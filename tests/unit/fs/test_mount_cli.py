@@ -348,7 +348,7 @@ class TestMountPersistence:
         monkeypatch.setenv("NEXUS_FS_STATE_DIR", str(tmp_path))
 
         with _mock_create_backend():
-            runner = CliRunner(mix_stderr=False, env=_env_no_auto_json())
+            runner = CliRunner(env=_env_no_auto_json())
             runner.invoke(main, ["mount", "local:///tmp/data", "--at", "/fast"])
             result = runner.invoke(
                 main, ["mount", "local:///tmp/data", "--at", "/slow"], catch_exceptions=False

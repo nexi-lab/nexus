@@ -40,6 +40,7 @@ import asyncio
 import contextlib
 import sys
 from dataclasses import asdict
+from pathlib import Path
 from typing import Any
 
 import click
@@ -154,7 +155,7 @@ def _check_stale_nag(entries: list[dict]) -> None:
     )
 
 
-def _rotate_backups(state_dir_path: "Path", keep: int = 3) -> None:  # noqa: F821
+def _rotate_backups(state_dir_path: Path, keep: int = 3) -> None:
     """Keep the N most recent mounts.json.bak.* files, delete older ones."""
     baks = sorted(state_dir_path.glob("mounts.json.bak.*"), key=lambda p: p.name)
     for old in baks[:-keep]:
@@ -162,7 +163,7 @@ def _rotate_backups(state_dir_path: "Path", keep: int = 3) -> None:  # noqa: F82
             old.unlink()
 
 
-def _write_backup(mounts_file_path: "Path") -> bool:  # noqa: F821
+def _write_backup(mounts_file_path: Path) -> bool:
     """Write a timestamped backup of mounts.json, then rotate to keep N=3.
 
     Microseconds are included in the filename so rapid successive prune calls

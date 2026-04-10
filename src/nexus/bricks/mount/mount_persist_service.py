@@ -110,6 +110,7 @@ class MountPersistService:
             Mount ID (UUID string)
         """
         self._check_manager()
+        assert self._manager is not None  # narrowed for mypy
 
         # Auto-populate from context if not provided
         if owner_user_id is None and context:
@@ -168,6 +169,7 @@ class MountPersistService:
             ValueError: If mount not found in database
         """
         self._check_manager()
+        assert self._manager is not None  # narrowed for mypy
 
         # Check if mount is already active
 
@@ -269,6 +271,7 @@ class MountPersistService:
             List of mount configuration dictionaries
         """
         self._check_manager()
+        assert self._manager is not None  # narrowed for mypy
 
         # Auto-populate filters from context
         if owner_user_id is None and context:
@@ -296,5 +299,6 @@ class MountPersistService:
             True if deleted, False if not found
         """
         self._check_manager()
+        assert self._manager is not None  # narrowed for mypy
 
         return self._manager.remove_mount(mount_point)

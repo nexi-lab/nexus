@@ -227,3 +227,4 @@ nexus.yaml
 scripts/nexus-ai-fs-demo/.env.scenarios
 benchmarks/longmemeval/data/*.json
 benchmarks/longmemeval/data/*.jsonl
+privatevar/

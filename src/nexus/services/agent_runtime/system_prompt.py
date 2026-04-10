@@ -18,7 +18,8 @@ import logging
 import os
 import platform
 import subprocess
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 

@@ -1500,6 +1500,18 @@ impl PyKernel {
         Ok((py_msgs, next))
     }
 
+    fn stream_collect_all<'py>(
+        &self,
+        py: Python<'py>,
+        path: &str,
+    ) -> PyResult<Bound<'py, PyBytes>> {
+        let data = self
+            .inner
+            .stream_collect_all(path)
+            .map_err(|e| -> PyErr { e.into() })?;
+        Ok(PyBytes::new(py, &data))
+    }
+
     fn list_streams(&self) -> Vec<String> {
         self.inner.list_streams()
     }

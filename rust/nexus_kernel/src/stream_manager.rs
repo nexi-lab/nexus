@@ -243,6 +243,37 @@ impl StreamManager {
             .map_err(StreamManagerError::Backend)
     }
 
+    /// Collect all message payloads from offset 0, concatenated into one Vec.
+    ///
+    /// Walks the entire stream from the beginning, joining payload bytes
+    /// (without the per-frame length prefix). Equivalent to repeated
+    /// `read_at` until empty, but in a single Rust call (no per-frame
+    /// PyO3 round-trip).
+    ///
+    /// Returns empty Vec if the stream has no data. Used by Python LLM
+    /// backends for `collect_all + CAS persist` pattern after the producer
+    /// finishes pumping tokens.
+    pub(crate) fn collect_all_payloads(&self, path: &str) -> Result<Vec<u8>, StreamManagerError> {
+        let buf = self
+            .buffers
+            .get(path)
+            .ok_or_else(|| StreamManagerError::NotFound(path.to_string()))?;
+        let tail = buf.tail_offset();
+        let mut out = Vec::with_capacity(tail);
+        let mut offset = 0usize;
+        loop {
+            match buf.read_at(offset) {
+                Ok((data, next)) => {
+                    out.extend_from_slice(&data);
+                    offset = next;
+                }
+                Err(StreamError::Empty) | Err(StreamError::ClosedEmpty) => break,
+                Err(e) => return Err(StreamManagerError::Backend(e)),
+            }
+        }
+        Ok(out)
+    }
+
     /// Get a backend reference (for sys_read/sys_write fast-path).
     pub(crate) fn get(&self, path: &str) -> Option<Arc<dyn StreamBackend>> {
         self.buffers.get(path).map(|r| Arc::clone(r.value()))
@@ -291,19 +322,52 @@ mod tests {
     use std::thread;
     use std::time::Duration;
 
-    /// Regression test for the lost-wakeup race fixed alongside the
-    /// `pipe_manager` equivalent. See `pipe_manager::tests` and the
-    /// commit message for the full race description.
-    ///
-    /// Stream is append-only with a single reader cursor advancing
-    /// through `read_at_blocking`. Each iteration writes one message
-    /// then expects the reader to receive it within a short timeout.
-    /// Pre-fix: the writer's `notify_all` arrives between the reader's
-    /// `read_at` returning Empty and the reader parking, the wakeup is
-    /// dropped, and the reader times out. Post-fix: the writer holds
-    /// `notify.mutex` around `notify_all`, so the reader either sees
-    /// the new data on its next predicate check or is woken from its
-    /// parked state.
+    #[test]
+    fn test_collect_all_payloads_empty() {
+        let sm = StreamManager::new();
+        sm.create("/s/empty", 1024).unwrap();
+        let data = sm.collect_all_payloads("/s/empty").unwrap();
+        assert!(data.is_empty());
+    }
+
+    #[test]
+    fn test_collect_all_payloads_single() {
+        let sm = StreamManager::new();
+        sm.create("/s/one", 1024).unwrap();
+        sm.write_nowait("/s/one", b"hello").unwrap();
+        let data = sm.collect_all_payloads("/s/one").unwrap();
+        assert_eq!(data, b"hello");
+    }
+
+    #[test]
+    fn test_collect_all_payloads_multi() {
+        let sm = StreamManager::new();
+        sm.create("/s/multi", 4096).unwrap();
+        sm.write_nowait("/s/multi", b"aaa").unwrap();
+        sm.write_nowait("/s/multi", b"bbb").unwrap();
+        sm.write_nowait("/s/multi", b"ccc").unwrap();
+        let data = sm.collect_all_payloads("/s/multi").unwrap();
+        assert_eq!(data, b"aaabbbccc");
+    }
+
+    #[test]
+    fn test_collect_all_payloads_after_close() {
+        let sm = StreamManager::new();
+        sm.create("/s/closed", 1024).unwrap();
+        sm.write_nowait("/s/closed", b"before").unwrap();
+        sm.close("/s/closed").unwrap();
+        let data = sm.collect_all_payloads("/s/closed").unwrap();
+        assert_eq!(data, b"before");
+    }
+
+    #[test]
+    fn test_collect_all_payloads_not_found() {
+        let sm = StreamManager::new();
+        let result = sm.collect_all_payloads("/s/nope");
+        assert!(result.is_err());
+    }
+
+    /// Regression test for the lost-wakeup race.
     #[test]
     fn read_at_blocking_no_lost_wakeup_under_concurrent_writes() {
         const ITERATIONS: usize = 1000;

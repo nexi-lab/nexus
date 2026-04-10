@@ -8,6 +8,7 @@ mod agent_registry;
 mod backend;
 mod bitmap;
 mod bloom;
+mod cas_chunking;
 mod cas_engine;
 mod cas_transport;
 mod dcache;

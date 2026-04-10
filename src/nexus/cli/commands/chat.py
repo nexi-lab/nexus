@@ -121,10 +121,8 @@ async def _run_chat(
 
         llm_backend = CASOpenAIBackend(base_url=base_url, api_key=api_key, default_model=model)
 
-        # Inject StreamManager for DT_STREAM orchestration
-        stream_mgr = getattr(nx, "_stream_manager", None)
-        if stream_mgr is not None:
-            llm_backend.set_stream_manager(stream_mgr)
+        # Inject NexusFS for DT_STREAM orchestration (Rust kernel)
+        llm_backend.set_stream_manager(nx)
 
         from nexus.contracts.metadata import DT_MOUNT
 
@@ -148,8 +146,7 @@ async def _run_chat(
         cwd = os.getcwd()
         agent_path = "/root/agents/default"
 
-        # StreamManager stream_read for DT_STREAM token delivery
-        _stream_read = getattr(stream_mgr, "stream_read", None) if stream_mgr else None
+        _stream_read = getattr(nx, "_stream_read", None)
 
         async def _fallback_stream_read(path: str, offset: int) -> tuple[bytes, int]:
             raise NotImplementedError("Streaming not available in REMOTE mode")

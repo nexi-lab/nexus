@@ -279,16 +279,8 @@ class CASOpenAIBackend(CASAddressingEngine):
                 if token_meta is not None:
                     meta = token_meta
 
-            # Collect all stream data (non-destructive read from offset 0)
-            full_chunks: list[bytes] = []
-            _offset = 0
-            while True:
-                _result = nx.stream_read_at(stream_path, _offset)
-                if _result is None:
-                    break
-                full_chunks.append(_result[0])
-                _offset = _result[1]
-            full_response = b"".join(full_chunks)
+            # Collect all stream payloads in single Rust call (no per-frame PyO3 roundtrip)
+            full_response = nx.stream_collect_all(stream_path)
             result = self.persist_session(
                 request_bytes=request_bytes,
                 response_content=full_response.decode("utf-8"),

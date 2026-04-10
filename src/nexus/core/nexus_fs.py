@@ -4761,6 +4761,14 @@ class NexusFS(  # type: ignore[misc]
             return None
         return (bytes(_result[0]), _result[1])
 
+    def stream_collect_all(self, path: str) -> bytes:
+        """Collect all message payloads from a DT_STREAM, concatenated.
+
+        Single Rust call — no per-frame PyO3 round-trip. Replaces
+        manual ``read_at`` loops in LLM backends.
+        """
+        return bytes(self._kernel.stream_collect_all(path))
+
     def stream_close(self, path: str) -> None:
         """Mark a DT_STREAM as closed (signals EOF to readers)."""
         self._kernel.close_stream(path)

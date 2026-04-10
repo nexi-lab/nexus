@@ -54,13 +54,18 @@ def install_remote_kernel_rpc_overrides(nfs: "NexusFS", transport: "RPCTransport
         # thread so it never stalls the asyncio event loop under slow/lossy networks.
         import asyncio as _asyncio
 
-        data = await _asyncio.to_thread(transport.read_file, path)
         if offset or count is not None:
-            # The server-side sys_read RPC does not support range params yet, so
-            # we fetch the full file and slice client-side. Bandwidth is O(file_size)
-            # for range reads, but correctness is guaranteed.
-            data = data[offset : offset + count] if count is not None else data[offset:]
-        return data
+            # Range read: use the JSON Call RPC so offset/count are forwarded to
+            # nexus_fs.sys_read() server-side. The typed read_file proto has no
+            # offset/count fields, so it can only do full-file reads.
+            params: dict[str, Any] = {"path": path, "offset": offset}
+            if count is not None:
+                params["count"] = count
+            result = await _asyncio.to_thread(transport.call_rpc, "read", params)
+            # call_rpc + decode_rpc_message already unwraps {"__type__":"bytes","data":...}
+            return result if isinstance(result, bytes) else bytes(result)
+        # Full-file read: use the efficient typed ReadRequest proto (no JSON/base64 overhead).
+        return await _asyncio.to_thread(transport.read_file, path)
 
     async def _remote_sys_rename(
         _self: Any,

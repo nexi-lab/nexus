@@ -487,10 +487,14 @@ class TestCASOpenAIBackendStreaming:
         def _stream_close(path: str) -> None:
             sm._closed = True
 
+        def _stream_collect_all(path: str) -> bytes:
+            return b"".join(sm._written)
+
         sm.stream_create.side_effect = _stream_create
         sm.stream_write_nowait.side_effect = _stream_write_nowait
         sm.stream_read_at.side_effect = _stream_read_at
         sm.stream_close.side_effect = _stream_close
+        sm.stream_collect_all.side_effect = _stream_collect_all
         # Back-compat convenience: expose .create alias used by an
         # assertion below.
         sm.create = sm.stream_create

@@ -33,13 +33,27 @@ logger = logging.getLogger(__name__)
 def install_remote_kernel_rpc_overrides(nfs: "NexusFS", transport: "RPCTransport") -> None:
     """Route kernel ops that require server-side hooks through direct RPC.
 
-    Most REMOTE filesystem operations already hit the server kernel through
-    RemoteBackend / RemoteMetastore. Rename is the exception: the client-side
-    kernel emulates it as metadata put/delete, which bypasses server-side
-    post-rename hooks like ReBAC path updates. Override it to call the
-    authoritative server ``sys_rename`` RPC directly.
+    The Rust kernel's internal Redb metastore is empty in the REMOTE profile
+    (no local data_dir), so kernel.sys_read / kernel.sys_write return hit=False
+    for all paths. Override these to call the authoritative server RPCs directly.
+
+    sys_rename is also overridden because the client-side kernel emulates it
+    as metadata put/delete, bypassing server-side post-rename hooks.
     """
     import types
+
+    async def _remote_sys_read(
+        _self: Any,
+        path: str,
+        *,
+        count: int | None = None,
+        offset: int = 0,
+        context: Any = None,  # noqa: ARG001
+    ) -> bytes:
+        data = transport.read_file(path)
+        if offset or count is not None:
+            data = data[offset : offset + count] if count is not None else data[offset:]
+        return data
 
     async def _remote_sys_rename(
         _self: Any,
@@ -54,6 +68,7 @@ def install_remote_kernel_rpc_overrides(nfs: "NexusFS", transport: "RPCTransport
         )
         return {}
 
+    cast(Any, nfs).sys_read = types.MethodType(_remote_sys_read, nfs)
     cast(Any, nfs).sys_rename = types.MethodType(_remote_sys_rename, nfs)
 
 

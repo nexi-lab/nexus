@@ -122,10 +122,11 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
 
         # Auto-index on write/delete/rename: register VFS hooks that notify
         # the search daemon so the index stays fresh automatically.
+        # NexusFS exposes register_intercept_write/delete/rename/copy directly.
         with contextlib.suppress(AttributeError, ImportError):
             _daemon_ref = app.state.search_daemon
-            _dispatch = getattr(svc.nexus_fs, "_dispatch", None)
-            if _dispatch is not None:
+            _nexus_fs = svc.nexus_fs
+            if _nexus_fs is not None and hasattr(_nexus_fs, "register_intercept_write"):
                 import asyncio as _asyncio
 
                 from nexus.contracts.vfs_hooks import (
@@ -180,10 +181,10 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
                     def on_post_copy(self, ctx: CopyHookContext) -> None:
                         _notify(ctx.dst_path, "update")
 
-                _dispatch.register_intercept_write(_SearchWriteHook())
-                _dispatch.register_intercept_delete(_SearchDeleteHook())
-                _dispatch.register_intercept_rename(_SearchRenameHook())
-                _dispatch.register_intercept_copy(_SearchCopyHook())
+                _nexus_fs.register_intercept_write(_SearchWriteHook())
+                _nexus_fs.register_intercept_delete(_SearchDeleteHook())
+                _nexus_fs.register_intercept_rename(_SearchRenameHook())
+                _nexus_fs.register_intercept_copy(_SearchCopyHook())
                 logger.info("Search auto-index hooks registered (write/delete/rename/copy)")
 
         stats = app.state.search_daemon.get_stats()

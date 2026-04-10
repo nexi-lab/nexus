@@ -652,7 +652,7 @@ class TTLSweeper:
                 continue
             if ".arch_" in fn:
                 continue
-            if await self._vfs.access(f"{dl_path}/{fn}.archived", context=self._ctx()):
+            if self._vfs.access(f"{dl_path}/{fn}.archived", context=self._ctx()):
                 continue  # already archived in a previous preserve-originals sweep
             msg_files.append(fn)
         msg_files.sort()
@@ -762,7 +762,7 @@ class TTLSweeper:
             try:
                 data = self._vfs.sys_read(read_path, context=self._ctx())
                 reason_raw = b"{}"
-                if await self._vfs.access(reason_path, context=self._ctx()):
+                if self._vfs.access(reason_path, context=self._ctx()):
                     reason_raw = self._vfs.sys_read(reason_path, context=self._ctx())
                 record = json.dumps(
                     {
@@ -789,7 +789,7 @@ class TTLSweeper:
 
         # Phase 1: write .tmp
         try:
-            await self._vfs.write(archive_tmp, archive_bytes, context=self._ctx())
+            self._vfs.write(archive_tmp, archive_bytes, context=self._ctx())
         except Exception:
             logger.warning("Failed to write archive tmp %s", archive_tmp)
             if delete_originals:
@@ -799,7 +799,7 @@ class TTLSweeper:
 
         # Phase 2: write final (archive is now durable)
         try:
-            await self._vfs.write(archive_final, archive_bytes, context=self._ctx())
+            self._vfs.write(archive_final, archive_bytes, context=self._ctx())
         except Exception:
             logger.warning("Failed to commit archive %s", archive_final)
             if delete_originals:
@@ -819,7 +819,7 @@ class TTLSweeper:
             # re-archiving the same messages on every poll cycle.
             for fn, orig, _ in good_claims:
                 try:
-                    await self._vfs.write(f"{orig}.archived", b"", context=self._ctx())
+                    self._vfs.write(f"{orig}.archived", b"", context=self._ctx())
                 except Exception:
                     logger.debug("Failed to write .archived marker for %s", fn)
 
@@ -1005,7 +1005,7 @@ class TTLSweeper:
         overwriting a concurrently restored copy.
         """
         try:
-            if not await self._vfs.access(orig_path, context=self._ctx()):
+            if not self._vfs.access(orig_path, context=self._ctx()):
                 self._vfs.sys_rename(claimed_path, orig_path, context=self._ctx())
         except Exception:
             pass

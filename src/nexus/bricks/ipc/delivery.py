@@ -151,7 +151,7 @@ class MessageSender:
     async def _send_to_inbox(self, envelope: MessageEnvelope, data: bytes) -> str:
         """Write message to inbox, copy to outbox, and notify via DT_PIPE + EventBus."""
         recipient_inbox = inbox_path(envelope.recipient)
-        if not await self._vfs.access(recipient_inbox, context=self._ctx()):
+        if not self._vfs.access(recipient_inbox, context=self._ctx()):
             raise InboxNotFoundError(envelope.recipient)
 
         # Check backpressure
@@ -162,16 +162,16 @@ class MessageSender:
             raise InboxFullError(envelope.recipient, inbox_count, self._max_inbox_size)
 
         msg_path = message_path_in_inbox(envelope.recipient, envelope.id, envelope.timestamp)
-        await self._vfs.write(msg_path, data, context=self._ctx())
+        self._vfs.write(msg_path, data, context=self._ctx())
 
         # Outbox copy (best-effort)
         outbox_dir = outbox_path(envelope.sender)
         try:
-            if await self._vfs.access(outbox_dir, context=self._ctx()):
+            if self._vfs.access(outbox_dir, context=self._ctx()):
                 outbox_msg_path = message_path_in_outbox(
                     envelope.sender, envelope.id, envelope.timestamp
                 )
-                await self._vfs.write(outbox_msg_path, data, context=self._ctx())
+                self._vfs.write(outbox_msg_path, data, context=self._ctx())
         except Exception as exc:
             logger.warning(
                 "Failed to write outbox copy",
@@ -467,7 +467,7 @@ class MessageProcessor:
             if claim_dt >= stale_cutoff:
                 continue  # recently claimed — active handler, do not disturb
             orig_path = f"{agent_inbox}/{orig_fn}"
-            if not await self._vfs.access(orig_path, context=self._ctx()):
+            if not self._vfs.access(orig_path, context=self._ctx()):
                 try:
                     self._vfs.sys_rename(proc_path, orig_path, context=self._ctx())
                     logger.info("Recovered stale .proc claim: %s → %s", fn, orig_fn)

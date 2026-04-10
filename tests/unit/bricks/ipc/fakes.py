@@ -96,7 +96,7 @@ class InMemoryStorageDriver:
         return sorted(set(results))
 
     # Alias for backward compatibility
-    async def list_dir(self, path: str, zone_id: str) -> list[str]:
+    def list_dir(self, path: str, zone_id: str) -> list[str]:
         ctx = type("Ctx", (), {"zone_id": zone_id})()
         return self.sys_readdir(path, recursive=False, context=ctx)
 
@@ -116,7 +116,7 @@ class InMemoryStorageDriver:
         self._mtimes[(dst, zone_id)] = datetime.now(UTC)
 
     # Alias for backward compatibility
-    async def rename(self, src: str, dst: str, zone_id: str) -> None:
+    def rename(self, src: str, dst: str, zone_id: str) -> None:
         ctx = type("Ctx", (), {"zone_id": zone_id})()
         self.sys_rename(src, dst, context=ctx)
 
@@ -138,9 +138,7 @@ class InMemoryStorageDriver:
                 parent = "/" + "/".join(parts[:i])
                 self._dirs.add((parent, zone_id))
 
-    async def access(
-        self, path: str, zone_id_compat: str | None = None, *, context: Any = None
-    ) -> bool:
+    def access(self, path: str, zone_id_compat: str | None = None, *, context: Any = None) -> bool:
         zone_id = zone_id_compat if zone_id_compat is not None else self._zone_id(context)
         return (path, zone_id) in self._files or (path, zone_id) in self._dirs
 
@@ -157,7 +155,7 @@ class InMemoryStorageDriver:
         del self._files[key]
         self._mtimes.pop(key, None)
 
-    async def file_mtime(self, path: str, zone_id: str) -> datetime | None:
+    def file_mtime(self, path: str, zone_id: str) -> datetime | None:
         """Return the mtime of a file, or None if it doesn't exist."""
         return self._mtimes.get((path, zone_id))
 
@@ -177,7 +175,7 @@ class InMemoryEventPublisher:
         self.published: list[tuple[str, dict[str, Any]]] = []
         self._should_fail = should_fail
 
-    async def publish(self, channel: str, data: dict[str, Any]) -> None:
+    def publish(self, channel: str, data: dict[str, Any]) -> None:
         if self._should_fail:
             raise ConnectionError("EventBus unavailable")
         self.published.append((channel, data))

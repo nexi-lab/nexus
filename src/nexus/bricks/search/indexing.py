@@ -23,6 +23,8 @@ from nexus.bricks.search.contextual_chunking import (
     ContextualChunker,
     ContextualChunkResult,
 )
+from nexus.bricks.search.index_scope import IndexScope, is_path_indexed
+from nexus.bricks.search.mutation_events import extract_zone_id, strip_zone_prefix
 
 # Removed: txtai handles this (Issue #2663)
 # from nexus.bricks.search.embeddings import EmbeddingProvider
@@ -88,6 +90,7 @@ class IndexingPipeline:
         batch_size: int = 100,
         max_embedding_concurrency: int = 5,
         cross_doc_batching: bool = True,
+        scope_provider: Callable[[], IndexScope | None] | None = None,
     ):
         self._chunker = chunker
         self._embedding_provider = embedding_provider
@@ -99,6 +102,11 @@ class IndexingPipeline:
         self._batch_size = batch_size
         self._max_embedding_concurrency = max_embedding_concurrency
         self._cross_doc_batching = cross_doc_batching
+        # Central gate for per-directory semantic index scoping (Issue #3698).
+        # A callable lets the daemon hand us a live snapshot without the
+        # pipeline owning IndexScope state. If None or returning None, the
+        # filter is disabled and every document is indexed (legacy behavior).
+        self._scope_provider = scope_provider
 
     # ------------------------------------------------------------------
     # Public API
@@ -136,9 +144,58 @@ class IndexingPipeline:
 
         Returns:
             List of IndexResult (one per document, same order as input).
+            Paths that are outside the current index scope (Issue #3698)
+            are returned with ``chunks_indexed=0`` and no error, and they
+            never reach the chunker or the embedding provider.
         """
         if not documents:
             return []
+
+        # Preserve the caller's input order for the final return value,
+        # before any scope filtering rearranges the working list.
+        original_order: list[str] = [p for p, _, _ in documents]
+
+        # Central index-scope gate (Issue #3698). Drops out-of-scope paths
+        # BEFORE any chunking, embedding API call, or DB write. This is the
+        # single authoritative cost-control chokepoint for the embedding
+        # pipeline — every other filter site (bootstrap, mutation consumers,
+        # refresh loop) is an optimization on top of this gate.
+        pre_scope_results: dict[str, IndexResult] = {}
+        if self._scope_provider is not None:
+            try:
+                scope = self._scope_provider()
+            except Exception:
+                # A scope provider failure must not break indexing — degrade
+                # to "index everything" (legacy behavior) and log loudly.
+                logger.exception("scope_provider raised; indexing every document")
+                scope = None
+            if scope is not None:
+                filtered_documents: list[tuple[str, str, str]] = []
+                for path, content, path_id in documents:
+                    try:
+                        zone_id = extract_zone_id(path)
+                        virtual_path = strip_zone_prefix(path)
+                        if is_path_indexed(scope, zone_id, virtual_path):
+                            filtered_documents.append((path, content, path_id))
+                        else:
+                            pre_scope_results[path] = IndexResult(path=path, chunks_indexed=0)
+                    except ValueError as exc:
+                        # Contract violation (empty path, bad shape, etc.)
+                        # Surface as an error on that specific path but
+                        # keep the rest of the batch moving.
+                        logger.warning("index_scope contract violation for %s: %s", path, exc)
+                        pre_scope_results[path] = IndexResult(
+                            path=path,
+                            chunks_indexed=0,
+                            error=f"scope check failed: {exc}",
+                        )
+                documents = filtered_documents
+                if not documents:
+                    # Nothing left to index after scope filter.
+                    return [
+                        pre_scope_results.get(p, IndexResult(path=p, chunks_indexed=0))
+                        for p in original_order
+                    ]
 
         total = len(documents)
         sem = asyncio.Semaphore(self._max_concurrency)
@@ -169,10 +226,11 @@ class IndexingPipeline:
 
         phase1 = await asyncio.gather(*[_chunk_one(p, c, pid) for p, c, pid in documents])
 
-        # Separate successful chunks from errors
+        # Separate successful chunks from errors. Seed the results map with
+        # any out-of-scope paths captured by the scope filter above so the
+        # final return preserves the caller's original input order.
         chunked_docs: list[_ChunkedDoc] = []
-        results_map: dict[str, IndexResult] = {}
-        doc_order = [p for p, _, _ in documents]
+        results_map: dict[str, IndexResult] = dict(pre_scope_results)
 
         for item in phase1:
             if isinstance(item, IndexResult):
@@ -199,8 +257,9 @@ class IndexingPipeline:
                 logger.error("Bulk insert failed for %s: %s", doc.path, exc)
                 results_map[doc.path] = IndexResult(path=doc.path, chunks_indexed=0, error=str(exc))
 
-        # Return results in input order
-        return [results_map.get(p, IndexResult(path=p, chunks_indexed=0)) for p in doc_order]
+        # Return results in the caller's original input order (captured
+        # before scope filtering reduced the working list).
+        return [results_map.get(p, IndexResult(path=p, chunks_indexed=0)) for p in original_order]
 
     # ------------------------------------------------------------------
     # Phase 1: Chunking

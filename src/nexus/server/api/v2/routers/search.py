@@ -648,3 +648,217 @@ async def search_expand(
     except Exception as e:
         logger.error("Query expansion error: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail="Query expansion failed") from e
+
+
+# =============================================================================
+# Per-directory semantic index scoping (Issue #3698)
+# =============================================================================
+#
+# Endpoints to opt a zone's directories into the embedding pipeline. When a
+# zone is in ``'scoped'`` mode, only files under registered directories are
+# embedded; BM25/FTS/Zoekt keep full coverage regardless.
+#
+# Authorization policy (Issue #6 #7): the caller must either be admin or
+# hold ReBAC write permission on the directory path. A full ReBAC integration
+# will arrive alongside the feature; this v1 uses admin-only so we don't
+# couple the search layer to the permission enforcer's async API today.
+
+
+async def _require_admin_or_path_write(
+    request: Request,
+    auth_result: dict[str, Any],
+    zone_id: str,
+    directory_path: str,
+) -> None:
+    """Policy gate for directory-scope mutation endpoints (Issue #3698 #6.7).
+
+    Policy: admin bypass, otherwise require write permission on the target
+    path via the async permission enforcer if one is configured. If no
+    enforcer is available, deny (fail-closed) — callers without an enforcer
+    should be admin-only by deployment configuration.
+    """
+    if auth_result.get("is_admin", False):
+        return
+
+    enforcer = getattr(request.app.state, "async_permission_enforcer", None)
+    if enforcer is None:
+        # Fail closed — no enforcer wired means non-admins cannot mutate
+        # index scope. Admins already bypassed above.
+        raise HTTPException(
+            status_code=403,
+            detail="index scope mutation requires admin privileges in this deployment",
+        )
+
+    from nexus.contracts.constants import ROOT_ZONE_ID
+    from nexus.contracts.types import OperationContext, Permission
+
+    ctx = OperationContext(
+        user_id=auth_result.get("subject_id", ""),
+        groups=auth_result.get("groups", []),
+        zone_id=zone_id or ROOT_ZONE_ID,
+        is_admin=False,
+        subject_type=auth_result.get("subject_type", "user"),
+        subject_id=auth_result.get("subject_id"),
+    )
+    try:
+        allowed = await enforcer.check_permission(directory_path, Permission.WRITE, ctx)
+    except Exception as exc:
+        logger.warning("ReBAC write check failed for %s: %s", directory_path, exc)
+        raise HTTPException(status_code=500, detail="permission check failed") from exc
+
+    if not allowed:
+        raise HTTPException(
+            status_code=403,
+            detail=f"write permission required on {directory_path}",
+        )
+
+
+@router.post("/index-directory")
+async def register_indexed_directory(
+    request: Request,
+    payload: dict[str, Any],
+    auth_result: dict[str, Any] = Depends(require_auth),
+    search_daemon: Any = Depends(_get_search_daemon),
+) -> dict[str, Any]:
+    """Register a directory for scoped semantic indexing (Issue #3698).
+
+    Request body:
+        {"path": "/zone/zone_a/project/src"}  -- or any canonical virtual path
+
+    Policies (Issue #6):
+    - Non-existent directories are ALLOWED (register for future use).
+    - File paths (non-directory) are rejected — the daemon does not verify
+      this today; v1 trusts the caller. Filesystem existence check is a
+      follow-up.
+    - Path escapes (``..``) → 400.
+    - Missing zone → 404.
+    - Duplicate registration → 409.
+    """
+    from nexus.bricks.search.index_scope import (
+        DirectoryAlreadyRegisteredError,
+        InvalidDirectoryPathError,
+        ZoneNotFoundError,
+    )
+    from nexus.contracts.constants import ROOT_ZONE_ID
+
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="request body must be a JSON object")
+    directory_path = payload.get("path")
+    if not isinstance(directory_path, str) or not directory_path:
+        raise HTTPException(status_code=400, detail="'path' field is required")
+
+    zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
+
+    await _require_admin_or_path_write(request, auth_result, zone_id, directory_path)
+
+    try:
+        canonical = await search_daemon.add_indexed_directory(zone_id, directory_path)
+    except ZoneNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except InvalidDirectoryPathError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except DirectoryAlreadyRegisteredError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    return {
+        "zone_id": zone_id,
+        "path": canonical,
+        "status": "registered",
+    }
+
+
+@router.delete("/index-directory")
+async def unregister_indexed_directory(
+    request: Request,
+    payload: dict[str, Any],
+    auth_result: dict[str, Any] = Depends(require_auth),
+    search_daemon: Any = Depends(_get_search_daemon),
+) -> dict[str, Any]:
+    """Unregister a directory from scoped semantic indexing (Issue #3698).
+
+    Does NOT purge existing embeddings — use ``/purge-unscoped`` for that.
+    Returns 404 if the directory was not registered.
+    """
+    from nexus.bricks.search.index_scope import (
+        DirectoryNotRegisteredError,
+        InvalidDirectoryPathError,
+    )
+    from nexus.contracts.constants import ROOT_ZONE_ID
+
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="request body must be a JSON object")
+    directory_path = payload.get("path")
+    if not isinstance(directory_path, str) or not directory_path:
+        raise HTTPException(status_code=400, detail="'path' field is required")
+
+    zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
+
+    await _require_admin_or_path_write(request, auth_result, zone_id, directory_path)
+
+    try:
+        canonical = await search_daemon.remove_indexed_directory(zone_id, directory_path)
+    except DirectoryNotRegisteredError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except InvalidDirectoryPathError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {
+        "zone_id": zone_id,
+        "path": canonical,
+        "status": "unregistered",
+    }
+
+
+@router.get("/indexed-dirs")
+async def list_indexed_dirs(
+    auth_result: dict[str, Any] = Depends(require_auth),
+    search_daemon: Any = Depends(_get_search_daemon),
+) -> dict[str, Any]:
+    """List directories currently registered for scoped semantic indexing.
+
+    Returns an empty list if no directories are registered for the caller's
+    zone (which, combined with zone mode 'all', means the zone indexes
+    everything).
+    """
+    from nexus.contracts.constants import ROOT_ZONE_ID
+
+    zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
+    mode = search_daemon._zone_indexing_modes.get(zone_id, "all")
+    directories = search_daemon.list_indexed_directories(zone_id)
+    return {
+        "zone_id": zone_id,
+        "indexing_mode": mode,
+        "directories": directories,
+    }
+
+
+@router.post("/purge-unscoped")
+async def purge_unscoped_embeddings(
+    auth_result: dict[str, Any] = Depends(require_auth),
+    search_daemon: Any = Depends(_get_search_daemon),
+) -> dict[str, Any]:
+    """Admin-only: purge stored embeddings for files outside any scope.
+
+    Destructive operation (Issue #3698). Call this after flipping a zone
+    from ``'all'`` to ``'scoped'`` or after unregistering directories to
+    clean up stale embeddings and txtai docs for files that are no longer
+    in scope. Only zones in ``'scoped'`` mode are affected.
+
+    This is decoupled from the unregister endpoint intentionally: removing
+    a directory registration is low-risk, purging embeddings is high-risk.
+    Keep them separate to minimize the blast radius of misconfiguration.
+    """
+    from nexus.contracts.constants import ROOT_ZONE_ID
+
+    if not auth_result.get("is_admin", False):
+        raise HTTPException(
+            status_code=403,
+            detail="purge-unscoped is admin-only",
+        )
+
+    zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
+    counts = await search_daemon.purge_unscoped_embeddings(zone_id)
+    return {
+        "zone_id": zone_id,
+        "purged": counts,
+    }

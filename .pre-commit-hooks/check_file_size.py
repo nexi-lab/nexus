@@ -35,6 +35,7 @@ EXCEPTIONS = [
     "src/nexus/storage/models/__init__.py",  # 3,400 lines - Phase 4 splitting (partially done)
     "src/nexus/server/fastapi_server.py",  # 2,133 lines - Phase 4 splitting
     "src/nexus/services/memory/memory_api.py",  # 3,012 lines - moved from core/, split tracked
+    "src/nexus/bricks/search/daemon.py",  # ~2,300 lines - Issue #3698 additions; split tracked as follow-up
 ]
 
 

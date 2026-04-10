@@ -58,6 +58,7 @@ if TYPE_CHECKING:
 
     from nexus.bricks.search.bm25s_search import BM25SIndex
     from nexus.bricks.search.chunking import EntropyAwareChunker
+    from nexus.bricks.search.index_scope import IndexScope
     from nexus.bricks.search.indexing import IndexingPipeline
 
 logger = logging.getLogger(__name__)
@@ -239,10 +240,147 @@ class SearchDaemon:
         self._latencies: list[float] = []
         self._max_latency_samples = 1000
 
+        # Per-directory semantic index scope state (Issue #3698).
+        # Single-process assumption: the daemon is the only writer.
+        # The CRUD endpoints update these under ``_refresh_lock`` as a
+        # write-through cache on top of the ``zones.indexing_mode`` column
+        # and the ``indexed_directories`` table. Multi-process deployments
+        # will need Postgres LISTEN/NOTIFY or a TTL refresh — not in v1.
+        self._zone_indexing_modes: dict[str, str] = {}
+        self._indexed_directories: dict[str, set[str]] = {}
+
     @property
     def is_initialized(self) -> bool:
         """Check if daemon is fully initialized."""
         return self._initialized
+
+    # =========================================================================
+    # Index scope (Issue #3698) — per-directory semantic index scoping
+    # =========================================================================
+
+    def _current_index_scope(self) -> "IndexScope | None":
+        """Return an immutable snapshot of the current per-zone index scope.
+
+        Called by ``IndexingPipeline.index_documents`` on every batch to
+        decide which paths reach the embedding provider. Cheap — builds a
+        fresh frozen snapshot from the in-memory dicts under the assumption
+        that CRUD endpoints hold ``_refresh_lock`` while writing.
+        """
+        from nexus.bricks.search.index_scope import IndexScope
+
+        return IndexScope(
+            zone_modes=dict(self._zone_indexing_modes),
+            zone_directories={
+                zone: frozenset(dirs) for zone, dirs in self._indexed_directories.items()
+            },
+        )
+
+    async def _load_index_scope(self) -> None:
+        """Populate ``_zone_indexing_modes`` and ``_indexed_directories``
+        from the database at startup.
+
+        Runs once from ``startup()`` before the mutation consumers spin up
+        so the first refresh already respects scope. Silent no-op if no
+        async session is available (test scaffolding, degraded mode).
+        """
+        if self._async_session is None:
+            logger.debug("No async session available, skipping index scope load")
+            return
+
+        try:
+            async with self._async_session() as session:
+                # Load zone indexing modes. Zones with mode NULL (pre-migration
+                # or test fixtures) default to 'all' per the backward-compat
+                # rule in is_path_indexed.
+                result = await session.execute(
+                    sa_text(
+                        "SELECT zone_id, COALESCE(indexing_mode, 'all') "
+                        "FROM zones WHERE deleted_at IS NULL"
+                    )
+                )
+                self._zone_indexing_modes = {row[0]: row[1] for row in result.fetchall()}
+
+                # Load indexed directories grouped by zone.
+                result = await session.execute(
+                    sa_text("SELECT zone_id, directory_path FROM indexed_directories")
+                )
+                dirs_by_zone: dict[str, set[str]] = {}
+                for row in result.fetchall():
+                    dirs_by_zone.setdefault(row[0], set()).add(row[1])
+                self._indexed_directories = dirs_by_zone
+
+            logger.info(
+                "Loaded index scope: %d zones (%d scoped), %d directories",
+                len(self._zone_indexing_modes),
+                sum(1 for m in self._zone_indexing_modes.values() if m == "scoped"),
+                sum(len(d) for d in self._indexed_directories.values()),
+            )
+        except Exception:
+            logger.warning(
+                "Failed to load index scope; defaulting to 'all' for every zone",
+                exc_info=True,
+            )
+            self._zone_indexing_modes = {}
+            self._indexed_directories = {}
+
+    async def add_indexed_directory(self, zone_id: str, directory_path: str) -> str:
+        """Register ``directory_path`` for scoped indexing. See scope_ops."""
+        from nexus.bricks.search import scope_ops
+
+        return await scope_ops.add_indexed_directory(self, zone_id, directory_path)
+
+    async def remove_indexed_directory(self, zone_id: str, directory_path: str) -> str:
+        """Unregister ``directory_path`` from scoped indexing. See scope_ops."""
+        from nexus.bricks.search import scope_ops
+
+        return await scope_ops.remove_indexed_directory(self, zone_id, directory_path)
+
+    def list_indexed_directories(self, zone_id: str) -> list[str]:
+        """List registered directories for ``zone_id``. See scope_ops."""
+        from nexus.bricks.search import scope_ops
+
+        return scope_ops.list_indexed_directories(self, zone_id)
+
+    async def purge_unscoped_embeddings(self, zone_id: str | None = None) -> dict[str, int]:
+        """Delete stored embeddings for out-of-scope files. See scope_ops."""
+        from nexus.bricks.search import scope_ops
+
+        return await scope_ops.purge_unscoped_embeddings(self, zone_id)
+
+    def _is_path_in_scope(self, path: str) -> bool:
+        """Optimization gate used by the daemon's refresh & consumer loops.
+
+        Returns True if ``path`` (either a raw ``/zone/{id}/...`` string
+        or a canonical virtual path) should be processed by the embedding
+        pipeline, according to the current in-memory scope snapshot.
+
+        This is a *duplicate* of the central gate in
+        ``IndexingPipeline.index_documents`` — the central gate is the
+        correctness boundary, this helper is the optimization that lets
+        the daemon skip file I/O and DB round trips for out-of-scope
+        paths. A quiet ``True`` is returned on any contract violation so
+        the central gate can surface the error instead of silently losing
+        the path here.
+        """
+        from nexus.bricks.search.index_scope import is_path_indexed
+
+        scope = self._current_index_scope()
+        if scope is None:
+            return True
+        try:
+            zone_id = extract_zone_id(path)
+            virtual_path = strip_zone_prefix(path)
+            return is_path_indexed(scope, zone_id, virtual_path)
+        except ValueError:
+            # Let the central gate handle contract violations — this
+            # helper is a fast-path optimization only.
+            return True
+
+    async def set_zone_indexing_mode(self, zone_id: str, mode: str) -> None:
+        """Flip zone between ``'all'`` and ``'scoped'``. See scope_ops."""
+        from nexus.bricks.search import scope_ops
+
+        await scope_ops.set_zone_indexing_mode(self, zone_id, mode)
 
     async def startup(self) -> None:
         """Initialize and pre-warm all search indexes.
@@ -323,6 +461,10 @@ class SearchDaemon:
                 f"alpha={self.config.entropy_alpha}"
             )
 
+        # Load per-directory semantic index scope (Issue #3698) before the
+        # pipeline starts so the very first refresh sees the current scope.
+        await self._load_index_scope()
+
         # Initialize indexing pipeline for parallel refresh (Issue #1094)
         from nexus.bricks.search.chunking import DocumentChunker
         from nexus.bricks.search.indexing import IndexingPipeline as _IP
@@ -340,6 +482,11 @@ class SearchDaemon:
             async_session_factory=self._async_session,
             max_concurrency=self.config.max_indexing_concurrency,
             cross_doc_batching=True,
+            # Central per-directory semantic index scope gate (Issue #3698).
+            # The daemon owns the mutable scope state; the pipeline asks for
+            # a fresh snapshot on every call so in-flight registrations are
+            # reflected without cross-thread gymnastics.
+            scope_provider=self._current_index_scope,
         )
         if self._async_session is not None:
             self._chunk_store = ChunkStore(
@@ -758,30 +905,87 @@ class SearchDaemon:
         return count
 
     async def _bootstrap_txtai_backend(self) -> None:
-        """Populate txtai from canonical SQL chunks so restarts keep semantic search."""
+        """Populate txtai from canonical SQL chunks so restarts keep semantic search.
+
+        Per-directory semantic index scoping (Issue #3698): zones in
+        ``'scoped'`` mode only replay chunks whose ``virtual_path`` falls
+        under a registered ``indexed_directories`` row. The filter is
+        pushed into SQL so we never materialize out-of-scope rows in
+        Python memory — critical for large workspaces.
+        """
         if self._backend is None or self._async_session is None:
             self._txtai_bootstrapped = self._backend is None
             return
 
+        from sqlalchemy import bindparam
         from sqlalchemy import text as sa_text
 
         try:
+            # Figure out which zones are in scoped mode. Zones in 'all'
+            # mode (the default) bypass the filter and replay everything.
+            scoped_zone_ids = sorted(
+                zid for zid, mode in self._zone_indexing_modes.items() if mode == "scoped"
+            )
+
             async with self._async_session() as session:
-                result = await session.execute(
-                    sa_text(
-                        """
-                        SELECT
-                            fp.zone_id,
-                            fp.virtual_path,
-                            c.chunk_index,
-                            c.chunk_text
-                        FROM document_chunks c
-                        JOIN file_paths fp ON c.path_id = fp.path_id
-                        WHERE fp.deleted_at IS NULL
-                        ORDER BY fp.zone_id, fp.virtual_path, c.chunk_index
-                        """
+                if not scoped_zone_ids:
+                    # Fast path: no scoped zones = legacy behavior.
+                    result = await session.execute(
+                        sa_text(
+                            """
+                            SELECT
+                                fp.zone_id,
+                                fp.virtual_path,
+                                c.chunk_index,
+                                c.chunk_text
+                            FROM document_chunks c
+                            JOIN file_paths fp ON c.path_id = fp.path_id
+                            WHERE fp.deleted_at IS NULL
+                            ORDER BY fp.zone_id, fp.virtual_path, c.chunk_index
+                            """
+                        )
                     )
-                )
+                else:
+                    # SQL-pushed scope filter (Issue #3698, review Issue #7).
+                    # For zones in 'scoped' mode, a row is kept only if it
+                    # has a matching row in ``indexed_directories`` where
+                    # ``virtual_path`` equals the directory OR starts with
+                    # ``directory || '/'``. The ``/`` suffix rule prevents
+                    # '/src' from matching '/srcX/foo' (Rule 6 bug guard).
+                    # Zones NOT in scoped mode bypass the filter entirely.
+                    result = await session.execute(
+                        sa_text(
+                            """
+                            SELECT
+                                fp.zone_id,
+                                fp.virtual_path,
+                                c.chunk_index,
+                                c.chunk_text
+                            FROM document_chunks c
+                            JOIN file_paths fp ON c.path_id = fp.path_id
+                            WHERE fp.deleted_at IS NULL
+                              AND (
+                                fp.zone_id NOT IN :scoped_zones
+                                OR EXISTS (
+                                    SELECT 1
+                                    FROM indexed_directories d
+                                    WHERE d.zone_id = fp.zone_id
+                                      AND (
+                                        d.directory_path = '/'
+                                        OR fp.virtual_path = d.directory_path
+                                        OR fp.virtual_path LIKE d.directory_path || '/%'
+                                      )
+                                )
+                              )
+                            ORDER BY fp.zone_id, fp.virtual_path, c.chunk_index
+                            """
+                        ).bindparams(
+                            # expanding=True lets SQLAlchemy render an IN-list
+                            # from a Python sequence for both Postgres and SQLite.
+                            bindparam("scoped_zones", expanding=True),
+                        ),
+                        {"scoped_zones": scoped_zone_ids},
+                    )
                 rows = result.fetchall()
 
             if not rows:
@@ -1704,6 +1908,11 @@ class SearchDaemon:
         for mutation in resolved:
             if mutation.event.op != SearchMutationOp.UPSERT or not mutation.content:
                 continue
+            # Early-skip for out-of-scope paths (Issue #3698). The central
+            # gate in IndexingPipeline.index_documents would also catch
+            # this, but filtering here avoids the pipeline overhead.
+            if not self._is_path_in_scope(mutation.event.path):
+                continue
             await self._indexing_pipeline.index_document(
                 mutation.event.path,
                 mutation.content,
@@ -1720,9 +1929,17 @@ class SearchDaemon:
 
         for mutation in resolved:
             if mutation.event.op == SearchMutationOp.DELETE:
+                # Deletes are NEVER filtered by scope (Issue #3698) — a
+                # file that was in scope when first indexed must still
+                # be cleaned up if it's later deleted, even if it now
+                # falls outside the scope definition.
                 deletes_by_zone.setdefault(mutation.zone_id, []).append(mutation.doc_id)
                 continue
             if mutation.content:
+                # Scope-filter upserts (Issue #3698). The helper takes the
+                # raw event path; it handles zone extraction internally.
+                if not self._is_path_in_scope(mutation.event.path):
+                    continue
                 upserts_by_zone.setdefault(mutation.zone_id, []).append(
                     {
                         "id": mutation.doc_id,
@@ -1830,12 +2047,18 @@ class SearchDaemon:
 
                 indexed_count += 1
 
-                # Collect for batched txtai upsert (Issue #2663)
-                if self._backend is not None:
-                    import re as _re
+                # Embedding-related work is gated by the per-directory
+                # semantic index scope (Issue #3698). BM25/FTS above run
+                # unconditionally — keyword search coverage stays full
+                # per the feature spec. Only the expensive (txtai, API
+                # embedding) paths respect the scope.
+                path_in_scope = self._is_path_in_scope(path)
 
-                    _zm = _re.match(r"^/zone/([^/]+)/", path)
-                    _zone = _zm.group(1) if _zm else "root"
+                # Collect for batched txtai upsert (Issue #2663)
+                if self._backend is not None and path_in_scope:
+                    # Fixed DRY bug (Issue #3698): use the shared
+                    # extract_zone_id helper instead of an inline regex.
+                    _zone = extract_zone_id(path)
                     _doc_id = f"{_zone}:{virtual_path}" if _zone != "root" else virtual_path
                     _txtai_batch.setdefault(_zone, []).append(
                         {
@@ -1846,8 +2069,10 @@ class SearchDaemon:
                         }
                     )
 
-                # Also run indexing pipeline for chunk + embedding storage
-                if self._indexing_pipeline and self._embedding_provider:
+                # Also run indexing pipeline for chunk + embedding storage.
+                # The pipeline's own central gate would catch out-of-scope
+                # paths too, but checking here avoids the pipeline overhead.
+                if self._indexing_pipeline and self._embedding_provider and path_in_scope:
                     try:
                         await self._indexing_pipeline.index_document(path, content, path_id)
                     except Exception as ie:

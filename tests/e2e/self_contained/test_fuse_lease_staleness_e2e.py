@@ -64,10 +64,10 @@ async def run_tests() -> int:
     file_cache = FileContentCache(fc_path)
 
     # Pre-populate data
-    await nx.write("/doc.txt", b"original-content")
-    await nx.write("/report.txt", b"report-v1")
+    nx.write("/doc.txt", b"original-content")
+    nx.write("/report.txt", b"report-v1")
     for i in range(20):
-        await nx.write(f"/batch/file_{i:03d}.txt", f"content-{i}".encode())
+        nx.write(f"/batch/file_{i:03d}.txt", f"content-{i}".encode())
     print("Data written\n")
 
     zone_id = getattr(nx, "zone_id", None) or "root"

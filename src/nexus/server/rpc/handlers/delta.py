@@ -163,7 +163,7 @@ async def handle_delta_write(nexus_fs: "NexusFS", params: Any, context: Any) -> 
             nexus_fs, params.path, new_content, context=context, if_match=if_match
         )
     else:
-        write_result = await nexus_fs.write(params.path, new_content, context=context)
+        write_result = nexus_fs.write(params.path, new_content, context=context)
     new_hash = hash_content(new_content)
 
     result: dict[str, Any] = {

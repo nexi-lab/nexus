@@ -32,7 +32,7 @@ async def _create_agent(
         "inbox": f"/agents/{agent_id}/inbox",
     }
     card_data = json.dumps(card).encode("utf-8")
-    await vfs.write(agent_card_path(agent_id), card_data, ZONE)
+    vfs.write(agent_card_path(agent_id), card_data, ZONE)
 
 
 class TestAgentDiscovery:

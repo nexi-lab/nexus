@@ -66,18 +66,18 @@ class TestStreamingCopy:
     async def test_copy_small_file(self, slim_fs: SlimNexusFS):
         """Files under chunk size use single read-write."""
         content = b"small file"
-        await slim_fs.write("/local/small.txt", content)
+        slim_fs.write("/local/small.txt", content)
         result = await slim_fs.copy("/local/small.txt", "/local/small_copy.txt")
         assert result["size"] == len(content)
-        assert await slim_fs.read("/local/small_copy.txt") == content
+        assert slim_fs.read("/local/small_copy.txt") == content
 
     @pytest.mark.asyncio
     async def test_copy_at_chunk_boundary(self, slim_fs: SlimNexusFS):
         """File exactly at chunk size boundary."""
         content = b"x" * STREAMING_COPY_CHUNK_SIZE
-        await slim_fs.write("/local/boundary.bin", content)
+        slim_fs.write("/local/boundary.bin", content)
         await slim_fs.copy("/local/boundary.bin", "/local/boundary_copy.bin")
-        result = await slim_fs.read("/local/boundary_copy.bin")
+        result = slim_fs.read("/local/boundary_copy.bin")
         assert len(result) == STREAMING_COPY_CHUNK_SIZE
         assert result == content
 
@@ -87,9 +87,9 @@ class TestStreamingCopy:
         # 1.5x chunk size to force 2 chunks
         size = STREAMING_COPY_CHUNK_SIZE + STREAMING_COPY_CHUNK_SIZE // 2
         content = bytes(i % 256 for i in range(size))
-        await slim_fs.write("/local/large.bin", content)
+        slim_fs.write("/local/large.bin", content)
         await slim_fs.copy("/local/large.bin", "/local/large_copy.bin")
-        result = await slim_fs.read("/local/large_copy.bin")
+        result = slim_fs.read("/local/large_copy.bin")
         assert len(result) == size
         assert result == content
 
@@ -98,9 +98,9 @@ class TestStreamingCopy:
         """File exactly two chunks — no remainder."""
         size = STREAMING_COPY_CHUNK_SIZE * 2
         content = b"\xab" * size
-        await slim_fs.write("/local/two_chunks.bin", content)
+        slim_fs.write("/local/two_chunks.bin", content)
         await slim_fs.copy("/local/two_chunks.bin", "/local/two_chunks_copy.bin")
-        result = await slim_fs.read("/local/two_chunks_copy.bin")
+        result = slim_fs.read("/local/two_chunks_copy.bin")
         assert len(result) == size
         assert result == content
 
@@ -108,12 +108,12 @@ class TestStreamingCopy:
     async def test_copy_preserves_source(self, slim_fs: SlimNexusFS):
         """Copy must not modify or delete the source file."""
         content = b"preserve me" * 1000
-        await slim_fs.write("/local/src.txt", content)
+        slim_fs.write("/local/src.txt", content)
         await slim_fs.copy("/local/src.txt", "/local/dst.txt")
         # Source unchanged
-        assert await slim_fs.read("/local/src.txt") == content
+        assert slim_fs.read("/local/src.txt") == content
         # Destination correct
-        assert await slim_fs.read("/local/dst.txt") == content
+        assert slim_fs.read("/local/dst.txt") == content
 
     @pytest.mark.asyncio
     async def test_copy_nonexistent_raises(self, slim_fs: SlimNexusFS):
@@ -124,6 +124,6 @@ class TestStreamingCopy:
     @pytest.mark.asyncio
     async def test_copy_empty_file(self, slim_fs: SlimNexusFS):
         """Copy of an empty file."""
-        await slim_fs.write("/local/empty.txt", b"")
+        slim_fs.write("/local/empty.txt", b"")
         await slim_fs.copy("/local/empty.txt", "/local/empty_copy.txt")
-        assert await slim_fs.read("/local/empty_copy.txt") == b""
+        assert slim_fs.read("/local/empty_copy.txt") == b""

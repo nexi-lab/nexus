@@ -166,7 +166,7 @@ class TestFileOperations:
     @pytest.mark.asyncio
     async def test_exists_delegates(self, gateway, mock_fs, context):
         """access delegates to NexusFS.access."""
-        assert await gateway.access("/test/file.txt", context=context) is True
+        assert gateway.access("/test/file.txt", context=context) is True
         mock_fs.access.assert_called_once()
 
 

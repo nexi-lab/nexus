@@ -164,7 +164,7 @@ class MCPMountManager:
         try:
             if self._filesystem:
                 # Check if base path exists
-                if not await self._filesystem.access(self.MCP_TOOLS_PATH):
+                if not self._filesystem.access(self.MCP_TOOLS_PATH):
                     return False
 
                 # List directories in MCP_TOOLS_PATH
@@ -175,7 +175,7 @@ class MCPMountManager:
                     mount_json_path = f"{item_path}/mount.json"
 
                     try:
-                        if await self._filesystem.access(mount_json_path):
+                        if self._filesystem.access(mount_json_path):
                             raw_content = self._filesystem.sys_read(mount_json_path)
                             content_str = (
                                 raw_content.decode("utf-8")
@@ -246,7 +246,7 @@ class MCPMountManager:
                 except OSError as e:
                     logger.warning("Failed to create directory %s: %s", mount_dir, e)
 
-                await self._filesystem.write(mount_json_path, content.encode("utf-8"))
+                self._filesystem.write(mount_json_path, content.encode("utf-8"))
             else:
                 mount_path = Path(mount_json_path.lstrip("/"))
                 mount_path.parent.mkdir(parents=True, exist_ok=True)
@@ -823,7 +823,7 @@ class MCPMountManager:
                     logger.warning("Failed to create directory %s: %s", mount.tools_path, e)
 
             # Write tool.json
-            await self._filesystem.write(tool_json_path, tool_json.encode("utf-8"))
+            self._filesystem.write(tool_json_path, tool_json.encode("utf-8"))
         else:
             # Local filesystem
             if mount.tools_path:
@@ -857,7 +857,7 @@ class MCPMountManager:
                     pass
                 except OSError as e:
                     logger.warning("Failed to create directory %s: %s", mount.tools_path, e)
-            await self._filesystem.write(readme_md_path, readme_md.encode("utf-8"))
+            self._filesystem.write(readme_md_path, readme_md.encode("utf-8"))
         else:
             if mount.tools_path:
                 tools_dir = Path(mount.tools_path.lstrip("/"))
@@ -1034,7 +1034,7 @@ class MCPMountManager:
         try:
             if self._filesystem:
                 # Check if path exists
-                if not await self._filesystem.access(tier_path):
+                if not self._filesystem.access(tier_path):
                     logger.debug("MCP tier path does not exist: %s", tier_path)
                     return 0
 
@@ -1045,7 +1045,7 @@ class MCPMountManager:
                     mount_json_path = f"{item_path}/mount.json"
 
                     try:
-                        if await self._filesystem.access(mount_json_path):
+                        if self._filesystem.access(mount_json_path):
                             raw_content = self._filesystem.sys_read(mount_json_path)
                             content_str = (
                                 raw_content.decode("utf-8")

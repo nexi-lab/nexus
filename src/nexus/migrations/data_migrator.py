@@ -185,7 +185,7 @@ class DataMigrator:
             full_target = f"{target_path.rstrip('/')}/{relative_path}"
 
             # Check if exists
-            if not options.overwrite and await self.nx.access(full_target):
+            if not options.overwrite and self.nx.access(full_target):
                 result.files_skipped += 1
                 continue
 
@@ -200,7 +200,7 @@ class DataMigrator:
                 content = response["Body"].read()
 
                 # Write to Nexus
-                await self.nx.write(full_target, content)
+                self.nx.write(full_target, content)
 
                 result.files_imported += 1
                 result.bytes_transferred += len(content)
@@ -276,7 +276,7 @@ class DataMigrator:
             full_target = f"{target_path.rstrip('/')}/{relative_path}"
 
             # Check if exists
-            if not options.overwrite and await self.nx.access(full_target):
+            if not options.overwrite and self.nx.access(full_target):
                 result.files_skipped += 1
                 continue
 
@@ -291,7 +291,7 @@ class DataMigrator:
                 content = blob.download_as_bytes()
 
                 # Write to Nexus
-                await self.nx.write(full_target, content)
+                self.nx.write(full_target, content)
 
                 result.files_imported += 1
                 result.bytes_transferred += len(content)
@@ -349,7 +349,7 @@ class DataMigrator:
             full_target = f"{target_path.rstrip('/')}/{relative_path}"
 
             # Check if exists
-            if not options.overwrite and await self.nx.access(full_target):
+            if not options.overwrite and self.nx.access(full_target):
                 result.files_skipped += 1
                 continue
 
@@ -364,7 +364,7 @@ class DataMigrator:
                 content = local_path.read_bytes()
 
                 # Write to Nexus
-                await self.nx.write(full_target, content)
+                self.nx.write(full_target, content)
 
                 result.files_imported += 1
                 result.bytes_transferred += len(content)

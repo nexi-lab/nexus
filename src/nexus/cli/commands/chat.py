@@ -126,7 +126,7 @@ async def _run_chat(
 
         from nexus.contracts.metadata import DT_MOUNT
 
-        await nx.sys_setattr("/llm", entry_type=DT_MOUNT, backend=llm_backend)
+        nx.sys_setattr("/llm", entry_type=DT_MOUNT, backend=llm_backend)
 
         # ── Mount external tool directories (Tier B, §1.5) ──
         if tools:
@@ -136,7 +136,7 @@ async def _run_chat(
                 tool_name = Path(tool_path).name
                 mount_point = f"/root/tools/{tool_name}"
                 tool_backend = PathLocalBackend(root_path=Path(tool_path))
-                await nx.sys_setattr(mount_point, entry_type=DT_MOUNT, backend=tool_backend)
+                nx.sys_setattr(mount_point, entry_type=DT_MOUNT, backend=tool_backend)
                 click.echo(f"  tools: {tool_path} → {mount_point}")
 
         # ── Create agent loop ──

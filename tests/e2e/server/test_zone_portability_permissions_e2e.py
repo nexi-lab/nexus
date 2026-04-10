@@ -49,13 +49,9 @@ async def source_nexus_fs_with_permissions(temp_dir):
     admin_context = OperationContext(user_id="admin", groups=[], is_admin=True)
 
     # Create test files as admin
-    await fs.write(
-        "/workspace/readme.md", b"# Test Project\n\nPermissions test.", context=admin_context
-    )
-    await fs.write(
-        "/workspace/src/main.py", b'print("Hello with permissions!")', context=admin_context
-    )
-    await fs.write("/docs/guide.txt", b"User guide with permissions.", context=admin_context)
+    fs.write("/workspace/readme.md", b"# Test Project\n\nPermissions test.", context=admin_context)
+    fs.write("/workspace/src/main.py", b'print("Hello with permissions!")', context=admin_context)
+    fs.write("/docs/guide.txt", b"User guide with permissions.", context=admin_context)
 
     yield fs
     fs.close()
@@ -171,7 +167,7 @@ class TestImportWithPermissions:
         admin_context = OperationContext(user_id="admin", groups=[], is_admin=True)
 
         # Create existing file
-        await target_nexus_fs_with_permissions.write(
+        target_nexus_fs_with_permissions.write(
             "/workspace/readme.md", b"Existing content", context=admin_context
         )
 
@@ -201,7 +197,7 @@ class TestImportWithPermissions:
         admin_context = OperationContext(user_id="admin", groups=[], is_admin=True)
 
         # Create existing file
-        await target_nexus_fs_with_permissions.write(
+        target_nexus_fs_with_permissions.write(
             "/workspace/readme.md", b"Existing content", context=admin_context
         )
 

@@ -113,7 +113,7 @@ async def _boot_remote_services(nfs: "NexusFS", call_rpc: Callable[..., Any]) ->
     await enlist_wired_services(nfs._service_registry, wired_dict)
 
     # version_service — enlist into ServiceRegistry
-    await nfs.sys_setattr("/__sys__/services/version_service", service=proxy)
+    nfs.sys_setattr("/__sys__/services/version_service", service=proxy)
 
     logger.info(
         "REMOTE profile: wired %d service slots with RPC forwarders (kernel runs naturally)",

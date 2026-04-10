@@ -68,7 +68,7 @@ async def get_catalog_schema(
         # Extract on-the-fly — use caller's auth context for permission check
         try:
             op_ctx = get_operation_context(auth_result) if auth_result else None
-            raw = await nexus_fs.read(full_path, context=op_ctx)
+            raw = nexus_fs.read(full_path, context=op_ctx)
             content = raw.encode() if isinstance(raw, str) else raw
         except PermissionError as perm_err:
             raise HTTPException(status_code=403, detail=f"Access denied: {full_path}") from perm_err

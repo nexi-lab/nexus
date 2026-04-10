@@ -10,7 +10,7 @@ Usage:
     from nexus.fs._facade import SlimNexusFS
 
     facade = SlimNexusFS(kernel_fs)
-    content = await facade.read("/s3/bucket/file.txt")
+    content = facade.read("/s3/bucket/file.txt")
 """
 
 from __future__ import annotations
@@ -99,7 +99,7 @@ class SlimNexusFS:
         """
         return self._kernel.sys_read(path, context=self._ctx)
 
-    async def read_range(self, path: str, start: int, end: int) -> bytes:
+    def read_range(self, path: str, start: int, end: int) -> bytes:
         """Read a specific byte range from a file.
 
         Memory-efficient — only fetches the requested range from the backend.
@@ -112,11 +112,11 @@ class SlimNexusFS:
         Returns:
             Bytes in the requested range.
         """
-        return await self._kernel.read_range(path, start, end, context=self._ctx)
+        return self._kernel.read_range(path, start, end, context=self._ctx)
 
     # -- Write operations --
 
-    async def write(self, path: str, content: bytes) -> dict[str, Any]:
+    def write(self, path: str, content: bytes) -> dict[str, Any]:
         """Write content to a file (creates or overwrites).
 
         Args:
@@ -126,9 +126,9 @@ class SlimNexusFS:
         Returns:
             Dict with path, size, etag, version.
         """
-        return await self._kernel.write(path, content, context=self._ctx)
+        return self._kernel.write(path, content, context=self._ctx)
 
-    async def write_batch(self, files: list[tuple[str, bytes]]) -> list[dict[str, Any]]:
+    def write_batch(self, files: list[tuple[str, bytes]]) -> list[dict[str, Any]]:
         """Write multiple files atomically in a single transaction.
 
         All files are written atomically — either all succeed or all fail.
@@ -145,9 +145,9 @@ class SlimNexusFS:
             NexusFileNotFoundError: Never — writes always create.
             InvalidPathError: If any path is invalid.
         """
-        return await self._kernel.write_batch(files, context=self._ctx)
+        return self._kernel.write_batch(files, context=self._ctx)
 
-    async def read_batch(
+    def read_batch(
         self,
         paths: list[str],
         *,
@@ -187,7 +187,7 @@ class SlimNexusFS:
             NexusFileNotFoundError: If any path is missing and ``partial=False``.
             InvalidPathError: If any path is invalid (always raised).
         """
-        return await self._kernel.read_batch(paths, partial=partial, context=self._ctx)
+        return self._kernel.read_batch(paths, partial=partial, context=self._ctx)
 
     # -- Directory operations --
 
@@ -277,9 +277,9 @@ class SlimNexusFS:
         Returns:
             True if the path exists (file or directory).
         """
-        return await self._kernel.access(path, context=self._ctx)
+        return self._kernel.access(path, context=self._ctx)
 
-    async def copy(self, src: str, dst: str) -> dict[str, Any]:
+    def copy(self, src: str, dst: str) -> dict[str, Any]:
         """Copy a file from src to dst.
 
         Delegates to the kernel's sys_copy which uses backend-native
@@ -294,9 +294,9 @@ class SlimNexusFS:
         Returns:
             Dict with path, size, etag of the new file.
         """
-        return await self._kernel.sys_copy(src, dst, context=self._ctx)
+        return self._kernel.sys_copy(src, dst, context=self._ctx)
 
-    async def edit(
+    def edit(
         self,
         path: str,
         edits: list[tuple[str, str]] | list[dict[str, Any]],
@@ -330,7 +330,7 @@ class SlimNexusFS:
             between the ETag check and the write.  For concurrent-writer safety,
             use an external lock or wait for kernel-level OCC-aware writes.
         """
-        return await self._kernel.edit(
+        return self._kernel.edit(
             path,
             edits,
             context=self._ctx,

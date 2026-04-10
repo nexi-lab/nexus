@@ -109,14 +109,14 @@ class MetadataHandler:
                     return self._build_file_attrs(rust_meta.size)
 
         # Check if it's a directory
-        if await ctx.nexus_fs.is_directory(original_path, context=ctx.context):
+        if ctx.nexus_fs.is_directory(original_path, context=ctx.context):
             metadata = await get_metadata(ctx, original_path)
             return build_dir_attrs(metadata)
 
         # Validate namespace visibility
         await check_namespace_visible(ctx, original_path)
 
-        if not await ctx.nexus_fs.access(original_path):
+        if not ctx.nexus_fs.access(original_path):
             import errno
 
             raise FuseOSError(errno.ENOENT)
@@ -289,7 +289,7 @@ class MetadataHandler:
         for file_info in files:
             if isinstance(file_info, str):
                 file_path = file_info
-                is_dir = await ctx.nexus_fs.is_directory(file_path, context=ctx.context)
+                is_dir = ctx.nexus_fs.is_directory(file_path, context=ctx.context)
             else:
                 file_path = str(file_info.get("path", ""))
                 is_dir = file_info.get("is_directory", False)

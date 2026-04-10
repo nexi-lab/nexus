@@ -63,7 +63,7 @@ async def test_write_operation_logged(nx: NexusFS, record_store: SQLAlchemyRecor
     content = b"Test content"
 
     # Write file
-    await nx.write(path, content)
+    nx.write(path, content)
     await _flush(nx)
 
     # Check operation log
@@ -89,11 +89,11 @@ async def test_write_update_operation_logged(
     content2 = b"Version 2"
 
     # Write initial version (use write() to get metadata dict with etag)
-    result1 = await nx.write(path, content1)
+    result1 = nx.write(path, content1)
     old_hash = result1["etag"]
 
     # Update file
-    await nx.write(path, content2)
+    nx.write(path, content2)
     await _flush(nx)
 
     # Check operation log
@@ -124,7 +124,7 @@ async def test_delete_operation_logged(nx: NexusFS, record_store: SQLAlchemyReco
     content = b"Test content"
 
     # Write and then delete (use write() to get metadata dict with etag)
-    result = await nx.write(path, content)
+    result = nx.write(path, content)
     content_hash = result["etag"]
     nx.sys_unlink(path)
     await _flush(nx)
@@ -160,7 +160,7 @@ async def test_rename_operation_logged(nx: NexusFS, record_store: SQLAlchemyReco
     content = b"Test content"
 
     # Write and then rename
-    await nx.write(old_path, content)
+    nx.write(old_path, content)
     nx.sys_rename(old_path, new_path)
     await _flush(nx)
 
@@ -193,10 +193,10 @@ async def test_operation_log_filtering_by_agent(
 
     # Use context parameter with different agent IDs
     context1 = OperationContext(user_id="test", groups=[], agent_id="agent-1")
-    await nx.write("/file1.txt", b"Content 1", context=context1)
+    nx.write("/file1.txt", b"Content 1", context=context1)
 
     context2 = OperationContext(user_id="test", groups=[], agent_id="agent-2")
-    await nx.write("/file2.txt", b"Content 2", context=context2)
+    nx.write("/file2.txt", b"Content 2", context=context2)
     await _flush(nx)
 
     # Check operation log filtering
@@ -222,8 +222,8 @@ async def test_operation_log_filtering_by_type(
     path = "/test.txt"
 
     # Perform various operations
-    await nx.write(path, b"Content")
-    await nx.write(path, b"Updated")
+    nx.write(path, b"Content")
+    nx.write(path, b"Updated")
     nx.sys_rename(path, "/renamed.txt")
     nx.sys_unlink("/renamed.txt")
     await _flush(nx)
@@ -254,9 +254,9 @@ async def test_get_path_history(nx: NexusFS, record_store: SQLAlchemyRecordStore
     path = "/test.txt"
 
     # Perform multiple operations on same path
-    await nx.write(path, b"Version 1")
-    await nx.write(path, b"Version 2")
-    await nx.write(path, b"Version 3")
+    nx.write(path, b"Version 1")
+    nx.write(path, b"Version 2")
+    nx.write(path, b"Version 3")
     await _flush(nx)
 
     # Check path history
@@ -273,8 +273,8 @@ async def test_get_path_history(nx: NexusFS, record_store: SQLAlchemyRecordStore
 async def test_get_last_operation(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
     """Test getting the last operation."""
     # Perform operations
-    await nx.write("/file1.txt", b"Content 1")
-    await nx.write("/file2.txt", b"Content 2")
+    nx.write("/file1.txt", b"Content 1")
+    nx.write("/file2.txt", b"Content 2")
     await _flush(nx)
 
     # Get last operation
@@ -294,12 +294,12 @@ async def test_undo_write_new_file(nx: NexusFS) -> None:
     content = b"Test content"
 
     # Write file
-    await nx.write(path, content)
-    assert await nx.access(path)
+    nx.write(path, content)
+    assert nx.access(path)
 
     # Undo by deleting the file
     nx.sys_unlink(path)
-    assert not await nx.access(path)
+    assert not nx.access(path)
 
 
 @pytest.mark.asyncio
@@ -312,11 +312,11 @@ async def test_undo_write_update(
     content2 = b"Version 2"
 
     # Write initial version (use write() to get metadata dict with etag)
-    result1 = await nx.write(path, content1)
+    result1 = nx.write(path, content1)
     old_hash = result1["etag"]
 
     # Update file
-    await nx.write(path, content2)
+    nx.write(path, content2)
     await _flush(nx)
 
     # Get the update operation
@@ -330,7 +330,7 @@ async def test_undo_write_update(
 
         # Undo by restoring old content
         old_content = local_backend.read_content(last_op.snapshot_hash)
-        await nx.write(path, old_content)
+        nx.write(path, old_content)
 
         # Verify restoration
         restored_content = nx.sys_read(path)
@@ -346,12 +346,12 @@ async def test_undo_delete(
     content = b"Test content"
 
     # Write and delete (use write() to get metadata dict with etag)
-    result = await nx.write(path, content)
+    result = nx.write(path, content)
     content_hash = result["etag"]
     local_backend.write_content(content)  # Hold extra CAS reference so blob survives unlink
     nx.sys_unlink(path)
     await _flush(nx)
-    assert not await nx.access(path)
+    assert not nx.access(path)
 
     # Get delete operation
     with record_store.session_factory() as session:
@@ -363,10 +363,10 @@ async def test_undo_delete(
 
         # Undo by restoring from snapshot
         restored_content = local_backend.read_content(last_op.snapshot_hash)
-        await nx.write(path, restored_content)
+        nx.write(path, restored_content)
 
         # Verify restoration
-        assert await nx.access(path)
+        assert nx.access(path)
         assert nx.sys_read(path) == content
 
 
@@ -383,11 +383,11 @@ async def test_undo_rename(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> 
     content = b"Test content"
 
     # Write and rename
-    await nx.write(old_path, content)
+    nx.write(old_path, content)
     nx.sys_rename(old_path, new_path)
     await _flush(nx)
-    assert not await nx.access(old_path)
-    assert await nx.access(new_path)
+    assert not nx.access(old_path)
+    assert nx.access(new_path)
 
     # Get rename operations — two-row pattern
     with record_store.session_factory() as session:
@@ -405,5 +405,5 @@ async def test_undo_rename(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> 
         nx.sys_rename(new_path, old_path)
 
         # Verify undo
-        assert await nx.access(old_path)
-        assert not await nx.access(new_path)
+        assert nx.access(old_path)
+        assert not nx.access(new_path)

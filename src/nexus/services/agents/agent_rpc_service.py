@@ -120,7 +120,7 @@ class AgentRPCService:
 
         config_yaml = yaml.dump(config_data, default_flow_style=False, sort_keys=False)
         ctx = parse_operation_context(context)
-        await self._vfs.write(config_path, config_yaml.encode("utf-8"), context=ctx)
+        self._vfs.write(config_path, config_yaml.encode("utf-8"), context=ctx)
 
     # ------------------------------------------------------------------
     # Directory & Permission Helpers
@@ -290,9 +290,7 @@ class AgentRPCService:
             identity_dir = f"{agent_dir}/.identity"
             ctx = parse_operation_context(context)
             self._vfs.mkdir(identity_dir, parents=True, exist_ok=True, context=ctx)
-            await self._vfs.write(
-                f"{identity_dir}/did.json", json.dumps(did_doc, indent=2), context=ctx
-            )
+            self._vfs.write(f"{identity_dir}/did.json", json.dumps(did_doc, indent=2), context=ctx)
             _logger.info("[KYA] Wrote DID document to %s/did.json", identity_dir)
         except Exception as e:
             _logger.warning("[KYA] Failed to write DID document: %s", e)
@@ -456,7 +454,7 @@ class AgentRPCService:
             existing_config["metadata"].update(metadata)
 
         updated_yaml = yaml.dump(existing_config, default_flow_style=False, sort_keys=False)
-        await self._vfs.write(config_path, updated_yaml.encode("utf-8"), context=ctx)
+        self._vfs.write(config_path, updated_yaml.encode("utf-8"), context=ctx)
 
         if self._entity_registry and (name is not None or description is not None):
             entity = self._entity_registry.get_entity("agent", agent_id)
@@ -626,7 +624,7 @@ class AgentRPCService:
                 if self._rmdir_fn:
                     try:
                         ctx = parse_operation_context(_context)
-                        if await self._vfs.access(agent_dir, context=ctx):
+                        if self._vfs.access(agent_dir, context=ctx):
                             self._rmdir_fn(agent_dir, recursive=True, context=ctx, is_admin=True)
                     except Exception as e:
                         logger.warning("Failed to delete agent directory %s: %s", agent_dir, e)

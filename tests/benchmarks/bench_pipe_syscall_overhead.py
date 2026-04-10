@@ -94,7 +94,7 @@ async def _setup(tmp_dir: Path):
     # Create the benchmark pipe via sys_setattr (standard path)
     from nexus.contracts.metadata import DT_PIPE
 
-    await nx.sys_setattr(
+    nx.sys_setattr(
         _BENCH_PIPE_PATH,
         entry_type=DT_PIPE,
         capacity=_BENCH_PIPE_CAPACITY,

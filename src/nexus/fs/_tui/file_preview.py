@@ -211,9 +211,9 @@ class FilePreview(Widget):
             # Read up to 1MB using range reads
             truncated = total_size > MAX_PREVIEW_BYTES
             if truncated:
-                raw = await self._fs.read_range(path, 0, MAX_PREVIEW_BYTES)
+                raw = self._fs.read_range(path, 0, MAX_PREVIEW_BYTES)
             else:
-                raw = await self._fs.read(path)
+                raw = self._fs.read(path)
 
             # Check for binary
             suffix = PurePosixPath(path).suffix.lower()

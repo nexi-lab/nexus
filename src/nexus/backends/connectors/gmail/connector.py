@@ -308,7 +308,7 @@ class PathGmailBackend(
             filesystem.mkdir(readme_dir, parents=True, exist_ok=True)
             readme_md_path = posixpath.join(readme_dir, "README.md")
             content = self.generate_readme(mount_path)
-            await filesystem.write(readme_md_path, content.encode("utf-8"))
+            filesystem.write(readme_md_path, content.encode("utf-8"))
             result["readme_md"] = readme_md_path
             return result
         except Exception as e:

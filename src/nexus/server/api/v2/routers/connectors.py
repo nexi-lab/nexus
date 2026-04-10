@@ -611,7 +611,7 @@ async def mount_connector(
             readme_base = f"/skills/{connector_name}"
             readme_content = temp_backend.generate_readme(mp)
             if readme_content:
-                await nx.write(
+                nx.write(
                     f"{readme_base}/README.md",
                     readme_content.encode("utf-8"),
                     context=mount_context,
@@ -623,7 +623,7 @@ async def mount_connector(
                     for op_name, schema_cls in schemas.items():
                         try:
                             schema_yaml = doc_gen.generate_schema_yaml(op_name, schema_cls)
-                            await nx.write(
+                            nx.write(
                                 f"{readme_base}/schemas/{op_name}.yaml",
                                 schema_yaml.encode("utf-8"),
                                 context=mount_context,
@@ -974,7 +974,7 @@ async def write_to_connector(
             assert backend is not None  # guaranteed by is_cli_connector check
             result = await asyncio.to_thread(backend.write_content, data, write_context)
         else:
-            result = await nx.write(mount_path, data, context=write_context)
+            result = nx.write(mount_path, data, context=write_context)
 
         return WriteResponse(
             success=True,

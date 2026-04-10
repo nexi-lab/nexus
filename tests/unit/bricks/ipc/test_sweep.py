@@ -52,7 +52,7 @@ class TestTTLSweeper:
         msg = _make_message("msg_expired", old_ts, ttl_seconds=60)
         filename = f"20200101T000000_{msg.id}.json"
         msg_path = f"{inbox_path('agent:bob')}/{filename}"
-        await vfs.write(msg_path, msg.to_bytes(), ZONE)
+        vfs.write(msg_path, msg.to_bytes(), ZONE)
 
         sweeper = TTLSweeper(vfs, zone_id=ZONE)
         expired_count = await sweeper.sweep_once()
@@ -95,7 +95,7 @@ class TestTTLSweeper:
         msg = _make_message("msg_valid", now, ttl_seconds=3600)
         filename = f"{now.strftime('%Y%m%dT%H%M%S')}_{msg.id}.json"
         msg_path = f"{inbox_path('agent:bob')}/{filename}"
-        await vfs.write(msg_path, msg.to_bytes(), ZONE)
+        vfs.write(msg_path, msg.to_bytes(), ZONE)
 
         sweeper = TTLSweeper(vfs, zone_id=ZONE)
         expired_count = await sweeper.sweep_once()
@@ -111,7 +111,7 @@ class TestTTLSweeper:
         msg = _make_message("msg_no_ttl", old_ts)  # No TTL
         filename = f"20200101T000000_{msg.id}.json"
         msg_path = f"{inbox_path('agent:bob')}/{filename}"
-        await vfs.write(msg_path, msg.to_bytes(), ZONE)
+        vfs.write(msg_path, msg.to_bytes(), ZONE)
 
         sweeper = TTLSweeper(vfs, zone_id=ZONE)
         expired_count = await sweeper.sweep_once()
@@ -126,7 +126,7 @@ class TestTTLSweeper:
             msg = _make_message(f"msg_{agent_id}", old_ts, ttl_seconds=1)
             filename = f"20200101T000000_msg_{agent_id}.json"
             msg_path = f"{inbox_path(agent_id)}/{filename}"
-            await vfs.write(msg_path, msg.to_bytes(), ZONE)
+            vfs.write(msg_path, msg.to_bytes(), ZONE)
 
         sweeper = TTLSweeper(vfs, zone_id=ZONE)
         expired_count = await sweeper.sweep_once()
@@ -151,7 +151,7 @@ class TestTTLSweeper:
         # Use current timestamp in filename — sweeper should skip this
         filename = f"{now.strftime('%Y%m%dT%H%M%S')}_{msg.id}.json"
         msg_path = f"{inbox_path('agent:bob')}/{filename}"
-        await vfs.write(msg_path, msg.to_bytes(), ZONE)
+        vfs.write(msg_path, msg.to_bytes(), ZONE)
 
         # Sweep interval = 60s, filename timestamp = now -> should skip
         sweeper = TTLSweeper(vfs, zone_id=ZONE, interval=60)
@@ -170,7 +170,7 @@ class TestTTLSweeper:
         msg = _make_message("msg_old_filename", old_ts, ttl_seconds=60)
         filename = f"20200101T000000_{msg.id}.json"
         msg_path = f"{inbox_path('agent:bob')}/{filename}"
-        await vfs.write(msg_path, msg.to_bytes(), ZONE)
+        vfs.write(msg_path, msg.to_bytes(), ZONE)
 
         sweeper = TTLSweeper(vfs, zone_id=ZONE, interval=60)
         expired_count = await sweeper.sweep_once()
@@ -255,7 +255,7 @@ class TestTTLSweeperLifecycle:
         msg = _make_message("msg_loop_test", old_ts, ttl_seconds=1)
         filename = f"20200101T000000_{msg.id}.json"
         msg_path = f"{inbox_path('agent:bob')}/{filename}"
-        await vfs.write(msg_path, msg.to_bytes(), ZONE)
+        vfs.write(msg_path, msg.to_bytes(), ZONE)
 
         sweeper = TTLSweeper(vfs, zone_id=ZONE, interval=0.05)
         await sweeper.start()
@@ -537,7 +537,7 @@ async def _write_old(
     """Write a file and back-date its mtime so retention logic treats it as old."""
     from datetime import timedelta
 
-    await vfs.write(path, data, zone)
+    vfs.write(path, data, zone)
     old_mtime = datetime.now(UTC) - timedelta(days=days_ago)
     vfs.set_mtime(path, zone, old_mtime)
 
@@ -587,7 +587,7 @@ class TestStaleInboxDrain:
         await _provision_agent(vfs, "agent:bob")
         msg = _make_message("msg_recent", datetime.now(UTC))
         filename = _recent_filename("msg_recent")
-        await vfs.write(f"{inbox_path('agent:bob')}/{filename}", msg.to_bytes(), ZONE)
+        vfs.write(f"{inbox_path('agent:bob')}/{filename}", msg.to_bytes(), ZONE)
 
         sweeper = TTLSweeper(vfs, zone_id=ZONE, inbox_stale_hours=24)
         await sweeper.sweep_once()
@@ -642,7 +642,7 @@ class TestStaleInboxDrain:
         old_ts = "20200101T000000"
         claimed = f"{inbox}/20200101T000000_msg_stale.json.drain_{old_ts}_aabbccdd"
         msg = _make_message("msg_stale", datetime(2020, 1, 1, tzinfo=UTC))
-        await vfs.write(claimed, msg.to_bytes(), ZONE)
+        vfs.write(claimed, msg.to_bytes(), ZONE)
         vfs.mkdir(inbox, ZONE)  # ensure inbox dir exists (already done by provision)
 
         sweeper = TTLSweeper(vfs, zone_id=ZONE, inbox_stale_hours=1)
@@ -662,7 +662,7 @@ class TestStaleInboxDrain:
         filename = _old_filename("msg_no_mtime", days_ago=10)
         # Write without a recorded mtime — simulates metastore miss
         path = f"{inbox_path('agent:bob')}/{filename}"
-        await vfs.write(path, msg.to_bytes(), ZONE)
+        vfs.write(path, msg.to_bytes(), ZONE)
         vfs._mtimes.pop((path, ZONE), None)  # remove mtime
 
         sweeper = TTLSweeper(vfs, zone_id=ZONE, inbox_stale_hours=1)
@@ -710,7 +710,7 @@ class TestPruneDir:
         await _provision_agent(vfs, "agent:bob")
         proc_path = processed_path("agent:bob")
         filename = _recent_filename("msg_proc_recent")
-        await vfs.write(f"{proc_path}/{filename}", b'{"id":"msg_proc_recent"}', ZONE)
+        vfs.write(f"{proc_path}/{filename}", b'{"id":"msg_proc_recent"}', ZONE)
 
         sweeper = TTLSweeper(vfs, zone_id=ZONE, processed_retention_days=7)
         await sweeper.sweep_once()
@@ -895,7 +895,7 @@ class TestDeadLetterCompaction:
 
         # claim_ts is old (2020) → stale; run_id has no matching archive
         claimed_path = f"{dl}/20200101T000000_msg_000.json.arch_20200101T000000_deadbeef"
-        await vfs.write(claimed_path, b'{"id":"msg_000"}', ZONE)
+        vfs.write(claimed_path, b'{"id":"msg_000"}', ZONE)
 
         sweeper = TTLSweeper(
             vfs, zone_id=ZONE, dead_letter_compact_min_files=50, inbox_stale_hours=1
@@ -919,11 +919,11 @@ class TestDeadLetterCompaction:
         run_id = "deadbeef"
         # Old claim_ts → stale
         claimed_path = f"{dl}/20200101T000000_msg_000.json.arch_20200101T000000_{run_id}"
-        await vfs.write(claimed_path, b'{"id":"msg_000"}', ZONE)
+        vfs.write(claimed_path, b'{"id":"msg_000"}', ZONE)
 
         # Committed archive for same run_id exists
         archive_path = f"{archive_dir}/20200101_20200101T120000_{run_id}.jsonl"
-        await vfs.write(archive_path, b'{"file":"20200101T000000_msg_000.json"}\n', ZONE)
+        vfs.write(archive_path, b'{"file":"20200101T000000_msg_000.json"}\n', ZONE)
 
         sweeper = TTLSweeper(
             vfs, zone_id=ZONE, dead_letter_compact_min_files=50, inbox_stale_hours=1
@@ -945,7 +945,7 @@ class TestDeadLetterCompaction:
         # Use a very recent claim_ts (now)
         recent_ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
         claimed_path = f"{dl}/20200101T000000_msg_000.json.arch_{recent_ts}_deadbeef"
-        await vfs.write(claimed_path, b'{"id":"msg_000"}', ZONE)
+        vfs.write(claimed_path, b'{"id":"msg_000"}', ZONE)
         # Deliberately remove mtime to prove filename-based check is used
         vfs._mtimes.pop((claimed_path, ZONE), None)
 
@@ -968,16 +968,11 @@ class TestDeadLetterCompaction:
         vfs.mkdir(archive_dir, ZONE)
 
         # Archive for an OLD message day but RECENTLY created — should NOT be pruned.
-        # file_mtime returns None → fallback must parse the creation ts
-        # (``<day>T<time>``) not the day prefix (``20200101``). Compute the
-        # "recent" creation timestamp from ``now - 1h`` so the test stays
-        # time-safe as the calendar marches forward (previously a
-        # hardcoded ``20260404T120000`` drifted past the 7-day retention
-        # window and started getting pruned, breaking the test).
+        # Compute "recent" creation timestamp from now - 1h so the test stays time-safe.
         now = datetime.now(UTC)
         recent_creation_ts = (now - timedelta(hours=1)).strftime("%Y%m%dT%H%M%S")
         recent_archive = f"{archive_dir}/20200101_{recent_creation_ts}_abc12345.jsonl"
-        await vfs.write(recent_archive, b"data", ZONE)
+        vfs.write(recent_archive, b"data", ZONE)
         # Simulate mtime=None by removing it from the fake's mtime store
         vfs._mtimes.pop((recent_archive, ZONE), None)
 

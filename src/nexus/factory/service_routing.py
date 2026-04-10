@@ -124,14 +124,14 @@ async def enlist_services(nx_or_coordinator: Any, services: dict[str, Any]) -> i
         canonical: str = _CANONICAL_NAMES.get(src_key, src_key)
         exports = _CANONICAL_EXPORTS.get(canonical, ())
         if _use_syscall:
-            await nx_or_coordinator.sys_setattr(
+            nx_or_coordinator.sys_setattr(
                 f"/__sys__/services/{canonical}",
                 service=val,
                 exports=exports,
                 allow_overwrite=True,
             )
         else:
-            await nx_or_coordinator.enlist(
+            nx_or_coordinator.enlist(
                 canonical,
                 val,
                 exports=exports,

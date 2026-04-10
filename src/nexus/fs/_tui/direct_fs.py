@@ -335,16 +335,16 @@ class MultiDirectFS:
         # Fallback to first backend
         return self._backends[0] if self._backends else None
 
-    async def read(self, path: str) -> bytes:
-        result: bytes = await self._resolve(path).read(path)
+    def read(self, path: str) -> bytes:
+        result: bytes = self._resolve(path).read(path)
         return result
 
-    async def read_range(self, path: str, start: int, end: int) -> bytes:
-        result: bytes = await self._resolve(path).read_range(path, start, end)
+    def read_range(self, path: str, start: int, end: int) -> bytes:
+        result: bytes = self._resolve(path).read_range(path, start, end)
         return result
 
-    async def write(self, path: str, content: bytes) -> dict[str, Any]:
-        result: dict[str, Any] = await self._resolve(path).write(path, content)
+    def write(self, path: str, content: bytes) -> dict[str, Any]:
+        result: dict[str, Any] = self._resolve(path).write(path, content)
         return result
 
     async def ls(

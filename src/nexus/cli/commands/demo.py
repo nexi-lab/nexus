@@ -291,7 +291,7 @@ async def _seed_files(
     for path, content, _description in all_files:
         if path in seeded:
             try:
-                if await nx.access(path):
+                if nx.access(path):
                     continue
             except Exception:
                 # Stale manifest entry; fall through and recreate the file.
@@ -301,7 +301,7 @@ async def _seed_files(
             parent = "/".join(path.split("/")[:-1])
             if parent:
                 nx.mkdir(parent, parents=True, exist_ok=True)
-            await nx.write(path, content.encode())
+            nx.write(path, content.encode())
             seeded.append(path)
             created += 1
         except Exception as e:
@@ -317,13 +317,13 @@ async def _seed_versions(nx: Any, manifest: dict[str, Any]) -> int:
     plan_path = "/workspace/demo/plan.md"
     if manifest.get("versions_seeded"):
         try:
-            if await nx.access(plan_path):
+            if nx.access(plan_path):
                 return 0
         except Exception:
             pass
     for version_content in PLAN_VERSIONS:
         try:
-            await nx.write(plan_path, version_content.encode())
+            nx.write(plan_path, version_content.encode())
             created += 1
         except Exception:
             break
@@ -332,7 +332,7 @@ async def _seed_versions(nx: Any, manifest: dict[str, Any]) -> int:
     final = next((c for p, c, _ in DEMO_FILES if p == plan_path), None)
     if final:
         try:
-            await nx.write(plan_path, final.encode())
+            nx.write(plan_path, final.encode())
             created += 1
         except Exception:
             pass

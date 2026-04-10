@@ -323,7 +323,7 @@ async def _async_version_rollback(
 
         # Get current version for confirmation
         # Check if file exists
-        if not await nx.access(path):
+        if not nx.access(path):
             console.print(f"[nexus.error]File not found: {path}[/nexus.error]")
             nx.close()
             return

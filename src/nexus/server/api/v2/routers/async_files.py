@@ -599,7 +599,7 @@ def create_async_files_router(
                 write_kwargs["consistency"] = mode.to_metastore_consistency()
 
             # fs.write is async — call directly
-            result = await fs.write(**write_kwargs)
+            result = fs.write(**write_kwargs)
 
             # Track write in transaction AFTER successful write.
             # Skip if _write_internal already tracked it (path already in registry).
@@ -725,7 +725,7 @@ def create_async_files_router(
                     raise NexusFileNotFoundError(f"{path} (version {version})")
                 # --- Enforce standard read authorization via the VFS path ---
                 try:
-                    _accessible = await fs.access(path, context=context)
+                    _accessible = fs.access(path, context=context)
                 except NexusPermissionError as e:
                     raise HTTPException(status_code=403, detail=str(e)) from e
                 if not _accessible:
@@ -808,7 +808,7 @@ def create_async_files_router(
                 )
 
             # Standard VFS read
-            result = await fs.read(path, return_metadata=include_metadata, context=context)
+            result = fs.read(path, return_metadata=include_metadata, context=context)
 
             if include_metadata and isinstance(result, dict):
                 file_content: str = result["content"]
@@ -938,7 +938,7 @@ def create_async_files_router(
         """Check if a file or directory exists."""
         try:
             fs = await _get_fs()
-            exists = await fs.access(path, context=context)
+            exists = fs.access(path, context=context)
             return ExistsResponse(exists=exists)
 
         except NexusPermissionError as e:
@@ -1297,7 +1297,7 @@ def create_async_files_router(
         try:
             fs = await _get_fs()
             files = [(item.path, base64.b64decode(item.content_base64)) for item in request.files]
-            raw_results = await fs.write_batch(files, context=context)
+            raw_results = fs.write_batch(files, context=context)
             return BatchWriteResponse(
                 results=[
                     BatchWriteResult(
@@ -1339,9 +1339,7 @@ def create_async_files_router(
         """
         try:
             fs = await _get_fs()
-            raw_results = await fs.read_batch(
-                request.paths, partial=request.partial, context=context
-            )
+            raw_results = fs.read_batch(request.paths, partial=request.partial, context=context)
             # Belt-and-suspenders aggregate size guard (Finding #3).
             # NexusFS.read_batch() already pre-checks via metadata sizes; this
             # post-read guard catches any content that slipped through (e.g. from
@@ -1522,7 +1520,7 @@ def create_async_files_router(
             if file_size < STREAMING_COPY_THRESHOLD:
                 # Small file: read all then write all
                 content = fs.sys_read(request.source, context=context)
-                await fs.write(request.destination, buf=content, context=context)
+                fs.write(request.destination, buf=content, context=context)
                 bytes_copied = len(content)
             else:
                 # Large file: streaming copy
@@ -1631,7 +1629,7 @@ def create_async_files_router(
 
                     if file_size < STREAMING_COPY_THRESHOLD:
                         content = fs.sys_read(op.source, context=context)
-                        await fs.write(op.destination, buf=content, context=context)
+                        fs.write(op.destination, buf=content, context=context)
                         bytes_copied = len(content)
                     else:
                         chunks = await asyncio.to_thread(fs.stream, op.source, context=context)
@@ -1762,7 +1760,7 @@ def create_async_files_router(
                     if len(results) >= limit:
                         break
                     try:
-                        content = await fs.read(file_path, context=context)
+                        content = fs.read(file_path, context=context)
                         if isinstance(content, bytes):
                             content = content.decode("utf-8", errors="replace")
                         elif isinstance(content, dict):

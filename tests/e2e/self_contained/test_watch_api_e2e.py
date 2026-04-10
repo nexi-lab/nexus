@@ -168,7 +168,7 @@ class TestWatchAPIWithEvents:
                 await asyncio.sleep(0.2)
 
                 # Write a file to trigger the event
-                await nexus_fs.write("/inbox/test.txt", b"hello world")
+                nexus_fs.write("/inbox/test.txt", b"hello world")
 
                 # Wait for watch to return
                 response = future.result(timeout=6.0)

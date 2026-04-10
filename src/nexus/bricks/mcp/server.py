@@ -448,7 +448,7 @@ async def create_mcp_server(
         """
         nx_instance = _get_nexus_instance(ctx)
         content_bytes = content.encode("utf-8") if isinstance(content, str) else content
-        await nx_instance.write(path, content_bytes)
+        nx_instance.write(path, content_bytes)
         return f"Successfully wrote {len(content_bytes)} bytes to {path}"
 
     @mcp.tool(
@@ -623,13 +623,13 @@ async def create_mcp_server(
             JSON string with file metadata
         """
         nx_instance = _get_nexus_instance(ctx)
-        if not await nx_instance.access(path):
+        if not nx_instance.access(path):
             return tool_error(
                 "not_found",
                 f"File not found at '{path}'. Use nexus_list_files to check available files.",
             )
 
-        is_dir = await nx_instance.is_directory(path)
+        is_dir = nx_instance.is_directory(path)
         info_dict: dict[str, Any] = {
             "path": path,
             "exists": True,

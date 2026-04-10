@@ -952,7 +952,7 @@ def cat(path: str) -> None:
 
     async def _run() -> bytes:
         fs = await _boot_fs()
-        content: bytes = await fs.read(path)
+        content: bytes = fs.read(path)
         await fs.close()
         return content
 
@@ -1018,7 +1018,7 @@ def write(
 
     async def _run() -> dict:
         fs = await _boot_fs()
-        result = await fs.write(path, content)
+        result = fs.write(path, content)
         await fs.close()
         return {"path": path, **result}
 
@@ -1082,7 +1082,7 @@ def edit(
 
     async def _run() -> dict:
         fs = await _boot_fs()
-        result = await fs.edit(
+        result = fs.edit(
             path,
             parsed_edits,
             preview=preview,

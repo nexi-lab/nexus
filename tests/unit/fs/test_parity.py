@@ -74,13 +74,13 @@ class TestAsyncOperations:
     @pytest.mark.asyncio
     async def test_write_read_parity(self, async_fs: SlimNexusFS):
         content = b"parity test content"
-        await async_fs.write("/local/parity.txt", content)
-        result = await async_fs.read("/local/parity.txt")
+        async_fs.write("/local/parity.txt", content)
+        result = async_fs.read("/local/parity.txt")
         assert result == content
 
     @pytest.mark.asyncio
     async def test_stat_parity(self, async_fs: SlimNexusFS):
-        await async_fs.write("/local/stat.txt", b"stat content")
+        async_fs.write("/local/stat.txt", b"stat content")
         stat = await async_fs.stat("/local/stat.txt")
         assert stat is not None
         assert stat["size"] == 12
@@ -89,8 +89,8 @@ class TestAsyncOperations:
 
     @pytest.mark.asyncio
     async def test_ls_parity(self, async_fs: SlimNexusFS):
-        await async_fs.write("/local/ls_a.txt", b"a")
-        await async_fs.write("/local/ls_b.txt", b"b")
+        async_fs.write("/local/ls_a.txt", b"a")
+        async_fs.write("/local/ls_b.txt", b"b")
         entries = await async_fs.ls("/local/", detail=False, recursive=True)
         paths = sorted(e for e in entries if e.endswith(".txt"))
         assert "/local/ls_a.txt" in paths
@@ -99,26 +99,26 @@ class TestAsyncOperations:
     @pytest.mark.asyncio
     async def test_exists_parity(self, async_fs: SlimNexusFS):
         assert not await async_fs.exists("/local/nope.txt")
-        await async_fs.write("/local/nope.txt", b"now")
+        async_fs.write("/local/nope.txt", b"now")
         assert await async_fs.exists("/local/nope.txt")
 
     @pytest.mark.asyncio
     async def test_delete_parity(self, async_fs: SlimNexusFS):
-        await async_fs.write("/local/del.txt", b"bye")
+        async_fs.write("/local/del.txt", b"bye")
         await async_fs.delete("/local/del.txt")
         assert await async_fs.stat("/local/del.txt") is None
 
     @pytest.mark.asyncio
     async def test_rename_parity(self, async_fs: SlimNexusFS):
-        await async_fs.write("/local/old_p.txt", b"rename")
+        async_fs.write("/local/old_p.txt", b"rename")
         await async_fs.rename("/local/old_p.txt", "/local/new_p.txt")
-        assert await async_fs.read("/local/new_p.txt") == b"rename"
+        assert async_fs.read("/local/new_p.txt") == b"rename"
 
     @pytest.mark.asyncio
     async def test_copy_parity(self, async_fs: SlimNexusFS):
-        await async_fs.write("/local/cp_src.txt", b"copy")
+        async_fs.write("/local/cp_src.txt", b"copy")
         await async_fs.copy("/local/cp_src.txt", "/local/cp_dst.txt")
-        assert await async_fs.read("/local/cp_dst.txt") == b"copy"
+        assert async_fs.read("/local/cp_dst.txt") == b"copy"
 
     @pytest.mark.asyncio
     async def test_mkdir_parity(self, async_fs: SlimNexusFS):
@@ -133,8 +133,8 @@ class TestAsyncOperations:
 
     @pytest.mark.asyncio
     async def test_read_range_parity(self, async_fs: SlimNexusFS):
-        await async_fs.write("/local/range.txt", b"0123456789")
-        result = await async_fs.read_range("/local/range.txt", 2, 7)
+        async_fs.write("/local/range.txt", b"0123456789")
+        result = async_fs.read_range("/local/range.txt", 2, 7)
         assert result == b"23456"
 
 

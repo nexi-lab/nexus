@@ -746,9 +746,7 @@ class MCPService:
             try:
                 if self._filesystem is not None:
                     self._filesystem.mkdir(readme_path, parents=True, exist_ok=True)
-                    await self._filesystem.write(
-                        readme_file, readme_md.encode("utf-8"), context=context
-                    )
+                    self._filesystem.write(readme_file, readme_md.encode("utf-8"), context=context)
                     logger.info("Generated MCP readme: %s", readme_file)
 
                     now = datetime.now(UTC)
@@ -773,9 +771,7 @@ class MCPService:
                         tier="user",
                     )
                     mount_json = json_module.dumps(mount_config.to_dict(), indent=2)
-                    await self._filesystem.write(
-                        mount_file, mount_json.encode("utf-8"), context=context
-                    )
+                    self._filesystem.write(mount_file, mount_json.encode("utf-8"), context=context)
                     logger.info("Generated mount config: %s", mount_file)
 
                     for tool in tools:
@@ -800,7 +796,7 @@ class MCPService:
                         )
                         tool_file = f"{readme_path}{tool_name}.json"
                         tool_json = json_module.dumps(tool_def.to_dict(), indent=2)
-                        await self._filesystem.write(
+                        self._filesystem.write(
                             tool_file,
                             tool_json.encode("utf-8"),
                             context=context,

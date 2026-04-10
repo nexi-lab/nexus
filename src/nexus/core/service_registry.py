@@ -361,7 +361,7 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
 
     # -- enlist — the ONE entry point for all services --------------------
 
-    async def enlist(
+    def enlist(
         self,
         name: str,
         instance: Any,
@@ -391,7 +391,9 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
 
         # Auto-start persistent background work (only post-bootstrap)
         if isinstance(instance, PersistentService) and self._bootstrapped:
-            await instance.start()
+            import asyncio
+
+            asyncio.ensure_future(instance.start())
             logger.info("[COORDINATOR] enlist %r — started (PersistentService)", name)
 
         # Auto-capture hooks via duck-typed hook_spec()
@@ -406,7 +408,7 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
 
     # -- mount — register VFS hooks ----------------------------------------
 
-    async def _mount_service(self, name: str) -> None:
+    def _mount_service(self, name: str) -> None:
         """Mount a service: register VFS hooks."""
         self._register_hooks(name)
         logger.info("[COORDINATOR] mount %r — hooks registered", name)

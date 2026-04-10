@@ -10,7 +10,7 @@ Usage with pytest:
     @pytest.mark.parametrize("path", UNICODE_PATHS)
     @pytest.mark.asyncio
     async def test_write_unicode(nexus_fs, path):
-        await nexus_fs.write(path, b"hello")
+        nexus_fs.write(path, b"hello")
         assert nexus_fs.sys_read(path) == b"hello"
 """
 

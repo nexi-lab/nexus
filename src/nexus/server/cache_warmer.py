@@ -737,7 +737,7 @@ class CacheWarmer:
         async with self._semaphore:
             try:
                 # Check if file exists (warms exists cache)
-                exists = await self._nexus.access(path)
+                exists = self._nexus.access(path)
                 if not exists:
                     self._current_stats.skipped += 1
                     return

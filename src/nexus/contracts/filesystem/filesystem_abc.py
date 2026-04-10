@@ -77,7 +77,7 @@ class NexusFilesystem(Protocol):
         self, path: str, *, context: OperationContext | None = None
     ) -> dict[str, Any] | None: ...
 
-    async def sys_setattr(
+    def sys_setattr(
         self, path: str, *, context: OperationContext | None = None, **attrs: Any
     ) -> dict[str, Any]: ...
 
@@ -96,7 +96,7 @@ class NexusFilesystem(Protocol):
         context: OperationContext | None = None,
     ) -> dict[str, Any]: ...
 
-    async def sys_copy(
+    def sys_copy(
         self, src_path: str, dst_path: str, *, context: OperationContext | None = None
     ) -> dict[str, Any]: ...
 
@@ -160,9 +160,9 @@ class NexusFilesystem(Protocol):
         context: OperationContext | None = None,
     ) -> None: ...
 
-    async def access(self, path: str, *, context: OperationContext | None = None) -> bool: ...
+    def access(self, path: str, *, context: OperationContext | None = None) -> bool: ...
 
-    async def is_directory(self, path: str, *, context: OperationContext | None = None) -> bool: ...
+    def is_directory(self, path: str, *, context: OperationContext | None = None) -> bool: ...
 
     async def lock(
         self,
@@ -190,7 +190,7 @@ class NexusFilesystem(Protocol):
         context: "OperationContext | None" = None,
     ) -> Any: ...
 
-    async def read(
+    def read(
         self,
         path: str,
         *,
@@ -200,7 +200,7 @@ class NexusFilesystem(Protocol):
         return_metadata: bool = False,
     ) -> bytes | dict[str, Any]: ...
 
-    async def write(
+    def write(
         self,
         path: str,
         buf: bytes | str,
@@ -211,7 +211,7 @@ class NexusFilesystem(Protocol):
         consistency: str = "sc",
     ) -> dict[str, Any]: ...
 
-    async def append(
+    def append(
         self,
         path: str,
         content: bytes | str,
@@ -219,7 +219,7 @@ class NexusFilesystem(Protocol):
         context: OperationContext | None = None,
     ) -> dict[str, Any]: ...
 
-    async def edit(
+    def edit(
         self,
         path: str,
         edits: builtins.list[tuple[str, str]] | builtins.list[dict[str, Any]] | builtins.list[Any],
@@ -229,14 +229,14 @@ class NexusFilesystem(Protocol):
         preview: bool = False,
     ) -> dict[str, Any]: ...
 
-    async def write_batch(
+    def write_batch(
         self,
         files: builtins.list[tuple[str, bytes]],
         *,
         context: OperationContext | None = None,
     ) -> builtins.list[dict[str, Any]]: ...
 
-    async def read_batch(
+    def read_batch(
         self,
         paths: builtins.list[str],
         *,

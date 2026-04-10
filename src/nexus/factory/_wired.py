@@ -285,7 +285,7 @@ async def _boot_post_kernel_services(
             from nexus.core.agent_registry import AgentRegistry
 
             _agent_reg = AgentRegistry()
-            await nx.sys_setattr("/__sys__/services/agent_registry", service=_agent_reg)
+            nx.sys_setattr("/__sys__/services/agent_registry", service=_agent_reg)
             logger.debug("[BOOT:WIRED] AgentRegistry constructed by wired tier")
         except Exception as exc:
             logger.debug("[BOOT:WIRED] AgentRegistry unavailable: %s", exc)
@@ -327,7 +327,7 @@ async def _boot_post_kernel_services(
                 policy=QoSEvictionPolicy(),
                 tuning=_eviction_tuning,
             )
-            await nx.sys_setattr("/__sys__/services/eviction_manager", service=_eviction_manager)
+            nx.sys_setattr("/__sys__/services/eviction_manager", service=_eviction_manager)
             logger.debug("[BOOT:WIRED] EvictionManager created (QoS-aware)")
         except Exception as exc:
             logger.warning("[BOOT:WIRED] EvictionManager unavailable: %s", exc)
@@ -343,7 +343,7 @@ async def _boot_post_kernel_services(
                 agent_registry=_agent_reg,
                 zone_id=ROOT_ZONE_ID,
             )
-            await nx.sys_setattr("/__sys__/services/acp_service", service=_acp_service)
+            nx.sys_setattr("/__sys__/services/acp_service", service=_acp_service)
             logger.debug("[BOOT:WIRED] AcpService created")
         except Exception as exc:
             logger.debug("[BOOT:WIRED] AcpService unavailable: %s", exc)

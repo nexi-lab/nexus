@@ -127,29 +127,29 @@ class TestSlimFileOperations:
 
     @pytest.mark.asyncio
     async def test_write_and_read(self, minimal_nx: "NexusFS") -> None:
-        await minimal_nx.write("/test.txt", b"hello kernel")
+        minimal_nx.write("/test.txt", b"hello kernel")
         data = minimal_nx.sys_read("/test.txt")
         assert data == b"hello kernel"
 
     @pytest.mark.asyncio
     async def test_exists_true(self, minimal_nx: "NexusFS") -> None:
-        await minimal_nx.write("/exists_check.txt", b"data")
-        assert await minimal_nx.access("/exists_check.txt") is True
+        minimal_nx.write("/exists_check.txt", b"data")
+        assert minimal_nx.access("/exists_check.txt") is True
 
     @pytest.mark.asyncio
     async def test_exists_false(self, minimal_nx: "NexusFS") -> None:
-        assert await minimal_nx.access("/nonexistent.txt") is False
+        assert minimal_nx.access("/nonexistent.txt") is False
 
     @pytest.mark.asyncio
     async def test_delete(self, minimal_nx: "NexusFS") -> None:
-        await minimal_nx.write("/to_delete.txt", b"bye")
+        minimal_nx.write("/to_delete.txt", b"bye")
         minimal_nx.sys_unlink("/to_delete.txt")
-        assert await minimal_nx.access("/to_delete.txt") is False
+        assert minimal_nx.access("/to_delete.txt") is False
 
     @pytest.mark.asyncio
     async def test_list_directory(self, minimal_nx: "NexusFS") -> None:
-        await minimal_nx.write("/dir/a.txt", b"a")
-        await minimal_nx.write("/dir/b.txt", b"b")
+        minimal_nx.write("/dir/a.txt", b"a")
+        minimal_nx.write("/dir/b.txt", b"b")
         listing = minimal_nx.sys_readdir("/dir")
         paths = [item["path"] if isinstance(item, dict) else item for item in listing]
         assert "/dir/a.txt" in paths
@@ -343,11 +343,11 @@ class TestSlimIntegrationViaConnect:
         assert nx.service("audit") is None
 
         # File operations should work
-        await nx.write("/hello.txt", b"slim mode")
+        nx.write("/hello.txt", b"slim mode")
         assert nx.sys_read("/hello.txt") == b"slim mode"
-        assert await nx.access("/hello.txt") is True
+        assert nx.access("/hello.txt") is True
         nx.sys_unlink("/hello.txt")
-        assert await nx.access("/hello.txt") is False
+        assert nx.access("/hello.txt") is False
 
     @pytest.mark.asyncio
     async def test_slim_factory_enabled_bricks_logged(

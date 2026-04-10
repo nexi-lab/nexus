@@ -792,7 +792,7 @@ class NexusFS(  # type: ignore[misc]
             return False
 
     @rpc_expose(description="Check if path is a directory")
-    async def is_directory(
+    def is_directory(
         self,
         path: str,
         *,
@@ -966,7 +966,7 @@ class NexusFS(  # type: ignore[misc]
         }
 
     @rpc_expose(description="Upsert file metadata attributes")
-    async def sys_setattr(
+    def sys_setattr(
         self,
         path: str,
         *,
@@ -1005,7 +1005,7 @@ class NexusFS(  # type: ignore[misc]
                 )
             exports = attrs.get("exports", ())
             allow_overwrite = attrs.get("allow_overwrite", False)
-            await self._service_registry.enlist(
+            self._service_registry.enlist(
                 name, service, exports=exports, allow_overwrite=allow_overwrite
             )
             return {"path": path, "registered": True, "service": name}
@@ -1716,7 +1716,7 @@ class NexusFS(  # type: ignore[misc]
         return results
 
     @rpc_expose(description="Read a byte range from a file")
-    async def read_range(
+    def read_range(
         self,
         path: str,
         start: int,
@@ -2292,7 +2292,7 @@ class NexusFS(  # type: ignore[misc]
         self.sys_unlink(path, recursive=recursive, context=context)
 
     @rpc_expose(description="Read file with optional metadata")
-    async def read(
+    def read(
         self,
         path: str,
         *,
@@ -2335,7 +2335,7 @@ class NexusFS(  # type: ignore[misc]
         return result
 
     @rpc_expose(description="Write file with metadata return")
-    async def write(
+    def write(
         self,
         path: str,
         buf: bytes | str,
@@ -2694,19 +2694,19 @@ class NexusFS(  # type: ignore[misc]
         Example:
             >>> # Increment a counter atomically
             >>> import json
-            >>> await nx.atomic_update(
+            >>> nx.atomic_update(
             ...     "/counters/visits.json",
             ...     lambda c: json.dumps({"count": json.loads(c)["count"] + 1}).encode()
             ... )
 
             >>> # Append to a log file atomically
-            >>> await nx.atomic_update(
+            >>> nx.atomic_update(
             ...     "/logs/access.log",
             ...     lambda c: c + b"New log entry\\n"
             ... )
 
             >>> # Update config safely across multiple agents
-            >>> await nx.atomic_update(
+            >>> nx.atomic_update(
             ...     "/shared/config.json",
             ...     lambda c: json.dumps({**json.loads(c), "version": 2}).encode()
             ... )
@@ -2714,10 +2714,10 @@ class NexusFS(  # type: ignore[misc]
         async with self.locked(path, timeout=timeout, ttl=ttl, context=context) as lock_id:  # noqa: F841
             content = self.sys_read(path, context=context)
             new_content = update_fn(content)
-            return await self.write(path, new_content, context=context)
+            return self.write(path, new_content, context=context)
 
     @rpc_expose(description="Append content to an existing file or create if it doesn't exist")
-    async def append(
+    def append(
         self,
         path: str,
         content: bytes | str,
@@ -2790,7 +2790,7 @@ class NexusFS(  # type: ignore[misc]
         # For non-existent files, we'll create them (existing_content stays empty)
         existing_content = b""
         try:
-            result = await self.read(path, context=context, return_metadata=True)
+            result = self.read(path, context=context, return_metadata=True)
             # Tier 2 read(return_metadata=True) always returns dict
             assert isinstance(result, dict), "Expected dict when return_metadata=True"
 
@@ -2828,14 +2828,14 @@ class NexusFS(  # type: ignore[misc]
         # - Workflow triggers
         # - Parent tuple creation
         # OCC check already done above (line 2985-2996), so just write.
-        return await self.write(
+        return self.write(
             path,
             final_content,
             context=context,
         )
 
     @rpc_expose(description="Apply surgical search/replace edits to a file")
-    async def edit(
+    def edit(
         self,
         path: str,
         edits: list[tuple[str, str]] | list[dict[str, Any]] | list[Any],
@@ -2921,7 +2921,7 @@ class NexusFS(  # type: ignore[misc]
         path = self._validate_path(path)
 
         # Read current content with metadata (via Tier 2 convenience)
-        result = await self.read(path, context=context, return_metadata=True)
+        result = self.read(path, context=context, return_metadata=True)
         assert isinstance(result, dict), "Expected dict when return_metadata=True"
 
         content_bytes: bytes = result["content"]
@@ -3020,7 +3020,7 @@ class NexusFS(  # type: ignore[misc]
 
         # Write the edited content. OCC check already done above (line 3117-3123).
         new_content_bytes = edit_result.content.encode("utf-8")
-        write_result = await self.write(
+        write_result = self.write(
             path,
             new_content_bytes,
             context=context,
@@ -3038,7 +3038,7 @@ class NexusFS(  # type: ignore[misc]
         }
 
     @rpc_expose(description="Write multiple files in a single transaction")
-    async def write_batch(
+    def write_batch(
         self, files: list[tuple[str, bytes]], context: OperationContext | None = None
     ) -> list[dict[str, Any]]:
         """
@@ -3241,7 +3241,7 @@ class NexusFS(  # type: ignore[misc]
             self._kernel.dispatch_post_hooks(event_name, ctx)
 
     @rpc_expose(description="Read multiple files atomically in a single round-trip")
-    async def read_batch(
+    def read_batch(
         self,
         paths: list[str],
         *,
@@ -3397,7 +3397,7 @@ class NexusFS(  # type: ignore[misc]
                 # they propagate through read() just as they would via the single-file
                 # endpoint.
                 try:
-                    content = await self.read(path, context=context)
+                    content = self.read(path, context=context)
                     _loaded_bytes += len(content)
                     if _loaded_bytes > _MAX_BATCH_READ_BYTES:
                         raise ValueError(
@@ -3920,7 +3920,7 @@ class NexusFS(  # type: ignore[misc]
     # ------------------------------------------------------------------
 
     @rpc_expose(description="Copy file with native backend support")
-    async def sys_copy(
+    def sys_copy(
         self, src_path: str, dst_path: str, *, context: OperationContext | None = None
     ) -> dict[str, Any]:
         """Copy a file from src_path to dst_path.
@@ -4519,7 +4519,7 @@ class NexusFS(  # type: ignore[misc]
         return results
 
     @rpc_expose(description="Check if file exists")
-    async def access(self, path: str, *, context: OperationContext | None = None) -> bool:
+    def access(self, path: str, *, context: OperationContext | None = None) -> bool:
         """Tier 2: check if path explicitly exists and is accessible.
 
         Returns True if path has explicit metadata or is an implicit directory,
@@ -4559,7 +4559,7 @@ class NexusFS(  # type: ignore[misc]
             return False
 
     @rpc_expose(description="Check existence of multiple paths in single call")
-    async def exists_batch(
+    def exists_batch(
         self, paths: list[str], context: OperationContext | None = None
     ) -> dict[str, bool]:
         """
@@ -4588,7 +4588,7 @@ class NexusFS(  # type: ignore[misc]
         results: dict[str, bool] = {}
         for path in paths:
             try:
-                results[path] = await self.access(path, context=context)
+                results[path] = self.access(path, context=context)
             except Exception as exc:
                 # Any error means file doesn't exist or isn't accessible
                 logger.debug("Exists check failed for %s: %s", path, exc)
@@ -4596,7 +4596,7 @@ class NexusFS(  # type: ignore[misc]
         return results
 
     @rpc_expose(description="Get metadata for multiple paths in single call")
-    async def metadata_batch(
+    def metadata_batch(
         self, paths: list[str], context: OperationContext | None = None
     ) -> dict[str, dict[str, Any] | None]:
         """
@@ -4668,7 +4668,7 @@ class NexusFS(  # type: ignore[misc]
                     continue
 
                 # Check if it's a directory
-                is_dir = await self.is_directory(path, context=context)  # type: ignore[attr-defined]  # allowed
+                is_dir = self.is_directory(path, context=context)
 
                 results[path] = {
                     "path": meta.path,
@@ -4690,7 +4690,7 @@ class NexusFS(  # type: ignore[misc]
         return results
 
     @rpc_expose(description="Delete multiple files/directories")
-    async def delete_batch(
+    def delete_batch(
         self,
         paths: list[str],
         recursive: bool = False,
@@ -5597,7 +5597,7 @@ class NexusFS(  # type: ignore[misc]
                     items, _ = await _buf.read_batch_blocking(offset, count, blocking=True)
                     return b"".join(items)
                 sdata: bytes
-                sdata, _ = await _buf.read(offset, blocking=True)
+                sdata, _ = _buf.read(offset, blocking=True)
                 return sdata
             except StreamEmptyError:
                 raise NexusFileNotFoundError(path, f"Stream empty at offset {offset}") from None

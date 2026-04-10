@@ -125,7 +125,7 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
 
         coord = svc.service_coordinator
         if coord is not None:
-            await coord.enlist("search_daemon", app.state.search_daemon)
+            coord.enlist("search_daemon", app.state.search_daemon)
         else:
             await app.state.search_daemon.startup()
         app.state.search_daemon_enabled = True

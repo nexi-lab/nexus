@@ -119,7 +119,7 @@ class NexusFSGateway:
         Returns:
             Dict with path, bytes_written, and created flag.
         """
-        return await self._fs.write(path, buf, context=context)
+        return self._fs.write(path, buf, context=context)
 
     def sys_read(
         self,
@@ -174,7 +174,7 @@ class NexusFSGateway:
         Returns:
             True if path exists, False otherwise
         """
-        return await self._fs.access(path, context=context)
+        return self._fs.access(path, context=context)
 
     # =========================================================================
     # Metadata Operations
@@ -571,7 +571,7 @@ class NexusFSGateway:
         Returns:
             File content as bytes/str, or metadata dict if return_metadata=True
         """
-        return await self._fs.read(path, context=context, return_metadata=return_metadata)
+        return self._fs.read(path, context=context, return_metadata=return_metadata)
 
     def read_bulk(
         self,

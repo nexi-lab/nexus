@@ -53,14 +53,14 @@ async def test_workspace_namespace_operations():
         )
 
         # Write to workspace
-        await nx.write("/workspace/acme/agent1/code.py", b"print('hello')", context=ctx)
+        nx.write("/workspace/acme/agent1/code.py", b"print('hello')", context=ctx)
 
         # Read back
         content = nx.sys_read("/workspace/acme/agent1/code.py", context=ctx)
         assert content == b"print('hello')"
 
         # Check existence
-        assert await nx.access("/workspace/acme/agent1/code.py", context=ctx)
+        assert nx.access("/workspace/acme/agent1/code.py", context=ctx)
 
         # List files
         files = nx.sys_readdir("/workspace/acme/agent1", context=ctx)
@@ -68,7 +68,7 @@ async def test_workspace_namespace_operations():
 
         # Delete
         nx.sys_unlink("/workspace/acme/agent1/code.py", context=ctx)
-        assert not await nx.access("/workspace/acme/agent1/code.py", context=ctx)
+        assert not nx.access("/workspace/acme/agent1/code.py", context=ctx)
 
         nx.close()
         cleanup_windows_db()
@@ -96,7 +96,7 @@ async def test_shared_namespace_operations():
         )
 
         # Write to shared namespace
-        await nx.write("/shared/acme/models/model.pkl", b"model data", context=ctx)
+        nx.write("/shared/acme/models/model.pkl", b"model data", context=ctx)
 
         # Read back
         content = nx.sys_read("/shared/acme/models/model.pkl", context=ctx)
@@ -108,7 +108,7 @@ async def test_shared_namespace_operations():
 
         # Delete
         nx.sys_unlink("/shared/acme/models/model.pkl", context=ctx)
-        assert not await nx.access("/shared/acme/models/model.pkl", context=ctx)
+        assert not nx.access("/shared/acme/models/model.pkl", context=ctx)
 
         nx.close()
         cleanup_windows_db()
@@ -135,7 +135,7 @@ async def test_external_namespace_operations():
         )  # External namespace doesn't require zone_id
 
         # Write to external namespace
-        await nx.write("/external/s3/bucket/file.txt", b"external data", context=ctx)
+        nx.write("/external/s3/bucket/file.txt", b"external data", context=ctx)
 
         # Read back
         content = nx.sys_read("/external/s3/bucket/file.txt", context=ctx)
@@ -147,7 +147,7 @@ async def test_external_namespace_operations():
 
         # Delete
         nx.sys_unlink("/external/s3/bucket/file.txt", context=ctx)
-        assert not await nx.access("/external/s3/bucket/file.txt", context=ctx)
+        assert not nx.access("/external/s3/bucket/file.txt", context=ctx)
 
         nx.close()
         cleanup_windows_db()
@@ -175,14 +175,14 @@ async def test_multi_namespace_operations_single_zone():
         )
 
         # Write to different namespaces
-        await nx.write("/workspace/acme/agent1/code.py", b"code", context=ctx)
-        await nx.write("/shared/acme/data.txt", b"data", context=ctx)
-        await nx.write("/external/gcs/bucket/file.txt", b"external", context=ctx)
+        nx.write("/workspace/acme/agent1/code.py", b"code", context=ctx)
+        nx.write("/shared/acme/data.txt", b"data", context=ctx)
+        nx.write("/external/gcs/bucket/file.txt", b"external", context=ctx)
 
         # Verify all namespaces work
-        assert await nx.access("/workspace/acme/agent1/code.py", context=ctx)
-        assert await nx.access("/shared/acme/data.txt", context=ctx)
-        assert await nx.access("/external/gcs/bucket/file.txt", context=ctx)
+        assert nx.access("/workspace/acme/agent1/code.py", context=ctx)
+        assert nx.access("/shared/acme/data.txt", context=ctx)
+        assert nx.access("/external/gcs/bucket/file.txt", context=ctx)
 
         nx.close()
         cleanup_windows_db()
@@ -201,7 +201,7 @@ async def test_namespace_isolation_between_zones():
         )
 
         # Zone 1 writes
-        await nx.write(
+        nx.write(
             "/workspace/acme/agent1/secret.txt",
             b"acme secret",
             context=OperationContext(
@@ -215,7 +215,7 @@ async def test_namespace_isolation_between_zones():
         )
 
         # Zone 2 writes to same path structure (different zone)
-        await nx.write(
+        nx.write(
             "/workspace/globex/agent1/secret.txt",
             b"globex secret",
             context=OperationContext(

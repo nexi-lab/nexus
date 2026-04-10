@@ -139,7 +139,7 @@ class ReadmeDocGenerator:
             # Write README.md
             readme_md_path = posixpath.join(readme_dir, "README.md")
             content = self.generate_readme(mount_path)
-            await filesystem.write(readme_md_path, content.encode("utf-8"))
+            filesystem.write(readme_md_path, content.encode("utf-8"))
             result["readme_md"] = readme_md_path
             logger.info("Generated README.md at %s", readme_md_path)
 
@@ -150,7 +150,7 @@ class ReadmeDocGenerator:
 
                 for filename, file_content in self._examples.items():
                     example_path = posixpath.join(examples_dir, filename)
-                    await filesystem.write(example_path, file_content.encode("utf-8"))
+                    filesystem.write(example_path, file_content.encode("utf-8"))
                     result["examples"].append(example_path)
                     logger.debug("Generated example at %s", example_path)
 
@@ -162,7 +162,7 @@ class ReadmeDocGenerator:
                 for op_name, schema in self._schemas.items():
                     schema_content = self.generate_schema_yaml(op_name, schema)
                     schema_path = posixpath.join(schemas_dir, f"{op_name}.yaml")
-                    await filesystem.write(schema_path, schema_content.encode("utf-8"))
+                    filesystem.write(schema_path, schema_content.encode("utf-8"))
                     result["schemas"].append(schema_path)
                     logger.debug("Generated schema at %s", schema_path)
 

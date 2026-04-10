@@ -520,8 +520,8 @@ class TestSlimNexusFSLifecycle:
         metastore.put(_make_mount_entry("/local", backend.name))
 
         async with SlimNexusFS(kernel) as fs:
-            await fs.write("/local/ctx.txt", b"context manager")
-            content = await fs.read("/local/ctx.txt")
+            fs.write("/local/ctx.txt", b"context manager")
+            content = fs.read("/local/ctx.txt")
             assert content == b"context manager"
 
         assert fs._closed is True

@@ -338,7 +338,7 @@ async def _register_vfs_hooks(
 
     async def _enlist(name: str, hook: Any) -> None:
         """Enlist hook via sys_setattr — factory is the first user."""
-        await nx.sys_setattr(f"/__sys__/services/{name}", service=hook)
+        nx.sys_setattr(f"/__sys__/services/{name}", service=hook)
 
     # ── Zone write guard hook (Issue #1790) ────────────────────────
     # Rejects writes to zones being deprovisioned (Issue #2061).

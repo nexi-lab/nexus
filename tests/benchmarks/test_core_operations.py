@@ -240,7 +240,7 @@ class TestGlobBenchmarks:
 
         async def _setup():
             for i in range(1000):
-                await nx.write(f"/bench_1k/file_{i:04d}.txt", b"x")
+                nx.write(f"/bench_1k/file_{i:04d}.txt", b"x")
 
         benchmark_loop.run_until_complete(_setup())
 
@@ -256,7 +256,7 @@ class TestGlobBenchmarks:
 
         async def _setup():
             for i in range(10_000):
-                await nx.write(f"/bench_10k/file_{i:05d}.txt", b"x")
+                nx.write(f"/bench_10k/file_{i:05d}.txt", b"x")
 
         benchmark_loop.run_until_complete(_setup())
 

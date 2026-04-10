@@ -194,7 +194,7 @@ class WorkflowDispatchService:
         from nexus.contracts.metadata import DT_PIPE
 
         try:
-            await self._nx.sys_setattr(
+            self._nx.sys_setattr(
                 _WORKFLOW_PIPE_PATH,
                 entry_type=DT_PIPE,
                 capacity=_WORKFLOW_PIPE_CAPACITY,

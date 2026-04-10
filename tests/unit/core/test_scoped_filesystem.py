@@ -169,7 +169,7 @@ class TestCoreFileOperations:
             "path": "/zones/team_12/users/user_1/workspace/file.txt",
             "etag": "abc",
         }
-        result = await scoped_fs.read("/workspace/file.txt", return_metadata=True)
+        result = scoped_fs.read("/workspace/file.txt", return_metadata=True)
         assert result["path"] == "/workspace/file.txt"
 
     @pytest.mark.asyncio
@@ -198,7 +198,7 @@ class TestCoreFileOperations:
             {"path": "/zones/team_12/users/user_1/workspace/b.txt"},
         ]
         files = [("/workspace/a.txt", b"a"), ("/workspace/b.txt", b"b")]
-        result = await scoped_fs.write_batch(files)
+        result = scoped_fs.write_batch(files)
         mock_fs.write_batch.assert_called_once()
         call_args = mock_fs.write_batch.call_args[0][0]
         assert call_args[0][0] == "/zones/team_12/users/user_1/workspace/a.txt"
@@ -208,7 +208,7 @@ class TestCoreFileOperations:
     async def test_append(self, scoped_fs: ScopedFilesystem, mock_fs: AsyncMock) -> None:
         """Test append with path scoping."""
         mock_fs.append.return_value = {"path": "/zones/team_12/users/user_1/workspace/log.txt"}
-        await scoped_fs.append("/workspace/log.txt", b"log entry")
+        scoped_fs.append("/workspace/log.txt", b"log entry")
         mock_fs.append.assert_called_once_with(
             "/zones/team_12/users/user_1/workspace/log.txt",
             b"log entry",
@@ -237,7 +237,7 @@ class TestCoreFileOperations:
     async def test_exists(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
         """Test exists with path scoping."""
         mock_fs.access.return_value = True
-        result = await scoped_fs.access("/workspace/file.txt")
+        result = scoped_fs.access("/workspace/file.txt")
         mock_fs.access.assert_called_once_with(
             "/zones/team_12/users/user_1/workspace/file.txt", context=None
         )
@@ -317,7 +317,7 @@ class TestDirectoryOperations:
     async def test_is_directory(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
         """Test is_directory with path scoping."""
         mock_fs.is_directory.return_value = True
-        result = await scoped_fs.is_directory("/workspace/dir")
+        result = scoped_fs.is_directory("/workspace/dir")
         mock_fs.is_directory.assert_called_once_with(
             "/zones/team_12/users/user_1/workspace/dir", context=None
         )

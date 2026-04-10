@@ -394,7 +394,7 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
                     if_match=request.etag,
                 )
             else:
-                result = await self._nexus_fs.write(request.path, content, context=op_context)
+                result = self._nexus_fs.write(request.path, content, context=op_context)
 
             etag = result.get("etag", "") if isinstance(result, dict) else ""
             size = result.get("size", len(content)) if isinstance(result, dict) else len(content)

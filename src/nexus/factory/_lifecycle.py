@@ -135,7 +135,7 @@ async def _wire_services(
     # Issue #1811: DriverLifecycleCoordinator is kernel-owned (created in
     # NexusFS.__init__). Root mount ("/") registered via coordinator.mount()
     # in create_nexus_fs() — unified lifecycle (pool + hooks + notify).
-    await nx.sys_setattr("/__sys__/services/driver_coordinator", service=nx._driver_coordinator)
+    nx.sys_setattr("/__sys__/services/driver_coordinator", service=nx._driver_coordinator)
 
     # Issue #1811 Phase 2: Inject coordinator into MountService so dynamic
     # mounts go through coordinator (hook_spec registration + KernelDispatch).
@@ -149,7 +149,7 @@ async def _wire_services(
 
     # Federation — wire from parameter (profile-gated, created before kernel).
     if federation is not None:
-        await nx.sys_setattr("/__sys__/services/federation", service=federation)
+        nx.sys_setattr("/__sys__/services/federation", service=federation)
         logger.debug("[LINK] Federation service enlisted")
 
         # Upgrade lock manager: LocalLockManager → RaftLockManager (kernel owns)

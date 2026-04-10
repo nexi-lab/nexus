@@ -50,7 +50,7 @@ class MutationHandler:
 
         await check_namespace_visible(ctx, original_path)
 
-        await ctx.nexus_fs.write(original_path, b"", context=ctx.context)
+        ctx.nexus_fs.write(original_path, b"", context=ctx.context)
 
         # Invalidate caches + fire-and-forget lease revocation (Issue #3397)
         invalidation_paths = [original_path]
@@ -149,11 +149,11 @@ class MutationHandler:
         await check_namespace_visible(ctx, old_path)
         await check_namespace_visible(ctx, new_path)
 
-        if await ctx.nexus_fs.access(new_path):
+        if ctx.nexus_fs.access(new_path):
             logger.error(f"Destination {new_path} already exists")
             raise FuseOSError(errno.EEXIST)
 
-        is_dir = await ctx.nexus_fs.is_directory(old_path, context=ctx.context)
+        is_dir = ctx.nexus_fs.is_directory(old_path, context=ctx.context)
         # Collect descendant paths BEFORE the move so we can revoke them
         descendant_paths: list[str] = []
         if is_dir:

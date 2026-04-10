@@ -290,14 +290,14 @@ class TestProxyFileOperations:
     @pytest.mark.asyncio
     async def test_write_and_read(self, admin_client: NexusFilesystem) -> None:
         """Write file via proxy, read back via proxy (hand-written override)."""
-        await admin_client.write("/workspace/proxy-test.txt", b"Hello from RPC proxy!")
+        admin_client.write("/workspace/proxy-test.txt", b"Hello from RPC proxy!")
         content = admin_client.sys_read("/workspace/proxy-test.txt")
         assert content == b"Hello from RPC proxy!"
 
     @pytest.mark.asyncio
     async def test_write_str_content(self, admin_client: NexusFilesystem) -> None:
         """Write string content (auto-encoded to bytes)."""
-        await admin_client.write("/workspace/str-test.txt", "String content here")
+        admin_client.write("/workspace/str-test.txt", "String content here")
         content = admin_client.sys_read("/workspace/str-test.txt")
         assert content == b"String content here"
 
@@ -310,8 +310,8 @@ class TestProxyFileOperations:
     @pytest.mark.asyncio
     async def test_exists(self, admin_client: NexusFilesystem) -> None:
         """Exists via proxy (hand-written override)."""
-        assert await admin_client.access("/workspace/proxy-test.txt") is True
-        assert await admin_client.access("/workspace/nonexistent-xyz.txt") is False
+        assert admin_client.access("/workspace/proxy-test.txt") is True
+        assert admin_client.access("/workspace/nonexistent-xyz.txt") is False
 
     @pytest.mark.asyncio
     async def test_list_auto_dispatched(self, admin_client: NexusFilesystem) -> None:
@@ -337,25 +337,25 @@ class TestProxyFileOperations:
     @pytest.mark.asyncio
     async def test_delete(self, admin_client: NexusFilesystem) -> None:
         """Delete file via proxy (hand-written override)."""
-        await admin_client.write("/workspace/to-delete.txt", b"delete me")
-        assert await admin_client.access("/workspace/to-delete.txt") is True
+        admin_client.write("/workspace/to-delete.txt", b"delete me")
+        assert admin_client.access("/workspace/to-delete.txt") is True
         admin_client.delete("/workspace/to-delete.txt")
-        assert await admin_client.access("/workspace/to-delete.txt") is False
+        assert admin_client.access("/workspace/to-delete.txt") is False
 
     @pytest.mark.asyncio
     async def test_rename(self, admin_client: NexusFilesystem) -> None:
         """Rename file via proxy (hand-written override)."""
-        await admin_client.write("/workspace/old-name.txt", b"rename me")
+        admin_client.write("/workspace/old-name.txt", b"rename me")
         admin_client.sys_rename("/workspace/old-name.txt", "/workspace/new-name.txt")
-        assert await admin_client.access("/workspace/new-name.txt") is True
-        assert await admin_client.access("/workspace/old-name.txt") is False
+        assert admin_client.access("/workspace/new-name.txt") is True
+        assert admin_client.access("/workspace/old-name.txt") is False
         # Cleanup
         admin_client.delete("/workspace/new-name.txt")
 
     @pytest.mark.asyncio
     async def test_edit(self, admin_client: NexusFilesystem) -> None:
         """Edit file via proxy (hand-written override with edit serialization)."""
-        await admin_client.write("/workspace/edit-test.txt", b"original text here")
+        admin_client.write("/workspace/edit-test.txt", b"original text here")
         result = admin_client.edit(
             "/workspace/edit-test.txt",
             [("original", "modified")],
@@ -379,7 +379,7 @@ class TestAutoDispatchedMethods:
     async def test_mkdir_and_rmdir(self, admin_client: NexusFilesystem) -> None:
         """mkdir and rmdir via auto-dispatch."""
         admin_client.mkdir("/workspace/proxy-dir")
-        assert await admin_client.is_directory("/workspace/proxy-dir") is True
+        assert admin_client.is_directory("/workspace/proxy-dir") is True
         admin_client.rmdir("/workspace/proxy-dir")
 
     def test_rebac_check(self, admin_client: NexusFilesystem) -> None:
@@ -437,7 +437,7 @@ class TestPerformance:
     async def test_write_read_latency(self, admin_client: NexusFilesystem) -> None:
         """Write+read round-trip should be under 500ms (localhost)."""
         start = time.monotonic()
-        await admin_client.write("/workspace/perf-test.txt", b"performance test payload")
+        admin_client.write("/workspace/perf-test.txt", b"performance test payload")
         content = admin_client.sys_read("/workspace/perf-test.txt")
         elapsed = time.monotonic() - start
         assert content == b"performance test payload"
@@ -458,7 +458,7 @@ class TestPerformance:
     async def test_exists_latency(self, admin_client: NexusFilesystem) -> None:
         """Exists should be under 200ms (hand-written with negative cache)."""
         start = time.monotonic()
-        await admin_client.access("/workspace/proxy-test.txt")
+        admin_client.access("/workspace/proxy-test.txt")
         elapsed = time.monotonic() - start
         assert elapsed < 0.2, f"Exists took {elapsed:.3f}s, expected < 0.2s"
 
@@ -468,7 +468,7 @@ class TestPerformance:
         start = time.monotonic()
         for i in range(5):
             path = f"/workspace/batch-{i}.txt"
-            await admin_client.write(path, f"batch content {i}".encode())
+            admin_client.write(path, f"batch content {i}".encode())
             content = admin_client.sys_read(path)
             assert content == f"batch content {i}".encode()
             admin_client.delete(path)
@@ -518,7 +518,7 @@ class TestPermissionEnforcement:
         from nexus.contracts.exceptions import NexusError
 
         with pytest.raises((NexusError, RemoteFilesystemError)):
-            await non_admin_client.write("/workspace/unauthorized.txt", b"should fail")
+            non_admin_client.write("/workspace/unauthorized.txt", b"should fail")
 
     @pytest.mark.asyncio
     async def test_non_admin_denied_read(self, non_admin_client: NexusFilesystem) -> None:

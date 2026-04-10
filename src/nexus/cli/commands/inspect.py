@@ -58,7 +58,7 @@ async def _async_info(
                 pass  # connection already established by async with
 
             # Check if file exists first
-            if not await nx.access(path):
+            if not nx.access(path):
                 render_output(
                     data=None,
                     output_opts=output_opts,

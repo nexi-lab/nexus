@@ -118,7 +118,7 @@ class TaskDispatchPipeConsumer:
 
         from nexus.contracts.metadata import DT_PIPE
 
-        await self._nx.sys_setattr(
+        self._nx.sys_setattr(
             _TASK_DISPATCH_PIPE_PATH,
             entry_type=DT_PIPE,
             capacity=_TASK_DISPATCH_PIPE_CAPACITY,

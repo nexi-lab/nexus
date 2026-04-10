@@ -93,7 +93,7 @@ async def copy_file(
             content = f.read()
 
         # Check if destination exists and has same content (if checksum enabled)
-        if checksum and await nx.access(dest):
+        if checksum and nx.access(dest):
             try:
                 raw_existing = nx.sys_read(dest)
                 # Type narrowing: when return_metadata=False (default), result is bytes
@@ -110,7 +110,7 @@ async def copy_file(
         if parent and parent != "/" and parent != ".":
             nx.mkdir(parent, parents=True, exist_ok=True)
 
-        await nx.write(dest, content)
+        nx.write(dest, content)
         return len(content)
 
     elif not is_source_local and is_dest_local:
@@ -141,7 +141,7 @@ async def copy_file(
         content = raw_content
 
         # Check if destination exists and has same content (if checksum enabled)
-        if checksum and await nx.access(dest):
+        if checksum and nx.access(dest):
             try:
                 raw_existing = nx.sys_read(dest)
                 # Type narrowing: when return_metadata=False (default), result is bytes
@@ -158,7 +158,7 @@ async def copy_file(
         if parent and parent != "/" and parent != ".":
             nx.mkdir(parent, parents=True, exist_ok=True)
 
-        await nx.write(dest, content)
+        nx.write(dest, content)
         return len(content)
 
 
@@ -351,7 +351,7 @@ async def move_file(
             except Exception:
                 # Fallback: copy content then delete source
                 content = nx.sys_read(source)
-                await nx.write(dest, content)
+                nx.write(dest, content)
                 nx.sys_unlink(source)
                 return True
 

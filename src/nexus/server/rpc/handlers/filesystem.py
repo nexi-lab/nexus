@@ -150,7 +150,7 @@ async def handle_read_async(
         return read_result
 
     # Read raw content via kernel
-    read_result_rich: bytes | dict[str, Any] = await nexus_fs.read(
+    read_result_rich: bytes | dict[str, Any] = nexus_fs.read(
         params.path,
         context=context,
         return_metadata=return_metadata,
@@ -215,7 +215,7 @@ async def handle_write(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[s
             if_none_match=if_none_match,
         )
     else:
-        write_result = await nexus_fs.write(params.path, content, context=context)
+        write_result = nexus_fs.write(params.path, content, context=context)
 
     # write() returns dict with metadata (etag, version, modified_at, size).
     # Merge bytes_written into the response for backward compatibility.
@@ -227,7 +227,7 @@ async def handle_write(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[s
 
 async def handle_exists(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Handle exists method."""
-    return {"exists": await nexus_fs.access(params.path, context=context)}
+    return {"exists": nexus_fs.access(params.path, context=context)}
 
 
 async def handle_list(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
@@ -723,4 +723,4 @@ async def handle_ainitialize_semantic_search(
 
 async def handle_is_directory(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Handle is_directory method."""
-    return {"is_directory": await nexus_fs.is_directory(params.path, context=context)}
+    return {"is_directory": nexus_fs.is_directory(params.path, context=context)}

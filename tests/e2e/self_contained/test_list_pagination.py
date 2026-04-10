@@ -32,7 +32,7 @@ async def nexus_fs(tmp_path, isolated_db):
 async def nexus_fs_with_files(nexus_fs):
     """Create NexusFS with 100 test files."""
     for i in range(100):
-        await nexus_fs.write(f"/workspace/file{i:03d}.txt", f"content {i}")
+        nexus_fs.write(f"/workspace/file{i:03d}.txt", f"content {i}")
     return nexus_fs
 
 
@@ -50,7 +50,7 @@ async def nexus_fs_large(tmp_path, isolated_db):
 
     # Create 1000 files in batches
     for i in range(1000):
-        await nx.write(f"/large/file{i:04d}.txt", f"content {i}")
+        nx.write(f"/large/file{i:04d}.txt", f"content {i}")
 
     yield nx
     nx.close()
@@ -164,9 +164,9 @@ class TestBackwardCompatibility:
         """Existing list() behavior should be unchanged."""
         # Create directories and files
         nexus_fs.mkdir("/test/sub", exist_ok=True, parents=True)
-        await nexus_fs.write("/test/a.txt", "a")
-        await nexus_fs.write("/test/b.txt", "b")
-        await nexus_fs.write("/test/sub/c.txt", "c")
+        nexus_fs.write("/test/a.txt", "a")
+        nexus_fs.write("/test/b.txt", "b")
+        nexus_fs.write("/test/sub/c.txt", "c")
 
         # Recursive list (default) — returns files and dirs
         result = nexus_fs.sys_readdir("/test/")
@@ -260,10 +260,10 @@ class TestPaginationEdgeCases:
     async def test_non_recursive_pagination(self, nexus_fs):
         """Should work with recursive=False."""
         # Create nested structure
-        await nexus_fs.write("/dir/file1.txt", "1")
-        await nexus_fs.write("/dir/file2.txt", "2")
-        await nexus_fs.write("/dir/sub/file3.txt", "3")
-        await nexus_fs.write("/dir/sub/deep/file4.txt", "4")
+        nexus_fs.write("/dir/file1.txt", "1")
+        nexus_fs.write("/dir/file2.txt", "2")
+        nexus_fs.write("/dir/sub/file3.txt", "3")
+        nexus_fs.write("/dir/sub/deep/file4.txt", "4")
 
         result = nexus_fs.sys_readdir(
             path="/dir/",
@@ -282,9 +282,9 @@ class TestPaginationEdgeCases:
     @pytest.mark.asyncio
     async def test_pagination_with_special_characters(self, nexus_fs):
         """Should handle paths with special characters."""
-        await nexus_fs.write("/test/file with spaces.txt", "content")
-        await nexus_fs.write("/test/file-with-dashes.txt", "content")
-        await nexus_fs.write("/test/file_with_underscores.txt", "content")
+        nexus_fs.write("/test/file with spaces.txt", "content")
+        nexus_fs.write("/test/file-with-dashes.txt", "content")
+        nexus_fs.write("/test/file_with_underscores.txt", "content")
 
         result = nexus_fs.sys_readdir(path="/test/", limit=10)
 
@@ -295,7 +295,7 @@ class TestPaginationEdgeCases:
         """Should handle cursor pointing to deleted file gracefully."""
         # Create files
         for i in range(20):
-            await nexus_fs.write(f"/test/file{i:02d}.txt", f"content {i}")
+            nexus_fs.write(f"/test/file{i:02d}.txt", f"content {i}")
 
         # Get first page
         page1 = nexus_fs.sys_readdir(path="/test/", limit=10)

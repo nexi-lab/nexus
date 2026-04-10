@@ -177,7 +177,7 @@ class TestRegisterService:
     ) -> None:
         svc = _DynamicProxyLikeService()
 
-        await coordinator.enlist("search", svc, exports=("glob", "grep"))
+        coordinator.enlist("search", svc, exports=("glob", "grep"))
 
         assert coordinator._get_hook_spec("search") is None
         assert dispatch.read_hook_count == 0
@@ -679,7 +679,7 @@ class TestEnlist:
     ) -> None:
         """On-demand service: enlist registers only, no start."""
         svc = _FakeService()
-        await coordinator.enlist("svc", svc)
+        coordinator.enlist("svc", svc)
 
         info = coordinator.service_info("svc")
         assert info is not None
@@ -694,7 +694,7 @@ class TestEnlist:
         svc = _PersistentFakeService()
         assert svc.started is False
 
-        await coordinator.enlist("svc", svc)
+        coordinator.enlist("svc", svc)
 
         assert svc.started is False  # deferred — not yet bootstrapped
         info = coordinator.service_info("svc")
@@ -710,7 +710,7 @@ class TestEnlist:
         svc = _PersistentFakeService()
         assert svc.started is False
 
-        await coordinator.enlist("svc", svc)
+        coordinator.enlist("svc", svc)
 
         assert svc.started is True
         info = coordinator.service_info("svc")
@@ -726,7 +726,7 @@ class TestEnlist:
         hook = MagicMock()
         svc = _FakeHookService(hook_spec_value=HookSpec(read_hooks=(hook,)))
 
-        await coordinator.enlist("svc", svc)
+        coordinator.enlist("svc", svc)
 
         info = coordinator.service_info("svc")
         assert info is not None
@@ -744,7 +744,7 @@ class TestEnlist:
         svc = _FakePersistentHookService(hook_spec_value=HookSpec(read_hooks=(hook,)))
         assert svc.started is False
 
-        await coordinator.enlist("svc", svc)
+        coordinator.enlist("svc", svc)
 
         assert svc.started is False  # deferred — not yet bootstrapped
         assert coordinator._get_hook_spec("svc") is not None
@@ -761,7 +761,7 @@ class TestEnlist:
         hook = MagicMock()
         svc = _FakePersistentHookService(hook_spec_value=HookSpec(read_hooks=(hook,)))
 
-        await coordinator.enlist("svc", svc)
+        coordinator.enlist("svc", svc)
 
         assert svc.started is True
         assert coordinator._get_hook_spec("svc") is not None
@@ -774,10 +774,10 @@ class TestEnlist:
     ) -> None:
         """enlist with depends_on registers without error."""
         dep = _FakeService()
-        await coordinator.enlist("dep", dep)
+        coordinator.enlist("dep", dep)
 
         svc = _PersistentFakeService()
-        await coordinator.enlist("child", svc, depends_on=("dep",))
+        coordinator.enlist("child", svc, depends_on=("dep",))
 
         info = coordinator.service_info("child")
         assert info is not None

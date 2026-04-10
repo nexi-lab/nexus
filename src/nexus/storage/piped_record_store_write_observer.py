@@ -132,7 +132,7 @@ class PipedRecordStoreWriteObserver:
         # Create audit pipe via sys_setattr (idempotent — reuses existing buffer)
         from nexus.contracts.metadata import DT_PIPE
 
-        await self._nx.sys_setattr(
+        self._nx.sys_setattr(
             _AUDIT_PIPE_PATH,
             entry_type=DT_PIPE,
             capacity=_AUDIT_PIPE_CAPACITY,

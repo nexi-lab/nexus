@@ -117,7 +117,7 @@ class ZoektPipeConsumer:
 
         # Create the pipe via the public syscall — the Rust kernel router
         # picks up DT_PIPE entry_type from the metastore.
-        await self._nx.sys_setattr(_ZOEKT_PIPE_PATH)
+        self._nx.sys_setattr(_ZOEKT_PIPE_PATH)
 
         self._pipe_ready = True
         self._consumer_task = asyncio.create_task(self._consume())

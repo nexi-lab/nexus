@@ -167,7 +167,7 @@ def glob(
                     filtered = []
                     for match in matches:
                         is_dir = (
-                            await nx.is_directory(match)
+                            nx.is_directory(match)
                             if hasattr(nx, "is_directory")
                             else match.endswith("/")
                         )

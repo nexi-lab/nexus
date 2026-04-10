@@ -48,11 +48,11 @@ class ContextualNexusFS:
     async def read(self, path: str) -> bytes:
         return cast(bytes, self._kernel.sys_read(path, context=self._ctx))
 
-    async def read_range(self, path: str, start: int, end: int) -> bytes:
-        return cast(bytes, await self._kernel.read_range(path, start, end, context=self._ctx))
+    def read_range(self, path: str, start: int, end: int) -> bytes:
+        return cast(bytes, self._kernel.read_range(path, start, end, context=self._ctx))
 
-    async def write(self, path: str, content: bytes) -> dict[str, Any]:
-        return cast(dict[str, Any], await self._kernel.write(path, content, context=self._ctx))
+    def write(self, path: str, content: bytes) -> dict[str, Any]:
+        return cast(dict[str, Any], self._kernel.write(path, content, context=self._ctx))
 
     async def ls(
         self,
@@ -105,11 +105,11 @@ class ContextualNexusFS:
     async def rename(self, old_path: str, new_path: str) -> None:
         self._kernel.sys_rename(old_path, new_path, context=self._ctx)
 
-    async def exists(self, path: str) -> bool:
-        return cast(bool, await self._kernel.access(path, context=self._ctx))
+    def exists(self, path: str) -> bool:
+        return cast(bool, self._kernel.access(path, context=self._ctx))
 
-    async def copy(self, src: str, dst: str) -> dict[str, Any]:
-        result: dict[str, Any] = await self._kernel.sys_copy(src, dst, context=self._ctx)
+    def copy(self, src: str, dst: str) -> dict[str, Any]:
+        result: dict[str, Any] = self._kernel.sys_copy(src, dst, context=self._ctx)
         return result
 
     def list_mounts(self) -> list[str]:
@@ -885,7 +885,7 @@ class PlaygroundApp(App[None]):
         if mode == "new_file":
             path = f"{self._current_path.rstrip('/')}/{value}"
             try:
-                await self._fs.write(path, b"")
+                self._fs.write(path, b"")
                 self.notify(f"Created: {value}", timeout=2)
                 await browser.load_directory(self._current_path)
                 self._update_status_bar()
@@ -1015,7 +1015,7 @@ class PlaygroundApp(App[None]):
             return
         path = self._resolve_command_path(name)
         try:
-            await self._fs.write(path, b"")
+            self._fs.write(path, b"")
             browser = self.query_one("#file-browser", FileBrowser)
             await browser.load_directory(self._current_path)
             self._update_status_bar()

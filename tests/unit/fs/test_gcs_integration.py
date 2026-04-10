@@ -168,14 +168,14 @@ class TestGCSBackendLifecycle:
     async def test_write_and_read(self, gcs_fs):
         fs, mp = gcs_fs
         content = b"Hello from GCS!"
-        await fs.write(f"{mp}/test.txt", content)
-        result = await fs.read(f"{mp}/test.txt")
+        fs.write(f"{mp}/test.txt", content)
+        result = fs.read(f"{mp}/test.txt")
         assert result == content
 
     @pytest.mark.asyncio
     async def test_stat(self, gcs_fs):
         fs, mp = gcs_fs
-        await fs.write(f"{mp}/meta.txt", b"metadata test")
+        fs.write(f"{mp}/meta.txt", b"metadata test")
         stat = await fs.stat(f"{mp}/meta.txt")
         assert stat is not None
         assert stat["size"] == 13
@@ -184,8 +184,8 @@ class TestGCSBackendLifecycle:
     @pytest.mark.asyncio
     async def test_ls(self, gcs_fs):
         fs, mp = gcs_fs
-        await fs.write(f"{mp}/a.txt", b"aaa")
-        await fs.write(f"{mp}/b.txt", b"bbb")
+        fs.write(f"{mp}/a.txt", b"aaa")
+        fs.write(f"{mp}/b.txt", b"bbb")
         entries = await fs.ls(f"{mp}/", detail=False, recursive=True)
         paths = [e for e in entries if e.endswith(".txt")]
         assert f"{mp}/a.txt" in paths
@@ -195,13 +195,13 @@ class TestGCSBackendLifecycle:
     async def test_exists(self, gcs_fs):
         fs, mp = gcs_fs
         assert not await fs.exists(f"{mp}/nofile.txt")
-        await fs.write(f"{mp}/nofile.txt", b"now I exist")
+        fs.write(f"{mp}/nofile.txt", b"now I exist")
         assert await fs.exists(f"{mp}/nofile.txt")
 
     @pytest.mark.asyncio
     async def test_delete(self, gcs_fs):
         fs, mp = gcs_fs
-        await fs.write(f"{mp}/delete-me.txt", b"bye")
+        fs.write(f"{mp}/delete-me.txt", b"bye")
         await fs.delete(f"{mp}/delete-me.txt")
         stat = await fs.stat(f"{mp}/delete-me.txt")
         assert stat is None
@@ -209,10 +209,10 @@ class TestGCSBackendLifecycle:
     @pytest.mark.asyncio
     async def test_copy(self, gcs_fs):
         fs, mp = gcs_fs
-        await fs.write(f"{mp}/src.txt", b"copy me")
+        fs.write(f"{mp}/src.txt", b"copy me")
         await fs.copy(f"{mp}/src.txt", f"{mp}/dst.txt")
-        src = await fs.read(f"{mp}/src.txt")
-        dst = await fs.read(f"{mp}/dst.txt")
+        src = fs.read(f"{mp}/src.txt")
+        dst = fs.read(f"{mp}/dst.txt")
         assert src == dst == b"copy me"
 
     @pytest.mark.asyncio
@@ -232,22 +232,22 @@ class TestGCSBackendLifecycle:
     @pytest.mark.asyncio
     async def test_overwrite(self, gcs_fs):
         fs, mp = gcs_fs
-        await fs.write(f"{mp}/ow.txt", b"version 1")
-        await fs.write(f"{mp}/ow.txt", b"version 2")
-        result = await fs.read(f"{mp}/ow.txt")
+        fs.write(f"{mp}/ow.txt", b"version 1")
+        fs.write(f"{mp}/ow.txt", b"version 2")
+        result = fs.read(f"{mp}/ow.txt")
         assert result == b"version 2"
 
     @pytest.mark.asyncio
     async def test_binary_content(self, gcs_fs):
         fs, mp = gcs_fs
         content = bytes(range(256))
-        await fs.write(f"{mp}/binary.bin", content)
-        result = await fs.read(f"{mp}/binary.bin")
+        fs.write(f"{mp}/binary.bin", content)
+        result = fs.read(f"{mp}/binary.bin")
         assert result == content
 
     @pytest.mark.asyncio
     async def test_empty_file(self, gcs_fs):
         fs, mp = gcs_fs
-        await fs.write(f"{mp}/empty.txt", b"")
-        result = await fs.read(f"{mp}/empty.txt")
+        fs.write(f"{mp}/empty.txt", b"")
+        result = fs.read(f"{mp}/empty.txt")
         assert result == b""

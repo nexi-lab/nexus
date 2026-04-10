@@ -123,7 +123,6 @@ class MountPersistService:
             if zone_id:
                 logger.info(f"[SAVE_MOUNT] Auto-populated zone_id: {zone_id}")
 
-        assert self._manager is not None
         mount_id = self._manager.save_mount(
             mount_point=mount_point,
             backend_type=backend_type,
@@ -175,11 +174,9 @@ class MountPersistService:
         if self._mounts.has_mount_sync(mount_point):
             logger.info(f"[LOAD_MOUNT] Mount already active: {mount_point}")
             # Return the mount_id from database
-            assert self._manager is not None
             config = self._manager.get_mount(mount_point)
             return str(config["mount_id"]) if config else mount_point
 
-        assert self._manager is not None
         config = self._manager.get_mount(mount_point)
         if not config:
             raise ValueError(f"Mount not found in database: {mount_point}")
@@ -285,7 +282,6 @@ class MountPersistService:
             if zone_id:
                 logger.info(f"[LIST_SAVED_MOUNTS] Auto-filtering by zone: {zone_id}")
 
-        assert self._manager is not None
         return self._manager.list_mounts(owner_user_id=owner_user_id, zone_id=zone_id)
 
     def delete_saved_mount(self, mount_point: str) -> bool:
@@ -301,5 +297,4 @@ class MountPersistService:
         """
         self._check_manager()
 
-        assert self._manager is not None
         return self._manager.remove_mount(mount_point)

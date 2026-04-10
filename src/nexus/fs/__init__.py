@@ -59,6 +59,8 @@ async def mount(
     at: str | None = None,
     mount_overrides: dict[str, str] | None = None,
     skip_unavailable: bool = False,
+    ephemeral: bool = False,
+    name: str | None = None,
 ) -> Any:
     """Mount one or more backends and return a SlimNexusFS facade.
 
@@ -72,6 +74,12 @@ async def mount(
             credentials, missing bucket, network error) are skipped with a
             warning instead of aborting the entire mount.  Useful for CLI
             commands that should not fail because of an unrelated broken mount.
+        ephemeral: If True, skip writing to mounts.json entirely.  The mount
+            is active for the lifetime of the returned SlimNexusFS object only.
+            Use this in tests and one-shot scripts to avoid accumulating stale
+            entries.  See also ``nexus.fs.testing.ephemeral_mount``.
+        name: Optional human label for the mount (single-URI only).  Stored
+            in mounts.json as ``"name"`` and usable with ``nexus-fs mount rm``.
 
     Returns:
         SlimNexusFS facade with all backends mounted.
@@ -107,6 +115,8 @@ async def mount(
         raise ValueError("At least one URI is required")
     if at is not None and len(uris) > 1:
         raise ValueError("'at' override is only valid with a single URI")
+    if name is not None and len(uris) > 1:
+        raise ValueError("'name' is only valid with a single URI")
 
     overrides = mount_overrides or {}
 
@@ -193,22 +203,28 @@ async def mount(
         # Persist mount entries so playground/fsspec/cp can auto-discover them.
         # Merges with existing entries so repeated `mount` calls accumulate.
         # Only persist URIs whose backends were successfully created.
+        # Skip entirely when ephemeral=True — caller explicitly opted out.
         skipped_uris = {u for u, _ in skipped}
-        try:
-            from nexus.fs._paths import save_persisted_mounts
+        if not ephemeral:
+            try:
+                from nexus.fs._paths import save_persisted_mounts
 
-            new_entries = [
-                {"uri": uri, "at": overrides.get(uri) or (at if i == 0 else None)}
-                for i, uri in enumerate(uris)
-                if uri not in skipped_uris
-            ]
-            save_persisted_mounts(new_entries)
-        except OSError as exc:
-            logger.warning(
-                "Could not write mounts.json (%s). "
-                "fsspec auto-discovery and playground will not find these mounts.",
-                exc,
-            )
+                new_entries = [
+                    {
+                        "uri": uri,
+                        "at": overrides.get(uri) or (at if i == 0 else None),
+                        "name": name if i == 0 else None,
+                    }
+                    for i, uri in enumerate(uris)
+                    if uri not in skipped_uris
+                ]
+                save_persisted_mounts(new_entries)
+            except OSError as exc:
+                logger.warning(
+                    "Could not write mounts.json (%s). "
+                    "fsspec auto-discovery and playground will not find these mounts.",
+                    exc,
+                )
 
         # Create DT_MOUNT or DT_EXTERNAL_STORAGE metadata entries for each mount point.
         # Non-storage connectors (oauth/api backends like gdrive) must be registered as
@@ -231,6 +247,8 @@ def mount_sync(
     at: str | None = None,
     mount_overrides: dict[str, str] | None = None,
     skip_unavailable: bool = False,
+    ephemeral: bool = False,
+    name: str | None = None,
 ) -> Any:
     """Synchronous version of mount().
 
@@ -248,6 +266,8 @@ def mount_sync(
             at=at,
             mount_overrides=mount_overrides,
             skip_unavailable=skip_unavailable,
+            ephemeral=ephemeral,
+            name=name,
         )
     )
     return SyncNexusFS(async_fs)

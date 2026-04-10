@@ -155,7 +155,7 @@ async def _run_chat(
             return nx.sys_write(path, buf)
 
         # StreamManager stream_read for DT_STREAM token delivery
-        _stream_read = getattr(stream_mgr, "stream_read", None) if stream_mgr else None
+        _stream_read = getattr(nx, "_stream_read", None)
 
         async def _fallback_stream_read(path: str, offset: int) -> tuple[bytes, int]:
             raise NotImplementedError("Streaming not available in REMOTE mode")

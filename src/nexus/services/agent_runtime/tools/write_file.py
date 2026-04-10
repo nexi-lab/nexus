@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from typing import Any
 
 
@@ -23,7 +23,7 @@ class WriteFileTool:
         "required": ["path", "content"],
     }
 
-    def __init__(self, sys_write: Callable[[str, bytes], Awaitable[Any]]) -> None:
+    def __init__(self, sys_write: Callable[[str, bytes], Any]) -> None:
         self._sys_write = sys_write
 
     async def call(self, *, path: str, content: str, **_: Any) -> str:

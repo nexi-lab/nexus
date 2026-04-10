@@ -27,7 +27,7 @@ class TestFileOperationBenchmarks:
 
         def write_file():
             counter[0] += 1
-            benchmark_loop.run_until_complete(nx.write(f"/bench_tiny_{counter[0]}.txt", content))
+            nx.write(f"/bench_tiny_{counter[0]}.txt", content)
 
         benchmark(write_file)
 
@@ -40,7 +40,7 @@ class TestFileOperationBenchmarks:
 
         def write_file():
             counter[0] += 1
-            benchmark_loop.run_until_complete(nx.write(f"/bench_small_{counter[0]}.txt", content))
+            nx.write(f"/bench_small_{counter[0]}.txt", content)
 
         benchmark(write_file)
 
@@ -52,7 +52,7 @@ class TestFileOperationBenchmarks:
 
         def write_file():
             counter[0] += 1
-            benchmark_loop.run_until_complete(nx.write(f"/bench_medium_{counter[0]}.txt", content))
+            nx.write(f"/bench_medium_{counter[0]}.txt", content)
 
         benchmark(write_file)
 
@@ -64,7 +64,7 @@ class TestFileOperationBenchmarks:
 
         def write_file():
             counter[0] += 1
-            benchmark_loop.run_until_complete(nx.write(f"/bench_large_{counter[0]}.txt", content))
+            nx.write(f"/bench_large_{counter[0]}.txt", content)
 
         benchmark(write_file)
 
@@ -73,7 +73,7 @@ class TestFileOperationBenchmarks:
         nx = populated_nexus
 
         def read_file():
-            return benchmark_loop.run_until_complete(nx.sys_read("/test_tiny.bin"))
+            return nx.sys_read("/test_tiny.bin")
 
         result = benchmark(read_file)
         assert len(result) == 13
@@ -84,7 +84,7 @@ class TestFileOperationBenchmarks:
         nx = populated_nexus
 
         def read_file():
-            return benchmark_loop.run_until_complete(nx.sys_read("/test_small.bin"))
+            return nx.sys_read("/test_small.bin")
 
         result = benchmark(read_file)
         assert len(result) == 1024
@@ -94,7 +94,7 @@ class TestFileOperationBenchmarks:
         nx = populated_nexus
 
         def read_file():
-            return benchmark_loop.run_until_complete(nx.sys_read("/test_medium.bin"))
+            return nx.sys_read("/test_medium.bin")
 
         result = benchmark(read_file)
         assert len(result) == 64 * 1024
@@ -104,7 +104,7 @@ class TestFileOperationBenchmarks:
         nx = populated_nexus
 
         def read_file():
-            return benchmark_loop.run_until_complete(nx.sys_read("/test_large.bin"))
+            return nx.sys_read("/test_large.bin")
 
         result = benchmark(read_file)
         assert len(result) == 1024 * 1024
@@ -114,11 +114,11 @@ class TestFileOperationBenchmarks:
         """Benchmark reading a file that's already in cache."""
         nx = populated_nexus
         # Pre-warm cache
-        benchmark_loop.run_until_complete(nx.sys_read("/test_small.bin"))
-        benchmark_loop.run_until_complete(nx.sys_read("/test_small.bin"))
+        nx.sys_read("/test_small.bin")
+        nx.sys_read("/test_small.bin")
 
         def read_file():
-            return benchmark_loop.run_until_complete(nx.sys_read("/test_small.bin"))
+            return nx.sys_read("/test_small.bin")
 
         result = benchmark(read_file)
         assert len(result) == 1024
@@ -153,8 +153,8 @@ class TestFileOperationBenchmarks:
         def delete_file():
             counter[0] += 1
             path = f"/delete_bench_{counter[0]}.txt"
-            benchmark_loop.run_until_complete(nx.write(path, content))
-            benchmark_loop.run_until_complete(nx.sys_unlink(path))
+            nx.write(path, content)
+            nx.sys_unlink(path)
 
         benchmark(delete_file)
 
@@ -173,7 +173,7 @@ class TestGlobBenchmarks:
         nx = populated_nexus
 
         def list_dir():
-            return benchmark_loop.run_until_complete(nx.sys_readdir("/dir_0"))
+            return nx.sys_readdir("/dir_0")
 
         result = benchmark(list_dir)
         assert len(result) > 0
@@ -184,7 +184,7 @@ class TestGlobBenchmarks:
         nx = populated_nexus
 
         def list_dir():
-            return benchmark_loop.run_until_complete(nx.sys_readdir("/many_files"))
+            return nx.sys_readdir("/many_files")
 
         result = benchmark(list_dir)
         assert len(result) >= 100
@@ -194,7 +194,7 @@ class TestGlobBenchmarks:
         nx = populated_nexus
 
         def list_recursive():
-            return benchmark_loop.run_until_complete(nx.sys_readdir("/", recursive=True))
+            return nx.sys_readdir("/", recursive=True)
 
         result = benchmark(list_recursive)
         assert len(result) > 100
@@ -245,7 +245,7 @@ class TestGlobBenchmarks:
         benchmark_loop.run_until_complete(_setup())
 
         def list_dir():
-            return benchmark_loop.run_until_complete(nx.sys_readdir("/bench_1k"))
+            return nx.sys_readdir("/bench_1k")
 
         result = benchmark(list_dir)
         assert len(result) == 1000
@@ -261,7 +261,7 @@ class TestGlobBenchmarks:
         benchmark_loop.run_until_complete(_setup())
 
         def list_dir():
-            return benchmark_loop.run_until_complete(nx.sys_readdir("/bench_10k"))
+            return nx.sys_readdir("/bench_10k")
 
         result = benchmark(list_dir)
         assert len(result) == 10_000

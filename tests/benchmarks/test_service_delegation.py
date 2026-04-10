@@ -93,7 +93,7 @@ def mock_gateway():
     mock_fs.sys_write = AsyncMock()
     mock_fs.write = AsyncMock()
     mock_fs.mkdir = AsyncMock()
-    mock_fs.sys_readdir = AsyncMock(return_value=["a.txt", "b.txt"])
+    mock_fs.sys_readdir = MagicMock(return_value=["a.txt", "b.txt"])
     mock_fs.access = AsyncMock(return_value=True)
     mock_fs.metadata = MagicMock()
     mock_fs.metadata.get = MagicMock(return_value=MagicMock())

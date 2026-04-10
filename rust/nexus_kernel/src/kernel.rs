@@ -303,6 +303,53 @@ impl KernelObserverRegistry {
     }
 }
 
+// ── Native Hook Registry (§11 Phase 10) ────────────────────────────────
+//
+// Pure Rust hook dispatch — no GIL crossing for Rust-native hooks.
+// Parallel to the PyO3-dependent HookRegistry in hook_registry.rs.
+// NativeInterceptHook trait defined in dispatch.rs.
+
+use crate::dispatch::{HookContext, NativeInterceptHook};
+
+#[allow(dead_code)]
+struct NativeHookEntry {
+    hook: Box<dyn NativeInterceptHook>,
+}
+
+#[allow(dead_code)]
+pub(crate) struct NativeHookRegistry {
+    hooks: Vec<NativeHookEntry>,
+}
+
+impl NativeHookRegistry {
+    pub(crate) fn new() -> Self {
+        Self { hooks: Vec::new() }
+    }
+
+    pub(crate) fn register(&mut self, hook: Box<dyn NativeInterceptHook>) {
+        self.hooks.push(NativeHookEntry { hook });
+    }
+
+    /// Dispatch pre-hooks. Returns Err on first abort.
+    pub(crate) fn dispatch_pre(&self, ctx: &HookContext) -> Result<(), String> {
+        for entry in &self.hooks {
+            entry.hook.on_pre(ctx)?;
+        }
+        Ok(())
+    }
+
+    /// Dispatch post-hooks (fire-and-forget).
+    pub(crate) fn dispatch_post(&self, ctx: &HookContext) {
+        for entry in &self.hooks {
+            entry.hook.on_post(ctx);
+        }
+    }
+
+    pub(crate) fn count(&self) -> usize {
+        self.hooks.len()
+    }
+}
+
 // ── Zone Revision Entry ─────────────────────────────────────────────────
 
 /// Per-zone monotonic revision counter + condvar for waiters.
@@ -403,6 +450,8 @@ pub struct Kernel {
     pub(crate) pipe_manager: crate::pipe_manager::PipeManager,
     // IPC registry — StreamManager owns DashMap<String, Arc<dyn StreamBackend>>
     pub(crate) stream_manager: crate::stream_manager::StreamManager,
+    // Native hook registry — pure Rust hooks dispatched without GIL (§11 Phase 10)
+    pub(crate) native_hooks: Mutex<NativeHookRegistry>,
 }
 
 impl Kernel {
@@ -435,6 +484,7 @@ impl Kernel {
             mount_metastores: DashMap::new(),
             pipe_manager: crate::pipe_manager::PipeManager::new(),
             stream_manager: crate::stream_manager::StreamManager::new(),
+            native_hooks: Mutex::new(NativeHookRegistry::new()),
         }
     }
 

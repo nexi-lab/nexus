@@ -218,6 +218,192 @@ pub(crate) trait MutationObserver: Send + Sync {
     fn on_mutation(&self, event: &FileEvent);
 }
 
+// ── INTERCEPT hook context structs (§11 Phase 9) ─────────────────────
+//
+// Pure Rust equivalents of Python vfs_hooks dataclasses.
+// Used by InterceptHook trait — eliminates GIL crossing for Rust hooks.
+// Python hooks use PyInterceptHookAdapter which converts to Py<PyAny>.
+
+/// Caller identity extracted from OperationContext.
+#[derive(Debug, Clone, Default)]
+#[allow(dead_code)]
+pub struct HookIdentity {
+    pub user_id: String,
+    pub zone_id: String,
+    pub agent_id: String,
+    pub is_admin: bool,
+}
+
+/// ReadHookContext — pre/post read intercept.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct ReadHookCtx {
+    pub path: String,
+    pub identity: HookIdentity,
+    pub content: Option<Vec<u8>>,
+    pub content_hash: Option<String>,
+}
+
+/// WriteHookContext — pre/post write intercept.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct WriteHookCtx {
+    pub path: String,
+    pub identity: HookIdentity,
+    pub content: Vec<u8>,
+    pub is_new_file: bool,
+    pub content_hash: Option<String>,
+    pub new_version: u64,
+}
+
+/// DeleteHookContext — pre/post delete intercept.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct DeleteHookCtx {
+    pub path: String,
+    pub identity: HookIdentity,
+}
+
+/// RenameHookContext — pre/post rename intercept.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct RenameHookCtx {
+    pub old_path: String,
+    pub new_path: String,
+    pub identity: HookIdentity,
+    pub is_directory: bool,
+}
+
+/// MkdirHookContext — pre/post mkdir intercept.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct MkdirHookCtx {
+    pub path: String,
+    pub identity: HookIdentity,
+}
+
+/// RmdirHookContext — pre/post rmdir intercept.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct RmdirHookCtx {
+    pub path: String,
+    pub identity: HookIdentity,
+    pub recursive: bool,
+}
+
+/// CopyHookContext — pre/post copy intercept.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct CopyHookCtx {
+    pub src_path: String,
+    pub dst_path: String,
+    pub identity: HookIdentity,
+}
+
+/// StatHookContext — pre/post stat intercept.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct StatHookCtx {
+    pub path: String,
+    pub identity: HookIdentity,
+    /// "TRAVERSE" or "READ"
+    pub permission: String,
+}
+
+/// AccessHookContext — pre/post access intercept.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct AccessHookCtx {
+    pub path: String,
+    pub identity: HookIdentity,
+    /// "TRAVERSE" or "READ"
+    pub permission: String,
+}
+
+/// WriteBatchHookContext — pre/post write_batch intercept.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct WriteBatchHookCtx {
+    pub paths: Vec<String>,
+    pub identity: HookIdentity,
+}
+
+/// Enum dispatching all hook context types for the InterceptHook trait.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub enum HookContext {
+    Read(ReadHookCtx),
+    Write(WriteHookCtx),
+    Delete(DeleteHookCtx),
+    Rename(RenameHookCtx),
+    Mkdir(MkdirHookCtx),
+    Rmdir(RmdirHookCtx),
+    Copy(CopyHookCtx),
+    Stat(StatHookCtx),
+    Access(AccessHookCtx),
+    WriteBatch(WriteBatchHookCtx),
+}
+
+#[allow(dead_code)]
+impl HookContext {
+    /// Extract the path from any context variant.
+    pub fn path(&self) -> &str {
+        match self {
+            Self::Read(c) => &c.path,
+            Self::Write(c) => &c.path,
+            Self::Delete(c) => &c.path,
+            Self::Rename(c) => &c.old_path,
+            Self::Mkdir(c) => &c.path,
+            Self::Rmdir(c) => &c.path,
+            Self::Copy(c) => &c.src_path,
+            Self::Stat(c) => &c.path,
+            Self::Access(c) => &c.path,
+            Self::WriteBatch(c) => c.paths.first().map(|s| s.as_str()).unwrap_or(""),
+        }
+    }
+
+    /// Extract identity from any context variant.
+    pub fn identity(&self) -> &HookIdentity {
+        match self {
+            Self::Read(c) => &c.identity,
+            Self::Write(c) => &c.identity,
+            Self::Delete(c) => &c.identity,
+            Self::Rename(c) => &c.identity,
+            Self::Mkdir(c) => &c.identity,
+            Self::Rmdir(c) => &c.identity,
+            Self::Copy(c) => &c.identity,
+            Self::Stat(c) => &c.identity,
+            Self::Access(c) => &c.identity,
+            Self::WriteBatch(c) => &c.identity,
+        }
+    }
+}
+
+// ── INTERCEPT hook trait (§11 Phase 10) ──────────────────────────────
+//
+// Pure Rust hook trait — no GIL crossing for Rust-native hooks.
+// Python hooks wrapped via PyInterceptHookAdapter (generated_pyo3.rs)
+// which converts HookContext → Py<PyAny> for backward compat.
+
+/// INTERCEPT hook — called before/after each syscall.
+///
+/// Pre-hooks can abort by returning Err (message becomes PermissionError).
+/// Post-hooks are fire-and-forget (errors logged, never abort).
+///
+/// Default implementation: no-op for all operations.
+#[allow(dead_code)]
+pub(crate) trait NativeInterceptHook: Send + Sync {
+    fn name(&self) -> &str;
+
+    /// Pre-intercept: return Err(message) to abort the operation.
+    fn on_pre(&self, _ctx: &HookContext) -> Result<(), String> {
+        Ok(())
+    }
+
+    /// Post-intercept: fire-and-forget after operation completes.
+    fn on_post(&self, _ctx: &HookContext) {}
+}
+
 // ── TrieNode ──────────────────────────────────────────────────────────
 
 /// Internal trie node — one per path segment.

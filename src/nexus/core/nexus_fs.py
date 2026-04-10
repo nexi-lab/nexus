@@ -1344,7 +1344,7 @@ class NexusFS(  # type: ignore[misc]
         """Read file content as bytes (POSIX pread(2)).
 
         Thin async wrapper around Rust Kernel.sys_read (pure Rust, zero GIL).
-        DT_PIPE/DT_STREAM, resolve, and hooks are [INTERMEDIATE] — migrates
+        DT_PIPE/DT_STREAM, resolve, and hooks are [TRANSITIONAL] — migrates
         to Rust dispatch middleware in PR 7.
         """
         # DT_PIPE: Rust IPC registry handles hot path.  Check custom backends
@@ -1370,7 +1370,7 @@ class NexusFS(  # type: ignore[misc]
 
             try:
                 if count is not None and count > 1:
-                    # [INTERMEDIATE] Sync: use sync read_batch for custom backends.
+                    # [TRANSITIONAL] Sync: use sync read_batch for custom backends.
                     items, _ = _custom_sbuf.read_batch(offset, count)
                     return b"".join(items)
                 data, _ = _custom_sbuf.read_at(offset)
@@ -2093,7 +2093,7 @@ class NexusFS(  # type: ignore[misc]
         """Write content to a file (POSIX write(2)).
 
         Thin async wrapper around Rust Kernel.sys_write (CAS I/O is pure Rust,
-        zero GIL). Metastore.put stays in Python [INTERMEDIATE] — migrates to
+        zero GIL). Metastore.put stays in Python [TRANSITIONAL] — migrates to
         Rust metastore in PR 7.
         """
         # DT_PIPE: custom backends (SHM/remote) checked first
@@ -2116,7 +2116,7 @@ class NexusFS(  # type: ignore[misc]
         if count is not None:
             buf = buf[:count]
 
-        # [INTERMEDIATE] PRE-DISPATCH: resolve — migrates to Rust dispatch middleware in PR 7
+        # [TRANSITIONAL] PRE-DISPATCH: resolve — migrates to Rust dispatch middleware in PR 7
         context = self._parse_context(context)
 
         # Virtual .readme/ paths are read-only (Issue #3728).
@@ -5447,7 +5447,7 @@ class NexusFS(  # type: ignore[misc]
             try:
                 data: bytes = _buf.read_nowait()
             except PipeEmptyError:
-                # [INTERMEDIATE] Sync blocking: custom async backends run in temp event loop.
+                # [TRANSITIONAL] Sync blocking: custom async backends run in temp event loop.
                 # Eliminated when all pipe backends migrate to Rust.
                 data = asyncio.run(_buf.read(blocking=True))
             except PipeClosedError:

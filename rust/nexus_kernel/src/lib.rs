@@ -34,6 +34,7 @@ mod openai_backend;
 #[cfg(feature = "connectors")]
 mod openai_inference;
 mod path_utils;
+mod permission_hook;
 mod pipe;
 mod pipe_manager;
 mod prefix;

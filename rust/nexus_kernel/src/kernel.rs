@@ -1407,6 +1407,14 @@ impl Kernel {
         // 1. Validate
         validate_path_fast(path)?;
 
+        // 1b. Trie-resolved virtual paths (§11 Phase 21) — short-circuit before route.
+        // Returns hit=false so Python wrapper's resolve_read() handles it.
+        // This is a no-op today (trie dispatch done in Python), but documents
+        // the intended Rust path when resolvers are fully ported.
+        if self.trie.lookup(path).is_some() {
+            return miss();
+        }
+
         // 2. Route (pure Rust LPM)
         let route = match self
             .router
@@ -1577,6 +1585,11 @@ impl Kernel {
 
         // 1. Validate
         validate_path_fast(path)?;
+
+        // 1b. Trie-resolved virtual paths (§11 Phase 21) — short-circuit before route.
+        if self.trie.lookup(path).is_some() {
+            return miss();
+        }
 
         // 2. Route (check write access)
         let route = match self
@@ -1816,6 +1829,11 @@ impl Kernel {
 
         // 1. Validate
         validate_path_fast(path)?;
+
+        // 1b. Trie-resolved virtual paths (§11 Phase 21)
+        if self.trie.lookup(path).is_some() {
+            return miss(0);
+        }
 
         // 2. Route (check write access)
         let route = match self

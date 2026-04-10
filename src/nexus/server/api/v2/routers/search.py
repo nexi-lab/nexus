@@ -37,7 +37,7 @@ def _get_search_daemon(request: Request) -> Any:
     if daemon is None:
         raise HTTPException(
             status_code=503,
-            detail="Search daemon not enabled (set NEXUS_SEARCH_DAEMON=true)",
+            detail="Search daemon unavailable (set NEXUS_SEARCH_DAEMON=false to disable)",
         )
     return daemon
 
@@ -144,7 +144,7 @@ async def search_daemon_health(
         return {
             "status": "disabled",
             "daemon_enabled": False,
-            "message": "Search daemon not enabled (set NEXUS_SEARCH_DAEMON=true)",
+            "message": "Search daemon unavailable (set NEXUS_SEARCH_DAEMON=false to disable)",
         }
     health: dict[str, Any] = search_daemon.get_health()
     return health

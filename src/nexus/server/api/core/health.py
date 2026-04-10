@@ -90,7 +90,7 @@ async def health_check_detailed(request: Request) -> dict[str, Any]:
     else:
         health["components"]["search_daemon"] = {
             "status": "disabled",
-            "message": "Set NEXUS_SEARCH_DAEMON=true to enable",
+            "message": "Search daemon unavailable (set NEXUS_SEARCH_DAEMON=false to disable)",
         }
 
     # Check ReBAC + circuit breaker (Issue #726)

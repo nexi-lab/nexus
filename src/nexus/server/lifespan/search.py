@@ -49,15 +49,13 @@ def _resolve_txtai_runtime_config() -> tuple[str, dict[str, str] | None]:
 
 async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asyncio.Task]:
     """Initialize search daemon and return background tasks."""
-    search_daemon_enabled = os.getenv("NEXUS_SEARCH_DAEMON", "").lower() in (
-        "true",
-        "1",
-        "yes",
-    ) or (
-        # Auto-enable if not explicitly disabled and database URL is set
-        os.getenv("NEXUS_SEARCH_DAEMON", "").lower() not in ("false", "0", "no")
-        and svc.database_url
-    )
+    _search_env = os.getenv("NEXUS_SEARCH_DAEMON", "").lower()
+    _explicit_off = _search_env in ("false", "0", "no")
+    _explicit_on = _search_env in ("true", "1", "yes")
+    # Default: auto-enable when a database URL is available (txtai requires postgres
+    # for the BM25+vector pipeline). Explicit NEXUS_SEARCH_DAEMON=true forces it on
+    # even without a database URL (e.g. SQLite-backed dev setups).
+    search_daemon_enabled = _explicit_on or (not _explicit_off and bool(svc.database_url))
 
     if not search_daemon_enabled:
         logger.debug("Search Daemon disabled (set NEXUS_SEARCH_DAEMON=true to enable)")
@@ -146,10 +144,11 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
 
         # Auto-index on write/delete/rename: register VFS hooks that notify
         # the search daemon so the index stays fresh automatically.
+        # NexusFS exposes register_intercept_write/delete/rename/copy directly.
         with contextlib.suppress(AttributeError, ImportError):
             _daemon_ref = app.state.search_daemon
-            _dispatch = getattr(svc.nexus_fs, "_dispatch", None)
-            if _dispatch is not None:
+            _nexus_fs = svc.nexus_fs
+            if _nexus_fs is not None and hasattr(_nexus_fs, "register_intercept_write"):
                 import asyncio as _asyncio
 
                 from nexus.contracts.vfs_hooks import (
@@ -204,10 +203,10 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
                     def on_post_copy(self, ctx: CopyHookContext) -> None:
                         _notify(ctx.dst_path, "update")
 
-                _dispatch.register_intercept_write(_SearchWriteHook())
-                _dispatch.register_intercept_delete(_SearchDeleteHook())
-                _dispatch.register_intercept_rename(_SearchRenameHook())
-                _dispatch.register_intercept_copy(_SearchCopyHook())
+                _nexus_fs.register_intercept_write(_SearchWriteHook())
+                _nexus_fs.register_intercept_delete(_SearchDeleteHook())
+                _nexus_fs.register_intercept_rename(_SearchRenameHook())
+                _nexus_fs.register_intercept_copy(_SearchCopyHook())
                 logger.info("Search auto-index hooks registered (write/delete/rename/copy)")
 
         stats = app.state.search_daemon.get_stats()

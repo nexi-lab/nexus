@@ -33,13 +33,39 @@ logger = logging.getLogger(__name__)
 def install_remote_kernel_rpc_overrides(nfs: "NexusFS", transport: "RPCTransport") -> None:
     """Route kernel ops that require server-side hooks through direct RPC.
 
-    Most REMOTE filesystem operations already hit the server kernel through
-    RemoteBackend / RemoteMetastore. Rename is the exception: the client-side
-    kernel emulates it as metadata put/delete, which bypasses server-side
-    post-rename hooks like ReBAC path updates. Override it to call the
-    authoritative server ``sys_rename`` RPC directly.
+    The Rust kernel's internal Redb metastore is empty in the REMOTE profile
+    (no local data_dir), so kernel.sys_read / kernel.sys_write return hit=False
+    for all paths. Override these to call the authoritative server RPCs directly.
+
+    sys_rename is also overridden because the client-side kernel emulates it
+    as metadata put/delete, bypassing server-side post-rename hooks.
     """
     import types
+
+    async def _remote_sys_read(
+        _self: Any,
+        path: str,
+        *,
+        count: int | None = None,
+        offset: int = 0,
+        context: Any = None,  # noqa: ARG001
+    ) -> bytes:
+        # transport.read_file() is a synchronous blocking gRPC call — run it in a
+        # thread so it never stalls the asyncio event loop under slow/lossy networks.
+        import asyncio as _asyncio
+
+        if offset or count is not None:
+            # Range read: use the JSON Call RPC so offset/count are forwarded to
+            # nexus_fs.sys_read() server-side. The typed read_file proto has no
+            # offset/count fields, so it can only do full-file reads.
+            params: dict[str, Any] = {"path": path, "offset": offset}
+            if count is not None:
+                params["count"] = count
+            result = await _asyncio.to_thread(transport.call_rpc, "read", params)
+            # call_rpc + decode_rpc_message already unwraps {"__type__":"bytes","data":...}
+            return result if isinstance(result, bytes) else bytes(result)
+        # Full-file read: use the efficient typed ReadRequest proto (no JSON/base64 overhead).
+        return await _asyncio.to_thread(transport.read_file, path)
 
     async def _remote_sys_rename(
         _self: Any,
@@ -54,6 +80,7 @@ def install_remote_kernel_rpc_overrides(nfs: "NexusFS", transport: "RPCTransport
         )
         return {}
 
+    cast(Any, nfs).sys_read = types.MethodType(_remote_sys_read, nfs)
     cast(Any, nfs).sys_rename = types.MethodType(_remote_sys_rename, nfs)
 
 

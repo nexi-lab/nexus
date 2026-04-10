@@ -139,8 +139,12 @@ async def handle_read_async(
 
     # Plain sys_read (Tier 1) — no metadata, no parsing
     if not parsed and not return_metadata:
+        _count = getattr(params, "count", None)
+        _offset = getattr(params, "offset", 0) or 0
         read_result: bytes = await nexus_fs.sys_read(
             params.path,
+            count=_count,
+            offset=_offset,
             context=context,
         )
         return read_result

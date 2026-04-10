@@ -231,7 +231,7 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
         await _durable.stop()
         logger.debug("Durable invalidation stream stopped")
 
-    # Close NexusFS kernel (async shutdown for BackgroundService + hooks)
+    # Close NexusFS kernel (sync shutdown for PersistentService + hooks)
     if app.state.nexus_fs:
         if hasattr(app.state.nexus_fs, "aclose"):
             app.state.nexus_fs.aclose()

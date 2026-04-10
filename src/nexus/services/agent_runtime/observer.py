@@ -49,13 +49,14 @@ class AgentObserver:
     within an async context (one observer per agent session).
     """
 
-    def __init__(self) -> None:
+    def __init__(self, on_update: Any | None = None) -> None:
         self._accumulated_text: list[str] = []
         self._accumulated_usage: dict[str, Any] = {}
         self._num_turns: int = 0
         self._model_name: str | None = None
         self._tool_calls: list[dict[str, Any]] = []
         self._prompt_active: bool = False
+        self._on_update = on_update  # §4A.3: push-mode callback for ACP
 
     def reset_turn(self) -> None:
         """Reset per-turn accumulators. Call before each prompt."""
@@ -85,6 +86,10 @@ class AgentObserver:
                 ``tool_call``, ``user_message_chunk``.
             update: The notification payload.
         """
+        # §4A.3: push to ACP transport if callback set
+        if self._on_update:
+            self._on_update(update_type, update)
+
         if update_type == "agent_message_chunk":
             if self._prompt_active:
                 content = update.get("content", {})

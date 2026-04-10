@@ -41,6 +41,12 @@ import click
     type=click.Path(exists=True, file_okay=False, resolve_path=True),
     help="Mount external tool directories (repeatable).",
 )
+@click.option(
+    "--acp",
+    is_flag=True,
+    default=False,
+    help="ACP mode: JSON-RPC over stdio (for sudowork integration).",
+)
 def chat(
     prompt: str | None,
     model: str | None,
@@ -49,6 +55,7 @@ def chat(
     resume: str | None,
     deployment_profile: str | None,
     tools: tuple[str, ...],
+    acp: bool,
 ) -> None:
     """Start an agent chat session.
 
@@ -62,6 +69,10 @@ def chat(
     One-shot mode:
         nexus chat -p "fix the login bug"
         nexus chat -p "add unit tests" --model claude-opus-4
+
+    \b
+    ACP mode (sudowork integration):
+        nexus chat --acp
     """
     asyncio.run(
         _run_chat(
@@ -72,6 +83,7 @@ def chat(
             resume=resume,
             deployment_profile=deployment_profile,
             tools=tools,
+            acp=acp,
         )
     )
 
@@ -85,6 +97,7 @@ async def _run_chat(
     resume: str | None,
     deployment_profile: str | None,
     tools: tuple[str, ...] = (),
+    acp: bool = False,
 ) -> None:
     """Bootstrap NexusFS + ManagedAgentLoop, then run REPL or one-shot."""
     from pathlib import Path
@@ -186,6 +199,11 @@ async def _run_chat(
         _ = continue_session  # TODO: wire SessionManager.latest()
         _ = resume  # TODO: wire SessionManager.load(id)
 
+        # ── ACP mode (§4A): JSON-RPC over stdio for sudowork ──
+        if acp:
+            await _run_acp_mode(nx=nx, model=model, llm_backend=llm_backend)
+            return
+
         # ── One-shot or REPL ──
         if prompt:
             result = await loop.run(prompt)
@@ -198,6 +216,51 @@ async def _run_chat(
         _close = getattr(nx, "close", None)
         if _close is not None:
             _close()
+
+
+async def _run_acp_mode(
+    *,
+    nx: Any,
+    model: str | None,
+    llm_backend: Any,
+) -> None:
+    """Run in ACP mode — JSON-RPC over stdio for sudowork integration (§4A)."""
+    from nexus.services.agent_runtime.acp_handler import AcpProtocolHandler
+    from nexus.services.agent_runtime.acp_transport import AcpTransport
+    from nexus.services.agent_runtime.compaction import DefaultCompactionStrategy
+    from nexus.services.agent_runtime.managed_loop import ManagedAgentLoop
+    from nexus.services.agent_runtime.observer import AgentObserver
+
+    _stream_read = getattr(nx, "_stream_read", None)
+
+    async def _fallback_stream_read(path: str, offset: int) -> tuple[bytes, int]:
+        raise NotImplementedError("Streaming not available")
+
+    async def _loop_factory(session_id: str, cwd: str, observer: AgentObserver) -> ManagedAgentLoop:
+        agent_path = "/root/agents/default"
+        loop = ManagedAgentLoop(
+            sys_read=nx.sys_read,
+            sys_write=nx.sys_write,
+            stream_read=_stream_read or _fallback_stream_read,
+            llm_backend=llm_backend,
+            agent_path=agent_path,
+            llm_path="/llm",
+            conv_path=f"{agent_path}/conversation",
+            proc_path=f"/root/proc/{session_id[:8]}",
+            model=model,
+            compactor=DefaultCompactionStrategy(
+                sys_write=nx.sys_write,
+                agent_path=agent_path,
+            ),
+            cwd=cwd or os.getcwd(),
+        )
+        loop._observer = observer
+        await loop.initialize()
+        return loop
+
+    transport = AcpTransport()
+    handler = AcpProtocolHandler(transport=transport, loop_factory=_loop_factory)
+    await handler.run()
 
 
 async def _repl_loop(loop: Any) -> None:

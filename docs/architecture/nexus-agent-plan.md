@@ -522,6 +522,8 @@ Step 6: session/load + set_model + configOptions (P1 polish)
 ```
 
 Steps 1-2 are the MVP. After Step 2, `nexus chat --acp` works in sudowork.
+Step 7 is the final gate: E2E test via sudowork's ai-dev-browser to verify
+the full flow (spawn → initialize → prompt → streaming response → tool calls).
 
 ---
 

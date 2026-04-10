@@ -23,6 +23,7 @@ __all__ = [
     "GREP_SEQUENTIAL_THRESHOLD",
     "GREP_PARALLEL_THRESHOLD",
     "GREP_TRIGRAM_THRESHOLD",
+    "GREP_ZOEKT_THRESHOLD",
     "GREP_CACHED_TEXT_RATIO",
     "GREP_PARALLEL_WORKERS",
     # Glob thresholds
@@ -39,6 +40,7 @@ __all__ = [
 GREP_SEQUENTIAL_THRESHOLD = 10  # Below this file count, use sequential (no overhead)
 GREP_PARALLEL_THRESHOLD = 100  # Above this, consider parallel processing
 GREP_TRIGRAM_THRESHOLD = 500  # Above this, prefer trigram index if available
+GREP_ZOEKT_THRESHOLD = 1000  # Above this, prefer Zoekt if available
 GREP_CACHED_TEXT_RATIO = 0.8  # Use cached text path if > 80% files have cached text
 
 # Issue #2071: GREP_PARALLEL_WORKERS moved to ProfileTuning.search.grep_parallel_workers
@@ -60,6 +62,7 @@ class SearchStrategy(StrEnum):
     RUST_BULK = "rust_bulk"  # 10-1000 files with Rust available
     PARALLEL_POOL = "parallel_pool"  # 100-10000 files, parallel processing
     TRIGRAM_INDEX = "trigram_index"  # > 500 files with trigram index
+    ZOEKT_INDEX = "zoekt_index"  # > 1000 files with Zoekt index
 
 
 class GlobStrategy(StrEnum):

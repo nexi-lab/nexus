@@ -47,29 +47,8 @@ def _resolve_txtai_runtime_config() -> tuple[str, dict[str, str] | None]:
     return model, vectors or None
 
 
-_ZOEKT_LEGACY_VARS = (
-    "ZOEKT_URL",
-    "ZOEKT_ENABLED",
-    "ZOEKT_TIMEOUT",
-    "ZOEKT_INDEX_DIR",
-    "ZOEKT_DATA_DIR",
-    "ZOEKT_DEBOUNCE_SECONDS",
-    "ZOEKT_INDEX_BINARY",
-)
-
-
 async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asyncio.Task]:
     """Initialize search daemon and return background tasks."""
-    # Warn about removed Zoekt env vars so operators know their config is ignored.
-    _zoekt_set = [v for v in _ZOEKT_LEGACY_VARS if os.environ.get(v)]
-    if _zoekt_set:
-        logger.warning(
-            "Zoekt has been removed (replaced by txtai). "
-            "The following environment variables are now ignored and should be removed: %s. "
-            "See NEXUS_TXTAI_* variables for the new search backend configuration.",
-            ", ".join(_zoekt_set),
-        )
-
     _search_env = os.getenv("NEXUS_SEARCH_DAEMON", "").lower()
     _explicit_off = _search_env in ("false", "0", "no")
     _explicit_on = _search_env in ("true", "1", "yes")
@@ -110,12 +89,28 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
 
             _settings_store = MetastoreSettingsStore(svc.nexus_fs.metadata)
 
+        # Issue #2188: Create ZoektClient + embedding provider via DI
+        _zoekt_client = None
+        _search_cfg = None
+        with contextlib.suppress(ImportError):
+            from nexus.bricks.search.config import search_config_from_env
+            from nexus.bricks.search.zoekt_client import ZoektClient
+
+            _search_cfg = search_config_from_env()
+            if _search_cfg.zoekt_enabled:
+                _zoekt_client = ZoektClient(
+                    base_url=_search_cfg.zoekt_url,
+                    timeout=_search_cfg.zoekt_timeout,
+                    enabled=True,
+                )
+
         # CacheBrick is available from startup_permissions
         _cache_brick = getattr(app.state, "cache_brick", None)
 
         app.state.search_daemon = SearchDaemon(
             config,
             async_session_factory=_async_sf,
+            zoekt_client=_zoekt_client,
             cache_brick=_cache_brick,
             settings_store=_settings_store,
         )

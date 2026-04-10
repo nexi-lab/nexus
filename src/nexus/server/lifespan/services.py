@@ -620,6 +620,20 @@ async def _startup_pipe_consumers(app: "FastAPI", svc: "LifespanServices") -> No
     if svc.event_signal is not None:
         app.state.event_signal = svc.event_signal
 
+    # Issue #810: ZoektPipeConsumer
+    zpc = svc.zoekt_pipe_consumer
+    if zpc is not None:
+        try:
+            if hasattr(zpc, "bind_fs") and nx is not None:
+                zpc.bind_fs(nx)
+            else:
+                raise RuntimeError("zoekt consumer missing startup binding hook")
+            await zpc.start()
+            app.state.zoekt_pipe_consumer = zpc
+            logger.info("[PIPE] ZoektPipeConsumer started")
+        except Exception as e:
+            logger.warning("[PIPE] ZoektPipeConsumer start failed: %s", e, exc_info=True)
+
     # TaskDispatchPipeConsumer (task lifecycle signals)
     tdc = svc.task_dispatch_consumer
     # Fallback: create consumer if not provided by factory (e.g. no record_store)
@@ -680,6 +694,15 @@ async def _shutdown_pipe_consumers(app: "FastAPI") -> None:
             logger.warning(
                 "[PIPE] Error stopping PipedRecordStoreWriteObserver: %s", e, exc_info=True
             )
+
+    # Issue #810: ZoektPipeConsumer
+    zpc = getattr(app.state, "zoekt_pipe_consumer", None)
+    if zpc is not None and hasattr(zpc, "stop"):
+        try:
+            await zpc.stop()
+            logger.info("[PIPE] ZoektPipeConsumer stopped")
+        except Exception as e:
+            logger.warning("[PIPE] Error stopping ZoektPipeConsumer: %s", e, exc_info=True)
 
     # TaskDispatchPipeConsumer
     tdc = getattr(app.state, "task_dispatch_consumer", None)

@@ -34,6 +34,7 @@ class TestZoneSearchCapabilities:
         daemon = MagicMock()
         daemon.get_stats.return_value = {
             "db_pool_size": 10,
+            "zoekt_available": True,
             "embedding_dimensions": 384,
         }
         caps = ZoneSearchCapabilities.from_daemon_stats("zone_a", daemon)
@@ -45,6 +46,7 @@ class TestZoneSearchCapabilities:
         daemon = MagicMock()
         daemon.get_stats.return_value = {
             "db_pool_size": 0,
+            "zoekt_available": False,
         }
         caps = ZoneSearchCapabilities.from_daemon_stats("phone_1", daemon)
         assert caps.search_modes == ("keyword",)

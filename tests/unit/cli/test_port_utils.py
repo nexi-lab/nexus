@@ -189,6 +189,7 @@ class TestResolvePorts:
         assert "grpc" in DEFAULT_PORTS
         assert "postgres" in DEFAULT_PORTS
         assert "dragonfly" in DEFAULT_PORTS
+        assert "zoekt" in DEFAULT_PORTS
 
 
 # ---------------------------------------------------------------------------
@@ -199,7 +200,7 @@ class TestResolvePorts:
 class TestDerivePorts:
     def test_returns_all_expected_keys(self) -> None:
         ports = derive_ports("/tmp/project-a")
-        assert set(ports.keys()) == {"http", "grpc", "postgres", "dragonfly"}
+        assert set(ports.keys()) == {"http", "grpc", "postgres", "dragonfly", "zoekt"}
 
     def test_deterministic(self) -> None:
         """Same path always produces the same ports."""
@@ -220,6 +221,7 @@ class TestDerivePorts:
         assert ports["grpc"] == base + 1
         assert ports["postgres"] == base + 2
         assert ports["dragonfly"] == base + 3
+        assert ports["zoekt"] == base + 4
 
     def test_ports_in_valid_range(self) -> None:
         """Derived ports should be in 10000–59999."""

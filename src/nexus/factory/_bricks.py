@@ -86,7 +86,7 @@ def _boot_independent_bricks(
 ) -> dict[str, Any]:
     """Boot Tier 2 (BRICK) — optional, silent on failure.
 
-    Creates Search wiring, Wallet, Manifest, ToolNamespace,
+    Creates Search/Zoekt wiring, Wallet, Manifest, ToolNamespace,
     ChunkedUpload, Distributed infra, Workflow engine, API key creator.
     On failure: logs DEBUG, sets that service to None.
 
@@ -150,6 +150,7 @@ def _boot_independent_bricks(
 
     # === Manually-wired bricks (complex conditional logic) ===
 
+    zoekt_pipe_consumer: Any = None  # Issue #810: DT_PIPE Zoekt consumer
     task_dispatch_consumer: Any = None  # Task Manager: DT_PIPE lifecycle consumer
 
     # --- Search Brick Import Validation (Issue #1520) ---
@@ -161,6 +162,40 @@ def _boot_independent_bricks(
             logger.debug("[BOOT:BRICK] Search brick imports: %s", _search_status)
         except ImportError:
             logger.debug("[BOOT:BRICK] Search brick manifest not available")
+
+        # Wire zoekt callbacks into backends (Issue #1520, #2188: DI via factory)
+        # Issue #810: Route through ZoektPipeConsumer for DT_PIPE decoupling.
+        try:
+            from nexus.bricks.search.config import search_config_from_env
+            from nexus.bricks.search.zoekt_client import ZoektIndexManager
+
+            _search_cfg = search_config_from_env()
+            if _search_cfg.zoekt_enabled:
+                _zoekt_index_mgr = ZoektIndexManager(
+                    index_dir=_search_cfg.zoekt_index_dir,
+                    data_dir=_search_cfg.zoekt_data_dir,
+                    debounce_seconds=_search_cfg.zoekt_debounce_seconds,
+                    enabled=True,
+                    index_binary=_search_cfg.zoekt_index_binary,
+                )
+                # Wrap in ZoektPipeConsumer for DT_PIPE decoupling (#810)
+                from nexus.factory.zoekt_pipe_consumer import ZoektPipeConsumer
+
+                _zoekt_consumer = ZoektPipeConsumer(_zoekt_index_mgr)
+                zoekt_pipe_consumer = _zoekt_consumer
+
+                if (
+                    hasattr(ctx.backend, "on_write_callback")
+                    and ctx.backend.on_write_callback is None
+                ):
+                    ctx.backend.on_write_callback = _zoekt_consumer.notify_write
+                if (
+                    hasattr(ctx.backend, "on_sync_callback")
+                    and ctx.backend.on_sync_callback is None
+                ):
+                    ctx.backend.on_sync_callback = _zoekt_consumer.notify_sync_complete
+        except ImportError:
+            logger.debug("[BOOT:BRICK] Zoekt not available, skipping callback wiring")
     else:
         logger.debug("[BOOT:BRICK] Search brick disabled by profile")
 
@@ -470,6 +505,8 @@ def _boot_independent_bricks(
         "governance_collusion_service": governance_collusion_service,
         "governance_graph_service": governance_graph_service,
         "governance_response_service": governance_response_service,
+        # DT_PIPE consumers (Issue #810)
+        "zoekt_pipe_consumer": zoekt_pipe_consumer,
         # Task Manager Brick
         "task_dispatch_consumer": task_dispatch_consumer,
     }

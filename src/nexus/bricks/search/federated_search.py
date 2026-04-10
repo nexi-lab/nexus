@@ -167,19 +167,20 @@ class FederatedSearchDispatcher:
         Returns:
             (effective_search_type, alpha_override_or_None)
         """
-        # Decision 13B rationale: BM25S in-memory index doesn't filter by
-        # zone_id, so keyword search through it leaks cross-zone results.
-        # When it's active, we force the semantic path which uses pgvector
-        # (zone-filtered).
+        # Decision 13B rationale: BM25S and Zoekt in-memory indexes don't
+        # filter by zone_id, so keyword search through them leaks cross-zone
+        # results. When they're active, we force the semantic path which
+        # uses pgvector (zone-filtered).
         #
-        # However, when BM25S is NOT available (bm25_documents=0), keyword
-        # search falls through to PostgreSQL FTS which IS zone-filtered.
-        # In that case, forcing semantic would break search on DBs without
-        # embeddings. So we only force semantic when BM25S is actually active.
+        # However, when BM25S/Zoekt are NOT available (bm25_documents=0,
+        # zoekt_available=False), keyword search falls through to PostgreSQL
+        # FTS which IS zone-filtered. In that case, forcing semantic would
+        # break search on DBs without embeddings. So we only force semantic
+        # when the leaky backends are actually active.
         # Check if the daemon has leaky (non-zone-filtered) keyword backends.
-        # BM25S doesn't filter by zone_id, so keyword through it leaks
-        # cross-zone results. When it has data, we force semantic.
-        # When it's empty or absent, FTS (zone-filtered) handles keyword.
+        # BM25S and Zoekt don't filter by zone_id, so keyword through them
+        # leaks cross-zone results. When they have data, we force semantic.
+        # When they're empty or absent, FTS (zone-filtered) handles keyword.
         try:
             daemon = self._get_daemon_for_zone(zone_id)
             _stats = (
@@ -188,9 +189,11 @@ class FederatedSearchDispatcher:
                 else {}
             )
             has_bm25s = _stats.get("bm25_documents", 0) > 0 if isinstance(_stats, dict) else False
+            has_zoekt = _stats.get("zoekt_available", False) if isinstance(_stats, dict) else False
         except Exception:
             has_bm25s = False
-        has_leaky_keyword = has_bm25s
+            has_zoekt = False
+        has_leaky_keyword = has_bm25s or has_zoekt
 
         if self._registry is None:
             if search_type == "keyword" and has_leaky_keyword:

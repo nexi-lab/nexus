@@ -112,6 +112,31 @@ def check(name: str, condition: bool, detail: str = "") -> None:
     results.append((name, condition, detail))
 
 
+def http_call_with_key(
+    method: str, path: str, body: dict | None, api_key: str
+) -> tuple[int, dict | None]:
+    """HTTP call using a specific API key (not the admin default)."""
+    url = f"{NEXUS_URL}{path}"
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(url, data=data, method=method)
+    req.add_header("Authorization", f"Bearer {api_key}")
+    if body is not None:
+        req.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            status = resp.getcode()
+            raw = resp.read().decode()
+            return status, json.loads(raw) if raw else None
+    except urllib.error.HTTPError as e:
+        raw = e.read().decode() if e.fp else ""
+        try:
+            return e.code, json.loads(raw) if raw else None
+        except Exception:
+            return e.code, {"raw": raw}
+    except Exception as e:
+        return 0, {"error": str(e)}
+
+
 def http_call(
     method: str, path: str, body: dict | None = None, expect: int = 200
 ) -> tuple[int, dict | None]:
@@ -205,6 +230,49 @@ def delete_file(path: str) -> None:
     )
     with contextlib.suppress(Exception):
         urllib.request.urlopen(req, timeout=10)
+
+
+def hmac_api_key(raw_key: str) -> str:
+    """Hash an API key using the same HMAC-SHA256 scheme as the server.
+
+    Mirrors ``nexus.storage.api_key_ops.hash_api_key``. The server reads
+    ``NEXUS_API_KEY_SECRET`` from its environment; in this test we fall
+    back to the legacy default salt.
+    """
+    import hashlib
+    import hmac
+
+    secret = os.environ.get("NEXUS_API_KEY_SECRET", "nexus-api-key-v1")
+    return hmac.new(
+        secret.encode("utf-8"),
+        raw_key.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def create_non_admin_key(user_id: str, raw_key: str) -> None:
+    """INSERT a non-admin API key + matching api_keys row directly into the DB.
+
+    Bypasses the admin CLI (which requires gRPC + TLS) by writing the
+    hashed key straight into ``api_keys``. The server's auth middleware
+    reads api_keys on every request, so the new key is usable immediately.
+    """
+    key_hash = hmac_api_key(raw_key)
+    # Delete any stale row under the same user_id so re-runs are idempotent.
+    psql(f"DELETE FROM api_keys WHERE user_id='{user_id}'")
+    psql(
+        "INSERT INTO api_keys "
+        "(key_id, key_hash, user_id, subject_type, subject_id, zone_id, "
+        " is_admin, inherit_permissions, name, created_at, revoked) "
+        "VALUES ("
+        f" gen_random_uuid()::text, '{key_hash}', '{user_id}', 'user', "
+        f" '{user_id}', '{TEST_ZONE}', 0, 0, 'e2e-scope-test', NOW(), 0)"
+    )
+
+
+def delete_non_admin_key(user_id: str) -> None:
+    """Clean up the non-admin API key after the test."""
+    psql(f"DELETE FROM api_keys WHERE user_id='{user_id}'")
 
 
 def count_chunks_for_path(virtual_path: str) -> int:
@@ -479,7 +547,214 @@ def main() -> None:
     )
 
     # -------------------------------------------------------------------------
-    print("\n=== 8. CLEANUP ===")
+    print("\n=== 8. REBAC AUTH — non-admin write check ===")
+    # -------------------------------------------------------------------------
+    # Issue #6 policy #7: mutation endpoints require write permission on
+    # the target path. Exercise the gate end-to-end by creating a
+    # non-admin API key and asserting that:
+    # (a) POST /index-directory without any grant → 403
+    # (b) DELETE /index-directory without any grant → 403
+    # (c) admin DOES bypass the check (already verified above via ADMIN_KEY)
+    #
+    # The "with grant → 200" path requires a ReBAC write tuple on the
+    # exact path AND a working PermissionEnforcer in the bricks layer.
+    # That integration is covered by the sync enforcer we call, but the
+    # fail-closed path is the important one to prove: a non-admin
+    # without explicit grant is denied.
+    nonadmin_user = "e2e_scope_nonadmin"
+    nonadmin_key = "sk-e2e_scope_nonadmin_test_key_do_not_use_in_prod"
+    try:
+        create_non_admin_key(nonadmin_user, nonadmin_key)
+    except Exception as exc:
+        check(
+            "create non-admin key",
+            False,
+            f"failed to create key: {exc}",
+        )
+    else:
+        check("create non-admin key", True)
+
+    status, body = http_call_with_key(
+        "POST",
+        "/api/v2/search/index-directory",
+        {"path": "/e2e_rebac/test"},
+        nonadmin_key,
+    )
+    check(
+        "non-admin POST /index-directory → 403 (no grant)",
+        status == 403,
+        f"got {status}: {body}",
+    )
+
+    status, body = http_call_with_key(
+        "DELETE",
+        "/api/v2/search/index-directory",
+        {"path": "/e2e_rebac/test"},
+        nonadmin_key,
+    )
+    check(
+        "non-admin DELETE /index-directory → 403 (no grant)",
+        status == 403,
+        f"got {status}: {body}",
+    )
+
+    # Non-admin calls to /indexing-mode must also be rejected (admin-only).
+    status, body = http_call_with_key(
+        "POST",
+        "/api/v2/search/indexing-mode",
+        {"mode": "scoped", "zone_id": TEST_ZONE},
+        nonadmin_key,
+    )
+    check(
+        "non-admin POST /indexing-mode → 403 (admin-only)",
+        status == 403,
+        f"got {status}: {body}",
+    )
+
+    # And /purge-unscoped is also admin-only.
+    status, body = http_call_with_key(
+        "POST",
+        "/api/v2/search/purge-unscoped",
+        {},
+        nonadmin_key,
+    )
+    check(
+        "non-admin POST /purge-unscoped → 403 (admin-only)",
+        status == 403,
+        f"got {status}: {body}",
+    )
+
+    delete_non_admin_key(nonadmin_user)
+
+    # -------------------------------------------------------------------------
+    print("\n=== 9. PURGE-UNSCOPED — destructive admin endpoint ===")
+    # -------------------------------------------------------------------------
+    # This section validates the ``purge_unscoped_embeddings`` SQL logic
+    # by directly inserting test rows into ``document_chunks`` +
+    # ``file_paths``, bypassing the full write/refresh/txtai pipeline.
+    #
+    # Rationale: the e2e write+index path is subject to an unrelated
+    # pre-existing bug in txtai's graph backend (NotNullViolation on the
+    # ``edges`` table — see daemon logs) that prevents new files from
+    # reaching the txtai sections table during this run. The purge
+    # endpoint itself operates on ``document_chunks`` via SQL, so we
+    # can test its correctness against hand-crafted rows that don't
+    # need the upstream write pipeline.
+    http_call("POST", "/api/v2/search/indexing-mode", {"mode": "scoped", "zone_id": TEST_ZONE})
+    # Start clean: nothing left from previous runs.
+    psql(f"DELETE FROM indexed_directories WHERE zone_id='{TEST_ZONE}'")
+    psql(
+        "DELETE FROM document_chunks WHERE path_id IN ("
+        "  SELECT path_id FROM file_paths WHERE virtual_path LIKE '/e2e_purge%'"
+        ")"
+    )
+    psql("DELETE FROM file_paths WHERE virtual_path LIKE '/e2e_purge%'")
+
+    status, _ = http_call("POST", "/api/v2/search/index-directory", {"path": "/e2e_purge/keeper"})
+    check("purge setup: register /e2e_purge/keeper", status == 200)
+    status, _ = http_call("POST", "/api/v2/search/index-directory", {"path": "/e2e_purge/temp"})
+    check("purge setup: register /e2e_purge/temp", status == 200)
+
+    keeper_path = "/e2e_purge/keeper/stays.md"
+    temp_path = "/e2e_purge/temp/will_be_purged.md"
+
+    # Insert fake file_paths + document_chunks rows directly. The
+    # purge_unscoped_embeddings method filters on file_paths.virtual_path
+    # joined against indexed_directories, so we need both tables
+    # populated.  For this test we don't need real embeddings — the
+    # method deletes from document_chunks based on the scope rules.
+    psql(
+        "INSERT INTO file_paths "
+        "(path_id, virtual_path, zone_id, backend_id, physical_path, "
+        " size_bytes, created_at, updated_at, current_version, deleted_at) "
+        "VALUES "
+        f" ('e2e-keeper-1', '{keeper_path}', '{TEST_ZONE}', 'local', "
+        f"  '/fake/keeper', 11, NOW(), NOW(), 1, NULL), "
+        f" ('e2e-temp-1', '{temp_path}', '{TEST_ZONE}', 'local', "
+        f"  '/fake/temp', 9, NOW(), NOW(), 1, NULL)"
+    )
+    psql(
+        "INSERT INTO document_chunks "
+        "(path_id, chunk_index, chunk_text, chunk_tokens, created_at) "
+        "VALUES "
+        "  ('e2e-keeper-1', 0, 'keeper test', 2, NOW()), "
+        "  ('e2e-temp-1', 0, 'temp test', 2, NOW())"
+    )
+
+    keeper_chunks_before = int(
+        psql(
+            "SELECT COUNT(*) FROM document_chunks c JOIN file_paths fp "
+            f"ON c.path_id = fp.path_id WHERE fp.virtual_path = '{keeper_path}'"
+        )
+        or "0"
+    )
+    temp_chunks_before = int(
+        psql(
+            "SELECT COUNT(*) FROM document_chunks c JOIN file_paths fp "
+            f"ON c.path_id = fp.path_id WHERE fp.virtual_path = '{temp_path}'"
+        )
+        or "0"
+    )
+    check(
+        f"seeded keeper document_chunks ({keeper_chunks_before})",
+        keeper_chunks_before == 1,
+    )
+    check(
+        f"seeded temp document_chunks ({temp_chunks_before})",
+        temp_chunks_before == 1,
+    )
+
+    # Unregister /e2e_purge/temp — now temp_path is out of scope.
+    status, _ = http_call("DELETE", "/api/v2/search/index-directory", {"path": "/e2e_purge/temp"})
+    check("unregister /e2e_purge/temp → 200", status == 200)
+
+    # Call /purge-unscoped. This should delete temp_path's chunks but
+    # leave keeper_path alone because /e2e_purge/keeper is still registered.
+    status, body = http_call("POST", "/api/v2/search/purge-unscoped", {})
+    check(
+        "POST /purge-unscoped → 200",
+        status == 200,
+        f"got {status}: {body}",
+    )
+    purged = (body or {}).get("purged") or {}
+    check(
+        f"purge reported document_chunks deleted >= 1 ({purged})",
+        isinstance(purged, dict) and purged.get("document_chunks", 0) >= 1,
+        str(purged),
+    )
+
+    keeper_chunks_after = int(
+        psql(
+            "SELECT COUNT(*) FROM document_chunks c JOIN file_paths fp "
+            f"ON c.path_id = fp.path_id WHERE fp.virtual_path = '{keeper_path}'"
+        )
+        or "0"
+    )
+    temp_chunks_after = int(
+        psql(
+            "SELECT COUNT(*) FROM document_chunks c JOIN file_paths fp "
+            f"ON c.path_id = fp.path_id WHERE fp.virtual_path = '{temp_path}'"
+        )
+        or "0"
+    )
+    check(
+        f"after purge: keeper rows PRESERVED ({keeper_chunks_after})",
+        keeper_chunks_after == 1,
+        f"keeper chunks dropped from {keeper_chunks_before} to {keeper_chunks_after}",
+    )
+    check(
+        f"after purge: temp rows DELETED ({temp_chunks_after})",
+        temp_chunks_after == 0,
+        f"temp still has {temp_chunks_after} chunks after purge",
+    )
+
+    # Cleanup purge test state.
+    psql("DELETE FROM document_chunks WHERE path_id IN ('e2e-keeper-1', 'e2e-temp-1')")
+    psql("DELETE FROM file_paths WHERE path_id IN ('e2e-keeper-1', 'e2e-temp-1')")
+    http_call("DELETE", "/api/v2/search/index-directory", {"path": "/e2e_purge/keeper"})
+
+    # -------------------------------------------------------------------------
+    print("\n=== 10. CLEANUP ===")
     # -------------------------------------------------------------------------
     for path in list(INDEXED_FILES) + list(UNINDEXED_FILES):
         with contextlib.suppress(Exception):

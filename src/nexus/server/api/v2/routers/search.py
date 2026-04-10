@@ -673,14 +673,14 @@ async def _require_admin_or_path_write(
     """Policy gate for directory-scope mutation endpoints (Issue #3698 #6.7).
 
     Policy: admin bypass, otherwise require write permission on the target
-    path via the async permission enforcer if one is configured. If no
-    enforcer is available, deny (fail-closed) — callers without an enforcer
-    should be admin-only by deployment configuration.
+    path via the (sync) ``permission_enforcer`` wired onto ``app.state``.
+    If no enforcer is available, deny (fail-closed) — a deployment without
+    a permission enforcer should be admin-only for mutation endpoints.
     """
     if auth_result.get("is_admin", False):
         return
 
-    enforcer = getattr(request.app.state, "async_permission_enforcer", None)
+    enforcer = getattr(request.app.state, "permission_enforcer", None)
     if enforcer is None:
         # Fail closed — no enforcer wired means non-admins cannot mutate
         # index scope. Admins already bypassed above.
@@ -701,7 +701,8 @@ async def _require_admin_or_path_write(
         subject_id=auth_result.get("subject_id"),
     )
     try:
-        allowed = await enforcer.check_permission(directory_path, Permission.WRITE, ctx)
+        # PermissionEnforcer.check is sync — no await.
+        allowed = bool(enforcer.check(directory_path, Permission.WRITE, ctx))
     except Exception as exc:
         logger.warning("ReBAC write check failed for %s: %s", directory_path, exc)
         raise HTTPException(status_code=500, detail="permission check failed") from exc

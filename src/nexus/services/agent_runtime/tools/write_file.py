@@ -23,7 +23,7 @@ class WriteFileTool:
         "required": ["path", "content"],
     }
 
-    def __init__(self, sys_write: Callable[[str, bytes], Any]) -> None:
+    def __init__(self, sys_write: Callable[..., Any]) -> None:
         self._sys_write = sys_write
 
     async def call(self, *, path: str, content: str, **_: Any) -> str:

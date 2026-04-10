@@ -23,7 +23,7 @@ from collections.abc import Awaitable, Callable
 logger = logging.getLogger(__name__)
 
 # Type alias for injected kernel callable
-SysReadFn = Callable[[str], bytes | Awaitable[bytes]]
+SysReadFn = Callable[..., Any]
 
 # Optional prompt fragment names (loaded from {agent_path}/prompts/{name}.md)
 _PROMPT_FRAGMENTS = (

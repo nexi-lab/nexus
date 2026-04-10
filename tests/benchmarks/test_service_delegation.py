@@ -234,14 +234,12 @@ class TestSyncDelegationOverhead:
         """Benchmark sys_readdir() delegation to SearchService."""
 
         def run():
-            delegation_loop.run_until_complete(
-                mock_nexus_fs.sys_readdir(
-                    path="/data",
-                    recursive=True,
-                    details=False,
-                    show_parsed=True,
-                    context=context,
-                )
+            mock_nexus_fs.sys_readdir(
+                path="/data",
+                recursive=True,
+                details=False,
+                show_parsed=True,
+                context=context,
             )
 
         benchmark(run)

@@ -28,7 +28,7 @@ class ReadFileTool:
         "required": ["path"],
     }
 
-    def __init__(self, sys_read: Callable[[str], bytes | Awaitable[bytes]]) -> None:
+    def __init__(self, sys_read: Callable[..., Any]) -> None:
         self._sys_read = sys_read
 
     async def call(self, *, path: str, limit: int | None = None, **_: Any) -> str:

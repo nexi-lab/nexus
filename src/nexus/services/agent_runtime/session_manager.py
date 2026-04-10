@@ -25,8 +25,8 @@ from nexus.contracts.vfs_paths import agent as agent_paths
 
 logger = logging.getLogger(__name__)
 
-SysReadFn = Callable[[str], bytes | Awaitable[bytes]]
-SysWriteFn = Callable[[str, bytes], Any]
+SysReadFn = Callable[..., Any]
+SysWriteFn = Callable[..., Any]
 SysReaddirFn = Callable[..., Awaitable[list[Any]]]
 
 

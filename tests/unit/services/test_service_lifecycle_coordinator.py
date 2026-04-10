@@ -234,7 +234,7 @@ class TestUnmountService:
         await coordinator._mount_service("search")
         assert dispatch.read_hook_count == 1
 
-        await coordinator._unmount_service("search")
+        coordinator._unmount_service("search")
         assert dispatch.read_hook_count == 0
 
 
@@ -252,7 +252,7 @@ class TestUnregisterServiceFull:
         svc = _FakeService()
         coordinator._register_service("search", svc)
         await coordinator._mount_service("search")
-        await coordinator.unregister_service_full("search")
+        coordinator.unregister_service_full("search")
 
         # Gone from registry
         assert coordinator.service("search") is None

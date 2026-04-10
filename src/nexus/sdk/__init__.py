@@ -17,8 +17,8 @@ Quick Start (Local - Verified):
     >>> from nexus.sdk import connect
     >>>
     >>> nx = connect(config={"profile": "slim", "data_dir": "./nexus-data"})
-    >>> await nx.sys_write("/workspace/file.txt", b"Hello World")
-    >>> content = await nx.sys_read("/workspace/file.txt")
+    >>> nx.sys_write("/workspace/file.txt", b"Hello World")
+    >>> content = nx.sys_read("/workspace/file.txt")
 
 Quick Start (Remote):
     >>> from nexus.sdk import connect
@@ -32,12 +32,12 @@ Quick Start (Remote):
     >>> nx = connect(config={"profile": "remote", "url": "http://localhost:2026"})
     >>>
     >>> # File operations
-    >>> await nx.sys_write("/workspace/file.txt", b"Hello World")
-    >>> content = await nx.sys_read("/workspace/file.txt")
-    >>> await nx.sys_unlink("/workspace/file.txt")
+    >>> nx.sys_write("/workspace/file.txt", b"Hello World")
+    >>> content = nx.sys_read("/workspace/file.txt")
+    >>> nx.sys_unlink("/workspace/file.txt")
     >>>
     >>> # Discovery
-    >>> files = await nx.sys_readdir("/workspace", recursive=True)
+    >>> files = nx.sys_readdir("/workspace", recursive=True)
     >>> python_files = nx.glob("**/*.py")
     >>> todos = nx.grep("TODO", file_pattern="**/*.py")
 
@@ -204,8 +204,8 @@ async def connect(
     Examples:
         >>> # Use local backend (default)
         >>> nx = connect()
-        >>> await nx.sys_write("/workspace/file.txt", b"Hello World")
-        >>> content = await nx.sys_read("/workspace/file.txt")
+        >>> nx.sys_write("/workspace/file.txt", b"Hello World")
+        >>> content = nx.sys_read("/workspace/file.txt")
 
         >>> # Use GCS backend
         >>> nx = connect(config={

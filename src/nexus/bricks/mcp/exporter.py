@@ -629,7 +629,7 @@ class MCPToolExporter:
         if self._filesystem:
             # Create directory
             try:
-                await self._filesystem.mkdir(tool_dir, parents=True)
+                self._filesystem.mkdir(tool_dir, parents=True)
             except FileExistsError:
                 pass
             except OSError as e:

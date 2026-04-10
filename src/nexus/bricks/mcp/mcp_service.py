@@ -214,7 +214,7 @@ class MCPService:
                 if self._filesystem is None:
                     raise RuntimeError("Filesystem not configured for MCPService")
 
-                items = await self._filesystem.sys_readdir(mount.tools_path, recursive=False)
+                items = self._filesystem.sys_readdir(mount.tools_path, recursive=False)
 
                 for item in items:
                     if isinstance(item, str) and item.endswith(".json"):
@@ -223,7 +223,7 @@ class MCPService:
                             continue
                         try:
                             # Read tool definition file
-                            raw = await self._filesystem.sys_read(item)
+                            raw = self._filesystem.sys_read(item)
                             if isinstance(raw, bytes):
                                 text = raw.decode("utf-8")
                             elif isinstance(raw, str):
@@ -745,7 +745,7 @@ class MCPService:
 
             try:
                 if self._filesystem is not None:
-                    await self._filesystem.mkdir(readme_path, parents=True, exist_ok=True)
+                    self._filesystem.mkdir(readme_path, parents=True, exist_ok=True)
                     await self._filesystem.write(
                         readme_file, readme_md.encode("utf-8"), context=context
                     )

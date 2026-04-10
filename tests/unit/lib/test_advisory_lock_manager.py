@@ -157,7 +157,7 @@ async def test_force_release(mgr):
     assert result is True
 
     # Should no longer be locked
-    assert await mgr.is_locked("/locked") is False
+    assert mgr.is_locked("/locked") is False
 
 
 @pytest.mark.asyncio
@@ -170,7 +170,7 @@ async def test_force_release_no_lock(mgr):
 @pytest.mark.asyncio
 async def test_get_lock_info_none(mgr):
     """get_lock_info returns None when not locked."""
-    info = await mgr.get_lock_info("/file.txt")
+    info = mgr.get_lock_info("/file.txt")
     assert info is None
 
 
@@ -180,7 +180,7 @@ async def test_get_lock_info_with_data(mgr):
     lock_id = await mgr.acquire("/file.txt")
     assert lock_id is not None
 
-    info = await mgr.get_lock_info("/file.txt")
+    info = mgr.get_lock_info("/file.txt")
     assert info is not None
     assert info.path == "/file.txt"
     assert info.mode == "mutex"
@@ -199,7 +199,7 @@ async def test_get_lock_info_semaphore(mgr):
     assert h1 is not None
     assert h2 is not None
 
-    info = await mgr.get_lock_info("/slots")
+    info = mgr.get_lock_info("/slots")
     assert info is not None
     assert info.mode == "semaphore"
 
@@ -211,7 +211,7 @@ async def test_get_lock_info_semaphore(mgr):
 @pytest.mark.asyncio
 async def test_list_locks_empty(mgr):
     """list_locks returns empty list when no locks."""
-    locks = await mgr.list_locks()
+    locks = mgr.list_locks()
     assert locks == []
 
 
@@ -223,7 +223,7 @@ async def test_list_locks_with_pattern(mgr):
     assert h1 is not None
     assert h2 is not None
 
-    locks = await mgr.list_locks(pattern="/a/")
+    locks = mgr.list_locks(pattern="/a/")
     assert len(locks) == 1
     assert locks[0].path == "/a/file.txt"
 
@@ -235,11 +235,11 @@ async def test_list_locks_with_pattern(mgr):
 @pytest.mark.asyncio
 async def test_is_locked(mgr):
     """is_locked returns True when locked, False otherwise."""
-    assert await mgr.is_locked("/file.txt") is False
+    assert mgr.is_locked("/file.txt") is False
 
     lock_id = await mgr.acquire("/file.txt")
     assert lock_id is not None
-    assert await mgr.is_locked("/file.txt") is True
+    assert mgr.is_locked("/file.txt") is True
 
     # Cleanup
     await mgr.release(lock_id, "/file.txt")
@@ -267,7 +267,7 @@ async def test_shared_locks_coexist(mgr):
     assert h1 != h2
 
     # Both should be tracked
-    assert await mgr.is_locked("/shared.txt") is True
+    assert mgr.is_locked("/shared.txt") is True
 
     # Cleanup
     await mgr.release(h1, "/shared.txt")

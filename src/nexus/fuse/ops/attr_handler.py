@@ -101,7 +101,7 @@ class AttrHandler:
             raise FuseOSError(errno.EROFS)
 
         if await ctx.nexus_fs.access(original_path):
-            raw_content = await ctx.nexus_fs.sys_read(original_path, context=ctx.context)
+            raw_content = ctx.nexus_fs.sys_read(original_path, context=ctx.context)
             assert isinstance(raw_content, bytes), "Expected bytes from read()"
             content = raw_content
         else:

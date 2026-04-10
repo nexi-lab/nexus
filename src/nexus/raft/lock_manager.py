@@ -177,13 +177,13 @@ class RaftLockManager(LockManagerBase):
                 return ExtendResult(success=False)
 
             logger.debug("Raft lock extended: %s (new TTL: %ss)", lock_key, ttl)
-            lock_info = await self.get_lock_info(path)
+            lock_info = self.get_lock_info(path)
             return ExtendResult(success=True, lock_info=lock_info)
         except Exception as e:
             logger.error("Failed to extend Raft lock %s: %s", lock_key, e)
             return ExtendResult(success=False)
 
-    async def get_lock_info(self, path: str) -> LockInfo | None:
+    def get_lock_info(self, path: str) -> LockInfo | None:
         lock_key = self._lock_key(path)
         try:
             store_info = self._store.get_lock_info(lock_key)
@@ -194,7 +194,7 @@ class RaftLockManager(LockManagerBase):
             logger.error("Failed to get lock info for %s: %s", lock_key, e)
             return None
 
-    async def list_locks(self, pattern: str = "", limit: int = 100) -> list[LockInfo]:
+    def list_locks(self, pattern: str = "", limit: int = 100) -> list[LockInfo]:
         try:
             store_locks = self._store.list_locks(prefix="", limit=limit)
             if store_locks is None:

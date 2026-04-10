@@ -126,7 +126,7 @@ async def test_delete_operation_logged(nx: NexusFS, record_store: SQLAlchemyReco
     # Write and then delete (use write() to get metadata dict with etag)
     result = await nx.write(path, content)
     content_hash = result["etag"]
-    await nx.sys_unlink(path)
+    nx.sys_unlink(path)
     await _flush(nx)
 
     # Check operation log
@@ -161,7 +161,7 @@ async def test_rename_operation_logged(nx: NexusFS, record_store: SQLAlchemyReco
 
     # Write and then rename
     await nx.write(old_path, content)
-    await nx.sys_rename(old_path, new_path)
+    nx.sys_rename(old_path, new_path)
     await _flush(nx)
 
     # Check operation log — two-row rename pattern (Issue #2929)
@@ -224,8 +224,8 @@ async def test_operation_log_filtering_by_type(
     # Perform various operations
     await nx.write(path, b"Content")
     await nx.write(path, b"Updated")
-    await nx.sys_rename(path, "/renamed.txt")
-    await nx.sys_unlink("/renamed.txt")
+    nx.sys_rename(path, "/renamed.txt")
+    nx.sys_unlink("/renamed.txt")
     await _flush(nx)
 
     # Check operation log filtering
@@ -298,7 +298,7 @@ async def test_undo_write_new_file(nx: NexusFS) -> None:
     assert await nx.access(path)
 
     # Undo by deleting the file
-    await nx.sys_unlink(path)
+    nx.sys_unlink(path)
     assert not await nx.access(path)
 
 
@@ -333,7 +333,7 @@ async def test_undo_write_update(
         await nx.write(path, old_content)
 
         # Verify restoration
-        restored_content = await nx.sys_read(path)
+        restored_content = nx.sys_read(path)
         assert restored_content == content1
 
 
@@ -349,7 +349,7 @@ async def test_undo_delete(
     result = await nx.write(path, content)
     content_hash = result["etag"]
     local_backend.write_content(content)  # Hold extra CAS reference so blob survives unlink
-    await nx.sys_unlink(path)
+    nx.sys_unlink(path)
     await _flush(nx)
     assert not await nx.access(path)
 
@@ -367,7 +367,7 @@ async def test_undo_delete(
 
         # Verify restoration
         assert await nx.access(path)
-        assert await nx.sys_read(path) == content
+        assert nx.sys_read(path) == content
 
 
 @pytest.mark.asyncio
@@ -384,7 +384,7 @@ async def test_undo_rename(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> 
 
     # Write and rename
     await nx.write(old_path, content)
-    await nx.sys_rename(old_path, new_path)
+    nx.sys_rename(old_path, new_path)
     await _flush(nx)
     assert not await nx.access(old_path)
     assert await nx.access(new_path)
@@ -402,7 +402,7 @@ async def test_undo_rename(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> 
         assert delete_row.new_path == new_path
 
         # Undo by renaming back
-        await nx.sys_rename(new_path, old_path)
+        nx.sys_rename(new_path, old_path)
 
         # Verify undo
         assert await nx.access(old_path)

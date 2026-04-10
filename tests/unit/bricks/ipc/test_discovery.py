@@ -21,9 +21,9 @@ async def _create_agent(
     status: str = "connected",
 ) -> None:
     """Helper: create agent directory and AGENT.json."""
-    await vfs.mkdir(f"/agents/{agent_id}", ZONE)
-    await vfs.mkdir(f"/agents/{agent_id}/inbox", ZONE)
-    await vfs.mkdir("/agents", ZONE)
+    vfs.mkdir(f"/agents/{agent_id}", ZONE)
+    vfs.mkdir(f"/agents/{agent_id}/inbox", ZONE)
+    vfs.mkdir("/agents", ZONE)
     card = {
         "name": name or agent_id,
         "agent_id": agent_id,

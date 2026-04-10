@@ -180,7 +180,7 @@ async def list_inbox(
         from nexus.contracts.types import OperationContext
 
         _ctx = OperationContext(user_id="system", groups=[], zone_id=zone_id, is_system=True)
-        filenames = await vfs.sys_readdir(inbox_path(agent_id), recursive=False, context=_ctx)
+        filenames = vfs.sys_readdir(inbox_path(agent_id), recursive=False, context=_ctx)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -209,7 +209,7 @@ async def inbox_count(
         from nexus.contracts.types import OperationContext
 
         _ctx = OperationContext(user_id="system", groups=[], zone_id=zone_id, is_system=True)
-        _entries = await vfs.sys_readdir(inbox_path(agent_id), recursive=False, context=_ctx)
+        _entries = vfs.sys_readdir(inbox_path(agent_id), recursive=False, context=_ctx)
         count = len(_entries)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

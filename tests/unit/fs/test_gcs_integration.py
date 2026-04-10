@@ -218,7 +218,7 @@ class TestGCSBackendLifecycle:
     @pytest.mark.asyncio
     async def test_mkdir(self, gcs_fs):
         fs, mp = gcs_fs
-        await fs.mkdir(f"{mp}/subdir")
+        fs.mkdir(f"{mp}/subdir")
         stat = await fs.stat(f"{mp}/subdir")
         assert stat is not None
         assert stat["is_directory"] is True

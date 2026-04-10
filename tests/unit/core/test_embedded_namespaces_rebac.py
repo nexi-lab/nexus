@@ -56,18 +56,18 @@ async def test_workspace_namespace_operations():
         await nx.write("/workspace/acme/agent1/code.py", b"print('hello')", context=ctx)
 
         # Read back
-        content = await nx.sys_read("/workspace/acme/agent1/code.py", context=ctx)
+        content = nx.sys_read("/workspace/acme/agent1/code.py", context=ctx)
         assert content == b"print('hello')"
 
         # Check existence
         assert await nx.access("/workspace/acme/agent1/code.py", context=ctx)
 
         # List files
-        files = await nx.sys_readdir("/workspace/acme/agent1", context=ctx)
+        files = nx.sys_readdir("/workspace/acme/agent1", context=ctx)
         assert "/workspace/acme/agent1/code.py" in files
 
         # Delete
-        await nx.sys_unlink("/workspace/acme/agent1/code.py", context=ctx)
+        nx.sys_unlink("/workspace/acme/agent1/code.py", context=ctx)
         assert not await nx.access("/workspace/acme/agent1/code.py", context=ctx)
 
         nx.close()
@@ -99,15 +99,15 @@ async def test_shared_namespace_operations():
         await nx.write("/shared/acme/models/model.pkl", b"model data", context=ctx)
 
         # Read back
-        content = await nx.sys_read("/shared/acme/models/model.pkl", context=ctx)
+        content = nx.sys_read("/shared/acme/models/model.pkl", context=ctx)
         assert content == b"model data"
 
         # List files
-        files = await nx.sys_readdir("/shared/acme/models", context=ctx)
+        files = nx.sys_readdir("/shared/acme/models", context=ctx)
         assert "/shared/acme/models/model.pkl" in files
 
         # Delete
-        await nx.sys_unlink("/shared/acme/models/model.pkl", context=ctx)
+        nx.sys_unlink("/shared/acme/models/model.pkl", context=ctx)
         assert not await nx.access("/shared/acme/models/model.pkl", context=ctx)
 
         nx.close()
@@ -138,15 +138,15 @@ async def test_external_namespace_operations():
         await nx.write("/external/s3/bucket/file.txt", b"external data", context=ctx)
 
         # Read back
-        content = await nx.sys_read("/external/s3/bucket/file.txt", context=ctx)
+        content = nx.sys_read("/external/s3/bucket/file.txt", context=ctx)
         assert content == b"external data"
 
         # List files
-        files = await nx.sys_readdir("/external/s3/bucket", context=ctx)
+        files = nx.sys_readdir("/external/s3/bucket", context=ctx)
         assert "/external/s3/bucket/file.txt" in files
 
         # Delete
-        await nx.sys_unlink("/external/s3/bucket/file.txt", context=ctx)
+        nx.sys_unlink("/external/s3/bucket/file.txt", context=ctx)
         assert not await nx.access("/external/s3/bucket/file.txt", context=ctx)
 
         nx.close()
@@ -229,7 +229,7 @@ async def test_namespace_isolation_between_zones():
         )
 
         # Verify isolation - each zone sees only their data
-        acme_content = await nx.sys_read(
+        acme_content = nx.sys_read(
             "/workspace/acme/agent1/secret.txt",
             context=OperationContext(
                 user_id="agent1",
@@ -240,7 +240,7 @@ async def test_namespace_isolation_between_zones():
                 is_admin=False,
             ),
         )
-        globex_content = await nx.sys_read(
+        globex_content = nx.sys_read(
             "/workspace/globex/agent1/secret.txt",
             context=OperationContext(
                 user_id="agent1",

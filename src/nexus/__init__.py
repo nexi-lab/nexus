@@ -19,8 +19,8 @@ For programmatic access (building tools, libraries, integrations), use the SDK:
     from nexus.sdk import connect
 
     nx = connect(config={"profile": "slim", "data_dir": "./nexus-data"})
-    await nx.sys_write("/workspace/data.txt", b"Hello World")
-    content = await nx.sys_read("/workspace/data.txt")
+    nx.sys_write("/workspace/data.txt", b"Hello World")
+    content = nx.sys_read("/workspace/data.txt")
 
 For command-line usage, use the nexus CLI:
 
@@ -237,7 +237,7 @@ async def connect(
 
         Default (development/testing):
             >>> nx = nexus.connect()
-            >>> await nx.sys_write("/workspace/file.txt", b"Hello World")
+            >>> nx.sys_write("/workspace/file.txt", b"Hello World")
 
         Federation (auto-detected when Rust extensions available):
             >>> # Requires NEXUS_PEERS, NEXUS_BIND_ADDR env vars

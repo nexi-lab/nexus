@@ -135,7 +135,7 @@ class TestTimeTravelDebug:
 
         # Delete file — hold extra CAS reference so blob survives unlink
         backend.write_content(b"Content before delete")
-        await nx.sys_unlink(path)
+        nx.sys_unlink(path)
         await _flush(nx)
 
         with record_store.session_factory() as session:
@@ -285,7 +285,7 @@ class TestTimeTravelDebug:
 
         # Delete file -- hold extra CAS reference so blob survives unlink
         backend.write_content(b"Will be deleted")
-        await nx.sys_unlink(path)
+        nx.sys_unlink(path)
         await _flush(nx)
 
         with record_store.session_factory() as session:

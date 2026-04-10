@@ -413,16 +413,16 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
 
     # -- umount — unregister VFS hooks ------------------------------------
 
-    async def _unmount_service(self, name: str) -> None:
+    def _unmount_service(self, name: str) -> None:
         """Unmount: unregister VFS hooks."""
         self._unregister_hooks(name)
         logger.info("[COORDINATOR] umount %r", name)
 
     # -- rmmod — unregister from Registry ----------------------------------
 
-    async def unregister_service_full(self, name: str) -> None:
+    def unregister_service_full(self, name: str) -> None:
         """Fully remove a service: unmount hooks, then unregister."""
-        await self._unmount_service(name)
+        self._unmount_service(name)
         self.unregister_service(name)
         self._hook_specs.pop(name, None)
         logger.info("[COORDINATOR] rmmod %r", name)

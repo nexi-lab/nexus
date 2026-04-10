@@ -42,7 +42,7 @@ class TestAgentProvisioner:
             skills=["code_review", "security"],
         )
 
-        card_data = await vfs.sys_read(agent_card_path("reviewer"), ZONE)
+        card_data = vfs.sys_read(agent_card_path("reviewer"), ZONE)
         card = json.loads(card_data)
         assert card["name"] == "Code Reviewer"
         assert card["agent_id"] == "reviewer"
@@ -73,7 +73,7 @@ class TestAgentProvisioner:
         await provisioner.provision("analyst")
         await provisioner.deprovision("analyst")
 
-        card_data = await vfs.sys_read(agent_card_path("analyst"), ZONE)
+        card_data = vfs.sys_read(agent_card_path("analyst"), ZONE)
         card = json.loads(card_data)
         assert card["status"] == "deprovisioned"
         assert "deprovisioned_at" in card
@@ -86,7 +86,7 @@ class TestAgentProvisioner:
             metadata={"model": "claude-opus", "version": "4.5"},
         )
 
-        card_data = await vfs.sys_read(agent_card_path("custom_agent"), ZONE)
+        card_data = vfs.sys_read(agent_card_path("custom_agent"), ZONE)
         card = json.loads(card_data)
         assert card["model"] == "claude-opus"
         assert card["version"] == "4.5"

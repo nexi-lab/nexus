@@ -136,7 +136,7 @@ class ZoektPipeConsumer:
             # Signal close via sys_unlink
             if self._nx is not None and self._pipe_ready:
                 with contextlib.suppress(Exception):
-                    await self._nx.sys_unlink(_ZOEKT_PIPE_PATH)
+                    self._nx.sys_unlink(_ZOEKT_PIPE_PATH)
 
             try:
                 await asyncio.wait_for(asyncio.shield(self._consumer_task), timeout=5.0)
@@ -162,7 +162,7 @@ class ZoektPipeConsumer:
                 while self._write_buffer:
                     data = self._write_buffer.popleft()
                     try:
-                        await nx.sys_write(_ZOEKT_PIPE_PATH, data)
+                        nx.sys_write(_ZOEKT_PIPE_PATH, data)
                     except Exception:
                         logger.warning("Zoekt pipe write failed, dropping event")
             await asyncio.sleep(0.01)  # 10ms poll interval
@@ -185,7 +185,7 @@ class ZoektPipeConsumer:
             # If nothing pending, block until first event
             if not pending_paths and not has_sync:
                 try:
-                    first = await nx.sys_read(_ZOEKT_PIPE_PATH)
+                    first = nx.sys_read(_ZOEKT_PIPE_PATH)
                 except NexusFileNotFoundError:
                     logger.debug("Zoekt pipe closed, consumer exiting")
                     break
@@ -202,10 +202,7 @@ class ZoektPipeConsumer:
                 if remaining <= 0:
                     break
                 try:
-                    data = await asyncio.wait_for(
-                        nx.sys_read(_ZOEKT_PIPE_PATH),
-                        timeout=remaining,
-                    )
+                    data = await asyncio.to_thread(nx.sys_read, _ZOEKT_PIPE_PATH)
                     msg = json.loads(data)
                     if msg["type"] == "write":
                         pending_paths.add(msg["path"])

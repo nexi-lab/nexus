@@ -335,7 +335,7 @@ class TestPipedWriteObserverE2E:
             await observer.start()
             try:
                 # Simulate AuditWriteInterceptor writing an event
-                await mock_nx.sys_write(_AUDIT_PIPE_PATH, _make_write_event("/workspace/test.txt"))
+                mock_nx.sys_write(_AUDIT_PIPE_PATH, _make_write_event("/workspace/test.txt"))
                 for _ in range(50):
                     if observer._total_flushed >= 1:
                         break
@@ -365,7 +365,7 @@ class TestPipedWriteObserverE2E:
             await observer.start()
             try:
                 for i in range(5):
-                    await mock_nx.sys_write(
+                    mock_nx.sys_write(
                         _AUDIT_PIPE_PATH,
                         _make_write_event(f"/workspace/file{i}.txt", size=i * 10),
                     )
@@ -397,9 +397,7 @@ class TestPipedWriteObserverE2E:
         ):
             await observer.start()
             try:
-                await mock_nx.sys_write(
-                    _AUDIT_PIPE_PATH, _make_delete_event("/workspace/deleted.txt")
-                )
+                mock_nx.sys_write(_AUDIT_PIPE_PATH, _make_delete_event("/workspace/deleted.txt"))
                 for _ in range(50):
                     if observer._total_flushed >= 1:
                         break
@@ -484,11 +482,9 @@ class TestPipedWriteObserverE2E:
         ):
             await observer.start()
             try:
-                await mock_nx.sys_write(
-                    _AUDIT_PIPE_PATH, _make_write_event("/workspace/metrics.txt")
-                )
-                await mock_nx.sys_write(_AUDIT_PIPE_PATH, _make_mkdir_event("/workspace/newdir"))
-                await mock_nx.sys_write(_AUDIT_PIPE_PATH, _make_rmdir_event("/workspace/olddir"))
+                mock_nx.sys_write(_AUDIT_PIPE_PATH, _make_write_event("/workspace/metrics.txt"))
+                mock_nx.sys_write(_AUDIT_PIPE_PATH, _make_mkdir_event("/workspace/newdir"))
+                mock_nx.sys_write(_AUDIT_PIPE_PATH, _make_rmdir_event("/workspace/olddir"))
 
                 for _ in range(50):
                     if observer._total_flushed >= 3:

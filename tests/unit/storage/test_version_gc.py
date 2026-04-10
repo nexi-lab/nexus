@@ -183,7 +183,7 @@ class TestVersionHistoryGC:
         gc.run_gc(config, dry_run=True)
 
         # Verify current version still readable
-        content = await nx.sys_read(path)
+        content = nx.sys_read(path)
         assert content == b"Version 5"
 
     @pytest.mark.asyncio
@@ -308,7 +308,7 @@ class TestVersionHistoryGC:
         # All files should still be readable
         for file_num in range(3):
             path = f"/workspace/file{file_num}.txt"
-            content = await nx.sys_read(path)
+            content = nx.sys_read(path)
             assert b"Version 4" in content  # Latest version
 
     @pytest.mark.asyncio

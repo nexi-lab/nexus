@@ -28,7 +28,7 @@ class TestWriteBatchHappyPath:
         results = await nx.write_batch([("/files/a.txt", b"hello")])
         assert len(results) == 1
         assert results[0]["size"] == 5
-        assert await nx.sys_read("/files/a.txt") == b"hello"
+        assert nx.sys_read("/files/a.txt") == b"hello"
 
     @pytest.mark.asyncio
     async def test_write_batch_multiple_files(self, nx):
@@ -40,7 +40,7 @@ class TestWriteBatchHappyPath:
         results = await nx.write_batch(files)
         assert len(results) == 3
         for i, (path, content) in enumerate(files):
-            assert await nx.sys_read(path) == content
+            assert nx.sys_read(path) == content
             assert results[i]["size"] == len(content)
 
     @pytest.mark.asyncio
@@ -139,14 +139,14 @@ class TestWriteBatchContentEdgeCases:
     async def test_empty_content(self, nx):
         results = await nx.write_batch([("/files/empty.txt", b"")])
         assert results[0]["size"] == 0
-        assert await nx.sys_read("/files/empty.txt") == b""
+        assert nx.sys_read("/files/empty.txt") == b""
 
     @pytest.mark.asyncio
     async def test_binary_content(self, nx):
         binary = bytes(range(256))
         results = await nx.write_batch([("/files/binary.bin", binary)])
         assert results[0]["size"] == 256
-        assert await nx.sys_read("/files/binary.bin") == binary
+        assert nx.sys_read("/files/binary.bin") == binary
 
     @pytest.mark.asyncio
     async def test_large_batch(self, nx):
@@ -155,8 +155,8 @@ class TestWriteBatchContentEdgeCases:
         results = await nx.write_batch(files)
         assert len(results) == 50
         # Spot-check a few
-        assert await nx.sys_read("/files/file_000.txt") == b"content_0"
-        assert await nx.sys_read("/files/file_049.txt") == b"content_49"
+        assert nx.sys_read("/files/file_000.txt") == b"content_0"
+        assert nx.sys_read("/files/file_049.txt") == b"content_49"
 
 
 class TestWriteBatchPathValidation:

@@ -128,12 +128,12 @@ async def _bench_sys_write(nx, data: bytes) -> list[float]:
     """[2] nx.sys_write(pipe_path, data) — full syscall path."""
     # warmup
     for _ in range(WARMUP):
-        await nx.sys_write(_BENCH_PIPE_PATH, data)
+        nx.sys_write(_BENCH_PIPE_PATH, data)
 
     times: list[float] = []
     for _ in range(ITERATIONS):
         t0 = time.perf_counter()
-        await nx.sys_write(_BENCH_PIPE_PATH, data)
+        nx.sys_write(_BENCH_PIPE_PATH, data)
         t1 = time.perf_counter()
         times.append((t1 - t0) * 1_000_000)
     return times
@@ -200,13 +200,13 @@ async def _bench_sys_read(nx, kernel, data: bytes) -> list[float]:
     # warmup
     for _ in range(WARMUP):
         kernel.pipe_write_nowait(_BENCH_PIPE_PATH, data)
-        await nx.sys_read(_BENCH_PIPE_PATH)
+        nx.sys_read(_BENCH_PIPE_PATH)
 
     times: list[float] = []
     for _ in range(ITERATIONS):
         kernel.pipe_write_nowait(_BENCH_PIPE_PATH, data)
         t0 = time.perf_counter()
-        await nx.sys_read(_BENCH_PIPE_PATH)
+        nx.sys_read(_BENCH_PIPE_PATH)
         t1 = time.perf_counter()
         times.append((t1 - t0) * 1_000_000)
     return times

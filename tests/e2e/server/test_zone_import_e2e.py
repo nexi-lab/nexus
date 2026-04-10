@@ -116,7 +116,7 @@ class TestZoneImportService:
         assert await target_nexus_fs.access("/docs/guide.txt")
 
         # Verify content is correct
-        content = await target_nexus_fs.sys_read("/workspace/readme.md")
+        content = target_nexus_fs.sys_read("/workspace/readme.md")
         assert b"Test Project" in content
 
     def test_import_with_target_zone_remap(self, exported_bundle, target_nexus_fs):
@@ -174,7 +174,7 @@ class TestConflictResolution:
         assert result.files_created == 3  # Other 3 files created
 
         # Original content should be preserved
-        content = await target_nexus_fs.sys_read("/workspace/readme.md")
+        content = target_nexus_fs.sys_read("/workspace/readme.md")
         assert content == b"Existing content"
 
     @pytest.mark.asyncio
@@ -196,7 +196,7 @@ class TestConflictResolution:
         assert result.files_created == 3
 
         # Content should be from bundle
-        content = await target_nexus_fs.sys_read("/workspace/readme.md")
+        content = target_nexus_fs.sys_read("/workspace/readme.md")
         assert b"Test Project" in content
 
     @pytest.mark.asyncio
@@ -358,6 +358,6 @@ class TestRoundTrip:
             "/workspace/src/utils.py",
             "/docs/guide.txt",
         ]:
-            source_content = await source_nexus_fs.sys_read(path)
-            target_content = await target_nexus_fs.sys_read(path)
+            source_content = source_nexus_fs.sys_read(path)
+            target_content = target_nexus_fs.sys_read(path)
             assert source_content == target_content, f"Content mismatch for {path}"

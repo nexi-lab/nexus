@@ -98,7 +98,7 @@ class InMemoryStorageDriver:
     # Alias for backward compatibility
     async def list_dir(self, path: str, zone_id: str) -> list[str]:
         ctx = type("Ctx", (), {"zone_id": zone_id})()
-        return await self.sys_readdir(path, recursive=False, context=ctx)
+        return self.sys_readdir(path, recursive=False, context=ctx)
 
     async def sys_rename(
         self, src: str, dst: str, zone_id_compat: str | None = None, *, context: Any = None
@@ -118,7 +118,7 @@ class InMemoryStorageDriver:
     # Alias for backward compatibility
     async def rename(self, src: str, dst: str, zone_id: str) -> None:
         ctx = type("Ctx", (), {"zone_id": zone_id})()
-        await self.sys_rename(src, dst, context=ctx)
+        self.sys_rename(src, dst, context=ctx)
 
     async def mkdir(
         self,

@@ -36,7 +36,7 @@ async def handle_delta_read(nexus_fs: "NexusFS", params: Any, context: Any) -> d
     from nexus.core.hash_fast import hash_content
 
     # Read current file content — sys_read (Tier 1) always returns bytes
-    content = await nexus_fs.sys_read(params.path, context=context)
+    content = nexus_fs.sys_read(params.path, context=context)
     if isinstance(content, str):
         content = content.encode("utf-8")
 
@@ -137,7 +137,7 @@ async def handle_delta_write(nexus_fs: "NexusFS", params: Any, context: Any) -> 
 
     try:
         # sys_read (Tier 1) always returns bytes
-        current_content = await nexus_fs.sys_read(params.path, context=context)
+        current_content = nexus_fs.sys_read(params.path, context=context)
         if isinstance(current_content, str):
             current_content = current_content.encode("utf-8")
     except Exception as e:

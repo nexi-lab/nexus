@@ -114,7 +114,7 @@ class TestModifiedAtOnReads:
         time.sleep(0.1)
 
         # Read the file
-        content = await nexus_fs.sys_read(path)
+        content = nexus_fs.sys_read(path)
         assert content == b"test content"
 
         # Check modified_at unchanged
@@ -136,7 +136,7 @@ class TestModifiedAtOnReads:
         # Multiple reads
         for _ in range(10):
             time.sleep(0.02)
-            await nexus_fs.sys_read(path)
+            nexus_fs.sys_read(path)
 
         meta_final = get_metadata(nexus_fs, path)
 
@@ -179,7 +179,7 @@ class TestModifiedAtOnReads:
 
         # List parent directory multiple times
         for _ in range(5):
-            list(await nexus_fs.sys_readdir(parent))
+            list(nexus_fs.sys_readdir(parent))
 
         meta_final = get_metadata(nexus_fs, path)
 
@@ -248,7 +248,7 @@ class TestTimestampsCombined:
         time.sleep(0.1)
 
         # Read file
-        await nexus_fs.sys_read(path)
+        nexus_fs.sys_read(path)
         meta2 = get_metadata(nexus_fs, path)
 
         assert meta2.created_at == meta1.created_at
@@ -341,7 +341,7 @@ class TestDatabaseDirectAccess:
 
         # Perform multiple reads
         for _ in range(5):
-            await nexus_fs.sys_read(path)
+            nexus_fs.sys_read(path)
 
         # Clear cache again
         if hasattr(nexus_fs.metadata, "_cache") and nexus_fs.metadata._cache:

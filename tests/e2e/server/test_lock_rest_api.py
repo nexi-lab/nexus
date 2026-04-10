@@ -264,7 +264,7 @@ class TestLockManagerIntegration:
         assert lock_id is not None
 
         # Check status
-        info = await lock_manager.get_lock_info("root", "/test/file.txt")
+        info = lock_manager.get_lock_info("root", "/test/file.txt")
         assert info is not None
         assert info.mode == "mutex"
         assert len(info.holders) == 1
@@ -280,7 +280,7 @@ class TestLockManagerIntegration:
         assert released is True
 
         # Verify unlocked
-        info = await lock_manager.get_lock_info("root", "/test/file.txt")
+        info = lock_manager.get_lock_info("root", "/test/file.txt")
         assert info is None
 
     @pytest.mark.asyncio
@@ -330,7 +330,7 @@ class TestLockManagerIntegration:
         assert released is True
 
         # Should be unlocked now
-        info = await lock_manager.get_lock_info("root", "/force-test.txt")
+        info = lock_manager.get_lock_info("root", "/force-test.txt")
         assert info is None
 
     @pytest.mark.asyncio
@@ -342,7 +342,7 @@ class TestLockManagerIntegration:
             assert lid is not None
             ids.append((f"/list-test-{i}.txt", lid))
 
-        locks = await lock_manager.list_locks("root", limit=100)
+        locks = lock_manager.list_locks("root", limit=100)
         assert len(locks) >= 3
 
         # Cleanup

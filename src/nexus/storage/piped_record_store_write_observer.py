@@ -171,10 +171,7 @@ class PipedRecordStoreWriteObserver:
         while remaining > 0:
             t0 = time.monotonic()
             try:
-                data = await asyncio.wait_for(
-                    self._nx.sys_read(_AUDIT_PIPE_PATH),
-                    timeout=min(remaining, 0.5),  # per-read cap
-                )
+                data = await asyncio.to_thread(self._nx.sys_read, _AUDIT_PIPE_PATH)
                 batch.append(json.loads(data))
             except TimeoutError:
                 break  # pipe drained (open but empty)
@@ -193,7 +190,7 @@ class PipedRecordStoreWriteObserver:
             # Signal close — wakes blocked consumer via sys_unlink
             if self._nx is not None and self._pipe_ready:
                 with contextlib.suppress(Exception):
-                    await self._nx.sys_unlink(_AUDIT_PIPE_PATH)
+                    self._nx.sys_unlink(_AUDIT_PIPE_PATH)
 
             # Let consumer drain naturally, with timeout
             try:
@@ -263,7 +260,7 @@ class PipedRecordStoreWriteObserver:
         while True:
             # Block until first event arrives
             try:
-                first = await nx.sys_read(_AUDIT_PIPE_PATH)
+                first = nx.sys_read(_AUDIT_PIPE_PATH)
             except NexusFileNotFoundError:
                 logger.debug("Audit pipe closed, consumer exiting")
                 break
@@ -284,9 +281,7 @@ class PipedRecordStoreWriteObserver:
             # OTel uses 200ms, Kafka uses 5ms; 200ms is a good default.
             if len(batch) < _MAX_BATCH_DRAIN and self._linger_s > 0:
                 try:
-                    more = await asyncio.wait_for(
-                        nx.sys_read(_AUDIT_PIPE_PATH), timeout=self._linger_s
-                    )
+                    more = await asyncio.to_thread(nx.sys_read, _AUDIT_PIPE_PATH)
                     batch.append(json.loads(more))
                     # Drain any additional events that arrived during linger
                     for _ in range(_MAX_BATCH_DRAIN - len(batch)):

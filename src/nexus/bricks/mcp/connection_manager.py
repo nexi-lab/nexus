@@ -147,7 +147,7 @@ class MCPConnectionManager:
         """Load existing connections from storage."""
         try:
             if self.filesystem and await self.filesystem.access(self.CONNECTIONS_PATH):
-                items = await self.filesystem.sys_readdir(self.CONNECTIONS_PATH)
+                items = self.filesystem.sys_readdir(self.CONNECTIONS_PATH)
                 for item in items:
                     # Item might be full path, just filename, or dict
                     if isinstance(item, dict):
@@ -158,7 +158,7 @@ class MCPConnectionManager:
                     if item_name.endswith(".json"):
                         path = f"{self.CONNECTIONS_PATH}{item_name}"
                         try:
-                            raw = await self.filesystem.sys_read(path)
+                            raw = self.filesystem.sys_read(path)
                             data = json.loads(
                                 raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
                             )
@@ -176,7 +176,7 @@ class MCPConnectionManager:
             if self.filesystem:
                 # Ensure directory exists
                 try:
-                    await self.filesystem.mkdir(self.CONNECTIONS_PATH, parents=True)
+                    self.filesystem.mkdir(self.CONNECTIONS_PATH, parents=True)
                 except FileExistsError:
                     pass
                 except OSError as e:
@@ -198,7 +198,7 @@ class MCPConnectionManager:
                 filename = f"{provider}_{user_id.replace('@', '_at_')}.json"
                 path = f"{self.CONNECTIONS_PATH}{filename}"
                 if await self.filesystem.access(path):
-                    await self.filesystem.sys_unlink(path)
+                    self.filesystem.sys_unlink(path)
         except Exception as e:
             logger.warning(f"Failed to delete connection file: {e}")
 

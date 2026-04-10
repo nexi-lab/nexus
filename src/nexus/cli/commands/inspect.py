@@ -162,7 +162,7 @@ async def _async_size(
         with console.status(
             f"[nexus.warning]Calculating size of {path}...[/nexus.warning]", spinner="dots"
         ):
-            files_raw = await nx.sys_readdir(path, recursive=True, details=True)
+            files_raw = nx.sys_readdir(path, recursive=True, details=True)
 
         nx.close()
 

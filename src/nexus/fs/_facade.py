@@ -97,7 +97,7 @@ class SlimNexusFS:
         Raises:
             NexusFileNotFoundError: If file does not exist.
         """
-        return await self._kernel.sys_read(path, context=self._ctx)
+        return self._kernel.sys_read(path, context=self._ctx)
 
     async def read_range(self, path: str, start: int, end: int) -> bytes:
         """Read a specific byte range from a file.
@@ -207,7 +207,7 @@ class SlimNexusFS:
         Returns:
             List of paths (detail=False) or list of metadata dicts (detail=True).
         """
-        return await self._kernel.sys_readdir(
+        return self._kernel.sys_readdir(
             path,
             recursive=recursive,
             details=detail,
@@ -221,7 +221,7 @@ class SlimNexusFS:
             path: Directory path to create.
             parents: If True, create parent directories as needed (mkdir -p).
         """
-        await self._kernel.mkdir(
+        self._kernel.mkdir(
             path,
             parents=parents,
             exist_ok=True,
@@ -235,7 +235,7 @@ class SlimNexusFS:
             path: Directory path to remove.
             recursive: If True, remove contents recursively (rm -rf).
         """
-        await self._kernel.rmdir(path, recursive=recursive, context=self._ctx)
+        self._kernel.rmdir(path, recursive=recursive, context=self._ctx)
 
     # -- File operations --
 
@@ -257,7 +257,7 @@ class SlimNexusFS:
             raise ValueError(
                 f"Cannot delete mount root '{normalized}' — use unmount() to remove a mount."
             )
-        await self._kernel.sys_unlink(path, context=self._ctx)
+        self._kernel.sys_unlink(path, context=self._ctx)
 
     async def rename(self, old_path: str, new_path: str) -> None:
         """Rename/move a file.
@@ -266,7 +266,7 @@ class SlimNexusFS:
             old_path: Current file path.
             new_path: New file path.
         """
-        await self._kernel.sys_rename(old_path, new_path, context=self._ctx)
+        self._kernel.sys_rename(old_path, new_path, context=self._ctx)
 
     async def exists(self, path: str) -> bool:
         """Check if a path exists.
@@ -444,7 +444,7 @@ class SlimNexusFS:
 
         # Stream: list files, read and search each one incrementally.
         # Stop as soon as max_results is reached — no unbounded preloading.
-        entries = await self._kernel.sys_readdir(
+        entries = self._kernel.sys_readdir(
             path,
             recursive=True,
             details=True,
@@ -474,7 +474,7 @@ class SlimNexusFS:
             batch_contents: dict[str, bytes] = {}
             for fp in batch:
                 try:
-                    batch_contents[fp] = await self._kernel.sys_read(fp, context=self._ctx)
+                    batch_contents[fp] = self._kernel.sys_read(fp, context=self._ctx)
                 except Exception:
                     continue
 
@@ -532,7 +532,7 @@ class SlimNexusFS:
         Returns:
             List of matching file paths.
         """
-        entries = await self._kernel.sys_readdir(
+        entries = self._kernel.sys_readdir(
             path,
             recursive=True,
             details=False,

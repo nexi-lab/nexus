@@ -762,7 +762,7 @@ class CacheWarmer:
         async with self._semaphore:
             try:
                 # Read file content
-                content = await self._nexus.sys_read(path, context=context)
+                content = self._nexus.sys_read(path, context=context)
                 if content:
                     content_bytes = content if isinstance(content, bytes) else b""
                     self._current_stats.content_warmed += 1
@@ -836,7 +836,7 @@ class CacheWarmer:
 
         try:
             # List root directory
-            root_entries = await self._nexus.sys_readdir("/", recursive=False)
+            root_entries = self._nexus.sys_readdir("/", recursive=False)
             if isinstance(root_entries, list):
                 # Handle both list[str] and list[dict] return types
                 for entry in root_entries[:50]:

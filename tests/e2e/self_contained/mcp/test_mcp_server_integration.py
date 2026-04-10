@@ -144,7 +144,7 @@ class TestFileOperationsIntegration:
         assert read_result == "Integration test content"
 
         # Verify directly with NexusFS
-        direct_read = await nexus_fs.sys_read("/integration_test.txt")
+        direct_read = nexus_fs.sys_read("/integration_test.txt")
         assert direct_read == b"Integration test content"
 
     @pytest.mark.asyncio

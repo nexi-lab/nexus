@@ -268,7 +268,7 @@ class DispatchMixin:
 
     # ── OBSERVE dispatch (Issue #1812, #1748, #3391) ──────────────────────
 
-    async def notify(self, event: FileEvent) -> None:
+    def notify(self, event: FileEvent) -> None:
         """OBSERVE phase — fire-and-forget dispatch to all matching observers.
 
         Used by Python-only fallback paths (hit=false) that the Rust kernel

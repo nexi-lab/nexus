@@ -11,7 +11,7 @@ Example:
 
     # Check permission asynchronously
     if await enforcer.check_permission("/path/to/file", Permission.READ, context):
-        content = await fs.sys_read("/path/to/file")
+        content = fs.sys_read("/path/to/file")
 """
 
 import asyncio

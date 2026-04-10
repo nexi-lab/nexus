@@ -803,7 +803,7 @@ class NexusFS(  # type: ignore[misc]
         Equivalent to ``(await sys_stat(path)).get("is_directory", False)``.
         """
         try:
-            stat = await self.sys_stat(path, context=context)
+            stat = self.sys_stat(path, context=context)
             return stat is not None and stat.get("is_directory", False)
         except (InvalidPathError, NexusFileNotFoundError):
             return False
@@ -836,7 +836,7 @@ class NexusFS(  # type: ignore[misc]
         return sorted(names)
 
     @rpc_expose(description="Get file metadata for FUSE operations")
-    async def sys_stat(
+    def sys_stat(
         self,
         path: str,
         *,
@@ -941,7 +941,7 @@ class NexusFS(  # type: ignore[misc]
 
         # Optional lock enrichment (zero cost when include_lock=False)
         if include_lock:
-            lock_info = await self._lock_manager.get_lock_info(normalized)
+            lock_info = self._lock_manager.get_lock_info(normalized)
             result["lock"] = self._format_lock_info(lock_info) if lock_info else None
 
         return result
@@ -1333,7 +1333,7 @@ class NexusFS(  # type: ignore[misc]
     # _acquire_lock_sync / _release_lock_sync in nexus_fs_lock.py (LockMixin)
 
     @rpc_expose(description="Read file content")
-    async def sys_read(
+    def sys_read(
         self,
         path: str,
         *,
@@ -1356,7 +1356,7 @@ class NexusFS(  # type: ignore[misc]
             try:
                 data = _custom_pbuf.read_nowait()
             except PipeEmptyError:
-                return await self._pipe_read(path, count=count, offset=offset)
+                return self._pipe_read(path, count=count, offset=offset)
             except PipeClosedError:
                 raise NexusFileNotFoundError(path, f"Pipe closed: {path}") from None
             if offset or count is not None:
@@ -1370,9 +1370,10 @@ class NexusFS(  # type: ignore[misc]
 
             try:
                 if count is not None and count > 1:
-                    items, _ = await _custom_sbuf.read_batch_blocking(offset, count, blocking=True)
+                    # [INTERMEDIATE] Sync: use sync read_batch for custom backends.
+                    items, _ = _custom_sbuf.read_batch(offset, count)
                     return b"".join(items)
-                data, _ = await _custom_sbuf.read(offset, blocking=True)
+                data, _ = _custom_sbuf.read_at(offset)
                 return data
             except StreamEmptyError:
                 raise NexusFileNotFoundError(path, f"Stream empty at offset {offset}") from None
@@ -1466,7 +1467,7 @@ class NexusFS(  # type: ignore[misc]
                 if offset or count is not None:
                     _data = _data[offset : offset + count] if count is not None else _data[offset:]
                 return bytes(_data)
-            _data = await asyncio.to_thread(self._kernel.pipe_read_blocking, path, 30000)
+            _data = self._kernel.pipe_read_blocking(path, 30000)
             if offset or count is not None:
                 _data = _data[offset : offset + count] if count is not None else _data[offset:]
             return bytes(_data)
@@ -1477,9 +1478,7 @@ class NexusFS(  # type: ignore[misc]
             if _result is not None:
                 return bytes(_result[0])
             # Slow path — block in Rust (GIL-free)
-            _data, _next = await asyncio.to_thread(
-                self._kernel.stream_read_at_blocking, path, offset, 30000
-            )
+            _data, _next = self._kernel.stream_read_at_blocking(path, offset, 30000)
             return bytes(_data)
 
         if not result.hit:
@@ -1785,7 +1784,7 @@ class NexusFS(  # type: ignore[misc]
                 return _rb.read_content_range(meta.etag, start, end, context=read_context)
 
         # FALLBACK: full read via sys_read + slice
-        content = await self.sys_read(path, count=end, offset=0, context=context)
+        content = self.sys_read(path, count=end, offset=0, context=context)
         return content[start:end]
 
     @rpc_expose(description="Stream file content in chunks")
@@ -2006,7 +2005,7 @@ class NexusFS(  # type: ignore[misc]
         route.metastore.put(new_meta)
 
         # Issue #3391: OBSERVE dispatch was missing for write_stream — add it.
-        await self.notify(
+        self.notify(
             FileEvent(
                 type=FileEventType.FILE_WRITE,
                 path=path,
@@ -2041,7 +2040,7 @@ class NexusFS(  # type: ignore[misc]
         }
 
     @rpc_expose(description="Write file content")
-    async def sys_write(
+    def sys_write(
         self,
         path: str,
         buf: bytes | str,
@@ -2115,7 +2114,7 @@ class NexusFS(  # type: ignore[misc]
         if result.hit:
             # Rust wrote to backend (CAS or PAS) + built metadata + updated dcache
             zone_id, agent_id, _ = self._get_context_identity(context)
-            await self._dispatch_write_events(
+            self._dispatch_write_events(
                 path,
                 _WriteContentResult(
                     content_hash=result.content_id or "",
@@ -2144,7 +2143,7 @@ class NexusFS(  # type: ignore[misc]
         else:
             # Fallback: DT_PIPE/DT_STREAM, route fail, or no-backend mount.
             # Normal CAS/PAS backends always hit=true (PR 12a fixed ObjectStore trait).
-            await self._write_internal(
+            self._write_internal(
                 path=path, content=buf, offset=offset, context=context, _meta=_meta
             )
 
@@ -2153,7 +2152,7 @@ class NexusFS(  # type: ignore[misc]
     # ── Tier 2 overrides (NexusFS-specific) ───────────────────────
 
     @rpc_expose(description="Create directory")
-    async def mkdir(
+    def mkdir(
         self,
         path: str,
         parents: bool = True,
@@ -2215,7 +2214,7 @@ class NexusFS(  # type: ignore[misc]
         # OBSERVE: Rust kernel fires DirCreate when hit=true (§11 Phase 5).
         # Only Python fires for the fallback path.
         if not _mkdir_result.hit:
-            await self.notify(
+            self.notify(
                 FileEvent(
                     type=FileEventType.DIR_CREATE,
                     path=path,
@@ -2238,7 +2237,7 @@ class NexusFS(  # type: ignore[misc]
             )
 
     @rpc_expose(description="Remove directory")
-    async def rmdir(
+    def rmdir(
         self,
         path: str,
         recursive: bool = True,
@@ -2249,7 +2248,7 @@ class NexusFS(  # type: ignore[misc]
         Defaults to recursive=True (rm -rf semantics).
         Delegates directly to sys_unlink.
         """
-        await self.sys_unlink(path, recursive=recursive, context=context)
+        self.sys_unlink(path, recursive=recursive, context=context)
 
     @rpc_expose(description="Read file with optional metadata")
     async def read(
@@ -2275,13 +2274,13 @@ class NexusFS(  # type: ignore[misc]
         Returns:
             bytes if return_metadata=False, else dict with content + metadata.
         """
-        content = await self.sys_read(path, count=count, offset=offset, context=context)
+        content = self.sys_read(path, count=count, offset=offset, context=context)
 
         if not return_metadata:
             return content
 
         # Compose with sys_stat for metadata
-        meta_dict = await self.sys_stat(path, context=context)
+        meta_dict = self.sys_stat(path, context=context)
         result: dict[str, Any] = {"content": content}
         if meta_dict:
             result.update(
@@ -2351,11 +2350,11 @@ class NexusFS(  # type: ignore[misc]
         if ttl is not None and ttl > 0:
             context = self._ensure_context_ttl(context, ttl)
 
-        return await self._write_internal(
+        return self._write_internal(
             path=path, content=buf, offset=offset, context=context, consistency=_consistency
         )
 
-    async def _write_internal(
+    def _write_internal(
         self,
         path: str,
         content: bytes,
@@ -2370,7 +2369,7 @@ class NexusFS(  # type: ignore[misc]
         """Kernel write implementation — OCC-free.
 
         Thin composition of _write_content (locked I/O) + _dispatch_write_events
-        (async event dispatch).
+        (sync event dispatch).
 
         OCC checks (if_match, if_none_match) are done by callers
         (write() convenience method or RPC handlers) BEFORE calling this.
@@ -2386,7 +2385,7 @@ class NexusFS(  # type: ignore[misc]
         # OBSERVE dispatch: this is the Python-only fallback path
         # (sys_write hit=false → Rust kernel did not fire OBSERVE).
         # Fire it from Python before INTERCEPT POST hooks.
-        await self.notify(
+        self.notify(
             FileEvent(
                 type=FileEventType.FILE_WRITE,
                 path=path,
@@ -2399,7 +2398,7 @@ class NexusFS(  # type: ignore[misc]
                 old_etag=wr.old_etag,
             )
         )
-        return await self._dispatch_write_events(path, wr, content)
+        return self._dispatch_write_events(path, wr, content)
 
     def _write_content(
         self,
@@ -2564,13 +2563,13 @@ class NexusFS(  # type: ignore[misc]
             is_external=_is_external,
         )
 
-    async def _dispatch_write_events(
+    def _dispatch_write_events(
         self,
         path: str,
         result: _WriteContentResult,
         content: bytes,
     ) -> dict[str, Any]:
-        """Post-write event dispatch (async, outside lock).
+        """Post-write event dispatch (sync, outside lock).
 
         Fires FileEvent notify (OBSERVE) + dispatch_post_hooks (INTERCEPT).
         Uses the augmented context from _write_content (stored in result).
@@ -2672,7 +2671,7 @@ class NexusFS(  # type: ignore[misc]
             ... )
         """
         async with self.locked(path, timeout=timeout, ttl=ttl, context=context) as lock_id:  # noqa: F841
-            content = await self.sys_read(path, context=context)
+            content = self.sys_read(path, context=context)
             new_content = update_fn(content)
             return await self.write(path, new_content, context=context)
 
@@ -3173,7 +3172,7 @@ class NexusFS(  # type: ignore[misc]
         for metadata in metadata_list:
             old_meta = existing_metadata.get(metadata.path)
             is_new = old_meta is None
-            await self.notify(
+            self.notify(
                 FileEvent(
                     type=FileEventType.FILE_WRITE,
                     path=metadata.path,
@@ -3449,7 +3448,7 @@ class NexusFS(  # type: ignore[misc]
         return results
 
     @rpc_expose(description="Delete file")
-    async def sys_unlink(
+    def sys_unlink(
         self,
         path: str,
         *,
@@ -3481,7 +3480,7 @@ class NexusFS(  # type: ignore[misc]
         # ── /__sys__/ kernel management dispatch ──────────────────────
         if path.startswith("/__sys__/services/"):
             name = path.rsplit("/", 1)[-1]
-            await self._service_registry.unregister_service_full(name)
+            self._service_registry.unregister_service_full(name)
             return {"path": path, "unregistered": True, "service": name}
 
         if path.startswith("/__sys__/hooks/"):
@@ -3536,7 +3535,7 @@ class NexusFS(  # type: ignore[misc]
 
         # ── Directory branch: rmdir logic ────────────────────────────
         if meta.is_dir or meta.is_mount or meta.is_external_storage:
-            return await self._unlink_directory(
+            return self._unlink_directory(
                 path, meta=meta, route=route, recursive=recursive, context=context
             )
 
@@ -3578,7 +3577,7 @@ class NexusFS(  # type: ignore[misc]
         # OBSERVE: Rust kernel fires FileDelete when hit=true (§11 Phase 5).
         # Only Python fires for the fallback path.
         if not _unlink_result.hit:
-            await self.notify(
+            self.notify(
                 FileEvent(
                     type=FileEventType.FILE_DELETE,
                     path=path,
@@ -3591,7 +3590,7 @@ class NexusFS(  # type: ignore[misc]
 
         return {}
 
-    async def _unlink_directory(
+    def _unlink_directory(
         self,
         path: str,
         *,
@@ -3657,7 +3656,7 @@ class NexusFS(  # type: ignore[misc]
                 logger.debug("Failed to clean up directory index for %s: %s", path, e)
 
         # OBSERVE then INTERCEPT (Issue #3391)
-        await self.notify(
+        self.notify(
             FileEvent(
                 type=FileEventType.DIR_DELETE,
                 path=path,
@@ -3680,7 +3679,7 @@ class NexusFS(  # type: ignore[misc]
         return {}
 
     @rpc_expose(description="Rename/move file")
-    async def sys_rename(
+    def sys_rename(
         self,
         old_path: str,
         new_path: str,
@@ -3714,8 +3713,8 @@ class NexusFS(  # type: ignore[misc]
             AccessDeniedError: If access is denied (zone isolation)
 
         Example:
-            >>> await nx.sys_rename('/workspace/old.txt', '/workspace/new.txt')
-            >>> await nx.sys_rename('/folder-a/file.txt', '/shared/folder-a/file.txt')
+            >>> nx.sys_rename('/workspace/old.txt', '/workspace/new.txt')
+            >>> nx.sys_rename('/folder-a/file.txt', '/shared/folder-a/file.txt')
         """
         old_path = self._validate_path(old_path)
         new_path = self._validate_path(new_path)
@@ -3786,7 +3785,7 @@ class NexusFS(  # type: ignore[misc]
                 if new_route.metastore.exists(new_path):
                     if force:
                         # force=True: delete destination so rename can proceed
-                        await self.sys_unlink(new_path, recursive=True, context=context)
+                        self.sys_unlink(new_path, recursive=True, context=context)
                     elif hasattr(new_route.backend, "file_exists"):
                         if new_route.backend.file_exists(new_route.backend_path):
                             raise FileExistsError(f"Destination path already exists: {new_path}")
@@ -3848,7 +3847,7 @@ class NexusFS(  # type: ignore[misc]
         # OBSERVE: Rust kernel fires FileRename when hit=true (§11 Phase 5).
         # Only Python fires for the fallback path.
         if not _rename_result.hit:
-            await self.notify(
+            self.notify(
                 FileEvent(
                     type=FileEventType.FILE_RENAME,
                     path=old_path,
@@ -4207,7 +4206,7 @@ class NexusFS(  # type: ignore[misc]
             mark_released(L1_VFS)
 
         # Lock released — event dispatch + side effects
-        await self.notify(
+        self.notify(
             FileEvent(
                 type=FileEventType.FILE_COPY,
                 path=src_path,
@@ -4716,7 +4715,7 @@ class NexusFS(  # type: ignore[misc]
                         path, recursive=recursive, context=context, is_implicit=is_implicit_dir
                     )
                 else:
-                    await self.sys_unlink(path, context=context)
+                    self.sys_unlink(path, context=context)
 
                 results[path] = {"success": True}
             except Exception as e:
@@ -4827,7 +4826,7 @@ class NexusFS(  # type: ignore[misc]
         results = {}
         for old_path, new_path in renames:
             try:
-                await self.sys_rename(old_path, new_path, context=context)
+                self.sys_rename(old_path, new_path, context=context)
                 results[old_path] = {"success": True, "new_path": new_path}
             except Exception as e:
                 results[old_path] = {"success": False, "error": str(e)}
@@ -5126,7 +5125,7 @@ class NexusFS(  # type: ignore[misc]
         return path.startswith(NexusFS._INTERNAL_PATH_PREFIXES)
 
     @rpc_expose(description="List directory entries")
-    async def sys_readdir(
+    def sys_readdir(
         self,
         path: str = "/",
         recursive: bool = True,
@@ -5139,7 +5138,7 @@ class NexusFS(  # type: ignore[misc]
     ) -> builtins.list[str] | builtins.list[dict[str, Any]] | Any:
         # ── /__sys__/locks/ virtual namespace (like /proc/locks) ──
         if path.rstrip("/") == "/__sys__/locks":
-            locks = await self._lock_manager.list_locks()
+            locks = self._lock_manager.list_locks()
             if details:
                 return [self._format_lock_info(lk) for lk in locks]
             return [lk.path for lk in locks]
@@ -5390,7 +5389,7 @@ class NexusFS(  # type: ignore[misc]
 
     # ── IPC primitives (inlined from IPCMixin) ─────────────────────────
 
-    async def _pipe_read(self, path: str, *, count: int | None = None, offset: int = 0) -> bytes:
+    def _pipe_read(self, path: str, *, count: int | None = None, offset: int = 0) -> bytes:
         """Read from DT_PIPE — nowait hot path + Rust blocking slow path (GIL-free)."""
         # Hot path: try nowait first (zero GIL)
         _data = self._kernel.pipe_read_nowait(path)
@@ -5407,15 +5406,17 @@ class NexusFS(  # type: ignore[misc]
             try:
                 data: bytes = _buf.read_nowait()
             except PipeEmptyError:
-                data = await _buf.read(blocking=True)
+                # [INTERMEDIATE] Sync blocking: custom async backends run in temp event loop.
+                # Eliminated when all pipe backends migrate to Rust.
+                data = asyncio.run(_buf.read(blocking=True))
             except PipeClosedError:
                 raise NexusFileNotFoundError(path, f"Pipe closed: {path}") from None
             if offset or count is not None:
                 data = data[offset : offset + count] if count is not None else data[offset:]
             return data
 
-        # Slow path: block in Rust, release GIL
-        _data = await asyncio.to_thread(self._kernel.pipe_read_blocking, path, 30000)
+        # Slow path: block in Rust (GIL released by PyO3)
+        _data = self._kernel.pipe_read_blocking(path, 30000)
         if offset or count is not None:
             _data = _data[offset : offset + count] if count is not None else _data[offset:]
         return bytes(_data)

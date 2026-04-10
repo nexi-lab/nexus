@@ -122,7 +122,7 @@ class TestAsyncOperations:
 
     @pytest.mark.asyncio
     async def test_mkdir_parity(self, async_fs: SlimNexusFS):
-        await async_fs.mkdir("/local/parity_dir")
+        async_fs.mkdir("/local/parity_dir")
         stat = await async_fs.stat("/local/parity_dir")
         assert stat is not None
         assert stat["is_directory"] is True

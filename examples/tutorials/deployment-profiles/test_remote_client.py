@@ -115,7 +115,7 @@ async def main() -> int:
     }
     for path, content in files.items():
         try:
-            await nx.sys_write(path, content)
+            nx.sys_write(path, content)
             print(f"  OK   {path} ({len(content)} bytes)")
         except Exception as e:
             print(f"  FAIL {path}: {e}")
@@ -125,7 +125,7 @@ async def main() -> int:
     print("READ")
     for path, expected in files.items():
         try:
-            got = await nx.sys_read(path)
+            got = nx.sys_read(path)
             if got == expected:
                 print(f"  OK   {path} — matches ({len(got)} bytes)")
             else:
@@ -138,7 +138,7 @@ async def main() -> int:
     # --- LIST ---
     print("LIST")
     try:
-        entries = await nx.sys_readdir("/")
+        entries = nx.sys_readdir("/")
         names = sorted(entries) if isinstance(entries, list) else entries
         print(f"  raw  / => {names}")
         # Verify expected paths are present
@@ -162,7 +162,7 @@ async def main() -> int:
     # --- STAT ---
     print("STAT")
     try:
-        info = await nx.sys_stat("/hello.txt")
+        info = nx.sys_stat("/hello.txt")
         print(f"  raw  /hello.txt => {info}")
         # Verify size matches what we wrote (25 bytes)
         size_v = info.get("size", None) if isinstance(info, dict) else getattr(info, "size", None)
@@ -228,7 +228,7 @@ async def main() -> int:
     # --- DELETE ---
     print("DELETE")
     try:
-        await nx.sys_unlink("/hello.txt")
+        nx.sys_unlink("/hello.txt")
         exists = await nx.access("/hello.txt")
         if not exists:
             print("  OK   /hello.txt deleted, verified gone")
@@ -241,7 +241,7 @@ async def main() -> int:
 
     # Verify remaining files still readable
     try:
-        got = await nx.sys_read("/project/main.py")
+        got = nx.sys_read("/project/main.py")
         assert got == files["/project/main.py"]
         print("  OK   /project/main.py still readable after sibling delete")
     except Exception as e:

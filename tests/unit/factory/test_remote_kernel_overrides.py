@@ -24,7 +24,7 @@ async def test_install_remote_kernel_rpc_overrides_routes_sys_rename_to_server_r
 
     install_remote_kernel_rpc_overrides(nfs, transport)
 
-    result = await nfs.sys_rename("/workspace/old.txt", "/workspace/new.txt")
+    result = nfs.sys_rename("/workspace/old.txt", "/workspace/new.txt")
 
     assert result == {}
     assert transport.calls == [

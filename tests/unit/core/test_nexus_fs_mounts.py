@@ -636,7 +636,7 @@ class TestMountIntegration:
         await nx.write("/mnt/list/file2.txt", b"Content 2")
 
         # List files
-        files = await nx.sys_readdir("/mnt/list", recursive=True)
+        files = nx.sys_readdir("/mnt/list", recursive=True)
 
         assert "/mnt/list/file1.txt" in files
         assert "/mnt/list/file2.txt" in files

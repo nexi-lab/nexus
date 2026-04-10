@@ -49,7 +49,7 @@ async def scan_and_remove(
 
     try:
         # List files in current directory
-        files = await nexus_fs.sys_readdir(path, recursive=False, details=False)
+        files = nexus_fs.sys_readdir(path, recursive=False, details=False)
 
         for file_path in files:
             # Handle both string and dict formats
@@ -68,7 +68,7 @@ async def scan_and_remove(
                     logger.info(f"[DRY RUN] Would delete: {file_path}")
                 else:
                     try:
-                        await nexus_fs.sys_unlink(file_path)
+                        nexus_fs.sys_unlink(file_path)
                         logger.info(f"Deleted: {file_path}")
                         deleted_count[0] += 1
                     except Exception as e:

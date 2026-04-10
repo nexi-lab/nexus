@@ -85,7 +85,7 @@ class AgentDiscovery:
             List of agent directory names under ``/agents/``.
         """
         try:
-            entries = await self._vfs.sys_readdir(AGENTS_ROOT, recursive=False, context=self._ctx())
+            entries = self._vfs.sys_readdir(AGENTS_ROOT, recursive=False, context=self._ctx())
             return sorted(entries)
         except Exception:
             logger.warning(
@@ -106,7 +106,7 @@ class AgentDiscovery:
         """
         card_path = agent_card_path(agent_id)
         try:
-            data = await self._vfs.sys_read(card_path, context=self._ctx())
+            data = self._vfs.sys_read(card_path, context=self._ctx())
             card_dict = json.loads(data)
         except Exception:
             logger.debug(

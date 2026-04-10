@@ -416,7 +416,7 @@ class AcpService:
             return None
         path = agent_paths.config(zone_id, agent_id)
         try:
-            data: bytes = await self._nexus_fs.sys_read(path)
+            data: bytes = self._nexus_fs.sys_read(path)
             if not data:
                 return None
             return AgentConfig.from_dict(json.loads(data.decode("utf-8")))
@@ -437,7 +437,7 @@ class AcpService:
         agents_dir = f"/{zone_id}/agents"
         configs: list[dict] = []
         try:
-            entries = await self._nexus_fs.sys_readdir(agents_dir)
+            entries = self._nexus_fs.sys_readdir(agents_dir)
         except (FileNotFoundError, Exception):
             return []
         for entry in entries:
@@ -448,7 +448,7 @@ class AcpService:
                 else f"{entry_path}agent.json"
             )
             try:
-                data: bytes = await self._nexus_fs.sys_read(config_path)
+                data: bytes = self._nexus_fs.sys_read(config_path)
                 if data:
                     cfg = json.loads(data.decode("utf-8"))
                     if isinstance(cfg, dict) and "agent_id" in cfg:
@@ -491,7 +491,7 @@ class AcpService:
         zone_id = zone_id or self._zone_id
         path = self._system_prompt_path(agent_id, zone_id)
         try:
-            data: bytes = await self._nexus_fs.sys_read(path)
+            data: bytes = self._nexus_fs.sys_read(path)
             return data.decode("utf-8", errors="replace") if data else None
         except FileNotFoundError:
             return None
@@ -509,7 +509,7 @@ class AcpService:
         zone_id = zone_id or self._zone_id
         path = self._system_prompt_path(agent_id, zone_id)
         with contextlib.suppress(Exception):
-            await self._nexus_fs.sys_unlink(path)
+            self._nexus_fs.sys_unlink(path)
 
     # ------------------------------------------------------------------
     # Enabled skills management (VFS-backed via sys_write/sys_read)
@@ -544,7 +544,7 @@ class AcpService:
         zone_id = zone_id or self._zone_id
         path = self._config_path(agent_id, zone_id)
         try:
-            data: bytes = await self._nexus_fs.sys_read(path)
+            data: bytes = self._nexus_fs.sys_read(path)
             return json.loads(data.decode("utf-8")) if data else None
         except FileNotFoundError:
             return None
@@ -567,11 +567,11 @@ class AcpService:
         proc_dir = f"/{zone_id}/proc"
         results: list[dict] = []
         try:
-            entries = await self._nexus_fs.sys_readdir(proc_dir)
+            entries = self._nexus_fs.sys_readdir(proc_dir)
             for entry in entries:
                 result_path = getattr(entry, "path", None) or str(entry)
                 try:
-                    data: bytes = await self._nexus_fs.sys_read(result_path)
+                    data: bytes = self._nexus_fs.sys_read(result_path)
                     if data:
                         payload = json.loads(data.decode("utf-8"))
                         if isinstance(payload, dict):
@@ -623,7 +623,7 @@ class AcpService:
 
         async def vfs_read(host_path: str) -> str:
             vfs_path = _host_to_vfs(host_path, host_cwd, vfs_root)
-            data: bytes = await nx.sys_read(vfs_path)
+            data: bytes = nx.sys_read(vfs_path)
             return data.decode("utf-8", errors="replace")
 
         async def vfs_write(host_path: str, content: str) -> None:

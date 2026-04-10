@@ -76,7 +76,7 @@ async def main():
 
         # Create main workspace directory
         try:
-            await nx.mkdir("/workspace/demo-project", parents=True)
+            nx.mkdir("/workspace/demo-project", parents=True)
             print("✓ Created: /workspace/demo-project")
         except Exception as e:
             if "already exists" in str(e).lower():
@@ -129,7 +129,7 @@ async def main():
 
         for dir_path in directories:
             try:
-                await nx.mkdir(dir_path, parents=True)
+                nx.mkdir(dir_path, parents=True)
                 print(f"✓ Created: {dir_path}")
             except Exception as e:
                 if "already exists" in str(e).lower():
@@ -152,7 +152,7 @@ async def main():
         }
 
         config_path = "/workspace/demo-project/config/app.json"
-        await nx.sys_write(config_path, json.dumps(config_data, indent=2).encode())
+        nx.sys_write(config_path, json.dumps(config_data, indent=2).encode())
         print(f"✓ Written: {config_path}")
 
         # Write data files
@@ -173,14 +173,14 @@ async def main():
         ]
 
         for file_path, content in data_files:
-            await nx.sys_write(file_path, content)
+            nx.sys_write(file_path, content)
             print(f"✓ Written: {file_path}")
 
         # Read files back
         print_section("4. Reading Files")
 
         try:
-            config_content = await nx.sys_read(config_path)
+            config_content = nx.sys_read(config_path)
             config = json.loads(config_content)
             print(f"📄 Config: {config['project_name']} v{config['version']}")
             print(f"   Settings: {json.dumps(config['settings'], indent=2)}")
@@ -191,7 +191,7 @@ async def main():
         # List files
         print_section("5. Listing Files")
 
-        all_files = await nx.sys_readdir("/workspace/demo-project", recursive=True)
+        all_files = nx.sys_readdir("/workspace/demo-project", recursive=True)
         print(f"📂 Found {len(all_files)} files:")
         for file_path in sorted(all_files):
             print(f"   - {file_path}")
@@ -211,7 +211,7 @@ async def main():
         print("\n📝 Updating config file...")
         config_data["version"] = "1.0.1"
         config_data["updated_at"] = datetime.now().isoformat()
-        await nx.sys_write(config_path, json.dumps(config_data, indent=2).encode())
+        nx.sys_write(config_path, json.dumps(config_data, indent=2).encode())
         print("✓ Updated config to version 1.0.1")
 
         # Version history

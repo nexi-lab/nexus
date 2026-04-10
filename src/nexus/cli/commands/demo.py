@@ -239,7 +239,7 @@ async def _get_nexus_client(config: dict[str, Any]) -> Any:
                 }
             )
             # Verify connectivity with a lightweight read-only call.
-            await nx.sys_readdir("/")
+            nx.sys_readdir("/")
             return nx
         except Exception as e:
             console.print(
@@ -300,7 +300,7 @@ async def _seed_files(
             # Ensure parent directory exists
             parent = "/".join(path.split("/")[:-1])
             if parent:
-                await nx.mkdir(parent, parents=True, exist_ok=True)
+                nx.mkdir(parent, parents=True, exist_ok=True)
             await nx.write(path, content.encode())
             seeded.append(path)
             created += 1
@@ -346,7 +346,7 @@ async def _seed_directories(nx: Any) -> int:
     created = 0
     for d in DEMO_DIRS:
         try:
-            await nx.mkdir(d, parents=True, exist_ok=True)
+            nx.mkdir(d, parents=True, exist_ok=True)
             created += 1
         except Exception:
             pass
@@ -1016,7 +1016,7 @@ async def _delete_demo_files(nx: Any, manifest: dict[str, Any]) -> int:
     # Delete files in reverse order (deepest first)
     for path in reversed(files):
         try:
-            await nx.sys_unlink(path)
+            nx.sys_unlink(path)
             removed += 1
         except Exception:
             pass
@@ -1024,7 +1024,7 @@ async def _delete_demo_files(nx: Any, manifest: dict[str, Any]) -> int:
     # Delete directories in reverse order (deepest first)
     for d in reversed(DEMO_DIRS):
         with contextlib.suppress(Exception):
-            await nx.rmdir(d)
+            nx.rmdir(d)
 
     return removed
 
@@ -1420,7 +1420,7 @@ async def _seed_search_chunks_docker(nx: Any, config: dict[str, Any]) -> bool:
     all_files = list(DEMO_FILES) + list(HERB_CORPUS)
     for path, _content, _desc in all_files:
         try:
-            raw = await nx.sys_read(path)
+            raw = nx.sys_read(path)
             text = raw.decode("utf-8", errors="ignore") if isinstance(raw, bytes) else str(raw)
             if text.strip():
                 docs.append({"path": path, "content": text})

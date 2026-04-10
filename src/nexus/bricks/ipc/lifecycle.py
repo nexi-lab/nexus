@@ -51,7 +51,7 @@ async def dead_letter_message(
             filename = msg_path.rsplit("/", 1)[-1]
             dest = f"{dead_letter_path(agent_id)}/{filename}"
 
-        await vfs.sys_rename(msg_path, dest, context=ctx)
+        vfs.sys_rename(msg_path, dest, context=ctx)
 
         # Write structured .reason.json sidecar (best-effort)
         try:

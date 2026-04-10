@@ -137,7 +137,7 @@ class AgentRPCService:
     ) -> None:
         try:
             ctx = parse_operation_context(context)
-            await self._vfs.mkdir(agent_dir, parents=True, exist_ok=True, context=ctx)
+            self._vfs.mkdir(agent_dir, parents=True, exist_ok=True, context=ctx)
             await self._write_agent_config(config_path, config_data, context)
 
             if self._rebac_manager:
@@ -289,7 +289,7 @@ class AgentRPCService:
             did_doc = create_did_document(agent_did, public_key)
             identity_dir = f"{agent_dir}/.identity"
             ctx = parse_operation_context(context)
-            await self._vfs.mkdir(identity_dir, parents=True, exist_ok=True, context=ctx)
+            self._vfs.mkdir(identity_dir, parents=True, exist_ok=True, context=ctx)
             await self._vfs.write(
                 f"{identity_dir}/did.json", json.dumps(did_doc, indent=2), context=ctx
             )
@@ -440,7 +440,7 @@ class AgentRPCService:
             raise ValueError(f"Agent not found: {agent_id}") from e
 
         ctx = parse_operation_context(context)
-        existing_content = await self._vfs.sys_read(config_path, context=ctx)
+        existing_content = self._vfs.sys_read(config_path, context=ctx)
         if isinstance(existing_content, dict):
             existing_config = existing_content
         else:
@@ -852,7 +852,7 @@ class AgentRPCService:
             zone_id = self._extract_zone_id(context) or ROOT_ZONE_ID
             config_path = f"/zone/{zone_id}/user/{user_id}/agent/{agent_name}/config.yaml"
             ctx = parse_operation_context(context)
-            content = await self._vfs.sys_read(config_path, context=ctx)
+            content = self._vfs.sys_read(config_path, context=ctx)
             import yaml
 
             if isinstance(content, bytes):
@@ -880,7 +880,7 @@ class AgentRPCService:
             zone_id = self._extract_zone_id(context) or ROOT_ZONE_ID
             config_path = f"/zone/{zone_id}/user/{user_id}/agent/{agent_name}/config.yaml"
             ctx = parse_operation_context(context)
-            content = await self._vfs.sys_read(config_path, context=ctx)
+            content = self._vfs.sys_read(config_path, context=ctx)
             import yaml
 
             if not isinstance(content, bytes):

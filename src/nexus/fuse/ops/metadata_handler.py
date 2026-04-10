@@ -277,7 +277,7 @@ class MetadataHandler:
 
         # Python path: list from filesystem
         list_start = time.time()
-        files_raw = await ctx.nexus_fs.sys_readdir(
+        files_raw = ctx.nexus_fs.sys_readdir(
             path, recursive=False, details=True, context=ctx.context
         )
         list_elapsed = time.time() - list_start

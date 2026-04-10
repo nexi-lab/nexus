@@ -172,19 +172,19 @@ async def demo_with_server():
     # Write files
     print_section("2. Writing Files at Actual Paths")
 
-    await nx.sys_write(f"{mount_point}/hello.txt", b"Hello from Nexus S3 Connector!")
+    nx.sys_write(f"{mount_point}/hello.txt", b"Hello from Nexus S3 Connector!")
     print_success(f"Wrote: {mount_point}/hello.txt")
 
-    await nx.sys_write(
+    nx.sys_write(
         f"{mount_point}/data.json",
         json.dumps({"type": "connector", "backend": "s3", "path_based": True}).encode(),
     )
     print_success(f"Wrote: {mount_point}/data.json")
 
-    await nx.mkdir(f"{mount_point}/subdir", parents=True)
+    nx.mkdir(f"{mount_point}/subdir", parents=True)
     print_success(f"Created: {mount_point}/subdir")
 
-    await nx.sys_write(f"{mount_point}/subdir/nested.txt", b"File in subdirectory")
+    nx.sys_write(f"{mount_point}/subdir/nested.txt", b"File in subdirectory")
     print_success(f"Wrote: {mount_point}/subdir/nested.txt")
 
     print_info("\nExpected S3 paths:")
@@ -203,18 +203,18 @@ async def demo_with_server():
     # Read files back
     print_section("4. Reading Files via Nexus")
 
-    content = await nx.sys_read(f"{mount_point}/hello.txt")
+    content = nx.sys_read(f"{mount_point}/hello.txt")
     print(f"  Content: {content.decode()}")
     print_success("Read file successfully")
 
-    json_content = await nx.sys_read(f"{mount_point}/data.json")
+    json_content = nx.sys_read(f"{mount_point}/data.json")
     print(f"  JSON: {json_content.decode()}")
     print_success("Read JSON file successfully")
 
     # Directory operations
     print_section("5. Directory Operations")
 
-    files = await nx.sys_readdir(mount_point)
+    files = nx.sys_readdir(mount_point)
     print("Files in root:")
     for f in files:
         print(f"  - {f}")
@@ -275,17 +275,17 @@ async def demo_local():
         # Write files
         print_section("2. Writing Files to S3")
 
-        await nx.sys_write("/workspace/s3/hello.txt", b"Hello from local Nexus!")
+        nx.sys_write("/workspace/s3/hello.txt", b"Hello from local Nexus!")
         print_success("Wrote: /workspace/s3/hello.txt")
 
-        await nx.sys_write(
+        nx.sys_write(
             "/workspace/s3/data.json",
             json.dumps({"local": True, "backend": "path_s3"}).encode(),
         )
         print_success("Wrote: /workspace/s3/data.json")
 
-        await nx.mkdir("/workspace/s3/subdir", parents=True)
-        await nx.sys_write("/workspace/s3/subdir/test.txt", b"Test file")
+        nx.mkdir("/workspace/s3/subdir", parents=True)
+        nx.sys_write("/workspace/s3/subdir/test.txt", b"Test file")
         print_success("Wrote: /workspace/s3/subdir/test.txt")
 
         print_info("\nFiles stored in S3 at:")
@@ -304,14 +304,14 @@ async def demo_local():
         # Read files back
         print_section("4. Reading Files from S3")
 
-        content = await nx.sys_read("/workspace/s3/hello.txt")
+        content = nx.sys_read("/workspace/s3/hello.txt")
         print(f"  hello.txt: {content.decode()}")
         print_success("Read successfully")
 
         # List directory
         print_section("5. Directory Listing")
 
-        files = await nx.sys_readdir("/workspace/s3")
+        files = nx.sys_readdir("/workspace/s3")
         print("Files:")
         for f in files:
             print(f"  - {f}")

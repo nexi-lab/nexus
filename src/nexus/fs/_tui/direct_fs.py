@@ -363,10 +363,10 @@ class MultiDirectFS:
         return result
 
     async def mkdir(self, path: str, parents: bool = True) -> None:
-        await self._resolve(path).mkdir(path, parents=parents)
+        self._resolve(path).mkdir(path, parents=parents)
 
     async def rmdir(self, path: str, recursive: bool = False) -> None:
-        await self._resolve(path).rmdir(path, recursive=recursive)
+        self._resolve(path).rmdir(path, recursive=recursive)
 
     async def delete(self, path: str) -> None:
         await self._resolve(path).delete(path)

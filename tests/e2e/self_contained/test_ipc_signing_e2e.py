@@ -211,7 +211,7 @@ class TestSignedIPCE2E:
         assert path.endswith(".json")
 
         # 5. Verify envelope on disk has signature
-        data = await vfs.sys_read(path, ZONE)
+        data = vfs.sys_read(path, ZONE)
         restored = MessageEnvelope.from_bytes(data)
         assert restored.signature is not None
         assert restored.signer_did == alice_record.did

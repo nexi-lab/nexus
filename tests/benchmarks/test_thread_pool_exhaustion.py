@@ -290,7 +290,7 @@ async def test_in_process_thread_exhaustion(
             start = time.time()
             try:
                 # This is the slow path - list with permission checks
-                _result = await nx.sys_readdir("/", recursive=False, context=context)
+                _result = nx.sys_readdir("/", recursive=False, context=context)
                 end = time.time()
                 return RequestResult(
                     request_id=request_id,

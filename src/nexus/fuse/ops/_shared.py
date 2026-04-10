@@ -352,7 +352,7 @@ async def get_file_content(
         read_ctx = ctx.context
         logger.info(f"[FUSE-CONTENT] L3 BACKEND FETCH: {path}")
         fetch_start = time.time()
-        raw_content = await ctx.nexus_fs.sys_read(path, context=read_ctx)
+        raw_content = ctx.nexus_fs.sys_read(path, context=read_ctx)
         fetch_time = time.time() - fetch_start
         assert isinstance(raw_content, bytes), "Expected bytes from read()"
         content = raw_content
@@ -484,7 +484,7 @@ def put_to_local_disk_cache(
 async def get_metadata(ctx: FUSESharedContext, path: str) -> Any:
     """Get file/directory metadata from filesystem."""
     if hasattr(ctx.nexus_fs, "sys_stat"):
-        metadata_dict = await ctx.nexus_fs.sys_stat(path)
+        metadata_dict = ctx.nexus_fs.sys_stat(path)
         if metadata_dict:
             return MetadataObj.from_dict(metadata_dict)
     return None

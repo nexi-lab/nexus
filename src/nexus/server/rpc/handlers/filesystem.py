@@ -141,7 +141,7 @@ async def handle_read_async(
     if not parsed and not return_metadata:
         _count = getattr(params, "count", None)
         _offset = getattr(params, "offset", 0) or 0
-        read_result: bytes = await nexus_fs.sys_read(
+        read_result: bytes = nexus_fs.sys_read(
             params.path,
             count=_count,
             offset=_offset,
@@ -260,7 +260,7 @@ async def handle_list(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[st
         # (Issue #3728), so we don't need a handler-level augment.
         result = search.list(path=params.path, **kwargs)
     else:
-        result = await nexus_fs.sys_readdir(params.path, **kwargs)
+        result = nexus_fs.sys_readdir(params.path, **kwargs)
     _list_elapsed = (_time.time() - _list_start) * 1000
 
     # Result is PaginatedResult when limit is provided
@@ -310,18 +310,18 @@ async def handle_list(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[st
 async def handle_delete(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Handle delete method."""
     try:
-        await nexus_fs.sys_unlink(params.path, context=context)
+        nexus_fs.sys_unlink(params.path, context=context)
     except TypeError:
-        await nexus_fs.sys_unlink(params.path)
+        nexus_fs.sys_unlink(params.path)
     return {"deleted": True}
 
 
 async def handle_rename(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Handle rename method."""
     try:
-        await nexus_fs.sys_rename(params.old_path, params.new_path, context=context)
+        nexus_fs.sys_rename(params.old_path, params.new_path, context=context)
     except TypeError:
-        await nexus_fs.sys_rename(params.old_path, params.new_path)
+        nexus_fs.sys_rename(params.old_path, params.new_path)
     return {"renamed": True}
 
 
@@ -339,7 +339,7 @@ async def handle_mkdir(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[s
     if hasattr(params, "exist_ok") and params.exist_ok is not None:
         kwargs["exist_ok"] = params.exist_ok
 
-    await nexus_fs.mkdir(params.path, **kwargs)
+    nexus_fs.mkdir(params.path, **kwargs)
     return {"created": True}
 
 
@@ -351,7 +351,7 @@ async def handle_rmdir(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[s
     if hasattr(params, "force") and params.force is not None:
         kwargs["force"] = params.force
 
-    await nexus_fs.rmdir(params.path, **kwargs)
+    nexus_fs.rmdir(params.path, **kwargs)
     return {"removed": True}
 
 
@@ -362,7 +362,7 @@ async def handle_rmdir(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[s
 
 async def handle_get_metadata(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Handle get_metadata method."""
-    metadata = await nexus_fs.sys_stat(params.path, context=context)
+    metadata = nexus_fs.sys_stat(params.path, context=context)
     if isinstance(metadata, dict):
         metadata = unscope_internal_dict(metadata, ["path"])
     return {"metadata": metadata}
@@ -625,7 +625,7 @@ async def handle_semantic_search_index(
         total_chunks = 0
         for file_path in paths_to_index:
             try:
-                content = await nexus_fs.sys_read(file_path, context=context)
+                content = nexus_fs.sys_read(file_path, context=context)
                 if isinstance(content, bytes):
                     content_str = content.decode("utf-8", errors="replace")
                 else:

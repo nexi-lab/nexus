@@ -192,7 +192,7 @@ class TestDeleteCallsDispatch:
         await nx.write("/test.txt", b"content")
         mock_notify.reset_mock()
 
-        await nx.sys_unlink("/test.txt")
+        nx.sys_unlink("/test.txt")
 
         mock_notify.assert_called_once()
         event = mock_notify.call_args.args[0]
@@ -205,7 +205,7 @@ class TestDeleteCallsDispatch:
         etag = result["etag"]
         mock_notify.reset_mock()
 
-        await nx.sys_unlink("/test.txt")
+        nx.sys_unlink("/test.txt")
 
         event = mock_notify.call_args.args[0]
         assert event.etag == etag
@@ -219,7 +219,7 @@ class TestRenameCallsDispatch:
         await nx.write("/old.txt", b"content")
         mock_notify.reset_mock()
 
-        await nx.sys_rename("/old.txt", "/new.txt")
+        nx.sys_rename("/old.txt", "/new.txt")
 
         mock_notify.assert_called_once()
         event = mock_notify.call_args.args[0]
@@ -291,7 +291,7 @@ class TestMkdirCallsDispatch:
 
     @pytest.mark.asyncio
     async def test_mkdir_notifies_dispatch(self, nx: NexusFS, mock_notify: MagicMock) -> None:
-        await nx.mkdir("/testdir")
+        nx.mkdir("/testdir")
 
         mock_notify.assert_called_once()
         event = mock_notify.call_args.args[0]
@@ -302,7 +302,7 @@ class TestMkdirCallsDispatch:
     async def test_mkdir_parents_notifies_dispatch(
         self, nx: NexusFS, mock_notify: MagicMock
     ) -> None:
-        await nx.mkdir("/a/b/c", parents=True)
+        nx.mkdir("/a/b/c", parents=True)
 
         # notify is called once for the final directory
         mock_notify.assert_called_once()
@@ -316,10 +316,10 @@ class TestRmdirCallsDispatch:
 
     @pytest.mark.asyncio
     async def test_rmdir_notifies_dispatch(self, nx: NexusFS, mock_notify: MagicMock) -> None:
-        await nx.mkdir("/mydir")
+        nx.mkdir("/mydir")
         mock_notify.reset_mock()
 
-        await nx.rmdir("/mydir")
+        nx.rmdir("/mydir")
 
         mock_notify.assert_called_once()
         event = mock_notify.call_args.args[0]
@@ -340,12 +340,12 @@ class TestRmdirCallsDispatch:
         obs = _CapturingObserver()
         cas_nx.register_observe(obs)
 
-        await cas_nx.mkdir("/mydir")
+        cas_nx.mkdir("/mydir")
         await cas_nx.write("/mydir/file.txt", b"content")
         cas_nx._kernel.flush_observers()
         obs.reset()
 
-        await cas_nx.rmdir("/mydir", recursive=True)
+        cas_nx.rmdir("/mydir", recursive=True)
         cas_nx._kernel.flush_observers()
 
         # rmdir notify is the last call; write_batch notify may precede it
@@ -394,7 +394,7 @@ class TestVFSObserverCoverage:
         hook.flush(nx_with_hook)
         hook.reset()
 
-        await nx_with_hook.sys_unlink("/file.txt")
+        nx_with_hook.sys_unlink("/file.txt")
         hook.flush(nx_with_hook)
 
         hook.assert_called_once()
@@ -406,7 +406,7 @@ class TestVFSObserverCoverage:
         hook.flush(nx_with_hook)
         hook.reset()
 
-        await nx_with_hook.sys_rename("/old.txt", "/new.txt")
+        nx_with_hook.sys_rename("/old.txt", "/new.txt")
         hook.flush(nx_with_hook)
 
         hook.assert_called_once()
@@ -427,7 +427,7 @@ class TestVFSObserverCoverage:
 
     @pytest.mark.asyncio
     async def test_mkdir_fires_hook(self, nx_with_hook: NexusFS, hook: _CapturingObserver) -> None:
-        await nx_with_hook.mkdir("/newdir")
+        nx_with_hook.mkdir("/newdir")
         hook.flush(nx_with_hook)
 
         hook.assert_called_once()
@@ -436,11 +436,11 @@ class TestVFSObserverCoverage:
 
     @pytest.mark.asyncio
     async def test_rmdir_fires_hook(self, nx_with_hook: NexusFS, hook: _CapturingObserver) -> None:
-        await nx_with_hook.mkdir("/mydir")
+        nx_with_hook.mkdir("/mydir")
         hook.flush(nx_with_hook)
         hook.reset()
 
-        await nx_with_hook.rmdir("/mydir")
+        nx_with_hook.rmdir("/mydir")
         hook.flush(nx_with_hook)
 
         hook.assert_called_once()

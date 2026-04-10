@@ -249,7 +249,7 @@ async def main() -> None:
         for resource_type in resource_types:
             resource_path = f"{user_base}/{resource_type}"
             try:
-                files = await nx.sys_readdir(resource_path, recursive=True, context=admin_context)
+                files = nx.sys_readdir(resource_path, recursive=True, context=admin_context)
                 if isinstance(files, list):
                     count = len(files)
                 elif isinstance(files, dict):

@@ -73,7 +73,7 @@ class TestTTLSweeper:
         msg = _make_message("msg_with_reason", old_ts, ttl_seconds=60)
         filename = f"20200101T000000_{msg.id}.json"
         msg_path = f"{inbox_path('agent:bob')}/{filename}"
-        await vfs.sys_write(msg_path, msg.to_bytes(), ZONE)
+        vfs.sys_write(msg_path, msg.to_bytes(), ZONE)
 
         sweeper = TTLSweeper(vfs, zone_id=ZONE)
         await sweeper.sweep_once()
@@ -84,7 +84,7 @@ class TestTTLSweeper:
 
         # Verify reason content
         reason_path = f"{dead_letter_path('agent:bob')}/{reason_files[0]}"
-        reason_data = json.loads(await vfs.sys_read(reason_path, ZONE))
+        reason_data = json.loads(vfs.sys_read(reason_path, ZONE))
         assert reason_data["reason"] == "ttl_expired"
         assert "sweeper" in reason_data["detail"]
 
@@ -135,7 +135,7 @@ class TestTTLSweeper:
 
     @pytest.mark.asyncio
     async def test_sweep_empty_agents(self, vfs: InMemoryVFS) -> None:
-        await vfs.mkdir("/agents", ZONE)
+        vfs.mkdir("/agents", ZONE)
 
         sweeper = TTLSweeper(vfs, zone_id=ZONE)
         expired_count = await sweeper.sweep_once()
@@ -184,7 +184,7 @@ class TestTTLSweeper:
         # Write corrupt data that is readable but not valid JSON
         filename = "20200101T000000_msg_corrupt.json"
         msg_path = f"{inbox_path('agent:bob')}/{filename}"
-        await vfs.sys_write(msg_path, b"not valid json {{{", ZONE)
+        vfs.sys_write(msg_path, b"not valid json {{{", ZONE)
 
         sweeper = TTLSweeper(vfs, zone_id=ZONE)
         expired_count = await sweeper.sweep_once()
@@ -298,7 +298,7 @@ class TestEventDrivenSweeper:
         msg = _make_message("msg_event_sweep", old_ts, ttl_seconds=60)
         filename = f"20200101T000000_{msg.id}.json"
         msg_path = f"{inbox_path('agent:bob')}/{filename}"
-        await vfs.sys_write(msg_path, msg.to_bytes(), ZONE)
+        vfs.sys_write(msg_path, msg.to_bytes(), ZONE)
 
         sweeper = TTLSweeper(
             vfs,
@@ -342,7 +342,7 @@ class TestEventDrivenSweeper:
             msg = _make_message(f"msg_rapid_{i}", old_ts, ttl_seconds=60)
             filename = f"20200101T00000{i}_{msg.id}.json"
             msg_path = f"{inbox_path('agent:bob')}/{filename}"
-            await vfs.sys_write(msg_path, msg.to_bytes(), ZONE)
+            vfs.sys_write(msg_path, msg.to_bytes(), ZONE)
 
         sweeper = TTLSweeper(
             vfs,
@@ -384,14 +384,14 @@ class TestEventDrivenSweeper:
         # Expired message for alice
         old_ts = datetime(2020, 1, 1, tzinfo=UTC)
         msg_a = _make_message("msg_alice", old_ts, ttl_seconds=60)
-        await vfs.sys_write(
+        vfs.sys_write(
             f"{inbox_path('agent:alice')}/20200101T000000_{msg_a.id}.json",
             msg_a.to_bytes(),
             ZONE,
         )
         # Expired message for bob
         msg_b = _make_message("msg_bob", old_ts, ttl_seconds=60)
-        await vfs.sys_write(
+        vfs.sys_write(
             f"{inbox_path('agent:bob')}/20200101T000000_{msg_b.id}.json",
             msg_b.to_bytes(),
             ZONE,
@@ -434,7 +434,7 @@ class TestEventDrivenSweeper:
         msg = _make_message("msg_poll_fallback", old_ts, ttl_seconds=60)
         filename = f"20200101T000000_{msg.id}.json"
         msg_path = f"{inbox_path('agent:bob')}/{filename}"
-        await vfs.sys_write(msg_path, msg.to_bytes(), ZONE)
+        vfs.sys_write(msg_path, msg.to_bytes(), ZONE)
 
         sweeper = TTLSweeper(
             vfs,
@@ -467,7 +467,7 @@ class TestEventDrivenSweeper:
         msg = _make_message("msg_future_expiry", now, ttl_seconds=1)
         filename = f"{now.strftime('%Y%m%dT%H%M%S')}_{msg.id}.json"
         msg_path = f"{inbox_path('agent:bob')}/{filename}"
-        await vfs.sys_write(msg_path, msg.to_bytes(), ZONE)
+        vfs.sys_write(msg_path, msg.to_bytes(), ZONE)
 
         sweeper = TTLSweeper(
             vfs,
@@ -579,7 +579,7 @@ class TestStaleInboxDrain:
         reason_files = [f for f in dl_files if f.endswith(".reason.json")]
         assert len(reason_files) == 1
         reason_path = f"{dead_letter_path('agent:bob')}/{reason_files[0]}"
-        reason_data = json.loads(await vfs.sys_read(reason_path, ZONE))
+        reason_data = json.loads(vfs.sys_read(reason_path, ZONE))
         assert reason_data["reason"] == "stale_inbox"
 
     @pytest.mark.asyncio
@@ -643,7 +643,7 @@ class TestStaleInboxDrain:
         claimed = f"{inbox}/20200101T000000_msg_stale.json.drain_{old_ts}_aabbccdd"
         msg = _make_message("msg_stale", datetime(2020, 1, 1, tzinfo=UTC))
         await vfs.write(claimed, msg.to_bytes(), ZONE)
-        await vfs.mkdir(inbox, ZONE)  # ensure inbox dir exists (already done by provision)
+        vfs.mkdir(inbox, ZONE)  # ensure inbox dir exists (already done by provision)
 
         sweeper = TTLSweeper(vfs, zone_id=ZONE, inbox_stale_hours=1)
         # Calling _recover_drain_claims directly with current filenames
@@ -816,7 +816,7 @@ class TestDeadLetterCompaction:
         archive_dir = dead_letter_archive_path("agent:bob")
         archive_files = await vfs.list_dir(archive_dir, ZONE)
         jsonl_file = next(f for f in archive_files if f.endswith(".jsonl"))
-        content = await vfs.sys_read(f"{archive_dir}/{jsonl_file}", ZONE)
+        content = vfs.sys_read(f"{archive_dir}/{jsonl_file}", ZONE)
         lines = [ln for ln in content.splitlines() if ln]
         assert len(lines) == 5
         for line in lines:
@@ -867,7 +867,7 @@ class TestDeadLetterCompaction:
         """Orphaned .tmp files (crash during phase 4) are deleted on next sweep."""
         await _provision_agent(vfs, "agent:bob")
         archive_dir = dead_letter_archive_path("agent:bob")
-        await vfs.mkdir(archive_dir, ZONE)
+        vfs.mkdir(archive_dir, ZONE)
         # Simulate an orphaned .tmp (crash left it behind)
         tmp_path = f"{archive_dir}/20200101_20200101T000000.jsonl.tmp"
         await _write_old(vfs, tmp_path, b"orphaned", ZONE)
@@ -891,7 +891,7 @@ class TestDeadLetterCompaction:
         await _provision_agent(vfs, "agent:bob")
         dl = dead_letter_path("agent:bob")
         archive_dir = dead_letter_archive_path("agent:bob")
-        await vfs.mkdir(archive_dir, ZONE)
+        vfs.mkdir(archive_dir, ZONE)
 
         # claim_ts is old (2020) → stale; run_id has no matching archive
         claimed_path = f"{dl}/20200101T000000_msg_000.json.arch_20200101T000000_deadbeef"
@@ -914,7 +914,7 @@ class TestDeadLetterCompaction:
         await _provision_agent(vfs, "agent:bob")
         dl = dead_letter_path("agent:bob")
         archive_dir = dead_letter_archive_path("agent:bob")
-        await vfs.mkdir(archive_dir, ZONE)
+        vfs.mkdir(archive_dir, ZONE)
 
         run_id = "deadbeef"
         # Old claim_ts → stale
@@ -940,7 +940,7 @@ class TestDeadLetterCompaction:
         await _provision_agent(vfs, "agent:bob")
         dl = dead_letter_path("agent:bob")
         archive_dir = dead_letter_archive_path("agent:bob")
-        await vfs.mkdir(archive_dir, ZONE)
+        vfs.mkdir(archive_dir, ZONE)
 
         # Use a very recent claim_ts (now)
         recent_ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
@@ -965,7 +965,7 @@ class TestDeadLetterCompaction:
         """Archive pruning fallback correctly parses the creation ts, not the day prefix."""
         await _provision_agent(vfs, "agent:bob")
         archive_dir = dead_letter_archive_path("agent:bob")
-        await vfs.mkdir(archive_dir, ZONE)
+        vfs.mkdir(archive_dir, ZONE)
 
         # Archive for an OLD message day but RECENTLY created — should NOT be pruned.
         # file_mtime returns None → fallback must parse the creation ts
@@ -1000,7 +1000,7 @@ class TestDeadLetterCompaction:
         """Archive segments older than retention are deleted (based on archive write time)."""
         await _provision_agent(vfs, "agent:bob")
         archive_dir = dead_letter_archive_path("agent:bob")
-        await vfs.mkdir(archive_dir, ZONE)
+        vfs.mkdir(archive_dir, ZONE)
         # Old archive segment — backdate mtime so retention logic treats it as old
         old_seg = f"{archive_dir}/20200101_20200101T000000_deadbeef.jsonl"
         await _write_old(vfs, old_seg, b"old archive data", ZONE, days_ago=40)

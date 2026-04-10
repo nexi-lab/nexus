@@ -126,15 +126,15 @@ def _make_async_observer(
 class TestAsyncObserveDispatch:
     """Tests for the async OBSERVE phase with ObserverRegistry."""
 
-    async def test_observer_called(self, dispatch: _TestDispatch) -> None:
+    def test_observer_called(self, dispatch: _TestDispatch) -> None:
         obs = _make_async_observer()
         dispatch.register_observe(obs)
         event = FileEvent(type=FileEventType.FILE_WRITE, path="/test")
-        await dispatch.notify(event)
+        dispatch.notify(event)
         assert len(obs._calls) == 1
         assert obs._calls[0] is event
 
-    async def test_event_mask_filtering(self, dispatch: _TestDispatch) -> None:
+    def test_event_mask_filtering(self, dispatch: _TestDispatch) -> None:
         """CAS observer with WRITE|DELETE mask should NOT fire for DIR_CREATE."""
         cas_obs = _make_async_observer(
             name="CAS",
@@ -143,10 +143,10 @@ class TestAsyncObserveDispatch:
         )
         dispatch.register_observe(cas_obs)
         event = FileEvent(type=FileEventType.DIR_CREATE, path="/mydir")
-        await dispatch.notify(event)
+        dispatch.notify(event)
         assert len(cas_obs._calls) == 0
 
-    async def test_event_mask_allows_matching_events(self, dispatch: _TestDispatch) -> None:
+    def test_event_mask_allows_matching_events(self, dispatch: _TestDispatch) -> None:
         cas_obs = _make_async_observer(
             name="CAS",
             event_mask=FILE_EVENT_BIT[FileEventType.FILE_WRITE]
@@ -154,10 +154,10 @@ class TestAsyncObserveDispatch:
         )
         dispatch.register_observe(cas_obs)
         event = FileEvent(type=FileEventType.FILE_WRITE, path="/test.txt")
-        await dispatch.notify(event)
+        dispatch.notify(event)
         assert len(cas_obs._calls) == 1
 
-    async def test_fault_isolation(self, dispatch: _TestDispatch) -> None:
+    def test_fault_isolation(self, dispatch: _TestDispatch) -> None:
         """One observer raising should not prevent others from firing."""
         bad = _make_async_observer(name="Bad", side_effect=RuntimeError("kaboom"))
         good = _make_async_observer(name="Good")
@@ -165,10 +165,10 @@ class TestAsyncObserveDispatch:
         dispatch.register_observe(good)
 
         event = FileEvent(type=FileEventType.FILE_WRITE, path="/test")
-        await dispatch.notify(event)
+        dispatch.notify(event)
         assert len(good._calls) == 1
 
-    async def test_concurrent_execution(self, dispatch: _TestDispatch) -> None:
+    def test_concurrent_execution(self, dispatch: _TestDispatch) -> None:
         """Multiple observers sleeping should run in parallel (gather), not serial."""
         import time
 
@@ -179,14 +179,14 @@ class TestAsyncObserveDispatch:
 
         event = FileEvent(type=FileEventType.FILE_WRITE, path="/test")
         t0 = time.monotonic()
-        await dispatch.notify(event)
+        dispatch.notify(event)
         elapsed = time.monotonic() - t0
 
         assert len(a._calls) == 1
         assert len(b._calls) == 1
         assert elapsed < 0.18, f"Expected parallel (~0.1s), got {elapsed:.3f}s"
 
-    async def test_unregister(self, dispatch: _TestDispatch) -> None:
+    def test_unregister(self, dispatch: _TestDispatch) -> None:
         obs = _make_async_observer()
         dispatch.register_observe(obs)
         assert dispatch.observer_count == 1
@@ -194,7 +194,7 @@ class TestAsyncObserveDispatch:
         assert removed is True
         assert dispatch.observer_count == 0
 
-    async def test_observer_count(self, dispatch: _TestDispatch) -> None:
+    def test_observer_count(self, dispatch: _TestDispatch) -> None:
         a = _make_async_observer(name="A")
         b = _make_async_observer(name="B")
         dispatch.register_observe(a)
@@ -218,30 +218,31 @@ class TestObserverDispatch:
     async work internally (e.g. EventBusObserver uses ``create_task``).
     """
 
-    async def test_observer_called_after_notify(self, dispatch: _TestDispatch) -> None:
+    def test_observer_called_after_notify(self, dispatch: _TestDispatch) -> None:
         obs = _make_async_observer(name="Sync")
         dispatch.register_observe(obs)
-        await dispatch.notify(_write_event())
+        dispatch.notify(_write_event())
         assert len(obs._calls) == 1
 
-    async def test_multiple_observers_all_called(self, dispatch: _TestDispatch) -> None:
+    def test_multiple_observers_all_called(self, dispatch: _TestDispatch) -> None:
         a = _make_async_observer(name="A")
         b = _make_async_observer(name="B")
         dispatch.register_observe(a)
         dispatch.register_observe(b)
-        await dispatch.notify(_write_event())
+        dispatch.notify(_write_event())
         assert len(a._calls) == 1
         assert len(b._calls) == 1
 
-    async def test_fault_isolation(self, dispatch: _TestDispatch) -> None:
+    def test_fault_isolation(self, dispatch: _TestDispatch) -> None:
         bad = _make_async_observer(name="Bad", side_effect=RuntimeError("boom"))
         good = _make_async_observer(name="Good")
         dispatch.register_observe(bad)
         dispatch.register_observe(good)
-        await dispatch.notify(_write_event())
+
+        dispatch.notify(_write_event())
         assert len(good._calls) == 1
 
-    async def test_failed_observer_logs_warning(self, dispatch: _TestDispatch, caplog) -> None:
+    def test_failed_observer_logs_warning(self, dispatch: _TestDispatch, caplog) -> None:
         """Observer exceptions are caught and logged, never raised to caller."""
         import logging
 
@@ -249,7 +250,7 @@ class TestObserverDispatch:
         dispatch.register_observe(obs)
 
         with caplog.at_level(logging.WARNING, logger="nexus.core.nexus_fs_dispatch"):
-            await dispatch.notify(_write_event())
+            dispatch.notify(_write_event())
 
         assert any("test-error" in r.message for r in caplog.records)
 

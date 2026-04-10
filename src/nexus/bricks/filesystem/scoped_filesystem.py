@@ -69,7 +69,7 @@ class ScopedFilesystem(ScopedPathMixin):
     # Content I/O (path-scoped)
     # ============================================================
 
-    async def sys_read(
+    def sys_read(
         self,
         path: str,
         *,
@@ -78,11 +78,11 @@ class ScopedFilesystem(ScopedPathMixin):
         context: OperationContext | None = None,
     ) -> bytes:
         """Read file content as bytes (POSIX pread)."""
-        return await self._fs.sys_read(
+        return self._fs.sys_read(
             self._scope_path(path), count=count, offset=offset, context=context
         )
 
-    async def sys_write(
+    def sys_write(
         self,
         path: str,
         buf: bytes | str,
@@ -92,7 +92,7 @@ class ScopedFilesystem(ScopedPathMixin):
         context: OperationContext | None = None,
     ) -> dict[str, Any]:
         """Write content to a file (POSIX pwrite)."""
-        return await self._fs.sys_write(
+        return self._fs.sys_write(
             self._scope_path(path), buf, count=count, offset=offset, context=context
         )
 
@@ -139,11 +139,11 @@ class ScopedFilesystem(ScopedPathMixin):
     # Metadata I/O (path-scoped)
     # ============================================================
 
-    async def sys_stat(
+    def sys_stat(
         self, path: str, *, context: OperationContext | None = None
     ) -> dict[str, Any] | None:
         """Read all file metadata."""
-        result = await self._fs.sys_stat(self._scope_path(path), context=context)
+        result = self._fs.sys_stat(self._scope_path(path), context=context)
         if result is not None and isinstance(result, dict):
             return self._unscope_dict(result, ["path"])
         return result
@@ -159,17 +159,15 @@ class ScopedFilesystem(ScopedPathMixin):
     # Namespace (path-scoped)
     # ============================================================
 
-    async def sys_unlink(
-        self, path: str, *, context: OperationContext | None = None
-    ) -> dict[str, Any]:
+    def sys_unlink(self, path: str, *, context: OperationContext | None = None) -> dict[str, Any]:
         """Remove a directory entry."""
-        return await self._fs.sys_unlink(self._scope_path(path), context=context)
+        return self._fs.sys_unlink(self._scope_path(path), context=context)
 
-    async def sys_rename(
+    def sys_rename(
         self, old_path: str, new_path: str, *, context: OperationContext | None = None
     ) -> dict[str, Any]:
         """Rename/move a file."""
-        return await self._fs.sys_rename(
+        return self._fs.sys_rename(
             self._scope_path(old_path), self._scope_path(new_path), context=context
         )
 
@@ -185,7 +183,7 @@ class ScopedFilesystem(ScopedPathMixin):
     # File Discovery Operations (path-scoped)
     # ============================================================
 
-    async def sys_readdir(
+    def sys_readdir(
         self,
         path: str = "/",
         recursive: bool = True,
@@ -195,7 +193,7 @@ class ScopedFilesystem(ScopedPathMixin):
         context: OperationContext | None = None,
     ) -> builtins.list[str] | builtins.list[dict[str, Any]]:
         """List files in a directory."""
-        result = await self._fs.sys_readdir(
+        result = self._fs.sys_readdir(
             self._scope_path(path), recursive, details, show_parsed, context=context
         )
         if details:
@@ -248,7 +246,7 @@ class ScopedFilesystem(ScopedPathMixin):
     # Directory Operations (path-scoped)
     # ============================================================
 
-    async def mkdir(
+    def mkdir(
         self,
         path: str,
         parents: bool = True,
@@ -257,13 +255,13 @@ class ScopedFilesystem(ScopedPathMixin):
         context: OperationContext | None = None,
     ) -> None:
         """Create a directory."""
-        await self._fs.mkdir(self._scope_path(path), parents, exist_ok, context=context)
+        self._fs.mkdir(self._scope_path(path), parents, exist_ok, context=context)
 
-    async def rmdir(
+    def rmdir(
         self, path: str, recursive: bool = True, *, context: OperationContext | None = None
     ) -> None:
         """Remove a directory."""
-        await self._fs.rmdir(self._scope_path(path), recursive=recursive, context=context)
+        self._fs.rmdir(self._scope_path(path), recursive=recursive, context=context)
 
     async def is_directory(self, path: str, *, context: OperationContext | None = None) -> bool:
         """Check if path is a directory."""

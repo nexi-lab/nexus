@@ -16,7 +16,7 @@ Example:
             self._gw = gateway  # Grep pattern: self._gw.
 
         async def sync_mount(self, ctx):
-            await self._gw.mkdir(ctx.mount_point, parents=True)
+            self._gw.mkdir(ctx.mount_point, parents=True)
             meta = self._gw.metadata_get(path)
             self._gw.metadata_put(new_meta)
     ```
@@ -79,7 +79,7 @@ class NexusFSGateway:
             exist_ok: If True, don't raise if directory exists
             context: Operation context for permissions
         """
-        await self._fs.mkdir(path, parents=parents, exist_ok=exist_ok, context=context)
+        self._fs.mkdir(path, parents=parents, exist_ok=exist_ok, context=context)
 
     async def sys_write(
         self,
@@ -98,7 +98,7 @@ class NexusFSGateway:
         Returns:
             Dict with path, bytes_written, and created flag.
         """
-        return await self._fs.sys_write(path, buf, context=context)
+        return self._fs.sys_write(path, buf, context=context)
 
     async def write(
         self,
@@ -136,7 +136,7 @@ class NexusFSGateway:
         Returns:
             File content as bytes.
         """
-        return await self._fs.sys_read(path, context=context)
+        return self._fs.sys_read(path, context=context)
 
     async def sys_readdir(
         self,
@@ -153,7 +153,7 @@ class NexusFSGateway:
         Returns:
             List of paths in directory
         """
-        result = await self._fs.sys_readdir(path, context=context)
+        result = self._fs.sys_readdir(path, context=context)
         # Handle PaginatedResult vs raw list
         items = result.items if hasattr(result, "items") else result
         # Convert to list of strings

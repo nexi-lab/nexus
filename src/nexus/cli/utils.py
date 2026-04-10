@@ -590,7 +590,7 @@ async def open_filesystem(
     Usage::
 
         async with open_filesystem(remote_url, remote_api_key) as nx:
-            result = await nx.sys_readdir(path)
+            result = nx.sys_readdir(path)
         # nx.close() is called automatically, even on exception.
     """
     nx = await get_filesystem(remote_url, remote_api_key, **kwargs)

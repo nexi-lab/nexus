@@ -178,7 +178,7 @@ class IOHandler:
             # Read existing content
             existing_content = b""
             if await ctx.nexus_fs.access(original_path):
-                raw_content = await ctx.nexus_fs.sys_read(original_path, context=ctx.context)
+                raw_content = ctx.nexus_fs.sys_read(original_path, context=ctx.context)
                 assert isinstance(raw_content, bytes), "Expected bytes from read()"
                 existing_content = raw_content
 

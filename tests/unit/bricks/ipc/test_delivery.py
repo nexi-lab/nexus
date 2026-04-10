@@ -78,7 +78,7 @@ class TestMessageSender:
         assert path.startswith("/agents/agent:bob/inbox/")
         assert path.endswith(".json")
         # Verify file was written
-        data = await vfs.sys_read(path, ZONE)
+        data = vfs.sys_read(path, ZONE)
         restored = MessageEnvelope.from_bytes(data)
         assert restored.id == env.id
         # Verify EventBus notification
@@ -524,7 +524,7 @@ class TestListenerResilience:
         await _provision_agent(vfs, "agent:bob")
         env = _make_envelope()
         msg_path = message_path_in_inbox("agent:bob", env.id, env.timestamp)
-        await vfs.sys_write(msg_path, env.to_bytes(), ZONE)
+        vfs.sys_write(msg_path, env.to_bytes(), ZONE)
 
         received: list[MessageEnvelope] = []
 
@@ -659,7 +659,7 @@ class TestSignedDelivery:
         env = _make_envelope()
         path = await sender.send(env)
 
-        data = await vfs.sys_read(path, ZONE)
+        data = vfs.sys_read(path, ZONE)
         restored = MessageEnvelope.from_bytes(data)
         assert restored.signature is not None
         assert restored.signer_did is not None

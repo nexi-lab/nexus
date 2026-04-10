@@ -52,7 +52,7 @@ class TestOnlineRoundTrip:
         proxy = ProxyVFSBrick(config, transport=http_transport)
         await proxy.start()
         try:
-            result = await proxy.sys_read("/file.txt", "zone1")
+            result = proxy.sys_read("/file.txt", "zone1")
             assert result == b"file content"
         finally:
             await proxy.stop()
@@ -112,9 +112,9 @@ class TestOfflineQueueReplay:
         try:
             # These should fail and be queued
             with pytest.raises(OfflineQueuedError):
-                await proxy.mkdir("/dir1", "z1")
+                proxy.mkdir("/dir1", "z1")
             with pytest.raises(OfflineQueuedError):
-                await proxy.mkdir("/dir2", "z1")
+                proxy.mkdir("/dir2", "z1")
 
             assert await proxy.pending_count() == 2
 

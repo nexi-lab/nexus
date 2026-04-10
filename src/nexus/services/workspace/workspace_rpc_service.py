@@ -307,7 +307,7 @@ class WorkspaceRPCService:
             context = self._operation_context
 
         if not await self._vfs.access(path, context=context):
-            await self._vfs.mkdir(path, parents=True, exist_ok=True, context=context)
+            self._vfs.mkdir(path, parents=True, exist_ok=True, context=context)
 
         config = self._wr.register_workspace(
             path=path,

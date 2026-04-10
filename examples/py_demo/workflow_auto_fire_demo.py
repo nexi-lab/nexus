@@ -189,7 +189,7 @@ actions:
     for path in cleanup_paths:
         try:
             if await nx.access(path):
-                await nx.sys_unlink(path)
+                nx.sys_unlink(path)
                 print(f"   🗑️  Deleted: {path}")
         except Exception:
             # Ignore errors - file might not exist
@@ -200,8 +200,8 @@ actions:
     print("\n⏳ Performing file operations (workflows will auto-fire)...\n")
 
     # Create directories
-    await nx.mkdir("/uploads/invoices", parents=True)
-    await nx.mkdir("/uploads/receipts", parents=True)
+    nx.mkdir("/uploads/invoices", parents=True)
+    nx.mkdir("/uploads/receipts", parents=True)
 
     # Test 1: Upload invoice (should trigger invoice-auto-tagger)
     print("1️⃣  Uploading invoice PDF...")
@@ -231,7 +231,7 @@ actions:
     # Test 3: Rename/move file (should trigger file-move-tracker)
     print("\n3️⃣  Moving invoice file...")
     new_invoice_path = f"/uploads/invoices/{invoice_filename.replace('.pdf', '-processed.pdf')}"
-    await nx.sys_rename(invoice_path, new_invoice_path)
+    nx.sys_rename(invoice_path, new_invoice_path)
     print(
         f"   ✅ Renamed: {invoice_filename} → {invoice_filename.replace('.pdf', '-processed.pdf')}"
     )
@@ -241,7 +241,7 @@ actions:
 
     # Test 4: Delete file (should trigger deletion-monitor)
     print("\n4️⃣  Deleting invoice file...")
-    await nx.sys_unlink(new_invoice_path)
+    nx.sys_unlink(new_invoice_path)
     print(f"   ✅ Deleted: {invoice_filename.replace('.pdf', '-processed.pdf')}")
     print("   🔄 Workflow 'deletion-monitor' should have fired!")
 
@@ -309,9 +309,9 @@ actions:
 
     # Create test file anyway (webhook will fail but shows the concept)
     print("\n📤 Uploading test file (webhook will attempt to fire)...")
-    await nx.mkdir("/uploads/webhooks", parents=True)
+    nx.mkdir("/uploads/webhooks", parents=True)
     test_data = json.dumps({"test": "data", "timestamp": time.time()}).encode()
-    await nx.sys_write("/uploads/webhooks/test.json", test_data)
+    nx.sys_write("/uploads/webhooks/test.json", test_data)
     print("   ✅ File uploaded, webhook workflow triggered!")
     print("   ⚠️  Webhook delivery will fail (no valid endpoint)")
 

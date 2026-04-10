@@ -191,7 +191,7 @@ class TestDeleteConsistency:
         self, nx: NexusFS, record_store: SQLAlchemyRecordStore
     ) -> None:
         await nx.write("/del.txt", b"content")
-        await nx.sys_unlink("/del.txt")
+        nx.sys_unlink("/del.txt")
 
         assert nx.metadata.get("/del.txt") is None
 
@@ -200,7 +200,7 @@ class TestDeleteConsistency:
         self, nx: NexusFS, record_store: SQLAlchemyRecordStore
     ) -> None:
         await nx.write("/del.txt", b"content")
-        await nx.sys_unlink("/del.txt")
+        nx.sys_unlink("/del.txt")
 
         with record_store.session_factory() as session:
             fp = (
@@ -217,7 +217,7 @@ class TestDeleteConsistency:
         self, nx: NexusFS, record_store: SQLAlchemyRecordStore
     ) -> None:
         await nx.write("/del.txt", b"content")
-        await nx.sys_unlink("/del.txt")
+        nx.sys_unlink("/del.txt")
 
         with record_store.session_factory() as session:
             logger = OperationLogger(session)
@@ -240,7 +240,7 @@ class TestRenameConsistency:
         self, nx: NexusFS, record_store: SQLAlchemyRecordStore
     ) -> None:
         await nx.write("/old.txt", b"content")
-        await nx.sys_rename("/old.txt", "/new.txt")
+        nx.sys_rename("/old.txt", "/new.txt")
 
         assert nx.metadata.get("/old.txt") is None
         meta = nx.metadata.get("/new.txt")
@@ -252,7 +252,7 @@ class TestRenameConsistency:
         self, nx: NexusFS, record_store: SQLAlchemyRecordStore
     ) -> None:
         await nx.write("/old.txt", b"content")
-        await nx.sys_rename("/old.txt", "/new.txt")
+        nx.sys_rename("/old.txt", "/new.txt")
 
         with record_store.session_factory() as session:
             logger = OperationLogger(session)

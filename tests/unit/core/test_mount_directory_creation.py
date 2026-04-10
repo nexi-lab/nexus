@@ -54,7 +54,7 @@ async def test_mount_creates_directory_entry(nx_with_mount):
     nx._driver_coordinator.mount("/mnt/test", mount_backend, readonly=False)
 
     # Create directory entry (this is what server.py now does)
-    await nx.mkdir("/mnt/test", parents=True, exist_ok=True)
+    nx.mkdir("/mnt/test", parents=True, exist_ok=True)
 
     # Verify directory exists in metadata
     assert nx.metadata.exists("/mnt")
@@ -90,16 +90,16 @@ async def test_mount_appears_in_listing(nx_with_mount):
 
     # Add mount and create directory
     nx._driver_coordinator.mount("/mnt/gcs_demo", mount_backend, readonly=False)
-    await nx.mkdir("/mnt/gcs_demo", parents=True, exist_ok=True)
+    nx.mkdir("/mnt/gcs_demo", parents=True, exist_ok=True)
 
     # List root directory (non-recursive)
-    root_list = await nx.sys_readdir("/", recursive=False, details=False)
+    root_list = nx.sys_readdir("/", recursive=False, details=False)
 
     # /mnt should appear in root listing
     assert "/mnt" in root_list, f"Expected /mnt in {root_list}"
 
     # List /mnt directory (non-recursive)
-    mnt_list = await nx.sys_readdir("/mnt", recursive=False, details=False)
+    mnt_list = nx.sys_readdir("/mnt", recursive=False, details=False)
 
     # /mnt/gcs_demo should appear in /mnt listing
     assert "/mnt/gcs_demo" in mnt_list, f"Expected /mnt/gcs_demo in {mnt_list}"
@@ -116,10 +116,10 @@ async def test_mount_appears_in_detailed_listing(nx_with_mount):
 
     # Add mount and create directory
     nx._driver_coordinator.mount("/personal/alice", mount_backend, readonly=False)
-    await nx.mkdir("/personal/alice", parents=True, exist_ok=True)
+    nx.mkdir("/personal/alice", parents=True, exist_ok=True)
 
     # List with details
-    root_list = await nx.sys_readdir("/", recursive=False, details=True)
+    root_list = nx.sys_readdir("/", recursive=False, details=True)
 
     # Find /personal in results
     personal_entry = next((e for e in root_list if e["path"] == "/personal"), None)
@@ -131,7 +131,7 @@ async def test_mount_appears_in_detailed_listing(nx_with_mount):
     assert await nx.is_directory("/personal")
 
     # List /personal with details
-    personal_list = await nx.sys_readdir("/personal", recursive=False, details=True)
+    personal_list = nx.sys_readdir("/personal", recursive=False, details=True)
 
     # Find /personal/alice in results
     alice_entry = next((e for e in personal_list if e["path"] == "/personal/alice"), None)
@@ -153,7 +153,7 @@ async def test_nested_mount_creates_all_parents(nx_with_mount):
 
     # Add mount and create directory with parents
     nx._driver_coordinator.mount("/a/b/c/mount", mount_backend, readonly=False)
-    await nx.mkdir("/a/b/c/mount", parents=True, exist_ok=True)
+    nx.mkdir("/a/b/c/mount", parents=True, exist_ok=True)
 
     # Verify all parents exist
     assert nx.metadata.exists("/a")
@@ -198,14 +198,14 @@ async def test_add_mount_via_api_creates_directory(nx_with_mount):
 
     # _setup_mount_point may not create dirs on non-gateway path (sync call to
     # async mkdir). Ensure dirs exist for the listing assertion below.
-    await nx.mkdir("/api/mount", parents=True, exist_ok=True)
+    nx.mkdir("/api/mount", parents=True, exist_ok=True)
 
     # Verify directory was created
     assert nx.metadata.exists("/api")
     assert nx.metadata.exists("/api/mount")
 
     # Verify mount appears in listing
-    api_list = await nx.sys_readdir("/api", recursive=False, details=False)
+    api_list = nx.sys_readdir("/api", recursive=False, details=False)
     assert "/api/mount" in api_list
 
 
@@ -215,10 +215,10 @@ async def test_mount_exist_ok_does_not_fail(nx_with_mount):
     nx, tmpdir = nx_with_mount
 
     # Create directory first
-    await nx.mkdir("/mnt/test", parents=True, exist_ok=True)
+    nx.mkdir("/mnt/test", parents=True, exist_ok=True)
 
     # Create it again with exist_ok=True (should not raise)
-    await nx.mkdir("/mnt/test", parents=True, exist_ok=True)
+    nx.mkdir("/mnt/test", parents=True, exist_ok=True)
 
     # Verify it still exists
     assert nx.metadata.exists("/mnt/test")
@@ -234,10 +234,10 @@ async def test_multiple_mounts_in_same_parent(nx_with_mount):
         mount_backend = MagicMock()
         mount_backend.name = name
         nx._driver_coordinator.mount(f"/mnt/{name}", mount_backend, readonly=False)
-        await nx.mkdir(f"/mnt/{name}", parents=True, exist_ok=True)
+        nx.mkdir(f"/mnt/{name}", parents=True, exist_ok=True)
 
     # List /mnt
-    mnt_list = await nx.sys_readdir("/mnt", recursive=False, details=False)
+    mnt_list = nx.sys_readdir("/mnt", recursive=False, details=False)
 
     # All mounts should appear
     assert "/mnt/mount1" in mnt_list

@@ -76,8 +76,8 @@ class TestZoneBoundarySecurity:
         )
 
         # Create zone directories
-        await nx.mkdir("/zone", context=system_admin)
-        await nx.mkdir("/zone/acme", context=system_admin)
+        nx.mkdir("/zone", context=system_admin)
+        nx.mkdir("/zone/acme", context=system_admin)
 
         test_file = "/zone/acme/doc.txt"
         await nx.write(test_file, b"secret acme data", context=system_admin)
@@ -97,7 +97,7 @@ class TestZoneBoundarySecurity:
 
         # Should be denied - cross-zone access without MANAGE_ZONES
         with pytest.raises(PermissionError, match="Access denied"):
-            await nx.sys_read(test_file, context=zone_admin_techcorp)
+            nx.sys_read(test_file, context=zone_admin_techcorp)
 
     @pytest.mark.asyncio
     async def test_system_admin_can_access_any_zone(self, nx: NexusFS) -> None:
@@ -117,8 +117,8 @@ class TestZoneBoundarySecurity:
         )
 
         # Create zone directories
-        await nx.mkdir("/zone", context=system_admin_setup)
-        await nx.mkdir("/zone/acme", context=system_admin_setup)
+        nx.mkdir("/zone", context=system_admin_setup)
+        nx.mkdir("/zone/acme", context=system_admin_setup)
 
         test_file = "/zone/acme/doc.txt"
         await nx.write(test_file, b"secret acme data", context=system_admin_setup)
@@ -137,7 +137,7 @@ class TestZoneBoundarySecurity:
         )
 
         # Should succeed - system admin with MANAGE_ZONES
-        content = await nx.sys_read(test_file, context=system_admin_zone2)
+        content = nx.sys_read(test_file, context=system_admin_zone2)
         assert content == b"secret acme data"
 
     @pytest.mark.asyncio
@@ -158,8 +158,8 @@ class TestZoneBoundarySecurity:
         )
 
         # Create zone directories
-        await nx.mkdir("/zone", context=system_admin)
-        await nx.mkdir("/zone/acme", context=system_admin)
+        nx.mkdir("/zone", context=system_admin)
+        nx.mkdir("/zone/acme", context=system_admin)
 
         test_file = "/zone/acme/doc.txt"
         await nx.write(test_file, b"acme data", context=system_admin)
@@ -181,7 +181,7 @@ class TestZoneBoundarySecurity:
         )
 
         # Should succeed - same zone
-        content = await nx.sys_read(test_file, context=zone_admin_acme)
+        content = nx.sys_read(test_file, context=zone_admin_acme)
         assert content == b"acme data"
 
     @pytest.mark.asyncio
@@ -202,8 +202,8 @@ class TestZoneBoundarySecurity:
         )
 
         # Create zone directories
-        await nx.mkdir("/zone", context=system_admin)
-        await nx.mkdir("/zone/acme", context=system_admin)
+        nx.mkdir("/zone", context=system_admin)
+        nx.mkdir("/zone/acme", context=system_admin)
 
         test_file = "/zone/acme/doc.txt"
         await nx.write(test_file, b"original", context=system_admin)
@@ -242,8 +242,8 @@ class TestZoneBoundarySecurity:
         )
 
         # Create zone directories
-        await nx.mkdir("/zone", context=system_admin)
-        await nx.mkdir("/zone/acme", context=system_admin)
+        nx.mkdir("/zone", context=system_admin)
+        nx.mkdir("/zone/acme", context=system_admin)
 
         test_file = "/zone/acme/doc.txt"
         await nx.write(test_file, b"secret", context=system_admin)
@@ -263,4 +263,4 @@ class TestZoneBoundarySecurity:
 
         # Should be denied
         with pytest.raises(PermissionError, match="Access denied"):
-            await nx.sys_read(test_file, context=limited_admin)
+            nx.sys_read(test_file, context=limited_admin)

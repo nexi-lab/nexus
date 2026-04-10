@@ -220,7 +220,7 @@ class TestStaleInboxDrainReal:
         reason_files = [f for f in dl_files if f.endswith(".reason.json")]
         assert len(reason_files) == 1
         reason_path = f"{dl}/{reason_files[0]}"
-        reason = json.loads(await adapter.sys_read(reason_path, ZONE))
+        reason = json.loads(adapter.sys_read(reason_path, ZONE))
         assert reason["reason"] == DLQReason.STALE_INBOX
 
     @pytest.mark.asyncio
@@ -340,7 +340,7 @@ class TestDeadLetterCompactionReal:
         assert len(jsonl_files) == 1, f"Expected 1 archive segment, got {jsonl_files}"
 
         # Archive is valid JSONL
-        content = await adapter.sys_read(f"{archive_dir}/{jsonl_files[0]}", ZONE)
+        content = adapter.sys_read(f"{archive_dir}/{jsonl_files[0]}", ZONE)
         records = [json.loads(line) for line in content.splitlines() if line]
         assert len(records) == 10
         for r in records:

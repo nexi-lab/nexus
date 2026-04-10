@@ -202,7 +202,7 @@ class TestSingleBackendLifecycle:
     @pytest.mark.asyncio
     async def test_mkdir(self, slim_fs: SlimNexusFS):
         """Create directory, verify it's a directory."""
-        await slim_fs.mkdir("/local/subdir")
+        slim_fs.mkdir("/local/subdir")
         stat = await slim_fs.stat("/local/subdir")
         assert stat is not None
         assert stat["is_directory"] is True

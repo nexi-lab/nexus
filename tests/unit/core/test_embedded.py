@@ -78,7 +78,7 @@ async def test_write_and_read(embedded: NexusFS) -> None:
     await embedded.write(path, content)
 
     # Read file
-    result = await embedded.sys_read(path)
+    result = embedded.sys_read(path)
     assert result == content
 
 
@@ -137,7 +137,7 @@ async def test_write_updates_version(embedded: NexusFS) -> None:
 async def test_read_nonexistent_file_raises_error(embedded: NexusFS) -> None:
     """Test that reading nonexistent file raises error."""
     with pytest.raises(NexusFileNotFoundError) as exc_info:
-        await embedded.sys_read("/nonexistent.txt")
+        embedded.sys_read("/nonexistent.txt")
 
     assert "/nonexistent.txt" in str(exc_info.value)
 
@@ -153,21 +153,21 @@ async def test_delete(embedded: NexusFS) -> None:
     assert await embedded.access(path)
 
     # Delete file
-    await embedded.sys_unlink(path)
+    embedded.sys_unlink(path)
 
     # File should not exist
     assert not await embedded.access(path)
 
     # Reading should raise error
     with pytest.raises(NexusFileNotFoundError):
-        await embedded.sys_read(path)
+        embedded.sys_read(path)
 
 
 @pytest.mark.asyncio
 async def test_delete_nonexistent_file_raises_error(embedded: NexusFS) -> None:
     """Test that deleting nonexistent file raises error."""
     with pytest.raises(NexusFileNotFoundError):
-        await embedded.sys_unlink("/nonexistent.txt")
+        embedded.sys_unlink("/nonexistent.txt")
 
 
 @pytest.mark.asyncio
@@ -180,7 +180,7 @@ async def test_delete_removes_metadata(embedded: NexusFS) -> None:
     assert embedded.metadata.exists(path)
 
     # Delete file
-    await embedded.sys_unlink(path)
+    embedded.sys_unlink(path)
 
     # Metadata should be gone
     assert not embedded.metadata.exists(path)
@@ -200,7 +200,7 @@ async def test_exists(embedded: NexusFS) -> None:
     assert await embedded.access(path)
 
     # Delete file
-    await embedded.sys_unlink(path)
+    embedded.sys_unlink(path)
     assert not await embedded.access(path)
 
 
@@ -213,7 +213,7 @@ async def test_list_files(embedded: NexusFS) -> None:
     await embedded.write("/dir/subdir/file3.txt", b"Content 3")
 
     # List all files (filter out system mount-point entries)
-    files = [f for f in await embedded.sys_readdir() if f not in _SYSTEM_PATHS]
+    files = [f for f in embedded.sys_readdir() if f not in _SYSTEM_PATHS]
 
     assert "/file1.txt" in files
     assert "/dir/file2.txt" in files
@@ -231,7 +231,7 @@ async def test_list_with_prefix(embedded: NexusFS) -> None:
     await embedded.write("/other/file4.txt", b"Content 4")
 
     # List with path filter
-    files = await embedded.sys_readdir(path="/dir")
+    files = embedded.sys_readdir(path="/dir")
 
     assert len(files) == 2
     assert "/dir/file2.txt" in files
@@ -243,7 +243,7 @@ async def test_list_with_prefix(embedded: NexusFS) -> None:
 @pytest.mark.asyncio
 async def test_list_empty(embedded: NexusFS) -> None:
     """Test listing when no user files exist."""
-    files = [f for f in await embedded.sys_readdir() if f not in _SYSTEM_PATHS]
+    files = [f for f in embedded.sys_readdir() if f not in _SYSTEM_PATHS]
     assert len(files) == 0
 
 
@@ -251,7 +251,7 @@ async def test_list_empty(embedded: NexusFS) -> None:
 async def test_path_validation_empty_path(embedded: NexusFS) -> None:
     """Test that empty path raises error."""
     with pytest.raises(InvalidPathError):
-        await embedded.sys_read("")
+        embedded.sys_read("")
 
 
 @pytest.mark.asyncio
@@ -267,7 +267,7 @@ async def test_path_validation_null_byte(embedded: NexusFS) -> None:
 async def test_path_validation_parent_directory(embedded: NexusFS) -> None:
     """Test that path with .. raises error."""
     with pytest.raises(InvalidPathError) as exc_info:
-        await embedded.sys_read("/../etc/passwd")
+        embedded.sys_read("/../etc/passwd")
 
     assert ".." in str(exc_info.value)
 
@@ -281,7 +281,7 @@ async def test_path_normalization_leading_slash(embedded: NexusFS) -> None:
     await embedded.write("test.txt", content)
 
     # Read with leading slash
-    result = await embedded.sys_read("/test.txt")
+    result = embedded.sys_read("/test.txt")
     assert result == content
 
     # Both should be the same file
@@ -297,7 +297,7 @@ async def test_binary_content(embedded: NexusFS) -> None:
 
     await embedded.write("/binary.bin", content)
 
-    result = await embedded.sys_read("/binary.bin")
+    result = embedded.sys_read("/binary.bin")
     assert result == content
 
 
@@ -306,7 +306,7 @@ async def test_empty_file(embedded: NexusFS) -> None:
     """Test handling of empty files."""
     await embedded.write("/empty.txt", b"")
 
-    result = await embedded.sys_read("/empty.txt")
+    result = embedded.sys_read("/empty.txt")
     assert result == b""
 
     # Check metadata
@@ -323,7 +323,7 @@ async def test_large_file(embedded: NexusFS) -> None:
 
     await embedded.write("/large.bin", content)
 
-    result = await embedded.sys_read("/large.bin")
+    result = embedded.sys_read("/large.bin")
     assert len(result) == len(content)
     assert result == content
 
@@ -336,7 +336,7 @@ async def test_unicode_paths(embedded: NexusFS) -> None:
 
     await embedded.write(path, content)
 
-    result = await embedded.sys_read(path)
+    result = embedded.sys_read(path)
     assert result == content
     assert await embedded.access(path)
 
@@ -397,7 +397,7 @@ async def test_context_manager(temp_dir: Path) -> None:
     )
     try:
         await nx.write("/test.txt", content)
-        result = await nx.sys_read("/test.txt")
+        result = nx.sys_read("/test.txt")
         assert result == content
     finally:
         nx.close()
@@ -466,12 +466,12 @@ async def test_multiple_operations(embedded: NexusFS) -> None:
 
     # Read all
     for i in range(10):
-        content = await embedded.sys_read(f"/file{i}.txt")
+        content = embedded.sys_read(f"/file{i}.txt")
         assert content == f"Content {i}".encode()
 
     # Delete half
     for i in range(0, 10, 2):
-        await embedded.sys_unlink(f"/file{i}.txt")
+        embedded.sys_unlink(f"/file{i}.txt")
 
     # Verify correct files remain
     for i in range(10):
@@ -494,10 +494,10 @@ async def test_overwrite_preserves_path(embedded: NexusFS) -> None:
 
     # Should be accessible at same path
     assert await embedded.access(path)
-    assert await embedded.sys_read(path) == b"Content 2"
+    assert embedded.sys_read(path) == b"Content 2"
 
     # Should be accessible in listing
-    files = [f for f in await embedded.sys_readdir() if f not in _SYSTEM_PATHS]
+    files = [f for f in embedded.sys_readdir() if f not in _SYSTEM_PATHS]
     assert path in files, f"Expected {path} in {files}"
 
 
@@ -520,11 +520,11 @@ async def test_list_recursive(embedded: NexusFS) -> None:
 
     # Non-recursive list of root — only direct-child *files* are returned
     # (virtual directories like /dir1, /dir2 are NOT materialised in the metastore)
-    files = [f for f in await embedded.sys_readdir("/", recursive=False) if f not in _SYSTEM_PATHS]
+    files = [f for f in embedded.sys_readdir("/", recursive=False) if f not in _SYSTEM_PATHS]
     assert "/file1.txt" in files
 
     # Recursive list of root — all files regardless of depth
-    files = [f for f in await embedded.sys_readdir("/", recursive=True) if f not in _SYSTEM_PATHS]
+    files = [f for f in embedded.sys_readdir("/", recursive=True) if f not in _SYSTEM_PATHS]
     assert len(files) >= 4
     assert "/file1.txt" in files
     assert "/dir1/file2.txt" in files
@@ -532,12 +532,12 @@ async def test_list_recursive(embedded: NexusFS) -> None:
     assert "/dir2/file4.txt" in files
 
     # Non-recursive list of dir1 — only direct-child files
-    files = await embedded.sys_readdir("/dir1", recursive=False)
+    files = embedded.sys_readdir("/dir1", recursive=False)
     assert len(files) == 1  # file2.txt only (subdir is virtual, not stored)
     assert "/dir1/file2.txt" in files
 
     # Recursive list of dir1
-    files = await embedded.sys_readdir("/dir1", recursive=True)
+    files = embedded.sys_readdir("/dir1", recursive=True)
     assert len(files) == 2
     assert "/dir1/file2.txt" in files
     assert "/dir1/subdir/file3.txt" in files
@@ -559,7 +559,7 @@ async def test_list_with_details(embedded: NexusFS) -> None:
     # List with details (filter out system mount-point entries)
     files = [
         f
-        for f in await embedded.sys_readdir("/", recursive=True, details=True)
+        for f in embedded.sys_readdir("/", recursive=True, details=True)
         if isinstance(f, dict) and f.get("path") not in _SYSTEM_PATHS
     ]
 
@@ -765,7 +765,7 @@ async def test_list_returns_list_type(embedded: NexusFS) -> None:
     await embedded.write("/file1.txt", b"Content")
     await embedded.write("/file2.txt", b"Content")
 
-    files = await embedded.sys_readdir()
+    files = embedded.sys_readdir()
     assert isinstance(files, list)
     user_files = [f for f in files if f not in _SYSTEM_PATHS]
     assert len(user_files) == 2

@@ -76,7 +76,7 @@ class TestOfflineQueueAccumulation:
             # These should get queued
             for i in range(3):
                 with pytest.raises(OfflineQueuedError):
-                    await proxy.mkdir(f"/dir_{i}", "z1")
+                    proxy.mkdir(f"/dir_{i}", "z1")
 
             assert await proxy.pending_count() == 3
 

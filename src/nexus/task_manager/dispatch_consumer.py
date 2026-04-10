@@ -185,7 +185,7 @@ class TaskDispatchPipeConsumer:
 
         while True:
             try:
-                data = await self._nx.sys_read(_TASK_DISPATCH_PIPE_PATH)
+                data = self._nx.sys_read(_TASK_DISPATCH_PIPE_PATH)
             except NexusFileNotFoundError:
                 logger.debug("[TASK-DISPATCH] pipe closed, consumer exiting")
                 break

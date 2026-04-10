@@ -403,7 +403,7 @@ class TestEventDrivenSweepIntegration:
             payload={},
         )
         msg_path = message_path_in_inbox("agent:bob", expired_env.id, expired_env.timestamp)
-        await vfs.sys_write(msg_path, expired_env.to_bytes(), ZONE)
+        vfs.sys_write(msg_path, expired_env.to_bytes(), ZONE)
 
         # Start event-driven sweeper
         sweeper = TTLSweeper(
@@ -469,7 +469,7 @@ class TestEventDrivenSweepIntegration:
         from nexus.bricks.ipc.conventions import message_path_in_inbox
 
         msg_path = message_path_in_inbox("agent:bob", env.id, env.timestamp)
-        await vfs.sys_write(msg_path, env.to_bytes(), ZONE)
+        vfs.sys_write(msg_path, env.to_bytes(), ZONE)
 
         # Publish TTL event (simulate what MessageSender._send_to_inbox does)
         import json

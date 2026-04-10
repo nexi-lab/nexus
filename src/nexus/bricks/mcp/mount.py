@@ -168,7 +168,7 @@ class MCPMountManager:
                     return False
 
                 # List directories in MCP_TOOLS_PATH
-                items = await self._filesystem.sys_readdir(self.MCP_TOOLS_PATH)
+                items = self._filesystem.sys_readdir(self.MCP_TOOLS_PATH)
                 for item in items:
                     # Skip files at root level
                     item_path = f"{self.MCP_TOOLS_PATH}{item}"
@@ -176,7 +176,7 @@ class MCPMountManager:
 
                     try:
                         if await self._filesystem.access(mount_json_path):
-                            raw_content = await self._filesystem.sys_read(mount_json_path)
+                            raw_content = self._filesystem.sys_read(mount_json_path)
                             content_str = (
                                 raw_content.decode("utf-8")
                                 if isinstance(raw_content, bytes)
@@ -240,7 +240,7 @@ class MCPMountManager:
                 # Ensure mount directory exists
                 mount_dir = f"{self.MCP_TOOLS_PATH}{mount.name}/"
                 try:
-                    await self._filesystem.mkdir(mount_dir, parents=True)
+                    self._filesystem.mkdir(mount_dir, parents=True)
                 except FileExistsError:
                     pass
                 except OSError as e:
@@ -816,7 +816,7 @@ class MCPMountManager:
             # Ensure directory exists
             if mount.tools_path:
                 try:
-                    await self._filesystem.mkdir(mount.tools_path, parents=True)
+                    self._filesystem.mkdir(mount.tools_path, parents=True)
                 except FileExistsError:
                     pass
                 except OSError as e:
@@ -852,7 +852,7 @@ class MCPMountManager:
         if self._filesystem:
             if mount.tools_path:
                 try:
-                    await self._filesystem.mkdir(mount.tools_path, parents=True)
+                    self._filesystem.mkdir(mount.tools_path, parents=True)
                 except FileExistsError:
                     pass
                 except OSError as e:
@@ -1039,14 +1039,14 @@ class MCPMountManager:
                     return 0
 
                 # List directories in tier_path
-                items = await self._filesystem.sys_readdir(tier_path)
+                items = self._filesystem.sys_readdir(tier_path)
                 for item in items:
                     item_path = f"{tier_path}{item}"
                     mount_json_path = f"{item_path}/mount.json"
 
                     try:
                         if await self._filesystem.access(mount_json_path):
-                            raw_content = await self._filesystem.sys_read(mount_json_path)
+                            raw_content = self._filesystem.sys_read(mount_json_path)
                             content_str = (
                                 raw_content.decode("utf-8")
                                 if isinstance(raw_content, bytes)

@@ -450,7 +450,7 @@ async def _async_list_skills(
         with timing.phase("server"):
             # Read README.md
             try:
-                raw = await nx.sys_read(readme_md_path)
+                raw = nx.sys_read(readme_md_path)
                 content = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
             except Exception:
                 console.print(
@@ -464,7 +464,7 @@ async def _async_list_skills(
             # List schema files
             schema_files: list[str] = []
             try:
-                entries = await nx.sys_readdir(schemas_dir)
+                entries = nx.sys_readdir(schemas_dir)
                 schema_files = [e.rstrip("/") for e in entries if str(e).endswith(".yaml")]
             except Exception:
                 pass  # No schemas directory is OK
@@ -540,14 +540,14 @@ async def _async_show_schema(
 
         with timing.phase("server"):
             try:
-                raw = await nx.sys_read(schema_path)
+                raw = nx.sys_read(schema_path)
                 content = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
             except Exception:
                 console.print(f"[nexus.error]Schema not found:[/nexus.error] {schema_path}")
                 console.print()
                 console.print("[nexus.muted]Available operations:[/nexus.muted]")
                 try:
-                    entries = await nx.sys_readdir(f"{mp}/.readme/schemas")
+                    entries = nx.sys_readdir(f"{mp}/.readme/schemas")
                     for e in entries:
                         if str(e).endswith(".yaml"):
                             console.print(

@@ -52,7 +52,7 @@ class NexusFilesystem(Protocol):
 
     # ── Content I/O ────────────────────────────────────────────────
 
-    async def sys_read(
+    def sys_read(
         self,
         path: str,
         *,
@@ -61,7 +61,7 @@ class NexusFilesystem(Protocol):
         context: OperationContext | None = None,
     ) -> bytes: ...
 
-    async def sys_write(
+    def sys_write(
         self,
         path: str,
         buf: bytes | str,
@@ -73,7 +73,7 @@ class NexusFilesystem(Protocol):
 
     # ── Metadata I/O ───────────────────────────────────────────────
 
-    async def sys_stat(
+    def sys_stat(
         self, path: str, *, context: OperationContext | None = None
     ) -> dict[str, Any] | None: ...
 
@@ -83,11 +83,11 @@ class NexusFilesystem(Protocol):
 
     # ── Namespace ──────────────────────────────────────────────────
 
-    async def sys_unlink(
+    def sys_unlink(
         self, path: str, *, recursive: bool = False, context: OperationContext | None = None
     ) -> dict[str, Any]: ...
 
-    async def sys_rename(
+    def sys_rename(
         self,
         old_path: str,
         new_path: str,
@@ -102,7 +102,7 @@ class NexusFilesystem(Protocol):
 
     # ── Directory ──────────────────────────────────────────────────
 
-    async def sys_readdir(
+    def sys_readdir(
         self,
         path: str = "/",
         recursive: bool = True,
@@ -143,7 +143,7 @@ class NexusFilesystem(Protocol):
 
     # ── Tier 2: Convenience ───────────────────────────────────────
 
-    async def mkdir(
+    def mkdir(
         self,
         path: str,
         parents: bool = True,
@@ -152,7 +152,7 @@ class NexusFilesystem(Protocol):
         context: OperationContext | None = None,
     ) -> None: ...
 
-    async def rmdir(
+    def rmdir(
         self,
         path: str,
         recursive: bool = True,

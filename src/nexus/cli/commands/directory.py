@@ -105,7 +105,7 @@ def list_files(
                     return
 
                 with timing.phase("server"):
-                    files_raw = await nx.sys_readdir(path, recursive=recursive, details=True)
+                    files_raw = nx.sys_readdir(path, recursive=recursive, details=True)
                     files = _normalize_readdir(files_raw)
 
             if not files:
@@ -263,12 +263,12 @@ def mkdir(
             ) as nx:
                 if if_not_exists:
                     with contextlib.suppress(FileExistsError):
-                        await nx.mkdir(path, parents=parents, exist_ok=True)
+                        nx.mkdir(path, parents=parents, exist_ok=True)
                     console.print(
                         f"[nexus.success]✓[/nexus.success] Directory exists: [nexus.path]{path}[/nexus.path]"
                     )
                 else:
-                    await nx.mkdir(path, parents=parents, exist_ok=True)
+                    nx.mkdir(path, parents=parents, exist_ok=True)
                     console.print(
                         f"[nexus.success]✓[/nexus.success] Created directory [nexus.path]{path}[/nexus.path]"
                     )
@@ -319,7 +319,7 @@ def rmdir(
                 if not force and not click.confirm(f"Remove directory {path}?"):
                     console.print("[nexus.warning]Cancelled[/nexus.warning]")
                     return
-                await nx.rmdir(path, recursive=recursive)
+                nx.rmdir(path, recursive=recursive)
             console.print(
                 f"[nexus.success]✓[/nexus.success] Removed directory [nexus.path]{path}[/nexus.path]"
             )
@@ -365,7 +365,7 @@ def tree(
                     pass  # connection already established by async with
 
                 with timing.phase("server"):
-                    files_raw = await nx.sys_readdir(path, recursive=True, details=True)
+                    files_raw = nx.sys_readdir(path, recursive=True, details=True)
 
             files = _normalize_readdir(files_raw)
             if not files:

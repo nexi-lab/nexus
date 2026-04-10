@@ -68,8 +68,8 @@ def init(path: str) -> None:
             nx = await connect_local_workspace(str(data_dir))
 
             # Create default directories
-            await nx.mkdir("/workspace", exist_ok=True)
-            await nx.mkdir("/shared", exist_ok=True)
+            nx.mkdir("/workspace", exist_ok=True)
+            nx.mkdir("/shared", exist_ok=True)
 
             nx.close()
 
@@ -173,7 +173,7 @@ def cat(
                             sys.stdout.buffer.flush()
                             return
 
-                        content = await nx.sys_read(path, context=cast(Any, operation_context))
+                        content = nx.sys_read(path, context=cast(Any, operation_context))
                         meta_data = None
 
             # JSON mode: return structured data
@@ -1025,7 +1025,7 @@ def rm(
                 nx.close()
                 return
 
-            await nx.sys_unlink(path)
+            nx.sys_unlink(path)
             nx.close()
 
             console.print(

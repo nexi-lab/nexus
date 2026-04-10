@@ -184,7 +184,7 @@ async def test_rust_integration() -> bool:
         )
 
         await nx.write("/rust_test.txt", b"Test content")
-        content = await nx.sys_read("/rust_test.txt")
+        content = nx.sys_read("/rust_test.txt")
         assert content == b"Test content", "Python mode read failed"
         print("✓ Python-only mode works")
 
@@ -241,7 +241,7 @@ async def test_permissions() -> bool:
         # Test basic read/write with permissions enabled
         print("\nTesting basic operations with permissions...")
         await nx.write("/perm_test.txt", b"Permission test")
-        content = await nx.sys_read("/perm_test.txt")
+        content = nx.sys_read("/perm_test.txt")
         assert content == b"Permission test", "Permission-enabled read failed"
         print("✓ Permissions work correctly")
 

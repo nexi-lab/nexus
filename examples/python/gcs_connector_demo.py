@@ -169,19 +169,19 @@ async def demo_with_server():
     # Write files
     print_section("2. Writing Files at Actual Paths")
 
-    await nx.sys_write(f"{mount_point}/hello.txt", b"Hello from Nexus GCS Connector!")
+    nx.sys_write(f"{mount_point}/hello.txt", b"Hello from Nexus GCS Connector!")
     print_success(f"Wrote: {mount_point}/hello.txt")
 
-    await nx.sys_write(
+    nx.sys_write(
         f"{mount_point}/data.json",
         json.dumps({"type": "connector", "backend": "gcs", "path_based": True}).encode(),
     )
     print_success(f"Wrote: {mount_point}/data.json")
 
-    await nx.mkdir(f"{mount_point}/subdir", parents=True)
+    nx.mkdir(f"{mount_point}/subdir", parents=True)
     print_success(f"Created: {mount_point}/subdir")
 
-    await nx.sys_write(f"{mount_point}/subdir/nested.txt", b"File in subdirectory")
+    nx.sys_write(f"{mount_point}/subdir/nested.txt", b"File in subdirectory")
     print_success(f"Wrote: {mount_point}/subdir/nested.txt")
 
     print_info("\nExpected GCS paths:")
@@ -200,18 +200,18 @@ async def demo_with_server():
     # Read files back
     print_section("4. Reading Files via Nexus")
 
-    content = await nx.sys_read(f"{mount_point}/hello.txt")
+    content = nx.sys_read(f"{mount_point}/hello.txt")
     print(f"  Content: {content.decode()}")
     print_success("Read file successfully")
 
-    json_content = await nx.sys_read(f"{mount_point}/data.json")
+    json_content = nx.sys_read(f"{mount_point}/data.json")
     print(f"  JSON: {json_content.decode()}")
     print_success("Read JSON file successfully")
 
     # Directory operations
     print_section("5. Directory Operations")
 
-    files = await nx.sys_readdir(mount_point)
+    files = nx.sys_readdir(mount_point)
     print("Files in root:")
     for f in files:
         print(f"  - {f}")
@@ -220,10 +220,10 @@ async def demo_with_server():
     # Cleanup
     print_section("6. Cleanup")
 
-    await nx.sys_unlink(f"{mount_point}/hello.txt")
-    await nx.sys_unlink(f"{mount_point}/data.json")
-    await nx.sys_unlink(f"{mount_point}/subdir/nested.txt")
-    await nx.sys_unlink(f"{mount_point}/subdir")
+    nx.sys_unlink(f"{mount_point}/hello.txt")
+    nx.sys_unlink(f"{mount_point}/data.json")
+    nx.sys_unlink(f"{mount_point}/subdir/nested.txt")
+    nx.sys_unlink(f"{mount_point}/subdir")
     print_success("Cleaned up test files")
 
     nx.remove_mount(mount_point)
@@ -270,17 +270,17 @@ async def demo_local():
         # Write files
         print_section("2. Writing Files to GCS")
 
-        await nx.sys_write("/workspace/gcs/hello.txt", b"Hello from local Nexus!")
+        nx.sys_write("/workspace/gcs/hello.txt", b"Hello from local Nexus!")
         print_success("Wrote: /workspace/gcs/hello.txt")
 
-        await nx.sys_write(
+        nx.sys_write(
             "/workspace/gcs/data.json",
             json.dumps({"local": True, "backend": "path_gcs"}).encode(),
         )
         print_success("Wrote: /workspace/gcs/data.json")
 
-        await nx.mkdir("/workspace/gcs/subdir", parents=True)
-        await nx.sys_write("/workspace/gcs/subdir/test.txt", b"Test file")
+        nx.mkdir("/workspace/gcs/subdir", parents=True)
+        nx.sys_write("/workspace/gcs/subdir/test.txt", b"Test file")
         print_success("Wrote: /workspace/gcs/subdir/test.txt")
 
         print_info("\nFiles stored in GCS at:")
@@ -299,14 +299,14 @@ async def demo_local():
         # Read files back
         print_section("4. Reading Files from GCS")
 
-        content = await nx.sys_read("/workspace/gcs/hello.txt")
+        content = nx.sys_read("/workspace/gcs/hello.txt")
         print(f"  hello.txt: {content.decode()}")
         print_success("Read successfully")
 
         # List directory
         print_section("5. Directory Listing")
 
-        files = await nx.sys_readdir("/workspace/gcs")
+        files = nx.sys_readdir("/workspace/gcs")
         print("Files:")
         for f in files:
             print(f"  - {f}")

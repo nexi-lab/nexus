@@ -335,7 +335,7 @@ class TestZoneIsolation:
         # Attempt read from zone_b context (admin but NO MANAGE_ZONES capability)
         admin_b = self._admin_ctx("zone_b")
         with pytest.raises(PermissionError, match="[Cc]ross.zone"):
-            await nx.sys_read(zone_a_path, context=admin_b)
+            nx.sys_read(zone_a_path, context=admin_b)
 
     @pytest.mark.asyncio
     async def test_user_cannot_list_other_zone_files(self, nexus_fs_enforced: NexusFS):
@@ -346,7 +346,7 @@ class TestZoneIsolation:
 
         # List from zone_b context at the zone_a prefix — returns empty, no cross-zone visibility
         admin_b = self._admin_ctx("zone_b")
-        results = await nx.sys_readdir("/zone/zone_a/", context=admin_b)
+        results = nx.sys_readdir("/zone/zone_a/", context=admin_b)
         assert len(results) == 0, "Cross-zone list should return no results"
 
     @pytest.mark.asyncio
@@ -407,7 +407,7 @@ class TestPermissionEnforcement:
             zone_id="root",
         )
         with pytest.raises(PermissionError, match="[Aa]ccess denied"):
-            await nx.sys_read("/workspace/confidential.txt", context=user_ctx)
+            nx.sys_read("/workspace/confidential.txt", context=user_ctx)
 
     @pytest.mark.asyncio
     async def test_write_requires_permission(self, nexus_fs_enforced: NexusFS):
@@ -439,7 +439,7 @@ class TestPermissionEnforcement:
         )
 
         # Read should succeed (viewer has read permission)
-        content = await nx.sys_read(file_path, context=viewer_ctx)
+        content = nx.sys_read(file_path, context=viewer_ctx)
         assert content == b"# readme"
 
         # Write should fail (viewer has no write permission)
@@ -502,7 +502,7 @@ class TestPermissionEnforcement:
         )
 
         # Read should succeed (viewer has read permission)
-        content = await nx.sys_read(file_path, context=viewer_ctx)
+        content = nx.sys_read(file_path, context=viewer_ctx)
         assert content == b"def hello():\n    return 'world'\n"
 
         # Edit should fail — edit delegates to write(), viewer has no write permission
@@ -514,7 +514,7 @@ class TestPermissionEnforcement:
             )
 
         # Verify file unchanged
-        content_after = await nx.sys_read(file_path, context=viewer_ctx)
+        content_after = nx.sys_read(file_path, context=viewer_ctx)
         assert content_after == b"def hello():\n    return 'world'\n"
 
     @pytest.mark.asyncio
@@ -556,7 +556,7 @@ class TestPermissionEnforcement:
         assert result["applied_count"] == 1
 
         # Verify content changed
-        content = await nx.sys_read(file_path, context=editor_ctx)
+        content = nx.sys_read(file_path, context=editor_ctx)
         assert content == b"x = 42\n"
 
 
@@ -628,7 +628,7 @@ class TestStaleSessionDetection:
                 agent_generation=3,  # Stale: JWT says 3, DB says 5
             )
             with pytest.raises(StaleSessionError):
-                await nx.sys_read("/workspace/agent-test.txt", context=stale_ctx)
+                nx.sys_read("/workspace/agent-test.txt", context=stale_ctx)
         finally:
             perm_enforcer.agent_registry = original_registry
 
@@ -677,7 +677,7 @@ class TestStaleSessionDetection:
                 agent_id="agent_current",
                 agent_generation=5,  # Current: matches DB
             )
-            content = await nx.sys_read("/workspace/agent-ok.txt", context=current_ctx)
+            content = nx.sys_read("/workspace/agent-ok.txt", context=current_ctx)
             assert content == b"ok"
         finally:
             perm_enforcer.agent_registry = original_registry
@@ -719,7 +719,7 @@ class TestStaleSessionDetection:
                 agent_generation=3,  # From old JWT
             )
             with pytest.raises(StaleSessionError):
-                await nx.sys_read("/workspace/deleted-agent.txt", context=deleted_ctx)
+                nx.sys_read("/workspace/deleted-agent.txt", context=deleted_ctx)
         finally:
             perm_enforcer.agent_registry = original_registry
 

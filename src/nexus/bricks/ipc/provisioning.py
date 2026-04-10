@@ -72,11 +72,9 @@ class AgentProvisioner:
         root = agent_dir(agent_id)
 
         # Create root and subdirectories
-        await self._vfs.mkdir(root, parents=True, exist_ok=True, context=self._ctx())
+        self._vfs.mkdir(root, parents=True, exist_ok=True, context=self._ctx())
         for subdir in AGENT_SUBDIRS:
-            await self._vfs.mkdir(
-                f"{root}/{subdir}", parents=True, exist_ok=True, context=self._ctx()
-            )
+            self._vfs.mkdir(f"{root}/{subdir}", parents=True, exist_ok=True, context=self._ctx())
 
         # Write AGENT.json card
         card = {

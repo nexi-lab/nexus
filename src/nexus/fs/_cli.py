@@ -1172,7 +1172,7 @@ def mkdir(
 
     async def _run() -> dict:
         fs = await _boot_fs()
-        await fs.mkdir(path, parents=parents)
+        fs.mkdir(path, parents=parents)
         await fs.close()
         return {"path": path, "created": True}
 

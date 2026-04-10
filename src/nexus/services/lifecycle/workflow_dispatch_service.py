@@ -244,7 +244,7 @@ class WorkflowDispatchService:
         engine = self._workflow_engine
         while True:
             try:
-                data = await self._nx.sys_read(_WORKFLOW_PIPE_PATH)
+                data = self._nx.sys_read(_WORKFLOW_PIPE_PATH)
             except NexusFileNotFoundError:
                 logger.debug("Workflow pipe closed, consumer exiting")
                 break

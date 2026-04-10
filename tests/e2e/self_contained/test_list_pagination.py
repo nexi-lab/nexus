@@ -62,7 +62,7 @@ class TestPaginatedListBasic:
     @pytest.mark.asyncio
     async def test_paginated_list_returns_paginated_result(self, nexus_fs_with_files):
         """list() with limit should return PaginatedResult."""
-        result = await nexus_fs_with_files.sys_readdir(
+        result = nexus_fs_with_files.sys_readdir(
             path="/workspace/",
             limit=10,
         )
@@ -75,7 +75,7 @@ class TestPaginatedListBasic:
     @pytest.mark.asyncio
     async def test_paginated_list_path_only_mode(self, nexus_fs_with_files):
         """Paginated list with details=False should return paths."""
-        result = await nexus_fs_with_files.sys_readdir(
+        result = nexus_fs_with_files.sys_readdir(
             path="/workspace/",
             limit=10,
             details=False,
@@ -88,7 +88,7 @@ class TestPaginatedListBasic:
     @pytest.mark.asyncio
     async def test_paginated_list_details_mode(self, nexus_fs_with_files):
         """Paginated list with details=True should return dicts."""
-        result = await nexus_fs_with_files.sys_readdir(
+        result = nexus_fs_with_files.sys_readdir(
             path="/workspace/",
             limit=10,
             details=True,
@@ -107,7 +107,7 @@ class TestPaginatedListBasic:
         page_count = 0
 
         while True:
-            result = await nexus_fs_with_files.sys_readdir(
+            result = nexus_fs_with_files.sys_readdir(
                 path="/workspace/",
                 limit=15,
                 cursor=cursor,
@@ -129,7 +129,7 @@ class TestPaginatedListBasic:
     @pytest.mark.asyncio
     async def test_last_page_has_no_cursor(self, nexus_fs_with_files):
         """Last page should have next_cursor=None and has_more=False."""
-        result = await nexus_fs_with_files.sys_readdir(
+        result = nexus_fs_with_files.sys_readdir(
             path="/workspace/",
             limit=200,  # More than total files
         )
@@ -144,7 +144,7 @@ class TestBackwardCompatibility:
     @pytest.mark.asyncio
     async def test_list_without_limit_returns_list(self, nexus_fs_with_files):
         """list() without limit should return regular list."""
-        result = await nexus_fs_with_files.sys_readdir(path="/workspace/")
+        result = nexus_fs_with_files.sys_readdir(path="/workspace/")
 
         # Should be a regular list, not PaginatedResult
         assert isinstance(result, list)
@@ -154,7 +154,7 @@ class TestBackwardCompatibility:
     @pytest.mark.asyncio
     async def test_list_without_limit_details_mode(self, nexus_fs_with_files):
         """list() without limit and details=True should return list of dicts."""
-        result = await nexus_fs_with_files.sys_readdir(path="/workspace/", details=True)
+        result = nexus_fs_with_files.sys_readdir(path="/workspace/", details=True)
 
         assert isinstance(result, list)
         assert all(isinstance(item, dict) for item in result)
@@ -163,17 +163,17 @@ class TestBackwardCompatibility:
     async def test_existing_tests_still_pass(self, nexus_fs):
         """Existing list() behavior should be unchanged."""
         # Create directories and files
-        await nexus_fs.mkdir("/test/sub", exist_ok=True, parents=True)
+        nexus_fs.mkdir("/test/sub", exist_ok=True, parents=True)
         await nexus_fs.write("/test/a.txt", "a")
         await nexus_fs.write("/test/b.txt", "b")
         await nexus_fs.write("/test/sub/c.txt", "c")
 
         # Recursive list (default) — returns files and dirs
-        result = await nexus_fs.sys_readdir("/test/")
+        result = nexus_fs.sys_readdir("/test/")
         assert len(result) >= 3  # at least a.txt, b.txt, sub/c.txt
 
         # Non-recursive list — direct children only (may include sub/ dir entry)
-        result = await nexus_fs.sys_readdir("/test/", recursive=False)
+        result = nexus_fs.sys_readdir("/test/", recursive=False)
         assert len(result) >= 2  # at least a.txt, b.txt
 
 
@@ -188,7 +188,7 @@ class TestPaginationAtScale:
         page_count = 0
 
         while True:
-            result = await nexus_fs_large.sys_readdir(
+            result = nexus_fs_large.sys_readdir(
                 path="/large/",
                 limit=100,
                 cursor=cursor,
@@ -208,7 +208,7 @@ class TestPaginationAtScale:
     @pytest.mark.asyncio
     async def test_small_pages(self, nexus_fs_large):
         """Should work with very small page sizes."""
-        result = await nexus_fs_large.sys_readdir(path="/large/", limit=1)
+        result = nexus_fs_large.sys_readdir(path="/large/", limit=1)
 
         assert len(result.items) == 1
         assert result.has_more is True
@@ -216,7 +216,7 @@ class TestPaginationAtScale:
     @pytest.mark.asyncio
     async def test_large_single_page(self, nexus_fs_large):
         """Should handle large single page requests."""
-        result = await nexus_fs_large.sys_readdir(path="/large/", limit=10000)
+        result = nexus_fs_large.sys_readdir(path="/large/", limit=10000)
 
         assert len(result.items) == 1000
         assert result.has_more is False
@@ -233,7 +233,7 @@ class TestPaginationWithPermissions:
     async def test_pagination_without_permissions(self, nexus_fs_with_files):
         """Pagination should work when permissions are disabled."""
         # nexus_fs fixture has enforce_permissions=False
-        result = await nexus_fs_with_files.sys_readdir(
+        result = nexus_fs_with_files.sys_readdir(
             path="/workspace/",
             limit=10,
         )
@@ -249,7 +249,7 @@ class TestPaginationEdgeCases:
     @pytest.mark.asyncio
     async def test_empty_directory(self, nexus_fs):
         """Should handle empty directories."""
-        result = await nexus_fs.sys_readdir(path="/empty/", limit=10)
+        result = nexus_fs.sys_readdir(path="/empty/", limit=10)
 
         assert isinstance(result, PaginatedResult)
         assert len(result.items) == 0
@@ -265,7 +265,7 @@ class TestPaginationEdgeCases:
         await nexus_fs.write("/dir/sub/file3.txt", "3")
         await nexus_fs.write("/dir/sub/deep/file4.txt", "4")
 
-        result = await nexus_fs.sys_readdir(
+        result = nexus_fs.sys_readdir(
             path="/dir/",
             recursive=False,
             limit=10,
@@ -286,7 +286,7 @@ class TestPaginationEdgeCases:
         await nexus_fs.write("/test/file-with-dashes.txt", "content")
         await nexus_fs.write("/test/file_with_underscores.txt", "content")
 
-        result = await nexus_fs.sys_readdir(path="/test/", limit=10)
+        result = nexus_fs.sys_readdir(path="/test/", limit=10)
 
         assert len(result.items) == 3
 
@@ -298,14 +298,14 @@ class TestPaginationEdgeCases:
             await nexus_fs.write(f"/test/file{i:02d}.txt", f"content {i}")
 
         # Get first page
-        page1 = await nexus_fs.sys_readdir(path="/test/", limit=10)
+        page1 = nexus_fs.sys_readdir(path="/test/", limit=10)
 
         # Delete some files (simulating concurrent modification)
-        await nexus_fs.sys_unlink("/test/file09.txt")
-        await nexus_fs.sys_unlink("/test/file10.txt")
+        nexus_fs.sys_unlink("/test/file09.txt")
+        nexus_fs.sys_unlink("/test/file10.txt")
 
         # Continue pagination - should work even with deleted files
-        page2 = await nexus_fs.sys_readdir(
+        page2 = nexus_fs.sys_readdir(
             path="/test/",
             limit=10,
             cursor=page1.next_cursor,

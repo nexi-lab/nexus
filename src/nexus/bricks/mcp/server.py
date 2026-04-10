@@ -421,7 +421,7 @@ async def create_mcp_server(
             File content as string
         """
         nx_instance = _get_nexus_instance(ctx)
-        content = await nx_instance.sys_read(path)
+        content = nx_instance.sys_read(path)
         if isinstance(content, bytes):
             return content.decode("utf-8", errors="replace")
         return str(content)
@@ -521,7 +521,7 @@ async def create_mcp_server(
             Success message or error
         """
         nx_instance = _get_nexus_instance(ctx)
-        await nx_instance.sys_unlink(path)
+        nx_instance.sys_unlink(path)
         return f"Successfully deleted {path}"
 
     @mcp.tool(
@@ -580,7 +580,7 @@ async def create_mcp_server(
         """
         nx_instance = _get_nexus_instance(ctx)
         try:
-            all_files = await nx_instance.sys_readdir(path, recursive=recursive, details=details)
+            all_files = nx_instance.sys_readdir(path, recursive=recursive, details=details)
         except FileNotFoundError:
             return tool_error(
                 "not_found",
@@ -639,7 +639,7 @@ async def create_mcp_server(
         # Try to get size if it's a file
         if not is_dir:
             try:
-                content = await nx_instance.sys_read(path)
+                content = nx_instance.sys_read(path)
                 if isinstance(content, bytes):
                     info_dict["size"] = len(content)
             except Exception as e:
@@ -671,7 +671,7 @@ async def create_mcp_server(
         """
         nx_instance = _get_nexus_instance(ctx)
         try:
-            await nx_instance.mkdir(path)
+            nx_instance.mkdir(path)
         except FileExistsError:
             return f"Directory already exists at '{path}'."
         return f"Successfully created directory {path}"
@@ -697,7 +697,7 @@ async def create_mcp_server(
         """
         nx_instance = _get_nexus_instance(ctx)
         try:
-            await nx_instance.rmdir(path, recursive=recursive)
+            nx_instance.rmdir(path, recursive=recursive)
         except OSError as e:
             if "not empty" in str(e).lower():
                 return tool_error(
@@ -730,7 +730,7 @@ async def create_mcp_server(
         """
         nx_instance = _get_nexus_instance(ctx)
         try:
-            await nx_instance.sys_rename(old_path, new_path)
+            nx_instance.sys_rename(old_path, new_path)
         except FileExistsError:
             return tool_error(
                 "invalid_input",
@@ -1296,7 +1296,7 @@ async def create_mcp_server(
         """
         try:
             nx_instance = _get_nexus_instance(ctx)
-            content = await nx_instance.sys_read(path)
+            content = nx_instance.sys_read(path)
             if isinstance(content, bytes):
                 return content.decode("utf-8", errors="replace")
             return str(content)

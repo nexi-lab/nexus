@@ -142,19 +142,19 @@ class AdvisoryLockManager(ABC):
         """Extend lock TTL (heartbeat)."""
 
     @abstractmethod
-    async def get_lock_info(
+    def get_lock_info(
         self,
         path: str,
     ) -> LockInfo | None:
         """Get information about a lock."""
 
-    async def is_locked(self, path: str) -> bool:
+    def is_locked(self, path: str) -> bool:
         """Check if a path is currently locked. Override for efficiency."""
-        info = await self.get_lock_info(path)
+        info = self.get_lock_info(path)
         return info is not None
 
     @abstractmethod
-    async def list_locks(
+    def list_locks(
         self,
         pattern: str = "",
         limit: int = 100,
@@ -442,17 +442,17 @@ class LocalLockManager(AdvisoryLockManager):
         lock_type, payload = entry
         if lock_type == self._VFS_LOCK:
             # lock_fast doesn't support TTL extension — treat as success (lock held in memory)
-            lock_info = await self.get_lock_info(path)
+            lock_info = self.get_lock_info(path)
             return ExtendResult(success=True, lock_info=lock_info)
         sem_name, holder_id = payload
         ttl_ms = max(1000, int(ttl * 1000))
         success = self._sem.extend(sem_name, holder_id, ttl_ms=ttl_ms)
         if not success:
             return ExtendResult(success=False)
-        lock_info = await self.get_lock_info(path)
+        lock_info = self.get_lock_info(path)
         return ExtendResult(success=True, lock_info=lock_info)
 
-    async def get_lock_info(self, path: str) -> LockInfo | None:
+    def get_lock_info(self, path: str) -> LockInfo | None:
         key = self._lock_key(path)
         # Collect holders from _active_locks that belong to this path.
         holders: list[HolderInfo] = []
@@ -480,7 +480,7 @@ class LocalLockManager(AdvisoryLockManager):
             fence_token=0,
         )
 
-    async def is_locked(self, path: str) -> bool:
+    def is_locked(self, path: str) -> bool:
         key = self._lock_key(path)
         for lock_type, payload in self._active_locks.values():
             if lock_type == self._VFS_LOCK:
@@ -493,7 +493,7 @@ class LocalLockManager(AdvisoryLockManager):
                 return True
         return False
 
-    async def list_locks(self, pattern: str = "", limit: int = 100) -> list[LockInfo]:
+    def list_locks(self, pattern: str = "", limit: int = 100) -> list[LockInfo]:
         results: list[LockInfo] = []
         seen_paths: set[str] = set()
         for _lid, (lock_type, payload) in self._active_locks.items():
@@ -505,7 +505,7 @@ class LocalLockManager(AdvisoryLockManager):
                 if pattern and pattern not in path:
                     continue
                 seen_paths.add(path)
-                info = await self.get_lock_info(path)
+                info = self.get_lock_info(path)
                 if info is not None:
                     results.append(info)
                     if len(results) >= limit:
@@ -524,7 +524,7 @@ class LocalLockManager(AdvisoryLockManager):
             if pattern and pattern not in path:
                 continue
             seen_paths.add(path)
-            info = await self.get_lock_info(path)
+            info = self.get_lock_info(path)
             if info is not None:
                 results.append(info)
             if len(results) >= limit:

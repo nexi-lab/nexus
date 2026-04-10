@@ -202,20 +202,20 @@ class TestKernelSanity:
     @pytest.mark.asyncio
     async def test_write_read_roundtrip(self, nx):
         await nx.write("/test.txt", b"hello world")
-        data = await nx.sys_read("/test.txt")
+        data = nx.sys_read("/test.txt")
         assert data == b"hello world"
 
     @pytest.mark.asyncio
     async def test_mkdir_and_list(self, nx):
-        await nx.mkdir("/mydir", parents=True, exist_ok=True)
+        nx.mkdir("/mydir", parents=True, exist_ok=True)
         await nx.write("/mydir/file.txt", b"content")
-        entries = await nx.sys_readdir("/mydir", recursive=False)
+        entries = nx.sys_readdir("/mydir", recursive=False)
         assert "/mydir/file.txt" in entries
 
     @pytest.mark.asyncio
     async def test_delete_file(self, nx):
         await nx.write("/del.txt", b"bye")
-        await nx.sys_unlink("/del.txt")
+        nx.sys_unlink("/del.txt")
         assert not await nx.access("/del.txt")
 
     @pytest.mark.asyncio
@@ -226,13 +226,13 @@ class TestKernelSanity:
 
     @pytest.mark.asyncio
     async def test_is_directory(self, nx):
-        await nx.mkdir("/somedir", parents=True, exist_ok=True)
+        nx.mkdir("/somedir", parents=True, exist_ok=True)
         assert await nx.is_directory("/somedir")
 
     @pytest.mark.asyncio
     async def test_get_metadata(self, nx):
         await nx.write("/meta.txt", b"metadata test")
-        meta = await nx.sys_stat("/meta.txt")
+        meta = nx.sys_stat("/meta.txt")
         assert meta is not None
         assert meta["size"] == 13
         assert meta["is_directory"] is False
@@ -355,7 +355,7 @@ class TestPermissionEnforcement:
         )
         path = f"/perm-test-{uuid.uuid4().hex[:8]}.txt"
         await nx_perms.write(path, b"admin write", context=ctx)
-        data = await nx_perms.sys_read(path, context=ctx)
+        data = nx_perms.sys_read(path, context=ctx)
         assert data == b"admin write"
 
     @pytest.mark.asyncio
@@ -369,7 +369,7 @@ class TestPermissionEnforcement:
             is_system=False,
         )
         dirname = f"/admin-dir-{uuid.uuid4().hex[:8]}"
-        await nx_perms.mkdir(dirname, parents=True, exist_ok=True, context=ctx)
+        nx_perms.mkdir(dirname, parents=True, exist_ok=True, context=ctx)
         assert await nx_perms.is_directory(dirname, context=ctx)
 
     @pytest.mark.asyncio
@@ -384,7 +384,7 @@ class TestPermissionEnforcement:
         )
         path = f"/perm-rw-{uuid.uuid4().hex[:8]}.txt"
         await nx_perms.write(path, b"perm data", context=ctx)
-        result = await nx_perms.sys_read(path, context=ctx)
+        result = nx_perms.sys_read(path, context=ctx)
         assert result == b"perm data"
 
     @pytest.mark.asyncio

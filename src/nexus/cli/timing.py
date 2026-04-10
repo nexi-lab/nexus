@@ -11,7 +11,7 @@ Usage::
         nx = get_filesystem(config)
 
     with timing.phase("server"):
-        result = await nx.sys_readdir(path)
+        result = nx.sys_readdir(path)
 
     # timing.phases == {"connect": 12.3, "server": 45.6}
     # timing.total_ms == 57.9

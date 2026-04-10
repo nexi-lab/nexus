@@ -392,7 +392,7 @@ async def set_agent_spec(
     existing_gen = 0
     try:
         ctx = parse_operation_context(None)
-        raw = await vfs.sys_read(spec_path, context=ctx)
+        raw = vfs.sys_read(spec_path, context=ctx)
         if raw:
             existing = _json.loads(raw if isinstance(raw, str) else raw.decode())
             existing_gen = existing.get("spec_generation", 0)
@@ -440,7 +440,7 @@ async def get_agent_spec(
     spec_path = f"/{desc.zone_id}/agents/{agent_id}/settings.json"
     try:
         ctx = parse_operation_context(None)
-        raw = await vfs.sys_read(spec_path, context=ctx)
+        raw = vfs.sys_read(spec_path, context=ctx)
         data = _json.loads(raw if isinstance(raw, str) else raw.decode())
     except Exception as exc:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' has no spec") from exc

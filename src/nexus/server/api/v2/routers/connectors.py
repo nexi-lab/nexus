@@ -798,7 +798,7 @@ async def get_readme_doc(
     # Fall back to reading from VFS if backend generation failed
     if not content:
         try:
-            raw = await nx.sys_read(f"{mp}/.readme/README.md")
+            raw = nx.sys_read(f"{mp}/.readme/README.md")
             content = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
         except Exception:
             pass
@@ -814,7 +814,7 @@ async def get_readme_doc(
         schemas = list(s.keys()) if s else list(t.keys())
     if not schemas:
         try:
-            entries = await nx.sys_readdir(f"{mp}/.readme/schemas")
+            entries = nx.sys_readdir(f"{mp}/.readme/schemas")
             schemas = [str(e).replace(".yaml", "") for e in entries if str(e).endswith(".yaml")]
         except Exception:
             pass
@@ -879,7 +879,7 @@ async def get_schema(
 
     # Try reading from VFS
     try:
-        raw = await nx.sys_read(f"{mp}/.readme/schemas/{operation}.yaml")
+        raw = nx.sys_read(f"{mp}/.readme/schemas/{operation}.yaml")
         content = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
         return SchemaResponse(mount_point=mount_path, operation=operation, content=content)
     except Exception:

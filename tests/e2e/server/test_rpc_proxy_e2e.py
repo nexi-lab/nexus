@@ -291,14 +291,14 @@ class TestProxyFileOperations:
     async def test_write_and_read(self, admin_client: NexusFilesystem) -> None:
         """Write file via proxy, read back via proxy (hand-written override)."""
         await admin_client.write("/workspace/proxy-test.txt", b"Hello from RPC proxy!")
-        content = await admin_client.sys_read("/workspace/proxy-test.txt")
+        content = admin_client.sys_read("/workspace/proxy-test.txt")
         assert content == b"Hello from RPC proxy!"
 
     @pytest.mark.asyncio
     async def test_write_str_content(self, admin_client: NexusFilesystem) -> None:
         """Write string content (auto-encoded to bytes)."""
         await admin_client.write("/workspace/str-test.txt", "String content here")
-        content = await admin_client.sys_read("/workspace/str-test.txt")
+        content = admin_client.sys_read("/workspace/str-test.txt")
         assert content == b"String content here"
 
     def test_stat(self, admin_client: NexusFilesystem) -> None:
@@ -316,7 +316,7 @@ class TestProxyFileOperations:
     @pytest.mark.asyncio
     async def test_list_auto_dispatched(self, admin_client: NexusFilesystem) -> None:
         """List via proxy (__getattr__ dispatch with response_key='files')."""
-        files = await admin_client.sys_readdir("/workspace")
+        files = admin_client.sys_readdir("/workspace")
         assert isinstance(files, list)
         # Should contain files we created
         paths = [f if isinstance(f, str) else f.get("path", "") for f in files]
@@ -346,7 +346,7 @@ class TestProxyFileOperations:
     async def test_rename(self, admin_client: NexusFilesystem) -> None:
         """Rename file via proxy (hand-written override)."""
         await admin_client.write("/workspace/old-name.txt", b"rename me")
-        await admin_client.sys_rename("/workspace/old-name.txt", "/workspace/new-name.txt")
+        admin_client.sys_rename("/workspace/old-name.txt", "/workspace/new-name.txt")
         assert await admin_client.access("/workspace/new-name.txt") is True
         assert await admin_client.access("/workspace/old-name.txt") is False
         # Cleanup
@@ -361,7 +361,7 @@ class TestProxyFileOperations:
             [("original", "modified")],
         )
         assert result.get("success") is True
-        content = await admin_client.sys_read("/workspace/edit-test.txt")
+        content = admin_client.sys_read("/workspace/edit-test.txt")
         assert b"modified text here" in content
         # Cleanup
         admin_client.delete("/workspace/edit-test.txt")
@@ -378,9 +378,9 @@ class TestAutoDispatchedMethods:
     @pytest.mark.asyncio
     async def test_mkdir_and_rmdir(self, admin_client: NexusFilesystem) -> None:
         """mkdir and rmdir via auto-dispatch."""
-        await admin_client.mkdir("/workspace/proxy-dir")
+        admin_client.mkdir("/workspace/proxy-dir")
         assert await admin_client.is_directory("/workspace/proxy-dir") is True
-        await admin_client.rmdir("/workspace/proxy-dir")
+        admin_client.rmdir("/workspace/proxy-dir")
 
     def test_rebac_check(self, admin_client: NexusFilesystem) -> None:
         """rebac_check via auto-dispatch."""
@@ -438,7 +438,7 @@ class TestPerformance:
         """Write+read round-trip should be under 500ms (localhost)."""
         start = time.monotonic()
         await admin_client.write("/workspace/perf-test.txt", b"performance test payload")
-        content = await admin_client.sys_read("/workspace/perf-test.txt")
+        content = admin_client.sys_read("/workspace/perf-test.txt")
         elapsed = time.monotonic() - start
         assert content == b"performance test payload"
         assert elapsed < 0.5, f"Write+read took {elapsed:.3f}s, expected < 0.5s"
@@ -449,7 +449,7 @@ class TestPerformance:
     async def test_list_latency(self, admin_client: NexusFilesystem) -> None:
         """List should be under 200ms (auto-dispatched via proxy)."""
         start = time.monotonic()
-        files = await admin_client.sys_readdir("/workspace")
+        files = admin_client.sys_readdir("/workspace")
         elapsed = time.monotonic() - start
         assert isinstance(files, list)
         assert elapsed < 0.2, f"List took {elapsed:.3f}s, expected < 0.2s"
@@ -469,7 +469,7 @@ class TestPerformance:
         for i in range(5):
             path = f"/workspace/batch-{i}.txt"
             await admin_client.write(path, f"batch content {i}".encode())
-            content = await admin_client.sys_read(path)
+            content = admin_client.sys_read(path)
             assert content == f"batch content {i}".encode()
             admin_client.delete(path)
         elapsed = time.monotonic() - start
@@ -526,7 +526,7 @@ class TestPermissionEnforcement:
         from nexus.contracts.exceptions import NexusError
 
         with pytest.raises((NexusError, RemoteFilesystemError)):
-            await non_admin_client.sys_read("/workspace/proxy-test.txt")
+            non_admin_client.sys_read("/workspace/proxy-test.txt")
 
     @pytest.mark.asyncio
     async def test_non_admin_list_filtered(self, non_admin_client: NexusFilesystem) -> None:
@@ -534,7 +534,7 @@ class TestPermissionEnforcement:
         from nexus.contracts.exceptions import NexusError
 
         try:
-            files = await non_admin_client.sys_readdir("/workspace")
+            files = non_admin_client.sys_readdir("/workspace")
             # If server completes, non-admin should see empty or filtered list
             assert isinstance(files, list)
         except (NexusError, RemoteFilesystemError):

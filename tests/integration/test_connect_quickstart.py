@@ -34,7 +34,7 @@ async def test_local_connect_falls_back_when_full_federation_build_is_unavailabl
     )
     try:
         await nx.write("/hello.txt", b"hello")
-        assert await nx.sys_read("/hello.txt") == b"hello"
+        assert nx.sys_read("/hello.txt") == b"hello"
     finally:
         nx.close()
 

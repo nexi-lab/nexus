@@ -321,7 +321,7 @@ class TestDirectoryGrantExpansion:
         ), "Alice should have access to file in dir_a"
 
         # Move file to dir_b
-        await nx.sys_rename("/dir_a/moveme.txt", "/dir_b/moveme.txt", context=ctx)
+        nx.sys_rename("/dir_a/moveme.txt", "/dir_b/moveme.txt", context=ctx)
 
         # Wait for permission update
         time.sleep(0.2)

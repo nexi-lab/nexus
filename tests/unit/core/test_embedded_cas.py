@@ -70,7 +70,7 @@ async def test_cas_write_and_read(embedded_cas: NexusFS) -> None:
 
     await embedded_cas.write("/test/file.txt", content)
 
-    result = await embedded_cas.sys_read("/test/file.txt")
+    result = embedded_cas.sys_read("/test/file.txt")
     assert result == content
 
 
@@ -201,7 +201,7 @@ async def test_cas_list_files(embedded_cas: NexusFS) -> None:
     await embedded_cas.write("/dir1/file2.txt", b"Content 2")
     await embedded_cas.write("/dir2/file3.txt", b"Content 3")
 
-    all_files = [f for f in await embedded_cas.sys_readdir() if f not in _SYSTEM_PATHS]
+    all_files = [f for f in embedded_cas.sys_readdir() if f not in _SYSTEM_PATHS]
     assert len(all_files) == 3
     assert "/dir1/file1.txt" in all_files
     assert "/dir1/file2.txt" in all_files
@@ -215,7 +215,7 @@ async def test_cas_binary_content(embedded_cas: NexusFS) -> None:
 
     await embedded_cas.write("/binary.bin", content)
 
-    result = await embedded_cas.sys_read("/binary.bin")
+    result = embedded_cas.sys_read("/binary.bin")
     assert result == content
 
 
@@ -224,7 +224,7 @@ async def test_cas_empty_content(embedded_cas: NexusFS) -> None:
     """Test CAS with empty content."""
     await embedded_cas.write("/empty.txt", b"")
 
-    result = await embedded_cas.sys_read("/empty.txt")
+    result = embedded_cas.sys_read("/empty.txt")
     assert result == b""
 
 
@@ -235,7 +235,7 @@ async def test_cas_large_content(embedded_cas: NexusFS) -> None:
 
     await embedded_cas.write("/large.bin", content)
 
-    result = await embedded_cas.sys_read("/large.bin")
+    result = embedded_cas.sys_read("/large.bin")
     assert len(result) == len(content)
     assert result == content
 

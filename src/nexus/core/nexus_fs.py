@@ -1934,7 +1934,7 @@ class NexusFS(  # type: ignore[misc]
         )
 
     @rpc_expose(description="Write file content from stream")
-    async def write_stream(
+    def write_stream(
         self,
         path: str,
         chunks: Iterator[bytes],
@@ -4836,7 +4836,7 @@ class NexusFS(  # type: ignore[misc]
             route.metastore.delete(path)
 
     @rpc_expose(description="Rename/move multiple files")
-    async def rename_batch(
+    def rename_batch(
         self,
         renames: list[tuple[str, str]],
         context: OperationContext | None = None,

@@ -278,7 +278,7 @@ class TestWriteStreamCallsDispatch:
         from nexus.contracts.types import OperationContext
 
         ctx = OperationContext(user_id="test", groups=[], backend_path="streamed.txt")
-        await nx.write_stream("/streamed.txt", iter([b"chunk1", b"chunk2"]), context=ctx)
+        nx.write_stream("/streamed.txt", iter([b"chunk1", b"chunk2"]), context=ctx)
 
         hook.on_post_write.assert_called_once()
         hook_ctx = hook.on_post_write.call_args.args[0]

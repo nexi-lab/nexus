@@ -1567,7 +1567,7 @@ def create_async_files_router(
         try:
             fs = await _get_fs()
             renames = [(op.source, op.destination) for op in request.operations]
-            raw_results = await fs.rename_batch(renames, context=context)
+            raw_results = fs.rename_batch(renames, context=context)
 
             results: list[BulkRenameResult] = []
             for op in request.operations:

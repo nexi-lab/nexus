@@ -270,6 +270,7 @@ def test_all_public_methods_are_exposed_or_excluded():
         "stream_read_at_blocking",  # Tier 2 → kernel.stream_read_at_blocking (local-only)
         "stream_write_nowait",  # Tier 2 → kernel.stream_write_nowait (local-only)
         "has_stream",  # Tier 2 → kernel.has_stream (local-only)
+        "stream_collect_all",  # Tier 2 → kernel.stream_collect_all (local-only)
         # Search/list — delegates to search_service
         "list",  # ABC stub → overrides NexusFS.list()
         "glob",  # ABC stub → search_service.glob()

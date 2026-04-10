@@ -491,10 +491,8 @@ async def _boot_post_kernel_services(
             with contextlib.suppress(Exception):
                 _candidate = nx.router.route(_llm_prefix).backend
                 if isinstance(_candidate, CASAnthropicBackend):
-                    _candidate.set_stream_manager(nx._stream_manager)
-                    logger.debug(
-                        "Injected StreamManager into CASAnthropicBackend at %s", _llm_prefix
-                    )
+                    _candidate.set_stream_manager(nx)
+                    logger.debug("Injected NexusFS into CASAnthropicBackend at %s", _llm_prefix)
     except Exception:
         pass
 

@@ -41,7 +41,7 @@ from nexus.core.object_store import WriteResult
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
-    from nexus.core.stream_manager import StreamManager
+    from nexus.core.nexus_fs import NexusFS
 
 logger = logging.getLogger(__name__)
 
@@ -125,7 +125,7 @@ class CASAnthropicBackend(CASAddressingEngine):
         transport = LLMTransport()
         super().__init__(transport, backend_name="anthropic_native")
 
-        self._stream_manager: StreamManager | None = None
+        self._nx: NexusFS | None = None
         self._active_tasks: dict[str, asyncio.Task[None]] = {}
 
         from nexus.backends.compute.message_chunking import MessageBoundaryStrategy
@@ -138,9 +138,12 @@ class CASAnthropicBackend(CASAddressingEngine):
     def name(self) -> str:
         return "anthropic_native"
 
-    def set_stream_manager(self, stream_manager: "StreamManager") -> None:
-        """Inject StreamManager for DT_STREAM orchestration."""
-        self._stream_manager = stream_manager
+    def set_stream_manager(self, nx_or_sm: Any) -> None:
+        """Inject NexusFS for DT_STREAM orchestration (Rust kernel).
+
+        Called by factory/DLC at mount time. Accepts NexusFS (preferred).
+        """
+        self._nx = nx_or_sm
 
     # ------------------------------------------------------------------
     # Streaming orchestration (owns full lifecycle)
@@ -157,19 +160,17 @@ class CASAnthropicBackend(CASAddressingEngine):
         owner_id: str | None = None,
     ) -> dict[str, Any]:
         """Start a streaming LLM call via Anthropic API."""
-        from nexus.core.stream import StreamError
-
-        if self._stream_manager is None:
+        if self._nx is None:
             raise BackendError(
-                "StreamManager not injected — call set_stream_manager() first",
+                "LLM streaming unavailable: NexusFS not injected. "
+                "Ensure backend is mounted via DLC.",
                 backend="anthropic_native",
             )
-        sm = self._stream_manager
 
         try:
-            sm.create(stream_path, capacity=capacity, owner_id=owner_id or "")
-        except StreamError as e:
-            raise BackendError(str(e), backend="anthropic_native") from e
+            self._nx.stream_create(stream_path, capacity)
+        except Exception as exc:
+            raise BackendError(f"LLM streaming unavailable: {exc}") from exc
 
         task = asyncio.create_task(
             self._run_stream(request_bytes, stream_path),
@@ -186,15 +187,15 @@ class CASAnthropicBackend(CASAddressingEngine):
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
-        with contextlib.suppress(Exception):
-            if self._stream_manager:
-                self._stream_manager.destroy(stream_path)
+        if self._nx is not None:
+            with contextlib.suppress(Exception):
+                self._nx.stream_destroy(stream_path)
         return True
 
     async def _run_stream(self, request_bytes: bytes, stream_path: str) -> None:
         """Background task: pump tokens from Anthropic API to DT_STREAM, then CAS persist."""
-        sm = self._stream_manager
-        assert sm is not None
+        assert self._nx is not None  # guaranteed by start_streaming() guard
+        nx = self._nx
 
         _SENTINEL: object = object()
         token_q: queue.Queue[tuple[str, dict[str, Any] | None] | object | Exception] = queue.Queue(
@@ -226,11 +227,12 @@ class CASAnthropicBackend(CASAddressingEngine):
                 token: str = token_item[0]
                 token_meta: dict[str, Any] | None = token_item[1]
                 if token:
-                    sm.stream_write_nowait(stream_path, token.encode("utf-8"))
+                    nx.stream_write_nowait(stream_path, token.encode("utf-8"))
                 if token_meta is not None:
                     meta = token_meta
 
-            full_response = sm.collect_all(stream_path)
+            # Collect all stream payloads in single Rust call (no per-frame PyO3 roundtrip)
+            full_response = nx.stream_collect_all(stream_path)
             result = self.persist_session(
                 request_bytes=request_bytes,
                 response_content=full_response.decode("utf-8"),
@@ -253,8 +255,8 @@ class CASAnthropicBackend(CASAddressingEngine):
                 done_payload["tool_calls"] = tool_calls
 
             done_msg = json.dumps(done_payload, separators=(",", ":"))
-            sm.stream_write_nowait(stream_path, done_msg.encode("utf-8"))
-            sm.signal_close(stream_path)
+            nx.stream_write_nowait(stream_path, done_msg.encode("utf-8"))
+            nx.stream_close(stream_path)
 
             logger.info(
                 "Anthropic stream completed: %s model=%s session=%s",
@@ -266,7 +268,7 @@ class CASAnthropicBackend(CASAddressingEngine):
         except asyncio.CancelledError:
             logger.info("Anthropic stream cancelled: %s", stream_path)
             with contextlib.suppress(Exception):
-                sm.signal_close(stream_path)
+                nx.stream_close(stream_path)
             raise
 
         except Exception as exc:
@@ -276,8 +278,8 @@ class CASAnthropicBackend(CASAddressingEngine):
                 separators=(",", ":"),
             )
             with contextlib.suppress(Exception):
-                sm.stream_write_nowait(stream_path, error_msg.encode("utf-8"))
-                sm.signal_close(stream_path)
+                nx.stream_write_nowait(stream_path, error_msg.encode("utf-8"))
+                nx.stream_close(stream_path)
 
         finally:
             with contextlib.suppress(Exception):

@@ -1290,6 +1290,16 @@ impl Kernel {
             .map_err(stream_mgr_err)
     }
 
+    /// Collect all stream payloads from offset 0, concatenated.
+    ///
+    /// Replaces the manual `read_at` loop in Python LLM backends.
+    /// Single Rust call → no per-frame PyO3 round-trip.
+    pub fn stream_collect_all(&self, path: &str) -> Result<Vec<u8>, KernelError> {
+        self.stream_manager
+            .collect_all_payloads(path)
+            .map_err(stream_mgr_err)
+    }
+
     /// List all streams with their paths.
     pub fn list_streams(&self) -> Vec<String> {
         self.stream_manager.list()

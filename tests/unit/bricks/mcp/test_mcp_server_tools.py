@@ -622,7 +622,9 @@ class TestSearchTools:
         assert "total" in response
         assert isinstance(response["items"], list)
         assert "test.py" in response["items"]
-        mock_nx_basic._mock_search.glob.assert_called_once_with("*.py", "/src")
+        # #3701: files=None forwarded by default so SearchService can
+        # distinguish "no filter" from "explicit empty filter".
+        mock_nx_basic._mock_search.glob.assert_called_once_with("*.py", "/src", files=None)
 
     async def test_glob_default_path(self, mock_nx_basic):
         """Test glob with default path."""
@@ -631,7 +633,7 @@ class TestSearchTools:
         glob_tool = get_tool(server, "nexus_glob")
         glob_tool.fn(pattern="*.txt")
 
-        mock_nx_basic._mock_search.glob.assert_called_once_with("*.txt", "/")
+        mock_nx_basic._mock_search.glob.assert_called_once_with("*.txt", "/", files=None)
 
     async def test_glob_error(self, mock_nx_basic):
         """Test glob error handling."""
@@ -645,7 +647,12 @@ class TestSearchTools:
         assert "Invalid pattern" in result
 
     async def test_grep_success(self, mock_nx_basic):
-        """Test grep content search successfully."""
+        """Test grep content search successfully.
+
+        Asserts the #3701 Issue 14 fix: MCP grep passes ``max_results`` to
+        SearchService so the underlying call can return enough matches for
+        the caller's requested page rather than silently capping at 100.
+        """
         server = await create_mcp_server(nx=mock_nx_basic)
 
         grep_tool = get_tool(server, "nexus_grep")
@@ -656,7 +663,10 @@ class TestSearchTools:
         assert "items" in response
         assert "total" in response
         assert isinstance(response["items"], list)
-        mock_nx_basic._mock_search.grep.assert_called_once_with("TODO", "/src", ignore_case=False)
+        # Default limit=100, offset=0 → max_results = max(100 + 0, 1) = 100
+        mock_nx_basic._mock_search.grep.assert_called_once_with(
+            "TODO", "/src", ignore_case=False, max_results=100, files=None
+        )
 
     async def test_grep_ignore_case(self, mock_nx_basic):
         """Test grep with case-insensitive search."""
@@ -665,7 +675,9 @@ class TestSearchTools:
         grep_tool = get_tool(server, "nexus_grep")
         await grep_tool.fn(pattern="error", path="/logs", ignore_case=True)
 
-        mock_nx_basic._mock_search.grep.assert_called_once_with("error", "/logs", ignore_case=True)
+        mock_nx_basic._mock_search.grep.assert_called_once_with(
+            "error", "/logs", ignore_case=True, max_results=100, files=None
+        )
 
     async def test_grep_result_limiting(self, mock_nx_basic):
         """Test grep pagination with default limit of 100 matches."""
@@ -684,6 +696,76 @@ class TestSearchTools:
         assert len(response["items"]) == 100
         assert response["has_more"] is True
         assert response["next_offset"] == 100
+
+    async def test_grep_large_limit_requests_max_results_through(self, mock_nx_basic):
+        """Issue #3701 #14: caller asking for limit=200 must not be capped at 100.
+
+        The pre-fix behaviour silently truncated to 100 because MCP did
+        not pass ``max_results`` to SearchService. This test locks in the
+        new behaviour: MCP passes ``limit + offset`` so SearchService
+        returns enough matches for the requested page.
+        """
+        large_results = [{"file": f"file{i}.py", "line": i, "content": "match"} for i in range(200)]
+        mock_nx_basic._mock_search.grep.return_value = large_results
+        server = await create_mcp_server(nx=mock_nx_basic)
+
+        grep_tool = get_tool(server, "nexus_grep")
+        result = await grep_tool.fn(pattern="test", limit=200)
+
+        # SearchService was asked for enough matches to fill the page.
+        mock_nx_basic._mock_search.grep.assert_called_once_with(
+            "test", "/", ignore_case=False, max_results=200, files=None
+        )
+        response = json.loads(result)
+        assert response["total"] == 200
+        assert response["count"] == 200
+        assert response["has_more"] is False
+
+    async def test_grep_offset_requests_enough_matches(self, mock_nx_basic):
+        """Issue #3701 #14: offset=150 with limit=50 must fetch at least 200."""
+        large_results = [{"file": f"file{i}.py", "line": i, "content": "match"} for i in range(200)]
+        mock_nx_basic._mock_search.grep.return_value = large_results
+        server = await create_mcp_server(nx=mock_nx_basic)
+
+        grep_tool = get_tool(server, "nexus_grep")
+        result = await grep_tool.fn(pattern="test", limit=50, offset=150)
+
+        mock_nx_basic._mock_search.grep.assert_called_once_with(
+            "test", "/", ignore_case=False, max_results=200, files=None
+        )
+        response = json.loads(result)
+        assert response["total"] == 200
+        assert response["count"] == 50
+        assert response["offset"] == 150
+        assert response["has_more"] is False
+
+    async def test_grep_files_parameter_forwarded(self, mock_nx_basic):
+        """Issue #3701 Issue 2A: files=[...] flows through to SearchService."""
+        mock_nx_basic._mock_search.grep.return_value = []
+        server = await create_mcp_server(nx=mock_nx_basic)
+
+        grep_tool = get_tool(server, "nexus_grep")
+        await grep_tool.fn(pattern="TODO", files=["/src/a.py", "/src/b.py"])
+
+        mock_nx_basic._mock_search.grep.assert_called_once_with(
+            "TODO",
+            "/",
+            ignore_case=False,
+            max_results=100,
+            files=["/src/a.py", "/src/b.py"],
+        )
+
+    async def test_glob_files_parameter_forwarded(self, mock_nx_basic):
+        """Issue #3701 Issue 2A: files=[...] flows through to SearchService."""
+        mock_nx_basic._mock_search.glob.return_value = []
+        server = await create_mcp_server(nx=mock_nx_basic)
+
+        glob_tool = get_tool(server, "nexus_glob")
+        glob_tool.fn(pattern="*.py", files=["/src/a.py", "/src/b.py"])
+
+        mock_nx_basic._mock_search.glob.assert_called_once_with(
+            "*.py", "/", files=["/src/a.py", "/src/b.py"]
+        )
 
     async def test_grep_error(self, mock_nx_basic):
         """Test grep error handling."""

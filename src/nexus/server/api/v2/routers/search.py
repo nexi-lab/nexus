@@ -1,9 +1,11 @@
-"""Search API v2 router (#2056, #2663).
+"""Search API v2 router (#2056, #2663, #3701).
 
 Provides search daemon endpoints:
 - GET  /api/v2/search/health   -- daemon health check (public, no auth)
 - GET  /api/v2/search/stats    -- daemon statistics
 - GET  /api/v2/search/query    -- execute search query
+- GET  /api/v2/search/grep     -- search file contents (#3701)
+- GET  /api/v2/search/glob     -- search files by pattern (#3701)
 - POST /api/v2/search/index    -- explicit document indexing
 - POST /api/v2/search/refresh  -- notify daemon of file change
 - POST /api/v2/search/expand   -- LLM-based query expansion
@@ -12,6 +14,13 @@ Rewritten for txtai backend (#2663):
 - txtai handles hybrid BM25+dense fusion internally
 - Zone-level isolation via txtai SQL WHERE (brick layer)
 - File-level ReBAC filtering in router (server layer)
+
+#3701 review:
+- Added grep/glob HTTP endpoints (previously MCP-only).
+- Collapsed duplicated response shaping into ``_serialize_search_result``.
+- Replaced the 3x over-fetch magic number with ``_REBAC_OVERFETCH_FACTOR``
+  and added ``truncated_by_permissions`` / ``permission_denial_rate``
+  instrumentation so callers can detect silent-undercount scenarios.
 """
 
 import logging
@@ -20,11 +29,27 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
+from nexus.lib.pagination import build_paginated_list_response
 from nexus.server.dependencies import require_auth
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/search", tags=["search"])
+
+# =============================================================================
+# Constants (#3701 review — Issue 16A)
+# =============================================================================
+
+# When a permission enforcer is active we over-fetch to compensate for
+# results that will be stripped during ReBAC filtering. 3x is the legacy
+# value chosen empirically when #2056 landed. Beware: when the denial rate
+# exceeds ~66% this factor is insufficient and the response reports
+# ``truncated_by_permissions`` so callers can detect the silent undercount.
+_REBAC_OVERFETCH_FACTOR: int = 3
+
+# Threshold above which a high denial rate triggers a server-side warning
+# log (Issue 16A). Below this the silent-undercount risk is minimal.
+_REBAC_HIGH_DENIAL_WARN_THRESHOLD: float = 0.5
 
 # =============================================================================
 # Dependencies
@@ -128,6 +153,82 @@ def _apply_rebac_filter(
     permitted_set = set(permitted_abs)
     filtered = [path_map[p] for p in abs_paths if p in permitted_set]
     return filtered, filter_ms
+
+
+# =============================================================================
+# Response shaping helpers (#3701 review — Issue 5A)
+# =============================================================================
+
+
+def _serialize_search_result(result: Any) -> dict[str, Any]:
+    """Serialize a single search result into the canonical response dict.
+
+    Collapses the 25-line dict comprehension previously duplicated across
+    the graph and non-graph branches of ``search_query``. Preserves the
+    pre-refactor field ordering, rounding, and None semantics.
+
+    ``splade_score`` and ``reranker_score`` are emitted whenever the
+    underlying result has them as attributes. Results that predate those
+    fields (e.g. bare ``BaseSearchResult``) get ``None``.
+    """
+    out: dict[str, Any] = {
+        "path": result.path,
+        "chunk_text": result.chunk_text,
+        "score": round(result.score, 4),
+        "chunk_index": result.chunk_index,
+        "line_start": result.line_start,
+        "line_end": result.line_end,
+        "keyword_score": (round(result.keyword_score, 4) if result.keyword_score else None),
+        "vector_score": (round(result.vector_score, 4) if result.vector_score else None),
+    }
+    splade = getattr(result, "splade_score", None)
+    out["splade_score"] = round(splade, 4) if splade is not None else None
+    reranker = getattr(result, "reranker_score", None)
+    out["reranker_score"] = round(reranker, 4) if reranker is not None else None
+    return out
+
+
+def _compute_rebac_fetch_limit(effective_limit: int, has_enforcer: bool) -> int:
+    """Compute the over-fetch size for a given effective limit.
+
+    Shared helper used by ``search_query``, ``search_grep``, and
+    ``search_glob`` so the over-fetch factor lives in exactly one place.
+    Returns ``effective_limit`` unchanged when no permission enforcer is
+    active (#3701 review — Issue 16A).
+    """
+    if not has_enforcer:
+        return effective_limit
+    return effective_limit * _REBAC_OVERFETCH_FACTOR
+
+
+def _rebac_denial_stats(
+    pre_filter_count: int, post_filter_count: int, effective_limit: int
+) -> dict[str, Any]:
+    """Compute denial-rate instrumentation for response envelopes.
+
+    Returns a dict that gets merged into the response envelope so
+    callers can detect silent under-counting after permission filtering.
+    Emits a WARNING log when the denial rate is high *and* the caller
+    did not get enough results — the exact failure mode 3x over-fetch
+    cannot always absorb.
+    """
+    denial_rate = 0.0 if pre_filter_count == 0 else 1.0 - (post_filter_count / pre_filter_count)
+
+    truncated = (
+        post_filter_count < effective_limit and denial_rate >= _REBAC_HIGH_DENIAL_WARN_THRESHOLD
+    )
+    if truncated:
+        logger.warning(
+            "[SEARCH-REBAC] high denial rate (%.1f%%) caused undercount: "
+            "got %d of %d requested; consider paginating or increasing limit",
+            denial_rate * 100.0,
+            post_filter_count,
+            effective_limit,
+        )
+    return {
+        "permission_denial_rate": round(denial_rate, 4),
+        "truncated_by_permissions": truncated,
+    }
 
 
 # =============================================================================
@@ -262,10 +363,12 @@ async def search_query(
         )
         effective_graph_mode = "none"
 
-    # Over-fetch when permission filtering is active to compensate for filtered results
-    fetch_limit = effective_limit
-    if permission_enforcer is not None:
-        fetch_limit = effective_limit * 3
+    # Over-fetch when permission filtering is active to compensate for
+    # filtered results (#3701 review: Issue 16A — replaces the 3x magic
+    # number with a named constant and adds silent-undercount detection).
+    fetch_limit = _compute_rebac_fetch_limit(
+        effective_limit, has_enforcer=permission_enforcer is not None
+    )
 
     try:
         filter_ms = 0.0
@@ -287,9 +390,11 @@ async def search_query(
             )
 
             # ReBAC file-level filtering (Decision #17)
+            pre_filter_count = len(results)
             results, filter_ms = _apply_rebac_filter(
                 results, permission_enforcer, auth_result, zone_id
             )
+            post_filter_count = len(results)
             results = results[:effective_limit]
 
             latency_ms = (time.perf_counter() - start_time) * 1000
@@ -298,25 +403,14 @@ async def search_query(
                 "query": q,
                 "search_type": type,
                 "graph_mode": effective_graph_mode,
-                "results": [
-                    {
-                        "path": r.path,
-                        "chunk_text": r.chunk_text,
-                        "score": round(r.score, 4),
-                        "chunk_index": r.chunk_index,
-                        "line_start": r.line_start,
-                        "line_end": r.line_end,
-                        "keyword_score": round(r.keyword_score, 4) if r.keyword_score else None,
-                        "vector_score": round(r.vector_score, 4) if r.vector_score else None,
-                    }
-                    for r in results
-                ],
+                "results": [_serialize_search_result(r) for r in results],
                 "total": len(results),
                 "latency_ms": round(latency_ms, 2),
                 "latency_breakdown": {
                     "total_ms": round(latency_ms, 2),
                     "permission_filter_ms": round(filter_ms, 2),
                 },
+                **_rebac_denial_stats(pre_filter_count, post_filter_count, effective_limit),
             }
             if routing_info:
                 response["routing"] = routing_info
@@ -338,7 +432,9 @@ async def search_query(
         rerank_ms = daemon_timing.get("rerank_ms", 0.0)
 
         # ReBAC file-level filtering (Decision #17)
+        pre_filter_count = len(results)
         results, filter_ms = _apply_rebac_filter(results, permission_enforcer, auth_result, zone_id)
+        post_filter_count = len(results)
         results = results[:effective_limit]
 
         latency_ms = (time.perf_counter() - start_time) * 1000
@@ -347,25 +443,7 @@ async def search_query(
             "query": q,
             "search_type": type,
             "graph_mode": "none",
-            "results": [
-                {
-                    "path": r.path,
-                    "chunk_text": r.chunk_text,
-                    "score": round(r.score, 4),
-                    "chunk_index": r.chunk_index,
-                    "line_start": r.line_start,
-                    "line_end": r.line_end,
-                    "keyword_score": round(r.keyword_score, 4) if r.keyword_score else None,
-                    "vector_score": round(r.vector_score, 4) if r.vector_score else None,
-                    "splade_score": round(r.splade_score, 4)
-                    if r.splade_score is not None
-                    else None,
-                    "reranker_score": round(r.reranker_score, 4)
-                    if r.reranker_score is not None
-                    else None,
-                }
-                for r in results
-            ],
+            "results": [_serialize_search_result(r) for r in results],
             "total": len(results),
             "latency_ms": round(latency_ms, 2),
             "latency_breakdown": {
@@ -374,6 +452,7 @@ async def search_query(
                 "rerank_ms": round(rerank_ms, 2),
                 "permission_filter_ms": round(filter_ms, 2),
             },
+            **_rebac_denial_stats(pre_filter_count, post_filter_count, effective_limit),
         }
         if routing_info:
             response["routing"] = routing_info
@@ -548,6 +627,231 @@ async def search_query_batch(
         "avg_per_query_ms": round(elapsed_ms / max(len(raw_queries), 1), 2),
         "permission_filter_ms": round(filter_ms_total, 2),
     }
+
+
+# =============================================================================
+# grep / glob HTTP endpoints (#3701 — Issue 1A)
+#
+# These endpoints mirror the existing ``nexus_grep``/``nexus_glob`` MCP
+# tools but enforce file-level ReBAC via the same ``_apply_rebac_filter``
+# helper used by ``search_query``. They are the first time agents can
+# get permission-filtered grep/glob results over HTTP.
+#
+# Implementation notes:
+# * Both endpoints delegate to ``SearchService`` via ``nexus_fs.service("search")``
+#   because ``SearchDaemon`` does not expose grep/glob methods — those live
+#   only at the SearchService layer.
+# * ``OperationContext`` is constructed from ``auth_result`` so SearchService's
+#   internal path/zone filtering uses the caller's identity.
+# * ``_compute_rebac_fetch_limit`` over-fetches from SearchService to
+#   compensate for ReBAC denial, matching the pattern in ``search_query``.
+# =============================================================================
+
+
+def _get_search_service(nexus_fs: Any) -> Any:
+    """Resolve SearchService from a NexusFilesystem handle.
+
+    Returns the service or raises HTTP 503 if the search brick is absent.
+    """
+    try:
+        service = nexus_fs.service("search")
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Search service lookup failed: {exc}") from exc
+    if service is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Search service not available (search brick not loaded)",
+        )
+    return service
+
+
+@router.get("/grep")
+async def search_grep(
+    request: Request,
+    pattern: str = Query(..., description="Regex pattern to search for", min_length=1),
+    path: str = Query("/", description="Base path to search from"),
+    ignore_case: bool = Query(False, description="Case-insensitive match"),
+    limit: int = Query(100, ge=1, le=10000, description="Max results to return"),
+    offset: int = Query(0, ge=0, description="Offset into the full result set"),
+    before_context: int = Query(0, ge=0, le=50, description="Context lines before each match"),
+    after_context: int = Query(0, ge=0, le=50, description="Context lines after each match"),
+    files: list[str] | None = Query(
+        None,
+        description=(
+            "Optional stateless narrowing: restrict grep to this working "
+            "set of file paths instead of walking the tree (#3701)."
+        ),
+    ),
+    auth_result: dict[str, Any] = Depends(require_auth),
+) -> dict[str, Any]:
+    """Search file contents via regex (#3701 Issue 1A).
+
+    Mirrors the ``nexus_grep`` MCP tool but routes through the HTTP
+    permission path (``_apply_rebac_filter``). Results are paginated via
+    offset/limit and include ``permission_denial_rate`` /
+    ``truncated_by_permissions`` when a permission enforcer is active.
+
+    The ``files=[...]`` parameter (#3701 Issue 2A) lets agents pass a
+    pre-narrowed working set so grep skips the tree walk. Repeat the
+    query param for each path, e.g.
+    ``?files=/src/a.py&files=/src/b.py``.
+    """
+    from nexus.contracts.constants import ROOT_ZONE_ID
+
+    start_time = time.perf_counter()
+    zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
+
+    nexus_fs = getattr(request.app.state, "nexus_fs", None)
+    if nexus_fs is None:
+        raise HTTPException(status_code=503, detail="NexusFS not initialized")
+    search_service = _get_search_service(nexus_fs)
+
+    # Build OperationContext so SearchService's internal path/zone
+    # filtering matches the caller's identity (Issue 6A scope: HTTP side).
+    from nexus.server.dependencies import get_operation_context
+
+    op_context = get_operation_context(auth_result)
+
+    permission_enforcer = getattr(request.app.state, "permission_enforcer", None)
+    fetch_limit = _compute_rebac_fetch_limit(
+        limit + offset, has_enforcer=permission_enforcer is not None
+    )
+
+    try:
+        raw_results = await search_service.grep(
+            pattern=pattern,
+            path=path,
+            ignore_case=ignore_case,
+            max_results=fetch_limit,
+            context=op_context,
+            before_context=before_context,
+            after_context=after_context,
+            files=files,
+        )
+    except ValueError as exc:
+        # SearchService raises ValueError for invalid regex, invalid files
+        # parameter (size cap, cross-zone), etc.
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.error("grep failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"grep failed: {type(exc).__name__}") from exc
+
+    # ReBAC file-level filtering, reusing the same helper as search_query.
+    # SearchService already filters by zone/path via context, so this is
+    # a second-layer guarantee for the HTTP surface.
+    pre_filter_count = len(raw_results)
+
+    class _GrepResultShim:
+        __slots__ = ("path",)
+
+        def __init__(self, path: str) -> None:
+            self.path = path
+
+    shims = [_GrepResultShim(r["file"]) for r in raw_results if "file" in r]
+    filtered_shims, filter_ms = _apply_rebac_filter(
+        shims, permission_enforcer, auth_result, zone_id
+    )
+    permitted_files = {shim.path for shim in filtered_shims}
+    filtered_results = [r for r in raw_results if r.get("file") in permitted_files]
+    post_filter_count = len(filtered_results)
+
+    total = len(filtered_results)
+    paginated = filtered_results[offset : offset + limit]
+    latency_ms = (time.perf_counter() - start_time) * 1000
+
+    extras: dict[str, Any] = {
+        "latency_ms": round(latency_ms, 2),
+        "latency_breakdown": {
+            "total_ms": round(latency_ms, 2),
+            "permission_filter_ms": round(filter_ms, 2),
+        },
+        **_rebac_denial_stats(pre_filter_count, post_filter_count, limit + offset),
+    }
+    return build_paginated_list_response(
+        items=paginated, total=total, offset=offset, limit=limit, extras=extras
+    )
+
+
+@router.get("/glob")
+async def search_glob(
+    request: Request,
+    pattern: str = Query(..., description="Glob pattern (e.g. '**/*.py')", min_length=1),
+    path: str = Query("/", description="Base path to search from"),
+    limit: int = Query(100, ge=1, le=10000, description="Max results to return"),
+    offset: int = Query(0, ge=0, description="Offset into the full result set"),
+    files: list[str] | None = Query(
+        None,
+        description=(
+            "Optional stateless narrowing: match the glob pattern against "
+            "this working set only instead of walking the tree (#3701)."
+        ),
+    ),
+    auth_result: dict[str, Any] = Depends(require_auth),
+) -> dict[str, Any]:
+    """Search file paths via glob pattern (#3701 Issue 1A).
+
+    Mirrors the ``nexus_glob`` MCP tool with HTTP-side ReBAC filtering.
+    Supports the ``files=[...]`` stateless narrowing parameter (#3701
+    Issue 2A).
+    """
+    from nexus.contracts.constants import ROOT_ZONE_ID
+
+    start_time = time.perf_counter()
+    zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
+
+    nexus_fs = getattr(request.app.state, "nexus_fs", None)
+    if nexus_fs is None:
+        raise HTTPException(status_code=503, detail="NexusFS not initialized")
+    search_service = _get_search_service(nexus_fs)
+
+    from nexus.server.dependencies import get_operation_context
+
+    op_context = get_operation_context(auth_result)
+
+    permission_enforcer = getattr(request.app.state, "permission_enforcer", None)
+
+    try:
+        all_matches: list[str] = search_service.glob(
+            pattern=pattern, path=path, context=op_context, files=files
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.error("glob failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"glob failed: {type(exc).__name__}") from exc
+
+    # ReBAC filtering: glob returns bare paths, wrap them in a shim that
+    # exposes a ``.path`` attribute so we can reuse ``_apply_rebac_filter``.
+    pre_filter_count = len(all_matches)
+
+    class _GlobResultShim:
+        __slots__ = ("path",)
+
+        def __init__(self, p: str) -> None:
+            self.path = p
+
+    shims = [_GlobResultShim(p) for p in all_matches]
+    filtered_shims, filter_ms = _apply_rebac_filter(
+        shims, permission_enforcer, auth_result, zone_id
+    )
+    filtered_paths = [shim.path for shim in filtered_shims]
+    post_filter_count = len(filtered_paths)
+
+    total = len(filtered_paths)
+    paginated = filtered_paths[offset : offset + limit]
+    latency_ms = (time.perf_counter() - start_time) * 1000
+
+    extras = {
+        "latency_ms": round(latency_ms, 2),
+        "latency_breakdown": {
+            "total_ms": round(latency_ms, 2),
+            "permission_filter_ms": round(filter_ms, 2),
+        },
+        **_rebac_denial_stats(pre_filter_count, post_filter_count, limit + offset),
+    }
+    return build_paginated_list_response(
+        items=paginated, total=total, offset=offset, limit=limit, extras=extras
+    )
 
 
 @router.post("/index")

@@ -17,6 +17,7 @@ from fastmcp import Context, FastMCP
 from nexus.bricks.mcp.formatters import format_response
 from nexus.bricks.mcp.tool_utils import handle_tool_errors, tool_error
 from nexus.contracts.filesystem.filesystem_abc import NexusFilesystem
+from nexus.lib.pagination import build_paginated_list_response
 
 logger = logging.getLogger(__name__)
 
@@ -667,6 +668,7 @@ async def create_mcp_server(
         limit: int = 100,
         offset: int = 0,
         response_format: str = "json",
+        files: list[str] | None = None,
         ctx: Context | None = None,
     ) -> str:
         """Search files using glob pattern with pagination.
@@ -677,6 +679,9 @@ async def create_mcp_server(
             limit: Maximum number of results to return (default: 100)
             offset: Number of results to skip (default: 0)
             response_format: Output format - "json" or "markdown" (default: "json")
+            files: Optional stateless narrowing working set (#3701). When
+                provided, the glob pattern is matched against this list
+                instead of walking the tree under ``path``.
 
         Returns:
             Formatted string with paginated search results containing:
@@ -690,33 +695,38 @@ async def create_mcp_server(
         Example:
             To find all Python files: nexus_glob("**/*.py", "/workspace")
             With pagination: nexus_glob("**/*.py", "/workspace", limit=50, offset=0)
+            Narrowed: nexus_glob("**/*.py", files=["/src/a.py", "/src/b.py"])
         """
         nx_instance: Any = _get_nexus_instance(ctx)
         _search = nx_instance.service("search")
         if _search is None:
             raise ValueError("SearchService not available — glob requires the search brick")
-        all_matches = _search.glob(pattern, path)
+        # NOTE(#3701): SearchService.glob is not passed an OperationContext
+        # here because the MCP transport's Context only carries a per-request
+        # API key, not (subject_id, zone_id, is_admin). Permission filtering
+        # therefore currently relies on whatever the NexusFilesystem connection
+        # enforces at the service-lookup layer. A proper fix requires
+        # threading an API-key → identity lookup into MCP tool handlers; see
+        # the follow-up issue linked in the #3701 review summary.
+        all_matches = _search.glob(pattern, path, files=files)
         total = len(all_matches)
 
         # Apply pagination
         paginated_matches = all_matches[offset : offset + limit]
-        has_more = (offset + limit) < total
 
         # Issue #538: Log truncation when results exceed limit
-        if has_more or offset > 0:
+        if (offset + limit) < total or offset > 0:
             logger.info(
                 f"[GLOB] Truncated {total} -> {len(paginated_matches)} results "
                 f"(offset={offset}, limit={limit})"
             )
 
-        result = {
-            "total": total,
-            "count": len(paginated_matches),
-            "offset": offset,
-            "items": paginated_matches,
-            "has_more": has_more,
-            "next_offset": offset + limit if has_more else None,
-        }
+        result = build_paginated_list_response(
+            items=paginated_matches,
+            total=total,
+            offset=offset,
+            limit=limit,
+        )
 
         return format_response(result, response_format)
 
@@ -736,6 +746,7 @@ async def create_mcp_server(
         limit: int = 100,
         offset: int = 0,
         response_format: str = "json",
+        files: list[str] | None = None,
         ctx: Context | None = None,
     ) -> str:
         """Search file contents using regex pattern with pagination.
@@ -747,6 +758,10 @@ async def create_mcp_server(
             limit: Maximum number of results to return (default: 100)
             offset: Number of results to skip (default: 0)
             response_format: Output format - "json" or "markdown" (default: "json")
+            files: Optional stateless narrowing working set (#3701). When
+                provided, grep searches only these files instead of walking
+                the tree. Agents should pass the file list from a previous
+                search/grep to drill down into its results.
 
         Returns:
             Formatted string with paginated search results containing:
@@ -760,33 +775,41 @@ async def create_mcp_server(
         Example:
             To get first 50 matches: nexus_grep("TODO", "/workspace", limit=50)
             To get next 50 matches: nexus_grep("TODO", "/workspace", limit=50, offset=50)
+            Narrowed: nexus_grep("TODO", files=["/src/a.py", "/src/b.py"])
         """
         nx_instance: Any = _get_nexus_instance(ctx)
         _search = nx_instance.service("search")
         if _search is None:
             raise ValueError("SearchService not available — grep requires the search brick")
-        all_results = await _search.grep(pattern, path, ignore_case=ignore_case)
+        # NOTE(#3701): See glob handler above for the MCP permission caveat.
+        # Also (#3701 Issue 14): we pass max_results so SearchService returns
+        # enough matches for the caller's requested page rather than silently
+        # capping at its default of 100.
+        all_results = await _search.grep(
+            pattern,
+            path,
+            ignore_case=ignore_case,
+            max_results=max(limit + offset, 1),
+            files=files,
+        )
         total = len(all_results)
 
         # Apply pagination
         paginated_results = all_results[offset : offset + limit]
-        has_more = (offset + limit) < total
 
         # Issue #538: Log truncation when results exceed limit
-        if has_more or offset > 0:
+        if (offset + limit) < total or offset > 0:
             logger.info(
                 f"[GREP] Truncated {total} -> {len(paginated_results)} results "
                 f"(offset={offset}, limit={limit})"
             )
 
-        result = {
-            "total": total,
-            "count": len(paginated_results),
-            "offset": offset,
-            "items": paginated_results,
-            "has_more": has_more,
-            "next_offset": offset + limit if has_more else None,
-        }
+        result = build_paginated_list_response(
+            items=paginated_results,
+            total=total,
+            offset=offset,
+            limit=limit,
+        )
 
         return format_response(result, response_format)
 

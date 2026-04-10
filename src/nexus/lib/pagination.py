@@ -1,8 +1,15 @@
-"""Cursor encoding/decoding for brick-layer pagination (Issue #937).
+"""Cursor encoding/decoding and response envelope helpers for brick pagination.
 
-Brick-layer utilities for tamper-resistant, URL-safe cursor tokens.
+Issue #937: tamper-resistant, URL-safe cursor tokens.
+Issue #3701: shared offset/limit envelope builder for grep/glob/list
+responses so transports (MCP, HTTP) emit the same shape.
+
 Kernel pagination primitives (PaginatedResult, paginate_iter) live in
 ``nexus.core.pagination``.
+
+This module must stay cross-brick safe (zero imports from
+``nexus.bricks.*``) because MCP, search, and HTTP routers all depend
+on it.
 """
 
 import base64
@@ -13,6 +20,68 @@ from dataclasses import dataclass
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Offset/limit response envelope (#3701)
+# =============================================================================
+
+
+def build_paginated_list_response(
+    *,
+    items: list[Any],
+    total: int,
+    offset: int,
+    limit: int,
+    extras: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a canonical paginated list envelope.
+
+    Used by grep/glob/list transports that return a list of items with
+    classic offset/limit pagination. Prior to #3701 this shape was
+    duplicated across MCP ``nexus_grep``/``nexus_glob`` and would have
+    been re-duplicated again when the HTTP grep/glob endpoints landed.
+
+    Args:
+        items: The slice to return (already paginated — this helper
+            does NOT paginate for you).
+        total: Total number of items in the full result set, *before*
+            pagination was applied.
+        offset: The offset at which ``items`` starts in the full set.
+        limit: The limit that was requested for this page.
+        extras: Optional extra fields to merge into the envelope. Used
+            to carry transport-specific additions such as ``stale_count``
+            or ``truncated_by_permissions``. Collisions with core keys
+            are deliberate escape hatches — extras win.
+
+    Returns:
+        ``{total, count, offset, items, has_more, next_offset, ...}``
+
+    Conventions:
+        * Envelopes are **additive-only**: new fields must be optional so
+          existing clients tolerating unknown keys continue to work.
+        * ``count`` is ``len(items)``, which may differ from ``limit`` on
+          the final page.
+        * ``has_more`` is ``True`` iff there are items after the current
+          page, i.e. ``offset + limit < total``.
+    """
+    has_more = (offset + limit) < total
+    envelope: dict[str, Any] = {
+        "total": total,
+        "count": len(items),
+        "offset": offset,
+        "items": items,
+        "has_more": has_more,
+        "next_offset": offset + limit if has_more else None,
+    }
+    if extras:
+        envelope.update(extras)
+    return envelope
+
+
+# =============================================================================
+# Cursor encoding (#937)
+# =============================================================================
 
 
 class CursorError(Exception):

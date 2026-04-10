@@ -584,3 +584,18 @@ send_notifications: true
             "Cannot delete calendars via Nexus. Use Google Calendar to manage calendars.",
             backend="gcalendar",
         )
+
+
+# Backward-compatibility alias: persisted mounts that stored backend_type
+# "gcalendar_connector" (the name used before this rename) must still mount.
+# Both names resolve to the same class. Remove this alias after one release cycle.
+from nexus.backends.base.registry import ConnectorRegistry  # noqa: E402
+
+ConnectorRegistry.register(
+    name="gcalendar_connector",
+    connector_class=PathCalendarBackend,
+    description="Google Calendar (deprecated alias — use calendar_connector)",
+    category="oauth",
+    requires=["google-api-python-client", "google-auth-oauthlib"],
+    service_name="google-calendar",
+)

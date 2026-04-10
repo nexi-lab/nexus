@@ -50,7 +50,11 @@ def install_remote_kernel_rpc_overrides(nfs: "NexusFS", transport: "RPCTransport
         offset: int = 0,
         context: Any = None,  # noqa: ARG001
     ) -> bytes:
-        data = transport.read_file(path)
+        # transport.read_file() is a synchronous blocking gRPC call — run it in a
+        # thread so it never stalls the asyncio event loop under slow/lossy networks.
+        import asyncio as _asyncio
+
+        data = await _asyncio.to_thread(transport.read_file, path)
         if offset or count is not None:
             data = data[offset : offset + count] if count is not None else data[offset:]
         return data

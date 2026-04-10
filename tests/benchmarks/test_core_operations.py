@@ -655,7 +655,7 @@ class TestBulkOperationBenchmarks:
         def write_batch():
             counter[0] += 1
             batch = [(f"/batch_{counter[0]}/file_{i}.txt", content) for i in range(10)]
-            benchmark_loop.run_until_complete(nx.write_batch(batch))
+            nx.write_batch(batch)
 
         benchmark(write_batch)
 
@@ -668,7 +668,7 @@ class TestBulkOperationBenchmarks:
         def write_batch():
             counter[0] += 1
             batch = [(f"/batch100_{counter[0]}/file_{i}.txt", content) for i in range(100)]
-            benchmark_loop.run_until_complete(nx.write_batch(batch))
+            nx.write_batch(batch)
 
         benchmark(write_batch)
 

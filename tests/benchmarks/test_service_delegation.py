@@ -319,7 +319,7 @@ class TestGatewayDelegationOverhead:
         """Benchmark gateway.sys_readdir() delegation."""
 
         def run():
-            delegation_loop.run_until_complete(mock_gateway.sys_readdir("/test", context=context))
+            mock_gateway.sys_readdir("/test", context=context)
 
         benchmark(run)
 

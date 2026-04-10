@@ -13,9 +13,6 @@ use pyo3::prelude::*;
 use pyo3::types::PyAny;
 use std::collections::HashMap;
 
-/// (observer, name) pair — shared by observer query methods.
-pub(crate) type ObserverPair = (Py<PyAny>, String);
-
 // ── InterceptHook trait ──────────────────────────────────────────────
 
 /// INTERCEPT hook — called before/after each syscall.
@@ -197,78 +194,7 @@ impl HookRegistry {
     }
 }
 
-// ── ObserverRegistry ────────────────────────────────────────────────
-
-pub(crate) struct ObserverEntry {
-    pub(crate) observer: Py<PyAny>,
-    pub(crate) name: String,
-    pub(crate) event_mask: u32,
-    /// Legacy field — §11 Phase 2 deleted OBSERVE_INLINE from the contract.
-    /// Kept for backward compat with the `register` signature; always false.
-    #[allow(dead_code)]
-    pub(crate) is_inline: bool,
-}
-
-/// Rust-side observer registry with event-type bitmask filtering.
-pub(crate) struct ObserverRegistry {
-    observers: Vec<ObserverEntry>,
-}
-
-impl ObserverRegistry {
-    pub(crate) fn new() -> Self {
-        Self {
-            observers: Vec::new(),
-        }
-    }
-
-    /// Register observer with event_mask bitmask and is_inline flag.
-    pub(crate) fn register(
-        &mut self,
-        py: Python<'_>,
-        obs: Py<PyAny>,
-        event_mask: u32,
-        is_inline: bool,
-    ) -> PyResult<()> {
-        let obs_ref = obs.bind(py);
-        let name: String = obs_ref
-            .get_type()
-            .name()
-            .map(|n| n.to_string())
-            .unwrap_or_else(|_| "<?>".to_string());
-
-        self.observers.push(ObserverEntry {
-            observer: obs,
-            name,
-            event_mask,
-            is_inline,
-        });
-        Ok(())
-    }
-
-    /// Unregister by identity.
-    pub(crate) fn unregister(&mut self, py: Python<'_>, obs: &Bound<'_, PyAny>) -> bool {
-        let obs_ptr = obs.as_ptr();
-        if let Some(pos) = self
-            .observers
-            .iter()
-            .position(|e| e.observer.bind(py).as_ptr() == obs_ptr)
-        {
-            self.observers.remove(pos);
-            return true;
-        }
-        false
-    }
-
-    /// Return (observer, name) pairs matching the event_type_bit.
-    pub(crate) fn get_matching(&self, py: Python<'_>, event_type_bit: u32) -> Vec<ObserverPair> {
-        self.observers
-            .iter()
-            .filter(|e| e.event_mask & event_type_bit != 0)
-            .map(|e| (e.observer.clone_ref(py), e.name.clone()))
-            .collect()
-    }
-
-    pub(crate) fn count(&self) -> usize {
-        self.observers.len()
-    }
-}
+// ── ObserverRegistry DELETED (§11 Phase 22) ─────────────────────────
+//
+// Observer registration and dispatch moved to pure Python (DispatchMixin._observers).
+// Rust KernelObserverRegistry (kernel.rs) retained for future Rust-native observers.

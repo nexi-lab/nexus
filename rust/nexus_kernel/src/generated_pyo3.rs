@@ -24,7 +24,7 @@ use crate::backend::{
     WriteResult,
 };
 use crate::dispatch::{FileEvent, MutationObserver, PathResolver};
-use crate::hook_registry::{HookRegistry, InterceptHook, ObserverPair, ObserverRegistry};
+use crate::hook_registry::{HookRegistry, InterceptHook};
 use crate::kernel::{Kernel, KernelError, OperationContext};
 use crate::lock::VFSLockManager;
 use crate::metastore::{FileMetadata, MetastoreError};
@@ -984,18 +984,17 @@ impl From<RustRouteResult> for PyRustRouteResult {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// PyKernel — wraps pure Rust Kernel + owns Hook/Observer registries
+// PyKernel — wraps pure Rust Kernel + owns Hook registry
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Python-facing Kernel. Wraps the pure Rust `Kernel` and adds:
-///   - Hook/Observer registries (PyO3-specific, stored here not in Rust Kernel)
+///   - Hook registry (PyO3-specific, stored here not in Rust Kernel)
 ///   - PRE-INTERCEPT dispatch (requires GIL for Python hook contexts)
 ///   - Type conversion (Vec<u8> -> PyBytes, StatResult -> PyDict, etc.)
 #[pyclass(name = "Kernel")]
 pub struct PyKernel {
     inner: Kernel,
     hooks: Mutex<HookRegistry>,
-    observers: Mutex<ObserverRegistry>,
 }
 
 #[pymethods]
@@ -1007,7 +1006,6 @@ impl PyKernel {
         Self {
             inner: Kernel::new(),
             hooks: Mutex::new(HookRegistry::new()),
-            observers: Mutex::new(ObserverRegistry::new()),
         }
     }
 
@@ -1592,64 +1590,39 @@ impl PyKernel {
         self.hooks.lock().count(op)
     }
 
-    // ── Observer proxy methods ─────────────────────────────────────────
-    //
-    // §11 Phase 6: observers are registered in BOTH the legacy
-    // Py<PyAny> ObserverRegistry (for Python fallback notify()) AND the
-    // pure Rust KernelObserverRegistry (for Tier 1 sys_* dispatch).
-    // The legacy path will be deleted once all Python fallback paths
-    // are migrated to Rust Tier 1 syscalls.
+    // ── Kernel-owned observer dispatch (Phase 10) ────────────────────
 
-    #[pyo3(signature = (obs, event_mask, is_inline=false))]
-    fn register_observer(
+    /// Register observer in pure Rust kernel registry (no GIL for filter loop).
+    /// The PyMutationObserverAdapter wraps Python observers as Rust trait objects.
+    #[pyo3(signature = (obs, name, event_mask, is_inline=true))]
+    fn register_kernel_observer(
         &self,
         py: Python<'_>,
         obs: Py<PyAny>,
+        name: &str,
         event_mask: u32,
         is_inline: bool,
     ) -> PyResult<()> {
-        // 1. Legacy registry (Python fallback notify() queries this).
-        self.observers
-            .lock()
-            .register(py, obs.clone_ref(py), event_mask, is_inline)?;
-        // 2. Kernel registry (Rust sys_* dispatch_observers uses this).
-        let name: String = obs
-            .bind(py)
-            .get_type()
-            .name()
-            .map(|n| n.to_string())
-            .unwrap_or_else(|_| "<?>".to_string());
         let adapter = PyMutationObserverAdapter { inner: obs };
         self.inner
-            .register_observer(Arc::new(adapter), name, event_mask);
+            .register_observer(std::sync::Arc::new(adapter), name.to_string(), event_mask);
+        let _ = py;
         Ok(())
     }
 
-    fn unregister_observer(&self, py: Python<'_>, obs: &Bound<'_, PyAny>) -> bool {
-        // Unregister from legacy registry. Kernel registry unregister
-        // requires name (not identity); for now only legacy is cleaned.
-        // The kernel registry observer becomes orphaned but harmless
-        // (fire-and-forget no-op after Python ref is dropped).
-        self.observers.lock().unregister(py, obs)
+    /// Unregister observer from kernel registry by name.
+    fn unregister_kernel_observer(&self, name: &str) -> bool {
+        self.inner.unregister_observer(name)
     }
 
-    fn get_matching_observers(&self, py: Python<'_>, event_type_bit: u32) -> Vec<ObserverPair> {
-        self.observers.lock().get_matching(py, event_type_bit)
+    /// Flush pending observer tasks (blocks until thread pool drains).
+    fn flush_observers(&self) {
+        self.inner.flush_observers();
     }
 
-    fn observer_count(&self) -> usize {
-        self.observers.lock().count()
-    }
-
-    /// Block until all queued observer jobs complete (test helper).
-    ///
-    /// OBSERVE dispatch is fire-and-forget — `dispatch_observers` returns
-    /// as soon as jobs are queued on the background ThreadPool. Tests need
-    /// this helper to make assertions deterministic (drain the pool before
-    /// checking observer side-effects). Not for production — blocks the
-    /// calling thread until every worker finishes.
-    fn flush_observers(&self, py: Python<'_>) {
-        py.detach(|| self.inner.flush_observers());
+    /// Total observers in kernel registry.
+    fn kernel_observer_count(&self) -> usize {
+        self.inner.observer_count()
     }
 
     // ── Hook counts ────────────────────────────────────────────────────

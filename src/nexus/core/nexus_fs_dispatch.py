@@ -71,6 +71,8 @@ class DispatchMixin:
         self._next_resolver_idx: int = 0
         self._mount_hooks: list[tuple[Any, Any]] = []  # (hook, adapter) pairs
         self._unmount_hooks: list[tuple[Any, Any]] = []  # (hook, adapter) pairs
+        # Observer registry — pure Python list (§11 Phase 22: eliminated Rust ObserverRegistry)
+        self._observers: list[tuple[Any, str, int, bool]] = []  # (obs, name, mask, is_inline)
         import concurrent.futures
 
         self._observer_executor = concurrent.futures.ThreadPoolExecutor(
@@ -236,26 +238,31 @@ class DispatchMixin:
     # ── register_observe: generic OBSERVE observers (Issue #1748) ───────
 
     def register_observe(self, obs: VFSObserver) -> None:
-        """Register an OBSERVE-phase observer.
-
-        §11 Phase 2 deleted ``OBSERVE_INLINE`` — all observers run on the
-        kernel's background ThreadPool (fire-and-forget by contract).
-        The ``is_inline`` parameter is no longer passed to the Rust
-        registry; the legacy ``ObserverRegistry`` in ``hook_registry.rs``
-        still accepts it for backward compat until Phase 6 fully rewires
-        registration to the Rust kernel ``KernelObserverRegistry``.
-        """
+        """Register OBSERVE observer (§11 Phase 22: pure Python registry)."""
         from nexus.core.file_events import ALL_FILE_EVENTS
 
         mask = getattr(obs, "event_mask", ALL_FILE_EVENTS)
-        self._kernel.register_observer(obs, mask, False)
+        is_inline_attr = getattr(obs, "OBSERVE_INLINE", True)
+        is_inline = bool(is_inline_attr) if isinstance(is_inline_attr, (bool, int)) else True
+        name = getattr(obs, "__class__", type(obs)).__name__
+        self._observers.append((obs, name, mask, is_inline))
 
     def has_hooks(self, op: str) -> bool:
         """O(1) check: any hooks registered for *op*? Delegates to Rust Kernel."""
         return bool(self._kernel.hook_count(op) > 0)
 
     def unregister_observe(self, obs: VFSObserver) -> bool:
-        return bool(self._kernel.unregister_observer(obs))
+        """Unregister OBSERVE observer by identity."""
+        for i, (o, _name, _mask, _inline) in enumerate(self._observers):
+            if o is obs:
+                self._observers.pop(i)
+                return True
+        return False
+
+    @property
+    def observer_count(self) -> int:
+        """Total registered observers."""
+        return len(self._observers)
 
     # ── PRE-INTERCEPT dispatch ──────────────────────────────────────────
     # ALL pre-hook dispatch now goes through Rust InterceptHook trait via
@@ -271,34 +278,32 @@ class DispatchMixin:
     # ── OBSERVE dispatch (Issue #1812, #1748, #3391) ──────────────────────
 
     def notify(self, event: FileEvent) -> None:
-        """OBSERVE phase — fire-and-forget dispatch to all matching observers.
+        """OBSERVE phase — pure Python dispatch (§11 Phase 22).
 
-        Used by Python-only fallback paths (hit=false) that the Rust kernel
-        did not handle. For hit=true paths, the Rust kernel fires OBSERVE
-        via its own ThreadPool (§11 Phase 5) — callers must NOT also call
-        notify(), or observers will see duplicate events.
-
-        §11 Phase 2 deleted ``OBSERVE_INLINE`` — all observers are dispatched
-        the same way (sync ``on_mutation`` call, fire-and-forget). There is
-        no inline/deferred split anymore. Observers that need background I/O
-        (e.g. EventBusObserver) schedule their own async work internally.
+        Iterates Python observer list directly (no Rust ObserverRegistry).
+        Inline observers: synchronous on caller's thread.
+        Deferred observers: submitted to ThreadPoolExecutor.
         """
         from nexus.core.file_events import FILE_EVENT_BIT, FileEventType
 
         event_type = event.type if isinstance(event.type, FileEventType) else None
         bit = FILE_EVENT_BIT.get(event_type, 0) if event_type else 0
-        if not bit:
-            return
-        # Use get_matching_observers (non-partitioned) — no inline/deferred split
-        observers = self._kernel.get_matching_observers(bit)
-        if not observers:
+        if not bit or not self._observers:
             return
 
-        for obs, name in observers:
+        def _run_observer(obs: Any, name: str) -> None:
             try:
                 obs.on_mutation(event)
             except Exception as exc:
                 logger.warning("Observer %s failed: %s", name, exc)
+
+        for obs, name, mask, is_inline in self._observers:
+            if mask & bit == 0:
+                continue
+            if is_inline:
+                _run_observer(obs, name)
+            else:
+                self._observer_executor.submit(_run_observer, obs, name)
 
     # ── MOUNT/UNMOUNT hooks (unified into OBSERVE phase) ────────────────
     #
@@ -406,6 +411,5 @@ class DispatchMixin:
     rmdir_hook_count = property(lambda self: self._hook_count("rmdir"))
     stat_hook_count = property(lambda self: self._hook_count("stat"))
     access_hook_count = property(lambda self: self._hook_count("access"))
-    observer_count = property(lambda self: int(self._kernel.observer_count()))
     mount_hook_count = property(lambda self: len(self._mount_hooks))
     unmount_hook_count = property(lambda self: len(self._unmount_hooks))

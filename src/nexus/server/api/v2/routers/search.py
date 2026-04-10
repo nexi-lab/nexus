@@ -832,6 +832,47 @@ async def list_indexed_dirs(
     }
 
 
+@router.post("/indexing-mode")
+async def set_indexing_mode(
+    payload: dict[str, Any],
+    auth_result: dict[str, Any] = Depends(require_auth),
+    search_daemon: Any = Depends(_get_search_daemon),
+) -> dict[str, Any]:
+    """Flip a zone between ``'all'`` and ``'scoped'`` indexing modes (Issue #3698).
+
+    Admin-only. Takes effect immediately — the daemon updates its
+    in-memory state under ``_refresh_lock`` alongside the DB write.
+
+    Request body:
+        {"mode": "all" | "scoped", "zone_id": "optional — defaults to caller's zone"}
+    """
+    from nexus.bricks.search.index_scope import (
+        InvalidDirectoryPathError,
+        ZoneNotFoundError,
+    )
+    from nexus.contracts.constants import ROOT_ZONE_ID
+
+    if not auth_result.get("is_admin", False):
+        raise HTTPException(status_code=403, detail="set-indexing-mode is admin-only")
+
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="request body must be a JSON object")
+    mode = payload.get("mode")
+    if not isinstance(mode, str) or not mode:
+        raise HTTPException(status_code=400, detail="'mode' field is required")
+
+    zone_id = payload.get("zone_id") or auth_result.get("zone_id") or ROOT_ZONE_ID
+
+    try:
+        await search_daemon.set_zone_indexing_mode(zone_id, mode)
+    except ZoneNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except InvalidDirectoryPathError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {"zone_id": zone_id, "indexing_mode": mode, "status": "updated"}
+
+
 @router.post("/purge-unscoped")
 async def purge_unscoped_embeddings(
     auth_result: dict[str, Any] = Depends(require_auth),

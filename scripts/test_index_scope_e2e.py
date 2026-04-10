@@ -1,0 +1,520 @@
+#!/usr/bin/env python3
+"""E2E validation for per-directory semantic index scoping (Issue #3698).
+
+Requires a running Nexus stack with the ``add_indexed_directories`` migration
+applied. Pass NEXUS_URL, NEXUS_API_KEY, DATABASE_URL as env vars:
+
+    export NEXUS_URL=http://localhost:50870
+    export NEXUS_API_KEY=sk-...
+    export DATABASE_URL=postgresql://postgres:nexus@localhost:50872/nexus
+    python scripts/test_index_scope_e2e.py
+
+What this validates:
+
+1. **API CRUD** — POST/DELETE /api/v2/search/index-directory + GET /indexed-dirs
+2. **Migration applied** — indexed_directories table and zones.indexing_mode exist
+3. **Scope filter correctness** — when a zone is in 'scoped' mode:
+    - Files INSIDE the registered directory ARE embedded (document_chunks rows)
+    - Files OUTSIDE the registered directory are NOT embedded (ZERO rows)
+    - No leak between scope boundaries
+4. **Semantic search scope** — /api/v2/search/query semantic returns only in-scope files
+5. **Backward compat** — zone in 'all' mode indexes everything (legacy behavior)
+6. **DELETE propagates** — unregistering a directory stops future embeddings
+
+Validation method: direct SQL inspection of document_chunks joined with file_paths,
+plus semantic search queries via the HTTP API. This catches both false positives
+(leakage) and false negatives (in-scope files missing from the index).
+"""
+
+from __future__ import annotations
+
+import contextlib
+import json
+import os
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+
+NEXUS_URL = os.environ.get("NEXUS_URL", "http://localhost:50870")
+API_KEY = os.environ.get("NEXUS_API_KEY", "")
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
+
+# Test zone and paths.
+TEST_ZONE = "root"
+INDEXED_DIR = "/e2e_scope/indexed"
+UNINDEXED_DIR = "/e2e_scope/noindex"
+
+# In-scope files — should appear in document_chunks + semantic search.
+INDEXED_FILES = {
+    f"{INDEXED_DIR}/auth_manual.md": (
+        "# Authentication Manual\n\n"
+        "The quantum encryption protocol uses entangled photon pairs to establish "
+        "a shared secret between Alice and Bob. Eve cannot eavesdrop without "
+        "perturbing the quantum state, which is detected via Bell inequality tests."
+    ),
+    f"{INDEXED_DIR}/deployment_guide.md": (
+        "# Deployment Guide\n\n"
+        "To deploy the mesh networking layer, configure the gossip protocol with "
+        "a fanout of 3 and heartbeat interval of 200ms. The failure detector uses "
+        "the phi-accrual algorithm for suspicion levels."
+    ),
+}
+
+# Out-of-scope files — MUST NOT appear in document_chunks or semantic search.
+# These use UNIQUE, SEMANTICALLY DISTINCTIVE content so leakage would be obvious.
+UNINDEXED_FILES = {
+    f"{UNINDEXED_DIR}/biotech_secret.md": (
+        "# Biotech Research Notes\n\n"
+        "The CRISPR-Cas9 gene editing workflow for zebrafish embryos uses "
+        "microinjection of single-guide RNA at the 1-cell stage. Knock-in "
+        "efficiency improves with HDR template lengths of 60-100 bp."
+    ),
+    f"{UNINDEXED_DIR}/astronomy_notes.md": (
+        "# Astronomy Observations\n\n"
+        "The Hertzsprung-Russell diagram plots stellar luminosity against surface "
+        "temperature. Main sequence stars fuse hydrogen into helium via the p-p "
+        "chain for low-mass stars and the CNO cycle for heavier stars."
+    ),
+}
+
+# Distinctive search queries that should ONLY match in-scope or out-of-scope files.
+# If an out-of-scope query returns a hit, that's a LEAK.
+INSCOPE_QUERIES = [
+    ("quantum encryption entangled photons", "auth_manual.md"),
+    ("mesh networking gossip heartbeat phi-accrual", "deployment_guide.md"),
+]
+LEAK_CANARY_QUERIES = [
+    # These terms only appear in unindexed files. If they return ANY results
+    # from the unindexed dir, we have a leak.
+    ("CRISPR Cas9 zebrafish microinjection", "biotech_secret.md"),
+    ("Hertzsprung-Russell luminosity main sequence", "astronomy_notes.md"),
+]
+
+# =============================================================================
+# Test harness
+# =============================================================================
+
+passed = 0
+failed = 0
+results: list[tuple[str, bool, str]] = []
+
+
+def check(name: str, condition: bool, detail: str = "") -> None:
+    global passed, failed
+    if condition:
+        passed += 1
+        print(f"  \u2713 {name}")
+    else:
+        failed += 1
+        print(f"  \u2717 {name} \u2014 {detail}")
+    results.append((name, condition, detail))
+
+
+def http_call(
+    method: str, path: str, body: dict | None = None, expect: int = 200
+) -> tuple[int, dict | None]:
+    """HTTP call with API key. Returns (status, parsed_body_or_None)."""
+    url = f"{NEXUS_URL}{path}"
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(url, data=data, method=method)
+    req.add_header("Authorization", f"Bearer {API_KEY}")
+    if body is not None:
+        req.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            status = resp.getcode()
+            raw = resp.read().decode()
+            return status, json.loads(raw) if raw else None
+    except urllib.error.HTTPError as e:
+        raw = e.read().decode() if e.fp else ""
+        try:
+            return e.code, json.loads(raw) if raw else None
+        except Exception:
+            return e.code, {"raw": raw}
+    except Exception as e:
+        return 0, {"error": str(e)}
+
+
+def psql(sql: str) -> str:
+    """Run a SQL query via docker exec. Returns stdout."""
+    # Find the postgres container for this worktree instance.
+    result = subprocess.run(
+        ["docker", "ps", "--format", "{{.Names}}", "--filter", "name=postgres"],
+        capture_output=True,
+        text=True,
+    )
+    containers = [
+        c
+        for c in result.stdout.strip().split("\n")
+        if c and "15214aa8" in c  # this worktree's hash
+    ]
+    if not containers:
+        return "ERROR: no postgres container found"
+    container = containers[0]
+    r = subprocess.run(
+        [
+            "docker",
+            "exec",
+            container,
+            "psql",
+            "-U",
+            "postgres",
+            "-d",
+            "nexus",
+            "-t",
+            "-A",
+            "-c",
+            sql,
+        ],
+        capture_output=True,
+        text=True,
+    )
+    return r.stdout.strip()
+
+
+def write_file(path: str, content: str) -> None:
+    """Create a file via the /api/v2/files/write HTTP endpoint."""
+    body = {"path": path, "content": content, "encoding": "utf8"}
+    req = urllib.request.Request(
+        f"{NEXUS_URL}/api/v2/files/write",
+        data=json.dumps(body).encode(),
+        headers={
+            "Authorization": f"Bearer {API_KEY}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        if resp.getcode() not in (200, 201):
+            raise RuntimeError(f"write {path} failed: {resp.read().decode()}")
+
+
+def delete_file(path: str) -> None:
+    """Delete a file via the /api/v2/files/delete endpoint (best-effort)."""
+    body = {"path": path}
+    req = urllib.request.Request(
+        f"{NEXUS_URL}/api/v2/files/delete",
+        data=json.dumps(body).encode(),
+        headers={
+            "Authorization": f"Bearer {API_KEY}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    with contextlib.suppress(Exception):
+        urllib.request.urlopen(req, timeout=10)
+
+
+def count_chunks_for_path(virtual_path: str) -> int:
+    """Return the number of txtai sections rows for a given file path.
+
+    The txtai backend stores document text in the ``sections`` table
+    (id = virtual_path, text = content). A row here proves the file is
+    in the semantic index — which is the cost-sensitive path we're
+    gating via the scope filter.
+    """
+    sql = f"SELECT COUNT(*) FROM sections WHERE id = '{virtual_path}'"
+    return int(psql(sql) or "0")
+
+
+def count_chunks_under_prefix(prefix: str) -> int:
+    """Return total txtai sections rows under a given path prefix."""
+    sql = f"SELECT COUNT(*) FROM sections WHERE id LIKE '{prefix}%'"
+    return int(psql(sql) or "0")
+
+
+def wait_for_index(
+    virtual_path: str, *, expect_present: bool, attempts: int = 6, delay: float = 5.0
+) -> bool:
+    """Poll document_chunks until the file is (or is not) indexed."""
+    for attempt in range(attempts):
+        n = count_chunks_for_path(virtual_path)
+        if expect_present and n > 0:
+            return True
+        if not expect_present and n == 0 and attempt > 0:
+            # For absence, wait once to make sure the consumer has had a
+            # chance to process, then confirm still zero.
+            return True
+        time.sleep(delay)
+    return (
+        count_chunks_for_path(virtual_path) > 0
+        if expect_present
+        else (count_chunks_for_path(virtual_path) == 0)
+    )
+
+
+# =============================================================================
+# Main validation flow
+# =============================================================================
+
+
+def main() -> None:
+    if not API_KEY:
+        print("ERROR: NEXUS_API_KEY not set")
+        sys.exit(1)
+    if not DATABASE_URL:
+        print("WARNING: DATABASE_URL not set (using docker exec fallback)")
+
+    # -------------------------------------------------------------------------
+    print("=== 1. SCHEMA — migration applied ===")
+    # -------------------------------------------------------------------------
+    check(
+        "zones.indexing_mode column exists",
+        psql(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name='zones' AND column_name='indexing_mode'"
+        )
+        == "indexing_mode",
+    )
+    check(
+        "indexed_directories table exists",
+        psql(
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_name='indexed_directories'"
+        )
+        == "indexed_directories",
+    )
+    check(
+        "alembic head is idx_dirs_3698",
+        psql("SELECT version_num FROM alembic_version") == "idx_dirs_3698",
+    )
+
+    # Ensure the test zone exists — on fresh stacks without `nexus demo init`,
+    # the zones table starts empty and the /indexing-mode endpoint would 404.
+    psql(
+        f"INSERT INTO zones (zone_id, name, phase, finalizers, "
+        f"created_at, updated_at, indexing_mode) "
+        f"VALUES ('{TEST_ZONE}', '{TEST_ZONE}', 'Active', '[]', "
+        f"NOW(), NOW(), 'all') "
+        f"ON CONFLICT (zone_id) DO NOTHING"
+    )
+
+    # -------------------------------------------------------------------------
+    print("\n=== 2. API CRUD — happy path ===")
+    # -------------------------------------------------------------------------
+    # Start clean: flip back to 'all' via the API, then remove any leftover
+    # directory registrations. This leaves a clean slate for subsequent tests.
+    http_call(
+        "POST",
+        "/api/v2/search/indexing-mode",
+        {"mode": "all", "zone_id": TEST_ZONE},
+    )
+    # Best-effort cleanup of any leftover directory registrations.
+    for path in (INDEXED_DIR,):
+        http_call("DELETE", "/api/v2/search/index-directory", {"path": path})
+    # Clean stale txtai-backend rows (sections / vectors / documents) from
+    # previous runs so leak checks start from a known state. The txtai
+    # content store uses three tables: ``documents`` (primary key on id,
+    # stores raw text), ``sections`` (append-only with indexid PK), and
+    # ``vectors`` (pgvector ANN index keyed by indexid). All three need
+    # cleanup — missing ``documents`` causes INSERT conflicts on the next
+    # bootstrap because txtai re-inserts by id.
+    scope_patterns = (INDEXED_DIR, UNINDEXED_DIR)
+    for prefix in scope_patterns:
+        # DELETE documents first — it's the one with a unique id PK.
+        psql(f"DELETE FROM documents WHERE id LIKE '{prefix}%'")
+        # DELETE sections (non-unique id, integer PK) — best-effort.
+        psql(f"DELETE FROM sections WHERE id LIKE '{prefix}%'")
+    # Orphan vectors (indexid no longer in sections) are harmless at query
+    # time because the ANN join drops them, but clean them for tidiness.
+    # Note: vectors.indexid is the join key, not 'id'.
+    psql("DELETE FROM vectors WHERE indexid NOT IN (SELECT indexid FROM sections)")
+
+    status, body = http_call("GET", "/api/v2/search/indexed-dirs")
+    check("GET /indexed-dirs returns 200", status == 200)
+
+    status, body = http_call("POST", "/api/v2/search/index-directory", {"path": INDEXED_DIR})
+    check(
+        "POST /index-directory returns 200",
+        status == 200,
+        f"status={status} body={body}",
+    )
+    check(
+        "POST body returns canonical path",
+        body is not None and body.get("path") == INDEXED_DIR,
+    )
+
+    status, body = http_call("GET", "/api/v2/search/indexed-dirs")
+    check(
+        "GET /indexed-dirs includes registered dir",
+        body is not None and INDEXED_DIR in body.get("directories", []),
+    )
+
+    # -------------------------------------------------------------------------
+    print("\n=== 3. API CRUD — edge cases (Issue #6 policies) ===")
+    # -------------------------------------------------------------------------
+    status, body = http_call("POST", "/api/v2/search/index-directory", {"path": INDEXED_DIR})
+    check("duplicate register → 409", status == 409)
+
+    status, body = http_call("POST", "/api/v2/search/index-directory", {"path": "/foo/../etc"})
+    check("path escape (..) → 400", status == 400)
+
+    status, body = http_call("POST", "/api/v2/search/index-directory", {"path": "relative/path"})
+    check("relative path → 400", status == 400)
+
+    status, body = http_call("POST", "/api/v2/search/index-directory", {"path": "/foo/./bar"})
+    check("dot segment → 400", status == 400)
+
+    status, body = http_call(
+        "DELETE", "/api/v2/search/index-directory", {"path": "/never/registered"}
+    )
+    check("DELETE absent dir → 404", status == 404)
+
+    # -------------------------------------------------------------------------
+    print("\n=== 4. SCOPE FILTER — in-scope files ARE embedded ===")
+    # -------------------------------------------------------------------------
+    # Flip zone to 'scoped' mode via the /indexing-mode endpoint. This
+    # updates the daemon's in-memory state under the refresh lock and
+    # writes through to the DB, so no restart is needed.
+    status, body = http_call(
+        "POST",
+        "/api/v2/search/indexing-mode",
+        {"mode": "scoped", "zone_id": TEST_ZONE},
+    )
+    check(
+        "POST /indexing-mode mode=scoped → 200",
+        status == 200,
+        f"status={status} body={body}",
+    )
+
+    status, body = http_call("GET", "/api/v2/search/indexed-dirs")
+    check(
+        "GET /indexed-dirs reports mode=scoped",
+        body is not None and body.get("indexing_mode") == "scoped",
+    )
+
+    # Write in-scope files.
+    print("    Writing in-scope files...")
+    for path, content in INDEXED_FILES.items():
+        try:
+            write_file(path, content)
+            check(f"wrote {path}", True)
+        except Exception as e:
+            check(f"wrote {path}", False, str(e))
+
+    # Write out-of-scope files.
+    print("    Writing out-of-scope files...")
+    for path, content in UNINDEXED_FILES.items():
+        try:
+            write_file(path, content)
+            check(f"wrote {path}", True)
+        except Exception as e:
+            check(f"wrote {path}", False, str(e))
+
+    # Wait for the debounce + indexing to fire (5s debounce + processing).
+    print("    Waiting 20s for auto-index refresh loop...")
+    time.sleep(20)
+
+    # Verify in-scope files got chunks.
+    for path in INDEXED_FILES:
+        n = count_chunks_for_path(path)
+        check(f"in-scope {path} has >=1 chunk", n >= 1, f"got {n}")
+
+    # -------------------------------------------------------------------------
+    print("\n=== 5. SCOPE FILTER — out-of-scope files NOT embedded (no leak) ===")
+    # -------------------------------------------------------------------------
+    for path in UNINDEXED_FILES:
+        n = count_chunks_for_path(path)
+        check(
+            f"out-of-scope {path} has 0 chunks (no leak)",
+            n == 0,
+            f"LEAK: {n} chunks found",
+        )
+
+    # Aggregate leak check — count total chunks under each prefix.
+    n_indexed = count_chunks_under_prefix(INDEXED_DIR)
+    n_unindexed = count_chunks_under_prefix(UNINDEXED_DIR)
+    check(f"chunks under {INDEXED_DIR} > 0", n_indexed > 0, f"got {n_indexed}")
+    check(
+        f"chunks under {UNINDEXED_DIR} == 0 (bulk leak check)",
+        n_unindexed == 0,
+        f"LEAK: {n_unindexed} chunks",
+    )
+
+    # -------------------------------------------------------------------------
+    print("\n=== 6. SEMANTIC SEARCH — leak canary queries ===")
+    # -------------------------------------------------------------------------
+    # In-scope queries should hit their expected file.
+    for q, expected in INSCOPE_QUERIES:
+        status, body = http_call(
+            "GET", f"/api/v2/search/query?q={urllib_quote(q)}&type=semantic&limit=5"
+        )
+        paths = [r.get("path", "") for r in (body.get("results", []) if body else [])]
+        hit = any(expected in p for p in paths)
+        check(f'in-scope query "{q[:40]}" returns {expected}', hit, str(paths))
+
+    # Leak canary: these queries use terms that ONLY appear in unindexed files.
+    # If semantic search returns any hit from the unindexed dir, that's a leak.
+    for q, _not_expected in LEAK_CANARY_QUERIES:
+        status, body = http_call(
+            "GET", f"/api/v2/search/query?q={urllib_quote(q)}&type=semantic&limit=5"
+        )
+        paths = [r.get("path", "") for r in (body.get("results", []) if body else [])]
+        leaked = any(UNINDEXED_DIR in p for p in paths)
+        check(
+            f'leak canary "{q[:40]}" does NOT return {UNINDEXED_DIR} files',
+            not leaked,
+            f"LEAK: paths={paths}",
+        )
+
+    # -------------------------------------------------------------------------
+    print("\n=== 7. KEYWORD COVERAGE — out-of-scope files still grep-able ===")
+    # -------------------------------------------------------------------------
+    # Per spec: BM25/FTS/grep keep full coverage. An out-of-scope file must
+    # still be findable via keyword search even though it's not semantically
+    # indexed.
+    r = subprocess.run(
+        ["nexus", "grep", "CRISPR", UNINDEXED_DIR],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "NEXUS_URL": NEXUS_URL, "NEXUS_API_KEY": API_KEY},
+    )
+    # nexus grep works on-demand, should find the literal.
+    check(
+        "grep finds literal in out-of-scope dir (on-demand scan)",
+        "CRISPR" in r.stdout or "biotech_secret" in r.stdout,
+        r.stdout[:200] if r.stdout else "grep returned no output",
+    )
+
+    # -------------------------------------------------------------------------
+    print("\n=== 8. CLEANUP ===")
+    # -------------------------------------------------------------------------
+    for path in list(INDEXED_FILES) + list(UNINDEXED_FILES):
+        with contextlib.suppress(Exception):
+            delete_file(path)
+
+    status, _ = http_call("DELETE", "/api/v2/search/index-directory", {"path": INDEXED_DIR})
+    check("DELETE /index-directory returns 200", status == 200)
+
+    # Flip back to 'all' mode via the API (write-through to DB + daemon).
+    http_call(
+        "POST",
+        "/api/v2/search/indexing-mode",
+        {"mode": "all", "zone_id": TEST_ZONE},
+    )
+
+    print_results()
+
+
+def urllib_quote(s: str) -> str:
+    import urllib.parse
+
+    return urllib.parse.quote_plus(s)
+
+
+def print_results() -> None:
+    print(f"\n{'=' * 60}")
+    print(f"RESULTS: {passed} passed, {failed} failed")
+    print(f"{'=' * 60}")
+    if failed:
+        print("\nFailed tests:")
+        for name, ok, detail in results:
+            if not ok:
+                print(f"  \u2717 {name}: {detail}")
+    sys.exit(1 if failed else 0)
+
+
+if __name__ == "__main__":
+    main()

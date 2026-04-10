@@ -17,6 +17,7 @@ See the 8 Issue #6 policies documented per function and in
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import bindparam
@@ -122,12 +123,21 @@ async def add_indexed_directory(daemon: SearchDaemon, zone_id: str, directory_pa
 
         if daemon._async_session is not None:
             async with daemon._async_session() as session:
+                # Explicit ``created_at`` — the Alembic migration sets
+                # ``server_default=sa.func.now()`` but SQLAlchemy raw
+                # ``text()`` INSERTs bypass the DB-level default, so we
+                # supply the timestamp from Python here.
                 await session.execute(
                     sa_text(
                         "INSERT INTO indexed_directories "
-                        "(zone_id, directory_path) VALUES (:zid, :dp)"
+                        "(zone_id, directory_path, created_at) "
+                        "VALUES (:zid, :dp, :ts)"
                     ),
-                    {"zid": zone_id, "dp": canonical},
+                    {
+                        "zid": zone_id,
+                        "dp": canonical,
+                        "ts": datetime.now(UTC),
+                    },
                 )
                 await session.commit()
 

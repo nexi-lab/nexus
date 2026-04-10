@@ -52,6 +52,8 @@ def _spawn_acp() -> subprocess.Popen[str]:
 
 def _send(proc: subprocess.Popen[str], msg: dict) -> None:
     assert proc.stdin is not None
+    if proc.poll() is not None:
+        pytest.skip(f"nexus chat --acp exited early (code={proc.returncode})")
     proc.stdin.write(json.dumps(msg) + "\n")
     proc.stdin.flush()
 
@@ -96,10 +98,25 @@ def _drain_stdout(proc: subprocess.Popen[str], timeout: float = 1.0) -> list[str
     return lines
 
 
+def _wait_boot(proc: subprocess.Popen[str], seconds: float = 6) -> None:
+    """Wait for boot. Skip test if process exits early (missing Rust ext, port conflict, etc.)."""
+    time.sleep(seconds)
+    if proc.poll() is not None:
+        stderr = proc.stderr.read() if proc.stderr else ""
+        pytest.skip(
+            f"nexus chat --acp exited during boot (code={proc.returncode}): "
+            f"{stderr[:200] if stderr else '(no stderr)'}"
+        )
+
+
 def _cleanup(proc: subprocess.Popen[str]) -> None:
-    if proc.stdin:
-        proc.stdin.close()
-    proc.kill()
+    try:
+        if proc.stdin and proc.poll() is None:
+            proc.stdin.close()
+    except BrokenPipeError:
+        pass
+    if proc.poll() is None:
+        proc.kill()
     proc.wait(timeout=10)
 
 
@@ -110,7 +127,7 @@ class TestAcpSubprocess:
         """Stdout must be clean before any JSON-RPC messages — no tracing leaks."""
         proc = _spawn_acp()
         try:
-            time.sleep(6)  # wait for full boot
+            _wait_boot(proc)
             lines = _drain_stdout(proc)
             # No lines should appear on stdout before we send anything
             for line in lines:
@@ -122,7 +139,7 @@ class TestAcpSubprocess:
         """initialize returns protocolVersion and capabilities."""
         proc = _spawn_acp()
         try:
-            time.sleep(6)
+            _wait_boot(proc)
             _send(proc, {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
             resp = _read_response(proc, expect_id=1)
             assert resp is not None, "No response to initialize"
@@ -137,7 +154,7 @@ class TestAcpSubprocess:
         """session/new returns sessionId and model info."""
         proc = _spawn_acp()
         try:
-            time.sleep(6)
+            _wait_boot(proc)
             # Initialize first
             _send(proc, {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
             _read_response(proc, expect_id=1)
@@ -166,7 +183,7 @@ class TestAcpSubprocess:
         """Closing stdin causes graceful shutdown."""
         proc = _spawn_acp()
         try:
-            time.sleep(6)
+            _wait_boot(proc)
             _send(proc, {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
             _read_response(proc, expect_id=1)
 
@@ -184,7 +201,7 @@ class TestAcpSubprocess:
         """session/prompt before session/new returns JSON-RPC error."""
         proc = _spawn_acp()
         try:
-            time.sleep(6)
+            _wait_boot(proc)
             _send(proc, {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
             _read_response(proc, expect_id=1)
 

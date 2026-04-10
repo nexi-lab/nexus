@@ -137,15 +137,22 @@ async def _run_chat(
     if acp:
         acp_output = _isolate_stdout_for_acp()
 
-    # ── Resolve model from env/config ──
-    model = model or os.environ.get("NEXUS_LLM_MODEL", "gpt-4o")
-    base_url = os.environ.get("NEXUS_LLM_BASE_URL")
-    api_key = os.environ.get("NEXUS_LLM_API_KEY", "")
+    # ── Resolve LLM config from env ──
+    # Priority: SUDOROUTER (Anthropic-native) > NEXUS_LLM (OpenAI-compat) > ANTHROPIC_API_KEY
+    model = model or os.environ.get("NEXUS_LLM_MODEL")
+    sr_base = os.environ.get("SUDOROUTER_BASE_URL")
+    sr_key = os.environ.get("SUDOROUTER_API_KEY")
+    anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
+    oai_base = os.environ.get("NEXUS_LLM_BASE_URL")
+    oai_key = os.environ.get("NEXUS_LLM_API_KEY", "")
 
-    if not base_url:
+    if not any([sr_base, anthropic_key, oai_base]):
         click.echo(
-            "Error: LLM backend URL required.\n"
-            "Set NEXUS_LLM_BASE_URL environment variable or configure in ~/.nexus/config.yaml.",
+            "Error: LLM backend required.\n"
+            "Set one of:\n"
+            "  SUDOROUTER_BASE_URL + SUDOROUTER_API_KEY  (Anthropic via SudoRouter)\n"
+            "  ANTHROPIC_API_KEY                          (Anthropic direct)\n"
+            "  NEXUS_LLM_BASE_URL + NEXUS_LLM_API_KEY    (OpenAI-compatible)\n",
             err=True,
         )
         sys.exit(1)
@@ -162,10 +169,24 @@ async def _run_chat(
         nx = await nexus.connect(config={"profile": profile, "data_dir": data_dir})
 
     try:
-        # ── Mount LLM backend ──
-        from nexus.backends.compute.openai_compatible import CASOpenAIBackend
+        # ── Mount LLM backend (auto-detect driver from env) ──
+        llm_backend: Any
+        if sr_base or (anthropic_key and not oai_base):
+            # Anthropic-native driver (SudoRouter or direct Anthropic API)
+            from nexus.backends.compute.anthropic_native import CASAnthropicBackend
 
-        llm_backend = CASOpenAIBackend(base_url=base_url, api_key=api_key, default_model=model)
+            _key = sr_key or anthropic_key or ""
+            _url = sr_base  # None for direct Anthropic
+            model = model or "claude-sonnet-4-6"
+            llm_backend = CASAnthropicBackend(api_key=_key, base_url=_url, default_model=model)
+        else:
+            # OpenAI-compatible driver
+            from nexus.backends.compute.openai_compatible import CASOpenAIBackend
+
+            model = model or "gpt-4o"
+            llm_backend = CASOpenAIBackend(
+                base_url=oai_base or "", api_key=oai_key, default_model=model
+            )
 
         # Inject NexusFS for DT_STREAM orchestration (Rust kernel)
         llm_backend.set_stream_manager(nx)
@@ -197,13 +218,9 @@ async def _run_chat(
         cwd = os.getcwd()
         agent_path = "/root/agents/default"
 
-        # Async wrappers for sync NexusFS syscalls — agent_runtime type
-        # aliases require Awaitable return types for mypy strict mode.
+        # Async wrappers for sync NexusFS syscalls (PR #3717: NexusFS is fully sync)
         async def _async_sys_read(path: str) -> bytes:
             return nx.sys_read(path)
-
-        async def _async_sys_write(path: str, buf: bytes) -> dict:
-            return nx.sys_write(path, buf)
 
         # StreamManager stream_read for DT_STREAM token delivery
         _nx_stream_read = getattr(nx, "_stream_read", None)

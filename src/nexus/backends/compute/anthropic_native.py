@@ -318,11 +318,11 @@ class CASAnthropicBackend(CASAddressingEngine):
         max_tokens = request.get("max_tokens", 8192)
 
         # Build Anthropic-specific kwargs
+        # Note: do NOT pass stream=True — client.messages.stream() handles that.
         api_kwargs: dict[str, Any] = {
             "model": model,
             "messages": self._convert_messages(messages),
             "max_tokens": max_tokens,
-            "stream": True,
         }
 
         # System prompt (Anthropic uses top-level 'system', not a message)

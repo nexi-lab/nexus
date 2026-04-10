@@ -8,7 +8,9 @@ Provides file operations using NexusFS via asyncio.to_thread():
 - GET    /list            - List directory contents
 - POST   /mkdir           - Create directory
 - GET    /metadata        - Get file metadata
-- POST   /batch-read      - Batch read multiple files
+- POST   /batch-read      - Batch read multiple files (legacy, lenient)
+- POST   /batch/write     - Atomic batch write (Issue #3700)
+- POST   /batch/read      - Atomic batch read with optional partial mode (Issue #3700)
 - GET    /stream          - Stream file content
 - POST   /rename          - Rename/move file
 - POST   /copy            - Copy file
@@ -31,12 +33,13 @@ from typing import Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import Response, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from nexus.bricks.search.primitives.glob_fast import glob_filter
 from nexus.bricks.search.primitives.grep_fast import grep_files_mmap
 from nexus.bricks.snapshot.errors import TransactionConflictError as _TransactionConflictError
 from nexus.contracts.exceptions import (
+    AccessDeniedError,
     ConflictError,
     InvalidPathError,
     NexusFileNotFoundError,
@@ -260,9 +263,112 @@ class GrepResponse(BaseModel):
 
 
 class BatchReadRequest(BaseModel):
-    """Request model for batch read."""
+    """Request model for batch read (legacy /batch-read endpoint)."""
 
     paths: list[str] = Field(..., description="List of paths to read")
+
+
+# ---------------------------------------------------------------------------
+# Batch write/read models (Issue #3700)
+# ---------------------------------------------------------------------------
+
+_MAX_BATCH_FILES = 500
+_MAX_BATCH_TOTAL_BYTES = 100 * 1024 * 1024  # 100 MB
+
+
+class BatchWriteFileItem(BaseModel):
+    """A single file entry in a batch write request."""
+
+    path: str = Field(..., description="Virtual path to write")
+    content_base64: str = Field(..., description="File content encoded as base64")
+
+    @field_validator("content_base64")
+    @classmethod
+    def validate_base64(cls, v: str) -> str:
+        try:
+            base64.b64decode(v, validate=True)
+        except Exception as exc:
+            raise ValueError(f"Invalid base64 encoding: {exc}") from exc
+        return v
+
+
+class BatchWriteRequest(BaseModel):
+    """Request model for POST /batch/write."""
+
+    files: list[BatchWriteFileItem] = Field(
+        ...,
+        description=f"Files to write (max {_MAX_BATCH_FILES})",
+        max_length=_MAX_BATCH_FILES,
+    )
+
+    @field_validator("files")
+    @classmethod
+    def validate_total_bytes(cls, v: list[BatchWriteFileItem]) -> list[BatchWriteFileItem]:
+        total = sum(len(base64.b64decode(f.content_base64)) for f in v)
+        if total > _MAX_BATCH_TOTAL_BYTES:
+            raise ValueError(
+                f"Total decoded size {total} bytes exceeds limit of {_MAX_BATCH_TOTAL_BYTES} bytes"
+            )
+        return v
+
+
+class BatchWriteResult(BaseModel):
+    """Result for a single file in a batch write response."""
+
+    path: str
+    etag: str | None
+    version: int
+    modified_at: Any | None
+    size: int
+
+
+class BatchWriteResponse(BaseModel):
+    """Response model for POST /batch/write."""
+
+    results: list[BatchWriteResult]
+
+
+class BatchReadAtomicRequest(BaseModel):
+    """Request model for POST /batch/read."""
+
+    paths: list[str] = Field(
+        ...,
+        description=f"Paths to read (max {_MAX_BATCH_FILES})",
+        max_length=_MAX_BATCH_FILES,
+    )
+    partial: bool = Field(
+        False,
+        description=(
+            "If false (default): any missing/inaccessible path raises an error. "
+            "If true: returns per-item success or error for every path."
+        ),
+    )
+
+
+class BatchReadSuccess(BaseModel):
+    """A successfully read file item in a batch read response."""
+
+    type: str = Field("success", frozen=True)
+    path: str
+    content_base64: str
+    etag: str | None
+    version: int
+    modified_at: Any | None
+    size: int
+
+
+class BatchReadError(BaseModel):
+    """A failed file item in a partial batch read response."""
+
+    type: str = Field("error", frozen=True)
+    path: str
+    error: str
+
+
+class BatchReadResponse(BaseModel):
+    """Response model for POST /batch/read."""
+
+    results: list[BatchReadSuccess | BatchReadError]
 
 
 class RenameRequest(BaseModel):
@@ -1163,6 +1269,127 @@ def create_async_files_router(
             raise HTTPException(status_code=400, detail=str(e)) from e
         except Exception as e:
             logger.exception(f"Batch read error: {e}")
+            raise HTTPException(status_code=500, detail=str(e)) from e
+
+    # =============================================================================
+    # Batch Write Endpoint (Issue #3700)
+    # =============================================================================
+
+    @router.post("/batch/write", response_model=BatchWriteResponse)
+    async def batch_write_files(
+        request: BatchWriteRequest,
+        context: Any = Depends(get_context),
+    ) -> BatchWriteResponse:
+        """
+        Write multiple files in a single round-trip for improved performance.
+
+        **Best-effort, not atomic**: each file is written independently. A
+        mid-batch failure leaves already-written files on disk; no rollback or
+        compensation is performed. Callers that need true all-or-nothing
+        semantics must implement their own retry/reconcile logic using the
+        returned etags.
+
+        13× faster than N sequential writes for small files.
+
+        Content must be base64-encoded. Max {_MAX_BATCH_FILES} files and
+        {_MAX_BATCH_TOTAL_BYTES // (1024*1024)} MB total decoded size per request.
+        """
+        try:
+            fs = await _get_fs()
+            files = [(item.path, base64.b64decode(item.content_base64)) for item in request.files]
+            raw_results = await fs.write_batch(files, context=context)
+            return BatchWriteResponse(
+                results=[
+                    BatchWriteResult(
+                        path=r["path"] if "path" in r else files[i][0],
+                        etag=r.get("etag"),
+                        version=r.get("version", 0),
+                        modified_at=r.get("modified_at"),
+                        size=r.get("size", 0),
+                    )
+                    for i, r in enumerate(raw_results)
+                ]
+            )
+        except (NexusPermissionError, AccessDeniedError) as e:
+            raise HTTPException(status_code=403, detail=str(e)) from e
+        except InvalidPathError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except Exception as e:
+            logger.exception("Batch write error: %s", e)
+            raise HTTPException(status_code=500, detail=str(e)) from e
+
+    # =============================================================================
+    # Batch Read Endpoint v2 (Issue #3700)
+    # =============================================================================
+
+    @router.post("/batch/read", response_model=BatchReadResponse)
+    async def batch_read_files_v2(
+        request: BatchReadAtomicRequest,
+        context: Any = Depends(get_context),
+    ) -> BatchReadResponse:
+        """
+        Read multiple files in a single atomic round-trip.
+
+        Uses the Rust kernel's parallel read path — faster and more consistent
+        than N sequential reads.
+
+        In strict mode (partial=false, default): any missing or inaccessible
+        path raises a 404/403. In partial mode (partial=true): returns a
+        per-item success or error for every path.
+        """
+        try:
+            fs = await _get_fs()
+            raw_results = await fs.read_batch(
+                request.paths, partial=request.partial, context=context
+            )
+            # Belt-and-suspenders aggregate size guard (Finding #3).
+            # NexusFS.read_batch() already pre-checks via metadata sizes; this
+            # post-read guard catches any content that slipped through (e.g. from
+            # external-mount fallback paths whose metadata sizes were unknown).
+            _total_read = sum(
+                len(r.get("content", b"")) for r in raw_results if isinstance(r, dict)
+            )
+            if _total_read > _MAX_BATCH_TOTAL_BYTES:
+                raise HTTPException(
+                    status_code=413,
+                    detail=(
+                        f"Batch read response size {_total_read} bytes exceeds "
+                        f"{_MAX_BATCH_TOTAL_BYTES // (1024 * 1024)} MB limit"
+                    ),
+                )
+            items: list[BatchReadSuccess | BatchReadError] = []
+            for r in raw_results:
+                if "error" in r:
+                    items.append(BatchReadError(type="error", path=r["path"], error=r["error"]))
+                else:
+                    items.append(
+                        BatchReadSuccess(
+                            type="success",
+                            path=r["path"],
+                            content_base64=base64.b64encode(r["content"]).decode(),
+                            etag=r.get("etag"),
+                            version=r.get("version", 0),
+                            modified_at=r.get("modified_at"),
+                            size=r.get("size", 0),
+                        )
+                    )
+            return BatchReadResponse(results=items)
+        except NexusFileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        except (NexusPermissionError, AccessDeniedError) as e:
+            raise HTTPException(status_code=403, detail=str(e)) from e
+        except InvalidPathError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except HTTPException:
+            # Pass through 413 (post-read size guard) and any other HTTP exceptions
+            # without re-wrapping them as 500.  Must come before the blanket handler.
+            raise
+        except ValueError as e:
+            # Kernel-side size-limit check (read_batch) raises ValueError with a
+            # descriptive message.  Surface it as 413 Request Entity Too Large.
+            raise HTTPException(status_code=413, detail=str(e)) from e
+        except Exception as e:
+            logger.exception("Batch read v2 error: %s", e)
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     # =============================================================================

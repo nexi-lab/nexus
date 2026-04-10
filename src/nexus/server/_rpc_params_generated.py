@@ -1042,6 +1042,14 @@ class WriteBatchParams:
             object.__setattr__(self, "files", tuple(self.files))
 
 
+@dataclass
+class ReadBatchParams:
+    """Parameters for read_batch(): Read multiple files in a single atomic round-trip (Issue #3700)."""
+
+    paths: list[str]
+    partial: bool = False
+
+
 METHOD_PARAMS: dict[str, type] = {
     "access_share_link": AccessShareLinkParams,
     "add_mount": AddMountParams,
@@ -1095,6 +1103,7 @@ METHOD_PARAMS: dict[str, type] = {
     "namespace_delete": NamespaceDeleteParams,
     "namespace_list": NamespaceListParams,
     "provision_user": ProvisionUserParams,
+    "read_batch": ReadBatchParams,
     "read_bulk": ReadBulkParams,
     "rebac_check": RebacCheckParams,
     "rebac_create": RebacCreateParams,

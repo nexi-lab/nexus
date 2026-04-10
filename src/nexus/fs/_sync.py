@@ -200,6 +200,23 @@ class SyncNexusFS:
         """Remove a mount and clean up all associated state (synchronous wrapper)."""
         self._runner(self._async.unmount(mount_point))
 
+    def write_batch(self, files: list[tuple[str, bytes]]) -> list[dict[str, Any]]:
+        return cast(
+            list[dict[str, Any]],
+            self._runner(self._async.write_batch(files)),
+        )
+
+    def read_batch(
+        self,
+        paths: list[str],
+        *,
+        partial: bool = False,
+    ) -> list[dict[str, Any]]:
+        return cast(
+            list[dict[str, Any]],
+            self._runner(self._async.read_batch(paths, partial=partial)),
+        )
+
     def close(self) -> None:
         """Clean up resources held by the underlying async facade and portal."""
         if hasattr(self._async, "close"):

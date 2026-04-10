@@ -297,6 +297,27 @@ class VFSWriteBatchHook(Protocol):
     def on_post_write_batch(self, ctx: WriteBatchHookContext) -> None: ...
 
 
+@dataclass
+class ReadBatchHookContext:
+    """Context passed through read-batch hooks (Issue #3700)."""
+
+    items: list[tuple[Any, FileMetadata | None]]  # (path, metadata_or_None)
+    context: OperationContext | None = None
+    zone_id: str | None = None
+    agent_id: str | None = None
+    warnings: list[OperationWarning] = field(default_factory=list)
+
+
+@runtime_checkable
+class VFSReadBatchHook(Protocol):
+    """Hook that runs after a batch read operation (Issue #3700)."""
+
+    @property
+    def name(self) -> str: ...
+
+    def on_post_read_batch(self, ctx: ReadBatchHookContext) -> None: ...
+
+
 # ---------------------------------------------------------------------------
 # OBSERVE phase — observer protocol (Issue #900)
 # ---------------------------------------------------------------------------

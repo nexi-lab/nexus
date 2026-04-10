@@ -45,9 +45,13 @@ chrono = { version = "0.4", default-features = false, features = ["std", "clock"
 mimalloc = { workspace = true, optional = true }
 
 [features]
-default = ["mimalloc", "connectors"]
+default = ["mimalloc", "connectors", "py-hook-adapters"]
 mimalloc = ["dep:mimalloc"]
 connectors = ["dep:reqwest", "dep:hmac", "dep:sha2"]
+# §11 Phase 14: Python hook/resolver adapters. Enabled by default (POST hooks
+# still use PyInterceptHookAdapter). Disable to compile out all Python-to-Rust
+# adapter bridging — requires ALL hooks to be NativeInterceptHook impls.
+py-hook-adapters = []
 
 [build-dependencies]
 tonic-build = "0.13"

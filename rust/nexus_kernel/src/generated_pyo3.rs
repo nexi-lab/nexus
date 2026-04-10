@@ -534,6 +534,7 @@ fn file_event_to_py(py: Python<'_>, event: &crate::dispatch::FileEvent) -> PyRes
 // ── PyInterceptHookAdapter ──────────────────────────────────────
 
 /// Wraps Python -> Rust `InterceptHook` trait.
+#[cfg(feature = "py-hook-adapters")]
 pub(crate) struct PyInterceptHookAdapter {
     inner: Py<PyAny>,
     hook_name: String,
@@ -755,6 +756,7 @@ impl InterceptHook for PyInterceptHookAdapter {
 // ── PyPathResolverAdapter ───────────────────────────────────────
 
 /// Wraps Python -> Rust `PathResolver` trait.
+#[cfg(feature = "py-hook-adapters")]
 pub(crate) struct PyPathResolverAdapter {
     inner: Py<PyAny>,
 }
@@ -793,6 +795,7 @@ impl PathResolver for PyPathResolverAdapter {
 // ── PyMutationObserverAdapter ───────────────────────────────────
 
 /// Wraps Python -> Rust `MutationObserver` trait.
+#[cfg(feature = "py-hook-adapters")]
 pub(crate) struct PyMutationObserverAdapter {
     inner: Py<PyAny>,
 }

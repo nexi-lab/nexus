@@ -1661,7 +1661,12 @@ def _store_adapter_bodies(traits: list[TraitDef]) -> list[str]:
 
 
 def _dispatch_adapter_bodies(traits: list[TraitDef]) -> list[str]:
-    """Generate Direction 2 (DISPATCH) adapter struct+impl blocks (no file header)."""
+    """Generate Direction 2 (DISPATCH) adapter struct+impl blocks (no file header).
+
+    All adapter structs are gated behind ``#[cfg(feature = "py-hook-adapters")]``
+    (§11 Phase 14). The feature is default-on; disable to compile out all
+    Python-to-Rust hook/resolver/observer bridging.
+    """
     trait_map = {t.name: t for t in traits}
     lines: list[str] = []
 
@@ -1754,6 +1759,7 @@ def _dispatch_adapter_bodies(traits: list[TraitDef]) -> list[str]:
         lines.append(f"// ── {adapter_name} " + "─" * (60 - len(adapter_name)))
         lines.append("")
         lines.append(f"/// Wraps Python -> Rust `{trait_name}` trait.")
+        lines.append('#[cfg(feature = "py-hook-adapters")]')
         lines.append(f"pub(crate) struct {adapter_name} {{")
         lines.append("    inner: Py<PyAny>,")
         if cached_name:

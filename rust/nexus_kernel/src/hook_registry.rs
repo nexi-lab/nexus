@@ -197,8 +197,9 @@ pub(crate) struct ObserverEntry {
     pub(crate) observer: Py<PyAny>,
     pub(crate) name: String,
     pub(crate) event_mask: u32,
-    /// Cached at registration: True = run inline (sync on caller path),
-    /// False = deferred (returned to Python for asyncio.create_task).
+    /// Legacy field — §11 Phase 2 deleted OBSERVE_INLINE from the contract.
+    /// Kept for backward compat with the `register` signature; always false.
+    #[allow(dead_code)]
     pub(crate) is_inline: bool,
 }
 
@@ -259,27 +260,6 @@ impl ObserverRegistry {
             .filter(|e| e.event_mask & event_type_bit != 0)
             .map(|e| (e.observer.clone_ref(py), e.name.clone()))
             .collect()
-    }
-
-    /// Return (inline, deferred) observer pairs matching the event_type_bit.
-    pub(crate) fn get_matching_partitioned(
-        &self,
-        py: Python<'_>,
-        event_type_bit: u32,
-    ) -> (Vec<ObserverPair>, Vec<ObserverPair>) {
-        let mut inline = Vec::new();
-        let mut deferred = Vec::new();
-        for e in &self.observers {
-            if e.event_mask & event_type_bit != 0 {
-                let pair = (e.observer.clone_ref(py), e.name.clone());
-                if e.is_inline {
-                    inline.push(pair);
-                } else {
-                    deferred.push(pair);
-                }
-            }
-        }
-        (inline, deferred)
     }
 
     pub(crate) fn count(&self) -> usize {

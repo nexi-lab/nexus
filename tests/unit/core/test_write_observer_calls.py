@@ -16,12 +16,12 @@ Issue #900: Migrated from _write_observer to KernelDispatch.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, MagicMock
+from typing import TYPE_CHECKING, Any
+from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.core.file_events import FileEventType
+from nexus.core.file_events import ALL_FILE_EVENTS, FileEvent, FileEventType
 from tests.conftest import make_test_nexus
 
 if TYPE_CHECKING:
@@ -36,18 +36,107 @@ async def nx(tmp_path: Path) -> NexusFS:
     return await make_test_nexus(tmp_path, backend=backend)
 
 
+class _CapturingObserver:
+    """Captures events via a real sync VFSObserver registration.
+
+    §11 Phase 6: ``notify()`` is only called on hit=false fallback paths;
+    hit=true syscalls dispatch OBSERVE through the Rust kernel's
+    background ThreadPool. Mocking ``nx.notify`` directly misses the
+    Rust path entirely. A registered observer sees events from both
+    paths — use ``flush()`` to drain the Rust ThreadPool before
+    assertions.
+    """
+
+    event_mask: int = ALL_FILE_EVENTS
+
+    def __init__(self) -> None:
+        self.calls: list[FileEvent] = []
+
+    def on_mutation(self, event: Any) -> None:
+        self.calls.append(event)
+
+    def flush(self, nx: "NexusFS") -> None:
+        """Drain the Rust kernel observer ThreadPool."""
+        nx._kernel.flush_observers()
+
+    def assert_called_once(self) -> None:
+        assert len(self.calls) == 1, f"expected 1 event, got {len(self.calls)}"
+
+    def reset(self) -> None:
+        self.calls.clear()
+
+    @property
+    def call_count(self) -> int:
+        return len(self.calls)
+
+    @property
+    def last_event(self) -> FileEvent:
+        assert self.calls, "observer was not called"
+        return self.calls[-1]
+
+
 @pytest.fixture
-def mock_notify(nx: NexusFS) -> AsyncMock:
-    """Replace dispatch methods on nx with mocks and return the mock notify."""
-    # resolve_* methods must return (handled=False, None) so sys_ methods
-    # fall through to the real implementation instead of unpacking a MagicMock.
+def mock_notify(nx: NexusFS) -> _CapturingObserver:
+    """Register a real observer and return it as the event capture point.
+
+    Drop-in replacement for the old ``AsyncMock`` fixture: exposes the
+    same methods test cases use (``assert_called_once``, ``reset_mock``,
+    ``call_args``, ``call_count``, ``call_args_list``) via a thin
+    adapter, but captures events from both the Rust ThreadPool (Tier 1
+    hit=true path) and the Python fallback (``notify()`` hit=false path).
+    """
     nx.resolve_read = MagicMock(return_value=(False, None))
     nx.resolve_write = MagicMock(return_value=(False, None))
     nx.resolve_delete = MagicMock(return_value=(False, None))
-    # Post-hooks dispatch through Rust (sync, no mock needed).
-    # OBSERVE dispatch is async — mock notify to capture events.
-    nx.notify = AsyncMock()
-    return nx.notify
+
+    obs = _CapturingObserver()
+    nx.register_observe(obs)
+
+    # Adapter: make _CapturingObserver quack like a MagicMock for the
+    # existing assertion patterns. `reset_mock()` and `.call_args.args[0]`
+    # come from unittest.mock idioms.
+    class _FlushingAdapter:
+        def __init__(self, obs: _CapturingObserver, nx: NexusFS) -> None:
+            self._obs = obs
+            self._nx = nx
+
+        def _drain(self) -> None:
+            self._nx._kernel.flush_observers()
+
+        def assert_called_once(self) -> None:
+            self._drain()
+            self._obs.assert_called_once()
+
+        def reset_mock(self) -> None:
+            self._drain()
+            self._obs.reset()
+
+        @property
+        def call_args(self) -> Any:
+            self._drain()
+            ev = self._obs.last_event
+
+            class _Args:
+                args = (ev,)
+
+            return _Args()
+
+        @property
+        def call_count(self) -> int:
+            self._drain()
+            return self._obs.call_count
+
+        @property
+        def call_args_list(self) -> list[Any]:
+            self._drain()
+
+            class _Call:
+                def __init__(self, ev: FileEvent) -> None:
+                    self.args = (ev,)
+
+            return [_Call(ev) for ev in self._obs.calls]
+
+    return _FlushingAdapter(obs, nx)
 
 
 # =========================================================================
@@ -178,7 +267,8 @@ class TestWriteStreamCallsDispatch:
         nx.resolve_read = MagicMock(return_value=(False, None))
         nx.resolve_write = MagicMock(return_value=(False, None))
         nx.resolve_delete = MagicMock(return_value=(False, None))
-        nx.notify = AsyncMock()
+        # write_stream is a Python-only path — notify() is still called by it.
+        nx.register_observe(_CapturingObserver())
 
         # Register a sync hook to verify dispatch
         hook = MagicMock()
@@ -247,18 +337,19 @@ class TestRmdirCallsDispatch:
         cas_nx.resolve_read = MagicMock(return_value=(False, None))
         cas_nx.resolve_write = MagicMock(return_value=(False, None))
         cas_nx.resolve_delete = MagicMock(return_value=(False, None))
-        cas_nx.notify = AsyncMock()
-        mock_notify = cas_nx.notify
+        obs = _CapturingObserver()
+        cas_nx.register_observe(obs)
 
         await cas_nx.mkdir("/mydir")
         await cas_nx.write("/mydir/file.txt", b"content")
-        mock_notify.reset_mock()
+        cas_nx._kernel.flush_observers()
+        obs.reset()
 
         await cas_nx.rmdir("/mydir", recursive=True)
+        cas_nx._kernel.flush_observers()
 
         # rmdir notify is the last call; write_batch notify may precede it
-        events = [call.args[0] for call in mock_notify.call_args_list]
-        rmdir_events = [e for e in events if e.type == FileEventType.DIR_DELETE]
+        rmdir_events = [e for e in obs.calls if e.type == FileEventType.DIR_DELETE]
         assert len(rmdir_events) == 1
         assert rmdir_events[0].path == "/mydir"
 
@@ -269,17 +360,19 @@ class TestRmdirCallsDispatch:
 
 
 class TestVFSObserverCoverage:
-    """Verify KernelDispatch OBSERVE fires for all mutation operations."""
+    """Verify OBSERVE phase fires for all mutation operations.
+
+    §11 Phase 6: observer.on_mutation is sync (was async_def). Uses a
+    sync observer and calls ``flush_observers()`` to drain the Rust
+    ThreadPool before assertions.
+    """
 
     @pytest.fixture
-    def hook(self) -> AsyncMock:
-        """Async observer mock — on_mutation must be async."""
-        mock = AsyncMock()
-        mock.event_mask = (1 << 10) - 1  # ALL_FILE_EVENTS
-        return mock
+    def hook(self) -> _CapturingObserver:
+        return _CapturingObserver()
 
     @pytest.fixture
-    async def nx_with_hook(self, tmp_path: Path, hook: AsyncMock) -> NexusFS:
+    async def nx_with_hook(self, tmp_path: Path, hook: _CapturingObserver) -> NexusFS:
         from nexus import CASLocalBackend
 
         backend = CASLocalBackend(str(tmp_path / "data"))
@@ -288,64 +381,68 @@ class TestVFSObserverCoverage:
         return nx
 
     @pytest.mark.asyncio
-    async def test_write_fires_hook(self, nx_with_hook: NexusFS, hook: AsyncMock) -> None:
+    async def test_write_fires_hook(self, nx_with_hook: NexusFS, hook: _CapturingObserver) -> None:
         await nx_with_hook.write("/file.txt", b"hello")
-        hook.on_mutation.assert_called_once()
-        event = hook.on_mutation.call_args.args[0]
-        assert event.type == FileEventType.FILE_WRITE
-        assert event.path == "/file.txt"
+        hook.flush(nx_with_hook)
+        hook.assert_called_once()
+        assert hook.last_event.type == FileEventType.FILE_WRITE
+        assert hook.last_event.path == "/file.txt"
 
     @pytest.mark.asyncio
-    async def test_delete_fires_hook(self, nx_with_hook: NexusFS, hook: AsyncMock) -> None:
+    async def test_delete_fires_hook(self, nx_with_hook: NexusFS, hook: _CapturingObserver) -> None:
         await nx_with_hook.write("/file.txt", b"hello")
+        hook.flush(nx_with_hook)
+        hook.reset()
 
-        hook.reset_mock()
         await nx_with_hook.sys_unlink("/file.txt")
+        hook.flush(nx_with_hook)
 
-        hook.on_mutation.assert_called_once()
-        event = hook.on_mutation.call_args.args[0]
-        assert event.type == FileEventType.FILE_DELETE
+        hook.assert_called_once()
+        assert hook.last_event.type == FileEventType.FILE_DELETE
 
     @pytest.mark.asyncio
-    async def test_rename_fires_hook(self, nx_with_hook: NexusFS, hook: AsyncMock) -> None:
+    async def test_rename_fires_hook(self, nx_with_hook: NexusFS, hook: _CapturingObserver) -> None:
         await nx_with_hook.write("/old.txt", b"hello")
+        hook.flush(nx_with_hook)
+        hook.reset()
 
-        hook.reset_mock()
         await nx_with_hook.sys_rename("/old.txt", "/new.txt")
+        hook.flush(nx_with_hook)
 
-        hook.on_mutation.assert_called_once()
-        event = hook.on_mutation.call_args.args[0]
-        assert event.type == FileEventType.FILE_RENAME
-        assert event.new_path == "/new.txt"
+        hook.assert_called_once()
+        assert hook.last_event.type == FileEventType.FILE_RENAME
+        assert hook.last_event.new_path == "/new.txt"
 
     @pytest.mark.asyncio
     async def test_write_batch_fires_hook_per_file(
-        self, nx_with_hook: NexusFS, hook: AsyncMock
+        self, nx_with_hook: NexusFS, hook: _CapturingObserver
     ) -> None:
         files = [("/a.txt", b"aaa"), ("/b.txt", b"bbb"), ("/c.txt", b"ccc")]
         await nx_with_hook.write_batch(files)
+        hook.flush(nx_with_hook)
 
-        assert hook.on_mutation.call_count == 3
-        paths = {call.args[0].path for call in hook.on_mutation.call_args_list}
+        assert hook.call_count == 3
+        paths = {e.path for e in hook.calls}
         assert paths == {"/a.txt", "/b.txt", "/c.txt"}
 
     @pytest.mark.asyncio
-    async def test_mkdir_fires_hook(self, nx_with_hook: NexusFS, hook: AsyncMock) -> None:
+    async def test_mkdir_fires_hook(self, nx_with_hook: NexusFS, hook: _CapturingObserver) -> None:
         await nx_with_hook.mkdir("/newdir")
+        hook.flush(nx_with_hook)
 
-        hook.on_mutation.assert_called_once()
-        event = hook.on_mutation.call_args.args[0]
-        assert event.type == FileEventType.DIR_CREATE
-        assert event.path == "/newdir"
+        hook.assert_called_once()
+        assert hook.last_event.type == FileEventType.DIR_CREATE
+        assert hook.last_event.path == "/newdir"
 
     @pytest.mark.asyncio
-    async def test_rmdir_fires_hook(self, nx_with_hook: NexusFS, hook: AsyncMock) -> None:
+    async def test_rmdir_fires_hook(self, nx_with_hook: NexusFS, hook: _CapturingObserver) -> None:
         await nx_with_hook.mkdir("/mydir")
+        hook.flush(nx_with_hook)
+        hook.reset()
 
-        hook.reset_mock()
         await nx_with_hook.rmdir("/mydir")
+        hook.flush(nx_with_hook)
 
-        hook.on_mutation.assert_called_once()
-        event = hook.on_mutation.call_args.args[0]
-        assert event.type == FileEventType.DIR_DELETE
-        assert event.path == "/mydir"
+        hook.assert_called_once()
+        assert hook.last_event.type == FileEventType.DIR_DELETE
+        assert hook.last_event.path == "/mydir"

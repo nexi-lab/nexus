@@ -14,7 +14,7 @@
 //! Issue #1868: Phase H — kernel boundary collapse.
 
 use crate::dcache::{CachedEntry, DCache, DT_DIR, DT_PIPE, DT_REG, DT_STREAM};
-use crate::dispatch::{MutationObserver, Trie};
+use crate::dispatch::{FileEvent, FileEventType, MutationObserver, Trie};
 use crate::file_watch::FileWatchRegistry;
 use crate::lock::{LockMode, VFSLockManagerInner};
 use crate::metastore::RedbMetastore;
@@ -23,6 +23,7 @@ use dashmap::DashMap;
 use parking_lot::{Condvar, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use threadpool::ThreadPool;
 
 // ── KernelError ────────────────────────────────────────────────────────────
 
@@ -231,24 +232,32 @@ pub struct StatResult {
 
 /// Observer entry — pure Rust, no PyO3 dependency.
 ///
-/// Stores `Box<dyn MutationObserver>` (either Rust-native or PyMutationObserverAdapter).
-/// The event_mask bitmask matching happens without GIL.
+/// Stores `Arc<dyn MutationObserver>` so the OBSERVE ThreadPool worker
+/// (§11 Phase 3) can clone the trait object across threads. `event_mask`
+/// bitmask matching happens without holding the GIL.
 struct KernelObserverEntry {
-    observer: Box<dyn MutationObserver>,
+    observer: Arc<dyn MutationObserver>,
     name: String,
     event_mask: u32,
-    is_inline: bool,
 }
 
 /// Pure Rust observer registry — event-type bitmask filtering without GIL.
 ///
-/// Moved from PyKernel (Phase 10). PyMutationObserverAdapter implements
-/// MutationObserver, so Python observers work transparently.
-/// Future: Rust-native observers (audit logger, search indexer) get zero-crossing dispatch.
+/// Single dispatch path for all OBSERVE-phase observers. The trait
+/// `MutationObserver` takes `&FileEvent` (post §11 Phase 2); the
+/// `PyMutationObserverAdapter` is the boundary that converts `&FileEvent`
+/// to a Python `FileEvent` once per call.
+///
+/// `OBSERVE_INLINE` (the legacy inline-on-caller-thread mode) was deleted
+/// in §11 Phase 2: it overlapped with INTERCEPT POST hooks and violated
+/// dispatch-contract orthogonality. OBSERVE is fire-and-forget by
+/// definition — there is no other mode. Observers needing causal
+/// ordering or sync blocking belong in INTERCEPT POST, not OBSERVE.
 struct KernelObserverRegistry {
     observers: Vec<KernelObserverEntry>,
 }
 
+#[allow(dead_code)]
 impl KernelObserverRegistry {
     fn new() -> Self {
         Self {
@@ -256,23 +265,17 @@ impl KernelObserverRegistry {
         }
     }
 
-    /// Register observer with event_mask + is_inline flag.
-    fn register(
-        &mut self,
-        observer: Box<dyn MutationObserver>,
-        name: String,
-        event_mask: u32,
-        is_inline: bool,
-    ) {
+    /// Register an observer with its event-type bitmask.
+    fn register(&mut self, observer: Arc<dyn MutationObserver>, name: String, event_mask: u32) {
         self.observers.push(KernelObserverEntry {
             observer,
             name,
             event_mask,
-            is_inline,
         });
     }
 
-    /// Unregister by name (identity not available for trait objects).
+    /// Unregister by name (identity is not available for trait objects).
+    /// Returns true if a registration with that name was removed.
     fn unregister(&mut self, name: &str) -> bool {
         if let Some(pos) = self.observers.iter().position(|e| e.name == name) {
             self.observers.remove(pos);
@@ -281,25 +284,17 @@ impl KernelObserverRegistry {
         false
     }
 
-    /// Dispatch matching observers inline (bitmask filter + on_mutation call).
-    /// No GIL needed for the filter loop. PyMutationObserverAdapter acquires GIL
-    /// only inside on_mutation().
-    fn dispatch_inline(&self, event_type: u32, path: &str) {
-        for entry in &self.observers {
-            if entry.is_inline && entry.event_mask & event_type != 0 {
-                entry.observer.on_mutation(event_type, path);
-            }
-        }
-    }
-
-    /// Return indices of deferred (non-inline) observers matching event_type.
-    /// Caller (PyKernel) uses indices to get Py<PyAny> refs for asyncio.create_task().
-    fn get_deferred_indices(&self, event_type: u32) -> Vec<usize> {
+    /// Return clones of all observers whose event_mask matches `event.event_type`.
+    ///
+    /// The dispatch loop (`Kernel::dispatch_observers`, §11 Phase 3) submits
+    /// each clone to the OBSERVE ThreadPool. Returning Arc clones lets the
+    /// pool borrow the registry lock for the minimum possible time — the
+    /// caller releases the lock before doing any per-observer work.
+    fn matching(&self, event_type_bit: u32) -> Vec<Arc<dyn MutationObserver>> {
         self.observers
             .iter()
-            .enumerate()
-            .filter(|(_, e)| !e.is_inline && e.event_mask & event_type != 0)
-            .map(|(i, _)| i)
+            .filter(|e| e.event_mask & event_type_bit != 0)
+            .map(|e| Arc::clone(&e.observer))
             .collect()
     }
 
@@ -364,8 +359,36 @@ pub struct Kernel {
     copy_hook_count: AtomicU64,
     access_hook_count: AtomicU64,
     write_batch_hook_count: AtomicU64,
-    // Observer registry (owned by kernel — bitmask matching without GIL)
+    // Observer registry (owned by kernel — bitmask matching without GIL).
+    //
+    // Field is accessed only via the `register_observer` / `dispatch_observers`
+    // methods, which have no production caller yet — Phase 5 wires them
+    // into the sys_* methods, Phase 6 wires PyKernel.register_observer to
+    // delegate here. Until then this is intentional pre-built infrastructure.
+    #[allow(dead_code)]
     observers: Mutex<KernelObserverRegistry>,
+    // Background ThreadPool for OBSERVE-phase dispatch (§11 Phase 3).
+    //
+    // OBSERVE is fire-and-forget by contract: the syscall returns as soon
+    // as the event is queued; observer callbacks run on this pool, off
+    // the hot path. There is no other mode — the legacy `OBSERVE_INLINE`
+    // flag was deleted in §11 Phase 2 because inline-on-caller-thread
+    // observers were functionally identical to INTERCEPT POST hooks and
+    // violated dispatch-contract orthogonality.
+    //
+    // 4 worker threads is enough for the typical workload (a handful of
+    // long-lived observers: FileWatcher, EventBus, etc.). Each worker
+    // acquires the GIL inside `PyMutationObserverAdapter::on_mutation`
+    // when calling Python observers — many parallel Python observers
+    // will serialize on the GIL, but Rust-native observers run truly
+    // parallel.
+    //
+    // No production caller yet — `dispatch_observers` becomes the sole
+    // submitter once Phase 5 wires sys_* call sites. The pool is created
+    // up-front so the cost (4 OS threads, ~8MB stack each) is paid once
+    // at kernel construction.
+    #[allow(dead_code)]
+    observer_pool: ThreadPool,
     // Zone revision counter — AtomicU64 per zone + Condvar for waiters (§10 A2)
     zone_revisions: DashMap<String, Arc<ZoneRevisionEntry>>,
     // File watch registry — Rust-native pattern matching (§10 A3)
@@ -405,6 +428,7 @@ impl Kernel {
             access_hook_count: AtomicU64::new(0),
             write_batch_hook_count: AtomicU64::new(0),
             observers: Mutex::new(KernelObserverRegistry::new()),
+            observer_pool: ThreadPool::with_name("nexus-observer".to_string(), 4),
             zone_revisions: DashMap::new(),
             file_watches: FileWatchRegistry::new(),
             agent_registry: crate::agent_registry::AgentRegistry::new(),
@@ -838,37 +862,116 @@ impl Kernel {
         }
     }
 
-    // ── Observer registry (Phase 10) ────────────────────────────────────
+    // ── Observer registry (§10 Phase 10 / §11 Phase 2) ────────────────
+    //
+    // These methods are pre-built infrastructure for §11 Phases 3/5/6:
+    //   - Phase 3: replaces the inline loop with a `ThreadPool::execute()`
+    //     submission so observers run off the syscall hot path.
+    //   - Phase 5: kernel sys_* methods call `dispatch_observers` after
+    //     each successful mutation.
+    //   - Phase 6: PyKernel.register_observer rewires from the legacy
+    //     `Py<PyAny>`-based ObserverRegistry to this Rust-typed registry,
+    //     and the legacy registry is deleted.
+    //
+    // No production caller exists yet, hence #[allow(dead_code)] — the
+    // attribute is removed when Phase 5 wires the first call site.
 
     /// Register a mutation observer (pure Rust or PyMutationObserverAdapter).
+    ///
+    /// `OBSERVE_INLINE` was deleted in §11 Phase 2 — all OBSERVE callbacks
+    /// run on `observer_pool` (the kernel's background ThreadPool). There
+    /// is no other mode. Observers needing synchronous-blocking semantics
+    /// must be moved to INTERCEPT POST.
+    #[allow(dead_code)]
     pub fn register_observer(
         &self,
-        observer: Box<dyn MutationObserver>,
+        observer: Arc<dyn MutationObserver>,
         name: String,
         event_mask: u32,
-        is_inline: bool,
     ) {
-        self.observers
-            .lock()
-            .register(observer, name, event_mask, is_inline);
+        self.observers.lock().register(observer, name, event_mask);
     }
 
-    /// Unregister observer by name.
+    /// Unregister observer by name. Returns true if removed.
+    #[allow(dead_code)]
     pub fn unregister_observer(&self, name: &str) -> bool {
         self.observers.lock().unregister(name)
     }
 
-    /// Dispatch inline observers matching event_type (no GIL for filter loop).
-    pub fn dispatch_observers_inline(&self, event_type: u32, path: &str) {
-        self.observers.lock().dispatch_inline(event_type, path);
+    /// OBSERVE-phase dispatch — submit all observers whose event_mask
+    /// matches `event.event_type` to the kernel observer ThreadPool.
+    ///
+    /// Fire-and-forget by contract: this returns immediately once the
+    /// jobs are queued. Observer callbacks run on `observer_pool` workers,
+    /// off the syscall hot path. Each callback is handed an owned clone
+    /// of the event so the worker doesn't borrow caller state.
+    ///
+    /// Snapshot-then-drop-lock pattern: we collect Arc clones of the
+    /// matching observers under the registry lock, then release the lock
+    /// before submitting to the pool. This prevents deadlocks if an
+    /// observer's callback re-enters the kernel (e.g. an audit logger
+    /// that itself does sys_write).
+    ///
+    /// Called by every successful Tier 1 mutation syscall (sys_write,
+    /// sys_unlink, sys_rename, sys_mkdir, sys_rmdir) via the
+    /// `dispatch_mutation` helper.
+    pub fn dispatch_observers(&self, event: &FileEvent) {
+        let observers = self.observers.lock().matching(event.event_type as u32);
+        if observers.is_empty() {
+            return;
+        }
+        for obs in observers {
+            let event_owned = event.clone();
+            self.observer_pool.execute(move || {
+                obs.on_mutation(&event_owned);
+            });
+        }
     }
 
-    /// Get indices of deferred observers matching event_type.
-    pub fn get_deferred_observer_indices(&self, event_type: u32) -> Vec<usize> {
-        self.observers.lock().get_deferred_indices(event_type)
+    /// Block until all queued observer jobs have completed.
+    ///
+    /// Test-only helper for deterministic assertions: `dispatch_observers`
+    /// returns as soon as work is queued, but tests often need to assert
+    /// observer side-effects before teardown. This is the OBSERVE analogue
+    /// of fsync.
+    ///
+    /// Not for production: it blocks the calling thread until the entire
+    /// ThreadPool drains, which would defeat the fire-and-forget contract
+    /// if called on the syscall hot path.
+    pub fn flush_observers(&self) {
+        self.observer_pool.join();
+    }
+
+    /// Helper: build a `FileEvent` pre-populated with the syscall's
+    /// `OperationContext` identity fields (zone_id, user_id, agent_id),
+    /// then apply caller-provided extras and dispatch.
+    ///
+    /// Used by sys_* methods to keep the per-syscall dispatch site to
+    /// 3-4 lines instead of a 15-field struct literal. Fast path: when
+    /// no observers are registered, `dispatch_observers` is an early
+    /// return after a single Mutex acquire — the FileEvent construction
+    /// is essentially free against any observer-bearing workload, so
+    /// there's no point in gating it behind a count check.
+    #[inline]
+    fn dispatch_mutation(
+        &self,
+        event_type: FileEventType,
+        path: &str,
+        ctx: &OperationContext,
+        extra: impl FnOnce(&mut FileEvent),
+    ) {
+        let mut event = FileEvent::new(event_type, path);
+        event.zone_id = Some(ctx.zone_id.clone());
+        if !ctx.user_id.is_empty() {
+            event.user_id = Some(ctx.user_id.clone());
+        }
+        event.agent_id = ctx.agent_id.clone();
+        extra(&mut event);
+        self.dispatch_observers(&event);
     }
 
     /// Number of registered observers.
+    #[allow(dead_code)]
     pub fn observer_count(&self) -> usize {
         self.observers.lock().count()
     }
@@ -1493,8 +1596,12 @@ impl Kernel {
         // 6. After write -> build metadata + metastore.put + dcache update
         let result = match write_result {
             Some(wr) => {
-                // Get existing version for increment
-                let old_version = self.dcache.get_entry(path).map(|e| e.version).unwrap_or(0);
+                // Snapshot old dcache state for the OBSERVE event payload
+                // (is_new + old_etag fields). Done before metastore.put so
+                // we capture the pre-write version, not the new one.
+                let old_entry = self.dcache.get_entry(path);
+                let old_version = old_entry.as_ref().map(|e| e.version).unwrap_or(0);
+                let old_etag = old_entry.as_ref().and_then(|e| e.etag.clone());
                 let new_version = old_version + 1;
 
                 // Build FileMetadata and persist via metastore (per-mount or global)
@@ -1528,6 +1635,19 @@ impl Kernel {
                         mime_type: None,
                     },
                 );
+
+                // OBSERVE-phase dispatch (§11 Phase 5): queue FileWrite to
+                // the kernel observer ThreadPool. Returns immediately —
+                // observer callbacks run off the syscall hot path.
+                let etag = wr.content_id.clone();
+                let size = wr.size;
+                self.dispatch_mutation(FileEventType::FileWrite, path, ctx, |ev| {
+                    ev.size = Some(size);
+                    ev.etag = Some(etag);
+                    ev.version = Some(new_version);
+                    ev.is_new = old_version == 0;
+                    ev.old_etag = old_etag;
+                });
 
                 Ok(SysWriteResult {
                     hit: true,
@@ -1706,7 +1826,17 @@ impl Kernel {
             }
         }
 
-        // 10. Return hit=true with metadata for event payload
+        // 10. OBSERVE-phase dispatch (§11 Phase 5): queue FileDelete.
+        // Cloned out of `entry` because the SysUnlinkResult below also
+        // moves them.
+        let etag_for_event = entry.etag.clone();
+        let size_for_event = entry.size;
+        self.dispatch_mutation(FileEventType::FileDelete, path, ctx, |ev| {
+            ev.size = Some(size_for_event);
+            ev.etag = etag_for_event;
+        });
+
+        // 11. Return hit=true with metadata for event payload
         Ok(SysUnlinkResult {
             hit: true,
             entry_type: entry.entry_type,
@@ -1906,6 +2036,14 @@ impl Kernel {
         // 10. Release sorted locks
         release_locks(&self.vfs_lock, lock1, lock2);
 
+        // 11. OBSERVE-phase dispatch (§11 Phase 5): queue FileRename.
+        // Convention (mirrors Python FileEvent for renames): primary
+        // `path` is the source, `new_path` is the destination.
+        let new_path_owned = new_path.to_string();
+        self.dispatch_mutation(FileEventType::FileRename, old_path, ctx, |ev| {
+            ev.new_path = Some(new_path_owned);
+        });
+
         Ok(SysRenameResult {
             hit: true,
             success: true,
@@ -1996,6 +2134,15 @@ impl Kernel {
                 mime_type: Some("inode/directory".to_string()),
             },
         );
+
+        // 8. OBSERVE-phase dispatch (§11 Phase 5): queue DirCreate.
+        // Only fires on the newly-created path — the early return at
+        // step 3 (already-exists branch) does NOT dispatch because no
+        // state actually changed. Parent directories created via
+        // ensure_parent_directories don't get individual events; the
+        // top-level mkdir event is enough for observers like
+        // FileWatcher to invalidate their dcache for the subtree.
+        self.dispatch_mutation(FileEventType::DirCreate, path, ctx, |_ev| {});
 
         Ok(SysMkdirResult {
             hit: true,
@@ -2145,6 +2292,14 @@ impl Kernel {
         self.dcache.evict(path);
         let prefix = format!("{}/", path.trim_end_matches('/'));
         self.dcache.evict_prefix(&prefix);
+
+        // 9. OBSERVE-phase dispatch (§11 Phase 5): queue DirDelete.
+        // Like sys_mkdir, only the top-level rmdir event fires —
+        // recursively-deleted children don't generate individual events
+        // (observers needing per-child notifications can list the
+        // directory before unlink themselves; the top-level event is
+        // the cache-invalidation signal).
+        self.dispatch_mutation(FileEventType::DirDelete, path, ctx, |_ev| {});
 
         Ok(SysRmdirResult {
             hit: true,
@@ -2515,5 +2670,232 @@ mod tests {
         assert!(validate_path_fast("/has\0null").is_err());
         assert!(validate_path_fast("/has/../traversal").is_err());
         assert!(validate_path_fast("/..").is_err());
+    }
+
+    // ── §11 Phase 3 OBSERVE ThreadPool tests ───────────────────────
+
+    use crate::dispatch::{FileEvent, FileEventType, MutationObserver};
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::Arc;
+
+    /// Counts every observed event and stashes the path so the test
+    /// can assert delivery in arbitrary order. Pure-Rust observer —
+    /// no GIL involved, so works fine in `cargo test --lib`.
+    struct CountingObserver {
+        seen: Arc<AtomicUsize>,
+        last_path: Arc<parking_lot::Mutex<Option<String>>>,
+    }
+
+    impl MutationObserver for CountingObserver {
+        fn on_mutation(&self, event: &FileEvent) {
+            *self.last_path.lock() = Some(event.path.clone());
+            self.seen.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    #[test]
+    fn dispatch_observers_runs_on_threadpool_off_caller_thread() {
+        let kernel = Kernel::new();
+        let seen = Arc::new(AtomicUsize::new(0));
+        let last_path = Arc::new(parking_lot::Mutex::new(None));
+        let obs = Arc::new(CountingObserver {
+            seen: Arc::clone(&seen),
+            last_path: Arc::clone(&last_path),
+        });
+
+        kernel.register_observer(obs, "counting".to_string(), FileEventType::FileWrite.bit());
+
+        let event = FileEvent::new(FileEventType::FileWrite, "/test/file.txt");
+        kernel.dispatch_observers(&event);
+
+        // dispatch_observers is fire-and-forget; the worker may not
+        // have run yet. flush_observers blocks until the queue drains.
+        kernel.flush_observers();
+
+        assert_eq!(seen.load(Ordering::Relaxed), 1);
+        assert_eq!(last_path.lock().as_deref(), Some("/test/file.txt"));
+    }
+
+    #[test]
+    fn dispatch_observers_skips_non_matching_event_mask() {
+        let kernel = Kernel::new();
+        let seen = Arc::new(AtomicUsize::new(0));
+        let obs = Arc::new(CountingObserver {
+            seen: Arc::clone(&seen),
+            last_path: Arc::new(parking_lot::Mutex::new(None)),
+        });
+
+        // Register for FileDelete only.
+        kernel.register_observer(obs, "del-only".to_string(), FileEventType::FileDelete.bit());
+
+        // Fire FileWrite — must NOT trigger the observer.
+        kernel.dispatch_observers(&FileEvent::new(FileEventType::FileWrite, "/x"));
+        kernel.flush_observers();
+        assert_eq!(seen.load(Ordering::Relaxed), 0);
+
+        // Fire FileDelete — must trigger.
+        kernel.dispatch_observers(&FileEvent::new(FileEventType::FileDelete, "/y"));
+        kernel.flush_observers();
+        assert_eq!(seen.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn dispatch_observers_fans_out_to_multiple_observers() {
+        let kernel = Kernel::new();
+        let count_a = Arc::new(AtomicUsize::new(0));
+        let count_b = Arc::new(AtomicUsize::new(0));
+
+        kernel.register_observer(
+            Arc::new(CountingObserver {
+                seen: Arc::clone(&count_a),
+                last_path: Arc::new(parking_lot::Mutex::new(None)),
+            }),
+            "a".to_string(),
+            FileEventType::FileWrite.bit(),
+        );
+        kernel.register_observer(
+            Arc::new(CountingObserver {
+                seen: Arc::clone(&count_b),
+                last_path: Arc::new(parking_lot::Mutex::new(None)),
+            }),
+            "b".to_string(),
+            FileEventType::FileWrite.bit(),
+        );
+
+        for i in 0..10 {
+            kernel.dispatch_observers(&FileEvent::new(FileEventType::FileWrite, format!("/p/{i}")));
+        }
+        kernel.flush_observers();
+
+        assert_eq!(count_a.load(Ordering::Relaxed), 10);
+        assert_eq!(count_b.load(Ordering::Relaxed), 10);
+    }
+
+    #[test]
+    fn dispatch_observers_no_observers_is_zero_cost_no_op() {
+        let kernel = Kernel::new();
+        // No observers registered; dispatch must not panic and must
+        // not even submit to the pool. flush_observers is a sanity
+        // check that returns immediately.
+        kernel.dispatch_observers(&FileEvent::new(FileEventType::FileWrite, "/empty"));
+        kernel.flush_observers();
+        assert_eq!(kernel.observer_count(), 0);
+    }
+
+    #[test]
+    fn unregister_observer_stops_dispatch() {
+        let kernel = Kernel::new();
+        let seen = Arc::new(AtomicUsize::new(0));
+        let obs = Arc::new(CountingObserver {
+            seen: Arc::clone(&seen),
+            last_path: Arc::new(parking_lot::Mutex::new(None)),
+        });
+        kernel.register_observer(obs, "to-remove".to_string(), FileEventType::FileWrite.bit());
+
+        kernel.dispatch_observers(&FileEvent::new(FileEventType::FileWrite, "/before"));
+        kernel.flush_observers();
+        assert_eq!(seen.load(Ordering::Relaxed), 1);
+
+        assert!(kernel.unregister_observer("to-remove"));
+        kernel.dispatch_observers(&FileEvent::new(FileEventType::FileWrite, "/after"));
+        kernel.flush_observers();
+        // Count is unchanged — observer is gone.
+        assert_eq!(seen.load(Ordering::Relaxed), 1);
+        assert_eq!(kernel.observer_count(), 0);
+    }
+
+    // ── §11 Phase 5 dispatch_mutation context propagation tests ────
+
+    /// Captures the FileEvent it receives so the test can assert on
+    /// every field. Used by the dispatch_mutation context tests below.
+    struct CapturingObserver {
+        captured: Arc<parking_lot::Mutex<Option<FileEvent>>>,
+    }
+
+    impl MutationObserver for CapturingObserver {
+        fn on_mutation(&self, event: &FileEvent) {
+            *self.captured.lock() = Some(event.clone());
+        }
+    }
+
+    #[test]
+    fn dispatch_mutation_propagates_operation_context_identity() {
+        let kernel = Kernel::new();
+        let captured = Arc::new(parking_lot::Mutex::new(None));
+        let obs = Arc::new(CapturingObserver {
+            captured: Arc::clone(&captured),
+        });
+        kernel.register_observer(obs, "cap".to_string(), FileEventType::FileWrite.bit());
+
+        let ctx = OperationContext {
+            user_id: "alice".to_string(),
+            zone_id: "root".to_string(),
+            is_admin: false,
+            agent_id: Some("agent-42".to_string()),
+            is_system: false,
+            groups: vec![],
+            admin_capabilities: vec![],
+            subject_type: "user".to_string(),
+            subject_id: None,
+            request_id: "req-1".to_string(),
+            context_zone_id: None,
+        };
+
+        kernel.dispatch_mutation(FileEventType::FileWrite, "/foo.txt", &ctx, |ev| {
+            ev.size = Some(42);
+            ev.etag = Some("abc123".to_string());
+            ev.version = Some(1);
+            ev.is_new = true;
+        });
+        kernel.flush_observers();
+
+        let event = captured.lock().clone().expect("observer received event");
+        assert_eq!(event.event_type, FileEventType::FileWrite);
+        assert_eq!(event.path, "/foo.txt");
+        assert_eq!(event.zone_id.as_deref(), Some("root"));
+        assert_eq!(event.user_id.as_deref(), Some("alice"));
+        assert_eq!(event.agent_id.as_deref(), Some("agent-42"));
+        assert_eq!(event.size, Some(42));
+        assert_eq!(event.etag.as_deref(), Some("abc123"));
+        assert_eq!(event.version, Some(1));
+        assert!(event.is_new);
+    }
+
+    #[test]
+    fn dispatch_mutation_handles_anonymous_context_without_user_id() {
+        // Edge case: kernel-internal calls (e.g. background scanners)
+        // pass an OperationContext with empty user_id. The helper must
+        // not stamp Some("") into event.user_id — it should leave it None.
+        let kernel = Kernel::new();
+        let captured = Arc::new(parking_lot::Mutex::new(None));
+        kernel.register_observer(
+            Arc::new(CapturingObserver {
+                captured: Arc::clone(&captured),
+            }),
+            "cap".to_string(),
+            FileEventType::DirCreate.bit(),
+        );
+
+        let ctx = OperationContext {
+            user_id: String::new(),
+            zone_id: "root".to_string(),
+            is_admin: true,
+            agent_id: None,
+            is_system: true,
+            groups: vec![],
+            admin_capabilities: vec![],
+            subject_type: "user".to_string(),
+            subject_id: None,
+            request_id: String::new(),
+            context_zone_id: None,
+        };
+
+        kernel.dispatch_mutation(FileEventType::DirCreate, "/d", &ctx, |_ev| {});
+        kernel.flush_observers();
+
+        let event = captured.lock().clone().expect("observer received event");
+        assert!(event.user_id.is_none());
+        assert!(event.agent_id.is_none());
+        assert_eq!(event.zone_id.as_deref(), Some("root"));
     }
 }

@@ -143,6 +143,7 @@ impl From<KernelError> for PyErr {
             KernelError::WouldBlock(msg) => {
                 pyo3::exceptions::PyRuntimeError::new_err(format!("WouldBlock:{msg}"))
             }
+            KernelError::PermissionDenied(msg) => pyo3::exceptions::PyPermissionError::new_err(msg),
         }
     }
 }

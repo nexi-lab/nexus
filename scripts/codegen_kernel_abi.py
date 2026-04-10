@@ -1945,6 +1945,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "                }",
             "            }),",
             '            KernelError::WouldBlock(msg) => pyo3::exceptions::PyRuntimeError::new_err(format!("WouldBlock:{msg}")),',
+            "            KernelError::PermissionDenied(msg) => pyo3::exceptions::PyPermissionError::new_err(msg),",
             "        }",
             "    }",
             "}",

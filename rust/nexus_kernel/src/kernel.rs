@@ -49,6 +49,7 @@ pub enum KernelError {
     StreamExists(String),
     StreamNotFound(String),
     WouldBlock(String),
+    PermissionDenied(String),
 }
 
 impl From<RouteError> for KernelError {
@@ -309,7 +310,10 @@ impl KernelObserverRegistry {
 // Parallel to the PyO3-dependent HookRegistry in hook_registry.rs.
 // NativeInterceptHook trait defined in dispatch.rs.
 
-use crate::dispatch::{HookContext, NativeInterceptHook};
+use crate::dispatch::{
+    DeleteHookCtx, HookContext, HookIdentity, NativeInterceptHook, ReadHookCtx, RenameHookCtx,
+    WriteHookCtx,
+};
 
 #[allow(dead_code)]
 struct NativeHookEntry {
@@ -1028,6 +1032,21 @@ impl Kernel {
         self.observers.lock().count()
     }
 
+    // ── Native INTERCEPT hook dispatch (§11 Phase 14) ─────────────────
+
+    /// Dispatch PRE-INTERCEPT hooks from NativeHookRegistry.
+    /// Returns Err(KernelError) if any hook aborts.
+    /// No-op when registry is empty (zero-cost lock check).
+    pub fn dispatch_native_pre(&self, ctx: &HookContext) -> Result<(), KernelError> {
+        let registry = self.native_hooks.lock();
+        if registry.count() == 0 {
+            return Ok(());
+        }
+        registry
+            .dispatch_pre(ctx)
+            .map_err(|msg| KernelError::PermissionDenied(msg))
+    }
+
     // ── Zone revision counter (§10 A2) ────────────────────────────────
 
     /// Get or create zone revision entry.
@@ -1408,12 +1427,23 @@ impl Kernel {
         validate_path_fast(path)?;
 
         // 1b. Trie-resolved virtual paths (§11 Phase 21) — short-circuit before route.
-        // Returns hit=false so Python wrapper's resolve_read() handles it.
-        // This is a no-op today (trie dispatch done in Python), but documents
-        // the intended Rust path when resolvers are fully ported.
         if self.trie.lookup(path).is_some() {
             return miss();
         }
+
+        // 1c. Native INTERCEPT PRE hooks (§11 Phase 14) — permission check etc.
+        let hook_id = HookIdentity {
+            user_id: ctx.user_id.clone(),
+            zone_id: ctx.zone_id.clone(),
+            agent_id: ctx.agent_id.clone().unwrap_or_default(),
+            is_admin: ctx.is_admin,
+        };
+        self.dispatch_native_pre(&HookContext::Read(ReadHookCtx {
+            path: path.to_string(),
+            identity: hook_id,
+            content: None,
+            content_hash: None,
+        }))?;
 
         // 2. Route (pure Rust LPM)
         let route = match self
@@ -1586,10 +1616,25 @@ impl Kernel {
         // 1. Validate
         validate_path_fast(path)?;
 
-        // 1b. Trie-resolved virtual paths (§11 Phase 21) — short-circuit before route.
+        // 1b. Trie-resolved virtual paths (§11 Phase 21)
         if self.trie.lookup(path).is_some() {
             return miss();
         }
+
+        // 1c. Native INTERCEPT PRE hooks (§11 Phase 14)
+        self.dispatch_native_pre(&HookContext::Write(WriteHookCtx {
+            path: path.to_string(),
+            identity: HookIdentity {
+                user_id: ctx.user_id.clone(),
+                zone_id: ctx.zone_id.clone(),
+                agent_id: ctx.agent_id.clone().unwrap_or_default(),
+                is_admin: ctx.is_admin,
+            },
+            content: content.to_vec(),
+            is_new_file: false,
+            content_hash: None,
+            new_version: 0,
+        }))?;
 
         // 2. Route (check write access)
         let route = match self
@@ -1835,6 +1880,17 @@ impl Kernel {
             return miss(0);
         }
 
+        // 1c. Native INTERCEPT PRE hooks (§11 Phase 14)
+        self.dispatch_native_pre(&HookContext::Delete(DeleteHookCtx {
+            path: path.to_string(),
+            identity: HookIdentity {
+                user_id: ctx.user_id.clone(),
+                zone_id: ctx.zone_id.clone(),
+                agent_id: ctx.agent_id.clone().unwrap_or_default(),
+                is_admin: ctx.is_admin,
+            },
+        }))?;
+
         // 2. Route (check write access)
         let route = match self
             .router
@@ -1951,6 +2007,19 @@ impl Kernel {
         // 1. Validate both
         validate_path_fast(old_path)?;
         validate_path_fast(new_path)?;
+
+        // 1c. Native INTERCEPT PRE hooks (§11 Phase 14)
+        self.dispatch_native_pre(&HookContext::Rename(RenameHookCtx {
+            old_path: old_path.to_string(),
+            new_path: new_path.to_string(),
+            identity: HookIdentity {
+                user_id: ctx.user_id.clone(),
+                zone_id: ctx.zone_id.clone(),
+                agent_id: ctx.agent_id.clone().unwrap_or_default(),
+                is_admin: ctx.is_admin,
+            },
+            is_directory: false,
+        }))?;
 
         // 2. Route both (check write access)
         let old_route = match self

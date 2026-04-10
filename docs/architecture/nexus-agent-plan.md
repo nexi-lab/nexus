@@ -279,7 +279,9 @@ struct PermissionRule {
 
 Matches CC's `bashPermissions.ts` wildcard pattern matching. Rules loaded from config. `Ask` deferred to V2 (interactive terminal prompt).
 
-**Layer: Infra (Rust) + Framework | P0 | Needs building**
+**Layer: Infra (Rust) + Framework | P0 | ✅ DONE (V1 Python)** — `RuleBasedPermissionService` with wildcard pattern matching,
+`PermissionRule.from_config()` for `~/.nexus/config.yaml` loading, wired into `ExclusiveLockPolicy._execute_one()`.
+Rust acceleration follow-up (same interface, swap implementation).
 
 ### 3.2 Path Sandboxing — ✅ DONE
 
@@ -296,7 +298,9 @@ zsh dangerous commands, brace expansion, control characters, unicode whitespace,
 Adopt CC's full 23-category check list. Configurable via deny list in config.
 CC: `bashSecurity.ts:16-101`. Each category has pattern + error message.
 
-**Layer: Infra (Rust) | P1 | Needs building**
+**Layer: Infra (Rust) | P1 | ✅ DONE (V1 Python)** — `BashCommandValidator` with 23 security categories,
+configurable disabled_categories + extra_patterns. Wired into `ExclusiveLockPolicy._execute_one()` for bash tool calls.
+Rust acceleration follow-up.
 
 ### 3.4 User Hooks — PreToolUse config hooks
 
@@ -304,7 +308,9 @@ CC: `settings.json` → `hooks` array → `preToolUse` entries.
 Nexus: `~/.nexus/config.yaml` → `settings.agent.hooks.pre_tool_use` entries.
 Loaded at agent boot, registered as INTERCEPT hooks in kernel dispatch.
 
-**Layer: Framework | P1 | Needs building**
+**Layer: Framework | P1 | ✅ DONE (config loading)** — `RuleBasedPermissionService.from_config()` + `BashCommandValidator.from_config()`.
+Hook registration via DI injection (`ManagedAgentLoop(permission_service=..., bash_validator=...)`).
+Config-driven user hooks: planned for §10 (MCP integration).
 
 ---
 

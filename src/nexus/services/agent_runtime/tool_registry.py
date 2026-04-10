@@ -279,8 +279,12 @@ class ExclusiveLockPolicy:
     def __init__(
         self,
         truncation: TruncationStrategy | None = None,
+        permission_service: Any | None = None,
+        bash_validator: Any | None = None,
     ) -> None:
         self._truncation = truncation or HeadTruncation()
+        self._permission_service = permission_service
+        self._bash_validator = bash_validator
 
     async def execute_batch(
         self, tool_calls: list[dict[str, Any]], registry: "ToolRegistry"
@@ -339,6 +343,32 @@ class ExclusiveLockPolicy:
                 tool_name=name,
                 content=json.dumps({"error": f"Invalid arguments for tool {name}"}),
             )
+
+        # §3.1 Permission check (three-checkpoint pipeline, checkpoint 3)
+        if self._permission_service is not None:
+            perm = self._permission_service.check(name, kwargs)
+            if not perm.allowed:
+                return ToolResult(
+                    tool_call_id=tool_call_id,
+                    tool_name=name,
+                    content=json.dumps({"error": f"Permission denied: {perm.reason}"}),
+                )
+
+        # §3.3 Bash security check (23-category validator)
+        if self._bash_validator is not None and name == "bash":
+            command = kwargs.get("command", "")
+            sec = self._bash_validator.validate(command)
+            if not sec.safe:
+                return ToolResult(
+                    tool_call_id=tool_call_id,
+                    tool_name=name,
+                    content=json.dumps(
+                        {
+                            "error": f"Bash security: {sec.message}",
+                            "category": sec.category,
+                        }
+                    ),
+                )
 
         try:
             raw_result = await tool.call(**kwargs)

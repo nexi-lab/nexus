@@ -46,6 +46,10 @@ from nexus.services.agent_runtime.compaction import (
     DefaultCompactionStrategy,
 )
 from nexus.services.agent_runtime.observer import AgentObserver, AgentTurnResult
+from nexus.services.agent_runtime.permissions import (
+    BashCommandValidator,
+    PermissionService,
+)
 from nexus.services.agent_runtime.tool_registry import (
     MAX_TOOL_RESULTS_PER_MESSAGE_CHARS,
     ConcurrencyPolicy,
@@ -108,6 +112,8 @@ class ManagedAgentLoop:
         compactor: CompactionStrategy | None = None,
         concurrency_policy: ConcurrencyPolicy | None = None,
         message_budget: MessageBudgetPolicy | None = None,
+        permission_service: PermissionService | None = None,
+        bash_validator: BashCommandValidator | None = None,
         cwd: str = "",
     ) -> None:
         self._sys_read = sys_read
@@ -128,7 +134,13 @@ class ManagedAgentLoop:
             sys_write=sys_write,
             agent_path=agent_path,
         )
-        self._concurrency_policy: ConcurrencyPolicy = concurrency_policy or ExclusiveLockPolicy()
+        # §3: Permission + bash security (injected into ConcurrencyPolicy)
+        _perm = permission_service
+        _bash = bash_validator or BashCommandValidator()
+        self._concurrency_policy: ConcurrencyPolicy = concurrency_policy or ExclusiveLockPolicy(
+            permission_service=_perm,
+            bash_validator=_bash,
+        )
         self._message_budget: MessageBudgetPolicy = message_budget or DefaultMessageBudget()
 
         # Shared observer (same logic as AcpConnection)

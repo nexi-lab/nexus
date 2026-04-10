@@ -1,4 +1,4 @@
-//! RustPermissionHook — Hybrid Rust/Python permission check hook (§11 Phase 11).
+//! PermissionHook — Hybrid Rust/Python permission check hook (§11 Phase 11).
 //!
 //! Architecture:
 //!   Fast path: Rust DashMap lease table (~100-200ns)
@@ -42,7 +42,8 @@ struct LeaseEntry {
 ///
 /// Implements NativeInterceptHook so it can be registered in the kernel's
 /// NativeHookRegistry and dispatched without GIL for lease hits.
-pub(crate) struct RustPermissionHook {
+#[allow(dead_code)]
+pub(crate) struct PermissionHook {
     /// Global toggle — when false, all checks are skipped.
     enforce: AtomicBool,
     /// Python PermissionChecker instance (slow path: GIL required).
@@ -55,7 +56,7 @@ pub(crate) struct RustPermissionHook {
     lease_ttl: Duration,
 }
 
-impl RustPermissionHook {
+impl PermissionHook {
     /// Create a new permission hook wrapping a Python checker.
     ///
     /// Called from Python during factory boot via PyKernel.register_native_permission_hook().
@@ -177,7 +178,7 @@ impl RustPermissionHook {
     }
 }
 
-impl NativeInterceptHook for RustPermissionHook {
+impl NativeInterceptHook for PermissionHook {
     fn name(&self) -> &str {
         "permission_check"
     }

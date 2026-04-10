@@ -1594,14 +1594,13 @@ impl PyKernel {
 
     /// Register observer in pure Rust kernel registry (no GIL for filter loop).
     /// The PyMutationObserverAdapter wraps Python observers as Rust trait objects.
-    #[pyo3(signature = (obs, name, event_mask, is_inline=true))]
+    #[pyo3(signature = (obs, name, event_mask))]
     fn register_kernel_observer(
         &self,
         py: Python<'_>,
         obs: Py<PyAny>,
         name: &str,
         event_mask: u32,
-        is_inline: bool,
     ) -> PyResult<()> {
         let adapter = PyMutationObserverAdapter { inner: obs };
         self.inner

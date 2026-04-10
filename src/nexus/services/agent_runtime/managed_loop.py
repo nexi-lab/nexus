@@ -46,7 +46,18 @@ from nexus.services.agent_runtime.compaction import (
     DefaultCompactionStrategy,
 )
 from nexus.services.agent_runtime.observer import AgentObserver, AgentTurnResult
-from nexus.services.agent_runtime.tool_registry import ToolRegistry
+from nexus.services.agent_runtime.permissions import (
+    BashCommandValidator,
+    PermissionService,
+)
+from nexus.services.agent_runtime.tool_registry import (
+    MAX_TOOL_RESULTS_PER_MESSAGE_CHARS,
+    ConcurrencyPolicy,
+    DefaultMessageBudget,
+    ExclusiveLockPolicy,
+    MessageBudgetPolicy,
+    ToolRegistry,
+)
 
 if TYPE_CHECKING:
     from nexus.backends.compute.openai_compatible import CASOpenAIBackend
@@ -99,6 +110,10 @@ class ManagedAgentLoop:
         tool_registry: ToolRegistry | None = None,
         max_retries: int = _DEFAULT_MAX_RETRIES,
         compactor: CompactionStrategy | None = None,
+        concurrency_policy: ConcurrencyPolicy | None = None,
+        message_budget: MessageBudgetPolicy | None = None,
+        permission_service: PermissionService | None = None,
+        bash_validator: BashCommandValidator | None = None,
         cwd: str = "",
     ) -> None:
         self._sys_read = sys_read
@@ -119,6 +134,14 @@ class ManagedAgentLoop:
             sys_write=sys_write,
             agent_path=agent_path,
         )
+        # §3: Permission + bash security (injected into ConcurrencyPolicy)
+        _perm = permission_service
+        _bash = bash_validator or BashCommandValidator()
+        self._concurrency_policy: ConcurrencyPolicy = concurrency_policy or ExclusiveLockPolicy(
+            permission_service=_perm,
+            bash_validator=_bash,
+        )
+        self._message_budget: MessageBudgetPolicy = message_budget or DefaultMessageBudget()
 
         # Shared observer (same logic as AcpConnection)
         self._observer = AgentObserver()
@@ -236,17 +259,38 @@ class ManagedAgentLoop:
                 await self._persist_result(result)
                 return result
 
-            # Execute tool calls via VFS → append results → persist
+            # Execute tool calls via ConcurrencyPolicy (§2.3)
             for tc in tool_calls:
                 self._observer.observe_update("tool_call", tc)
-                tool_result = await self._execute_tool(tc)
-                self._messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tc["id"],
-                        "content": tool_result,
-                    }
+
+            if self._tool_registry:
+                # §2.3: ConcurrencyPolicy — parallel/serial by tool classification
+                tool_results = await self._concurrency_policy.execute_batch(
+                    tool_calls, self._tool_registry
                 )
+                # §2.4: MessageBudgetPolicy — enforce per-message aggregate cap
+                tool_results = await self._message_budget.enforce(
+                    tool_results, MAX_TOOL_RESULTS_PER_MESSAGE_CHARS
+                )
+                for tr in tool_results:
+                    self._messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tr.tool_call_id,
+                            "content": tr.content,
+                        }
+                    )
+            else:
+                # Legacy fallback (no ToolRegistry)
+                for tc in tool_calls:
+                    tool_result = await self._execute_tool(tc)
+                    self._messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tc["id"],
+                            "content": tool_result,
+                        }
+                    )
             await self._persist_conversation()
 
         # Max turns reached

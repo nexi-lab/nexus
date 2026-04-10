@@ -125,7 +125,7 @@ async def _bench_piped_async(tmp_dir: Path) -> list[float]:
             self._kernel = k
             # Rust kernel handles IPC blocking internally (no Python IPCWaiter needed)
 
-        async def sys_setattr(self, path: str, **kwargs: Any) -> dict:
+        def sys_setattr(self, path: str, **kwargs: Any) -> dict:
             """No-op — pipe already created via kernel.create_pipe."""
             return {"path": path, "created": False}
 

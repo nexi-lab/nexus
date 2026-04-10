@@ -62,7 +62,7 @@ class MockNexusFS:
         self._pipes[path].put_nowait(data)
         self.write_count += 1
 
-    async def sys_setattr(self, path: str, **kwargs: object) -> None:  # noqa: ARG002
+    def sys_setattr(self, path: str, **kwargs: object) -> None:  # noqa: ARG002
         """Create a pipe (asyncio.Queue)."""
         if path not in self._pipes:
             self._pipes[path] = asyncio.Queue()

@@ -125,6 +125,33 @@ impl ReplicationScanner {
         (scanned, replicated, errors)
     }
 
+    /// Start the background scan loop in a dedicated thread.
+    ///
+    /// The loop runs until `stop()` is called. Each iteration:
+    /// 1. Sleeps for `interval_ms`
+    /// 2. Calls `scan_and_replicate(kernel)`
+    ///
+    /// Thread-safe: the kernel Arc is shared, scanner stats are atomic.
+    pub(crate) fn start(self: &Arc<Self>, kernel: Arc<crate::kernel::Kernel>) {
+        if self.running.swap(true, Ordering::SeqCst) {
+            return; // Already running
+        }
+        let scanner = Arc::clone(self);
+        let interval = std::time::Duration::from_millis(self.interval_ms);
+        std::thread::Builder::new()
+            .name("replication-scanner".to_string())
+            .spawn(move || {
+                while scanner.running.load(Ordering::Relaxed) {
+                    std::thread::sleep(interval);
+                    if !scanner.running.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    let (_scanned, _replicated, _errors) = scanner.scan_and_replicate(&kernel);
+                }
+            })
+            .expect("failed to spawn replication-scanner thread");
+    }
+
     /// Check if the scanner is running.
     pub(crate) fn is_running(&self) -> bool {
         self.running.load(Ordering::Relaxed)

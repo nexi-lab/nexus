@@ -321,6 +321,7 @@ pub(crate) struct NativeHookRegistry {
     hooks: Vec<NativeHookEntry>,
 }
 
+#[allow(dead_code)]
 impl NativeHookRegistry {
     pub(crate) fn new() -> Self {
         Self { hooks: Vec::new() }
@@ -451,6 +452,7 @@ pub struct Kernel {
     // IPC registry — StreamManager owns DashMap<String, Arc<dyn StreamBackend>>
     pub(crate) stream_manager: crate::stream_manager::StreamManager,
     // Native hook registry — pure Rust hooks dispatched without GIL (§11 Phase 10)
+    #[allow(dead_code)]
     pub(crate) native_hooks: Mutex<NativeHookRegistry>,
 }
 

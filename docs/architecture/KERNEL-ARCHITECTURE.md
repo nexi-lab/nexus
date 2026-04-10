@@ -169,6 +169,11 @@ program against the contract, kernel implements it.
 primitives (§4) into user-facing operations. NexusFS contains **no service
 business logic**.
 
+All kernel methods are synchronous (`def`, not `async def`). Blocking
+waits (advisory locks, stream reads) use Rust Condvar with GIL release.
+Exception: `sys_watch` uses asyncio futures to wait for file events.
+Async exists only at the transport layer (gRPC, HTTP).
+
 Kernel syscalls, all POSIX-aligned, all path-addressed:
 
 | Plane | Syscalls |
@@ -434,8 +439,8 @@ Two-layer architecture for both: VFS metadata (inode) in MetastoreABC, data
   upsert, read/write via `sys_read`/`sys_write`, destroyed via `sys_unlink`),
   per-pipe lock for MPMC safety. Reads are destructive (consumed on read).
 - **MemoryPipeBackend (kpipe)** — Lock-free **SPSC** kernel primitive (`kfifo` analogue),
-  no internal synchronization. PipeManager wraps with per-pipe `asyncio.Lock`
-  for **MPMC** safety. Direct MemoryPipeBackend access is kernel-internal only.
+  no internal synchronization. Kernel manages pipe lifecycle directly.
+  Direct MemoryPipeBackend access is kernel-internal only.
 
 **DT_STREAM (StreamManager + pluggable StreamBackend):**
 

@@ -22,6 +22,30 @@ from typing import Any
 import click
 
 
+def _isolate_stdout_for_acp() -> Any:
+    """Isolate stdout for ACP JSON-RPC: dup real stdout, redirect fd 1 → stderr.
+
+    After this call:
+    - sys.stdout writes to stderr (catches Rust tracing, Python logging, print())
+    - The returned stream writes to the original stdout fd (for ACP JSON-RPC only)
+    - os.dup2 redirects fd 1 at the OS level so Rust tracing also goes to stderr
+    """
+    import io
+
+    # Dup the real stdout fd before redirecting
+    real_stdout_fd = os.dup(1)
+    # Redirect fd 1 → stderr at the OS level (catches Rust tracing)
+    os.dup2(2, 1)
+    # Redirect Python sys.stdout → stderr (catches print/click.echo)
+    sys.stdout = sys.stderr
+    # Create a Python file object wrapping the real stdout fd
+    return io.TextIOWrapper(
+        io.FileIO(real_stdout_fd, mode="w", closefd=True),
+        encoding="utf-8",
+        line_buffering=True,
+    )
+
+
 @click.command("chat")
 @click.option("-p", "--prompt", default=None, help="One-shot mode: run single prompt and exit.")
 @click.option("--model", default=None, help="LLM model name.")
@@ -104,6 +128,15 @@ async def _run_chat(
 
     import nexus
 
+    # ── ACP mode: isolate stdout for JSON-RPC ──
+    # Rust tracing and Python logging write to stdout by default.
+    # In ACP mode, stdout is exclusively for JSON-RPC messages.
+    # Save the real stdout, redirect sys.stdout → stderr, and pass
+    # the saved stream to AcpTransport.
+    acp_output = None
+    if acp:
+        acp_output = _isolate_stdout_for_acp()
+
     # ── Resolve model from env/config ──
     model = model or os.environ.get("NEXUS_LLM_MODEL", "gpt-4o")
     base_url = os.environ.get("NEXUS_LLM_BASE_URL")
@@ -152,6 +185,11 @@ async def _run_chat(
                 nx.sys_setattr(mount_point, entry_type=DT_MOUNT, backend=tool_backend)
                 click.echo(f"  tools: {tool_path} → {mount_point}")
 
+        # ── ACP mode (§4A): JSON-RPC over stdio for sudowork ──
+        if acp:
+            await _run_acp_mode(nx=nx, model=model, llm_backend=llm_backend, output=acp_output)
+            return
+
         # ── Create agent loop ──
         from nexus.services.agent_runtime.compaction import DefaultCompactionStrategy
         from nexus.services.agent_runtime.managed_loop import ManagedAgentLoop
@@ -176,9 +214,13 @@ async def _run_chat(
             data = _nx_stream_read(path, offset=offset)
             return data, offset + len(data)
 
+        # Use nx.write (create-on-write) not nx.sys_write (requires existing file).
+        async def _async_write(path: str, buf: bytes) -> dict:
+            return nx.write(path, buf)
+
         loop = ManagedAgentLoop(
             sys_read=_async_sys_read,
-            sys_write=_async_sys_write,
+            sys_write=_async_write,
             stream_read=_stream_read_adapter,
             llm_backend=llm_backend,
             agent_path=agent_path,
@@ -187,7 +229,7 @@ async def _run_chat(
             proc_path="/root/proc/chat-0",
             model=model,
             compactor=DefaultCompactionStrategy(
-                sys_write=_async_sys_write,
+                sys_write=_async_write,
                 agent_path=agent_path,
             ),
             cwd=cwd,
@@ -198,11 +240,6 @@ async def _run_chat(
         # ── Session resume (--continue / --resume) ──
         _ = continue_session  # TODO: wire SessionManager.latest()
         _ = resume  # TODO: wire SessionManager.load(id)
-
-        # ── ACP mode (§4A): JSON-RPC over stdio for sudowork ──
-        if acp:
-            await _run_acp_mode(nx=nx, model=model, llm_backend=llm_backend)
-            return
 
         # ── One-shot or REPL ──
         if prompt:
@@ -223,6 +260,7 @@ async def _run_acp_mode(
     nx: Any,
     model: str | None,
     llm_backend: Any,
+    output: Any | None = None,
 ) -> None:
     """Run in ACP mode — JSON-RPC over stdio for sudowork integration (§4A)."""
     from nexus.services.agent_runtime.acp_handler import AcpProtocolHandler
@@ -231,17 +269,27 @@ async def _run_acp_mode(
     from nexus.services.agent_runtime.managed_loop import ManagedAgentLoop
     from nexus.services.agent_runtime.observer import AgentObserver
 
-    _stream_read = getattr(nx, "_stream_read", None)
+    # Async wrappers for sync NexusFS syscalls (PR #3717: NexusFS is fully sync)
+    async def _async_sys_read(path: str) -> bytes:
+        return nx.sys_read(path)
 
-    async def _fallback_stream_read(path: str, offset: int) -> tuple[bytes, int]:
-        raise NotImplementedError("Streaming not available")
+    async def _async_write(path: str, buf: bytes) -> dict:
+        return nx.write(path, buf)
+
+    _nx_stream_read = getattr(nx, "_stream_read", None)
+
+    def _stream_read_adapter(path: str, offset: int) -> tuple[bytes, int]:
+        if _nx_stream_read is None:
+            raise NotImplementedError("Streaming not available")
+        data = _nx_stream_read(path, offset=offset)
+        return data, offset + len(data)
 
     async def _loop_factory(session_id: str, cwd: str, observer: AgentObserver) -> ManagedAgentLoop:
         agent_path = "/root/agents/default"
         loop = ManagedAgentLoop(
-            sys_read=nx.sys_read,
-            sys_write=nx.sys_write,
-            stream_read=_stream_read or _fallback_stream_read,
+            sys_read=_async_sys_read,
+            sys_write=_async_write,
+            stream_read=_stream_read_adapter,
             llm_backend=llm_backend,
             agent_path=agent_path,
             llm_path="/llm",
@@ -249,7 +297,7 @@ async def _run_acp_mode(
             proc_path=f"/root/proc/{session_id[:8]}",
             model=model,
             compactor=DefaultCompactionStrategy(
-                sys_write=nx.sys_write,
+                sys_write=_async_write,
                 agent_path=agent_path,
             ),
             cwd=cwd or os.getcwd(),
@@ -258,7 +306,7 @@ async def _run_acp_mode(
         await loop.initialize()
         return loop
 
-    transport = AcpTransport()
+    transport = AcpTransport(output=output)
     handler = AcpProtocolHandler(transport=transport, loop_factory=_loop_factory)
     await handler.run()
 

@@ -28,12 +28,18 @@ JSONRPC_VERSION = "2.0"
 class AcpTransport:
     """ACP JSON-RPC transport over stdin/stdout.
 
-    Read from stdin (async readline), write to stdout (sync, newline-delimited).
-    Thread-safe for writes (stdout.write is atomic for small messages).
+    Read from stdin (async readline), write to a dedicated output stream
+    (sync, newline-delimited). The output stream defaults to sys.stdout but
+    can be overridden — critical for ACP mode where sys.stdout is redirected
+    to stderr to prevent Rust tracing / Python logging from polluting the
+    JSON-RPC channel.
+
+    Thread-safe for writes (file.write is atomic for small messages).
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, output: Any | None = None) -> None:
         self._reader: asyncio.StreamReader | None = None
+        self._output = output  # set by caller; fallback to sys.stdout in write_message
         self._next_request_id = 0
         self._pending_requests: dict[int, asyncio.Future[dict[str, Any]]] = {}
 
@@ -67,10 +73,11 @@ class AcpTransport:
             return None
 
     def write_message(self, msg: dict[str, Any]) -> None:
-        """Write one JSON-RPC message to stdout (newline-delimited)."""
+        """Write one JSON-RPC message to output stream (newline-delimited)."""
         data = json.dumps(msg, separators=(",", ":"), ensure_ascii=False)
-        sys.stdout.write(data + "\n")
-        sys.stdout.flush()
+        out = self._output or sys.stdout
+        out.write(data + "\n")
+        out.flush()
 
     def send_response(
         self, request_id: int, result: Any = None, error: dict[str, Any] | None = None

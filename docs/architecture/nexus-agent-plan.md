@@ -336,6 +336,195 @@ See `services/agent_runtime/system_prompt.py`.
 
 ---
 
+## 4A. Sudowork Integration [P0 — Detailed Design]
+
+Integrate `nexus chat` as an ACP-compatible agent in
+[sudowork](https://github.com/sudoprivacy/sudowork) — the multi-agent
+cowork platform. Nexus appears as a new tab alongside Claude Code,
+Codex, Goose, etc.
+
+### 4A.1 ACP JSON-RPC Transport
+
+**Context**: Sudowork spawns agents as child processes communicating via
+newline-delimited JSON-RPC 2.0 over stdin/stdout. Each agent binary
+accepts a flag (`--acp`, `--experimental-acp`, or subcommand `acp`)
+to switch from terminal mode to JSON-RPC mode.
+
+**Nexus**: `nexus chat --acp` activates ACP I/O mode. Orthogonal to
+connection method (`--with`):
+
+```
+nexus chat                      # terminal + embedded NexusFS
+nexus chat --with addr          # terminal + remote NexusFS
+nexus chat --acp                # JSON-RPC + embedded NexusFS (sudowork spawns this)
+nexus chat --acp --with addr    # JSON-RPC + remote NexusFS
+```
+
+**Implementation** — new module `src/nexus/services/agent_runtime/acp_transport.py`:
+
+```python
+class AcpTransport:
+    """ACP JSON-RPC transport over stdin/stdout."""
+
+    async def read_message(self) -> dict:
+        """Read one JSON-RPC message from stdin (newline-delimited)."""
+
+    def write_message(self, msg: dict) -> None:
+        """Write one JSON-RPC message to stdout (newline-delimited)."""
+
+    def send_notification(self, method: str, params: dict) -> None:
+        """Send a notification (no response expected)."""
+
+    async def send_request(self, method: str, params: dict) -> dict:
+        """Send a request and await response (for permission prompts)."""
+```
+
+**Layer: Framework | P0 | Needs building**
+
+### 4A.2 ACP Protocol Handler
+
+Handle JSON-RPC methods from sudowork. Creates ManagedAgentLoop on
+`session/new` and drives it on `session/prompt`.
+
+**Sudowork → Nexus (incoming):**
+
+| Method | Action |
+|--------|--------|
+| `initialize` | Return `{ protocolVersion: 1, capabilities: {...} }` |
+| `session/new` | Create ManagedAgentLoop, return `{ sessionId, configOptions, models }` |
+| `session/load` | Resume session via SessionManager (P1) |
+| `session/prompt` | Run `loop.run(prompt)`, stream updates, return when turn completes |
+| `session/set_model` | Switch model mid-session (P1) |
+| `session/set_config_option` | Update config (P1) |
+
+**Nexus → Sudowork (outgoing):**
+
+| Method | When |
+|--------|------|
+| `session/update` (notification) | Every token chunk, tool call status change, usage update |
+| `session/request_permission` (request) | Tool needs interactive approval (§3 `Ask` action) |
+
+**Implementation** — new module `src/nexus/services/agent_runtime/acp_handler.py`:
+
+```python
+class AcpProtocolHandler:
+    """ACP protocol handler — bridges sudowork ↔ ManagedAgentLoop."""
+
+    def __init__(self, transport: AcpTransport, **loop_kwargs): ...
+
+    async def run(self) -> None:
+        """Main loop: read JSON-RPC messages, dispatch to handlers."""
+
+    async def _handle_initialize(self, params: dict) -> dict: ...
+    async def _handle_session_new(self, params: dict) -> dict: ...
+    async def _handle_session_prompt(self, params: dict) -> dict: ...
+```
+
+**Layer: Framework | P0 | Needs building**
+
+### 4A.3 Push-mode Observer Bridge
+
+AgentObserver currently accumulates updates (pull model). ACP requires
+pushing `session/update` notifications to stdout **immediately** as they
+happen during `loop.run()`.
+
+**Design**: Add optional `on_update` callback to AgentObserver. When set,
+each `observe_update()` call also fires the callback. AcpProtocolHandler
+wires this to `transport.send_notification("session/update", ...)`.
+
+```python
+class AgentObserver:
+    def __init__(self, on_update: Callable | None = None):
+        self._on_update = on_update
+
+    def observe_update(self, update_type, update):
+        # ... existing accumulation logic ...
+        if self._on_update:
+            self._on_update(update_type, update)  # push to ACP
+```
+
+Also wire streaming token delivery: current REPL prints tokens to terminal.
+ACP mode sends them as `agent_message_chunk` notifications instead.
+
+**Layer: Framework | P0 | Needs building**
+
+### 4A.4 Tool Call Status Lifecycle
+
+Sudowork UI shows tool execution progress (spinner, status text). Requires
+status transitions: `pending` → `in_progress` → `completed`/`failed`.
+
+Current ExclusiveLockPolicy only emits a single `tool_call` observation.
+Extend to emit status transitions:
+
+```
+1. Before execution: observe("tool_call", {status: "pending", ...})
+2. Start execution:  observe("tool_call_update", {status: "in_progress", ...})
+3. After execution:  observe("tool_call_update", {status: "completed"|"failed", ...})
+```
+
+Map to ACP `session/update` with `sessionUpdate: "tool_call"` and
+`sessionUpdate: "tool_call_update"` respectively.
+
+**Layer: Framework | P0 | Needs building**
+
+### 4A.5 Interactive Permission via ACP
+
+§3.1 defined `PermissionAction.Ask` as V2. For sudowork integration this
+becomes P0 — sudowork UI shows approval dialog, user clicks allow/deny.
+
+**Flow**:
+1. ExclusiveLockPolicy hits a rule with `action: Ask`
+2. Sends `session/request_permission` JSON-RPC **request** to sudowork
+3. Sudowork shows dialog with options (allow_once, allow_always, reject_once, reject_always)
+4. Sudowork responds with `{ outcome: { outcome, optionId } }`
+5. Nexus proceeds or blocks based on response
+
+**Implementation**: Add `AcpPermissionBridge` that wraps `PermissionService`.
+When action is `Ask`, it calls `transport.send_request("session/request_permission", ...)`
+instead of auto-denying.
+
+**Layer: Framework | P1 | Needs building**
+
+### 4A.6 Sudowork-side Registration
+
+Add nexus to `src/types/acpTypes.ts` in the sudowork repo:
+
+```typescript
+nexus: {
+    id: 'nexus',
+    name: 'Nexus',
+    cliCommand: 'nexus',
+    acpArgs: ['chat', '--acp'],
+    enabled: true,
+    supportsStreaming: true,
+}
+```
+
+Auto-detected via `which nexus`. No custom connector needed — uses
+generic backend spawn path.
+
+**Layer: External (sudowork PR) | P0 | Trivial**
+
+### 4A.7 Implementation Order
+
+```
+Step 1: AcpTransport (§4A.1) + AcpProtocolHandler skeleton (§4A.2)
+        — initialize + session/new + session/prompt (basic, no streaming)
+Step 2: Push-mode Observer (§4A.3) + --acp CLI flag
+        — full streaming, end-to-end test with sudowork
+Step 3: Tool call lifecycle (§4A.4)
+        — sudowork shows tool execution progress
+Step 4: Interactive permission (§4A.5)
+        — approval dialogs in sudowork UI
+Step 5: Sudowork PR (§4A.6)
+        — add nexus entry to acpTypes.ts
+Step 6: session/load + set_model + configOptions (P1 polish)
+```
+
+Steps 1-2 are the MVP. After Step 2, `nexus chat --acp` works in sudowork.
+
+---
+
 ## 5. Agent Lifecycle [P0/P1]
 
 ### 5.1 Subagent Spawn [Production]
@@ -646,17 +835,21 @@ Precedence: `CLI args > env vars > config file` (matching CC).
 4. ~~**Retry wrapper** (§1.3)~~ — DONE (PR #3660)
 5. ~~**Session Manager** (§1.7)~~ — DONE (PR #3660)
 
-### To implement next (designed, ready for implementation):
+### Done (designed + implemented):
 
 6. ~~**Context Compression** (§4.1)~~ — DONE (CompactionStrategy + DefaultCompactionStrategy, 15 tests)
 7. ~~**System Prompt Assembly** (§4.2)~~ — DONE (assemble_system_prompt + vfs_paths, 9 tests)
 8. ~~**REPL + CLI** (§11.2 + §13.2)~~ — DONE (`nexus chat`, interactive REPL + one-shot, embedded/remote modes, V1 slash commands)
 9. ~~**External tool discovery (Tier B)** (§1.5)~~ — DONE (`--tools PATH` → DT_MOUNT to `/root/tools/{name}`)
-10. **Tool Protocol extension** (§2.1) — add max_result_size_chars, validate_input, check_permissions, is_destructive
-11. **Parallel execution** (§2.3) — CC-equivalent StreamingToolExecutor with pluggable ConcurrencyPolicy
-12. **Tool result handling** (§2.4) — two-tier truncation + spill-to-VFS with pluggable ABCs
-13. **Rust permission service** (§3.1) — CC-like rule-based matcher, inject kernel INTERCEPT
-14. **Bash security** (§3.3) — 23-category command validator (Rust)
+10. ~~**Tool Protocol extension** (§2.1)~~ — DONE (max_result_size_chars, is_destructive, should_defer)
+11. ~~**Parallel execution** (§2.3)~~ — DONE (ConcurrencyPolicy + ExclusiveLockPolicy, wired into managed_loop)
+12. ~~**Tool result handling** (§2.4)~~ — DONE (HeadTruncation + DefaultMessageBudget 50K/200K + VFSToolResultStorage)
+13. ~~**Permission pipeline** (§3.1)~~ — DONE V1 (RuleBasedPermissionService, wildcard pattern matching)
+14. ~~**Bash security** (§3.3)~~ — DONE V1 (BashCommandValidator, 23 categories)
+
+### To implement next (designed, ready for implementation):
+
+15. **Sudowork ACP integration** (§4A) — ACP JSON-RPC transport + protocol handler + push observer + tool lifecycle + --acp flag
 
 ### Deferred Items (not in current scope):
 - Multi-agent teams (§5.2, P1)
@@ -666,6 +859,7 @@ Precedence: `CLI args > env vars > config file` (matching CC).
 - Worktree isolation (§8.1, P1)
 - Feature flags (§12.1, P2)
 - Semantic search in CLUSTER profile (P1 — needs BRICK_SEARCH opt-in)
+- Rust acceleration for permission/bash security (swap Python impl → Rust, same Protocol)
 
 ---
 

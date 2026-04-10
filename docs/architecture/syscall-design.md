@@ -379,3 +379,13 @@ Migration phases (incremental, each a PR):
 
 The key insight: **Phase H is the last phase that adds logic.** The §7
 collapse is a **refactoring** that changes the boundary, not the logic.
+
+---
+
+## 8. Version History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| §1–§7 | 2026-03 | Initial syscall design, POSIX alignment, convenience layer, key decisions, collapse plan |
+| §8 | 2026-04-10 | Added version history table |
+| §11 | 2026-04-10 | KERNEL-ARCHITECTURE.md §2.4.1: formal 4 dispatch contracts (RESOLVE, INTERCEPT PRE, INTERCEPT POST, OBSERVE) with ordering, error semantics, and zero-overhead invariant. Phase 18 docs. |

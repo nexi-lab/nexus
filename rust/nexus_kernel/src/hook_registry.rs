@@ -24,6 +24,12 @@ pub(crate) type ObserverPair = (Py<PyAny>, String);
 /// Pre-hooks can abort by returning Err. Post-hooks are fire-and-forget.
 ///
 /// Each method receives opaque context (PyObject) — kernel never inspects it.
+///
+/// NOTE: PyInterceptHookAdapter (in generated_pyo3.rs, codegen output) is
+/// the only production impl of this trait. Once the kernel boundary collapses
+/// to pure Rust (syscall-design.md §7), PyInterceptHookAdapter should be
+/// gated behind #[cfg(test)] — production hooks will be native Rust impls
+/// that don't cross the PyO3 boundary.
 #[allow(dead_code)]
 pub(crate) trait InterceptHook: Send + Sync {
     fn name(&self) -> &str;

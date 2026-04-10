@@ -1553,6 +1553,47 @@ class NexusFS(  # type: ignore[misc]
         bulk_start = time.time()
         results: dict[str, bytes | dict[str, Any] | None] = {}
 
+        # Small-batch fast path: <=4 paths → sequential sys_read (no batch overhead).
+        # Avoids permission-check batching, metadata batching, and logging for tiny requests.
+        if len(paths) <= 4:
+            zone_id, agent_id, is_admin = self._get_context_identity(context)
+            _rust_ctx = self._build_rust_ctx(context, is_admin)
+            for path in paths:
+                try:
+                    vpath = self._validate_path(path)
+                    result = self._kernel.sys_read(vpath, _rust_ctx)
+                    if not result.hit:
+                        if skip_errors:
+                            results[path] = None
+                            continue
+                        raise NexusFileNotFoundError(path)
+                    content = result.data or b""
+                    if return_metadata:
+                        meta = self.metadata.get(vpath)
+                        results[path] = {
+                            "content": content,
+                            "etag": meta.etag if meta else None,
+                            "version": meta.version if meta else 0,
+                            "modified_at": meta.modified_at if meta else None,
+                            "size": len(content),
+                        }
+                    else:
+                        results[path] = content
+                except NexusFileNotFoundError:
+                    if skip_errors:
+                        results[path] = None
+                    else:
+                        raise
+                except Exception as e:
+                    logger.warning(
+                        "[READ-BULK] Failed to read %s: %s: %s", path, type(e).__name__, e
+                    )
+                    if skip_errors:
+                        results[path] = None
+                    else:
+                        raise
+            return results
+
         # Validate all paths
         validated_paths = []
         for path in paths:

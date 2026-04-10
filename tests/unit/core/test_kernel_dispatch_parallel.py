@@ -254,7 +254,6 @@ class TestObserverDispatch:
 
         assert any("test-error" in r.message for r in caplog.records)
 
-    async def test_shutdown_is_no_op(self, dispatch: _TestDispatch) -> None:
-        """shutdown() is a no-op after §11 Phase 6 (observer work runs on
-        Rust kernel ThreadPool, not Python asyncio.Task background set)."""
+    async def test_shutdown_noop(self, dispatch: _TestDispatch) -> None:
+        """shutdown() should return immediately."""
         await dispatch.shutdown()  # should not raise

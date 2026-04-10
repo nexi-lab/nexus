@@ -71,15 +71,17 @@ class DispatchMixin:
         self._next_resolver_idx: int = 0
         self._mount_hooks: list[tuple[Any, Any]] = []  # (hook, adapter) pairs
         self._unmount_hooks: list[tuple[Any, Any]] = []  # (hook, adapter) pairs
+        import concurrent.futures
 
-    async def shutdown(self, *, timeout: float = 5.0) -> None:
-        """Shutdown dispatch state (call during kernel teardown).
+        self._observer_executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=4, thread_name_prefix="observe"
+        )
 
-        §11 Phase 3 moved observer callbacks to the Rust kernel's
-        background ThreadPool — there are no Python asyncio.Task
-        observer jobs to drain anymore. This method is kept as a
-        no-op so callers don't break.
-        """
+    # ── Lifecycle (Issue #3391) ──────────────────────────────────────────
+
+    async def shutdown(self) -> None:
+        """Shutdown observer executor (call during kernel teardown)."""
+        self._observer_executor.shutdown(wait=False)
 
     # ── PRE-DISPATCH: virtual path resolvers (Issue #889, #1317) ──────
 

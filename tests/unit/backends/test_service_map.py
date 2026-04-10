@@ -82,7 +82,7 @@ class TestServiceRegistry:
         """Test Google Calendar service now has a connector (was None before)."""
         info = ServiceMap.get_service_info("google-calendar")
         assert info is not None
-        assert info.connector == "gcalendar_connector"
+        assert info.connector == "calendar_connector"
         assert info.klavis_mcp == "google_calendar"
         assert info.oauth_provider == "google"
 
@@ -159,7 +159,7 @@ class TestServiceMapGetServiceName:
         """Test getting service name from connector."""
         assert ServiceMap.get_service_name(connector="gdrive_connector") == "google-drive"
         assert ServiceMap.get_service_name(connector="gmail_connector") == "gmail"
-        assert ServiceMap.get_service_name(connector="gcalendar_connector") == "google-calendar"
+        assert ServiceMap.get_service_name(connector="calendar_connector") == "google-calendar"
 
     def test_get_service_name_by_connector_optional(self) -> None:
         """Test connector lookup for backends with optional deps."""
@@ -216,7 +216,7 @@ class TestServiceMapGetConnector:
         """Test getting connector for services with connectors."""
         assert ServiceMap.get_connector("google-drive") == "gdrive_connector"
         assert ServiceMap.get_connector("gmail") == "gmail_connector"
-        assert ServiceMap.get_connector("google-calendar") == "gcalendar_connector"
+        assert ServiceMap.get_connector("google-calendar") == "calendar_connector"
 
     def test_get_connector_none(self) -> None:
         """Test getting connector for MCP-only services."""

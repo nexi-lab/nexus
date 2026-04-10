@@ -5789,4 +5789,3 @@ class NexusFS(  # type: ignore[misc]
         Requires SearchService.
         """
         raise NotImplementedError("grep requires SearchService")
-

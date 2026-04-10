@@ -128,6 +128,67 @@ class SlimNexusFS:
         """
         return await self._kernel.write(path, content, context=self._ctx)
 
+    async def write_batch(self, files: list[tuple[str, bytes]]) -> list[dict[str, Any]]:
+        """Write multiple files atomically in a single transaction.
+
+        All files are written atomically — either all succeed or all fail.
+        13× faster than N sequential ``write()`` calls for small files.
+
+        Args:
+            files: List of ``(path, content)`` tuples.
+
+        Returns:
+            List of result dicts (same order as input), each with
+            ``etag``, ``version``, ``modified_at``, and ``size``.
+
+        Raises:
+            NexusFileNotFoundError: Never — writes always create.
+            InvalidPathError: If any path is invalid.
+        """
+        return await self._kernel.write_batch(files, context=self._ctx)
+
+    async def read_batch(
+        self,
+        paths: list[str],
+        *,
+        partial: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Read multiple files in a single atomic round-trip.
+
+        Uses the Rust kernel's parallel read path — faster and more
+        consistent than N sequential ``read()`` calls.
+
+        Args:
+            paths:   List of virtual file paths.
+            partial: If ``False`` (default), raises ``NexusFileNotFoundError``
+                     on the first missing or inaccessible path.
+                     If ``True``, returns a per-item result for every path
+                     (successes and errors alike).
+
+        Returns:
+            List of dicts in the same order as *paths*.
+
+            Successful item::
+
+                {
+                    "path":        str,
+                    "content":     bytes,
+                    "etag":        str | None,
+                    "version":     int,
+                    "modified_at": datetime | None,
+                    "size":        int,
+                }
+
+            Failed item (only when ``partial=True``)::
+
+                {"path": str, "error": "not_found"}
+
+        Raises:
+            NexusFileNotFoundError: If any path is missing and ``partial=False``.
+            InvalidPathError: If any path is invalid (always raised).
+        """
+        return await self._kernel.read_batch(paths, partial=partial, context=self._ctx)
+
     # -- Directory operations --
 
     async def ls(

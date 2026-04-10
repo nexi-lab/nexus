@@ -236,6 +236,14 @@ class NexusFilesystem(Protocol):
         context: OperationContext | None = None,
     ) -> builtins.list[dict[str, Any]]: ...
 
+    async def read_batch(
+        self,
+        paths: builtins.list[str],
+        *,
+        partial: bool = False,
+        context: OperationContext | None = None,
+    ) -> builtins.list[dict[str, Any]]: ...
+
     def glob(self, pattern: str, path: str = "/", context: Any = None) -> builtins.list[str]: ...
 
     def grep(

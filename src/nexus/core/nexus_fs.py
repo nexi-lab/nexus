@@ -2733,12 +2733,17 @@ class NexusFS(  # type: ignore[misc]
         self, files: list[tuple[str, bytes]], context: OperationContext | None = None
     ) -> list[dict[str, Any]]:
         """
-        Write multiple files in a single transaction for improved performance.
+        Write multiple files in a single round-trip for improved performance.
 
         This is 13x faster than calling write() multiple times for small files
         because it uses a single database transaction instead of N transactions.
 
-        All files are written atomically - either all succeed or all fail.
+        **Atomicity**: best-effort. For CAS backends (the common case) each file
+        is written independently via content-addressed storage, so a mid-batch
+        failure leaves already-written files on disk. No rollback or compensation
+        is performed. Callers that need true all-or-nothing semantics should use
+        separate write() calls inside an explicit transaction (if supported) or
+        implement idempotent retries using the returned etags.
 
         Args:
             files: List of (path, content) tuples to write
@@ -2763,7 +2768,7 @@ class NexusFS(  # type: ignore[misc]
             >>> results = nx.write_batch(files)
             >>> print(f"Wrote {len(results)} files")
 
-            >>> # Atomic batch write - all or nothing
+            >>> # Best-effort batch write (not all-or-nothing; see docstring)
             >>> files = [
             ...     ("/config/setting1.json", b'{"enabled": true}'),
             ...     ("/config/setting2.json", b'{"timeout": 30}'),
@@ -2879,15 +2884,12 @@ class NexusFS(  # type: ignore[misc]
         items = [
             (metadata, existing_metadata.get(metadata.path) is None) for metadata in metadata_list
         ]
-        if self._kernel.hook_count("write_batch") > 0:
-            from nexus.contracts.vfs_hooks import WriteBatchHookContext
+        from nexus.contracts.vfs_hooks import WriteBatchHookContext
 
-            self._kernel.dispatch_post_hooks(
-                "write_batch",
-                WriteBatchHookContext(
-                    items=items, context=context, zone_id=zone_id, agent_id=agent_id
-                ),
-            )
+        self._dispatch_batch_post_hook(
+            "write_batch",
+            WriteBatchHookContext(items=items, context=context, zone_id=zone_id, agent_id=agent_id),
+        )
 
         # Issue #900: Unified two-phase dispatch — OBSERVE (fire-and-forget)
         for metadata in metadata_list:
@@ -2908,6 +2910,263 @@ class NexusFS(  # type: ignore[misc]
             )
 
         # Issue #1682: Hierarchy tuples + owner grants moved to post_write_batch hooks.
+
+        return results
+
+    def _dispatch_batch_post_hook(self, event_name: str, ctx: Any) -> None:
+        """Dispatch a post-batch hook if any listeners are registered.
+
+        Shared by write_batch and read_batch to avoid duplicating the
+        hook_count guard + dispatch_post_hooks call.
+        """
+        if self._kernel.hook_count(event_name) > 0:
+            self._kernel.dispatch_post_hooks(event_name, ctx)
+
+    @rpc_expose(description="Read multiple files atomically in a single round-trip")
+    async def read_batch(
+        self,
+        paths: list[str],
+        *,
+        partial: bool = False,
+        context: OperationContext | None = None,
+    ) -> list[dict[str, Any]]:
+        """
+        Read multiple files in a single round-trip for improved performance.
+
+        Uses the Rust kernel's parallel _read_batch (rayon par_iter) for all
+        paths, then a single metadata.get_batch() call — no N+1 queries.
+
+        Args:
+            paths:   List of virtual paths to read.
+            partial: If False (default), raises NexusFileNotFoundError on
+                     the first path that is missing or inaccessible.
+                     If True, returns a per-item result for every path
+                     (successful reads and errors alike).
+            context: Optional operation context for permission checks.
+
+        Returns:
+            List of dicts in the same order as *paths*.
+
+            Successful item::
+
+                {
+                    "path":        str,
+                    "content":     bytes,
+                    "etag":        str | None,   # from actual read bytes (r.content_hash)
+                    "version":     int,           # from pre-read metadata snapshot
+                    "modified_at": datetime | None,  # from pre-read metadata snapshot
+                    "size":        int,
+                }
+
+            **Note on consistency**: ``etag`` reflects the actual bytes returned
+            (authoritative). ``version`` and ``modified_at`` come from a metadata
+            snapshot taken *before* the reads, so under concurrent writes they
+            may not match the returned content. Use ``etag`` for cache validation
+            or optimistic concurrency; do not rely on ``version``/``modified_at``
+            being coherent with the content under concurrent updates.
+
+            Failed item (only possible when partial=True)::
+
+                {
+                    "path":  str,
+                    "error": "not_found",
+                }
+
+        Raises:
+            InvalidPathError:       If any path is invalid (always, even in partial mode).
+            NexusFileNotFoundError: If any path is missing and partial=False.
+            NexusPermissionError:   If access is denied and partial=False.
+        """
+        if not paths:
+            return []
+
+        # Validate all paths up-front — invalid paths always raise, even in partial mode.
+        validated_paths: list[str] = [self._validate_path(p) for p in paths]
+
+        zone_id, agent_id, is_admin = self._get_context_identity(context)
+        _rust_ctx = self._build_rust_ctx(context, is_admin)
+
+        # PRE-INTERCEPT: per-path stat/read permission hooks (same pattern as read_bulk).
+        from nexus.contracts.exceptions import PermissionDeniedError
+        from nexus.contracts.vfs_hooks import StatHookContext as _SHC
+
+        _ctx = self._resolve_cred(context)
+        allowed_paths: list[str] = []
+        denied_paths: set[str] = set()
+        for path in validated_paths:
+            try:
+                self._kernel.dispatch_pre_hooks(
+                    "stat", _SHC(path=path, context=_ctx, permission="READ")
+                )
+                allowed_paths.append(path)
+            except PermissionDeniedError as exc:
+                if not partial:
+                    from nexus.contracts.exceptions import NexusPermissionError
+
+                    raise NexusPermissionError(f"Permission denied: {path}") from exc
+                denied_paths.add(path)
+
+        # Batch metadata fetch — one query for all allowed paths.
+        batch_meta = self.metadata.get_batch(allowed_paths) if allowed_paths else {}
+
+        # Finding #3 — DoS guard: reject batches whose declared metadata size exceeds
+        # the per-request ceiling.  Uses metadata sizes already fetched, so no extra
+        # round-trip is needed.  External-mount / virtual paths that lack metadata
+        # entries contribute 0 to the total; their own backends enforce their limits.
+        #
+        # IMPORTANT: iterate over allowed_paths (with duplicates), NOT over
+        # batch_meta.values() (unique keys).  A request repeating the same large file
+        # N times would otherwise bypass the cap since the dict only stores one entry
+        # per unique path.
+        _MAX_BATCH_READ_BYTES = 100 * 1024 * 1024  # 100 MB
+        if allowed_paths and batch_meta:
+            _total_declared = sum(
+                batch_meta[p].size
+                for p in allowed_paths
+                if batch_meta.get(p) is not None  # value may be None for missing files
+            )
+            if _total_declared > _MAX_BATCH_READ_BYTES:
+                raise ValueError(
+                    f"Batch read aggregate declared size {_total_declared} bytes exceeds "
+                    f"{_MAX_BATCH_READ_BYTES // (1024 * 1024)} MB limit"
+                )
+
+        # KERNEL: parallel Rust read for all allowed paths.
+        rust_results = self._kernel._read_batch(allowed_paths, _rust_ctx) if allowed_paths else []
+
+        results: list[dict[str, Any]] = []
+        hit_items: list[tuple[str, "FileMetadata | None"]] = []  # for post-hooks
+
+        # Check once whether any per-file "read" post-hooks are registered.
+        # These hooks (e.g. DynamicViewerReadHook) may transform or redact content.
+        # Finding #1 — we must fire them per-item so batch semantics match single read().
+        _has_read_hooks = self._kernel.hook_count("read") > 0
+
+        # Map allowed_paths → rust_results (same order, guaranteed by _read_batch).
+        allowed_iter = iter(rust_results)
+
+        # Cumulative byte counter — tracks actual bytes loaded across both the
+        # CAS fast path and the fallback read() path.  External/virtual paths have
+        # no metadata entry so they contribute 0 to the upfront declared-size check;
+        # their actual content is captured here to close that gap.
+        _loaded_bytes = 0
+
+        for path in validated_paths:
+            if path in denied_paths:
+                results.append({"path": path, "error": "permission_denied"})
+                continue
+
+            r = next(allowed_iter)
+            meta = batch_meta.get(path)
+
+            if not r.hit:
+                # Finding #2 — _read_batch returns hit=False not only for missing CAS
+                # files but also for: DT_PIPE / DT_STREAM entries, backend read errors,
+                # lock timeouts, route misses, and external connector paths.  A bare
+                # hit=False must not be treated as "file not found" for all of these.
+                #
+                # Delegate to the full single-file read() path, which correctly handles:
+                #   • virtual resolver paths (resolve_read)
+                #   • external connector mounts (ExternalRouteResult)
+                #   • DT_PIPE / DT_STREAM entry types
+                #   • standard per-file read hooks (DynamicViewerReadHook, etc.)
+                #
+                # Only NexusFileNotFoundError from read() is classified as "not found";
+                # any other exception is a real failure and either propagates (strict
+                # mode) or surfaces as a per-item "read_error" (partial mode).
+                #
+                # Resolver permission errors and parser failures are NOT caught here —
+                # they propagate through read() just as they would via the single-file
+                # endpoint.
+                try:
+                    content = await self.read(path, context=context)
+                    _loaded_bytes += len(content)
+                    if _loaded_bytes > _MAX_BATCH_READ_BYTES:
+                        raise ValueError(
+                            f"Batch read aggregate size exceeded "
+                            f"{_MAX_BATCH_READ_BYTES // (1024 * 1024)} MB limit"
+                        )
+                    results.append(
+                        {
+                            "path": path,
+                            "content": content,
+                            "etag": meta.etag if meta else None,
+                            "version": meta.version if meta else 0,
+                            "modified_at": meta.modified_at if meta else None,
+                            "size": len(content),
+                        }
+                    )
+                    hit_items.append((path, meta))
+                    continue
+                except NexusFileNotFoundError:
+                    pass  # Confirmed missing — fall through to not_found handling.
+                except Exception:
+                    # Real failure (backend error, permission denied, lock timeout…).
+                    # In partial mode return a per-item error so the rest of the batch
+                    # is not aborted.  In strict mode re-raise so the caller sees the
+                    # actual failure.
+                    if not partial:
+                        raise
+                    results.append({"path": path, "error": "read_error"})
+                    continue
+
+                if not partial:
+                    raise NexusFileNotFoundError(path)
+                results.append({"path": path, "error": "not_found"})
+                continue
+
+            content = bytes(r.data) if r.data else b""
+            _loaded_bytes += len(content)
+            if _loaded_bytes > _MAX_BATCH_READ_BYTES:
+                raise ValueError(
+                    f"Batch read aggregate size exceeded "
+                    f"{_MAX_BATCH_READ_BYTES // (1024 * 1024)} MB limit"
+                )
+
+            # Finding #1 — per-item "read" post-hook (mirrors read() at line ~1285).
+            # Ensures content-transforming hooks such as DynamicViewerReadHook fire
+            # for every successfully read item, preventing authorization bypass via
+            # the batch endpoint.
+            if _has_read_hooks:
+                from nexus.contracts.vfs_hooks import ReadHookContext
+
+                _read_ctx = ReadHookContext(
+                    path=path,
+                    context=context,
+                    zone_id=zone_id,
+                    agent_id=agent_id,
+                    content=content,
+                    content_hash=r.content_hash,
+                )
+                self._kernel.dispatch_post_hooks("read", _read_ctx)
+                content = _read_ctx.content or content
+
+            # Use r.content_hash as the primary etag — it reflects the actual bytes
+            # returned by this read, not the pre-read metadata snapshot (which can be
+            # stale under concurrent writes).  Fall back to meta.etag only when the
+            # Rust result has no content_hash (older backends / degenerate path).
+            _etag = r.content_hash or (meta.etag if meta else None)
+            results.append(
+                {
+                    "path": path,
+                    "content": content,
+                    "etag": _etag,
+                    "version": meta.version if meta else 0,
+                    "modified_at": meta.modified_at if meta else None,
+                    "size": len(content),
+                }
+            )
+            hit_items.append((path, meta))
+
+        # POST-INTERCEPT: batch post-hook (only if listeners registered).
+        from nexus.contracts.vfs_hooks import ReadBatchHookContext
+
+        self._dispatch_batch_post_hook(
+            "read_batch",
+            ReadBatchHookContext(
+                items=hit_items, context=context, zone_id=zone_id, agent_id=agent_id
+            ),
+        )
 
         return results
 

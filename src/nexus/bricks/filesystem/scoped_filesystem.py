@@ -316,6 +316,38 @@ class ScopedFilesystem(ScopedPathMixin):
         results = await self._fs.write_batch(scoped_files, context=context)
         return [self._unscope_dict(r, ["path"]) for r in results]
 
+    async def read_batch(
+        self,
+        paths: builtins.list[str],
+        *,
+        partial: bool = False,
+        context: OperationContext | None = None,
+    ) -> builtins.list[dict[str, Any]]:
+        """Read multiple files in a single round-trip.
+
+        Raises AccessDeniedError if any path resolves to a global namespace
+        (e.g. /memory/, /skills/) — cross-scope reads are not permitted in
+        batch mode.  Use the underlying filesystem directly for global paths.
+        """
+        from nexus.bricks.filesystem._scoped_base import GLOBAL_NAMESPACES
+        from nexus.contracts.exceptions import AccessDeniedError
+
+        is_admin = getattr(context, "is_admin", False)
+
+        scoped_paths = []
+        for path in paths:
+            scoped = self._scope_path(path)
+            if not is_admin:
+                for ns in GLOBAL_NAMESPACES:
+                    if scoped.startswith(ns):
+                        raise AccessDeniedError(
+                            f"Cross-scope read denied: '{path}' resolves to global namespace '{ns}'"
+                        )
+            scoped_paths.append(scoped)
+
+        results = await self._fs.read_batch(scoped_paths, partial=partial, context=context)
+        return [self._unscope_dict(r, ["path"]) for r in results]
+
     # ============================================================
     # Mount Operations
     # ============================================================

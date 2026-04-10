@@ -92,7 +92,7 @@ class SessionManager:
 - `should_defer: bool` — lazy schema loading (see §2.5). CC: `Tool.ts:438`
 
 Core Tier A tools (read/write/edit/bash/grep/glob): ✅ DONE.
-Protocol extension: **Needs building**.
+Protocol extension: ✅ DONE (`tool_registry.py` — `max_result_size_chars`, `is_destructive`, `should_defer` with defaults).
 
 **Layer: Framework (Rust permission svc + Python Protocol) | P0**
 
@@ -124,7 +124,8 @@ class ExclusiveLockPolicy:
 
 Wire into `managed_loop.run()`: replace sequential `for tc in tool_calls`.
 
-**Layer: Framework | P0 | Needs building**
+**Layer: Framework | P0 | ✅ DONE** — `ExclusiveLockPolicy` default, wired into `managed_loop.run()`.
+`ConcurrencyPolicy` injected via DI — replaceable per-agent.
 
 ### 2.4 Tool Result Handling — two-tier truncation + spill to VFS
 
@@ -175,7 +176,8 @@ Configurable thresholds (CC has per-tool + global):
 
 All constants overridable via config.
 
-**Layer: Framework | P0 | Needs building**
+**Layer: Framework | P0 | ✅ DONE** — `HeadTruncation`, `VFSToolResultStorage`, `DefaultMessageBudget`.
+Per-tool truncation in `ExclusiveLockPolicy._execute_one()`, aggregate budget in `managed_loop.run()`.
 
 ### 2.5 Deferred Tool Loading / ToolSearch
 

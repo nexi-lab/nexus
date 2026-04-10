@@ -1,3 +1,4 @@
+# §11 Phase 22 — dispatch cleanup
 """DispatchMixin — three-phase VFS dispatch (collapsed from KernelDispatch).
 
 Mixin for NexusFS. Every VFS operation passes through three ordered phases:

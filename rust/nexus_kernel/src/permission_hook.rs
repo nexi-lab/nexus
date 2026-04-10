@@ -56,6 +56,7 @@ pub(crate) struct PermissionHook {
     lease_ttl: Duration,
 }
 
+#[allow(dead_code)]
 impl PermissionHook {
     /// Create a new permission hook wrapping a Python checker.
     ///
@@ -108,7 +109,7 @@ impl PermissionHook {
     /// Slow path: acquire GIL and call Python checker.check(path, permission, context).
     /// Returns Ok(()) on success, Err(message) if permission denied.
     fn python_check(&self, path: &str, perm: Permission) -> Result<(), String> {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let checker = self.checker.bind(py);
             // Import Permission enum from Python
             let perm_mod = py
@@ -150,7 +151,7 @@ impl PermissionHook {
             Some(e) => e,
             None => return Ok(()), // No enforcer — allow
         };
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let enf = enforcer.bind(py);
             let perm_mod = py
                 .import("nexus.contracts.types")

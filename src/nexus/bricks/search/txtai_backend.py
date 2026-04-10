@@ -631,7 +631,13 @@ class TxtaiBackend:
             pass
 
     async def delete(self, ids: list[str], *, zone_id: str) -> int:  # noqa: ARG002
-        """Delete documents by id."""
+        """Delete documents by id.
+
+        Calls ``Embeddings.delete()`` and then persists with ``_save()`` so
+        that pgvector + the content tables drop the rows immediately. Without
+        the save, txtai's delete is in-memory only and the rows linger in
+        ``sections``/``vectors`` until the next index/upsert flush.
+        """
         if not ids:
             return 0
         await self.startup()
@@ -640,6 +646,14 @@ class TxtaiBackend:
             if not self._embeddings:
                 return 0
             await asyncio.to_thread(self._embeddings.delete, ids)
+            try:
+                await asyncio.to_thread(self._save)
+            except Exception:
+                logger.warning(
+                    "txtai delete: save() failed; in-memory state may be ahead of "
+                    "pgvector until the next index/upsert flush",
+                    exc_info=True,
+                )
         return len(ids)
 
     # ----- Search -------------------------------------------------------------

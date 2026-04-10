@@ -131,7 +131,15 @@ class DaemonConfig:
     txtai_vectors: dict[str, Any] | None = None
     txtai_reranker: str | None = None  # e.g. "cross-encoder/ms-marco-MiniLM-L-2-v2"
     txtai_sparse: bool = False  # Enable SPLADE learned sparse retrieval
-    txtai_graph: bool = True  # Enable semantic graph
+    # Semantic graph: disabled by default because txtai's graph upsert path
+    # calls ``grand.backends._sqlbackend.add_edges_from`` which issues
+    # ``INSERT INTO edges DEFAULT VALUES``, failing the NOT NULL constraint
+    # on the ``ID`` column. That tears down the enclosing transaction and
+    # drops every co-batched document write. The graph is only consumed by
+    # the rarely-used ``graph_mode`` query parameter (low/high/dual/auto)
+    # on ``/api/v2/search/query`` — default ``graph_mode=none`` does not
+    # need it. Operators who want the feature can flip this in config.
+    txtai_graph: bool = False  # Enable semantic graph (opt-in; see note above)
 
 
 class SearchDaemon:

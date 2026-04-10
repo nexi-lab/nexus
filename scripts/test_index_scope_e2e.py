@@ -629,27 +629,20 @@ def main() -> None:
     # -------------------------------------------------------------------------
     print("\n=== 9. PURGE-UNSCOPED — destructive admin endpoint ===")
     # -------------------------------------------------------------------------
-    # This section validates the ``purge_unscoped_embeddings`` SQL logic
-    # by directly inserting test rows into ``document_chunks`` +
-    # ``file_paths``, bypassing the full write/refresh/txtai pipeline.
+    # Register TWO directories under scoped mode, write a file in each so
+    # both get embedded, then unregister ONE directory. The unregistered
+    # directory's file is now out of scope and must be purged by the
+    # endpoint while the still-registered directory's file remains.
     #
-    # Rationale: the e2e write+index path is subject to an unrelated
-    # pre-existing bug in txtai's graph backend (NotNullViolation on the
-    # ``edges`` table — see daemon logs) that prevents new files from
-    # reaching the txtai sections table during this run. The purge
-    # endpoint itself operates on ``document_chunks`` via SQL, so we
-    # can test its correctness against hand-crafted rows that don't
-    # need the upstream write pipeline.
-    http_call("POST", "/api/v2/search/indexing-mode", {"mode": "scoped", "zone_id": TEST_ZONE})
-    # Start clean: nothing left from previous runs.
-    psql(f"DELETE FROM indexed_directories WHERE zone_id='{TEST_ZONE}'")
-    psql(
-        "DELETE FROM document_chunks WHERE path_id IN ("
-        "  SELECT path_id FROM file_paths WHERE virtual_path LIKE '/e2e_purge%'"
-        ")"
+    # NOTE: the txtai graph backend is disabled by default (see DaemonConfig
+    # .txtai_graph) because its graph upsert path hits a NotNullViolation
+    # on ``INSERT INTO edges DEFAULT VALUES``. With graph disabled the real
+    # write path works end-to-end.
+    http_call(
+        "POST",
+        "/api/v2/search/indexing-mode",
+        {"mode": "scoped", "zone_id": TEST_ZONE},
     )
-    psql("DELETE FROM file_paths WHERE virtual_path LIKE '/e2e_purge%'")
-
     status, _ = http_call("POST", "/api/v2/search/index-directory", {"path": "/e2e_purge/keeper"})
     check("purge setup: register /e2e_purge/keeper", status == 200)
     status, _ = http_call("POST", "/api/v2/search/index-directory", {"path": "/e2e_purge/temp"})
@@ -657,51 +650,27 @@ def main() -> None:
 
     keeper_path = "/e2e_purge/keeper/stays.md"
     temp_path = "/e2e_purge/temp/will_be_purged.md"
-
-    # Insert fake file_paths + document_chunks rows directly. The
-    # purge_unscoped_embeddings method filters on file_paths.virtual_path
-    # joined against indexed_directories, so we need both tables
-    # populated.  For this test we don't need real embeddings — the
-    # method deletes from document_chunks based on the scope rules.
-    psql(
-        "INSERT INTO file_paths "
-        "(path_id, virtual_path, zone_id, backend_id, physical_path, "
-        " size_bytes, created_at, updated_at, current_version, deleted_at) "
-        "VALUES "
-        f" ('e2e-keeper-1', '{keeper_path}', '{TEST_ZONE}', 'local', "
-        f"  '/fake/keeper', 11, NOW(), NOW(), 1, NULL), "
-        f" ('e2e-temp-1', '{temp_path}', '{TEST_ZONE}', 'local', "
-        f"  '/fake/temp', 9, NOW(), NOW(), 1, NULL)"
+    write_file(
+        keeper_path,
+        "# Keeper\n\nQuasar jets accelerate plasma to relativistic speeds via magnetic reconnection.",
     )
-    psql(
-        "INSERT INTO document_chunks "
-        "(path_id, chunk_index, chunk_text, chunk_tokens, created_at) "
-        "VALUES "
-        "  ('e2e-keeper-1', 0, 'keeper test', 2, NOW()), "
-        "  ('e2e-temp-1', 0, 'temp test', 2, NOW())"
+    write_file(
+        temp_path,
+        "# Temp\n\nEnzyme kinetics follow Michaelis-Menten saturation with allosteric feedback.",
     )
 
-    keeper_chunks_before = int(
-        psql(
-            "SELECT COUNT(*) FROM document_chunks c JOIN file_paths fp "
-            f"ON c.path_id = fp.path_id WHERE fp.virtual_path = '{keeper_path}'"
-        )
-        or "0"
-    )
-    temp_chunks_before = int(
-        psql(
-            "SELECT COUNT(*) FROM document_chunks c JOIN file_paths fp "
-            f"ON c.path_id = fp.path_id WHERE fp.virtual_path = '{temp_path}'"
-        )
-        or "0"
+    print("    Waiting 20s for both files to be embedded...")
+    time.sleep(20)
+
+    keeper_count_before = count_chunks_for_path(keeper_path)
+    temp_count_before = count_chunks_for_path(temp_path)
+    check(
+        f"before purge: keeper embedded ({keeper_count_before} sections rows)",
+        keeper_count_before >= 1,
     )
     check(
-        f"seeded keeper document_chunks ({keeper_chunks_before})",
-        keeper_chunks_before == 1,
-    )
-    check(
-        f"seeded temp document_chunks ({temp_chunks_before})",
-        temp_chunks_before == 1,
+        f"before purge: temp embedded ({temp_count_before} sections rows)",
+        temp_count_before >= 1,
     )
 
     # Unregister /e2e_purge/temp — now temp_path is out of scope.
@@ -718,39 +687,32 @@ def main() -> None:
     )
     purged = (body or {}).get("purged") or {}
     check(
-        f"purge reported document_chunks deleted >= 1 ({purged})",
-        isinstance(purged, dict) and purged.get("document_chunks", 0) >= 1,
+        f"purge reported txtai_docs deleted ({purged})",
+        isinstance(purged, dict) and purged.get("txtai_docs", 0) >= 1,
         str(purged),
     )
 
-    keeper_chunks_after = int(
-        psql(
-            "SELECT COUNT(*) FROM document_chunks c JOIN file_paths fp "
-            f"ON c.path_id = fp.path_id WHERE fp.virtual_path = '{keeper_path}'"
-        )
-        or "0"
-    )
-    temp_chunks_after = int(
-        psql(
-            "SELECT COUNT(*) FROM document_chunks c JOIN file_paths fp "
-            f"ON c.path_id = fp.path_id WHERE fp.virtual_path = '{temp_path}'"
-        )
-        or "0"
+    # Give the backend a moment to flush.
+    time.sleep(2)
+
+    keeper_count_after = count_chunks_for_path(keeper_path)
+    temp_count_after = count_chunks_for_path(temp_path)
+    check(
+        f"after purge: keeper STILL embedded ({keeper_count_after} sections rows)",
+        keeper_count_after >= 1,
+        f"keeper rows dropped from {keeper_count_before} to {keeper_count_after}",
     )
     check(
-        f"after purge: keeper rows PRESERVED ({keeper_chunks_after})",
-        keeper_chunks_after == 1,
-        f"keeper chunks dropped from {keeper_chunks_before} to {keeper_chunks_after}",
-    )
-    check(
-        f"after purge: temp rows DELETED ({temp_chunks_after})",
-        temp_chunks_after == 0,
-        f"temp still has {temp_chunks_after} chunks after purge",
+        f"after purge: temp PURGED ({temp_count_after} sections rows)",
+        temp_count_after == 0,
+        f"LEAK: temp still has {temp_count_after} rows after purge",
     )
 
     # Cleanup purge test state.
-    psql("DELETE FROM document_chunks WHERE path_id IN ('e2e-keeper-1', 'e2e-temp-1')")
-    psql("DELETE FROM file_paths WHERE path_id IN ('e2e-keeper-1', 'e2e-temp-1')")
+    with contextlib.suppress(Exception):
+        delete_file(keeper_path)
+    with contextlib.suppress(Exception):
+        delete_file(temp_path)
     http_call("DELETE", "/api/v2/search/index-directory", {"path": "/e2e_purge/keeper"})
 
     # -------------------------------------------------------------------------

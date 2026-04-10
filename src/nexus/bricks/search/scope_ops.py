@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from sqlalchemy import bindparam
 from sqlalchemy import text as sa_text
@@ -235,12 +235,21 @@ async def purge_unscoped_embeddings(
 
     async with daemon._refresh_lock:
         for target_zone in target_zones:
+            # Two things can hold stored text for a zone:
+            #   1. ``document_chunks`` — legacy per-chunk store used by the
+            #      sync indexing path. Keyed by ``path_id`` from file_paths.
+            #   2. ``sections`` — the txtai content store populated by the
+            #      txtai backend. Keyed by ``id`` = virtual_path (with an
+            #      optional zone prefix for non-root zones).
+            # We purge both, using the same scope rule to decide which
+            # rows are now out-of-scope.
             async with daemon._async_session() as session:
-                rows = (
+                # --- Legacy document_chunks path -------------------------
+                legacy_rows = (
                     await session.execute(
                         sa_text(
                             """
-                            SELECT fp.path_id, fp.virtual_path
+                            SELECT fp.path_id
                             FROM file_paths fp
                             WHERE fp.zone_id = :zid
                               AND fp.deleted_at IS NULL
@@ -262,28 +271,74 @@ async def purge_unscoped_embeddings(
                         {"zid": target_zone},
                     )
                 ).fetchall()
+                legacy_path_ids = [row[0] for row in legacy_rows]
+                if legacy_path_ids:
+                    delete_stmt = sa_text(
+                        "DELETE FROM document_chunks WHERE path_id IN :pids"
+                    ).bindparams(bindparam("pids", expanding=True))
+                    result = await session.execute(delete_stmt, {"pids": legacy_path_ids})
+                    counts["document_chunks"] += int(result.rowcount or 0)
 
-                if not rows:
-                    continue
+                # --- txtai sections path ---------------------------------
+                # The txtai content store uses virtual_path (optionally
+                # zone-prefixed) as the ``id`` column. Match rows whose
+                # stored id corresponds to a file in the zone that is no
+                # longer under any registered directory.
+                prefix_like = f"{target_zone}:%" if target_zone != "root" else None
+                candidate_sql = """
+                    SELECT id FROM sections
+                    WHERE (
+                        id LIKE '/%'
+                        OR id LIKE :zone_prefix
+                    )
+                """
+                txtai_rows = (
+                    await session.execute(
+                        sa_text(candidate_sql),
+                        {"zone_prefix": prefix_like or "__never_matches__"},
+                    )
+                ).fetchall()
 
-                path_ids = [row[0] for row in rows]
-                virtual_paths = [row[1] for row in rows]
+                # Strip optional zone: prefix and evaluate scope in Python
+                # (simpler than rewriting the full path-match logic in SQL
+                # for the txtai id format).
+                from nexus.bricks.search.index_scope import is_path_indexed
 
-                delete_stmt = sa_text(
-                    "DELETE FROM document_chunks WHERE path_id IN :pids"
-                ).bindparams(bindparam("pids", expanding=True))
-                result = await session.execute(delete_stmt, {"pids": path_ids})
+                scope = daemon._current_index_scope()
+                txtai_ids_to_delete: list[str] = []
+                for (sec_id,) in txtai_rows:
+                    if not isinstance(sec_id, str):
+                        continue
+                    # Extract the virtual_path portion.
+                    if ":" in sec_id and not sec_id.startswith("/"):
+                        zid_prefix, _, vpath = sec_id.partition(":")
+                        if zid_prefix != target_zone:
+                            continue
+                        candidate_vpath = vpath
+                    elif sec_id.startswith("/"):
+                        if target_zone != "root":
+                            # Unprefixed ids belong to the root zone.
+                            continue
+                        candidate_vpath = sec_id
+                    else:
+                        continue
+                    if scope is None:
+                        continue
+                    try:
+                        if not is_path_indexed(scope, target_zone, candidate_vpath):
+                            txtai_ids_to_delete.append(sec_id)
+                    except ValueError:
+                        continue
+
                 await session.commit()
-                counts["document_chunks"] += int(result.rowcount or 0)
 
-            # Prune the txtai backend too so searches don't return stale hits.
-            if daemon._backend is not None:
+            # Prune the txtai backend via its delete API so the in-memory
+            # index and pgvector rows both drop the entries.
+            if daemon._backend is not None and txtai_ids_to_delete:
                 try:
-                    ids: list[Any] = [
-                        f"{target_zone}:{vp}" if target_zone != "root" else vp
-                        for vp in virtual_paths
-                    ]
-                    deleted = int(await daemon._backend.delete(ids, zone_id=target_zone))
+                    deleted = int(
+                        await daemon._backend.delete(txtai_ids_to_delete, zone_id=target_zone)
+                    )
                     counts["txtai_docs"] += deleted
                 except Exception:
                     logger.warning(

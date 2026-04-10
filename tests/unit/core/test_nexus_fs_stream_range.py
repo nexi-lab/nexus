@@ -55,7 +55,7 @@ class _StubFS:
     def _vfs_locked(self, path, mode):
         yield
 
-    async def sys_read(self, path, *, count=None, offset=0, context=None):
+    def sys_read(self, path, *, count=None, offset=0, context=None):
         """Stub sys_read for read_range fallback path."""
         meta = self.metadata.get(path)
         if meta is None:

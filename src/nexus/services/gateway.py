@@ -63,7 +63,7 @@ class NexusFSGateway:
     # File Operations
     # =========================================================================
 
-    async def mkdir(
+    def mkdir(
         self,
         path: str,
         *,
@@ -81,7 +81,7 @@ class NexusFSGateway:
         """
         self._fs.mkdir(path, parents=parents, exist_ok=exist_ok, context=context)
 
-    async def sys_write(
+    def sys_write(
         self,
         path: str,
         buf: bytes | str,
@@ -121,7 +121,7 @@ class NexusFSGateway:
         """
         return await self._fs.write(path, buf, context=context)
 
-    async def sys_read(
+    def sys_read(
         self,
         path: str,
         *,
@@ -138,7 +138,7 @@ class NexusFSGateway:
         """
         return self._fs.sys_read(path, context=context)
 
-    async def sys_readdir(
+    def sys_readdir(
         self,
         path: str,
         *,

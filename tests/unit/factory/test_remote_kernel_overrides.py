@@ -13,7 +13,7 @@ class _DummyTransport:
 
 
 class _DummyNfs:
-    async def sys_rename(self, old_path: str, new_path: str, **kwargs: object) -> dict[str, object]:
+    def sys_rename(self, old_path: str, new_path: str, **kwargs: object) -> dict[str, object]:
         raise AssertionError("original client-side sys_rename should be replaced")
 
 

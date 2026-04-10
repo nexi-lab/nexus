@@ -72,7 +72,7 @@ class _RestApiNexusClient:
         text = content.decode("utf-8", errors="replace")
         self._client.post("/api/v2/files/write", json_body={"path": path, "content": text})
 
-    async def mkdir(self, path: str, *, parents: bool = False, exist_ok: bool = False) -> None:  # noqa: ARG002
+    def mkdir(self, path: str, *, parents: bool = False, exist_ok: bool = False) -> None:  # noqa: ARG002
         try:
             self._client.post("/api/v2/files/mkdir", json_body={"path": path})
         except Exception:
@@ -91,7 +91,7 @@ class _RestApiNexusClient:
         content = result.get("content", "") if isinstance(result, dict) else str(result)
         return content.encode("utf-8")
 
-    async def sys_readdir(self, path: str) -> list[str]:
+    def sys_readdir(self, path: str) -> list[str]:
         try:
             result = self._client.get(f"/api/v2/files/list?path={path}")
             items = result.get("items", []) if isinstance(result, dict) else []

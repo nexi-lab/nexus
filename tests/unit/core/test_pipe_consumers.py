@@ -68,7 +68,7 @@ class MockNexusFS:
             self._pipes[path] = asyncio.Queue()
         self._closed.discard(path)
 
-    async def sys_write(self, path: str, data: bytes, **kwargs: object) -> None:  # noqa: ARG002
+    def sys_write(self, path: str, data: bytes, **kwargs: object) -> None:  # noqa: ARG002
         """Write data into the pipe queue."""
         if path in self._closed or path not in self._pipes:
             from nexus.contracts.exceptions import NexusFileNotFoundError
@@ -76,7 +76,7 @@ class MockNexusFS:
             raise NexusFileNotFoundError(path=path)
         self._pipes[path].put_nowait(data)
 
-    async def sys_read(self, path: str, **kwargs: object) -> bytes:  # noqa: ARG002
+    def sys_read(self, path: str, **kwargs: object) -> bytes:  # noqa: ARG002
         """Read data from the pipe queue.
 
         Blocks briefly (50ms) when empty — simulates the real DT_PIPE
@@ -99,7 +99,7 @@ class MockNexusFS:
 
             raise NexusFileNotFoundError(path=path) from None
 
-    async def sys_unlink(self, path: str, **kwargs: object) -> None:  # noqa: ARG002
+    def sys_unlink(self, path: str, **kwargs: object) -> None:  # noqa: ARG002
         """Close the pipe — subsequent reads raise NexusFileNotFoundError."""
         self._closed.add(path)
 

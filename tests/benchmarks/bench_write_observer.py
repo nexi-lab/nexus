@@ -133,7 +133,7 @@ async def _bench_piped_async(tmp_dir: Path) -> list[float]:
             """Tier 2 NexusFS public sync API — sync passthrough to kernel."""
             return self._kernel.pipe_read_nowait(path)
 
-        async def sys_read(self, path: str, **kwargs: Any) -> bytes:
+        def sys_read(self, path: str, **kwargs: Any) -> bytes:
             from nexus.contracts.exceptions import NexusFileNotFoundError
 
             # Blocking read: poll pipe_read_nowait with asyncio.sleep
@@ -149,7 +149,7 @@ async def _bench_piped_async(tmp_dir: Path) -> list[float]:
                         raise NexusFileNotFoundError(path, f"Pipe closed: {path}") from None
                     raise
 
-        async def sys_unlink(self, path: str, **kwargs: Any) -> dict:
+        def sys_unlink(self, path: str, **kwargs: Any) -> dict:
             try:
                 self._kernel.close_pipe(path)
             except (RuntimeError, Exception):

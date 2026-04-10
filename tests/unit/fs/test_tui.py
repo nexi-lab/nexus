@@ -641,7 +641,7 @@ class TestPlaygroundApp:
         class _Kernel:
             router = _Router()
 
-            async def sys_readdir(self, path, recursive=False, details=False, context=None):
+            def sys_readdir(self, path, recursive=False, details=False, context=None):
                 assert path == "/gws/docs"
                 return []
 
@@ -682,7 +682,7 @@ class TestPlaygroundApp:
         class _Kernel:
             router = _Router()
 
-            async def sys_readdir(self, path, recursive=False, details=False, context=None):
+            def sys_readdir(self, path, recursive=False, details=False, context=None):
                 assert path == "/gws/docs"
                 return []
 
@@ -721,7 +721,7 @@ class TestPlaygroundApp:
         class _Kernel:
             router = _Router()
 
-            async def sys_readdir(self, path, recursive=False, details=False, context=None):
+            def sys_readdir(self, path, recursive=False, details=False, context=None):
                 assert path == "/gws/docs"
                 return [
                     {
@@ -778,10 +778,10 @@ class TestPlaygroundApp:
         class _Kernel:
             router = _Router()
 
-            async def sys_readdir(self, path, recursive=False, details=False, context=None):
+            def sys_readdir(self, path, recursive=False, details=False, context=None):
                 return []
 
-            async def sys_stat(self, path, context=None):
+            def sys_stat(self, path, context=None):
                 return None
 
         fs = ContextualNexusFS(_Kernel())

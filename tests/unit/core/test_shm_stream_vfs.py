@@ -93,7 +93,7 @@ class TestShmStreamVFS:
         backend.write_nowait(b"hello shm")
 
         # Read via sys_read — should hit the _custom_stream_backends branch
-        data = await nx.sys_read(path, offset=0)
+        data = nx.sys_read(path, offset=0)
         assert data == b"hello shm"
 
         nx.close()
@@ -156,7 +156,7 @@ class TestShmStreamVFS:
         backend.write_nowait(b"msg3")
 
         # Read offset 0 → first message
-        data1 = await nx.sys_read(path, offset=0)
+        data1 = nx.sys_read(path, offset=0)
         assert data1 == b"msg1"
 
         nx.close()

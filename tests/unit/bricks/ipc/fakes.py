@@ -51,7 +51,7 @@ class InMemoryStorageDriver:
     # Alias for backward compatibility
     read = sys_read
 
-    async def write(
+    def write(
         self, path: str, data: bytes, zone_id_compat: str | None = None, *, context: Any = None
     ) -> None:
         zone_id = zone_id_compat if zone_id_compat is not None else self._zone_id(context)

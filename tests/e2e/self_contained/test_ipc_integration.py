@@ -277,7 +277,7 @@ class TestDeadLetterAndTTLSweep:
         from nexus.bricks.ipc.conventions import message_path_in_inbox
 
         msg_path = message_path_in_inbox("agent:bob", env.id, env.timestamp)
-        await vfs.write(msg_path, env.to_bytes(), ZONE)
+        vfs.write(msg_path, env.to_bytes(), ZONE)
 
         # Also send a valid (non-expired) message
         valid_env = MessageEnvelope(

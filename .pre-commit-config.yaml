@@ -116,6 +116,14 @@ repos:
         pass_filenames: false
         files: ^(rust/nexus_kernel/src/.*\.rs|scripts/codegen_kernel_abi\.py|stubs/nexus_kernel/|src/nexus/core/kernel_)$
 
+      # Guard: block push to already-merged PR branches (requires gh CLI)
+      - id: check-merged-branch
+        name: Block Push to Merged Branch
+        entry: scripts/check_merged_branch.sh
+        language: script
+        stages: [pre-push]
+        always_run: true
+
       # Rust quality: no todo!()/unimplemented!() in committed code
       - id: rust-no-todo
         name: "No todo!/unimplemented! in Rust"

@@ -203,7 +203,7 @@ def test_mount_test_runs_doctor_without_persisting(tmp_path, monkeypatch) -> Non
     envelope = json.loads(result.output)
     assert "Mounts" in envelope["data"]
     assert not (tmp_path / "mounts.json").exists()
-    mock_mount.assert_awaited_once_with("s3://my-bucket")
+    mock_mount.assert_awaited_once_with("s3://my-bucket", ephemeral=True)
 
 
 def test_mount_test_restores_existing_mounts_file(tmp_path, monkeypatch) -> None:

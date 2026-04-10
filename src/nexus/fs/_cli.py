@@ -67,13 +67,24 @@ _STALE_NAG_THRESHOLD = 50  # warn once after this many total entries
 
 
 def _is_local_uri_stale(uri: str) -> bool:
-    """Return True if a local:// URI points to a path that no longer exists."""
+    """Return True if a local:// URI points to a path that no longer exists.
+
+    Only absolute paths (after expanduser) are checked — relative paths like
+    ``local://./data`` are cwd-sensitive and cannot be reliably evaluated
+    after the process that created them has exited.  Such entries are
+    conservatively treated as live (returns False) so prune never silently
+    removes a mount that might still be valid.
+    """
     if not uri.startswith("local://"):
         return False
     path_part = uri[len("local://") :]
     from pathlib import Path
 
-    return not Path(path_part).exists()
+    p = Path(path_part).expanduser()
+    if not p.is_absolute():
+        # Relative path — cannot safely determine staleness across cwd changes.
+        return False
+    return not p.exists()
 
 
 def _check_uri_liveness(uri: str) -> str:
@@ -151,18 +162,27 @@ def _rotate_backups(state_dir_path: "Path", keep: int = 3) -> None:  # noqa: F82
             old.unlink()
 
 
-def _write_backup(mounts_file_path: "Path") -> None:  # noqa: F821
-    """Write a timestamped backup of mounts.json, then rotate to keep N=3."""
+def _write_backup(mounts_file_path: "Path") -> bool:  # noqa: F821
+    """Write a timestamped backup of mounts.json, then rotate to keep N=3.
+
+    Microseconds are included in the filename so rapid successive prune calls
+    within the same second never overwrite each other's pre-prune snapshots.
+
+    Returns True if the backup was successfully created, False on any OSError.
+    Callers that perform destructive operations should treat False as a hard
+    stop rather than proceeding without a rollback artifact.
+    """
     import datetime
     import shutil
 
-    ts = datetime.datetime.now().strftime("%Y%m%dT%H%M%S")
+    ts = datetime.datetime.now().strftime("%Y%m%dT%H%M%S%f")
     bak = mounts_file_path.parent / f"mounts.json.bak.{ts}"
     try:
         shutil.copy2(mounts_file_path, bak)
         _rotate_backups(mounts_file_path.parent)
+        return True
     except OSError:
-        pass  # best-effort; don't abort the prune
+        return False
 
 
 class _MountGroup(click.Group):
@@ -175,7 +195,12 @@ class _MountGroup(click.Group):
 
     def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
         known = set(self.commands)
-        if args and args[0] not in known and not args[0].startswith("-"):
+        # Route to 'add' whenever no known subcommand appears in the token list.
+        # This handles both the original token-first form ("mount s3://bucket")
+        # AND the option-first legacy form ("mount --at /mp s3://bucket") that
+        # old scripts depend on.  Help/version flags are passed through unchanged
+        # so the group help text is still reachable.
+        if args and args[0] not in ("-h", "--help") and not any(a in known for a in args):
             args = ["add"] + list(args)
         return super().parse_args(ctx, args)
 
@@ -370,6 +395,19 @@ def mount_rm(identifier: str, output_opts: OutputOptions) -> None:
     from nexus.fs._paths import load_persisted_mounts, save_persisted_mounts
 
     entries = load_persisted_mounts()
+
+    # Name match is checked first; fail on ambiguity so two mounts sharing the
+    # same label don't silently both disappear.
+    by_name = [e for e in entries if e.get("name") == identifier]
+    if len(by_name) > 1:
+        uris = ", ".join(e["uri"] for e in by_name)
+        click.echo(
+            f"Error: {len(by_name)} mounts share the name {identifier!r} ({uris}). "
+            "Use the URI to disambiguate.",
+            err=True,
+        )
+        sys.exit(1)
+
     remaining = [e for e in entries if e.get("name") != identifier and e["uri"] != identifier]
     removed = len(entries) - len(remaining)
 
@@ -398,26 +436,16 @@ def mount_test(uris: tuple[str, ...], output_opts: OutputOptions) -> None:
       nexus-fs mount test s3://my-bucket gcs://project/bucket
     """
     from nexus.fs._doctor import DoctorStatus, render_doctor, run_all_checks
-    from nexus.fs._paths import mounts_file
     from nexus.fs._sync import run_sync
 
     async def _run() -> dict[str, list[dict[str, str | float | None]]]:
         from nexus.fs import mount
 
-        mf = mounts_file()
-        # Snapshot raw bytes so we can restore byte-for-byte, preserving
-        # the original schema version without normalising through our reader.
-        previous_raw: bytes | None = mf.read_bytes() if mf.exists() else None
-        try:
-            fs = await mount(*uris)
-            results = await run_all_checks(fs=fs)
-        finally:
-            if previous_raw is not None:
-                with contextlib.suppress(OSError):
-                    mf.write_bytes(previous_raw)
-            else:
-                with contextlib.suppress(OSError):
-                    mf.unlink()
+        # Use ephemeral=True so mounts.json is never touched — no snapshot/restore
+        # gymnastics needed, and concurrent mount operations on the shared registry
+        # are never lost.
+        fs = await mount(*uris, ephemeral=True)
+        results = await run_all_checks(fs=fs)
 
         return {
             section: [{**asdict(r), "status": r.status.value} for r in checks]
@@ -595,8 +623,14 @@ def mount_prune(
         )
 
     mf = mounts_file()
-    if mf.exists():
-        _write_backup(mf)
+    if mf.exists() and not _write_backup(mf):
+        click.echo(
+            "Error: could not create a backup of mounts.json before pruning. "
+            "Aborting to protect your mount configuration. "
+            "Free disk space and retry, or use --dry-run to inspect entries.",
+            err=True,
+        )
+        sys.exit(1)
 
     save_persisted_mounts(to_keep, merge=False)
     click.echo(

@@ -146,14 +146,23 @@ async def _run_chat(
         cwd = os.getcwd()
         agent_path = "/root/agents/default"
 
-        _stream_read = getattr(nx, "_stream_read", None)
+        # Async wrappers for sync NexusFS syscalls — agent_runtime type
+        # aliases require Awaitable return types for mypy strict mode.
+        async def _async_sys_read(path: str) -> bytes:
+            return nx.sys_read(path)
+
+        async def _async_sys_write(path: str, buf: bytes) -> dict:
+            return nx.sys_write(path, buf)
+
+        # StreamManager stream_read for DT_STREAM token delivery
+        _stream_read = getattr(stream_mgr, "stream_read", None) if stream_mgr else None
 
         async def _fallback_stream_read(path: str, offset: int) -> tuple[bytes, int]:
             raise NotImplementedError("Streaming not available in REMOTE mode")
 
         loop = ManagedAgentLoop(
-            sys_read=nx.sys_read,
-            sys_write=nx.sys_write,
+            sys_read=_async_sys_read,
+            sys_write=_async_sys_write,
             stream_read=_stream_read or _fallback_stream_read,
             llm_backend=llm_backend,
             agent_path=agent_path,
@@ -162,7 +171,7 @@ async def _run_chat(
             proc_path="/root/proc/chat-0",
             model=model,
             compactor=DefaultCompactionStrategy(
-                sys_write=nx.sys_write,
+                sys_write=_async_sys_write,
                 agent_path=agent_path,
             ),
             cwd=cwd,

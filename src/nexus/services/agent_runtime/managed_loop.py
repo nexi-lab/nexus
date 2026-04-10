@@ -69,8 +69,8 @@ _DEFAULT_MAX_RETRIES = 5
 _DEFAULT_BASE_DELAY = 1.0  # seconds
 
 # Kernel syscall callables (injected from NexusFS).
-SysReadFn = Callable[..., Any]
-SysWriteFn = Callable[..., Any]
+SysReadFn = Callable[[str], Awaitable[bytes]]
+SysWriteFn = Callable[[str, bytes], Awaitable[Any]]
 # StreamReadFn: (path, offset, blocking) → (data, next_offset)
 StreamReadFn = Callable[[str, int], Awaitable[tuple[bytes, int]]]
 

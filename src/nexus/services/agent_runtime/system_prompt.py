@@ -18,13 +18,12 @@ import logging
 import os
 import platform
 import subprocess
-from collections.abc import Callable
-from typing import Any
+from collections.abc import Awaitable, Callable
 
 logger = logging.getLogger(__name__)
 
 # Type alias for injected kernel callable
-SysReadFn = Callable[..., Any]
+SysReadFn = Callable[[str], Awaitable[bytes]]
 
 # Optional prompt fragment names (loaded from {agent_path}/prompts/{name}.md)
 _PROMPT_FRAGMENTS = (

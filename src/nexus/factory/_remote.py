@@ -56,6 +56,9 @@ def install_remote_kernel_rpc_overrides(nfs: "NexusFS", transport: "RPCTransport
 
         data = await _asyncio.to_thread(transport.read_file, path)
         if offset or count is not None:
+            # The server-side sys_read RPC does not support range params yet, so
+            # we fetch the full file and slice client-side. Bandwidth is O(file_size)
+            # for range reads, but correctness is guaranteed.
             data = data[offset : offset + count] if count is not None else data[offset:]
         return data
 

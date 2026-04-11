@@ -227,7 +227,11 @@ def overlay_owns_path(
     - Backend has no ``SKILL_NAME`` (overlay inactive)
     - ``backend_path`` is not under the configured readme directory
     - Backend opts to defer to real data (``VIRTUAL_README_DEFERS_TO_BACKEND``)
-      AND real content exists at the path
+      AND the real ``.readme/`` directory exists on the backend
+      (subtree-level ownership — Issue #3728 round 6 finding #16).
+      The whole subtree is handed over to the backend atomically so
+      listings, reads, writes, and stats cannot disagree about a
+      "partly real, partly virtual" state.
 
     Propagates ``ValueError`` for malformed paths (traversal, null byte,
     backslash) so callers can raise a loud error rather than silently
@@ -238,10 +242,57 @@ def overlay_owns_path(
     parts = _parse_readme_path_parts(backend_path, readme_dir=_readme_dir_for(backend))
     if parts is None:
         return False
-    return not (
-        _defers_to_backend(backend)
-        and _real_content_exists(backend, backend_path or "", context=context)
-    )
+    return not (_defers_to_backend(backend) and _real_readme_root_exists(backend, context=context))
+
+
+def _real_readme_root_exists(backend: Any, context: Any | None = None) -> bool:
+    """Probe the backend for a real ``.readme/`` directory (subtree root).
+
+    Issue #3728 round 6 finding #16: deferral must be subtree-atomic to
+    avoid "partly real, partly virtual" mixed states.  We probe the
+    root ``.readme`` path only — if it exists, the whole subtree is
+    considered user data and the overlay steps aside entirely.
+
+    Returns ``True`` only when the backend confirms existence via
+    either ``content_exists`` or ``list_dir`` returning a non-empty
+    result.  Any exception or missing probe method → ``False``.
+    """
+    readme_dir = _readme_dir_for(backend)
+    # 1) content_exists probe (cheap for backends that implement it)
+    if _real_content_exists(backend, readme_dir, context=context):
+        return True
+    # 2) list_dir probe (for backends whose content_exists is a stub
+    #    but whose list_dir returns real directory entries).
+    try:
+        from dataclasses import replace as _replace
+
+        from nexus.contracts.types import OperationContext
+
+        if context is not None:
+            try:
+                probe_ctx: Any = _replace(context, backend_path=readme_dir)
+            except Exception:
+                probe_ctx = OperationContext(
+                    user_id=getattr(context, "user_id", "system") or "system",
+                    groups=list(getattr(context, "groups", []) or []),
+                    zone_id=getattr(context, "zone_id", None),
+                    is_system=getattr(context, "is_system", False),
+                    backend_path=readme_dir,
+                )
+        else:
+            probe_ctx = OperationContext(
+                user_id="system",
+                groups=[],
+                is_system=True,
+                backend_path=readme_dir,
+            )
+        list_fn = getattr(backend, "list_dir", None)
+        if callable(list_fn):
+            entries = list_fn(readme_dir, context=probe_ctx)
+            return bool(entries)
+    except Exception:
+        return False
+    return False
 
 
 def dispatch_virtual_readme_read(

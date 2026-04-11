@@ -3912,18 +3912,66 @@ class NexusFS(  # type: ignore[misc]
         self._reject_if_virtual_readme(dst_path, context, op="copy")
 
         # Virtual .readme/ source: bypass metastore and copy the virtual
-        # bytes to the destination.  Enforces ``FileExistsError`` on
-        # existing destinations to match the non-virtual copy semantics
-        # (round 5 finding #11 — ``write()`` alone is an overwrite path).
+        # bytes to the destination.  Virtual docs have no metastore row
+        # so the normal ``src_meta.get`` path below would fail before
+        # hooks run — do the safety checks the normal branch does
+        # (source READ permission via the copy hook, destination
+        # existence on BOTH metastore and backend) here first.
+        # Round 6 findings #14 + #15.
         _virtual_src_bytes = self._try_virtual_readme_bytes(src_path, context)
         if _virtual_src_bytes is not None:
-            # Destination-exists check — same contract as the regular
-            # copy branch below.
+            # Enforce source READ permission + destination WRITE
+            # permission via the same copy-hook pipeline the normal
+            # copy path runs.  Permission hooks receive a synthesized
+            # metadata dict since virtual docs have no row.
+            from nexus.contracts.vfs_hooks import CopyHookContext as _CHC
+
+            _virtual_copy_ctx = _CHC(
+                src_path=src_path,
+                dst_path=dst_path,
+                context=context,
+                zone_id=zone_id,
+                agent_id=agent_id,
+                metadata=None,  # virtual docs have no FileMetadata row
+            )
+            self._kernel.dispatch_pre_hooks("copy", _virtual_copy_ctx)
+
+            # Destination exists check — both metastore AND backend
+            # (path-addressed external connectors may have a real file
+            # at backend_path that hasn't been synced into the metastore
+            # yet; the metastore-only check would let us overwrite it).
             if dst_route.metastore.exists(dst_path):
                 raise FileExistsError(f"Destination path already exists: {dst_path}")
+            dst_backend_path = getattr(dst_route, "backend_path", "") or ""
+            dst_backend = getattr(dst_route, "backend", None)
+            _content_exists = getattr(dst_backend, "content_exists", None)
+            if dst_backend is not None and callable(_content_exists):
+                from dataclasses import replace as _replace
+
+                try:
+                    _probe_ctx = (
+                        _replace(context, backend_path=dst_backend_path)
+                        if context is not None
+                        else None
+                    )
+                except Exception:
+                    _probe_ctx = None
+                try:
+                    if _content_exists(dst_backend_path, context=_probe_ctx):
+                        raise FileExistsError(
+                            f"Destination path already exists on backend: {dst_path}"
+                        )
+                except FileExistsError:
+                    raise
+                except Exception:
+                    # Probe failed — fall through to the write and let
+                    # the backend's own create-semantics handle it.
+                    pass
+
             # Route through the normal write path for post-hooks +
             # metadata + return-shape parity.
             write_result = await self.write(dst_path, _virtual_src_bytes, context=context)
+            self._kernel.dispatch_post_hooks("copy", _virtual_copy_ctx)
             return {
                 "src_path": src_path,
                 "dst_path": dst_path,

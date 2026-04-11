@@ -284,10 +284,11 @@ class ReadmeDocMixin:
         """Get the full path to the .readme directory."""
         return self.get_doc_generator().get_readme_path(mount_path)
 
-    async def write_readme(self, mount_path: str, filesystem: Any = None) -> dict[str, str]:
-        """Generate and write .readme/ directory to the filesystem."""
-        self._mount_path = mount_path
-        return await self.get_doc_generator().write_readme(mount_path, filesystem)
+    # NOTE (Issue #3728): ``write_readme`` was removed. The virtual
+    # ``.readme/`` overlay now serves docs on-demand from class metadata
+    # via ``nexus.backends.connectors.schema_generator.dispatch_virtual_readme_*``,
+    # so materializing files into the backend is no longer needed and
+    # would drift from the canonical (class-metadata-derived) content.
 
     def format_error_with_skill_ref(
         self,

@@ -449,6 +449,84 @@ class NexusFS(  # type: ignore[misc]
             )
         return context.zone_id, context.agent_id, getattr(context, "is_admin", False)
 
+    # =========================================================================
+    # Virtual .readme/ overlay helper (Issue #3728)
+    # =========================================================================
+
+    def _try_virtual_readme_stat(
+        self,
+        path: str,
+        ctx: OperationContext,
+    ) -> dict[str, Any] | None:
+        """Return a stat dict for a virtual ``.readme/`` entry, or ``None``.
+
+        Called from ``sys_stat`` when the metastore has no entry for the
+        path — if the path routes to a skill backend and falls under
+        ``.readme/``, synthesize a stat dict from the virtual tree.
+
+        Returns ``None`` for any of: path doesn't route anywhere, backend
+        has no skill docs, path isn't under ``.readme/``, or normalization
+        fails.  The caller treats ``None`` as "really not found" and
+        continues with the normal sys_stat miss path.
+        """
+        try:
+            _, _, is_admin = self._get_context_identity(ctx)
+            route = self.router.route(
+                path, is_admin=is_admin, check_write=False, zone_id=self._zone_id
+            )
+        except Exception:
+            return None
+
+        backend = getattr(route, "backend", None)
+        if backend is None:
+            return None
+
+        mount_point = getattr(route, "mount_point", "") or ""
+        backend_path = getattr(route, "backend_path", "") or ""
+
+        from nexus.backends.connectors.schema_generator import (
+            _parse_readme_path_parts,
+            _readme_dir_for,
+            get_virtual_readme_tree_for_backend,
+        )
+
+        try:
+            parts = _parse_readme_path_parts(backend_path, readme_dir=_readme_dir_for(backend))
+        except ValueError:
+            return None  # malformed path — let sys_stat return None
+
+        if parts is None:
+            return None  # not under .readme/
+
+        try:
+            tree = get_virtual_readme_tree_for_backend(backend, mount_point)
+        except Exception:
+            return None
+
+        entry = tree.find(parts)
+        if entry is None:
+            return None  # under .readme/ but not a known file
+
+        backend_name = getattr(backend, "name", "") or ""
+        return {
+            "path": path,
+            "backend_name": backend_name,
+            "physical_path": "",
+            "size": entry.size(),
+            "etag": None,
+            "mime_type": "inode/directory" if entry.is_dir else "text/markdown",
+            "created_at": None,
+            "modified_at": None,
+            "is_directory": entry.is_dir,
+            "entry_type": 1 if entry.is_dir else 0,
+            "owner": ctx.user_id,
+            "group": ctx.user_id,
+            # Read-only — virtual files cannot be modified.
+            "mode": 0o555 if entry.is_dir else 0o444,
+            "version": 1,
+            "zone_id": self._zone_id,
+        }
+
     # Issue #1790: _check_zone_writable() deleted — now handled by
     def _build_write_metadata(
         self,
@@ -736,6 +814,12 @@ class NexusFS(  # type: ignore[misc]
             }
 
         if file_meta is None:
+            # Virtual .readme/ overlay check (Issue #3728) — before giving
+            # up, see if this is a synthetic file under a skill backend's
+            # .readme/ directory.
+            _vstat = self._try_virtual_readme_stat(normalized, ctx)
+            if _vstat is not None:
+                return _vstat
             return None
 
         result: dict[str, Any] = {
@@ -1219,19 +1303,39 @@ class NexusFS(  # type: ignore[misc]
         )
         _route_backend = getattr(_route, "backend", None)
         _route_backend_path = getattr(_route, "backend_path", "") or ""
+        _route_mount_point = getattr(_route, "mount_point", "") or ""
         if isinstance(_route, ExternalRouteResult) and _route_backend is not None:
             _ctx = (
-                _dc_replace(context, backend_path=_route_backend_path, virtual_path=path)
+                _dc_replace(
+                    context,
+                    backend_path=_route_backend_path,
+                    virtual_path=path,
+                    mount_path=_route_mount_point,
+                )
                 if context
                 else OperationContext(
                     user_id="anonymous",
                     groups=[],
                     backend_path=_route_backend_path,
                     virtual_path=path,
+                    mount_path=_route_mount_point,
                 )
             )
             try:
-                data = _route_backend.read_content(_route_backend_path, context=_ctx)
+                # Virtual .readme/ overlay check (Issue #3728).  If the path
+                # is under a skill backend's .readme/ directory, serve from
+                # the generated tree instead of calling the real backend.
+                from nexus.backends.connectors.schema_generator import (
+                    dispatch_virtual_readme_read,
+                )
+
+                _virtual_data = dispatch_virtual_readme_read(
+                    _route_backend, _route_mount_point, _route_backend_path
+                )
+                if _virtual_data is not None:
+                    data = _virtual_data
+                else:
+                    data = _route_backend.read_content(_route_backend_path, context=_ctx)
                 if offset or count is not None:
                     data = data[offset : offset + count] if count is not None else data[offset:]
                 return data
@@ -1542,7 +1646,13 @@ class NexusFS(  # type: ignore[misc]
                 from dataclasses import replace as _replace
 
                 read_context = (
-                    _replace(context, backend_path=route.backend_path) if context else None
+                    _replace(
+                        context,
+                        backend_path=route.backend_path,
+                        mount_path=route.mount_point,
+                    )
+                    if context
+                    else None
                 )
                 return _rb.read_content_range(meta.etag, start, end, context=read_context)
 
@@ -1720,10 +1830,19 @@ class NexusFS(  # type: ignore[misc]
 
         # Add backend_path to context for path-based connectors
         if context:
-            context = _dc_replace(context, backend_path=route.backend_path, virtual_path=path)
+            context = _dc_replace(
+                context,
+                backend_path=route.backend_path,
+                virtual_path=path,
+                mount_path=route.mount_point,
+            )
         else:
             context = OperationContext(
-                user_id="anonymous", groups=[], backend_path=route.backend_path, virtual_path=path
+                user_id="anonymous",
+                groups=[],
+                backend_path=route.backend_path,
+                virtual_path=path,
+                mount_path=route.mount_point,
             )
 
         # Write content via streaming
@@ -2203,12 +2322,21 @@ class NexusFS(  # type: ignore[misc]
         from dataclasses import replace
 
         if context:
-            context = replace(context, backend_path=route.backend_path, virtual_path=path)
+            context = replace(
+                context,
+                backend_path=route.backend_path,
+                virtual_path=path,
+                mount_path=route.mount_point,
+            )
         else:
             from nexus.contracts.types import OperationContext
 
             context = OperationContext(
-                user_id="anonymous", groups=[], backend_path=route.backend_path, virtual_path=path
+                user_id="anonymous",
+                groups=[],
+                backend_path=route.backend_path,
+                virtual_path=path,
+                mount_path=route.mount_point,
             )
 
         # DT_EXTERNAL_STORAGE: backend manages own content storage.
@@ -2840,13 +2968,19 @@ class NexusFS(  # type: ignore[misc]
                     path, is_admin=is_admin, check_write=True, zone_id=self._zone_id
                 )
                 _write_ctx = (
-                    _dc_replace(context, backend_path=route.backend_path, virtual_path=path)
+                    _dc_replace(
+                        context,
+                        backend_path=route.backend_path,
+                        virtual_path=path,
+                        mount_path=route.mount_point,
+                    )
                     if context
                     else OperationContext(
                         user_id="anonymous",
                         groups=[],
                         backend_path=route.backend_path,
                         virtual_path=path,
+                        mount_path=route.mount_point,
                     )
                 )
                 content_hash = route.backend.write_content(content, context=_write_ctx).content_id
@@ -3779,6 +3913,7 @@ class NexusFS(  # type: ignore[misc]
                             _ctx_replace(
                                 context,
                                 backend_path=src_route.backend_path,
+                                mount_path=src_route.mount_point,
                             )
                             if context
                             else context
@@ -3914,6 +4049,11 @@ class NexusFS(  # type: ignore[misc]
         # Get file metadata
         meta = self.metadata.get(path)
         if meta is None:
+            # Virtual .readme/ overlay check (Issue #3728) — before raising,
+            # see if the path routes to a skill backend's .readme/ tree.
+            _vstat = self._try_virtual_readme_stat(path, ctx)
+            if _vstat is not None:
+                return _vstat
             raise NexusFileNotFoundError(path)
 
         # Get size from backend if not in metadata
@@ -3933,7 +4073,11 @@ class NexusFS(  # type: ignore[misc]
                 if context:
                     from dataclasses import replace
 
-                    size_context = replace(context, backend_path=route.backend_path)
+                    size_context = replace(
+                        context,
+                        backend_path=route.backend_path,
+                        mount_path=route.mount_point,
+                    )
                 size = route.backend.get_content_size(meta.etag, context=size_context)
             except Exception as exc:
                 logger.debug("Failed to get content size for %s: %s", path, exc)
@@ -4764,17 +4908,36 @@ class NexusFS(  # type: ignore[misc]
                 backend = getattr(_route, "backend", None)
                 if isinstance(_route, ExternalRouteResult) and backend is not None:
                     backend_path = getattr(_route, "backend_path", "") or ""
+                    mount_point = getattr(_route, "mount_point", "") or ""
                     _ctx = (
-                        _dc_replace(context, backend_path=backend_path, virtual_path=path)
+                        _dc_replace(
+                            context,
+                            backend_path=backend_path,
+                            virtual_path=path,
+                            mount_path=mount_point,
+                        )
                         if context
                         else OperationContext(
                             user_id="anonymous",
                             groups=[],
                             backend_path=backend_path,
                             virtual_path=path,
+                            mount_path=mount_point,
                         )
                     )
-                    entries = backend.list_dir(backend_path, context=_ctx)
+                    # Virtual .readme/ overlay check (Issue #3728).
+                    from nexus.backends.connectors.schema_generator import (
+                        dispatch_virtual_readme_list,
+                    )
+
+                    _virtual_entries = dispatch_virtual_readme_list(
+                        backend, mount_point, backend_path
+                    )
+                    entries = (
+                        _virtual_entries
+                        if _virtual_entries is not None
+                        else backend.list_dir(backend_path, context=_ctx)
+                    )
                     if entries is not None:
                         if details:
                             return [

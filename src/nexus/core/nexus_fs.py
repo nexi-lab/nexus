@@ -488,7 +488,19 @@ class NexusFS(  # type: ignore[misc]
             _parse_readme_path_parts,
             _readme_dir_for,
             get_virtual_readme_tree_for_backend,
+            overlay_owns_path,
         )
+
+        # Round 5 finding #13: defer to real backend when it owns this
+        # path, so ``sys_stat`` can't report virtual metadata for a file
+        # that ``sys_read`` serves from real storage.  Malformed paths
+        # propagate as None so sys_stat returns its normal miss result.
+        try:
+            _owns = overlay_owns_path(backend, mount_point, backend_path, context=ctx)
+        except ValueError:
+            return None
+        if not _owns:
+            return None
 
         try:
             parts = _parse_readme_path_parts(backend_path, readme_dir=_readme_dir_for(backend))
@@ -559,32 +571,22 @@ class NexusFS(  # type: ignore[misc]
         if backend is None:
             return
 
-        from nexus.backends.connectors.schema_generator import (
-            _defers_to_backend,
-            _has_skill_name,
-            _parse_readme_path_parts,
-            _readme_dir_for,
-            _real_content_exists,
-        )
-
-        if not _has_skill_name(backend):
-            return
-
         backend_path = getattr(route, "backend_path", "") or ""
+        mount_point = getattr(route, "mount_point", "") or ""
+
+        from nexus.backends.connectors.schema_generator import overlay_owns_path
+
+        # Shared ownership check — only reject when the virtual overlay
+        # is authoritative for this path.  On deferring backends
+        # (native gdrive) with real data here, the mutation is a
+        # legitimate operation against user data and passes through.
+        # Malformed paths (traversal etc.) fall through so the real
+        # call surfaces the underlying error with its own message.
         try:
-            parts = _parse_readme_path_parts(backend_path, readme_dir=_readme_dir_for(backend))
+            owns = overlay_owns_path(backend, mount_point, backend_path, context=context)
         except ValueError:
-            # Malformed path (traversal etc.) — let the real call surface it
             return
-
-        if parts is None:
-            return  # not a virtual readme path
-
-        # Finding #9: on writable backends that defer to real content,
-        # only reject when the virtual overlay is actually serving this
-        # path.  If the real backend has data here, the mutation is a
-        # legitimate user action against real data — let it through.
-        if _defers_to_backend(backend) and _real_content_exists(backend, backend_path):
+        if not owns:
             return
 
         raise PermissionError(
@@ -621,7 +623,7 @@ class NexusFS(  # type: ignore[misc]
         from nexus.backends.connectors.schema_generator import dispatch_virtual_readme_read
 
         try:
-            return dispatch_virtual_readme_read(backend, mount_point, backend_path)
+            return dispatch_virtual_readme_read(backend, mount_point, backend_path, context=context)
         except Exception:
             return None
 
@@ -1428,7 +1430,10 @@ class NexusFS(  # type: ignore[misc]
                 )
 
                 _virtual_data = dispatch_virtual_readme_read(
-                    _route_backend, _route_mount_point, _route_backend_path
+                    _route_backend,
+                    _route_mount_point,
+                    _route_backend_path,
+                    context=_ctx,
                 )
                 if _virtual_data is not None:
                     data = _virtual_data
@@ -3907,13 +3912,17 @@ class NexusFS(  # type: ignore[misc]
         self._reject_if_virtual_readme(dst_path, context, op="copy")
 
         # Virtual .readme/ source: bypass metastore and copy the virtual
-        # bytes through to the destination via sys_write after a real-file
-        # check.  This matches the behavior of ``sys_read`` + ``write``
-        # composition without requiring the source to be materialized.
+        # bytes to the destination.  Enforces ``FileExistsError`` on
+        # existing destinations to match the non-virtual copy semantics
+        # (round 5 finding #11 — ``write()`` alone is an overwrite path).
         _virtual_src_bytes = self._try_virtual_readme_bytes(src_path, context)
         if _virtual_src_bytes is not None:
-            # Use the existing write path so destination metadata +
-            # post-hooks fire normally.
+            # Destination-exists check — same contract as the regular
+            # copy branch below.
+            if dst_route.metastore.exists(dst_path):
+                raise FileExistsError(f"Destination path already exists: {dst_path}")
+            # Route through the normal write path for post-hooks +
+            # metadata + return-shape parity.
             write_result = await self.write(dst_path, _virtual_src_bytes, context=context)
             return {
                 "src_path": src_path,
@@ -5094,7 +5103,7 @@ class NexusFS(  # type: ignore[misc]
                     )
 
                     _virtual_entries = dispatch_virtual_readme_list(
-                        backend, mount_point, backend_path
+                        backend, mount_point, backend_path, context=_ctx
                     )
                     if _virtual_entries is not None:
                         entries = _virtual_entries

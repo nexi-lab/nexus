@@ -158,22 +158,50 @@ def _defers_to_backend(backend: Any) -> bool:
     return bool(getattr(type(backend), "VIRTUAL_README_DEFERS_TO_BACKEND", False))
 
 
-def _real_content_exists(backend: Any, backend_path: str) -> bool:
+def _real_content_exists(
+    backend: Any,
+    backend_path: str,
+    context: Any | None = None,
+) -> bool:
     """Best-effort probe: does the real backend have content at this path?
 
-    Returns True only when the backend explicitly confirms existence —
-    any exception or missing probe method is treated as "does not exist"
+    When a caller context is supplied, we reuse its ``user_id`` / ``zone_id``
+    so user-scoped connectors (native Google Drive, etc.) can actually
+    resolve an auth token and answer the question.  If no context is
+    supplied, fall back to a synthetic system context — this path is
+    safe for CLI-backed connectors whose ``content_exists`` is a stub
+    that returns ``False`` without needing auth.
+
+    Returns ``True`` only when the backend explicitly confirms existence.
+    Any exception or missing probe method is treated as "does not exist"
     so the overlay still works on backends without a cheap exists check.
     """
     try:
+        from dataclasses import replace as _replace
+
         from nexus.contracts.types import OperationContext
 
-        probe_ctx = OperationContext(
-            user_id="system",
-            groups=[],
-            is_system=True,
-            backend_path=backend_path,
-        )
+        probe_ctx: Any
+        if context is not None:
+            # Reuse the caller's identity and zone so auth-sensitive probes
+            # execute against the same credentials the original request did.
+            try:
+                probe_ctx = _replace(context, backend_path=backend_path)
+            except Exception:
+                probe_ctx = OperationContext(
+                    user_id=getattr(context, "user_id", "system") or "system",
+                    groups=list(getattr(context, "groups", []) or []),
+                    zone_id=getattr(context, "zone_id", None),
+                    is_system=getattr(context, "is_system", False),
+                    backend_path=backend_path,
+                )
+        else:
+            probe_ctx = OperationContext(
+                user_id="system",
+                groups=[],
+                is_system=True,
+                backend_path=backend_path,
+            )
         exists_fn = getattr(backend, "content_exists", None)
         if callable(exists_fn):
             return bool(exists_fn(backend_path, context=probe_ctx))
@@ -182,10 +210,45 @@ def _real_content_exists(backend: Any, backend_path: str) -> bool:
     return False
 
 
+def overlay_owns_path(
+    backend: Any,
+    mount_path: str,  # noqa: ARG001 — kept for API symmetry with dispatchers
+    backend_path: str | None,
+    context: Any | None = None,
+) -> bool:
+    """Return True if the virtual ``.readme/`` overlay authoritatively
+    owns ``backend_path`` on this ``backend``.
+
+    Single decision point used by every read/list/stat/exists/write
+    code path (Issue #3728 round 5 refactor) — ensures reads, writes,
+    and stats agree on who owns a given path.
+
+    Returns False when:
+    - Backend has no ``SKILL_NAME`` (overlay inactive)
+    - ``backend_path`` is not under the configured readme directory
+    - Backend opts to defer to real data (``VIRTUAL_README_DEFERS_TO_BACKEND``)
+      AND real content exists at the path
+
+    Propagates ``ValueError`` for malformed paths (traversal, null byte,
+    backslash) so callers can raise a loud error rather than silently
+    falling through to the real backend (Decision #4A).
+    """
+    if not _has_skill_name(backend):
+        return False
+    parts = _parse_readme_path_parts(backend_path, readme_dir=_readme_dir_for(backend))
+    if parts is None:
+        return False
+    return not (
+        _defers_to_backend(backend)
+        and _real_content_exists(backend, backend_path or "", context=context)
+    )
+
+
 def dispatch_virtual_readme_read(
     backend: Any,
     mount_path: str,
     backend_path: str | None,
+    context: Any | None = None,
 ) -> bytes | None:
     """Serve a read from the virtual ``.readme/`` overlay if it matches.
 
@@ -204,18 +267,12 @@ def dispatch_virtual_readme_read(
           non-skill backends return ``None`` from the ``_has_skill_name``
           check above, so this only fires for misconfigured skill backends.
     """
-    if not _has_skill_name(backend):
+    if not overlay_owns_path(backend, mount_path, backend_path, context=context):
         return None
 
     parts = _parse_readme_path_parts(backend_path, readme_dir=_readme_dir_for(backend))
-    if parts is None:
-        return None
-
-    # Finding #9: on writable path-addressed connectors (native gdrive),
-    # real user files at ``.readme/...`` must shadow the virtual overlay.
-    # Return None so the caller falls through to the real backend read.
-    if _defers_to_backend(backend) and _real_content_exists(backend, backend_path):
-        return None
+    # overlay_owns_path guarantees parts is not None here
+    assert parts is not None
 
     from nexus.contracts.exceptions import NexusFileNotFoundError
 
@@ -232,6 +289,7 @@ def dispatch_virtual_readme_list(
     backend: Any,
     mount_path: str,
     backend_path: str | None,
+    context: Any | None = None,
 ) -> list[str] | None:
     """List a directory from the virtual ``.readme/`` overlay if it matches.
 
@@ -245,16 +303,11 @@ def dispatch_virtual_readme_list(
         ``NotADirectoryError`` — path matches a virtual file, not a directory.
         ``ValueError`` — path traversal.
     """
-    if not _has_skill_name(backend):
+    if not overlay_owns_path(backend, mount_path, backend_path, context=context):
         return None
 
     parts = _parse_readme_path_parts(backend_path, readme_dir=_readme_dir_for(backend))
-    if parts is None:
-        return None
-
-    # Finding #9: defer to real backend listing when it has content.
-    if _defers_to_backend(backend) and _real_content_exists(backend, backend_path):
-        return None
+    assert parts is not None
 
     from nexus.contracts.exceptions import NexusFileNotFoundError
 
@@ -271,6 +324,7 @@ def dispatch_virtual_readme_exists(
     backend: Any,
     mount_path: str,
     backend_path: str | None,
+    context: Any | None = None,
 ) -> bool | None:
     """Answer ``content_exists`` from the virtual ``.readme/`` overlay.
 
@@ -284,16 +338,22 @@ def dispatch_virtual_readme_exists(
     try:
         parts = _parse_readme_path_parts(backend_path, readme_dir=_readme_dir_for(backend))
     except ValueError:
-        # Malformed path under .readme/ — treat as non-existent (False).
+        # Malformed path under .readme/ — exists() is a predicate, not
+        # an access attempt.  Return False so callers get a definitive
+        # answer without a surprise exception.
         return False
 
     if parts is None:
         return None
 
-    # Finding #9: defer to real backend — if it has content here, the
-    # virtual overlay is not in force for this path, so let the normal
-    # exists code path answer.
-    if _defers_to_backend(backend) and _real_content_exists(backend, backend_path):
+    # Shared ownership check: fall through to real backend when the
+    # overlay isn't authoritative here (e.g. native gdrive with a real
+    # ``.readme/`` folder).
+    try:
+        _owns = overlay_owns_path(backend, mount_path, backend_path, context=context)
+    except ValueError:
+        return False
+    if not _owns:
         return None
 
     try:
@@ -308,6 +368,7 @@ def dispatch_virtual_readme_size(
     backend: Any,
     mount_path: str,
     backend_path: str | None,
+    context: Any | None = None,
 ) -> int | None:
     """Return the virtual file size under ``.readme/``.
 
@@ -318,16 +379,11 @@ def dispatch_virtual_readme_size(
     Raises ``NexusFileNotFoundError`` for virtual directories and for
     paths under ``.readme/`` that don't exist.
     """
-    if not _has_skill_name(backend):
+    if not overlay_owns_path(backend, mount_path, backend_path, context=context):
         return None
 
     parts = _parse_readme_path_parts(backend_path, readme_dir=_readme_dir_for(backend))
-    if parts is None:
-        return None
-
-    # Finding #9: defer to real backend when it has content at this path.
-    if _defers_to_backend(backend) and _real_content_exists(backend, backend_path):
-        return None
+    assert parts is not None
 
     from nexus.contracts.exceptions import NexusFileNotFoundError
 

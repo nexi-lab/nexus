@@ -200,7 +200,7 @@ class TestMountService:
         spec = HookSpec(read_hooks=(read_hook,), observers=(observer,))
         coordinator._register_service("search", svc)
         coordinator._set_hook_spec("search", spec)
-        await coordinator._mount_service("search")
+        coordinator._mount_service("search")
 
         assert dispatch.read_hook_count == 1
         assert dispatch.observer_count == 1
@@ -211,7 +211,7 @@ class TestMountService:
     ) -> None:
         svc = _FakeService()
         coordinator._register_service("search", svc)
-        await coordinator._mount_service("search")
+        coordinator._mount_service("search")
         assert dispatch.read_hook_count == 0
         assert dispatch.observer_count == 0
 
@@ -231,7 +231,7 @@ class TestUnmountService:
         spec = HookSpec(read_hooks=(read_hook,))
         coordinator._register_service("search", svc)
         coordinator._set_hook_spec("search", spec)
-        await coordinator._mount_service("search")
+        coordinator._mount_service("search")
         assert dispatch.read_hook_count == 1
 
         coordinator._unmount_service("search")
@@ -251,7 +251,7 @@ class TestUnregisterServiceFull:
     ) -> None:
         svc = _FakeService()
         coordinator._register_service("search", svc)
-        await coordinator._mount_service("search")
+        coordinator._mount_service("search")
         coordinator.unregister_service_full("search")
 
         # Gone from registry
@@ -275,7 +275,7 @@ class TestSwapService:
         svc1 = _FakeHookService(hook_spec_value=spec1)
         coordinator._register_service("search", svc1, exports=("glob",))
         coordinator._set_hook_spec("search", spec1)
-        await coordinator._mount_service("search")
+        coordinator._mount_service("search")
         assert dispatch.read_hook_count == 1
 
         hook2 = MagicMock()
@@ -299,7 +299,7 @@ class TestSwapService:
         """Verify that service(name) NEVER returns None during swap."""
         svc1 = _FakeHookService()
         coordinator._register_service("search", svc1, exports=("glob",))
-        await coordinator._mount_service("search")
+        coordinator._mount_service("search")
 
         assert coordinator.service("search") is not None
 
@@ -318,7 +318,7 @@ class TestSwapService:
         """Q1 services can be swapped via refcount drain (#1452)."""
         svc1 = _FakeService()  # no hook_spec
         coordinator._register_service("search", svc1, exports=("glob",))
-        await coordinator._mount_service("search")
+        coordinator._mount_service("search")
 
         svc2 = _FakeServiceV2()
         await coordinator.swap_service("search", svc2, exports=("glob",))
@@ -340,7 +340,7 @@ class TestSwapService:
         # Register then set hook_spec separately (retroactive capture)
         coordinator._register_service("search", svc1)
         coordinator._set_hook_spec("search", spec1)
-        await coordinator._mount_service("search")
+        coordinator._mount_service("search")
         assert dispatch.read_hook_count == 1
 
         hook2 = MagicMock()
@@ -367,7 +367,7 @@ class TestSwapService:
 
         svc1 = _SlowHookService()
         coordinator._register_service("search", svc1, exports=("glob",))
-        await coordinator._mount_service("search")
+        coordinator._mount_service("search")
 
         # Start an in-flight call via ServiceRef
         ref = coordinator.service("search")
@@ -476,7 +476,7 @@ class TestSwapWithFullHookSpec:
         svc1 = _FakeHookService(hook_spec_value=spec1)
         coordinator._register_service("rebac", svc1)
         coordinator._set_hook_spec("rebac", spec1)
-        await coordinator._mount_service("rebac")
+        coordinator._mount_service("rebac")
 
         assert dispatch.read_hook_count == 1
         assert dispatch.write_hook_count == 1
@@ -510,7 +510,7 @@ class TestSwapWithFullHookSpec:
         svc1 = _FakeHookService(hook_spec_value=spec1)
         coordinator._register_service("parser", svc1)
         coordinator._set_hook_spec("parser", spec1)
-        await coordinator._mount_service("parser")
+        coordinator._mount_service("parser")
         assert dispatch.read_hook_count == 1
 
         svc2 = _FakeHookServiceV2()  # empty hook_spec
@@ -804,7 +804,7 @@ class TestSwapUnifiedPath:
     ) -> None:
         """All service types can be swapped via unified refcount drain path."""
         coordinator._register_service("svc", service_class())
-        await coordinator._mount_service("svc")
+        coordinator._mount_service("svc")
         svc2 = replacement_class()
         await coordinator.swap_service("svc", svc2)
 
@@ -829,7 +829,7 @@ class TestSwapWithoutHooks:
         """On-demand services can be swapped at runtime."""
         svc1 = _FakeService()
         coordinator._register_service("search", svc1, exports=("glob",))
-        await coordinator._mount_service("search")
+        coordinator._mount_service("search")
 
         svc2 = _FakeServiceV2()
         await coordinator.swap_service("search", svc2, exports=("glob",))
@@ -856,7 +856,7 @@ class TestSwapWithoutHooks:
 
         svc1 = _Plain()
         coordinator._register_service("svc", svc1)
-        await coordinator._mount_service("svc")
+        coordinator._mount_service("svc")
 
         svc2 = _PlainV2()
         await coordinator.swap_service("svc", svc2)
@@ -881,7 +881,7 @@ class TestSwapWithoutHooks:
 
         svc1 = _SlowService()
         coordinator._register_service("svc", svc1, exports=("work",))
-        await coordinator._mount_service("svc")
+        coordinator._mount_service("svc")
 
         ref = coordinator.service("svc")
         assert ref is not None
@@ -908,7 +908,7 @@ class TestSwapWithoutHooks:
         """Swap plain old → hook_spec new: new hooks get registered."""
         svc1 = _FakeService()
         coordinator._register_service("svc", svc1)
-        await coordinator._mount_service("svc")
+        coordinator._mount_service("svc")
 
         hook = MagicMock()
         spec = HookSpec(read_hooks=(hook,))

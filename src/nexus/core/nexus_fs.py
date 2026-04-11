@@ -560,9 +560,11 @@ class NexusFS(  # type: ignore[misc]
             return
 
         from nexus.backends.connectors.schema_generator import (
+            _defers_to_backend,
             _has_skill_name,
             _parse_readme_path_parts,
             _readme_dir_for,
+            _real_content_exists,
         )
 
         if not _has_skill_name(backend):
@@ -577,6 +579,13 @@ class NexusFS(  # type: ignore[misc]
 
         if parts is None:
             return  # not a virtual readme path
+
+        # Finding #9: on writable backends that defer to real content,
+        # only reject when the virtual overlay is actually serving this
+        # path.  If the real backend has data here, the mutation is a
+        # legitimate user action against real data — let it through.
+        if _defers_to_backend(backend) and _real_content_exists(backend, backend_path):
+            return
 
         raise PermissionError(
             f"Cannot {op} virtual .readme/ path: {path} "
@@ -3893,6 +3902,27 @@ class NexusFS(  # type: ignore[misc]
 
         if dst_route.readonly:
             raise PermissionError(f"Cannot copy to read-only path: {dst_path}")
+
+        # Virtual .readme/ destination is read-only (Issue #3728).
+        self._reject_if_virtual_readme(dst_path, context, op="copy")
+
+        # Virtual .readme/ source: bypass metastore and copy the virtual
+        # bytes through to the destination via sys_write after a real-file
+        # check.  This matches the behavior of ``sys_read`` + ``write``
+        # composition without requiring the source to be materialized.
+        _virtual_src_bytes = self._try_virtual_readme_bytes(src_path, context)
+        if _virtual_src_bytes is not None:
+            # Use the existing write path so destination metadata +
+            # post-hooks fire normally.
+            write_result = await self.write(dst_path, _virtual_src_bytes, context=context)
+            return {
+                "src_path": src_path,
+                "dst_path": dst_path,
+                "size": len(_virtual_src_bytes),
+                "etag": write_result.get("etag"),
+                "version": write_result.get("version"),
+                "modified_at": write_result.get("modified_at"),
+            }
 
         # Fast-fail (unlocked — re-checked under lock)
         if not src_route.metastore.exists(src_path) and not self.metadata.is_implicit_directory(

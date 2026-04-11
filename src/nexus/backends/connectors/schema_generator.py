@@ -147,6 +147,41 @@ def _readme_dir_for(backend: Any) -> str:
     return getattr(type(backend), "README_DIR", ".readme") or ".readme"
 
 
+def _defers_to_backend(backend: Any) -> bool:
+    """Return True if the backend's real content should shadow the overlay.
+
+    Issue #3728 finding #9: on writable path-addressed connectors (native
+    gdrive), users can legitimately create real ``.readme/`` files — the
+    overlay must not silently hide them.  Those connectors opt in by
+    setting ``VIRTUAL_README_DEFERS_TO_BACKEND = True``.
+    """
+    return bool(getattr(type(backend), "VIRTUAL_README_DEFERS_TO_BACKEND", False))
+
+
+def _real_content_exists(backend: Any, backend_path: str) -> bool:
+    """Best-effort probe: does the real backend have content at this path?
+
+    Returns True only when the backend explicitly confirms existence —
+    any exception or missing probe method is treated as "does not exist"
+    so the overlay still works on backends without a cheap exists check.
+    """
+    try:
+        from nexus.contracts.types import OperationContext
+
+        probe_ctx = OperationContext(
+            user_id="system",
+            groups=[],
+            is_system=True,
+            backend_path=backend_path,
+        )
+        exists_fn = getattr(backend, "content_exists", None)
+        if callable(exists_fn):
+            return bool(exists_fn(backend_path, context=probe_ctx))
+    except Exception:
+        return False
+    return False
+
+
 def dispatch_virtual_readme_read(
     backend: Any,
     mount_path: str,
@@ -174,6 +209,12 @@ def dispatch_virtual_readme_read(
 
     parts = _parse_readme_path_parts(backend_path, readme_dir=_readme_dir_for(backend))
     if parts is None:
+        return None
+
+    # Finding #9: on writable path-addressed connectors (native gdrive),
+    # real user files at ``.readme/...`` must shadow the virtual overlay.
+    # Return None so the caller falls through to the real backend read.
+    if _defers_to_backend(backend) and _real_content_exists(backend, backend_path):
         return None
 
     from nexus.contracts.exceptions import NexusFileNotFoundError
@@ -211,6 +252,10 @@ def dispatch_virtual_readme_list(
     if parts is None:
         return None
 
+    # Finding #9: defer to real backend listing when it has content.
+    if _defers_to_backend(backend) and _real_content_exists(backend, backend_path):
+        return None
+
     from nexus.contracts.exceptions import NexusFileNotFoundError
 
     tree = get_virtual_readme_tree_for_backend(backend, mount_path)
@@ -245,6 +290,12 @@ def dispatch_virtual_readme_exists(
     if parts is None:
         return None
 
+    # Finding #9: defer to real backend — if it has content here, the
+    # virtual overlay is not in force for this path, so let the normal
+    # exists code path answer.
+    if _defers_to_backend(backend) and _real_content_exists(backend, backend_path):
+        return None
+
     try:
         tree = get_virtual_readme_tree_for_backend(backend, mount_path)
     except Exception:
@@ -272,6 +323,10 @@ def dispatch_virtual_readme_size(
 
     parts = _parse_readme_path_parts(backend_path, readme_dir=_readme_dir_for(backend))
     if parts is None:
+        return None
+
+    # Finding #9: defer to real backend when it has content at this path.
+    if _defers_to_backend(backend) and _real_content_exists(backend, backend_path):
         return None
 
     from nexus.contracts.exceptions import NexusFileNotFoundError

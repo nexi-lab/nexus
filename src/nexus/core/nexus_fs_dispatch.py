@@ -73,7 +73,7 @@ class DispatchMixin:
         self._mount_hooks: list[tuple[Any, Any]] = []  # (hook, adapter) pairs
         self._unmount_hooks: list[tuple[Any, Any]] = []  # (hook, adapter) pairs
         # Observer registry — pure Python list (§11 Phase 22: eliminated Rust ObserverRegistry)
-        self._observers: list[tuple[Any, str, int, bool]] = []  # (obs, name, mask, is_inline)
+        # Observer registry: Rust kernel SSOT. No Python-side list.
         import concurrent.futures
 
         self._observer_executor = concurrent.futures.ThreadPoolExecutor(
@@ -239,31 +239,26 @@ class DispatchMixin:
     # ── register_observe: generic OBSERVE observers (Issue #1748) ───────
 
     def register_observe(self, obs: VFSObserver) -> None:
-        """Register OBSERVE observer (§11 Phase 22: pure Python registry)."""
+        """Register OBSERVE observer on Rust kernel (SSOT)."""
         from nexus.core.file_events import ALL_FILE_EVENTS
 
         mask = getattr(obs, "event_mask", ALL_FILE_EVENTS)
-        is_inline_attr = getattr(obs, "OBSERVE_INLINE", True)
-        is_inline = bool(is_inline_attr) if isinstance(is_inline_attr, (bool, int)) else True
         name = getattr(obs, "__class__", type(obs)).__name__
-        self._observers.append((obs, name, mask, is_inline))
+        self._kernel.register_kernel_observer(obs, name, mask)
 
     def has_hooks(self, op: str) -> bool:
         """O(1) check: any hooks registered for *op*? Delegates to Rust Kernel."""
         return bool(self._kernel.hook_count(op) > 0)
 
     def unregister_observe(self, obs: VFSObserver) -> bool:
-        """Unregister OBSERVE observer by identity."""
-        for i, (o, _name, _mask, _inline) in enumerate(self._observers):
-            if o is obs:
-                self._observers.pop(i)
-                return True
-        return False
+        """Unregister OBSERVE observer from Rust kernel."""
+        name = getattr(obs, "__class__", type(obs)).__name__
+        return bool(self._kernel.unregister_kernel_observer(name))
 
     @property
     def observer_count(self) -> int:
         """Total registered observers."""
-        return len(self._observers)
+        return int(self._kernel.kernel_observer_count())
 
     # ── PRE-INTERCEPT dispatch ──────────────────────────────────────────
     # ALL pre-hook dispatch now goes through Rust InterceptHook trait via
@@ -276,35 +271,14 @@ class DispatchMixin:
     # self._kernel.dispatch_post_hooks(op, ctx).
     # Sync post-hooks: serial in Rust (fire-and-forget).
 
-    # ── OBSERVE dispatch (Issue #1812, #1748, #3391) ──────────────────────
+    def notify(self, event: FileEvent) -> None:  # noqa: ARG002
+        """No-op — Rust kernel dispatch_observers is SSOT.
 
-    def notify(self, event: FileEvent) -> None:
-        """OBSERVE phase — pure Python dispatch (§11 Phase 22).
-
-        Iterates Python observer list directly (no Rust ObserverRegistry).
-        Inline observers: synchronous on caller's thread.
-        Deferred observers: submitted to ThreadPoolExecutor.
+        hit=true path: Rust sys_* internally calls dispatch_observers.
+        hit=false fallback callers in nexus_fs.py still call this but
+        Rust kernel observers already received the event via the Rust path.
+        This stub prevents AttributeError; the calls should be cleaned up.
         """
-        from nexus.core.file_events import FILE_EVENT_BIT, FileEventType
-
-        event_type = event.type if isinstance(event.type, FileEventType) else None
-        bit = FILE_EVENT_BIT.get(event_type, 0) if event_type else 0
-        if not bit or not self._observers:
-            return
-
-        def _run_observer(obs: Any, name: str) -> None:
-            try:
-                obs.on_mutation(event)
-            except Exception as exc:
-                logger.warning("Observer %s failed: %s", name, exc)
-
-        for obs, name, mask, is_inline in self._observers:
-            if mask & bit == 0:
-                continue
-            if is_inline:
-                _run_observer(obs, name)
-            else:
-                self._observer_executor.submit(_run_observer, obs, name)
 
     # ── MOUNT/UNMOUNT hooks (unified into OBSERVE phase) ────────────────
     #

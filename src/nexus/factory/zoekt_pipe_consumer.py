@@ -184,15 +184,15 @@ class ZoektPipeConsumer:
         while True:
             # If nothing pending, block until first event
             if not pending_paths and not has_sync:
-                # Poll with async sleep to let flush_loop and other tasks run
+                # Poll with async sleep to let flush_loop and other tasks run.
+                # Max 3000 retries (~30s) to prevent infinite loop on orphan tasks.
                 first = None
-                while first is None:
+                for _ in range(3000):
                     try:
                         first = nx.sys_read(_ZOEKT_PIPE_PATH)
+                        break
                     except NexusFileNotFoundError:
-                        # Pipe empty or closed — yield to event loop then retry
                         await asyncio.sleep(0.01)
-                        # Check if pipe was closed (consumer stopping)
                         if not self._pipe_ready:
                             break
                 if first is None:

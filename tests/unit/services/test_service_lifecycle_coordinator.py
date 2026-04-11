@@ -352,7 +352,6 @@ class TestSwapService:
         assert dispatch.read_hook_count == 1
 
     @pytest.mark.asyncio()
-    @pytest.mark.skip(reason="Temporarily skip — drain test hangs xdist worker in CI")
     async def test_swap_drains_in_flight_calls(
         self,
         coordinator: ServiceRegistry,
@@ -867,7 +866,6 @@ class TestSwapWithoutHooks:
         assert ref._service_instance is svc2
 
     @pytest.mark.asyncio
-    @pytest.mark.skip(reason="Temporarily skip — drain test hangs xdist worker in CI")
     async def test_swap_drains_in_flight_calls(
         self,
         coordinator: ServiceRegistry,

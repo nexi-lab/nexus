@@ -230,8 +230,23 @@ def _default_repr(default: Any) -> str:
 
 
 def _is_context_param(name: str, annotation_str: str) -> bool:
-    """Return True if this parameter represents an OperationContext."""
-    if annotation_str in CONTEXT_TYPES:
+    """Return True if this parameter represents an OperationContext.
+
+    Handles bare forms (``OperationContext``, ``OperationContext | None``)
+    AND single-quoted double-forward-reference forms
+    (``'OperationContext | None'``) that leak through when the source
+    has ``context: "OperationContext | None"`` with `from __future__
+    import annotations` — inspect.signature returns the annotation as
+    a string that still contains the literal inner quotes.
+    """
+    # Strip any outer single/double quote pair before comparing — this
+    # catches the double-forward-reference case.
+    stripped = annotation_str.strip()
+    if (stripped.startswith("'") and stripped.endswith("'")) or (
+        stripped.startswith('"') and stripped.endswith('"')
+    ):
+        stripped = stripped[1:-1]
+    if stripped in CONTEXT_TYPES or annotation_str in CONTEXT_TYPES:
         return True
     # Also exclude _context params (internal convention)
     return name.startswith("_") and "context" in name.lower()

@@ -13,46 +13,40 @@ from dataclasses import dataclass
 from typing import Any
 
 __all__ = [
+    "AccessParams",
     "AccessShareLinkParams",
     "AddMountParams",
-    "AgentHeartbeatParams",
-    "AgentListByZoneParams",
-    "AgentTransitionParams",
     "AppendParams",
     "BackfillDirectoryIndexParams",
     "CreateShareLinkParams",
-    "DeleteAgentParams",
     "DeleteBatchParams",
     "DeleteConnectorParams",
     "DeleteSavedMountParams",
-    "DeprovisionUserParams",
     "DiffVersionsParams",
     "EditParams",
     "ExistsBatchParams",
-    "GetAgentParams",
+    "FlushWriteObserverParams",
     "GetEtagParams",
     "GetMountParams",
     "GetShareLinkAccessLogsParams",
     "GetShareLinkParams",
     "GetTopLevelMountsParams",
     "GetVersionParams",
-    "GetWorkspaceInfoParams",
     "GlobBatchParams",
     "GlobParams",
     "GrepParams",
     "HasMountParams",
-    "ListAgentsParams",
+    "IsDirectoryParams",
     "ListConnectorsParams",
     "ListIncomingSharesParams",
     "ListMountsParams",
     "ListOutgoingSharesParams",
     "ListParams",
-    "ListQueueTasksParams",
     "ListSavedMountsParams",
     "ListShareLinksParams",
     "ListVersionsParams",
-    "ListWorkspacesParams",
     "LoadMountParams",
+    "LockAcquireParams",
     "MCPConnectParams",
     "MCPListMountsParams",
     "MCPListToolsParams",
@@ -62,10 +56,12 @@ __all__ = [
     "MakePrivateParams",
     "MakePublicParams",
     "MetadataBatchParams",
+    "MkdirParams",
     "NamespaceDeleteParams",
     "NamespaceListParams",
-    "ProvisionUserParams",
+    "ReadBatchParams",
     "ReadBulkParams",
+    "ReauthMountParams",
     "RebacCheckParams",
     "RebacCreateParams",
     "RebacDeleteParams",
@@ -73,41 +69,37 @@ __all__ = [
     "RebacExplainParams",
     "RebacListObjectsParams",
     "RebacListTuplesParams",
-    "RegisterAgentParams",
-    "RegisterWorkspaceParams",
     "RemoveMountParams",
     "RenameBatchParams",
     "RevokeShareByIdParams",
     "RevokeShareLinkParams",
     "RevokeShareParams",
+    "RmdirParams",
     "RollbackParams",
     "SaveMountParams",
-    "SemanticSearchParams",
     "SemanticSearchIndexParams",
     "ShareWithUserParams",
-    "SnapshotBeginParams",
-    "SnapshotCommitParams",
-    "SnapshotRollbackParams",
     "StatBulkParams",
     "StatParams",
-    "SysAccessParams",
-    "SysIsDirectoryParams",
-    "SysMkdirParams",
+    "SysCopyParams",
+    "SysLockParams",
     "SysReaddirParams",
     "SysRenameParams",
-    "SysRmdirParams",
     "SysStatParams",
     "SysUnlinkParams",
+    "SysUnlockParams",
+    "SysWatchParams",
     "SysWriteParams",
-    "UnregisterWorkspaceParams",
-    "UpdateAgentParams",
-    "UpdateWorkspaceParams",
-    "WorkspaceDiffParams",
-    "WorkspaceLogParams",
-    "WorkspaceRestoreParams",
-    "WorkspaceSnapshotParams",
+    "UpdateMountParams",
     "WriteBatchParams",
 ]
+
+
+@dataclass
+class AccessParams:
+    """Parameters for access(): Tier 2: check if path explicitly exists and is accessible."""
+
+    path: str
 
 
 @dataclass
@@ -129,30 +121,6 @@ class AddMountParams:
     backend_config: dict[str, Any]
     readonly: bool = False
     io_profile: str = "balanced"
-
-
-@dataclass
-class AgentHeartbeatParams:
-    """Parameters for agent_heartbeat(): Record a heartbeat for an active agent."""
-
-    agent_id: str
-
-
-@dataclass
-class AgentListByZoneParams:
-    """Parameters for agent_list_by_zone(): List agents in a zone, optionally filtered by state."""
-
-    zone_id: str
-    state: str | None = None
-
-
-@dataclass
-class AgentTransitionParams:
-    """Parameters for agent_transition(): Transition an agent's lifecycle state with optimistic locking."""
-
-    agent_id: str
-    target_state: str
-    expected_generation: int | None = None
 
 
 @dataclass
@@ -185,13 +153,6 @@ class CreateShareLinkParams:
 
 
 @dataclass
-class DeleteAgentParams:
-    """Parameters for delete_agent(): Delete a registered agent (v0.5.0)."""
-
-    agent_id: str
-
-
-@dataclass
 class DeleteBatchParams:
     """Parameters for delete_batch(): Delete multiple files or directories in a single operation."""
 
@@ -214,16 +175,6 @@ class DeleteSavedMountParams:
     """Parameters for delete_saved_mount(): Delete a saved mount configuration from the database."""
 
     mount_point: str
-
-
-@dataclass
-class DeprovisionUserParams:
-    """Parameters for deprovision_user(): Deprovision a user and remove all their resources."""
-
-    user_id: str
-    zone_id: str | None = None
-    delete_user_record: bool = False
-    force: bool = False
 
 
 @dataclass
@@ -260,10 +211,10 @@ class ExistsBatchParams:
 
 
 @dataclass
-class GetAgentParams:
-    """Parameters for get_agent(): Get information about a registered agent (v0.5.0)."""
+class FlushWriteObserverParams:
+    """Parameters for flush_write_observer(): Flush the async write observer so pending version/audit records are committed."""
 
-    agent_id: str
+    pass
 
 
 @dataclass
@@ -311,24 +262,12 @@ class GetVersionParams:
 
 
 @dataclass
-class GetWorkspaceInfoParams:
-    """Parameters for get_workspace_info(): Get information about a registered workspace."""
-
-    path: str
-
-
-@dataclass
 class GlobParams:
     """Parameters for glob(): Find files matching a glob pattern."""
 
     pattern: str
     path: str = "/"
     context: Any = None
-    # Issue #3701 (2A): stateless working-set narrowing. When provided,
-    # glob matches ``pattern`` against this list instead of walking the
-    # tree under ``path``. See SearchService._validate_and_normalize_files
-    # for the edge-case spec (empty list, traversal, cross-zone, dedupe,
-    # stale, size cap, permission intersection).
     files: list[str] | None = None
 
 
@@ -352,14 +291,9 @@ class GrepParams:
     max_results: int = 100
     search_mode: str = "auto"
     context: Any = None
-    # Issue #3701 (2A): stateless working-set narrowing. When provided,
-    # grep searches only the intersection of ``files`` with the caller's
-    # permitted paths. Composes with ``file_pattern`` via intersection.
-    # See SearchService._validate_and_normalize_files for the full spec.
-    # NOTE: ``before_context``/``after_context``/``invert_match`` are
-    # present in SearchService.grep's Python signature but deliberately
-    # NOT added here — they're pre-existing RPC drift out of scope for
-    # #3701. The HTTP grep endpoint exposes them via its own handler.
+    before_context: int = 0
+    after_context: int = 0
+    invert_match: bool = False
     files: list[str] | None = None
 
 
@@ -368,6 +302,13 @@ class HasMountParams:
     """Parameters for has_mount(): Check if a mount exists at the given path."""
 
     mount_point: str
+
+
+@dataclass
+class IsDirectoryParams:
+    """Parameters for is_directory(): Tier 2: convenience wrapper — derives from sys_stat."""
+
+    path: str
 
 
 @dataclass
@@ -381,13 +322,6 @@ class ListParams:
     context: Any = None
     limit: int | None = None
     cursor: str | None = None
-
-
-@dataclass
-class ListAgentsParams:
-    """Parameters for list_agents(): List all registered agents (v0.5.0)."""
-
-    pass
 
 
 @dataclass
@@ -432,16 +366,6 @@ class ListOutgoingSharesParams:
 
 
 @dataclass
-class ListQueueTasksParams:
-    """Parameters for list_queue_tasks(): List tasks with optional filters."""
-
-    task_type: str | None = None
-    status: int | None = None
-    limit: int = 50
-    offset: int = 0
-
-
-@dataclass
 class ListSavedMountsParams:
     """Parameters for list_saved_mounts(): List mount configurations saved in the database."""
 
@@ -466,17 +390,20 @@ class ListVersionsParams:
 
 
 @dataclass
-class ListWorkspacesParams:
-    """Parameters for list_workspaces(): List all registered workspaces for the current user."""
-
-    context: Any | None = None
-
-
-@dataclass
 class LoadMountParams:
     """Parameters for load_mount(): Load a saved mount configuration and activate it."""
 
     mount_point: str
+
+
+@dataclass
+class LockAcquireParams:
+    """Parameters for lock_acquire(): Tier 2: wraps sys_lock with dict return for gRPC Call RPC."""
+
+    path: str
+    mode: str = "exclusive"
+    ttl: float = 30.0
+    max_holders: int = 1
 
 
 @dataclass
@@ -565,6 +492,15 @@ class MetadataBatchParams:
 
 
 @dataclass
+class MkdirParams:
+    """Parameters for mkdir(): Create a directory (Tier 2 convenience over sys_setattr)."""
+
+    path: str
+    parents: bool = True
+    exist_ok: bool = True
+
+
+@dataclass
 class NamespaceDeleteParams:
     """Parameters for namespace_delete(): Delete all tuples for a namespace's object type."""
 
@@ -580,19 +516,11 @@ class NamespaceListParams:
 
 
 @dataclass
-class ProvisionUserParams:
-    """Parameters for provision_user(): Provision a new user with all default resources (Issue #820)."""
+class ReadBatchParams:
+    """Parameters for read_batch(): Read multiple files in a single round-trip for improved performance."""
 
-    user_id: str
-    email: str
-    display_name: str | None = None
-    zone_id: str | None = None
-    zone_name: str | None = None
-    create_api_key: bool = True
-    api_key_name: str | None = None
-    api_key_expires_at: str | None = None
-    create_agents: bool = True
-    import_skills: bool = False
+    paths: list[str]
+    partial: bool = False
 
 
 @dataclass
@@ -605,8 +533,17 @@ class ReadBulkParams:
 
 
 @dataclass
+class ReauthMountParams:
+    """Parameters for reauth_mount(): Refresh or rotate OAuth credentials for a mounted connector."""
+
+    mount_point: str
+    provider: str | None = None
+    user_email: str | None = None
+
+
+@dataclass
 class RebacCheckParams:
-    """Parameters for rebac_check(): Check if subject has permission on object (Issue #1081)."""
+    """Parameters for rebac_check(): Check if subject has permission on object."""
 
     subject: tuple[str, str]
     permission: str
@@ -714,34 +651,6 @@ class RebacListTuplesParams:
 
 
 @dataclass
-class RegisterAgentParams:
-    """Parameters for register_agent(): Register an AI agent (v0.5.0)."""
-
-    agent_id: str
-    name: str
-    description: str | None = None
-    generate_api_key: bool = False
-    metadata: dict | None = None
-    capabilities: list[str] | None = None
-    context: dict | None = None
-
-
-@dataclass
-class RegisterWorkspaceParams:
-    """Parameters for register_workspace(): Register a directory as a workspace."""
-
-    path: str
-    name: str | None = None
-    description: str | None = None
-    created_by: str | None = None
-    tags: list[str] | None = None
-    metadata: dict[str, Any] | None = None
-    session_id: str | None = None
-    ttl: str | None = None
-    context: Any | None = None
-
-
-@dataclass
 class RemoveMountParams:
     """Parameters for remove_mount(): Remove a backend mount from the filesystem."""
 
@@ -794,6 +703,14 @@ class RevokeShareLinkParams:
 
 
 @dataclass
+class RmdirParams:
+    """Parameters for rmdir(): Remove a directory with lenient defaults (Tier 2 convenience)."""
+
+    path: str
+    recursive: bool = True
+
+
+@dataclass
 class RollbackParams:
     """Parameters for rollback(): Rollback file to a previous version."""
 
@@ -813,17 +730,6 @@ class SaveMountParams:
     owner_user_id: str | None = None
     zone_id: str | None = None
     description: str | None = None
-
-
-@dataclass
-class SemanticSearchParams:
-    """Parameters for semantic_search(): Search documents using natural language queries."""
-
-    query: str = ""
-    path: str = "/"
-    limit: int = 10
-    filters: dict[str, Any] | None = None
-    search_mode: str = "semantic"
 
 
 @dataclass
@@ -851,29 +757,6 @@ class ShareWithUserParams:
 
 
 @dataclass
-class SnapshotBeginParams:
-    """Parameters for snapshot_begin(): Begin a transactional snapshot for the specified paths."""
-
-    paths: list[str]
-    agent_id: str | None = None
-    zone_id: str = "root"
-
-
-@dataclass
-class SnapshotCommitParams:
-    """Parameters for snapshot_commit(): Commit a snapshot — changes become permanent."""
-
-    snapshot_id: str
-
-
-@dataclass
-class SnapshotRollbackParams:
-    """Parameters for snapshot_rollback(): Rollback a snapshot — restore paths to pre-snapshot state."""
-
-    snapshot_id: str
-
-
-@dataclass
 class StatParams:
     """Parameters for stat(): Get file metadata without reading the file content."""
 
@@ -889,37 +772,32 @@ class StatBulkParams:
 
 
 @dataclass
-class SysAccessParams:
-    """Parameters for access(): Check if a file or directory exists."""
+class SysCopyParams:
+    """Parameters for sys_copy(): Copy a file from src_path to dst_path."""
 
-    path: str
-
-
-@dataclass
-class SysIsDirectoryParams:
-    """Parameters for is_directory(): Check if path is a directory (explicit or implicit)."""
-
-    path: str
+    src_path: str
+    dst_path: str
 
 
 @dataclass
-class SysMkdirParams:
-    """Parameters for mkdir(): Create a directory (parents=True for mkdir -p)."""
+class SysLockParams:
+    """Parameters for sys_lock(): Acquire or extend advisory lock (POSIX fcntl(F_SETLK))."""
 
     path: str
-    parents: bool = False
-    exist_ok: bool = False
+    mode: str = "exclusive"
+    ttl: float = 30.0
+    max_holders: int = 1
+    lock_id: str | None = None
 
 
 @dataclass
 class SysReaddirParams:
-    """Parameters for sys_readdir(): List directory entries (POSIX readdir(3))."""
+    """Parameters for sys_readdir() method."""
 
     path: str = "/"
     recursive: bool = True
     details: bool = False
     show_parsed: bool = True
-    context: Any = None
     limit: int | None = None
     cursor: str | None = None
 
@@ -930,23 +808,7 @@ class SysRenameParams:
 
     old_path: str
     new_path: str
-
-
-@dataclass
-class SysRmdirParams:
-    """Parameters for sys_rmdir(): Remove a directory (recursive=True for rm -rf)."""
-
-    path: str
-    recursive: bool = False
-    subject: tuple[str, str] | None = None
-    zone_id: str | None = None
-    agent_id: str | None = None
-    is_admin: bool | None = None
-
-    def __post_init__(self) -> None:
-        """Convert lists to tuples (JSON deserializes tuples as lists)."""
-        if isinstance(self.subject, list):
-            object.__setattr__(self, "subject", tuple(self.subject))
+    force: bool = False
 
 
 @dataclass
@@ -954,100 +816,56 @@ class SysStatParams:
     """Parameters for sys_stat(): Get file metadata without reading content (FUSE getattr)."""
 
     path: str
+    include_lock: bool = False
 
 
 @dataclass
 class SysUnlinkParams:
-    """Parameters for sys_unlink(): Delete a file or memory."""
+    """Parameters for sys_unlink(): Remove a file or directory entry."""
 
     path: str
+    recursive: bool = False
+
+
+@dataclass
+class SysUnlockParams:
+    """Parameters for sys_unlock(): Release advisory lock."""
+
+    path: str
+    lock_id: str | None = None
+    force: bool = False
+
+
+@dataclass
+class SysWatchParams:
+    """Parameters for sys_watch(): Wait for file changes (inotify(7)). Returns FileEvent dict or None on timeout."""
+
+    path: str
+    timeout: float = 30.0
+    recursive: bool = False
 
 
 @dataclass
 class SysWriteParams:
-    """Parameters for sys_write(): Write content to a file (POSIX pwrite(2))."""
+    """Parameters for sys_write(): Write content to a file (POSIX write(2))."""
 
     path: str
-    buf: bytes | str = b""
+    buf: bytes | str
     count: int | None = None
     offset: int = 0
-    content: bytes | str = b""
-
-    def __post_init__(self) -> None:
-        """Accept both 'buf' (POSIX) and 'content' (handler) as the payload field."""
-        if self.content and not self.buf:
-            self.buf = self.content
-        elif self.buf and not self.content:
-            self.content = self.buf
 
 
 @dataclass
-class UnregisterWorkspaceParams:
-    """Parameters for unregister_workspace(): Unregister a workspace (does NOT delete files)."""
+class UpdateMountParams:
+    """Parameters for update_mount(): Update a mount's backend configuration without removing it."""
 
-    path: str
-
-
-@dataclass
-class UpdateAgentParams:
-    """Parameters for update_agent(): Update an existing agent's configuration (v0.5.1)."""
-
-    agent_id: str
-    name: str | None = None
-    description: str | None = None
-    metadata: dict | None = None
-    context: dict | None = None
-
-
-@dataclass
-class UpdateWorkspaceParams:
-    """Parameters for update_workspace(): Update an existing workspace configuration."""
-
-    path: str
-    name: str | None = None
-    description: str | None = None
-    metadata: dict | None = None
-
-
-@dataclass
-class WorkspaceDiffParams:
-    """Parameters for workspace_diff(): Compare two workspace snapshots."""
-
-    snapshot_1: int
-    snapshot_2: int
-    workspace_path: str | None = None
-
-
-@dataclass
-class WorkspaceLogParams:
-    """Parameters for workspace_log(): List snapshot history for workspace."""
-
-    workspace_path: str | None = None
-    limit: int = 100
-
-
-@dataclass
-class WorkspaceRestoreParams:
-    """Parameters for workspace_restore(): Restore workspace to a previous snapshot."""
-
-    snapshot_number: int
-    workspace_path: str | None = None
-
-
-@dataclass
-class WorkspaceSnapshotParams:
-    """Parameters for workspace_snapshot(): Create a snapshot of a registered workspace."""
-
-    workspace_path: str | None = None
-    description: str | None = None
-    tags: list[str] | None = None
-    created_by: str | None = None
-    context: dict | None = None
+    mount_point: str
+    backend_config: dict[str, Any]
 
 
 @dataclass
 class WriteBatchParams:
-    """Parameters for write_batch(): Write multiple files in a single transaction for improved performance."""
+    """Parameters for write_batch(): Write multiple files in a single round-trip for improved performance."""
 
     files: list[tuple[str, bytes]]
 
@@ -1057,55 +875,41 @@ class WriteBatchParams:
             object.__setattr__(self, "files", tuple(self.files))
 
 
-@dataclass
-class ReadBatchParams:
-    """Parameters for read_batch(): Read multiple files in a single atomic round-trip (Issue #3700)."""
-
-    paths: list[str]
-    partial: bool = False
-
-
 METHOD_PARAMS: dict[str, type] = {
+    "access": AccessParams,
     "access_share_link": AccessShareLinkParams,
     "add_mount": AddMountParams,
-    "agent_heartbeat": AgentHeartbeatParams,
-    "agent_list_by_zone": AgentListByZoneParams,
-    "agent_transition": AgentTransitionParams,
     "append": AppendParams,
     "backfill_directory_index": BackfillDirectoryIndexParams,
     "create_share_link": CreateShareLinkParams,
-    "delete_agent": DeleteAgentParams,
     "delete_batch": DeleteBatchParams,
     "delete_connector": DeleteConnectorParams,
     "delete_saved_mount": DeleteSavedMountParams,
-    "deprovision_user": DeprovisionUserParams,
     "diff_versions": DiffVersionsParams,
     "edit": EditParams,
     "exists_batch": ExistsBatchParams,
-    "get_agent": GetAgentParams,
+    "flush_write_observer": FlushWriteObserverParams,
     "get_etag": GetEtagParams,
     "get_mount": GetMountParams,
     "get_share_link": GetShareLinkParams,
     "get_share_link_access_logs": GetShareLinkAccessLogsParams,
     "get_top_level_mounts": GetTopLevelMountsParams,
     "get_version": GetVersionParams,
-    "get_workspace_info": GetWorkspaceInfoParams,
     "glob": GlobParams,
     "glob_batch": GlobBatchParams,
     "grep": GrepParams,
     "has_mount": HasMountParams,
+    "is_directory": IsDirectoryParams,
     "list": ListParams,
-    "list_agents": ListAgentsParams,
     "list_connectors": ListConnectorsParams,
     "list_incoming_shares": ListIncomingSharesParams,
     "list_mounts": ListMountsParams,
     "list_outgoing_shares": ListOutgoingSharesParams,
-    "list_queue_tasks": ListQueueTasksParams,
     "list_saved_mounts": ListSavedMountsParams,
     "list_share_links": ListShareLinksParams,
     "list_versions": ListVersionsParams,
-    "list_workspaces": ListWorkspacesParams,
     "load_mount": LoadMountParams,
+    "lock_acquire": LockAcquireParams,
     "make_private": MakePrivateParams,
     "make_public": MakePublicParams,
     "mcp_connect": MCPConnectParams,
@@ -1115,11 +919,12 @@ METHOD_PARAMS: dict[str, type] = {
     "mcp_sync": MCPSyncParams,
     "mcp_unmount": MCPUnmountParams,
     "metadata_batch": MetadataBatchParams,
+    "mkdir": MkdirParams,
     "namespace_delete": NamespaceDeleteParams,
     "namespace_list": NamespaceListParams,
-    "provision_user": ProvisionUserParams,
     "read_batch": ReadBatchParams,
     "read_bulk": ReadBulkParams,
+    "reauth_mount": ReauthMountParams,
     "rebac_check": RebacCheckParams,
     "rebac_create": RebacCreateParams,
     "rebac_delete": RebacDeleteParams,
@@ -1127,38 +932,27 @@ METHOD_PARAMS: dict[str, type] = {
     "rebac_explain": RebacExplainParams,
     "rebac_list_objects": RebacListObjectsParams,
     "rebac_list_tuples": RebacListTuplesParams,
-    "register_agent": RegisterAgentParams,
-    "register_workspace": RegisterWorkspaceParams,
     "remove_mount": RemoveMountParams,
     "rename_batch": RenameBatchParams,
     "revoke_share": RevokeShareParams,
     "revoke_share_by_id": RevokeShareByIdParams,
     "revoke_share_link": RevokeShareLinkParams,
+    "rmdir": RmdirParams,
     "rollback": RollbackParams,
     "save_mount": SaveMountParams,
-    "semantic_search": SemanticSearchParams,
     "semantic_search_index": SemanticSearchIndexParams,
     "share_with_user": ShareWithUserParams,
-    "snapshot_begin": SnapshotBeginParams,
-    "snapshot_commit": SnapshotCommitParams,
-    "snapshot_rollback": SnapshotRollbackParams,
     "stat": StatParams,
     "stat_bulk": StatBulkParams,
-    "access": SysAccessParams,
-    "is_directory": SysIsDirectoryParams,
-    "mkdir": SysMkdirParams,
+    "sys_copy": SysCopyParams,
+    "sys_lock": SysLockParams,
     "sys_readdir": SysReaddirParams,
     "sys_rename": SysRenameParams,
-    "sys_rmdir": SysRmdirParams,
     "sys_stat": SysStatParams,
     "sys_unlink": SysUnlinkParams,
+    "sys_unlock": SysUnlockParams,
+    "sys_watch": SysWatchParams,
     "sys_write": SysWriteParams,
-    "unregister_workspace": UnregisterWorkspaceParams,
-    "update_agent": UpdateAgentParams,
-    "update_workspace": UpdateWorkspaceParams,
-    "workspace_diff": WorkspaceDiffParams,
-    "workspace_log": WorkspaceLogParams,
-    "workspace_restore": WorkspaceRestoreParams,
-    "workspace_snapshot": WorkspaceSnapshotParams,
+    "update_mount": UpdateMountParams,
     "write_batch": WriteBatchParams,
 }

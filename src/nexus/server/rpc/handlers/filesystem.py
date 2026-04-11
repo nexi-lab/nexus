@@ -413,6 +413,15 @@ async def handle_grep(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[st
         kwargs["file_pattern"] = params.file_pattern
     if hasattr(params, "search_mode") and params.search_mode is not None:
         kwargs["search_mode"] = params.search_mode
+    # Pre-existing RPC drift fix (#3701 follow-up): forward the context-line
+    # and invert-match params so remote SDK / MCP callers can use them.
+    # Previously these were silently dropped at this allowlist boundary.
+    if hasattr(params, "before_context") and params.before_context:
+        kwargs["before_context"] = params.before_context
+    if hasattr(params, "after_context") and params.after_context:
+        kwargs["after_context"] = params.after_context
+    if hasattr(params, "invert_match") and params.invert_match:
+        kwargs["invert_match"] = params.invert_match
     # Issue #3701 (2A): forward the stateless ``files=[...]`` narrowing
     # parameter. Explicit ``is not None`` check so an intentional empty
     # list ``files=[]`` (empty-set short-circuit) is preserved all the

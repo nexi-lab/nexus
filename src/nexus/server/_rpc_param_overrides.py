@@ -14,11 +14,9 @@ from typing import Any
 
 from nexus.contracts.constants import DEFAULT_OAUTH_REDIRECT_URI
 from nexus.server._rpc_params_generated import (
-    SysAccessParams,
-    SysIsDirectoryParams,
-    SysMkdirParams,
+    AccessParams,
+    RmdirParams,
     SysRenameParams,
-    SysRmdirParams,
     SysUnlinkParams,
 )
 
@@ -207,15 +205,28 @@ class NamespaceGetParams:
 
 OVERRIDE_METHOD_PARAMS: dict[str, type] = {
     "sys_read": ReadParams,
-    # Short aliases for nexus-test / remote clients
+    # Short aliases for nexus-test / remote clients. Keys are alias names
+    # (not the canonical method on NexusFS) — the canonical method's
+    # generated params class is reused here so the alias and canonical
+    # forms accept the same params.
     "read": ReadParams,
     "write": WriteParams,
     "delete": SysUnlinkParams,
-    "exists": SysAccessParams,
-    "mkdir": SysMkdirParams,
-    "rmdir": SysRmdirParams,
+    "exists": AccessParams,
     "rename": SysRenameParams,
-    "is_directory": SysIsDirectoryParams,
+    # Legacy alias used by older remote clients (nexus.backends.storage.remote
+    # still calls ``_call_rpc("sys_rmdir", ...)``). The server's dispatch
+    # table at nexus.server.rpc.dispatch also still registers ``sys_rmdir``
+    # as a backward-compat alias to ``handle_rmdir``. Drop this entry once
+    # all client versions have migrated to the canonical ``rmdir`` method.
+    "sys_rmdir": RmdirParams,
+    # NOTE: ``mkdir``, ``rmdir``, and ``is_directory`` were previously
+    # listed here as overrides because they used to be aliases for
+    # ``sys_mkdir`` / ``sys_rmdir`` / ``sys_is_directory``. Those methods
+    # have since been renamed to drop the ``sys_`` prefix on NexusFS, so
+    # they're now canonical method names — the auto-generator emits
+    # ``MkdirParams`` / ``RmdirParams`` / ``IsDirectoryParams`` directly
+    # and no override is needed.
     "oauth_get_auth_url": OAuthGetAuthUrlParams,
     "oauth_exchange_code": OAuthExchangeCodeParams,
     # Admin

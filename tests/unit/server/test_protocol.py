@@ -317,9 +317,18 @@ class TestCodegenConsistency:
             )
 
     def test_method_params_count(self):
-        """METHOD_PARAMS should have a reasonable number of entries."""
-        assert len(METHOD_PARAMS) >= 113, (
-            f"Expected at least 113 METHOD_PARAMS entries, got {len(METHOD_PARAMS)}"
+        """METHOD_PARAMS should have a reasonable number of entries.
+
+        Threshold lowered from 113 → 90 in #3701: when
+        ``_rpc_params_generated.py`` was regenerated to fix sys_access
+        drift, ~20 entries for ``nexus.system_services.*`` methods
+        (workspace, agents, lifecycle) were dropped because those
+        modules no longer exist as @rpc_expose surfaces. The methods
+        moved into HTTP routers / internal services and intentionally
+        do not have generated Param classes.
+        """
+        assert len(METHOD_PARAMS) >= 90, (
+            f"Expected at least 90 METHOD_PARAMS entries, got {len(METHOD_PARAMS)}"
         )
 
     def test_method_params_names_are_strings(self):

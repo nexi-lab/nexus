@@ -17,10 +17,14 @@ from nexus.bricks.mcp.server import create_mcp_server
 
 
 def get_tool(server, tool_name: str):
-    """Helper to get a tool from the MCP server."""
-    lp = server._local_provider
-    tools = {v.name: v for k, v in lp._components.items() if k.startswith("tool:")}
-    return tools[tool_name]
+    """Helper to get a tool from the MCP server (FastMCP 2.x and 3.x compat)."""
+    # FastMCP 3.x API
+    if hasattr(server, "_local_provider"):
+        lp = server._local_provider
+        tools = {v.name: v for k, v in lp._components.items() if k.startswith("tool:")}
+        return tools[tool_name]
+    # FastMCP 2.x API
+    return server._tool_manager._tools[tool_name]
 
 
 def get_prompt(server, prompt_name: str):
@@ -38,7 +42,11 @@ def get_resource_template(server, uri_pattern: str):
 
 
 def tool_exists(server, tool_name: str) -> bool:
-    """Check if a tool exists in the server."""
+    """Check if a tool exists in the server (FastMCP 2.x and 3.x compat)."""
+    if hasattr(server, "_local_provider"):
+        lp = server._local_provider
+        names = {v.name for k, v in lp._components.items() if k.startswith("tool:")}
+        return tool_name in names
     return tool_name in server._tool_manager._tools
 
 

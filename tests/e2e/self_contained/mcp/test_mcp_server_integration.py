@@ -480,7 +480,7 @@ class TestSemanticSearchIntegration:
             pytest.skip("Semantic search tool not registered")
 
         search_tool = await get_tool(mcp_server, "nexus_semantic_search")
-        result = search_tool.fn(query="test files", limit=5)
+        result = await search_tool.fn(query="test files", limit=5)
 
         # Should return JSON results or indicate not available
         assert "not available" in result or result.startswith("[") or result.startswith("{")
@@ -676,7 +676,7 @@ class TestComprehensiveMCPToolsWorkflow:
         # Step 8: Test nexus_semantic_search (optional)
         if await tool_exists(mcp_server, "nexus_semantic_search"):
             search_tool = await get_tool(mcp_server, "nexus_semantic_search")
-            search_result = search_tool.fn(query="test files", limit=5)
+            search_result = await search_tool.fn(query="test files", limit=5)
             # Should return result or indicate not available
             assert "not available" in search_result or search_result.startswith("[")
 

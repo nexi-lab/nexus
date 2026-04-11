@@ -163,6 +163,18 @@ def _open_local_metastore(metadata_path: str, kernel: object = None) -> "Metasto
         except Exception as e:
             logger.warning("RustMetastoreProxy failed, falling back: %s", e)
 
+    # Guard: if a Redb store already exists but the kernel is absent/stale,
+    # do NOT silently open a different backend — that would hide existing data
+    # and create a split-brain on the next good binary.  Fail with a clear error
+    # so the developer knows to rebuild nexus_kernel (Issue #3712).
+    _redb_path = Path(metadata_path).with_suffix(".redb")
+    if kernel is None and _redb_path.exists():
+        raise RuntimeError(
+            f"Rust metastore {_redb_path} exists but nexus_kernel is stale or "
+            "unavailable — refusing to fall back to a different metadata format. "
+            "Rebuild the extension: cd rust/nexus_kernel && maturin develop --release"
+        )
+
     try:
         from nexus.storage.raft_metadata_store import RaftMetadataStore
 

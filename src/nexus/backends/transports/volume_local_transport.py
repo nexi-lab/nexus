@@ -122,12 +122,21 @@ class VolumeLocalTransport:
         self._volume_available = False
         self._VolumeEngine: Any = None  # Class reference for lazy creation
 
-        # RUST_FALLBACK: VolumeEngine
+        # RUST_FALLBACK: VolumeEngine — fail closed if existing volume data is on disk.
+        # Silently delegating to LocalTransport when cas_volumes/ already exists would
+        # make volume-packed blobs unreadable and split writes into two layouts (Issue #3712).
         from nexus._rust_compat import VolumeEngine as _VolumeEngine
 
         if _VolumeEngine is not None:
             self._VolumeEngine = _VolumeEngine
             self._volume_available = True
+        elif (self._root / "cas_volumes").exists():
+            raise RuntimeError(
+                f"VolumeEngine is unavailable (stale or absent nexus_kernel) but "
+                f"{self._root / 'cas_volumes'} already contains volume-packed data. "
+                "Delegating to flat-file storage would make those blobs unreadable. "
+                "Rebuild the extension: cd rust/nexus_kernel && maturin develop --release"
+            )
 
         # Permanent engine for non-TTL CAS blobs
         self._engine: Any = None

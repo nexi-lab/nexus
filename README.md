@@ -263,9 +263,19 @@ uv run pytest tests/
 ```
 
 For semantic search work: `uv sync --extra semantic-search`
-For Rust extensions: `maturin develop --release -m rust/nexus_kernel/Cargo.toml`
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide.
+**After cloning, pulling, or switching branches that touch `rust/`**, rebuild the Rust extensions:
+
+```bash
+just setup        # rebuild all crates (requires: cargo install just)
+just doctor       # verify the binary matches current source
+```
+
+Or per-crate: `maturin develop --release -m rust/nexus_kernel/Cargo.toml`
+
+> **Why?** `PYTHONPATH=src` only affects pure-Python imports. Native extensions (`nexus_kernel.so`) resolve via site-packages and must be explicitly rebuilt after Rust changes. A stale binary imports silently but fails at runtime with a cryptic `AttributeError`. See [#3712](https://github.com/nexi-lab/nexus/issues/3712).
+
+Claude Code users: see `CLAUDE.md` (local-only, not committed) for the full contributor guide.
 
 ## Troubleshooting
 
@@ -273,6 +283,18 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide.
 <summary><code>ModuleNotFoundError: No module named 'nexus'</code></summary>
 
 Install from PyPI: `pip install nexus-ai-fs`. The package name on PyPI is `nexus-ai-fs`, not `nexus`.
+
+</details>
+
+<details>
+<summary><code>AttributeError: 'Kernel' object has no attribute '...'</code></summary>
+
+The installed `nexus_kernel` binary is stale. Rebuild:
+
+```bash
+just setup
+# or: maturin develop --release -m rust/nexus_kernel/Cargo.toml
+```
 
 </details>
 

@@ -446,13 +446,17 @@ async def connect(
     overrides = cfg.features.to_overrides() if cfg.features else {}
     enabled_bricks = resolve_enabled_bricks(resolved_profile, overrides=overrides)
 
-    # Create Rust kernel early so RustMetastoreProxy can use it
+    # Create Rust kernel early so RustMetastoreProxy can use it.
+    # Route through _rust_compat so stale binaries (missing Kernel methods)
+    # are caught here and never passed to RustMetastoreProxy (Issue #3712).
     _early_kernel = None
     try:
-        from nexus_kernel import Kernel as _Kernel
+        from nexus._rust_compat import RUST_AVAILABLE as _RUST_AVAILABLE
+        from nexus._rust_compat import Kernel as _Kernel
 
-        _early_kernel = _Kernel()
-    except (ImportError, Exception):
+        if _RUST_AVAILABLE and _Kernel is not None:
+            _early_kernel = _Kernel()
+    except Exception:
         pass
 
     # Create metadata store — profile-gated federation (PR #3371 Phase 2)

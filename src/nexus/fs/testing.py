@@ -69,7 +69,7 @@ async def async_ephemeral_mount(*uris: str, **kwargs: Any) -> AsyncIterator[Any]
         @pytest.mark.asyncio
         async def test_read_local():
             async with async_ephemeral_mount("local:///tmp/test-data") as fs:
-                content = await fs.read("/local/tmp/test-data/readme.txt")
+                content = fs.read("/local/tmp/test-data/readme.txt")
     """
     kwargs["ephemeral"] = True
     from nexus.fs import mount
@@ -84,34 +84,18 @@ async def async_ephemeral_mount(*uris: str, **kwargs: Any) -> AsyncIterator[Any]
 
 
 def _close_fs_sync(fs: Any) -> None:
-    """Best-effort synchronous close of a SlimNexusFS (which has async close)."""
-    import asyncio
-
-    close = getattr(fs, "close", None)
-    if close is None:
-        return
-    try:
-        # If there's already a running loop (e.g. inside pytest-asyncio), schedule
-        # the close as a task and let the loop drain it; otherwise run a fresh loop.
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-
-        if loop is not None and loop.is_running():
-            # Can't call run_until_complete inside a running loop.
-            # Create a task — it will run when the loop next yields.
-            loop.create_task(close())
-        else:
-            asyncio.run(close())
-    except Exception:
-        pass  # best-effort; never let teardown mask a test failure
-
-
-async def _close_fs_async(fs: Any) -> None:
-    """Best-effort async close of a SlimNexusFS."""
+    """Best-effort synchronous close of a NexusFS (close is sync)."""
     close = getattr(fs, "close", None)
     if close is None:
         return
     with contextlib.suppress(Exception):
-        await close()
+        close()
+
+
+async def _close_fs_async(fs: Any) -> None:
+    """Best-effort close of a SlimNexusFS (close is sync)."""
+    close = getattr(fs, "close", None)
+    if close is None:
+        return
+    with contextlib.suppress(Exception):
+        close()

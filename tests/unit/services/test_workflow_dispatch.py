@@ -28,7 +28,7 @@ def _make_mock_nx() -> MagicMock:
 
     Production code calls ``self._nx.pipe_write_nowait`` /
     ``self._nx.pipe_close`` (sync passthroughs to the Rust kernel) and
-    ``await self._nx.sys_setattr`` / ``await self._nx.sys_read`` (async).
+    ``self._nx.sys_setattr`` / ``self._nx.sys_read`` (sync).
     """
     nx = AsyncMock()
     # Sync passthrough methods — must be MagicMock so calls are not awaited

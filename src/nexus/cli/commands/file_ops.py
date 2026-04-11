@@ -471,7 +471,7 @@ def append(
             ) as nx:
                 # Append with OCC parameters and context.
                 # CAS params (if_match, force) are NexusFS-specific (transitional, see #1323).
-                result = await cast(Any, nx).append(
+                result = cast(Any, nx).append(
                     path,
                     file_content,
                     context=operation_context,

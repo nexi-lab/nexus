@@ -75,6 +75,71 @@ def reset_request_api_key(token: contextvars.Token[str | None]) -> None:
     _request_api_key.reset(token)
 
 
+def _resolve_mcp_operation_context(nx_instance: NexusFilesystem) -> Any:
+    """Build an explicit ``OperationContext`` for MCP search calls.
+
+    Codex review #3 finding #1: the previous MCP grep/glob handlers
+    called ``SearchService`` without any ``OperationContext`` at all,
+    so permission filtering relied on whatever the underlying
+    NexusFilesystem connection happened to enforce at the
+    service-lookup layer. On any deployment where the default
+    connection is wider than the per-request subject, that was a
+    tenant-isolation hole: an MCP caller could search a broader
+    filesystem view than their ReBAC grants allowed.
+
+    This helper rebuilds the caller's identity from the remote
+    connection's authenticated whoami cache (``subject_id``,
+    ``zone_id``, ``is_admin``) and returns a real ``OperationContext``.
+    For local embedded connections that expose ``_default_context``,
+    we honour that — it represents the process identity. For
+    anything else we fail closed so MCP never silently runs under
+    an ambient admin identity.
+
+    Raises:
+        PermissionError: when no explicit identity can be resolved
+            from the connection. Fail-closed semantics — surfacing
+            the misconfiguration is better than silently running
+            under whatever ambient identity is in scope.
+    """
+    from nexus.contracts.constants import ROOT_ZONE_ID
+    from nexus.contracts.types import OperationContext
+
+    # Local embedded mode: trust the filesystem's own default context.
+    default_ctx = getattr(nx_instance, "_default_context", None)
+    if default_ctx is not None:
+        return default_ctx
+
+    # Remote mode: build from the whoami-populated connection fields.
+    subject_id = getattr(nx_instance, "subject_id", None)
+    subject_type = getattr(nx_instance, "subject_type", None) or "user"
+    zone_id = getattr(nx_instance, "zone_id", None) or ROOT_ZONE_ID
+    is_admin = bool(getattr(nx_instance, "is_admin", False))
+
+    if not subject_id:
+        # Fail closed — we could not resolve a subject identity from
+        # the remote connection's whoami cache. Running a grep/glob
+        # at this point would fall back to whatever ambient identity
+        # the default connection has, which is the exact bug Codex
+        # flagged. Raising here surfaces the misconfiguration to
+        # operators.
+        raise PermissionError(
+            "MCP search tool could not resolve caller identity. "
+            "Ensure the remote connection's /api/auth/whoami "
+            "populates subject_id, or configure an embedded "
+            "NexusFilesystem with a _default_context."
+        )
+
+    return OperationContext(
+        user_id=subject_id,
+        subject_type=subject_type,
+        subject_id=subject_id,
+        zone_id=zone_id,
+        groups=[],
+        is_admin=is_admin,
+        is_system=False,
+    )
+
+
 async def create_mcp_server(
     nx: NexusFilesystem | None = None,
     name: str = "nexus",
@@ -701,14 +766,14 @@ async def create_mcp_server(
         _search = nx_instance.service("search")
         if _search is None:
             raise ValueError("SearchService not available — glob requires the search brick")
-        # NOTE(#3701): SearchService.glob is not passed an OperationContext
-        # here because the MCP transport's Context only carries a per-request
-        # API key, not (subject_id, zone_id, is_admin). Permission filtering
-        # therefore currently relies on whatever the NexusFilesystem connection
-        # enforces at the service-lookup layer. A proper fix requires
-        # threading an API-key → identity lookup into MCP tool handlers; see
-        # the follow-up issue linked in the #3701 review summary.
-        all_matches = _search.glob(pattern, path, files=files)
+        # Codex review #3 finding #1: build an explicit OperationContext
+        # from the connection's authenticated whoami identity so ReBAC
+        # filtering sees the real (subject_id, zone_id, is_admin) rather
+        # than the ambient identity of whatever default connection the
+        # MCP server was booted with. ``_resolve_mcp_operation_context``
+        # fails closed if the identity can't be resolved.
+        op_context = _resolve_mcp_operation_context(nx_instance)
+        all_matches = _search.glob(pattern, path, files=files, context=op_context)
         total = len(all_matches)
 
         # Apply pagination
@@ -794,7 +859,11 @@ async def create_mcp_server(
         _search = nx_instance.service("search")
         if _search is None:
             raise ValueError("SearchService not available — grep requires the search brick")
-        # NOTE(#3701): See glob handler above for the MCP permission caveat.
+        # Codex review #3 finding #1: build an explicit OperationContext
+        # (see ``_resolve_mcp_operation_context`` for the fail-closed
+        # semantics). Previously grep ran without any context so ReBAC
+        # filtering fell back to the ambient connection identity.
+        op_context = _resolve_mcp_operation_context(nx_instance)
         # Codex adversarial review of #3701: sentinel fetch. Request
         # ``limit + offset + 1`` rows so we can detect ``has_more``
         # reliably. Without the sentinel, a corpus with exactly
@@ -807,6 +876,7 @@ async def create_mcp_server(
             "ignore_case": ignore_case,
             "max_results": max(sentinel_window, 1),
             "files": files,
+            "context": op_context,
         }
         # Only forward the context/invert flags when set so older servers
         # without the #3701 fields still accept the request.

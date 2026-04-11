@@ -780,17 +780,37 @@ async def _do_grep_operation(
     total = post_filter_count
     paginated = filtered_results[offset : offset + limit]
 
-    # Codex review of #3701 (finding #2): unscope every result entry's
-    # ``file`` so the HTTP response surfaces user-facing paths
-    # (``/docs/a.py``) instead of leaking the internal zone-scoped
-    # storage path (``/zone/<tenant>/docs/a.py``). This matches what
-    # the existing RPC ``handle_grep`` does and prevents tenant
-    # identifier / storage layout leakage to clients. ``unscope_result``
-    # is a no-op for already-user-facing paths, so root callers see no
-    # behavioural change.
-    from nexus.server.path_utils import unscope_result
+    # Codex review of #3701 (review #2 finding #2 + review #3 finding #3):
+    # unscope every result entry's ``file`` so the HTTP response surfaces
+    # user-facing paths (``/docs/a.py``) instead of leaking the internal
+    # zone-scoped storage path (``/zone/<tenant>/docs/a.py``), but ALSO
+    # attach a ``zone_id`` on each item whenever we recovered one from
+    # the internal path. A caller with multi-zone visibility (admin or
+    # cross-zone share recipient) can then distinguish two results that
+    # would otherwise collide onto the same unscoped ``file`` — e.g.
+    # ``/zone/acme/src/x.py`` and ``/zone/beta/src/x.py`` both unscope
+    # to ``/src/x.py``. Without ``zone_id`` the caller cannot safely
+    # round-trip a result back through ``files=[...]``.
+    from nexus.core.path_utils import split_zone_from_internal_path
 
-    paginated = [unscope_result(r) for r in paginated]
+    annotated: list[dict[str, Any]] = []
+    for r in paginated:
+        out = dict(r)
+        raw_file = r.get("file", "")
+        zone, unscoped = split_zone_from_internal_path(raw_file)
+        out["file"] = unscoped
+        if zone is not None:
+            out["zone_id"] = zone
+        annotated.append(out)
+    paginated = annotated
+
+    # Detect residual ambiguity: if two distinct raw paths collapse to
+    # the same (file, zone_id) tuple we have a lossy response and
+    # surface it in the envelope so callers know round-trip safety is
+    # degraded. This is defence-in-depth — the zone_id fix above
+    # should already disambiguate every normal multi-zone case.
+    _keys = [(it["file"], it.get("zone_id")) for it in paginated]
+    multi_zone_ambiguous = len(set(_keys)) < len(_keys)
     latency_ms = (time.perf_counter() - start_time) * 1000
 
     extras: dict[str, Any] = {
@@ -801,6 +821,8 @@ async def _do_grep_operation(
         },
         **_rebac_denial_stats(pre_filter_count, post_filter_count, window_size),
     }
+    if multi_zone_ambiguous:
+        extras["multi_zone_ambiguous"] = True
     return build_paginated_list_response(
         items=paginated,
         total=total,
@@ -870,23 +892,48 @@ async def _do_glob_operation(
     total = len(filtered_paths)
     paginated = filtered_paths[offset : offset + limit]
 
-    # Codex review of #3701 (finding #2): unscope every glob path so
-    # the HTTP response surfaces user-facing paths and never leaks the
-    # internal ``/zone/<tenant>/...`` form. Mirrors the unscope pass in
-    # the existing RPC ``handle_glob`` and the grep fix above.
-    from nexus.server.path_utils import unscope_internal_path
+    # Codex review of #3701 (review #2 finding #2 + review #3 finding #3):
+    # unscope every glob path so the HTTP response surfaces user-facing
+    # paths and never leaks the internal ``/zone/<tenant>/...`` form,
+    # but also compute a parallel ``item_zones`` list so multi-zone
+    # callers can distinguish colliding unscoped paths (e.g.
+    # ``/zone/acme/src/x.py`` and ``/zone/beta/src/x.py`` both
+    # unscope to ``/src/x.py`` — the zone id is the only round-trip
+    # disambiguator). ``item_zones[i]`` is the zone of ``items[i]``
+    # when one was recovered from the internal prefix, otherwise
+    # ``None``.
+    from nexus.core.path_utils import split_zone_from_internal_path
 
-    paginated = [unscope_internal_path(p) for p in paginated]
+    item_zones: list[str | None] = []
+    unscoped_items: list[str] = []
+    for p in paginated:
+        zone, unscoped = split_zone_from_internal_path(p)
+        unscoped_items.append(unscoped)
+        item_zones.append(zone)
+    paginated = unscoped_items
+
+    # Detect residual ambiguity (two results collapsing onto the same
+    # (path, zone_id) after unscoping) and surface it in the envelope
+    # so callers know round-trip safety is degraded.
+    _keys = list(zip(paginated, item_zones, strict=False))
+    glob_multi_zone_ambiguous = len(set(_keys)) < len(_keys)
     latency_ms = (time.perf_counter() - start_time) * 1000
 
-    extras = {
+    extras: dict[str, Any] = {
         "latency_ms": round(latency_ms, 2),
         "latency_breakdown": {
             "total_ms": round(latency_ms, 2),
             "permission_filter_ms": round(filter_ms, 2),
         },
         **_rebac_denial_stats(pre_filter_count, post_filter_count, limit + offset),
+        # Codex review #3 finding #3: parallel zone disambiguation.
+        # ``item_zones[i]`` is the zone id of ``items[i]`` (may be
+        # ``None`` for root-zone paths). Multi-zone callers use this
+        # to round-trip results back through ``files=[...]``.
+        "item_zones": item_zones,
     }
+    if glob_multi_zone_ambiguous:
+        extras["multi_zone_ambiguous"] = True
     return build_paginated_list_response(
         items=paginated, total=total, offset=offset, limit=limit, extras=extras
     )

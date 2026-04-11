@@ -2605,7 +2605,7 @@ class SearchService:
     def _validate_and_normalize_files(
         self,
         files: builtins.list[str],
-        path: str,
+        path: str,  # noqa: ARG002 — kept for API compat; no longer used after Codex review #3 fix
         context: Any,
     ) -> tuple[builtins.list[str], int]:
         """Validate and normalize a caller-supplied files list for grep/glob.
@@ -2634,9 +2634,10 @@ class SearchService:
                 intersection; this helper only deals with ``files``.
             (h) Path normalisation → leading slash added, trailing
                 slashes preserved as-is, no case folding.
-            (i) Permissions → intersected with the permitted set from
-                ``self.list(path, recursive=True, context=context)`` so
-                the caller cannot probe files they wouldn't normally see.
+            (i) Permissions → authorised directly via the injected
+                ``PermissionEnforcer.filter_list`` (Codex review #3
+                finding #2: no recursive tree walk — O(files) instead
+                of O(tree)).
 
         Args:
             files: Caller-supplied list of file paths.
@@ -2702,27 +2703,37 @@ class SearchService:
                 normalised.append(validated)
 
         # (i) Permission intersection: only keep files the caller is
-        # actually allowed to see under ``path``. self.list already
-        # enforces permissions via ``context``; anything the caller
-        # named that isn't in the permitted set is treated as stale.
+        # actually allowed to see. We must avoid the recursive tree
+        # walk here — Codex review #3 (finding #2) flagged that the
+        # previous implementation called
+        # ``self.list(path, recursive=True, context=context)`` which
+        # defeats the whole ``O(files)`` promise of ``files=[...]``
+        # (large repos hit the metastore for the entire subtree and
+        # time out under load). Instead we authorise the caller's list
+        # directly via ``filter_list``, which is implemented on the
+        # ReBAC enforcer as a bulk strategy chain — ``O(files)``, not
+        # ``O(tree)``.
         #
-        # Codex review of #3701 (finding #1): for non-root tenants
-        # ``self.list`` returns *zone-scoped* internal paths like
-        # ``/zone/<tenant>/docs/a.py`` while the caller passes user-facing
-        # paths like ``/docs/a.py``. Compare them in the same namespace
-        # by unscoping the list output before building the permitted
-        # set, otherwise every entry is silently dropped for non-root
-        # callers (the bug Codex flagged).
-        from nexus.core.path_utils import unscope_internal_path
+        # This also sidesteps Codex review #2 finding #1 (zone scoping
+        # mismatch) because we never call ``self.list`` here — there's
+        # no list output to unscope, and the enforcer's ``filter_list``
+        # accepts the caller's paths in the same namespace the caller
+        # supplied them (no internal zone prefix).
+        resolved_context = context if context is not None else self._default_context
+        if self._enforce_permissions and self._permission_enforcer is not None:
+            permitted_list = self._permission_enforcer.filter_list(normalised, resolved_context)
+            permitted_set = set(permitted_list)
+        else:
+            # Permissions disabled — no filtering, everything passes.
+            permitted_set = set(normalised)
 
-        permitted_paths_internal = cast(
-            builtins.list[str],
-            self.list(path, recursive=True, context=context),
-        )
-        permitted_set = {unscope_internal_path(p) for p in permitted_paths_internal}
-
-        # (e) Stale silent skip — drop entries not in permitted_set and
-        # report the count so the caller can detect drift.
+        # (e) Stale silent skip — drop entries not in permitted_set
+        # (either unreadable to the caller or filtered by the enforcer)
+        # and report the count so the caller can detect drift.
+        # Note: we intentionally do NOT do a separate existence check
+        # here; if the caller names a file that doesn't exist, the
+        # downstream grep/glob will simply produce zero matches for it,
+        # which is the same observable end result.
         visible = [p for p in normalised if p in permitted_set]
         stale_count = len(normalised) - len(visible)
         return visible, stale_count

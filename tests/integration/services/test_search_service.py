@@ -38,9 +38,16 @@ def mock_metadata_store():
 
 @pytest.fixture
 def mock_permission_enforcer():
-    """Create a mock PermissionEnforcer (permissive by default)."""
+    """Create a mock PermissionEnforcer (permissive by default).
+
+    ``filter_list`` defaults to a pass-through — any path supplied is
+    treated as readable unless the test overrides it. This matches the
+    mock_metadata_store pattern and keeps the ``files=[...]`` validator
+    tests oblivious to which enforcer strategy runs.
+    """
     enforcer = MagicMock()
     enforcer.check_permission.return_value = True
+    enforcer.filter_list = MagicMock(side_effect=lambda paths, context: list(paths))
     return enforcer
 
 
@@ -879,26 +886,36 @@ class TestValidateAndNormalizeFiles:
 
     # --- (e) stale silent skip ---
 
-    def test_stale_entries_silently_skipped_with_count(self, service, context):
-        """(e) Entries not in the permitted set are dropped silently."""
-        with patch.object(service, "list", return_value=["/a.py", "/b.py"]):
-            files, stale = service._validate_and_normalize_files(
-                files=["/a.py", "/gone.py", "/b.py", "/also-gone.py"],
-                path="/",
-                context=context,
-            )
-            assert files == ["/a.py", "/b.py"]
-            assert stale == 2
+    def test_stale_entries_silently_skipped_with_count(
+        self, service, mock_permission_enforcer, context
+    ):
+        """(e) Entries not permitted by the enforcer are dropped silently.
 
-    def test_all_stale_returns_empty_with_full_count(self, service, context):
-        with patch.object(service, "list", return_value=[]):
-            files, stale = service._validate_and_normalize_files(
-                files=["/a.py", "/b.py", "/c.py"],
-                path="/",
-                context=context,
-            )
-            assert files == []
-            assert stale == 3
+        Codex review #3 finding #2: validator now authorises the
+        supplied list directly via ``filter_list`` instead of walking
+        the tree, so stale/unreadable detection flows through the
+        enforcer.
+        """
+        mock_permission_enforcer.filter_list = MagicMock(return_value=["/a.py", "/b.py"])
+        files, stale = service._validate_and_normalize_files(
+            files=["/a.py", "/gone.py", "/b.py", "/also-gone.py"],
+            path="/",
+            context=context,
+        )
+        assert files == ["/a.py", "/b.py"]
+        assert stale == 2
+
+    def test_all_stale_returns_empty_with_full_count(
+        self, service, mock_permission_enforcer, context
+    ):
+        mock_permission_enforcer.filter_list = MagicMock(return_value=[])
+        files, stale = service._validate_and_normalize_files(
+            files=["/a.py", "/b.py", "/c.py"],
+            path="/",
+            context=context,
+        )
+        assert files == []
+        assert stale == 3
 
     # --- (f) size cap ---
 
@@ -940,88 +957,96 @@ class TestValidateAndNormalizeFiles:
 
     # --- (i) permission intersection ---
 
-    def test_permission_filter_intersects_files(self, service, mock_metadata_store, context):
-        """(i) Only files the caller can see are returned."""
-        with patch.object(service, "list", return_value=["/public/a.py", "/public/b.py"]):
-            files, stale = service._validate_and_normalize_files(
-                files=["/public/a.py", "/secret/c.py"],
-                path="/",
-                context=context,
-            )
-            assert "/secret/c.py" not in files
-            assert files == ["/public/a.py"]
-            assert stale == 1
+    def test_permission_filter_intersects_files(self, service, mock_permission_enforcer, context):
+        """(i) Only files the caller can see are returned.
 
-    def test_non_root_zone_unscope_intersection(self, service, mock_gateway, context):
-        """Regression for Codex review #2 finding #1.
-
-        For non-root tenants, ``self.list()`` returns *zone-scoped*
-        internal paths like ``/zone/<tenant>/docs/a.py`` while callers
-        pass user-facing paths like ``/docs/a.py``. The intersection
-        must happen in the same namespace — otherwise every entry is
-        silently dropped and the caller sees ``stale_count == n``.
-
-        Codex repro:
-            files=['/docs/a.py'], list -> ['/zone/tenant-1/docs/a.py']
-            BUG: returned ([], 1)
-            FIX: returns (['/docs/a.py'], 0)
+        Codex review #3 finding #2: the validator now authorises via
+        ``filter_list`` directly — no tree walk. The enforcer is the
+        source of truth for which files are visible.
         """
-        mock_gateway.get_routing_params.return_value = ("tenant-1", None, False)
-        with patch.object(
-            service,
-            "list",
-            return_value=[
-                "/zone/tenant-1/docs/a.py",
-                "/zone/tenant-1/docs/b.py",
-                "/zone/tenant-1/docs/c.py",
-            ],
-        ):
-            files, stale = service._validate_and_normalize_files(
-                files=["/docs/a.py", "/docs/b.py"],
-                path="/",
-                context=context,
-            )
-            assert files == ["/docs/a.py", "/docs/b.py"]
-            assert stale == 0
+        mock_permission_enforcer.filter_list = MagicMock(return_value=["/public/a.py"])
+        files, stale = service._validate_and_normalize_files(
+            files=["/public/a.py", "/secret/c.py"],
+            path="/",
+            context=context,
+        )
+        assert "/secret/c.py" not in files
+        assert files == ["/public/a.py"]
+        assert stale == 1
 
-    def test_non_root_zone_stale_path_still_counted(self, service, mock_gateway, context):
-        """Codex review #2 finding #1: stale paths still counted correctly
-        for non-root tenants after the unscope normalisation."""
-        mock_gateway.get_routing_params.return_value = ("tenant-1", None, False)
-        with patch.object(
-            service,
-            "list",
-            return_value=[
-                "/zone/tenant-1/docs/a.py",
-                "/zone/tenant-1/docs/b.py",
-            ],
-        ):
-            files, stale = service._validate_and_normalize_files(
-                files=["/docs/a.py", "/docs/missing.py"],
-                path="/",
-                context=context,
-            )
-            assert files == ["/docs/a.py"]
-            assert stale == 1
+    def test_no_recursive_tree_walk(self, service, mock_permission_enforcer, context):
+        """Regression test for Codex review #3 finding #2.
 
-    def test_tenant_prefix_format_unscope(self, service, mock_gateway, context):
-        """Codex review #2 finding #1: ``/tenant:<id>/...`` format also unscopes."""
-        mock_gateway.get_routing_params.return_value = ("acme", None, False)
-        with patch.object(
-            service,
-            "list",
-            return_value=[
-                "/tenant:acme/workspace/a.py",
-                "/tenant:acme/workspace/b.py",
-            ],
-        ):
+        ``_validate_and_normalize_files`` must NOT call
+        ``self.list(..., recursive=True)`` — that would defeat the
+        whole ``files=[...]`` ``O(files)`` promise. Instead it must
+        authorise the supplied list directly via ``filter_list``.
+
+        Codex critique: "large-repo grep/glob requests can still hit
+        the metadata store for the entire subtree and time out under
+        load" if the validator walks the tree.
+        """
+        mock_permission_enforcer.filter_list = MagicMock(
+            side_effect=lambda paths, context: list(paths)
+        )
+        with patch.object(service, "list") as tree_walk_mock:
             files, stale = service._validate_and_normalize_files(
-                files=["/workspace/a.py"],
+                files=["/a.py", "/b.py", "/c.py"],
                 path="/",
                 context=context,
             )
-            assert files == ["/workspace/a.py"]
-            assert stale == 0
+        # ``self.list`` must NEVER be called — otherwise we're back to
+        # the O(tree) behaviour Codex flagged.
+        tree_walk_mock.assert_not_called()
+        # And ``filter_list`` was called exactly once with the caller's
+        # normalised list.
+        mock_permission_enforcer.filter_list.assert_called_once()
+        call_args = mock_permission_enforcer.filter_list.call_args
+        passed_paths = call_args[0][0] if call_args[0] else call_args.kwargs["paths"]
+        assert sorted(passed_paths) == ["/a.py", "/b.py", "/c.py"]
+        assert files == ["/a.py", "/b.py", "/c.py"]
+        assert stale == 0
+
+    def test_enforcer_filter_list_results_are_authoritative(
+        self, service, mock_permission_enforcer, context
+    ):
+        """Codex review #3 finding #2: authorisation delegates to the
+        enforcer's ``filter_list`` instead of comparing against a tree
+        listing. The enforcer is authoritative.
+        """
+        mock_permission_enforcer.filter_list = MagicMock(return_value=["/docs/a.py", "/docs/b.py"])
+        files, stale = service._validate_and_normalize_files(
+            files=["/docs/a.py", "/docs/b.py", "/docs/denied.py"],
+            path="/",
+            context=context,
+        )
+        assert files == ["/docs/a.py", "/docs/b.py"]
+        assert stale == 1  # /docs/denied.py was filtered by the enforcer
+
+    def test_permission_filter_sees_any_path_namespace(
+        self, service, mock_permission_enforcer, context
+    ):
+        """Codex review #3 finding #2: because we no longer call
+        ``self.list``, the validator is agnostic to zone-scoping quirks
+        — whatever path namespace the caller supplies, that's what
+        flows to the enforcer. Non-root tenants don't need special
+        unscoping handling in this layer.
+        """
+        # Caller supplies user-facing paths; enforcer accepts them as-is.
+        mock_permission_enforcer.filter_list = MagicMock(
+            side_effect=lambda paths, context: list(paths)
+        )
+        files, stale = service._validate_and_normalize_files(
+            files=["/docs/a.py", "/docs/b.py"],
+            path="/",
+            context=context,
+        )
+        assert files == ["/docs/a.py", "/docs/b.py"]
+        assert stale == 0
+        # No zone-prefix stripping, no list() walk.
+        call_args = mock_permission_enforcer.filter_list.call_args
+        passed_paths = call_args[0][0] if call_args[0] else call_args.kwargs["paths"]
+        assert sorted(passed_paths) == ["/docs/a.py", "/docs/b.py"]
 
 
 # =============================================================================
@@ -1037,7 +1062,14 @@ class TestGrepFilesParam:
     """
 
     async def test_files_short_circuits_tree_walk(self, service, mock_metadata_store, context):
-        """15A: files=[...] should bypass self.list(path, recursive=True)."""
+        """15A: files=[...] should bypass self.list(path, recursive=True).
+
+        Updated after Codex review #3 finding #2: the validator no
+        longer calls ``self.list`` at all (it authorises via
+        ``filter_list`` directly), so the full grep path invokes
+        ``self.list`` exactly ZERO times when ``files=[...]`` is
+        supplied — neither the validator nor phase 1 walks the tree.
+        """
         tree_walk_mock = MagicMock(return_value=["/a.py", "/b.py", "/c.py"])
         with patch.object(service, "list", side_effect=tree_walk_mock):
             mock_metadata_store.get_searchable_text_bulk.return_value = {
@@ -1049,9 +1081,7 @@ class TestGrepFilesParam:
                 files=["/a.py", "/b.py"],
                 context=context,
             )
-        # list() was called exactly once (inside the validator for the
-        # permission intersection) — not twice (validator + phase 1).
-        assert tree_walk_mock.call_count == 1
+        assert tree_walk_mock.call_count == 0
         assert {r["file"] for r in results} == {"/a.py", "/b.py"}
 
     async def test_files_only_searches_supplied_files(self, service, mock_metadata_store, context):
@@ -1307,19 +1337,23 @@ class TestGrepContextAndInvertRouting:
 class TestGlobFilesParam:
     """Tests for the ``files=[...]`` parameter on SearchService.glob."""
 
-    def test_files_short_circuits_tree_walk(self, service, context):
-        """glob with files=[...] should not walk the full tree."""
+    def test_files_short_circuits_tree_walk(self, service, mock_permission_enforcer, context):
+        """glob with files=[...] should not walk the full tree.
+
+        Codex review #3 finding #2: after the validator fix, glob's
+        files=[...] path invokes ``self.list`` zero times — authorisation
+        is delegated to the enforcer's ``filter_list``.
+        """
         tree_walk_mock = MagicMock(return_value=["/a.py", "/b.py"])
+        # Enforcer permits only /a.py and /b.py (not /evil.py).
+        mock_permission_enforcer.filter_list = MagicMock(return_value=["/a.py", "/b.py"])
         with patch.object(service, "list", side_effect=tree_walk_mock):
-            # Supply a larger universe than the permitted tree — after
-            # permission intersection we expect only /a.py and /b.py.
             result = service.glob(
                 pattern="*.py",
                 files=["/a.py", "/b.py", "/evil.py"],
                 context=context,
             )
-        # list() was called once (inside the validator) not twice.
-        assert tree_walk_mock.call_count == 1
+        assert tree_walk_mock.call_count == 0
         # Only permitted files come back
         assert set(result) == {"/a.py", "/b.py"}
 

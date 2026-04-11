@@ -538,6 +538,114 @@ class TestRebacInteraction:
         assert grep_resp["items"][0]["file"] == "/docs/a.py"
         assert glob_resp["items"] == ["/docs/a.py"]
 
+    def test_grep_attaches_zone_id_for_cross_zone_results(self) -> None:
+        """Regression for Codex review #3 finding #3.
+
+        A caller with multi-zone visibility (admin or cross-zone share
+        recipient) receives two results whose internal paths are in
+        different zones. After unscoping, the file fields collapse
+        onto the same outward path. The fix attaches a ``zone_id``
+        field on each item so the caller can disambiguate and
+        round-trip results back through ``files=[...]``.
+
+        Codex critique: "follow-up grep/glob calls can target the
+        wrong file or make one of the files unreachable" without
+        disambiguation.
+        """
+        svc = _make_search_service(
+            grep_return=[
+                {
+                    "file": "/zone/acme/src/x.py",
+                    "line": 1,
+                    "content": "hello",
+                    "match": "hello",
+                },
+                {
+                    "file": "/zone/beta/src/x.py",
+                    "line": 2,
+                    "content": "hello",
+                    "match": "hello",
+                },
+            ]
+        )
+        enforcer = MagicMock()
+        enforcer.filter_search_results = MagicMock(
+            return_value=["/zone/acme/src/x.py", "/zone/beta/src/x.py"]
+        )
+        client = TestClient(_build_app(search_service=svc, permission_enforcer=enforcer))
+        resp = client.get("/api/v2/search/grep?pattern=hello")
+        data = resp.json()
+        items = data["items"]
+        assert len(items) == 2
+        # Both items collapse to the same file path after unscoping,
+        # but each carries a distinct zone_id so callers can
+        # distinguish and round-trip them.
+        assert all(it["file"] == "/src/x.py" for it in items)
+        zones = sorted(it.get("zone_id") for it in items)
+        assert zones == ["acme", "beta"]
+
+    def test_grep_single_zone_omits_zone_id_for_zoneless_paths(self) -> None:
+        """Codex review #3 finding #3: when the internal path has no
+        zone prefix (root zone) the ``zone_id`` field is NOT emitted.
+        Keeps the common root-zone response slim.
+        """
+        svc = _make_search_service(
+            grep_return=[
+                {"file": "/docs/a.py", "line": 1, "content": "x", "match": "x"},
+            ],
+        )
+        client = TestClient(_build_app(search_service=svc))
+        resp = client.get("/api/v2/search/grep?pattern=x")
+        data = resp.json()
+        assert "zone_id" not in data["items"][0]
+
+    def test_glob_emits_parallel_zone_ids_on_envelope(self) -> None:
+        """Codex review #3 finding #3: glob items stay as strings for
+        backward compatibility, but a parallel ``item_zones`` list is
+        added to the envelope — ``item_zones[i]`` is the zone id of
+        ``items[i]`` (or ``None`` for root-zone).
+        """
+        svc = _make_search_service(
+            glob_return=[
+                "/zone/acme/src/x.py",
+                "/zone/beta/src/x.py",
+                "/docs/y.py",  # root-zone — item_zones[i] is None
+            ]
+        )
+        enforcer = MagicMock()
+        enforcer.filter_search_results = MagicMock(
+            return_value=[
+                "/zone/acme/src/x.py",
+                "/zone/beta/src/x.py",
+                "/docs/y.py",
+            ]
+        )
+        client = TestClient(_build_app(search_service=svc, permission_enforcer=enforcer))
+        resp = client.get("/api/v2/search/glob?pattern=*.py")
+        data = resp.json()
+        # Items are unscoped strings; backward-compat shape preserved.
+        assert data["items"] == ["/src/x.py", "/src/x.py", "/docs/y.py"]
+        # Parallel list disambiguates the collision.
+        assert data["item_zones"] == ["acme", "beta", None]
+        # Collision is detected and surfaced.
+        assert data.get("multi_zone_ambiguous") is not True  # zones differ → not ambiguous
+        # But if we had two from the same zone colliding, the flag would fire.
+
+    def test_split_zone_helper(self) -> None:
+        """Regression for the helper: ensures the zone extraction is
+        correct for all known internal path formats."""
+        from nexus.core.path_utils import split_zone_from_internal_path
+
+        cases = [
+            ("/zone/acme/src/x.py", ("acme", "/src/x.py")),
+            ("/zone/acme/user:alice/src/x.py", ("acme", "/src/x.py")),
+            ("/tenant:default/x.py", ("default", "/x.py")),
+            ("/workspace/foo.py", (None, "/workspace/foo.py")),
+            ("/", (None, "/")),
+        ]
+        for internal, expected in cases:
+            assert split_zone_from_internal_path(internal) == expected
+
 
 # ---------------------------------------------------------------------------
 # Parity — HTTP grep/glob and HTTP query share response envelope shape (#3701 10A)

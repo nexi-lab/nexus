@@ -143,14 +143,15 @@ class DriverLifecycleCoordinator:
         if entry is None:
             return False
 
-        spec = self._mount_specs.pop(mount_point, None)
-        if spec is not None:
-            self._unregister_hooks_for_spec(spec)
-
+        # Fire unmount event BEFORE unregistering hooks (observers must still be active)
         try:
             self._dispatch.dispatch_event("unmount", mount_point)
         except Exception as exc:
             logger.warning("[DRIVER] on_unmount notification failed for %s: %s", mount_point, exc)
+
+        spec = self._mount_specs.pop(mount_point, None)
+        if spec is not None:
+            self._unregister_hooks_for_spec(spec)
 
         _kernel = getattr(self._mount_table, "_kernel", None)
         if _kernel is not None:

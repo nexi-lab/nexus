@@ -115,15 +115,20 @@ class TestMount:
 
     def test_mount_fires_mount_event(self) -> None:
         """Mount dispatches a MOUNT event through Rust dispatch_observers."""
+        import time
+
         _, dispatch, coord = _make_coordinator()
         backend = _BackendWithHookSpec()
 
         coord.mount("/data", backend)
 
-        # Flush observer thread pool to ensure delivery
-        dispatch._kernel.flush_observers()
-
+        # Wait for async observer delivery (Rust thread pool → Python GIL)
         hook = backend._mount_observer
+        for _ in range(100):
+            if hook.mount_paths:
+                break
+            time.sleep(0.01)
+
         assert hook.mount_paths == ["/data"]
 
     def test_mount_no_hook_spec_still_routes(self) -> None:
@@ -159,20 +164,26 @@ class TestUnmount:
         assert dispatch.observer_count == 0
 
     def test_unmount_fires_unmount_event(self) -> None:
+        import time
+
         mount_table, dispatch, coord = _make_coordinator()
         backend = _BackendWithHookSpec()
 
         coord.mount("/data", backend)
-        dispatch._kernel.flush_observers()
 
         mount_entry = MagicMock()
         mount_entry.backend = backend
         mount_table.get.return_value = mount_entry
 
         coord.unmount("/data")
-        dispatch._kernel.flush_observers()
 
+        # Wait for async observer delivery
         hook = backend._mount_observer
+        for _ in range(100):
+            if hook.unmount_paths:
+                break
+            time.sleep(0.01)
+
         assert hook.unmount_paths == ["/data"]
 
     def test_unmount_not_found_returns_false(self) -> None:

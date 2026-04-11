@@ -777,8 +777,15 @@ async def unregister_indexed_directory(
 ) -> dict[str, Any]:
     """Unregister a directory from scoped semantic indexing (Issue #3698).
 
-    Does NOT purge existing embeddings — use ``/purge-unscoped`` for that.
     Returns 404 if the directory was not registered.
+
+    After successful unregistration this endpoint runs
+    ``purge_unscoped_embeddings`` for the zone so any txtai rows that
+    were under the removed directory disappear from semantic search at
+    the same instant. The canonical ``document_chunks`` rows are
+    preserved (purge only touches derived txtai state) so a future
+    re-registration or mode flip back to ``'all'`` can rebuild the
+    semantic index from the existing chunk store.
     """
     from nexus.bricks.search.index_scope import (
         DirectoryNotRegisteredError,
@@ -803,10 +810,26 @@ async def unregister_indexed_directory(
     except InvalidDirectoryPathError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    # Auto-purge stale derived txtai rows so query results stop showing
+    # the now-unscoped files immediately. Best-effort: a purge failure
+    # is logged but does not roll back the unregister itself, since
+    # the unregister metadata change is the source of truth.
+    purged: dict[str, int] = {}
+    try:
+        purged = await search_daemon.purge_unscoped_embeddings(zone_id)
+    except Exception:
+        logger.warning(
+            "auto-purge after unregister failed for zone %s; "
+            "stale txtai rows may remain until next /purge-unscoped",
+            zone_id,
+            exc_info=True,
+        )
+
     return {
         "zone_id": zone_id,
         "path": canonical,
         "status": "unregistered",
+        "purged": purged,
     }
 
 
@@ -844,10 +867,18 @@ async def set_indexing_mode(
     Admin-only. Takes effect immediately — the daemon updates its
     in-memory state under ``_refresh_lock`` alongside the DB write.
 
+    When flipping a zone from ``'all'`` to ``'scoped'``, this endpoint
+    also runs ``purge_unscoped_embeddings`` for that zone so previously
+    embedded out-of-scope files become invisible to semantic search at
+    the same instant as the metadata change. Without that, the API
+    would claim "takes effect immediately" while stale txtai rows
+    remained searchable until a separate ``/purge-unscoped`` call ran.
+
     Request body:
         {"mode": "all" | "scoped", "zone_id": "optional — defaults to caller's zone"}
     """
     from nexus.bricks.search.index_scope import (
+        INDEX_MODE_SCOPED,
         InvalidDirectoryPathError,
         ZoneNotFoundError,
     )
@@ -871,24 +902,45 @@ async def set_indexing_mode(
     except InvalidDirectoryPathError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    return {"zone_id": zone_id, "indexing_mode": mode, "status": "updated"}
+    purged: dict[str, int] | None = None
+    if mode == INDEX_MODE_SCOPED:
+        # Auto-purge stale derived rows so de-scoping is enforced
+        # immediately at query time, not just at the next write.
+        purged = await search_daemon.purge_unscoped_embeddings(zone_id)
+
+    response: dict[str, Any] = {
+        "zone_id": zone_id,
+        "indexing_mode": mode,
+        "status": "updated",
+    }
+    if purged is not None:
+        response["purged"] = purged
+    return response
 
 
 @router.post("/purge-unscoped")
 async def purge_unscoped_embeddings(
+    payload: dict[str, Any] | None = None,
     auth_result: dict[str, Any] = Depends(require_auth),
     search_daemon: Any = Depends(_get_search_daemon),
 ) -> dict[str, Any]:
-    """Admin-only: purge stored embeddings for files outside any scope.
+    """Admin-only: purge derived embedding artifacts for files outside any scope.
 
-    Destructive operation (Issue #3698). Call this after flipping a zone
-    from ``'all'`` to ``'scoped'`` or after unregistering directories to
-    clean up stale embeddings and txtai docs for files that are no longer
-    in scope. Only zones in ``'scoped'`` mode are affected.
+    Destructive operation (Issue #3698). Call this after unregistering
+    directories to clean up stale txtai sections/vectors for files that
+    are no longer in scope. Only zones in ``'scoped'`` mode are affected.
 
-    This is decoupled from the unregister endpoint intentionally: removing
-    a directory registration is low-risk, purging embeddings is high-risk.
-    Keep them separate to minimize the blast radius of misconfiguration.
+    Only deletes **derived** txtai state (``sections``, ``vectors``,
+    in-memory index). The canonical ``document_chunks`` table is
+    preserved so a future mode-flip back to ``'all'`` can rebuild
+    semantic search from existing chunks.
+
+    Request body (optional):
+        {"zone_id": "zone-name"}    # defaults to caller's zone
+
+    Both this endpoint and ``/indexing-mode`` accept the same payload
+    shape so an admin operating across zones doesn't accidentally
+    purge the wrong one.
     """
     from nexus.contracts.constants import ROOT_ZONE_ID
 
@@ -898,7 +950,8 @@ async def purge_unscoped_embeddings(
             detail="purge-unscoped is admin-only",
         )
 
-    zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
+    body: dict[str, Any] = payload or {}
+    zone_id = body.get("zone_id") or auth_result.get("zone_id") or ROOT_ZONE_ID
     counts = await search_daemon.purge_unscoped_embeddings(zone_id)
     return {
         "zone_id": zone_id,

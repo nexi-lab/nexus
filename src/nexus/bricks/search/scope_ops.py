@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import text as sa_text
 
@@ -39,6 +39,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "add_indexed_directory",
+    "backfill_zone_from_chunks",
     "list_indexed_directories",
     "purge_unscoped_embeddings",
     "remove_indexed_directory",
@@ -107,6 +108,11 @@ async def add_indexed_directory(daemon: SearchDaemon, zone_id: str, directory_pa
     Policies (Issue #6): #1 non-existent dirs allowed, #4 missing zone
     → ``ZoneNotFoundError``, #5 path escape → ``InvalidDirectoryPathError``.
     Mutates in-memory + DB state under ``_refresh_lock``.
+
+    After successful registration, kicks off a backfill from
+    ``document_chunks`` so files that already exist under the new
+    directory become semantically searchable immediately rather than
+    waiting for the next write or restart.
     """
     canonical = validate_directory_path(directory_path)
 
@@ -143,6 +149,12 @@ async def add_indexed_directory(daemon: SearchDaemon, zone_id: str, directory_pa
         daemon._indexed_directories.setdefault(zone_id, set()).add(canonical)
 
     logger.info("Registered indexed directory %s under zone %s", canonical, zone_id)
+
+    # Backfill OUTSIDE the refresh lock so the txtai upsert (which can
+    # take seconds) doesn't block other refreshes. Best-effort: backfill
+    # failures are logged but don't roll back the registration.
+    await backfill_zone_from_chunks(daemon, zone_id)
+
     return canonical
 
 
@@ -188,15 +200,135 @@ def list_indexed_directories(daemon: SearchDaemon, zone_id: str) -> list[str]:
     return sorted(daemon._indexed_directories.get(zone_id, set()))
 
 
+async def backfill_zone_from_chunks(daemon: SearchDaemon, zone_id: str) -> int:
+    """Re-upsert in-scope ``document_chunks`` for ``zone_id`` into txtai.
+
+    Called when scope expands (a directory is registered, or a zone
+    flips from ``'scoped'`` back to ``'all'``). Without backfill, files
+    that were previously skipped by the embedding pipeline would stay
+    invisible to semantic search until they were re-written or the
+    daemon was restarted (because bootstrap is the only other path
+    that replays ``document_chunks`` into txtai).
+
+    Reads from ``document_chunks`` JOIN ``file_paths``, applies the
+    current scope rule (in Python, after fetch — the scope is in
+    memory and trivial to evaluate), groups chunks by virtual_path,
+    and upserts each in-scope file into the txtai backend.
+
+    Returns the number of files re-upserted. Best-effort: backfill
+    failures are logged but do not raise.
+    """
+    if daemon._async_session is None or daemon._backend is None:
+        return 0
+
+    from nexus.bricks.search.index_scope import is_path_indexed
+
+    scope = daemon._current_index_scope()
+    if scope is None:
+        return 0
+
+    try:
+        async with daemon._async_session() as session:
+            rows = (
+                await session.execute(
+                    sa_text(
+                        """
+                        SELECT
+                            fp.virtual_path,
+                            c.chunk_index,
+                            c.chunk_text
+                        FROM document_chunks c
+                        JOIN file_paths fp ON c.path_id = fp.path_id
+                        WHERE fp.zone_id = :zid
+                          AND fp.deleted_at IS NULL
+                        ORDER BY fp.virtual_path, c.chunk_index
+                        """
+                    ),
+                    {"zid": zone_id},
+                )
+            ).fetchall()
+    except Exception:
+        logger.warning(
+            "backfill_zone_from_chunks: SELECT failed for zone %s",
+            zone_id,
+            exc_info=True,
+        )
+        return 0
+
+    if not rows:
+        return 0
+
+    # Group chunks by virtual_path and filter through scope.
+    grouped: dict[str, list[str]] = {}
+    for row in rows:
+        vpath = row[0]
+        text = row[2] or ""
+        if not vpath:
+            continue
+        try:
+            if not is_path_indexed(scope, zone_id, vpath):
+                continue
+        except ValueError:
+            continue
+        grouped.setdefault(vpath, []).append(text)
+
+    if not grouped:
+        return 0
+
+    docs: list[dict[str, Any]] = []
+    for vpath, parts in grouped.items():
+        content = "\n".join(p for p in parts if p)
+        if not content.strip():
+            continue
+        doc_id = f"{zone_id}:{vpath}" if zone_id != "root" else vpath
+        docs.append(
+            {
+                "id": doc_id,
+                "text": content,
+                "path": vpath,
+                "zone_id": zone_id,
+            }
+        )
+
+    if not docs:
+        return 0
+
+    try:
+        await daemon._backend.upsert(docs, zone_id=zone_id)
+    except Exception:
+        logger.warning(
+            "backfill_zone_from_chunks: txtai upsert failed for zone %s",
+            zone_id,
+            exc_info=True,
+        )
+        return 0
+
+    logger.info(
+        "backfilled %d in-scope files into txtai for zone %s",
+        len(docs),
+        zone_id,
+    )
+    return len(docs)
+
+
 async def set_zone_indexing_mode(daemon: SearchDaemon, zone_id: str, mode: str) -> None:
-    """Flip a zone between ``'all'`` and ``'scoped'`` indexing modes."""
+    """Flip a zone between ``'all'`` and ``'scoped'`` indexing modes.
+
+    When flipping from ``'scoped'`` to ``'all'``, kicks off a backfill
+    from ``document_chunks`` so previously skipped files become
+    semantically searchable immediately. The router calls
+    ``purge_unscoped_embeddings`` after the reverse flip
+    (``'all'`` → ``'scoped'``) to keep both directions symmetric.
+    """
     if mode not in (INDEX_MODE_ALL, INDEX_MODE_SCOPED):
         raise InvalidDirectoryPathError(f"mode must be 'all' or 'scoped', got {mode!r}")
 
     if not await zone_exists(daemon, zone_id):
         raise ZoneNotFoundError(f"zone {zone_id!r} does not exist")
 
+    previous_mode: str | None = None
     async with daemon._refresh_lock:
+        previous_mode = daemon._zone_indexing_modes.get(zone_id)
         if daemon._async_session is not None:
             async with daemon._async_session() as session:
                 await session.execute(
@@ -207,6 +339,13 @@ async def set_zone_indexing_mode(daemon: SearchDaemon, zone_id: str, mode: str) 
         daemon._zone_indexing_modes[zone_id] = mode
 
     logger.info("Set indexing_mode=%s for zone %s", mode, zone_id)
+
+    # Backfill on widening (scoped → all) so previously excluded files
+    # become searchable without waiting for the next write/restart.
+    # Done outside the refresh lock so the txtai upsert doesn't block
+    # other refreshes.
+    if previous_mode == INDEX_MODE_SCOPED and mode == INDEX_MODE_ALL:
+        await backfill_zone_from_chunks(daemon, zone_id)
 
 
 async def purge_unscoped_embeddings(

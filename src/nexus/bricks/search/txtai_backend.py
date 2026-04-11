@@ -637,6 +637,14 @@ class TxtaiBackend:
         that pgvector + the content tables drop the rows immediately. Without
         the save, txtai's delete is in-memory only and the rows linger in
         ``sections``/``vectors`` until the next index/upsert flush.
+
+        **Fail-closed contract:** if either ``Embeddings.delete()`` or
+        ``_save()`` raises, this method rolls back the pgvector session
+        and re-raises so the caller knows the deletion is NOT durable.
+        Reporting an optimistic count would let admin cleanup endpoints
+        like ``/api/v2/search/purge-unscoped`` claim success while stale
+        embeddings remain in the index — exactly the silent-failure
+        mode the purge endpoint exists to prevent.
         """
         if not ids:
             return 0
@@ -645,15 +653,18 @@ class TxtaiBackend:
         async with self._lock:
             if not self._embeddings:
                 return 0
-            await asyncio.to_thread(self._embeddings.delete, ids)
             try:
+                await asyncio.to_thread(self._embeddings.delete, ids)
                 await asyncio.to_thread(self._save)
             except Exception:
-                logger.warning(
-                    "txtai delete: save() failed; in-memory state may be ahead of "
-                    "pgvector until the next index/upsert flush",
+                logger.error(
+                    "txtai delete failed for %d ids; rolling back and re-raising "
+                    "so the caller knows the deletion is NOT durable",
+                    len(ids),
                     exc_info=True,
                 )
+                await asyncio.to_thread(self._rollback_db_sessions)
+                raise
         return len(ids)
 
     # ----- Search -------------------------------------------------------------

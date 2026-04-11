@@ -740,21 +740,32 @@ def main() -> None:
     )
 
     # Unregister /e2e_purge/temp — now temp_path is out of scope.
-    status, _ = http_call("DELETE", "/api/v2/search/index-directory", {"path": "/e2e_purge/temp"})
+    # The DELETE endpoint auto-purges stale txtai rows, so the temp
+    # row should already be gone after this call returns.
+    status, body = http_call(
+        "DELETE", "/api/v2/search/index-directory", {"path": "/e2e_purge/temp"}
+    )
     check("unregister /e2e_purge/temp → 200", status == 200)
+    auto_purged = (body or {}).get("purged") or {}
+    check(
+        f"DELETE /index-directory auto-purged stale rows ({auto_purged})",
+        isinstance(auto_purged, dict) and auto_purged.get("txtai_docs", 0) >= 1,
+        str(auto_purged),
+    )
 
-    # Call /purge-unscoped. This should delete temp_path's chunks but
-    # leave keeper_path alone because /e2e_purge/keeper is still registered.
+    # Calling /purge-unscoped explicitly should be idempotent — there's
+    # nothing left to purge after the auto-purge above, so the count
+    # is 0 and that's the expected result.
     status, body = http_call("POST", "/api/v2/search/purge-unscoped", {})
     check(
-        "POST /purge-unscoped → 200",
+        "POST /purge-unscoped → 200 (idempotent after auto-purge)",
         status == 200,
         f"got {status}: {body}",
     )
     purged = (body or {}).get("purged") or {}
     check(
-        f"purge reported txtai_docs deleted ({purged})",
-        isinstance(purged, dict) and purged.get("txtai_docs", 0) >= 1,
+        f"explicit purge is idempotent ({purged})",
+        isinstance(purged, dict) and purged.get("txtai_docs", 0) == 0,
         str(purged),
     )
 

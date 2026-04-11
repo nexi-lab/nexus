@@ -141,6 +141,17 @@ class DaemonConfig:
     # need it. Operators who want the feature can flip this in config.
     txtai_graph: bool = False  # Enable semantic graph (opt-in; see note above)
 
+    # Per-directory semantic index scoping (Issue #3698).
+    # ``scope_refresh_seconds`` controls how often the daemon re-reads
+    # ``zones.indexing_mode`` and ``indexed_directories`` from the DB
+    # so multi-worker deployments converge on a consistent view of the
+    # scope state. The cost is one small SQL query per refresh
+    # interval per worker. Single-process deployments can leave this
+    # at the default (5s) — the daemon also write-throughs on the
+    # CRUD endpoints in the local process, so the periodic refresh
+    # only matters when ANOTHER worker mutated scope.
+    scope_refresh_seconds: float = 5.0
+
 
 class SearchDaemon:
     """Long-running search service with pre-warmed indexes.
@@ -249,13 +260,16 @@ class SearchDaemon:
         self._max_latency_samples = 1000
 
         # Per-directory semantic index scope state (Issue #3698).
-        # Single-process assumption: the daemon is the only writer.
-        # The CRUD endpoints update these under ``_refresh_lock`` as a
-        # write-through cache on top of the ``zones.indexing_mode`` column
-        # and the ``indexed_directories`` table. Multi-process deployments
-        # will need Postgres LISTEN/NOTIFY or a TTL refresh — not in v1.
+        # The local-process CRUD endpoints update these under
+        # ``_refresh_lock`` as a write-through cache on top of the
+        # ``zones.indexing_mode`` column and the ``indexed_directories``
+        # table. A periodic refresh task (``_scope_refresh_loop``)
+        # re-reads from the DB so multi-worker deployments converge on
+        # a consistent view of scope state — see
+        # ``DaemonConfig.scope_refresh_seconds``.
         self._zone_indexing_modes: dict[str, str] = {}
         self._indexed_directories: dict[str, set[str]] = {}
+        self._scope_refresh_task: asyncio.Task[None] | None = None
 
     @property
     def is_initialized(self) -> bool:
@@ -351,6 +365,60 @@ class SearchDaemon:
             sum(1 for m in self._zone_indexing_modes.values() if m == "scoped"),
             sum(len(d) for d in self._indexed_directories.values()),
         )
+
+    async def _scope_refresh_loop(self) -> None:
+        """Periodically re-read scope state from the DB.
+
+        Multi-worker deployments need this so a CRUD endpoint call on
+        worker A becomes visible to worker B within bounded staleness.
+        Single-worker deployments tolerate it cheaply because the
+        local write-through path keeps state fresh, and the periodic
+        re-read costs one small SELECT every ``scope_refresh_seconds``.
+
+        Uses ``_refresh_lock`` so the in-memory dicts don't see a half-
+        loaded state if a CRUD call is mid-write.
+
+        Distinct from ``_load_index_scope``: this path is best-effort —
+        on transient DB failure it logs and retries on the next tick
+        rather than crashing the daemon. The startup load is still the
+        fail-closed path that establishes the initial trusted state.
+        """
+        interval = max(0.5, self.config.scope_refresh_seconds)
+        while not self._shutting_down:
+            try:
+                await asyncio.sleep(interval)
+            except asyncio.CancelledError:
+                return
+            if self._shutting_down or self._async_session is None:
+                return
+            try:
+                async with self._async_session() as session:
+                    modes_result = await session.execute(
+                        sa_text(
+                            "SELECT zone_id, COALESCE(indexing_mode, 'all') "
+                            "FROM zones WHERE deleted_at IS NULL"
+                        )
+                    )
+                    new_modes = {row[0]: row[1] for row in modes_result.fetchall()}
+
+                    dirs_result = await session.execute(
+                        sa_text("SELECT zone_id, directory_path FROM indexed_directories")
+                    )
+                    new_dirs: dict[str, set[str]] = {}
+                    for row in dirs_result.fetchall():
+                        new_dirs.setdefault(row[0], set()).add(row[1])
+
+                async with self._refresh_lock:
+                    self._zone_indexing_modes = new_modes
+                    self._indexed_directories = new_dirs
+            except asyncio.CancelledError:
+                return
+            except Exception:
+                # Best-effort: keep the old snapshot, log and retry next tick.
+                logger.warning(
+                    "scope refresh tick failed; keeping previous snapshot",
+                    exc_info=True,
+                )
 
     async def add_indexed_directory(self, zone_id: str, directory_path: str) -> str:
         """Register ``directory_path`` for scoped indexing. See scope_ops."""
@@ -539,6 +607,14 @@ class SearchDaemon:
             self._refresh_task = asyncio.create_task(self._index_refresh_loop())
             self._legacy_refresh_task = asyncio.create_task(self._legacy_refresh_loop())
 
+        # Start the periodic scope refresh loop so multi-worker
+        # deployments converge on the same scope state when another
+        # worker mutated it. Single-worker deployments still benefit
+        # because external SQL changes (admin tools, migrations) are
+        # picked up without a daemon restart.
+        if self._async_session is not None and self.config.scope_refresh_seconds > 0:
+            self._scope_refresh_task = asyncio.create_task(self._scope_refresh_loop())
+
         # If BM25S not loaded, count existing DB documents for stats
         if not self._bm25s_index and self._async_session:
             try:
@@ -592,6 +668,11 @@ class SearchDaemon:
             self._refresh_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._refresh_task
+        if self._scope_refresh_task:
+            self._scope_refresh_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._scope_refresh_task
+            self._scope_refresh_task = None
         self._consumer_tasks.clear()
 
         # Shutdown txtai backend (Issue #2663)
@@ -989,9 +1070,18 @@ class SearchDaemon:
                     # ``directory || '/'``. The ``/`` suffix rule prevents
                     # '/src' from matching '/srcX/foo' (Rule 6 bug guard).
                     # Zones NOT in scoped mode bypass the filter entirely.
+                    #
+                    # WILDCARD ESCAPING: ``LIKE`` interprets ``_`` and ``%``
+                    # as wildcards. A directory like ``/team_a`` would
+                    # otherwise match ``/teamXa/foo`` and reintroduce
+                    # out-of-scope rows after restart. We escape the
+                    # pattern via nested REPLACE() inside SQL so the match
+                    # is a literal prefix only, with ``ESCAPE '\'`` to
+                    # honour the escapes. Both Postgres and SQLite
+                    # support this form.
                     result = await session.execute(
                         sa_text(
-                            """
+                            r"""
                             SELECT
                                 fp.zone_id,
                                 fp.virtual_path,
@@ -1009,7 +1099,14 @@ class SearchDaemon:
                                       AND (
                                         d.directory_path = '/'
                                         OR fp.virtual_path = d.directory_path
-                                        OR fp.virtual_path LIKE d.directory_path || '/%'
+                                        OR fp.virtual_path LIKE
+                                            REPLACE(
+                                              REPLACE(
+                                                REPLACE(d.directory_path, '\', '\\'),
+                                                '%', '\%'
+                                              ),
+                                              '_', '\_'
+                                            ) || '/%' ESCAPE '\'
                                       )
                                 )
                               )

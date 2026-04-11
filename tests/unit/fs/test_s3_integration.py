@@ -120,7 +120,7 @@ class TestS3BackendLifecycle:
     async def test_copy(self, s3_fs):
         fs, mp = s3_fs
         fs.write(f"{mp}/src.txt", b"copy me")
-        await fs.copy(f"{mp}/src.txt", f"{mp}/dst.txt")
+        fs.copy(f"{mp}/src.txt", f"{mp}/dst.txt")
         src = fs.read(f"{mp}/src.txt")
         dst = fs.read(f"{mp}/dst.txt")
         assert src == dst == b"copy me"

@@ -151,7 +151,7 @@ class TestSingleBackendLifecycle:
     async def test_stat(self, slim_fs: SlimNexusFS):
         """Write a file, stat it, verify metadata."""
         slim_fs.write("/local/meta.txt", b"metadata test")
-        stat = await slim_fs.stat("/local/meta.txt")
+        stat = slim_fs.stat("/local/meta.txt")
         assert stat is not None
         assert stat["path"] == "/local/meta.txt"
         assert stat["size"] == 13
@@ -162,7 +162,7 @@ class TestSingleBackendLifecycle:
         """Write files, list directory, verify they appear."""
         slim_fs.write("/local/a.txt", b"aaa")
         slim_fs.write("/local/b.txt", b"bbb")
-        entries = await slim_fs.ls("/local/", detail=False, recursive=True)
+        entries = slim_fs.ls("/local/", detail=False, recursive=True)
         paths = [e for e in entries if e.endswith(".txt")]
         assert "/local/a.txt" in paths
         assert "/local/b.txt" in paths
@@ -170,15 +170,15 @@ class TestSingleBackendLifecycle:
     @pytest.mark.asyncio
     async def test_exists(self, slim_fs: SlimNexusFS):
         """Check exists before and after write."""
-        assert not await slim_fs.exists("/local/nofile.txt")
+        assert not slim_fs.exists("/local/nofile.txt")
         slim_fs.write("/local/nofile.txt", b"now I exist")
-        assert await slim_fs.exists("/local/nofile.txt")
+        assert slim_fs.exists("/local/nofile.txt")
 
     @pytest.mark.asyncio
     async def test_rename(self, slim_fs: SlimNexusFS):
         """Write, rename, verify old path gone and new path exists."""
         slim_fs.write("/local/old.txt", b"rename me")
-        await slim_fs.rename("/local/old.txt", "/local/new.txt")
+        slim_fs.rename("/local/old.txt", "/local/new.txt")
         result = slim_fs.read("/local/new.txt")
         assert result == b"rename me"
 
@@ -186,15 +186,15 @@ class TestSingleBackendLifecycle:
     async def test_delete(self, slim_fs: SlimNexusFS):
         """Write, delete, verify gone."""
         slim_fs.write("/local/delete-me.txt", b"bye")
-        await slim_fs.delete("/local/delete-me.txt")
-        stat = await slim_fs.stat("/local/delete-me.txt")
+        slim_fs.delete("/local/delete-me.txt")
+        stat = slim_fs.stat("/local/delete-me.txt")
         assert stat is None
 
     @pytest.mark.asyncio
     async def test_copy(self, slim_fs: SlimNexusFS):
         """Write, copy, verify both exist with same content."""
         slim_fs.write("/local/src.txt", b"copy me")
-        await slim_fs.copy("/local/src.txt", "/local/dst.txt")
+        slim_fs.copy("/local/src.txt", "/local/dst.txt")
         src = slim_fs.read("/local/src.txt")
         dst = slim_fs.read("/local/dst.txt")
         assert src == dst == b"copy me"
@@ -203,14 +203,14 @@ class TestSingleBackendLifecycle:
     async def test_mkdir(self, slim_fs: SlimNexusFS):
         """Create directory, verify it's a directory."""
         slim_fs.mkdir("/local/subdir")
-        stat = await slim_fs.stat("/local/subdir")
+        stat = slim_fs.stat("/local/subdir")
         assert stat is not None
         assert stat["is_directory"] is True
 
     @pytest.mark.asyncio
     async def test_stat_directory(self, slim_fs: SlimNexusFS):
         """Stat on the mount root should return directory."""
-        stat = await slim_fs.stat("/local")
+        stat = slim_fs.stat("/local")
         assert stat is not None
         assert stat["is_directory"] is True
 

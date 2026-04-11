@@ -102,10 +102,10 @@ class TestEphemeralMountExceptionSafety:
             # Monkey-patch fs.close to track calls
             original_close = getattr(fs, "close", None)
 
-            async def _tracking_close() -> None:
+            def _tracking_close() -> None:
                 close_called.append(True)
                 if original_close:
-                    await original_close()
+                    original_close()
 
             fs.close = _tracking_close
             raise ValueError("test error")

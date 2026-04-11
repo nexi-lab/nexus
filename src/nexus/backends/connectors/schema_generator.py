@@ -342,6 +342,27 @@ def get_virtual_readme_tree_for_backend(backend: Any, mount_path: str) -> Virtua
         generator._directory_structure = dir_structure
 
     tree = generator.generate_tree(mount_path)
+
+    # IMPORTANT (Issue #3728): connectors can override ``generate_readme``
+    # to substitute a curated static markdown file (see
+    # ``PathGmailBackend.generate_readme`` which loads
+    # ``connectors/gmail/README.md`` with the authoritative ``SENT/_reply.yaml``
+    # / ``SENT/_forward.yaml`` write paths).  The generator-built README in
+    # ``tree`` only uses class-level metadata and can't see those overrides,
+    # so we ask the backend itself for the README.md body and overwrite the
+    # generator's version.  ``schemas/`` and ``examples/`` still come from
+    # the generator — those don't have connector-level overrides today.
+    try:
+        backend_readme = backend.generate_readme(mount_path)
+    except Exception:
+        backend_readme = None
+    if isinstance(backend_readme, str) and backend_readme:
+        tree.children["README.md"] = VirtualEntry(
+            name="README.md",
+            is_dir=False,
+            content=backend_readme.encode("utf-8"),
+        )
+
     _VIRTUAL_TREE_CACHE[key] = tree
     return tree
 

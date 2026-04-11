@@ -1638,23 +1638,26 @@ class NexusFS(  # type: ignore[misc]
 
             meta = route.metastore.get(path)
 
-            if meta is None or meta.etag is None:
-                raise NexusFileNotFoundError(path)
+            if meta is not None and meta.etag is not None:
+                _rb = self._driver_coordinator.resolve_backend(meta.backend_name)
+                if hasattr(_rb, "read_content_range"):
+                    from dataclasses import replace as _replace
 
-            _rb = self._driver_coordinator.resolve_backend(meta.backend_name)
-            if hasattr(_rb, "read_content_range"):
-                from dataclasses import replace as _replace
-
-                read_context = (
-                    _replace(
-                        context,
-                        backend_path=route.backend_path,
-                        mount_path=route.mount_point,
+                    read_context = (
+                        _replace(
+                            context,
+                            backend_path=route.backend_path,
+                            mount_path=route.mount_point,
+                        )
+                        if context
+                        else None
                     )
-                    if context
-                    else None
-                )
-                return _rb.read_content_range(meta.etag, start, end, context=read_context)
+                    return _rb.read_content_range(meta.etag, start, end, context=read_context)
+            # Metadata miss or backend can't do range reads — fall through to
+            # the sys_read slice path below.  Virtual ``.readme/`` paths
+            # (Issue #3728) take this branch: their tree is served from
+            # sys_read's ExternalRouteResult dispatch, which the slice call
+            # then trims to [start, end).
 
         # FALLBACK: full read via sys_read + slice
         content = await self.sys_read(path, count=end, offset=0, context=context)
@@ -4262,7 +4265,11 @@ class NexusFS(  # type: ignore[misc]
 
             if self.metadata.exists(path):
                 return True
-            return is_implicit_dir
+            if is_implicit_dir:
+                return True
+            # Virtual .readme/ overlay check (Issue #3728) — before reporting
+            # not-found, see if the path resolves to a virtual skill doc.
+            return self._try_virtual_readme_stat(path, ctx) is not None
         except (InvalidPathError, NexusFileNotFoundError, BackendError):
             return False
 

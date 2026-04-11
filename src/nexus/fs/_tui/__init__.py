@@ -1238,15 +1238,15 @@ class PlaygroundApp(App[None]):
             return "x://timeline"
         if connector_name == "hn_connector":
             return "hn://top"
-        if connector_name == "gws_github":
-            return None
+        if connector_name == "github_connector":
+            return "github://me"
         if connector_name.startswith("gws_"):
             return f"gws://{connector_name.removeprefix('gws_')}"
         return None
 
     def _connector_auth_service(self, connector_name: str, service_name: str | None) -> str | None:
         """Map connector targets to the auth flow users should follow."""
-        if connector_name == "gws_github":
+        if connector_name == "github_connector":
             return "github"
         if connector_name.startswith("gws_"):
             return "gws"

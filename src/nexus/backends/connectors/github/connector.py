@@ -36,7 +36,12 @@ logger = logging.getLogger(__name__)
 
 
 @register_connector(
-    "gws_github",
+    # Registry name must match the factory lookup fallback
+    # ``f"{scheme}_connector"`` so ``github://<authority>`` mounts resolve
+    # to this class.  Previously registered as ``"gws_github"``, which was
+    # unreachable from any scheme and made ``nexus-fs mount github://...``
+    # fail — see #3728 follow-up.
+    "github_connector",
     description="GitHub via gh CLI",
     category="cli",
 )

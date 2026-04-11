@@ -15,7 +15,6 @@ from typing import Any
 from nexus.contracts.constants import DEFAULT_OAUTH_REDIRECT_URI
 from nexus.server._rpc_params_generated import (
     AccessParams,
-    RmdirParams,
     SysRenameParams,
     SysUnlinkParams,
 )
@@ -40,6 +39,62 @@ class ReadParams:
     parsed: bool = False
     return_url: bool = False
     expires_in: int = 3600
+
+
+# ============================================================
+# RPC alias params with conservative defaults (Codex adversarial
+# review of nexi-lab/nexus#3701)
+# ============================================================
+#
+# These override the auto-generated ``MkdirParams`` / ``RmdirParams``
+# when accessed via the ``mkdir`` / ``rmdir`` RPC names so that legacy
+# clients sending ``{"path": "/foo"}`` without explicit ``parents`` /
+# ``exist_ok`` / ``recursive`` fields get the safe defaults
+# (``parents=False``, ``exist_ok=False``, ``recursive=False``) rather
+# than the NexusFS signature defaults (``parents=True``,
+# ``exist_ok=True``, ``recursive=True``).
+#
+# Background: ``NexusFS.mkdir`` has ``parents=True, exist_ok=True``
+# defaults (mkdir -p), and ``NexusFS.rmdir`` has ``recursive=True``
+# (rm -rf). The legacy RPC alias has always been conservative —
+# changing the defaults at the RPC layer silently turns a previously
+# safe ``rmdir`` call into a destructive recursive subtree delete,
+# and ``mkdir`` starts silently creating parent directories and
+# succeeding on existing paths. This was caught by Codex during the
+# #3701 PR review. These alias classes preserve the pre-#3701
+# behavior exactly.
+
+
+@dataclass
+class MkdirAliasParams:
+    """Legacy-conservative mkdir RPC alias params.
+
+    NexusFS.mkdir defaults to ``parents=True, exist_ok=True`` (mkdir
+    -p), but the ``mkdir`` RPC alias has historically used
+    conservative defaults so legacy clients that omit these fields
+    get a plain mkdir that errors on missing parents or existing
+    paths.
+    """
+
+    path: str
+    parents: bool = False
+    exist_ok: bool = False
+
+
+@dataclass
+class RmdirAliasParams:
+    """Legacy-conservative rmdir RPC alias params.
+
+    NexusFS.rmdir defaults to ``recursive=True`` (rm -rf), but the
+    ``rmdir`` RPC alias has historically been non-recursive so
+    legacy clients that omit ``recursive`` get subtree-safe
+    behavior. Dropping this override would turn a previously safe
+    rmdir into a destructive recursive delete — a real behavioral
+    regression.
+    """
+
+    path: str
+    recursive: bool = False
 
 
 @dataclass
@@ -214,19 +269,23 @@ OVERRIDE_METHOD_PARAMS: dict[str, type] = {
     "delete": SysUnlinkParams,
     "exists": AccessParams,
     "rename": SysRenameParams,
-    # Legacy alias used by older remote clients (nexus.backends.storage.remote
-    # still calls ``_call_rpc("sys_rmdir", ...)``). The server's dispatch
-    # table at nexus.server.rpc.dispatch also still registers ``sys_rmdir``
-    # as a backward-compat alias to ``handle_rmdir``. Drop this entry once
-    # all client versions have migrated to the canonical ``rmdir`` method.
-    "sys_rmdir": RmdirParams,
-    # NOTE: ``mkdir``, ``rmdir``, and ``is_directory`` were previously
-    # listed here as overrides because they used to be aliases for
-    # ``sys_mkdir`` / ``sys_rmdir`` / ``sys_is_directory``. Those methods
-    # have since been renamed to drop the ``sys_`` prefix on NexusFS, so
-    # they're now canonical method names — the auto-generator emits
-    # ``MkdirParams`` / ``RmdirParams`` / ``IsDirectoryParams`` directly
-    # and no override is needed.
+    # Codex review of #3701: restore legacy-conservative mkdir/rmdir
+    # alias defaults. NexusFS.mkdir defaults to ``parents=True,
+    # exist_ok=True`` (mkdir -p) and NexusFS.rmdir defaults to
+    # ``recursive=True`` (rm -rf), but the RPC alias has always been
+    # conservative. Using the auto-generated classes would silently
+    # flip legacy clients sending only ``{"path": ...}`` into mkdir-p
+    # semantics for mkdir and recursive subtree delete for rmdir — a
+    # real behavioral regression flagged by Codex.
+    "mkdir": MkdirAliasParams,
+    "rmdir": RmdirAliasParams,
+    # ``sys_rmdir`` is also kept as an alias for older remote clients
+    # (``nexus.backends.storage.remote`` still calls ``_call_rpc(
+    # "sys_rmdir", ...)``). It shares the same conservative defaults
+    # so both spellings behave identically. The dispatch table at
+    # ``nexus.server.rpc.dispatch`` registers ``sys_rmdir`` as a
+    # backward-compat alias to ``handle_rmdir``.
+    "sys_rmdir": RmdirAliasParams,
     "oauth_get_auth_url": OAuthGetAuthUrlParams,
     "oauth_exchange_code": OAuthExchangeCodeParams,
     # Admin

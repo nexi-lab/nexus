@@ -1077,6 +1077,162 @@ class TestGrepFilesParam:
         assert len([r for r in results if r["file"] == "/a.py"]) == 1
 
 
+class TestGrepContextAndInvertRouting:
+    """Regression tests for #3701 Codex finding #3.
+
+    The accelerated grep paths (TRIGRAM_INDEX, ZOEKT_INDEX,
+    PARALLEL_POOL, mmap, rust_bulk) all do raw regex scans and
+    silently drop ``before_context`` / ``after_context`` /
+    ``invert_match``. SearchService.grep is required to detect
+    those flags and force routing through ``_grep_lines`` so the
+    flags actually take effect, regardless of what
+    ``_select_grep_strategy`` would normally pick.
+    """
+
+    async def test_before_after_context_force_python_path_when_strategy_would_be_rust(
+        self, service, mock_metadata_store, context
+    ):
+        """before_context/after_context must take effect even on a corpus
+        that would normally select RUST_BULK / SEQUENTIAL routing."""
+        from nexus.bricks.search.search_service import SearchStrategy
+
+        files = [f"/src/f{i}.py" for i in range(50)]
+        # Empty cached text → strategy selector would pick a non-cached path.
+        mock_metadata_store.get_searchable_text_bulk.return_value = {}
+
+        strategy_calls: list[SearchStrategy] = []
+        original_select = service._select_grep_strategy
+
+        def spy(*args, **kwargs):
+            strategy = original_select(*args, **kwargs)
+            strategy_calls.append(strategy)
+            return strategy
+
+        # Stub _grep_raw_content so we can assert force_python_path was passed.
+        captured_kwargs: dict = {}
+
+        async def fake_raw(**kwargs):
+            captured_kwargs.update(kwargs)
+            return [
+                {
+                    "file": "/src/f0.py",
+                    "line": 3,
+                    "content": "MATCH",
+                    "before_context": [
+                        {"line": 1, "content": "before-1"},
+                        {"line": 2, "content": "before-2"},
+                    ],
+                    "after_context": [{"line": 4, "content": "after-1"}],
+                }
+            ]
+
+        with (
+            patch.object(service, "list", return_value=files),
+            patch.object(service, "_select_grep_strategy", side_effect=spy),
+            patch.object(service, "_grep_raw_content", side_effect=fake_raw),
+        ):
+            results = await service.grep(
+                pattern="MATCH",
+                context=context,
+                before_context=2,
+                after_context=1,
+            )
+        # The strategy selector should NOT have run (we override the
+        # strategy when context flags are set, so the selector is bypassed).
+        assert strategy_calls == []
+        # _grep_raw_content received force_python_path=True so the mmap
+        # and rust accelerator branches inside it are skipped.
+        assert captured_kwargs.get("force_python_path") is True
+        assert captured_kwargs.get("before_context") == 2
+        assert captured_kwargs.get("after_context") == 1
+        assert len(results) == 1
+        assert results[0]["before_context"][0]["content"] == "before-1"
+        assert results[0]["after_context"][0]["content"] == "after-1"
+
+    async def test_invert_match_forces_python_path(self, service, mock_metadata_store, context):
+        """invert_match must take effect even when accelerators are available."""
+        files = [f"/src/f{i}.py" for i in range(50)]
+        mock_metadata_store.get_searchable_text_bulk.return_value = {}
+
+        captured_kwargs: dict = {}
+
+        async def fake_raw(**kwargs):
+            captured_kwargs.update(kwargs)
+            return []
+
+        with (
+            patch.object(service, "list", return_value=files),
+            patch.object(service, "_grep_raw_content", side_effect=fake_raw),
+        ):
+            await service.grep(
+                pattern="MATCH",
+                context=context,
+                invert_match=True,
+            )
+        assert captured_kwargs.get("force_python_path") is True
+        assert captured_kwargs.get("invert_match") is True
+
+    async def test_no_flags_does_not_force_python_path(self, service, mock_metadata_store, context):
+        """When no context/invert flags are set, the normal strategy selector
+        runs and force_python_path stays False — accelerators remain in play.
+        """
+        files = [f"/src/f{i}.py" for i in range(50)]
+        mock_metadata_store.get_searchable_text_bulk.return_value = {}
+
+        captured_kwargs: dict = {}
+
+        async def fake_raw(**kwargs):
+            captured_kwargs.update(kwargs)
+            return []
+
+        with (
+            patch.object(service, "list", return_value=files),
+            patch.object(service, "_grep_raw_content", side_effect=fake_raw),
+        ):
+            await service.grep(pattern="MATCH", context=context)
+        assert captured_kwargs.get("force_python_path") is False
+
+    async def test_grep_raw_content_skips_mmap_when_force_python_path(self, service, context):
+        """``_grep_raw_content(force_python_path=True)`` must not call the
+        mmap accelerator even when it is available."""
+        import re as _re
+
+        from nexus.bricks.search import search_service as ss_mod
+
+        with (
+            patch.object(ss_mod.grep_fast, "is_mmap_available", return_value=True),
+            patch.object(ss_mod.grep_fast, "grep_files_mmap") as mmap_mock,
+            patch.object(ss_mod.grep_fast, "is_available", return_value=True),
+            patch.object(ss_mod.grep_fast, "grep_bulk") as rust_mock,
+            patch.object(
+                service,
+                "_read",
+                new=AsyncMock(return_value=b"line a\nMATCH line b\nline c\n"),
+            ),
+        ):
+            from nexus.bricks.search.search_service import SearchStrategy
+
+            results = await service._grep_raw_content(
+                regex=_re.compile("MATCH"),
+                pattern="MATCH",
+                files_needing_raw=["/a.py"],
+                strategy=SearchStrategy.SEQUENTIAL,
+                ignore_case=False,
+                remaining_results=10,
+                context=context,
+                before_context=1,
+                after_context=1,
+                invert_match=False,
+                force_python_path=True,
+            )
+        mmap_mock.assert_not_called()
+        rust_mock.assert_not_called()
+        assert len(results) == 1
+        assert results[0]["line"] == 2
+        assert results[0]["before_context"][0]["content"] == "line a"
+        assert results[0]["after_context"][0]["content"] == "line c"
+
+
 class TestGlobFilesParam:
     """Tests for the ``files=[...]`` parameter on SearchService.glob."""
 

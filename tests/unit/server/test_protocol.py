@@ -2,6 +2,7 @@
 
 import dataclasses
 from datetime import datetime
+from typing import cast
 
 import pytest
 
@@ -367,6 +368,53 @@ class TestCodegenConsistency:
             if not required:
                 result = parse_method_params(method_name, {})
                 assert isinstance(result, param_class)
+
+    def test_mkdir_rmdir_alias_defaults_are_conservative(self):
+        """Regression test for #3701 Codex finding #1.
+
+        NexusFS.mkdir defaults to ``parents=True, exist_ok=True``
+        (mkdir -p) and NexusFS.rmdir defaults to ``recursive=True``
+        (rm -rf), but the legacy ``mkdir`` / ``rmdir`` / ``sys_rmdir``
+        RPC aliases must override those defaults to the conservative
+        equivalents (``parents=False``, ``exist_ok=False``,
+        ``recursive=False``).
+
+        Dropping these overrides silently turns a previously safe
+        ``rmdir`` call into a destructive recursive subtree delete and
+        ``mkdir`` into mkdir-p — a real behavioral regression for
+        legacy clients that send only ``{"path": "/foo"}``.
+        """
+        from nexus.server._rpc_param_overrides import (
+            MkdirAliasParams,
+            RmdirAliasParams,
+        )
+
+        assert METHOD_PARAMS["mkdir"] is MkdirAliasParams
+        assert METHOD_PARAMS["rmdir"] is RmdirAliasParams
+        # sys_rmdir is the legacy spelling kept for older remote clients;
+        # it must share the same conservative defaults.
+        assert METHOD_PARAMS["sys_rmdir"] is RmdirAliasParams
+
+        mkdir_defaults = {f.name: f.default for f in dataclasses.fields(MkdirAliasParams)}
+        assert mkdir_defaults["parents"] is False
+        assert mkdir_defaults["exist_ok"] is False
+
+        rmdir_defaults = {f.name: f.default for f in dataclasses.fields(RmdirAliasParams)}
+        assert rmdir_defaults["recursive"] is False
+
+        # Round-trip through parse_method_params with only ``path`` set
+        # (the way legacy clients call) — defaults must hold.
+        parsed_mkdir = cast(MkdirAliasParams, parse_method_params("mkdir", {"path": "/foo"}))
+        assert parsed_mkdir.parents is False
+        assert parsed_mkdir.exist_ok is False
+
+        parsed_rmdir = cast(RmdirAliasParams, parse_method_params("rmdir", {"path": "/foo"}))
+        assert parsed_rmdir.recursive is False
+
+        parsed_sys_rmdir = cast(
+            RmdirAliasParams, parse_method_params("sys_rmdir", {"path": "/foo"})
+        )
+        assert parsed_sys_rmdir.recursive is False
 
 
 # ============================================================

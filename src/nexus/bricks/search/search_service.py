@@ -1826,6 +1826,17 @@ class SearchService:
         if not candidate_files:
             return []
 
+        # #3701 Codex finding: only the Python path through ``_grep_lines``
+        # honours ``before_context`` / ``after_context`` / ``invert_match``.
+        # The accelerated paths (TRIGRAM_INDEX, ZOEKT_INDEX, PARALLEL_POOL,
+        # mmap, rust_bulk) all do raw regex scans and silently drop these
+        # flags. When any of them are set we route every file through the
+        # CACHED_TEXT/SEQUENTIAL Python loop so the flags actually take
+        # effect. ``CACHED_TEXT`` runs opportunistically on whatever the
+        # metastore has cached; everything else falls through to
+        # ``_grep_raw_content`` with ``force_python_path=True``.
+        needs_python_path = before_context > 0 or after_context > 0 or invert_match
+
         # Phase 2: Bulk fetch searchable text
         searchable_texts = self.metadata.get_searchable_text_bulk(candidate_files)
         cached_text_ratio = len(searchable_texts) / len(candidate_files) if candidate_files else 0.0
@@ -1838,27 +1849,39 @@ class SearchService:
         # threshold lives in ``FILES_FILTER_TRIGRAM_THRESHOLD`` and is
         # benchmark-backed.
         zone_id, _, _ = self._get_routing_params(context)
-        strategy = self._select_grep_strategy(
-            file_count=len(candidate_files),
-            cached_text_ratio=cached_text_ratio,
-            zone_id=zone_id,
-        )
-        if (
-            files is not None
-            and strategy == SearchStrategy.TRIGRAM_INDEX
-            and len(candidate_files) < FILES_FILTER_TRIGRAM_THRESHOLD
-        ):
-            logger.debug(
-                "[GREP] files=[...] of size %d below trigram threshold %d — "
-                "bypassing TRIGRAM_INDEX in favour of direct scan",
-                len(candidate_files),
-                FILES_FILTER_TRIGRAM_THRESHOLD,
-            )
+        if needs_python_path:
+            # Force a Python-loop strategy so context/invert flags take
+            # effect. CACHED_TEXT is preferred when the metastore has
+            # text cached for most candidates; otherwise SEQUENTIAL
+            # routes through ``_grep_raw_content`` which will skip its
+            # mmap+rust accelerator branches via ``force_python_path``.
             strategy = (
                 SearchStrategy.CACHED_TEXT
                 if cached_text_ratio >= GREP_CACHED_TEXT_RATIO
-                else SearchStrategy.RUST_BULK
+                else SearchStrategy.SEQUENTIAL
             )
+        else:
+            strategy = self._select_grep_strategy(
+                file_count=len(candidate_files),
+                cached_text_ratio=cached_text_ratio,
+                zone_id=zone_id,
+            )
+            if (
+                files is not None
+                and strategy == SearchStrategy.TRIGRAM_INDEX
+                and len(candidate_files) < FILES_FILTER_TRIGRAM_THRESHOLD
+            ):
+                logger.debug(
+                    "[GREP] files=[...] of size %d below trigram threshold %d — "
+                    "bypassing TRIGRAM_INDEX in favour of direct scan",
+                    len(candidate_files),
+                    FILES_FILTER_TRIGRAM_THRESHOLD,
+                )
+                strategy = (
+                    SearchStrategy.CACHED_TEXT
+                    if cached_text_ratio >= GREP_CACHED_TEXT_RATIO
+                    else SearchStrategy.RUST_BULK
+                )
 
         # Remember whether the caller supplied a files filter so the
         # trigram branch can post-filter its results (#3701 13A).
@@ -1958,6 +1981,7 @@ class SearchService:
                     before_context=before_context,
                     after_context=after_context,
                     invert_match=invert_match,
+                    force_python_path=needs_python_path,
                 )
             )
 
@@ -2062,13 +2086,25 @@ class SearchService:
         before_context: int = 0,
         after_context: int = 0,
         invert_match: bool = False,
+        force_python_path: bool = False,
     ) -> builtins.list[dict[str, Any]]:
-        """Process files needing raw content read (mmap, Rust bulk, sequential)."""
+        """Process files needing raw content read (mmap, Rust bulk, sequential).
+
+        When ``force_python_path`` is True the mmap and Rust bulk
+        accelerators are skipped and every file is run through the
+        Python sequential fallback. This exists because those
+        accelerators do raw regex scans without honouring
+        ``before_context`` / ``after_context`` / ``invert_match`` —
+        flags that ``_grep_lines`` (called from the sequential
+        fallback) does honour.
+        """
         results: builtins.list[dict[str, Any]] = []
         mmap_used = False
 
-        # Try mmap-accelerated grep first (Issue #893)
-        if grep_fast.is_mmap_available():
+        # Try mmap-accelerated grep first (Issue #893). Skipped when the
+        # caller asked for context/invert flags — mmap doesn't honour
+        # them and would silently drop them.
+        if not force_python_path and grep_fast.is_mmap_available():
             try:
                 zone_id, _, _ = self._extract_zone_info(context)
                 if zone_id and self._file_cache is not None:

@@ -715,8 +715,17 @@ async def _do_grep_operation(
     op_context = get_operation_context(auth_result)
 
     permission_enforcer = getattr(request.app.state, "permission_enforcer", None)
+    # Sentinel fetch (Codex adversarial review of #3701): request one
+    # extra row beyond the caller's window so we can reliably detect
+    # whether there are more matches after ReBAC filtering. Without
+    # this sentinel, fetching exactly ``limit + offset`` and treating
+    # the length as the true total silently reports ``has_more=False``
+    # on the first page of a large result set whenever SearchService's
+    # cap happens to match the requested window.
+    window_size = limit + offset
+    sentinel_window = window_size + 1
     fetch_limit = _compute_rebac_fetch_limit(
-        limit + offset, has_enforcer=permission_enforcer is not None
+        sentinel_window, has_enforcer=permission_enforcer is not None
     )
 
     try:
@@ -759,7 +768,16 @@ async def _do_grep_operation(
     filtered_results = [r for r in raw_results if r.get("file") in permitted_files]
     post_filter_count = len(filtered_results)
 
-    total = len(filtered_results)
+    # Sentinel detection: if we got at least one result beyond the
+    # window, there's a next page. The sentinel row is not included in
+    # the items we return to the caller.
+    has_more = post_filter_count > window_size
+    # ``total`` reports the best-known count. When has_more is true,
+    # we know at least ``window_size + 1`` exist but the true total
+    # may be larger; we report the observed post-filter count as a
+    # floor. When has_more is false, post_filter_count is the true
+    # total of matches visible to this caller.
+    total = post_filter_count
     paginated = filtered_results[offset : offset + limit]
     latency_ms = (time.perf_counter() - start_time) * 1000
 
@@ -769,10 +787,15 @@ async def _do_grep_operation(
             "total_ms": round(latency_ms, 2),
             "permission_filter_ms": round(filter_ms, 2),
         },
-        **_rebac_denial_stats(pre_filter_count, post_filter_count, limit + offset),
+        **_rebac_denial_stats(pre_filter_count, post_filter_count, window_size),
     }
     return build_paginated_list_response(
-        items=paginated, total=total, offset=offset, limit=limit, extras=extras
+        items=paginated,
+        total=total,
+        offset=offset,
+        limit=limit,
+        extras=extras,
+        has_more=has_more,
     )
 
 

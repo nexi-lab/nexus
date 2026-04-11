@@ -795,12 +795,17 @@ async def create_mcp_server(
         if _search is None:
             raise ValueError("SearchService not available — grep requires the search brick")
         # NOTE(#3701): See glob handler above for the MCP permission caveat.
-        # Also (#3701 Issue 14): we pass max_results so SearchService returns
-        # enough matches for the caller's requested page rather than silently
-        # capping at its default of 100.
+        # Codex adversarial review of #3701: sentinel fetch. Request
+        # ``limit + offset + 1`` rows so we can detect ``has_more``
+        # reliably. Without the sentinel, a corpus with exactly
+        # ``limit + offset`` matches would report ``has_more=False``
+        # even when SearchService's underlying pool has more hits it
+        # truncated because of the max_results cap.
+        window_size = limit + offset
+        sentinel_window = window_size + 1
         grep_kwargs: dict[str, Any] = {
             "ignore_case": ignore_case,
-            "max_results": max(limit + offset, 1),
+            "max_results": max(sentinel_window, 1),
             "files": files,
         }
         # Only forward the context/invert flags when set so older servers
@@ -813,16 +818,23 @@ async def create_mcp_server(
             grep_kwargs["invert_match"] = True
 
         all_results = await _search.grep(pattern, path, **grep_kwargs)
-        total = len(all_results)
+        raw_count = len(all_results)
+        # Sentinel-based has_more: if SearchService returned the sentinel
+        # row, there's at least one more match beyond the window.
+        has_more = raw_count > window_size
+        # Trim the sentinel row off so callers don't see the "hidden"
+        # row we fetched just to detect has_more.
+        usable_results = all_results[:window_size]
+        total = len(usable_results)
 
         # Apply pagination
-        paginated_results = all_results[offset : offset + limit]
+        paginated_results = usable_results[offset : offset + limit]
 
         # Issue #538: Log truncation when results exceed limit
-        if (offset + limit) < total or offset > 0:
+        if has_more or offset > 0:
             logger.info(
-                f"[GREP] Truncated {total} -> {len(paginated_results)} results "
-                f"(offset={offset}, limit={limit})"
+                f"[GREP] Truncated ({'+' if has_more else ''}{total}) -> "
+                f"{len(paginated_results)} results (offset={offset}, limit={limit})"
             )
 
         result = build_paginated_list_response(
@@ -830,6 +842,7 @@ async def create_mcp_server(
             total=total,
             offset=offset,
             limit=limit,
+            has_more=has_more,
         )
 
         return format_response(result, response_format)

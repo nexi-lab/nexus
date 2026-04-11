@@ -34,6 +34,7 @@ def build_paginated_list_response(
     offset: int,
     limit: int,
     extras: dict[str, Any] | None = None,
+    has_more: bool | None = None,
 ) -> dict[str, Any]:
     """Build a canonical paginated list envelope.
 
@@ -46,13 +47,23 @@ def build_paginated_list_response(
         items: The slice to return (already paginated — this helper
             does NOT paginate for you).
         total: Total number of items in the full result set, *before*
-            pagination was applied.
+            pagination was applied. May be a lower bound when the
+            caller fetched via a sentinel approach (see ``has_more``).
         offset: The offset at which ``items`` starts in the full set.
         limit: The limit that was requested for this page.
         extras: Optional extra fields to merge into the envelope. Used
             to carry transport-specific additions such as ``stale_count``
             or ``truncated_by_permissions``. Collisions with core keys
             are deliberate escape hatches — extras win.
+        has_more: Explicit override for the ``has_more`` field. Use
+            this when ``total`` is a lower bound (sentinel-style fetch)
+            rather than the true total, so the caller can set
+            ``has_more`` independently. Defaults to ``offset + limit <
+            total`` when not provided. Flagged by Codex adversarial
+            review of #3701: fetching ``limit + offset`` and treating
+            the length as the true total silently reports
+            ``has_more=False`` on the first page of a large result set
+            if the SearchService cap happens to match.
 
     Returns:
         ``{total, count, offset, items, has_more, next_offset, ...}``
@@ -63,9 +74,12 @@ def build_paginated_list_response(
         * ``count`` is ``len(items)``, which may differ from ``limit`` on
           the final page.
         * ``has_more`` is ``True`` iff there are items after the current
-          page, i.e. ``offset + limit < total``.
+          page. When the caller can detect this independently (e.g. via
+          a sentinel fetch of ``limit + 1``), pass it explicitly.
+          Otherwise it defaults to ``offset + limit < total``.
     """
-    has_more = (offset + limit) < total
+    if has_more is None:
+        has_more = (offset + limit) < total
     envelope: dict[str, Any] = {
         "total": total,
         "count": len(items),

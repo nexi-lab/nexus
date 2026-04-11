@@ -176,15 +176,63 @@ class TestGrepHappyPath:
         assert kwargs["after_context"] == 3
 
     def test_max_results_overfetches_when_enforcer_active(self) -> None:
-        """Issue 16A: fetch_limit = (limit + offset) * overfetch when enforcer on."""
+        """Issue 16A + Codex #3701 sentinel fix: fetch_limit =
+        (limit + offset + 1) * overfetch when enforcer is on.
+
+        The +1 is the sentinel row added by ``_do_grep_operation`` so
+        ``has_more`` can be detected reliably even when the
+        post-ReBAC count happens to equal the requested window.
+        """
         svc = _make_search_service(grep_return=[])
         enforcer = MagicMock()
         enforcer.filter_search_results = MagicMock(return_value=[])
         client = TestClient(_build_app(search_service=svc, permission_enforcer=enforcer))
         client.get("/api/v2/search/grep?pattern=x&limit=10&offset=0")
         kwargs = svc.grep.await_args.kwargs
-        # _REBAC_OVERFETCH_FACTOR is 3 → fetch_limit = 10*3
-        assert kwargs["max_results"] == 30
+        # sentinel_window = (10 + 0 + 1) = 11; _REBAC_OVERFETCH_FACTOR = 3 → 33
+        assert kwargs["max_results"] == 33
+
+    def test_pagination_sentinel_detects_more_when_window_exactly_full(self) -> None:
+        """Regression test for #3701 Codex finding #2 (silent truncation).
+
+        Without the sentinel +1, fetching ``limit + offset`` rows and
+        treating ``len(raw_results)`` as the true total causes
+        ``has_more=False`` on the first page of a large result set
+        whenever SearchService's cap matches the requested window. The
+        sentinel +1 row makes the router detect that there's another
+        page and report ``has_more=True``.
+        """
+        # Caller asks for limit=5. The router fetches sentinel_window=6
+        # (no enforcer → 6, with enforcer → 6*overfetch). The mock
+        # returns exactly 6 rows so the sentinel detects "more
+        # available" — ``items`` should still be capped to 5 and
+        # ``has_more`` must be True.
+        results = [{"file": f"/f{i}.py", "line": i, "content": "m", "match": "m"} for i in range(6)]
+        svc = _make_search_service(grep_return=results)
+        client = TestClient(_build_app(search_service=svc))
+        resp = client.get("/api/v2/search/grep?pattern=m&limit=5&offset=0")
+        data = resp.json()
+        assert data["count"] == 5
+        assert len(data["items"]) == 5
+        assert data["has_more"] is True
+        assert data["next_offset"] == 5
+
+    def test_pagination_sentinel_reports_has_more_false_at_end(self) -> None:
+        """Regression test for #3701 Codex finding #2 — true end of stream.
+
+        When the underlying service returns fewer rows than the
+        sentinel window, has_more must be False — the sentinel logic
+        must not over-report a next page on the final result set.
+        """
+        # Caller asks for limit=5; only 4 results exist total → no more.
+        results = [{"file": f"/f{i}.py", "line": i, "content": "m", "match": "m"} for i in range(4)]
+        svc = _make_search_service(grep_return=results)
+        client = TestClient(_build_app(search_service=svc))
+        resp = client.get("/api/v2/search/grep?pattern=m&limit=5&offset=0")
+        data = resp.json()
+        assert data["count"] == 4
+        assert data["has_more"] is False
+        assert data["next_offset"] is None
 
 
 class TestGlobHappyPath:

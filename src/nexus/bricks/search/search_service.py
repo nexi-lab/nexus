@@ -1026,6 +1026,27 @@ class SearchService:
             f"{len(all_files)} files"
         )
 
+        # Fix nexi-lab/nexus#3733 Bug B: drop synthetic metadata-store entries
+        # whose paths are not valid virtual filesystem paths. The ReBAC brick
+        # stores namespace configurations as ``FileMetadata(path="ns:rebac:{type}",
+        # backend_name="_namespace")`` via ``MetastoreNamespaceStore``. When a
+        # non-admin user's list request walks from ``/`` (e.g. the new POST
+        # ``/api/v2/search/grep`` endpoint defaults to ``path="/"``), those
+        # synthetic entries leak into the candidate set, then the permission
+        # filter's ``router.validate_path`` call rejects them with
+        # ``InvalidPathError: Path must be absolute: ns:rebac:memory``.
+        #
+        # The correct fix is to scope them: any FileMetadata whose path does
+        # not start with ``/`` is a synthetic/pseudo-path that should never
+        # enter the filesystem filter pipeline.
+        _pre_synthetic = len(all_files)
+        all_files = [f for f in all_files if f.path.startswith("/")]
+        if len(all_files) != _pre_synthetic:
+            logger.debug(
+                f"[LIST-SYNTHETIC] dropped {_pre_synthetic - len(all_files)} "
+                f"synthetic metadata entries (e.g. ns:rebac:*)"
+            )
+
         # Predicate pushdown: filter by accessible_int_ids at service layer
         if _accessible_int_ids is not None:
             tiger_cache = getattr(_rebac_manager, "_tiger_cache", None) if _rebac_manager else None
@@ -1059,6 +1080,9 @@ class SearchService:
                         list_prefix,
                         zone_id=list_zone_id,
                     )
+                    # Fix nexi-lab/nexus#3733 Bug B: same synthetic-entry
+                    # guard as the primary list path above.
+                    all_files = [f for f in all_files if f.path.startswith("/")]
                     logger.info(
                         f"[LIST-TIMING] metadata.list() retry: "
                         f"{(_time.time() - _meta_start) * 1000:.1f}ms, {len(all_files)} files"
@@ -1396,7 +1420,11 @@ class SearchService:
             from nexus.contracts.constants import SYSTEM_PATH_PREFIX
 
             batch.items = [
-                item for item in batch.items if not item.path.startswith(SYSTEM_PATH_PREFIX)
+                item
+                for item in batch.items
+                # Fix nexi-lab/nexus#3733 Bug B: drop synthetic metadata entries
+                # (e.g. ns:rebac:*) whose paths are not valid virtual paths.
+                if item.path.startswith("/") and not item.path.startswith(SYSTEM_PATH_PREFIX)
             ]
 
             if self._enforce_permissions and context:

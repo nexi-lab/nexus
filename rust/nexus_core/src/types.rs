@@ -130,6 +130,16 @@ pub enum InternedRelationConfig {
     TupleToUserset {
         tupleset: Sym,
         computed_userset: Sym,
+        /// Skip the reverse (group-style) pattern 2 evaluation.
+        ///
+        /// Set to ``true`` at build time for tupleset relations where
+        /// the reverse direction has broken semantics — specifically
+        /// ``parent``, where "X is parent_owner of Y iff X owns
+        /// parent(Y)" requires the forward direction only. The reverse
+        /// direction would find Y's CHILDREN and grant permission based
+        /// on owning any child, which is a privilege escalation.
+        /// See nexi-lab/nexus#3733 Bug A.
+        skip_reverse: bool,
     },
 }
 
@@ -149,10 +159,18 @@ impl InternedNamespaceConfig {
                         union: union.iter().map(|s| interner.get_or_intern(s)).collect(),
                     },
                     RelationConfig::TupleToUserset { tuple_to_userset } => {
+                        // Fix nexi-lab/nexus#3733 Bug A: pre-compute
+                        // skip_reverse flag at build time. For ``parent``
+                        // tuplesets the reverse direction is a privilege
+                        // escalation (owning any child would grant parent
+                        // access). Comparing the raw string here is
+                        // cheaper than interning "parent" separately.
+                        let skip_reverse = tuple_to_userset.tupleset == "parent";
                         InternedRelationConfig::TupleToUserset {
                             tupleset: interner.get_or_intern(&tuple_to_userset.tupleset),
                             computed_userset: interner
                                 .get_or_intern(&tuple_to_userset.computed_userset),
+                            skip_reverse,
                         }
                     }
                 };

@@ -401,6 +401,20 @@ class PermissionComputer:
                     )
                 return True
 
+        # Fix nexi-lab/nexus#3733 Bug A: skip Pattern 2 for ``parent``
+        # tupleset. See the identical guard in
+        # ``zone_traversal.py`` and ``bulk_evaluator.py``. Pattern 2
+        # inverts parent semantics (finds children instead of the parent)
+        # and causes privilege escalation where owning any child grants
+        # access to all siblings via the parent.
+        if tupleset_relation == "parent":
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(
+                    "  [depth=%d] skipping Pattern 2 for 'parent' tupleset (not a group pattern)",
+                    depth,
+                )
+            return False
+
         # Pattern 2 (group-style): Find subjects where (?, tupleset_relation, obj)
         related_subjects = self._repo.find_subjects_with_relation(obj, tupleset_relation)
         if logger.isEnabledFor(logging.DEBUG):
@@ -988,7 +1002,12 @@ class PermissionComputer:
             # Pattern 1 (parent-style)
             related_objects = self._repo.find_related_objects(obj, tupleset_relation)
             # Pattern 2 (group-style)
-            related_subjects = self._repo.find_subjects_with_relation(obj, tupleset_relation)
+            # Fix nexi-lab/nexus#3733 Bug A: skip for ``parent`` tupleset.
+            # See the guard in compute_permission() above.
+            if tupleset_relation == "parent":
+                related_subjects: list[Entity] = []
+            else:
+                related_subjects = self._repo.find_subjects_with_relation(obj, tupleset_relation)
 
             path_entry["tupleToUserset"] = {
                 "tupleset": tupleset_relation,

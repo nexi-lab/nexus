@@ -2654,13 +2654,16 @@ class SearchService:
             LIMIT :lim
         """)
 
-        try:
+        def _run_query() -> list:
             session = self._record_store.session_factory()
             try:
                 result = session.execute(sql, bind_params)
-                rows = result.fetchall()
+                return result.fetchall()
             finally:
                 session.close()
+
+        try:
+            rows = await asyncio.to_thread(_run_query)
         except Exception as e:
             logger.warning("SQL chunk search failed: %s", e, exc_info=True)
             return []

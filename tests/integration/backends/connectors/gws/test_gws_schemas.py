@@ -1099,3 +1099,357 @@ class TestDriveDisplayPath:
         c = self._connector()
         path = c.display_path("file-abc", None)
         assert path == "file-abc.yaml"
+
+
+# ---------------------------------------------------------------------------
+# Issue #3713 — CLIResult.as_yaml() / as_json() preamble stripping
+# ---------------------------------------------------------------------------
+
+
+class TestCLIResultParsing:
+    """as_yaml() and as_json() strip CLI preamble and raise ValueError on bad output."""
+
+    def _make(self, stdout: str) -> CLIResult:
+        return CLIResult(status=CLIResultStatus.SUCCESS, stdout=stdout)
+
+    # --- as_yaml ---
+
+    def test_as_yaml_no_preamble(self) -> None:
+        r = self._make("id: abc\nfoo: bar\n")
+        assert r.as_yaml() == {"id": "abc", "foo": "bar"}
+
+    def test_as_yaml_strips_keyring_preamble(self) -> None:
+        r = self._make("Using keyring backend for credentials\nid: abc\nfoo: bar\n")
+        assert r.as_yaml() == {"id": "abc", "foo": "bar"}
+
+    def test_as_yaml_strips_multi_line_preamble(self) -> None:
+        r = self._make("Line one\nLine two\nkey: value\n")
+        assert r.as_yaml() == {"key": "value"}
+
+    def test_as_yaml_raises_on_garbage(self) -> None:
+        r = self._make("!!not valid yaml [\x00")
+        with pytest.raises(ValueError, match="Failed to parse CLI output as YAML"):
+            r.as_yaml()
+
+    # --- as_json ---
+
+    def test_as_json_no_preamble(self) -> None:
+        r = self._make('{"key": "value"}')
+        assert r.as_json() == {"key": "value"}
+
+    def test_as_json_strips_preamble(self) -> None:
+        r = self._make('Some preamble text\n{"key": "value"}')
+        assert r.as_json() == {"key": "value"}
+
+    def test_as_json_raises_on_garbage(self) -> None:
+        r = self._make("not json at all")
+        with pytest.raises(ValueError, match="Failed to parse CLI output as JSON"):
+            r.as_json()
+
+
+# ---------------------------------------------------------------------------
+# Issue #3713 — _gmail_utils.extract_body: MIME shape coverage
+# ---------------------------------------------------------------------------
+
+
+class TestExtractBody:
+    """extract_body() handles all MIME shapes correctly."""
+
+    import base64 as _base64
+
+    from nexus.backends.connectors.gws._gmail_utils import extract_body as _extract_body
+
+    @staticmethod
+    def _b64(text: str) -> str:
+        import base64
+
+        return base64.urlsafe_b64encode(text.encode()).decode().rstrip("=")
+
+    def test_single_part_plain(self) -> None:
+        from nexus.backends.connectors.gws._gmail_utils import extract_body
+
+        payload = {"mimeType": "text/plain", "body": {"data": self._b64("Hello World")}}
+        assert extract_body(payload) == "Hello World"
+
+    def test_multipart_alternative_prefers_plain(self) -> None:
+        from nexus.backends.connectors.gws._gmail_utils import extract_body
+
+        payload = {
+            "mimeType": "multipart/alternative",
+            "parts": [
+                {"mimeType": "text/plain", "body": {"data": self._b64("Plain text")}},
+                {"mimeType": "text/html", "body": {"data": self._b64("<b>HTML</b>")}},
+            ],
+        }
+        assert extract_body(payload) == "Plain text"
+
+    def test_html_only_fallback(self) -> None:
+        from nexus.backends.connectors.gws._gmail_utils import extract_body
+
+        payload = {
+            "mimeType": "multipart/alternative",
+            "parts": [
+                {"mimeType": "text/html", "body": {"data": self._b64("<b>HTML only</b>")}},
+            ],
+        }
+        assert extract_body(payload) == "<b>HTML only</b>"
+
+    def test_multipart_mixed_extracts_plain_from_nested_part(self) -> None:
+        from nexus.backends.connectors.gws._gmail_utils import extract_body
+
+        payload = {
+            "mimeType": "multipart/mixed",
+            "parts": [
+                {
+                    "mimeType": "multipart/alternative",
+                    "parts": [
+                        {"mimeType": "text/plain", "body": {"data": self._b64("Nested plain")}},
+                        {
+                            "mimeType": "text/html",
+                            "body": {"data": self._b64("<b>Nested HTML</b>")},
+                        },
+                    ],
+                },
+                {
+                    "mimeType": "application/pdf",
+                    "filename": "attachment.pdf",
+                    "body": {"data": self._b64("binary")},
+                },
+            ],
+        }
+        assert extract_body(payload) == "Nested plain"
+
+    def test_empty_payload_returns_empty_string(self) -> None:
+        from nexus.backends.connectors.gws._gmail_utils import extract_body
+
+        assert extract_body({}) == ""
+        assert extract_body({"mimeType": "multipart/mixed", "parts": []}) == ""
+
+
+# ---------------------------------------------------------------------------
+# Issue #3713 — GmailConnector.list_dir pagination and failure paths
+# ---------------------------------------------------------------------------
+
+
+def _gmail_list_result(messages: list[dict], next_token: str | None = None) -> CLIResult:
+    """Build a CLIResult whose stdout is a gws messages.list YAML response."""
+    import yaml as _yaml
+
+    data: dict = {"messages": messages}
+    if next_token:
+        data["nextPageToken"] = next_token
+    return CLIResult(
+        status=CLIResultStatus.SUCCESS,
+        stdout=_yaml.dump(data, default_flow_style=False),
+        command=["gws", "gmail", "users", "messages", "list"],
+    )
+
+
+class TestGmailConnectorPagination:
+    """list_dir paginates via nextPageToken and stops at MAX_LIST_RESULTS."""
+
+    def _connector(self) -> GmailConnector:
+        c = GmailConnector.__new__(GmailConnector)
+        c._id_list_cache = {}
+        c._backend_name = "cli:gws:gmail"
+        return c
+
+    def test_single_page_no_token(self) -> None:
+        c = self._connector()
+        cast(Any, c)._execute_cli = MagicMock(
+            return_value=_gmail_list_result(
+                [
+                    {"id": "msg1", "threadId": "thr1"},
+                    {"id": "msg2", "threadId": "thr2"},
+                ]
+            )
+        )
+        result = c.list_dir("INBOX/PRIMARY")
+        assert result == ["thr1-msg1.yaml", "thr2-msg2.yaml"]
+        assert cast(Any, c)._execute_cli.call_count == 1
+
+    def test_two_page_pagination(self) -> None:
+        c = self._connector()
+        page1 = _gmail_list_result([{"id": "msg1", "threadId": "thr1"}], next_token="tok123")
+        page2 = _gmail_list_result([{"id": "msg2", "threadId": "thr2"}])
+        cast(Any, c)._execute_cli = MagicMock(side_effect=[page1, page2])
+
+        result = c.list_dir("INBOX/PRIMARY")
+
+        assert "thr1-msg1.yaml" in result
+        assert "thr2-msg2.yaml" in result
+        assert cast(Any, c)._execute_cli.call_count == 2
+        # Second call must carry the pageToken from the first response.
+        # Command layout: ["gws", "gmail", "users", "messages", "list",
+        #                   "--params", <json>, "--format", "yaml"]
+        #                   0       1       2         3       4     5       6         7      8
+        second_call_params = json.loads(cast(Any, c)._execute_cli.call_args_list[1].args[0][6])
+        assert second_call_params["pageToken"] == "tok123"
+
+    def test_list_dir_returns_empty_on_cli_failure(self) -> None:
+        c = self._connector()
+        cast(Any, c)._execute_cli = MagicMock(
+            return_value=CLIResult(
+                status=CLIResultStatus.EXIT_ERROR,
+                exit_code=1,
+                stdout="",
+                stderr="network error",
+                command=["gws", "gmail", "users", "messages", "list"],
+            )
+        )
+        result = c.list_dir("INBOX/PRIMARY")
+        assert result == []
+
+    def test_id_list_cache_avoids_second_call(self) -> None:
+        c = self._connector()
+        cast(Any, c)._execute_cli = MagicMock(
+            return_value=_gmail_list_result([{"id": "msg1", "threadId": "thr1"}])
+        )
+        c.list_dir("INBOX/PRIMARY")
+        c.list_dir("INBOX/PRIMARY")  # should hit cache
+        assert cast(Any, c)._execute_cli.call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# Issue #3713 — GmailConnector.read_content body extraction and error handling
+# ---------------------------------------------------------------------------
+
+
+def _gmail_get_result(msg: dict) -> CLIResult:
+    """Build a CLIResult whose stdout is a gws messages.get YAML response."""
+    import yaml as _yaml
+
+    return CLIResult(
+        status=CLIResultStatus.SUCCESS,
+        stdout=_yaml.dump(msg, default_flow_style=False),
+        command=["gws", "gmail", "users", "messages", "get"],
+    )
+
+
+class TestGmailConnectorReadContent:
+    """read_content extracts body + headers and raises on CLI failure."""
+
+    import base64 as _base64
+
+    @staticmethod
+    def _b64(text: str) -> str:
+        import base64
+
+        return base64.urlsafe_b64encode(text.encode()).decode().rstrip("=")
+
+    def _connector(self) -> GmailConnector:
+        c = GmailConnector.__new__(GmailConnector)
+        c._id_list_cache = {}
+        c._backend_name = "cli:gws:gmail"
+        return c
+
+    def _context(self, path: str) -> Any:
+        from nexus.contracts.types import OperationContext
+
+        return OperationContext(
+            user_id="alice@example.com",
+            groups=[],
+            backend_path=path,
+            virtual_path=f"/gws/gmail/{path}",
+        )
+
+    def test_extracts_plain_body_and_headers(self) -> None:
+        c = self._connector()
+        import yaml as _yaml
+
+        msg = {
+            "id": "msg001",
+            "threadId": "thr001",
+            "labelIds": ["INBOX", "CATEGORY_PERSONAL"],
+            "snippet": "Hello there",
+            "historyId": "999",
+            "internalDate": "1710720000000",
+            "payload": {
+                "headers": [
+                    {"name": "Subject", "value": "Test Subject"},
+                    {"name": "From", "value": "sender@example.com"},
+                    {"name": "To", "value": "alice@example.com"},
+                    {"name": "Date", "value": "Wed, 20 Mar 2026 10:00:00 +0000"},
+                ],
+                "mimeType": "text/plain",
+                "body": {"data": self._b64("Hello, this is the body.")},
+            },
+        }
+        cast(Any, c)._execute_cli = MagicMock(return_value=_gmail_get_result(msg))
+        ctx = self._context("INBOX/PRIMARY/thr001-msg001.yaml")
+
+        raw = c.read_content("msg001", context=ctx)
+        result = _yaml.safe_load(raw)
+
+        assert result["body"] == "Hello, this is the body."
+        assert result["subject"] == "Test Subject"
+        assert result["from"] == "sender@example.com"
+        assert result["id"] == "msg001"
+        assert result["threadId"] == "thr001"
+        assert "INBOX" in result["labels"]
+
+    def test_read_content_raises_on_cli_failure(self) -> None:
+        from nexus.contracts.exceptions import BackendError
+
+        c = self._connector()
+        cast(Any, c)._execute_cli = MagicMock(
+            return_value=CLIResult(
+                status=CLIResultStatus.EXIT_ERROR,
+                exit_code=1,
+                stdout="",
+                stderr="401 Unauthorized",
+                command=["gws", "gmail", "users", "messages", "get"],
+            )
+        )
+        with pytest.raises(BackendError):
+            c.read_content("badmsg")
+
+    def test_msg_id_extracted_from_context_path(self) -> None:
+        c = self._connector()
+        called_params: list[dict] = []
+
+        def _fake_cli(cmd: list[str], **_: Any) -> CLIResult:
+            # Command: ["gws", "gmail", "users", "messages", "get",
+            #           "--params", <json>, "--format", "yaml"]
+            params = json.loads(cmd[6])
+            called_params.append(params)
+            return _gmail_get_result(
+                {
+                    "id": params["id"],
+                    "payload": {
+                        "mimeType": "text/plain",
+                        "headers": [],
+                        "body": {"data": self._b64("body")},
+                    },
+                }
+            )
+
+        cast(Any, c)._execute_cli = _fake_cli
+        ctx = self._context("INBOX/PRIMARY/thread001-targetmsg.yaml")
+        c.read_content("ignored_hash", context=ctx)
+        assert called_params[0]["id"] == "targetmsg"
+
+    def test_preamble_in_get_response_is_stripped(self) -> None:
+        import yaml as _yaml
+
+        c = self._connector()
+        msg = {
+            "id": "msg002",
+            "payload": {
+                "mimeType": "text/plain",
+                "headers": [{"name": "Subject", "value": "Hi"}],
+                "body": {"data": self._b64("Body text")},
+            },
+        }
+        preamble_stdout = "Using keyring backend\n" + _yaml.dump(msg)
+        cast(Any, c)._execute_cli = MagicMock(
+            return_value=CLIResult(
+                status=CLIResultStatus.SUCCESS,
+                stdout=preamble_stdout,
+                command=["gws", "gmail", "users", "messages", "get"],
+            )
+        )
+        raw = c.read_content("msg002")
+        result = _yaml.safe_load(raw)
+        assert result["body"] == "Body text"
+        assert result["subject"] == "Hi"

@@ -287,9 +287,22 @@ class SearchDaemon:
         """Populate ``_zone_indexing_modes`` and ``_indexed_directories``
         from the database at startup.
 
-        Runs once from ``startup()`` before the mutation consumers spin up
-        so the first refresh already respects scope. Silent no-op if no
-        async session is available (test scaffolding, degraded mode).
+        Runs once from ``startup()`` before the txtai backend bootstrap
+        and before the mutation consumers spin up so the very first
+        refresh already respects scope.
+
+        **Fail-closed contract:** on any error fetching scope metadata
+        we raise ``IndexScopeLoadError``, which propagates out of
+        ``startup()`` and crashes the daemon. The alternative —
+        defaulting every zone to ``'all'`` on error — silently disables
+        scoped-mode enforcement, letting the daemon embed and serve
+        data it was explicitly configured NOT to index. That is a
+        trust-boundary failure; fail-fast is the only safe choice.
+        Operators can restart after fixing the DB; the migration is
+        required for startup to succeed.
+
+        Silent no-op only when no async session is available at all
+        (embedded test scaffolding).
         """
         if self._async_session is None:
             logger.debug("No async session available, skipping index scope load")
@@ -316,20 +329,28 @@ class SearchDaemon:
                 for row in result.fetchall():
                     dirs_by_zone.setdefault(row[0], set()).add(row[1])
                 self._indexed_directories = dirs_by_zone
-
-            logger.info(
-                "Loaded index scope: %d zones (%d scoped), %d directories",
-                len(self._zone_indexing_modes),
-                sum(1 for m in self._zone_indexing_modes.values() if m == "scoped"),
-                sum(len(d) for d in self._indexed_directories.values()),
-            )
-        except Exception:
-            logger.warning(
-                "Failed to load index scope; defaulting to 'all' for every zone",
-                exc_info=True,
-            )
+        except Exception as exc:
+            # Reset state so a partial read can't leave the daemon in a
+            # confusing half-loaded state if someone catches this upstream.
             self._zone_indexing_modes = {}
             self._indexed_directories = {}
+            logger.error(
+                "FATAL: failed to load index scope metadata; "
+                "refusing to start in a degraded state where scoped "
+                "zones would silently become 'all' and embed out-of-"
+                "scope data. Fix the database and restart.",
+                exc_info=True,
+            )
+            from nexus.bricks.search.index_scope import IndexScopeLoadError
+
+            raise IndexScopeLoadError("Failed to load per-zone index scope from database") from exc
+
+        logger.info(
+            "Loaded index scope: %d zones (%d scoped), %d directories",
+            len(self._zone_indexing_modes),
+            sum(1 for m in self._zone_indexing_modes.values() if m == "scoped"),
+            sum(len(d) for d in self._indexed_directories.values()),
+        )
 
     async def add_indexed_directory(self, zone_id: str, directory_path: str) -> str:
         """Register ``directory_path`` for scoped indexing. See scope_ops."""
@@ -422,6 +443,17 @@ class SearchDaemon:
         await self._check_zoekt()
         await self._check_embedding_cache()
 
+        # Load per-directory semantic index scope (Issue #3698) BEFORE
+        # initializing the txtai backend or spawning the bootstrap task.
+        # The bootstrap snapshots ``_zone_indexing_modes`` to decide whether
+        # to push the SQL scope filter; if bootstrap races the scope load,
+        # it sees an empty mode map, takes the legacy fast path, and
+        # replays every document_chunks row (including out-of-scope ones)
+        # into the txtai backend. Loading scope first is the only
+        # reliable way to prevent that leak across restarts. Must run
+        # synchronously — do NOT kick off as a background task.
+        await self._load_index_scope()
+
         # Initialize txtai backend for semantic/hybrid/graph search (Issue #2663)
         try:
             from nexus.bricks.search.txtai_backend import TxtaiBackend
@@ -468,10 +500,6 @@ class SearchDaemon:
                 f"Entropy filtering enabled: threshold={self.config.entropy_threshold}, "
                 f"alpha={self.config.entropy_alpha}"
             )
-
-        # Load per-directory semantic index scope (Issue #3698) before the
-        # pipeline starts so the very first refresh sees the current scope.
-        await self._load_index_scope()
 
         # Initialize indexing pipeline for parallel refresh (Issue #1094)
         from nexus.bricks.search.chunking import DocumentChunker

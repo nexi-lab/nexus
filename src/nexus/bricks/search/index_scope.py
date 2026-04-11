@@ -35,6 +35,7 @@ __all__ = [
     "DirectoryNotRegisteredError",
     "IndexScope",
     "IndexScopeError",
+    "IndexScopeLoadError",
     "InvalidDirectoryPathError",
     "ZoneNotFoundError",
     "canonical_directory_path",
@@ -68,6 +69,16 @@ class DirectoryAlreadyRegisteredError(IndexScopeError):
 
     Not raised when overlap is intentional (``/src`` and ``/src/lib`` can
     coexist); only raised on exact duplicate ``(zone_id, directory_path)``.
+    """
+
+
+class IndexScopeLoadError(IndexScopeError):
+    """Failed to load index scope metadata at daemon startup.
+
+    Raised by ``SearchDaemon._load_index_scope`` when the database read
+    fails. The daemon fails closed (crashes) rather than degrading to
+    ``'all'`` for every zone, which would silently disable scoped-mode
+    enforcement and leak out-of-scope data.
     """
 
 

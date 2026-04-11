@@ -20,7 +20,6 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import bindparam
 from sqlalchemy import text as sa_text
 
 from nexus.bricks.search.index_scope import (
@@ -213,11 +212,32 @@ async def set_zone_indexing_mode(daemon: SearchDaemon, zone_id: str, mode: str) 
 async def purge_unscoped_embeddings(
     daemon: SearchDaemon, zone_id: str | None = None
 ) -> dict[str, int]:
-    """Delete stored embeddings for files that are now outside any scope.
+    """Delete derived embedding artifacts for files now outside any scope.
 
     Destructive admin operation. Only zones in ``'scoped'`` mode are
     affected — zones in ``'all'`` mode keep all their embeddings.
-    Returns ``{"document_chunks": N, "txtai_docs": M}``.
+
+    **What gets deleted:** only the **derived** txtai artifacts
+    (``sections``, ``vectors``, and the in-memory txtai index) for rows
+    whose ``id`` corresponds to a file that no longer falls under any
+    registered ``indexed_directories`` row.
+
+    **What does NOT get deleted:** the canonical ``document_chunks``
+    table. Those rows are the source-of-truth for semantic search and
+    are what ``_bootstrap_txtai_backend`` replays on every daemon
+    restart. Deleting them would turn a scope mode flip into permanent,
+    unrecoverable search-data loss: switching a zone back from
+    ``'scoped'`` to ``'all'`` could not re-populate those files without
+    a full re-embed (which may be impossible if the source file
+    contents have since changed).
+
+    The txtai artifacts, by contrast, are cheap to rebuild from
+    ``document_chunks`` via the next bootstrap — so purging them only
+    reclaims memory and search-index space, not data.
+
+    Returns ``{"txtai_docs": M}`` where M is the number of stale
+    txtai rows removed. ``document_chunks`` is reported as 0 for
+    backward compat with the response shape but is never written to.
     """
     counts = {"document_chunks": 0, "txtai_docs": 0}
 
@@ -235,55 +255,11 @@ async def purge_unscoped_embeddings(
 
     async with daemon._refresh_lock:
         for target_zone in target_zones:
-            # Two things can hold stored text for a zone:
-            #   1. ``document_chunks`` — legacy per-chunk store used by the
-            #      sync indexing path. Keyed by ``path_id`` from file_paths.
-            #   2. ``sections`` — the txtai content store populated by the
-            #      txtai backend. Keyed by ``id`` = virtual_path (with an
-            #      optional zone prefix for non-root zones).
-            # We purge both, using the same scope rule to decide which
-            # rows are now out-of-scope.
+            # We purge ONLY the txtai content store (``sections``) plus
+            # the in-memory txtai index. The ``document_chunks`` table
+            # is the canonical rebuild source and MUST NOT be touched
+            # here — see the function docstring for rationale.
             async with daemon._async_session() as session:
-                # --- Legacy document_chunks path -------------------------
-                legacy_rows = (
-                    await session.execute(
-                        sa_text(
-                            """
-                            SELECT fp.path_id
-                            FROM file_paths fp
-                            WHERE fp.zone_id = :zid
-                              AND fp.deleted_at IS NULL
-                              AND EXISTS (
-                                SELECT 1 FROM document_chunks c
-                                WHERE c.path_id = fp.path_id
-                              )
-                              AND NOT EXISTS (
-                                SELECT 1 FROM indexed_directories d
-                                WHERE d.zone_id = fp.zone_id
-                                  AND (
-                                    d.directory_path = '/'
-                                    OR fp.virtual_path = d.directory_path
-                                    OR fp.virtual_path LIKE d.directory_path || '/%'
-                                  )
-                              )
-                            """
-                        ),
-                        {"zid": target_zone},
-                    )
-                ).fetchall()
-                legacy_path_ids = [row[0] for row in legacy_rows]
-                if legacy_path_ids:
-                    delete_stmt = sa_text(
-                        "DELETE FROM document_chunks WHERE path_id IN :pids"
-                    ).bindparams(bindparam("pids", expanding=True))
-                    result = await session.execute(delete_stmt, {"pids": legacy_path_ids})
-                    counts["document_chunks"] += int(result.rowcount or 0)
-
-                # --- txtai sections path ---------------------------------
-                # The txtai content store uses virtual_path (optionally
-                # zone-prefixed) as the ``id`` column. Match rows whose
-                # stored id corresponds to a file in the zone that is no
-                # longer under any registered directory.
                 prefix_like = f"{target_zone}:%" if target_zone != "root" else None
                 candidate_sql = """
                     SELECT id FROM sections
@@ -330,8 +306,6 @@ async def purge_unscoped_embeddings(
                     except ValueError:
                         continue
 
-                await session.commit()
-
             # Prune the txtai backend via its delete API so the in-memory
             # index and pgvector rows both drop the entries.
             if daemon._backend is not None and txtai_ids_to_delete:
@@ -348,8 +322,8 @@ async def purge_unscoped_embeddings(
                     )
 
     logger.info(
-        "Purged unscoped embeddings: %d chunks, %d txtai docs across %d zones",
-        counts["document_chunks"],
+        "Purged unscoped txtai artifacts: %d docs across %d zones "
+        "(document_chunks preserved for rebuild)",
         counts["txtai_docs"],
         len(target_zones),
     )

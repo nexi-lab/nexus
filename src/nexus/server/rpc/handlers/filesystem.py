@@ -387,6 +387,11 @@ def handle_glob(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any
     kwargs: dict[str, Any] = {"context": context}
     if hasattr(params, "path") and params.path:
         kwargs["path"] = params.path
+    # Issue #3701 (2A): forward the stateless ``files=[...]`` narrowing
+    # parameter. Explicit ``is not None`` check so an intentional empty
+    # list ``files=[]`` (empty-set short-circuit) is preserved.
+    if hasattr(params, "files") and params.files is not None:
+        kwargs["files"] = params.files
 
     search = nexus_fs.service("search")
     assert search is not None, "SearchService required for glob"
@@ -408,6 +413,12 @@ async def handle_grep(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[st
         kwargs["file_pattern"] = params.file_pattern
     if hasattr(params, "search_mode") and params.search_mode is not None:
         kwargs["search_mode"] = params.search_mode
+    # Issue #3701 (2A): forward the stateless ``files=[...]`` narrowing
+    # parameter. Explicit ``is not None`` check so an intentional empty
+    # list ``files=[]`` (empty-set short-circuit) is preserved all the
+    # way through to SearchService.
+    if hasattr(params, "files") and params.files is not None:
+        kwargs["files"] = params.files
 
     search = nexus_fs.service("search")
     assert search is not None, "SearchService required for grep"

@@ -324,6 +324,12 @@ class GlobParams:
     pattern: str
     path: str = "/"
     context: Any = None
+    # Issue #3701 (2A): stateless working-set narrowing. When provided,
+    # glob matches ``pattern`` against this list instead of walking the
+    # tree under ``path``. See SearchService._validate_and_normalize_files
+    # for the edge-case spec (empty list, traversal, cross-zone, dedupe,
+    # stale, size cap, permission intersection).
+    files: list[str] | None = None
 
 
 @dataclass
@@ -346,6 +352,15 @@ class GrepParams:
     max_results: int = 100
     search_mode: str = "auto"
     context: Any = None
+    # Issue #3701 (2A): stateless working-set narrowing. When provided,
+    # grep searches only the intersection of ``files`` with the caller's
+    # permitted paths. Composes with ``file_pattern`` via intersection.
+    # See SearchService._validate_and_normalize_files for the full spec.
+    # NOTE: ``before_context``/``after_context``/``invert_match`` are
+    # present in SearchService.grep's Python signature but deliberately
+    # NOT added here — they're pre-existing RPC drift out of scope for
+    # #3701. The HTTP grep endpoint exposes them via its own handler.
+    files: list[str] | None = None
 
 
 @dataclass

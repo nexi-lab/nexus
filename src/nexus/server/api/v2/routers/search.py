@@ -717,6 +717,8 @@ async def search_grep(
         limit + offset, has_enforcer=permission_enforcer is not None
     )
 
+    from nexus.contracts.exceptions import InvalidPathError
+
     try:
         raw_results = await search_service.grep(
             pattern=pattern,
@@ -728,9 +730,11 @@ async def search_grep(
             after_context=after_context,
             files=files,
         )
-    except ValueError as exc:
-        # SearchService raises ValueError for invalid regex, invalid files
-        # parameter (size cap, cross-zone), etc.
+    except (ValueError, InvalidPathError) as exc:
+        # Client errors from SearchService:
+        #  * ValueError — invalid regex, size cap exceeded, cross-zone entry
+        #  * InvalidPathError — path traversal segment in ``path`` or ``files``
+        # All of these are 400s, not 500s.
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         logger.error("grep failed: %s", exc, exc_info=True)
@@ -810,11 +814,14 @@ async def search_glob(
 
     permission_enforcer = getattr(request.app.state, "permission_enforcer", None)
 
+    from nexus.contracts.exceptions import InvalidPathError
+
     try:
         all_matches: list[str] = search_service.glob(
             pattern=pattern, path=path, context=op_context, files=files
         )
-    except ValueError as exc:
+    except (ValueError, InvalidPathError) as exc:
+        # Same client-error classification as the grep handler.
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         logger.error("glob failed: %s", exc, exc_info=True)

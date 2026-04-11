@@ -547,3 +547,27 @@ class TestHttpFilesParameter:
         client = TestClient(_build_app(search_service=svc))
         resp = client.get("/api/v2/search/grep?pattern=x&files=../etc/passwd")
         assert resp.status_code == 400
+
+    def test_grep_files_traversal_invalid_path_error_returns_400(self) -> None:
+        """Live-validation regression: the real SearchService raises
+        ``InvalidPathError`` (not ``ValueError``) on a traversal segment.
+        Previously the handler only caught ``ValueError`` and the
+        traversal leaked through as a 500. Locks in the fix."""
+        from nexus.contracts.exceptions import InvalidPathError
+
+        svc = _make_search_service(
+            grep_raises=InvalidPathError("path traversal rejected: ../etc/passwd")
+        )
+        client = TestClient(_build_app(search_service=svc))
+        resp = client.get("/api/v2/search/grep?pattern=x&files=../etc/passwd")
+        assert resp.status_code == 400
+        assert "traversal" in resp.json()["detail"]
+
+    def test_glob_invalid_path_error_returns_400(self) -> None:
+        """Same regression for the glob handler."""
+        from nexus.contracts.exceptions import InvalidPathError
+
+        svc = _make_search_service(glob_raises=InvalidPathError("path traversal rejected"))
+        client = TestClient(_build_app(search_service=svc))
+        resp = client.get("/api/v2/search/glob?pattern=*.py&files=../etc/passwd")
+        assert resp.status_code == 400

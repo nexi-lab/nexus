@@ -123,10 +123,11 @@ class VolumeLocalTransport:
         self._VolumeEngine: Any = None  # Class reference for lazy creation
 
         # RUST_FALLBACK: VolumeEngine
-        from nexus_kernel import VolumeEngine
+        from nexus._rust_compat import VolumeEngine as _VolumeEngine
 
-        self._VolumeEngine = VolumeEngine
-        self._volume_available = True
+        if _VolumeEngine is not None:
+            self._VolumeEngine = _VolumeEngine
+            self._volume_available = True
 
         # Permanent engine for non-TTL CAS blobs
         self._engine: Any = None

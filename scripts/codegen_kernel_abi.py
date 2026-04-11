@@ -88,6 +88,7 @@ FEATURE_GATED_EXPORTS: set[str] = {
 CAPABILITY_GROUP_CONFIG: dict[str, tuple[str, ...]] = {
     "core": (
         "Kernel",  # PyKernel exposed to Python as "Kernel" via #[pyclass(name = "Kernel")]
+        "OperationContext",  # PyOperationContext — used in _build_rust_ctx() on every syscall
         "normalize_path",
         "validate_path",
         "canonicalize_path",

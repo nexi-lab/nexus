@@ -80,7 +80,7 @@ except ImportError:
     _CAPABILITY_GROUPS = {
         "core": ("Kernel",),
     }
-    _KERNEL_REQUIRED_METHODS: frozenset[str] = frozenset()
+    _KERNEL_REQUIRED_METHODS = frozenset()
 
 # Per-group availability flags (set after validation below)
 RUST_HASH_AVAILABLE: bool = False
@@ -187,6 +187,7 @@ def _get(name: str) -> Any:
 # Core kernel (Issue #1868 — unified Kernel replaces SyscallEngine+RustDCache+
 # RustPathRouter+PathTrie+HookRegistry+ObserverRegistry)
 Kernel = _get("Kernel")
+OperationContext = _get("OperationContext")
 SysReadResult = _get("SysReadResult")
 SysWriteResult = _get("SysWriteResult")
 

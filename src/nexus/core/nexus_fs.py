@@ -3970,17 +3970,21 @@ class NexusFS(  # type: ignore[misc]
                         # surface any permanent create-semantics error
                         pass
 
-            # Unlocked fast-fail so obvious collisions don't wait for
-            # a lock acquisition.
+            # Destination-exists fast-fail (round 6 finding #15 — the
+            # probe covers both metastore and backend).
+            #
+            # Round 9 finding #21: we do NOT wrap this in
+            # ``_vfs_locked(dst_path)`` because the follow-up
+            # ``self.write(dst_path, ...)`` takes the same path-level
+            # write lock internally, and the lock manager is not
+            # re-entrant — nesting the acquisition would deadlock
+            # until the 5-second timeout.  The residual TOCTOU
+            # window between this check and ``write()``'s own
+            # acquisition is bounded by ``write()``'s last-writer-
+            # wins overwrite semantics — the same behavior every
+            # other caller of ``write()`` already tolerates.
             _check_dst_exists()
-
-            # Locked re-check — mirrors the normal copy path's
-            # "Authoritative checks under lock" block.  Without this,
-            # a concurrent writer creating ``dst_path`` between the
-            # unlocked check and the write would be silently clobbered.
-            with self._vfs_locked(dst_path, "write"):
-                _check_dst_exists()
-                write_result = await self.write(dst_path, _virtual_src_bytes, context=context)
+            write_result = await self.write(dst_path, _virtual_src_bytes, context=context)
             self._kernel.dispatch_post_hooks("copy", _virtual_copy_ctx)
             return {
                 "src_path": src_path,

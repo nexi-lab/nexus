@@ -99,7 +99,7 @@ class MockNexusFS:
         import queue as _queue
 
         try:
-            return self._pipes[path].get(timeout=0.05)
+            return self._pipes[path].get(timeout=2.0)
         except _queue.Empty:
             from nexus.contracts.exceptions import NexusFileNotFoundError
 

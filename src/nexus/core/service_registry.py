@@ -391,9 +391,11 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
 
         # Auto-start persistent background work (only post-bootstrap)
         if isinstance(instance, PersistentService) and self._bootstrapped:
-            import asyncio
+            from nexus.lib.sync_bridge import run_sync
 
-            asyncio.ensure_future(instance.start())
+            coro = instance.start()
+            if asyncio.iscoroutine(coro):
+                run_sync(coro, timeout=30.0)
             logger.info("[COORDINATOR] enlist %r — started (PersistentService)", name)
 
         # Auto-capture hooks via duck-typed hook_spec()

@@ -740,6 +740,7 @@ async def register_indexed_directory(
         InvalidDirectoryPathError,
         ZoneNotFoundError,
     )
+    from nexus.bricks.search.scope_ops import BackfillFailedError
     from nexus.contracts.constants import ROOT_ZONE_ID
 
     if not isinstance(payload, dict):
@@ -752,6 +753,9 @@ async def register_indexed_directory(
 
     await _require_admin_or_path_write(request, auth_result, zone_id, directory_path)
 
+    backfill_status = "ok"
+    backfill_error: str | None = None
+    backfill_attempted = 0
     try:
         canonical = await search_daemon.add_indexed_directory(zone_id, directory_path)
     except ZoneNotFoundError as exc:
@@ -760,12 +764,42 @@ async def register_indexed_directory(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except DirectoryAlreadyRegisteredError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except BackfillFailedError as exc:
+        # The metadata change committed BUT the backfill (replaying
+        # historical document_chunks into txtai) failed. Surface as a
+        # degraded-state response so operators know the directory is
+        # registered but pre-existing files under it are not yet
+        # searchable. The path is recoverable: re-issuing the same
+        # POST will trigger backfill again.
+        canonical = exc.args[0] if exc.args else directory_path
+        # The canonical name from the failed call is buried in the
+        # exception message; recompute from the input.
+        from nexus.bricks.search.scope_ops import validate_directory_path
 
-    return {
+        try:
+            canonical = validate_directory_path(directory_path)
+        except Exception:
+            canonical = directory_path
+        backfill_status = "failed"
+        backfill_error = str(exc)
+        backfill_attempted = exc.files_attempted
+        logger.warning(
+            "register /index-directory %s succeeded but backfill failed: %s",
+            canonical,
+            exc,
+        )
+
+    response = {
         "zone_id": zone_id,
         "path": canonical,
         "status": "registered",
+        "backfill_status": backfill_status,
     }
+    if backfill_status == "failed":
+        response["backfill_error"] = backfill_error
+        response["backfill_attempted"] = backfill_attempted
+        response["degraded"] = True
+    return response
 
 
 @router.delete("/index-directory")
@@ -811,26 +845,39 @@ async def unregister_indexed_directory(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     # Auto-purge stale derived txtai rows so query results stop showing
-    # the now-unscoped files immediately. Best-effort: a purge failure
-    # is logged but does not roll back the unregister itself, since
-    # the unregister metadata change is the source of truth.
+    # the now-unscoped files immediately. The metadata change is the
+    # source of truth and is already committed; a purge failure does
+    # NOT roll it back, but it IS surfaced via ``purge_status`` and
+    # ``degraded`` so operators know to retry /purge-unscoped. The
+    # periodic _scope_refresh_loop will also retry the purge on its
+    # next tick as a self-healing mechanism.
+    purge_status = "ok"
+    purge_error: str | None = None
     purged: dict[str, int] = {}
     try:
         purged = await search_daemon.purge_unscoped_embeddings(zone_id)
-    except Exception:
+    except Exception as exc:
+        purge_status = "failed"
+        purge_error = str(exc)
         logger.warning(
             "auto-purge after unregister failed for zone %s; "
-            "stale txtai rows may remain until next /purge-unscoped",
+            "stale txtai rows may remain until next /purge-unscoped "
+            "or scope_refresh_loop self-heal tick",
             zone_id,
             exc_info=True,
         )
 
-    return {
+    response = {
         "zone_id": zone_id,
         "path": canonical,
         "status": "unregistered",
         "purged": purged,
+        "purge_status": purge_status,
     }
+    if purge_status == "failed":
+        response["purge_error"] = purge_error
+        response["degraded"] = True
+    return response
 
 
 @router.get("/indexed-dirs")
@@ -878,10 +925,12 @@ async def set_indexing_mode(
         {"mode": "all" | "scoped", "zone_id": "optional — defaults to caller's zone"}
     """
     from nexus.bricks.search.index_scope import (
+        INDEX_MODE_ALL,
         INDEX_MODE_SCOPED,
         InvalidDirectoryPathError,
         ZoneNotFoundError,
     )
+    from nexus.bricks.search.scope_ops import BackfillFailedError
     from nexus.contracts.constants import ROOT_ZONE_ID
 
     if not auth_result.get("is_admin", False):
@@ -895,26 +944,70 @@ async def set_indexing_mode(
 
     zone_id = payload.get("zone_id") or auth_result.get("zone_id") or ROOT_ZONE_ID
 
+    backfill_status = "ok"
+    backfill_error: str | None = None
+    backfill_attempted = 0
     try:
         await search_daemon.set_zone_indexing_mode(zone_id, mode)
     except ZoneNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except InvalidDirectoryPathError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except BackfillFailedError as exc:
+        # The mode flip from 'scoped' to 'all' committed BUT the
+        # backfill of historical content failed. The metadata change
+        # is irreversible (already persisted) so we surface a
+        # degraded-state response. The next write or daemon restart
+        # will pick up where backfill left off.
+        backfill_status = "failed"
+        backfill_error = str(exc)
+        backfill_attempted = exc.files_attempted
+        logger.warning(
+            "indexing-mode flip on zone %s succeeded but backfill failed: %s",
+            zone_id,
+            exc,
+        )
 
+    purge_status: str | None = None
+    purge_error: str | None = None
     purged: dict[str, int] | None = None
     if mode == INDEX_MODE_SCOPED:
         # Auto-purge stale derived rows so de-scoping is enforced
         # immediately at query time, not just at the next write.
-        purged = await search_daemon.purge_unscoped_embeddings(zone_id)
+        # Failures here become a degraded response (NOT a 5xx)
+        # because the metadata change has already committed.
+        try:
+            purged = await search_daemon.purge_unscoped_embeddings(zone_id)
+            purge_status = "ok"
+        except Exception as exc:
+            purge_status = "failed"
+            purge_error = str(exc)
+            logger.warning(
+                "auto-purge after mode=scoped flip failed for zone %s; "
+                "stale txtai rows may remain until next /purge-unscoped "
+                "or scope_refresh_loop self-heal tick",
+                zone_id,
+                exc_info=True,
+            )
 
     response: dict[str, Any] = {
         "zone_id": zone_id,
         "indexing_mode": mode,
         "status": "updated",
     }
-    if purged is not None:
-        response["purged"] = purged
+    if mode == INDEX_MODE_ALL:
+        response["backfill_status"] = backfill_status
+        if backfill_status == "failed":
+            response["backfill_error"] = backfill_error
+            response["backfill_attempted"] = backfill_attempted
+            response["degraded"] = True
+    if mode == INDEX_MODE_SCOPED:
+        response["purge_status"] = purge_status
+        if purged is not None:
+            response["purged"] = purged
+        if purge_status == "failed":
+            response["purge_error"] = purge_error
+            response["degraded"] = True
     return response
 
 

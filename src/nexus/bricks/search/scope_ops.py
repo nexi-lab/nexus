@@ -27,6 +27,7 @@ from nexus.bricks.search.index_scope import (
     INDEX_MODE_SCOPED,
     DirectoryAlreadyRegisteredError,
     DirectoryNotRegisteredError,
+    IndexScopeError,
     InvalidDirectoryPathError,
     ZoneNotFoundError,
     canonical_directory_path,
@@ -38,6 +39,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "BackfillFailedError",
     "add_indexed_directory",
     "backfill_zone_from_chunks",
     "list_indexed_directories",
@@ -155,6 +157,11 @@ async def add_indexed_directory(daemon: SearchDaemon, zone_id: str, directory_pa
     # Backfill OUTSIDE the refresh lock so the txtai upsert (which can
     # take seconds) doesn't block other refreshes. Pass the captured
     # generation so the backfill bails if scope changes mid-flight.
+    # BackfillFailedError propagates to the caller so the API endpoint
+    # can return a degraded-state response — the metadata change has
+    # already committed but the historical content is not yet
+    # searchable. Operators can retry by re-issuing the registration
+    # or by triggering a manual rebuild.
     await backfill_zone_from_chunks(daemon, zone_id, expected_generation=backfill_generation)
 
     return canonical
@@ -205,6 +212,19 @@ def list_indexed_directories(daemon: SearchDaemon, zone_id: str) -> list[str]:
     return sorted(daemon._indexed_directories.get(zone_id, set()))
 
 
+class BackfillFailedError(IndexScopeError):
+    """Raised when a scope-expansion backfill fails to durably write txtai.
+
+    Distinct from "nothing to backfill" (returns 0) so callers can
+    surface a partial-success / degraded state to operators instead of
+    silently swallowing the failure.
+    """
+
+    def __init__(self, message: str, *, files_attempted: int) -> None:
+        super().__init__(message)
+        self.files_attempted = files_attempted
+
+
 async def backfill_zone_from_chunks(
     daemon: SearchDaemon,
     zone_id: str,
@@ -233,10 +253,13 @@ async def backfill_zone_from_chunks(
     memory and trivial to evaluate), groups chunks by virtual_path,
     and upserts each in-scope file into the txtai backend.
 
-    Returns the number of files re-upserted. Best-effort on the
-    SELECT/upsert path itself — those failures log and return 0 —
-    but generation skew returns 0 silently because that is the
-    correct outcome.
+    **Returns** the number of files re-upserted. ``0`` means "nothing
+    to backfill" — distinct from failure, which raises
+    ``BackfillFailedError`` so the caller can mark the originating
+    mutation as degraded.
+
+    A generation skew returns ``0`` (not raise) because that is the
+    correct outcome — the metadata change has been superseded.
     """
     if daemon._async_session is None or daemon._backend is None:
         return 0
@@ -267,13 +290,16 @@ async def backfill_zone_from_chunks(
                     {"zid": zone_id},
                 )
             ).fetchall()
-    except Exception:
+    except Exception as exc:
         logger.warning(
             "backfill_zone_from_chunks: SELECT failed for zone %s",
             zone_id,
             exc_info=True,
         )
-        return 0
+        raise BackfillFailedError(
+            f"failed to read document_chunks for zone {zone_id!r}: {exc}",
+            files_attempted=0,
+        ) from exc
 
     if not rows:
         return 0
@@ -335,13 +361,16 @@ async def backfill_zone_from_chunks(
 
     try:
         await daemon._backend.upsert(docs, zone_id=zone_id)
-    except Exception:
+    except Exception as exc:
         logger.warning(
             "backfill_zone_from_chunks: txtai upsert failed for zone %s",
             zone_id,
             exc_info=True,
         )
-        return 0
+        raise BackfillFailedError(
+            f"failed to upsert {len(docs)} files into txtai for zone {zone_id!r}: {exc}",
+            files_attempted=len(docs),
+        ) from exc
 
     logger.info(
         "backfilled %d in-scope files into txtai for zone %s",

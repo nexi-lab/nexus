@@ -100,6 +100,8 @@ EXPECTED_MODELS = [
     # Secrets Store
     "SecretStoreModel",
     "SecretStoreVersionModel",
+    # Per-directory semantic index scoping (Issue #3698)
+    "IndexedDirectoryModel",
 ]
 
 

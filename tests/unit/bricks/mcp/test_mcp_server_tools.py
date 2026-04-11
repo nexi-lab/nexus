@@ -5,7 +5,7 @@ for the Nexus MCP server implementation.
 """
 
 import json
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import ANY, AsyncMock, Mock, patch
 
 import pytest
 
@@ -624,7 +624,13 @@ class TestSearchTools:
         assert "test.py" in response["items"]
         # #3701: files=None forwarded by default so SearchService can
         # distinguish "no filter" from "explicit empty filter".
-        mock_nx_basic._mock_search.glob.assert_called_once_with("*.py", "/src", files=None)
+        # Codex review #3 finding #1: ``context=...`` is now always
+        # supplied (resolved from the connection's identity) so the
+        # underlying SearchService sees an explicit OperationContext
+        # instead of running under an ambient default.
+        mock_nx_basic._mock_search.glob.assert_called_once_with(
+            "*.py", "/src", files=None, context=ANY
+        )
 
     async def test_glob_default_path(self, mock_nx_basic):
         """Test glob with default path."""
@@ -633,7 +639,9 @@ class TestSearchTools:
         glob_tool = get_tool(server, "nexus_glob")
         glob_tool.fn(pattern="*.txt")
 
-        mock_nx_basic._mock_search.glob.assert_called_once_with("*.txt", "/", files=None)
+        mock_nx_basic._mock_search.glob.assert_called_once_with(
+            "*.txt", "/", files=None, context=ANY
+        )
 
     async def test_glob_error(self, mock_nx_basic):
         """Test glob error handling."""
@@ -652,6 +660,12 @@ class TestSearchTools:
         Asserts the #3701 Issue 14 fix: MCP grep passes ``max_results`` to
         SearchService so the underlying call can return enough matches for
         the caller's requested page rather than silently capping at 100.
+
+        Codex review #1 finding #2: ``max_results`` is now
+        ``limit + offset + 1`` (sentinel fetch) so ``has_more`` can be
+        detected reliably. Codex review #3 finding #1: ``context=...``
+        is now always passed so SearchService runs under an explicit
+        identity.
         """
         server = await create_mcp_server(nx=mock_nx_basic)
 
@@ -663,9 +677,14 @@ class TestSearchTools:
         assert "items" in response
         assert "total" in response
         assert isinstance(response["items"], list)
-        # Default limit=100, offset=0 → max_results = max(100 + 0, 1) = 100
+        # Default limit=100, offset=0 → sentinel_window = 100 + 0 + 1 = 101
         mock_nx_basic._mock_search.grep.assert_called_once_with(
-            "TODO", "/src", ignore_case=False, max_results=100, files=None
+            "TODO",
+            "/src",
+            ignore_case=False,
+            max_results=101,
+            files=None,
+            context=ANY,
         )
 
     async def test_grep_ignore_case(self, mock_nx_basic):
@@ -676,7 +695,12 @@ class TestSearchTools:
         await grep_tool.fn(pattern="error", path="/logs", ignore_case=True)
 
         mock_nx_basic._mock_search.grep.assert_called_once_with(
-            "error", "/logs", ignore_case=True, max_results=100, files=None
+            "error",
+            "/logs",
+            ignore_case=True,
+            max_results=101,  # sentinel_window = 100 + 0 + 1
+            files=None,
+            context=ANY,
         )
 
     async def test_grep_result_limiting(self, mock_nx_basic):
@@ -702,8 +726,10 @@ class TestSearchTools:
 
         The pre-fix behaviour silently truncated to 100 because MCP did
         not pass ``max_results`` to SearchService. This test locks in the
-        new behaviour: MCP passes ``limit + offset`` so SearchService
-        returns enough matches for the requested page.
+        new behaviour: MCP passes ``limit + offset + 1`` (sentinel fetch
+        from Codex review #1 finding #2) so SearchService returns enough
+        matches for the requested page plus a sentinel row for has_more
+        detection.
         """
         large_results = [{"file": f"file{i}.py", "line": i, "content": "match"} for i in range(200)]
         mock_nx_basic._mock_search.grep.return_value = large_results
@@ -712,9 +738,14 @@ class TestSearchTools:
         grep_tool = get_tool(server, "nexus_grep")
         result = await grep_tool.fn(pattern="test", limit=200)
 
-        # SearchService was asked for enough matches to fill the page.
+        # sentinel_window = 200 + 0 + 1 = 201
         mock_nx_basic._mock_search.grep.assert_called_once_with(
-            "test", "/", ignore_case=False, max_results=200, files=None
+            "test",
+            "/",
+            ignore_case=False,
+            max_results=201,
+            files=None,
+            context=ANY,
         )
         response = json.loads(result)
         assert response["total"] == 200
@@ -722,7 +753,11 @@ class TestSearchTools:
         assert response["has_more"] is False
 
     async def test_grep_offset_requests_enough_matches(self, mock_nx_basic):
-        """Issue #3701 #14: offset=150 with limit=50 must fetch at least 200."""
+        """Issue #3701 #14: offset=150 with limit=50 must fetch at least 200.
+
+        Plus Codex review #1 finding #2 sentinel: request 201 to detect
+        has_more reliably.
+        """
         large_results = [{"file": f"file{i}.py", "line": i, "content": "match"} for i in range(200)]
         mock_nx_basic._mock_search.grep.return_value = large_results
         server = await create_mcp_server(nx=mock_nx_basic)
@@ -730,8 +765,14 @@ class TestSearchTools:
         grep_tool = get_tool(server, "nexus_grep")
         result = await grep_tool.fn(pattern="test", limit=50, offset=150)
 
+        # sentinel_window = 50 + 150 + 1 = 201
         mock_nx_basic._mock_search.grep.assert_called_once_with(
-            "test", "/", ignore_case=False, max_results=200, files=None
+            "test",
+            "/",
+            ignore_case=False,
+            max_results=201,
+            files=None,
+            context=ANY,
         )
         response = json.loads(result)
         assert response["total"] == 200
@@ -747,12 +788,14 @@ class TestSearchTools:
         grep_tool = get_tool(server, "nexus_grep")
         await grep_tool.fn(pattern="TODO", files=["/src/a.py", "/src/b.py"])
 
+        # sentinel_window = 100 + 0 + 1 = 101
         mock_nx_basic._mock_search.grep.assert_called_once_with(
             "TODO",
             "/",
             ignore_case=False,
-            max_results=100,
+            max_results=101,
             files=["/src/a.py", "/src/b.py"],
+            context=ANY,
         )
 
     async def test_glob_files_parameter_forwarded(self, mock_nx_basic):
@@ -764,7 +807,7 @@ class TestSearchTools:
         glob_tool.fn(pattern="*.py", files=["/src/a.py", "/src/b.py"])
 
         mock_nx_basic._mock_search.glob.assert_called_once_with(
-            "*.py", "/", files=["/src/a.py", "/src/b.py"]
+            "*.py", "/", files=["/src/a.py", "/src/b.py"], context=ANY
         )
 
     async def test_grep_before_and_after_context_forwarded(self, mock_nx_basic):

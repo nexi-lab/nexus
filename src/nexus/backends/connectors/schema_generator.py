@@ -251,26 +251,29 @@ def _build_probe_context(context: Any | None, backend_path: str) -> Any:
 def _real_readme_root_exists(backend: Any, context: Any | None = None) -> bool:
     """Probe the backend for a real ``.readme/`` directory (subtree root).
 
-    Issue #3728 round 6/7: deferral must be subtree-atomic AND an
-    *empty* real directory must still count as existing — otherwise
-    the overlay shadows user-created folders on gdrive where
-    ``list_dir`` returns ``[]`` for both missing and empty directories.
+    **Error semantics (trade-off, round 8 finding #20):**
+    Codex raised a concern that treating probe errors as "no real
+    data" lets the overlay shadow a real ``.readme/`` during
+    transient auth/network failures.  The inverse (fail-closed:
+    treat errors as "real data exists, defer") breaks the much more
+    common unauthed-mount case where users legitimately want to see
+    the virtual docs before setting up OAuth — they have no real
+    data to protect, and transient probes and "no OAuth configured"
+    look the same from Python.
+
+    We keep the original semantics — probe errors return ``False``
+    so the overlay stays visible — and accept that on a fully
+    authed deferring backend, a transient probe failure can briefly
+    shadow real content until the probe recovers.  This trade is
+    documented here so future reviewers can pick a different policy
+    if the calculus changes.
 
     Probe order (first definite "yes" wins):
-    1. ``backend.is_directory(readme_dir, context)`` — dedicated
-       directory-existence check (implemented by
-       ``PathAddressingEngine`` and most connector backends);
-       detects empty directories that ``list_dir`` can't distinguish
-       from "missing".
-    2. ``backend.content_exists(readme_dir, context)`` — file-level
-       existence, useful for connectors where the readme path can
-       appear as a file-like entry.
-    3. Non-empty ``backend.list_dir(readme_dir, context)`` — last-
-       resort fallback for backends that implement neither of the
-       above but expose real children through listing.
-
-    Returns ``False`` on any exception or when every probe says the
-    directory isn't there.
+    1. ``backend.is_directory(readme_dir, context)`` — handles empty
+       real directories that ``list_dir`` can't distinguish from
+       "missing".
+    2. ``backend.content_exists(readme_dir, context)``.
+    3. Non-empty ``backend.list_dir(readme_dir, context)``.
     """
     readme_dir = _readme_dir_for(backend)
     probe_ctx = _build_probe_context(context, readme_dir)
@@ -282,15 +285,16 @@ def _real_readme_root_exists(backend: Any, context: Any | None = None) -> bool:
             if is_dir_fn(readme_dir, context=probe_ctx):
                 return True
         except Exception:
-            pass  # fall through to the remaining probes
+            pass
 
-    # 2) content_exists probe (cheap for backends that implement it).
-    if _real_content_exists(backend, readme_dir, context=context):
-        return True
+    # 2) content_exists probe.
+    try:
+        if _real_content_exists(backend, readme_dir, context=context):
+            return True
+    except Exception:
+        pass
 
-    # 3) list_dir probe (only detects *non-empty* directories, which is
-    #    why we run it last — list_dir returning ``[]`` for both
-    #    "empty" and "missing" was the original finding-#17 bug).
+    # 3) list_dir probe (detects *non-empty* directories).
     list_fn = getattr(backend, "list_dir", None)
     if callable(list_fn):
         try:
@@ -298,7 +302,7 @@ def _real_readme_root_exists(backend: Any, context: Any | None = None) -> bool:
             if entries:
                 return True
         except Exception:
-            return False
+            pass
     return False
 
 

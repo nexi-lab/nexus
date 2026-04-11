@@ -3916,8 +3916,9 @@ class NexusFS(  # type: ignore[misc]
         # so the normal ``src_meta.get`` path below would fail before
         # hooks run — do the safety checks the normal branch does
         # (source READ permission via the copy hook, destination
-        # existence on BOTH metastore and backend) here first.
-        # Round 6 findings #14 + #15.
+        # existence on BOTH metastore and backend, locked re-check to
+        # close the concurrent-write race in round 8 finding #19) here
+        # first.  Round 6 findings #14+#15, round 8 finding #19.
         _virtual_src_bytes = self._try_virtual_readme_bytes(src_path, context)
         if _virtual_src_bytes is not None:
             # Enforce source READ permission + destination WRITE
@@ -3936,41 +3937,50 @@ class NexusFS(  # type: ignore[misc]
             )
             self._kernel.dispatch_pre_hooks("copy", _virtual_copy_ctx)
 
-            # Destination exists check — both metastore AND backend
-            # (path-addressed external connectors may have a real file
-            # at backend_path that hasn't been synced into the metastore
-            # yet; the metastore-only check would let us overwrite it).
-            if dst_route.metastore.exists(dst_path):
-                raise FileExistsError(f"Destination path already exists: {dst_path}")
-            dst_backend_path = getattr(dst_route, "backend_path", "") or ""
-            dst_backend = getattr(dst_route, "backend", None)
-            _content_exists = getattr(dst_backend, "content_exists", None)
-            if dst_backend is not None and callable(_content_exists):
-                from dataclasses import replace as _replace
+            def _check_dst_exists() -> None:
+                """Raise FileExistsError if dst_path is occupied.
 
-                try:
-                    _probe_ctx = (
-                        _replace(context, backend_path=dst_backend_path)
-                        if context is not None
-                        else None
-                    )
-                except Exception:
-                    _probe_ctx = None
-                try:
-                    if _content_exists(dst_backend_path, context=_probe_ctx):
-                        raise FileExistsError(
-                            f"Destination path already exists on backend: {dst_path}"
+                Probes both the metastore and the backend so a real
+                backend file that hasn't been synced to the metastore
+                still blocks the copy.
+                """
+                if dst_route.metastore.exists(dst_path):
+                    raise FileExistsError(f"Destination path already exists: {dst_path}")
+                _dst_bp = getattr(dst_route, "backend_path", "") or ""
+                _dst_be = getattr(dst_route, "backend", None)
+                _fn = getattr(_dst_be, "content_exists", None)
+                if _dst_be is not None and callable(_fn):
+                    from dataclasses import replace as _replace
+
+                    try:
+                        _pctx = (
+                            _replace(context, backend_path=_dst_bp) if context is not None else None
                         )
-                except FileExistsError:
-                    raise
-                except Exception:
-                    # Probe failed — fall through to the write and let
-                    # the backend's own create-semantics handle it.
-                    pass
+                    except Exception:
+                        _pctx = None
+                    try:
+                        if _fn(_dst_bp, context=_pctx):
+                            raise FileExistsError(
+                                f"Destination path already exists on backend: {dst_path}"
+                            )
+                    except FileExistsError:
+                        raise
+                    except Exception:
+                        # Probe failed — the write call below will
+                        # surface any permanent create-semantics error
+                        pass
 
-            # Route through the normal write path for post-hooks +
-            # metadata + return-shape parity.
-            write_result = await self.write(dst_path, _virtual_src_bytes, context=context)
+            # Unlocked fast-fail so obvious collisions don't wait for
+            # a lock acquisition.
+            _check_dst_exists()
+
+            # Locked re-check — mirrors the normal copy path's
+            # "Authoritative checks under lock" block.  Without this,
+            # a concurrent writer creating ``dst_path`` between the
+            # unlocked check and the write would be silently clobbered.
+            with self._vfs_locked(dst_path, "write"):
+                _check_dst_exists()
+                write_result = await self.write(dst_path, _virtual_src_bytes, context=context)
             self._kernel.dispatch_post_hooks("copy", _virtual_copy_ctx)
             return {
                 "src_path": src_path,

@@ -380,11 +380,12 @@ class TestSwapService:
             coordinator.swap_service("search", svc2, exports=("glob",), drain_timeout=2.0)
         )
 
-        result = await in_flight
+        # Guard: whole test must finish in 5s (prevents xdist hang)
+        result = await asyncio.wait_for(in_flight, timeout=5.0)
         assert result == ["*.py"]
         assert call_completed.is_set()
 
-        await swap_task
+        await asyncio.wait_for(swap_task, timeout=5.0)
         new_ref = coordinator.service("search")
         assert new_ref is not None
         assert new_ref._service_instance is svc2
@@ -890,11 +891,12 @@ class TestSwapWithoutHooks:
         svc2 = _FakeServiceV2()
         swap_task = asyncio.create_task(coordinator.swap_service("svc", svc2, drain_timeout=2.0))
 
-        result = await in_flight
+        # Guard: whole test must finish in 5s (prevents xdist hang)
+        result = await asyncio.wait_for(in_flight, timeout=5.0)
         assert result == "done"
         assert call_completed.is_set()
 
-        await swap_task
+        await asyncio.wait_for(swap_task, timeout=5.0)
         new_ref = coordinator.service("svc")
         assert new_ref is not None
         assert new_ref._service_instance is svc2

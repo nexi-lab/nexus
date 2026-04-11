@@ -164,8 +164,7 @@ jobs:
         timeout-minutes: 45
         run: |
           start=$(date +%s)
-          uv run pytest tests/unit -v --durations=10 --timeout=60 --tb=short \
-            --no-header -q
+          uv run pytest tests/unit -v --durations=10 --timeout=60 --tb=short
           status=$?
           echo $(( $(date +%s) - start )) > unit_test_duration_sec.txt
           exit $status

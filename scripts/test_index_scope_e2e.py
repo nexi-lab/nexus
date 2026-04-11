@@ -624,6 +624,72 @@ def main() -> None:
         f"got {status}: {body}",
     )
 
+    # ---- Non-admin WITH explicit ReBAC grant should SUCCEED ----------------
+    # Issue the key via the admin /api/v2/auth/keys endpoint with a --grant.
+    # This is the proper write path: it creates the api_keys row AND the
+    # ReBAC tuple in one call, which invalidates the ZoneGraphLoader cache
+    # so the subsequent permission check sees the fresh tuple.
+    #
+    # Raw SQL INSERTs into rebac_tuples do NOT invalidate the cache, so a
+    # test that seeds tuples directly would get a false-deny from the
+    # stale cached graph. (This is how the real CLI / admin flows work.)
+    grant_user = "e2e_scope_grant_user"
+    grant_path = "/e2e_rebac/granted"
+    # Clean any leftover state.
+    psql(f"DELETE FROM rebac_tuples WHERE subject_id='{grant_user}'")
+    psql(f"DELETE FROM api_keys WHERE user_id='{grant_user}'")
+
+    status, body = http_call(
+        "POST",
+        "/api/v2/auth/keys",
+        {
+            "user_id": grant_user,
+            "label": "e2e-scope-grant-test",
+            "grants": [{"path": grant_path, "role": "editor"}],
+        },
+    )
+    check(
+        f"admin POST /api/v2/auth/keys with editor grant → 201 (body keys: "
+        f"{list(body.keys()) if isinstance(body, dict) else body})",
+        status == 201 and isinstance(body, dict) and "key" in body,
+        f"got {status}: {body}",
+    )
+    grant_key = (body or {}).get("key") or (body or {}).get("raw_key") or ""
+
+    if grant_key:
+        status, body = http_call_with_key(
+            "POST",
+            "/api/v2/search/index-directory",
+            {"path": grant_path},
+            grant_key,
+        )
+        check(
+            "non-admin POST /index-directory → 200 (WITH direct_editor grant)",
+            status == 200,
+            f"got {status}: {body}",
+        )
+
+        status, body = http_call_with_key(
+            "DELETE",
+            "/api/v2/search/index-directory",
+            {"path": grant_path},
+            grant_key,
+        )
+        check(
+            "non-admin DELETE /index-directory → 200 (WITH direct_editor grant)",
+            status == 200,
+            f"got {status}: {body}",
+        )
+    else:
+        check(
+            "non-admin POST /index-directory → 200 (WITH grant)",
+            False,
+            "could not extract API key from create-key response; skipping grant tests",
+        )
+
+    # Cleanup grant test state.
+    psql(f"DELETE FROM rebac_tuples WHERE subject_id='{grant_user}'")
+    delete_non_admin_key(grant_user)
     delete_non_admin_key(nonadmin_user)
 
     # -------------------------------------------------------------------------

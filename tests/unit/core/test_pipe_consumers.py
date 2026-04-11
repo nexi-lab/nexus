@@ -93,8 +93,8 @@ class MockNexusFS:
 
             raise NexusFileNotFoundError(path=path)
         try:
-            return await asyncio.wait_for(self._pipes[path].get(), timeout=0.05)
-        except TimeoutError:
+            return self._pipes[path].get_nowait()
+        except asyncio.QueueEmpty:
             from nexus.contracts.exceptions import NexusFileNotFoundError
 
             raise NexusFileNotFoundError(path=path) from None

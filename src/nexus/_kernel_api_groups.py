@@ -14,7 +14,6 @@ from __future__ import annotations
 MODULE_CAPABILITY_GROUPS: dict[str, tuple[str, ...]] = {
     "core": (
         "Kernel",
-        "OperationContext",
         "normalize_path",
         "validate_path",
         "canonicalize_path",

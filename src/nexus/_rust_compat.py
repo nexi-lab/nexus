@@ -187,7 +187,6 @@ def _get(name: str) -> Any:
 # Core kernel (Issue #1868 — unified Kernel replaces SyscallEngine+RustDCache+
 # RustPathRouter+PathTrie+HookRegistry+ObserverRegistry)
 Kernel = _get("Kernel")
-OperationContext = _get("OperationContext")
 SysReadResult = _get("SysReadResult")
 SysWriteResult = _get("SysWriteResult")
 

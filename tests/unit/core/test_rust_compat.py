@@ -163,12 +163,6 @@ class TestCoreMissing:
         compat = _reload_rust_compat(mod)
         assert compat.normalize_path is None
 
-    def test_rust_available_false_when_operation_context_missing(self) -> None:
-        """Regression: OperationContext used in _build_rust_ctx() on every syscall."""
-        mod = _make_fake_module(missing_module_symbols=["OperationContext"])
-        compat = _reload_rust_compat(mod)
-        assert compat.RUST_AVAILABLE is False
-
     def test_hash_available_false_when_core_disabled(self) -> None:
         mod = _make_fake_module(missing_module_symbols=["Kernel"])
         compat = _reload_rust_compat(mod)

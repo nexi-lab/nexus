@@ -4,8 +4,10 @@ Provides search daemon endpoints:
 - GET  /api/v2/search/health   -- daemon health check (public, no auth)
 - GET  /api/v2/search/stats    -- daemon statistics
 - GET  /api/v2/search/query    -- execute search query
-- GET  /api/v2/search/grep     -- search file contents (#3701)
-- GET  /api/v2/search/glob     -- search files by pattern (#3701)
+- GET  /api/v2/search/grep     -- search file contents (#3701, small files=)
+- POST /api/v2/search/grep     -- same as GET, JSON body for large files=
+- GET  /api/v2/search/glob     -- search files by pattern (#3701, small files=)
+- POST /api/v2/search/glob     -- same as GET, JSON body for large files=
 - POST /api/v2/search/index    -- explicit document indexing
 - POST /api/v2/search/refresh  -- notify daemon of file change
 - POST /api/v2/search/expand   -- LLM-based query expansion
@@ -665,38 +667,40 @@ def _get_search_service(nexus_fs: Any) -> Any:
     return service
 
 
-@router.get("/grep")
-async def search_grep(
+# =============================================================================
+# Shared grep / glob operation helpers (#3701 Issue 1A + POST follow-up)
+#
+# Both GET and POST handlers delegate to these coroutines so the request
+# parsing layer (Query vs JSON body) is separate from the business logic.
+# This keeps the POST endpoints trivial (just body → call helper) and
+# guarantees GET and POST stay semantically identical forever.
+# =============================================================================
+
+
+async def _do_grep_operation(
     request: Request,
-    pattern: str = Query(..., description="Regex pattern to search for", min_length=1),
-    path: str = Query("/", description="Base path to search from"),
-    ignore_case: bool = Query(False, description="Case-insensitive match"),
-    limit: int = Query(100, ge=1, le=10000, description="Max results to return"),
-    offset: int = Query(0, ge=0, description="Offset into the full result set"),
-    before_context: int = Query(0, ge=0, le=50, description="Context lines before each match"),
-    after_context: int = Query(0, ge=0, le=50, description="Context lines after each match"),
-    files: list[str] | None = Query(
-        None,
-        description=(
-            "Optional stateless narrowing: restrict grep to this working "
-            "set of file paths instead of walking the tree (#3701)."
-        ),
-    ),
-    auth_result: dict[str, Any] = Depends(require_auth),
+    auth_result: dict[str, Any],
+    *,
+    pattern: str,
+    path: str,
+    ignore_case: bool,
+    limit: int,
+    offset: int,
+    before_context: int,
+    after_context: int,
+    invert_match: bool,
+    files: list[str] | None,
 ) -> dict[str, Any]:
-    """Search file contents via regex (#3701 Issue 1A).
+    """Execute a grep request and assemble the paginated response.
 
-    Mirrors the ``nexus_grep`` MCP tool but routes through the HTTP
-    permission path (``_apply_rebac_filter``). Results are paginated via
-    offset/limit and include ``permission_denial_rate`` /
-    ``truncated_by_permissions`` when a permission enforcer is active.
-
-    The ``files=[...]`` parameter (#3701 Issue 2A) lets agents pass a
-    pre-narrowed working set so grep skips the tree walk. Repeat the
-    query param for each path, e.g.
-    ``?files=/src/a.py&files=/src/b.py``.
+    Shared by ``GET /grep`` (query params) and ``POST /grep`` (JSON body).
+    Enforces ReBAC at the router layer and surfaces
+    ``permission_denial_rate``/``truncated_by_permissions`` in the
+    response envelope.
     """
     from nexus.contracts.constants import ROOT_ZONE_ID
+    from nexus.contracts.exceptions import InvalidPathError
+    from nexus.server.dependencies import get_operation_context
 
     start_time = time.perf_counter()
     zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
@@ -706,18 +710,14 @@ async def search_grep(
         raise HTTPException(status_code=503, detail="NexusFS not initialized")
     search_service = _get_search_service(nexus_fs)
 
-    # Build OperationContext so SearchService's internal path/zone
-    # filtering matches the caller's identity (Issue 6A scope: HTTP side).
-    from nexus.server.dependencies import get_operation_context
-
+    # Build OperationContext so SearchService's internal path/zone filter
+    # matches the caller's identity (Issue 6A scope: HTTP side).
     op_context = get_operation_context(auth_result)
 
     permission_enforcer = getattr(request.app.state, "permission_enforcer", None)
     fetch_limit = _compute_rebac_fetch_limit(
         limit + offset, has_enforcer=permission_enforcer is not None
     )
-
-    from nexus.contracts.exceptions import InvalidPathError
 
     try:
         raw_results = await search_service.grep(
@@ -728,13 +728,13 @@ async def search_grep(
             context=op_context,
             before_context=before_context,
             after_context=after_context,
+            invert_match=invert_match,
             files=files,
         )
     except (ValueError, InvalidPathError) as exc:
         # Client errors from SearchService:
         #  * ValueError — invalid regex, size cap exceeded, cross-zone entry
         #  * InvalidPathError — path traversal segment in ``path`` or ``files``
-        # All of these are 400s, not 500s.
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         logger.error("grep failed: %s", exc, exc_info=True)
@@ -776,29 +776,23 @@ async def search_grep(
     )
 
 
-@router.get("/glob")
-async def search_glob(
+async def _do_glob_operation(
     request: Request,
-    pattern: str = Query(..., description="Glob pattern (e.g. '**/*.py')", min_length=1),
-    path: str = Query("/", description="Base path to search from"),
-    limit: int = Query(100, ge=1, le=10000, description="Max results to return"),
-    offset: int = Query(0, ge=0, description="Offset into the full result set"),
-    files: list[str] | None = Query(
-        None,
-        description=(
-            "Optional stateless narrowing: match the glob pattern against "
-            "this working set only instead of walking the tree (#3701)."
-        ),
-    ),
-    auth_result: dict[str, Any] = Depends(require_auth),
+    auth_result: dict[str, Any],
+    *,
+    pattern: str,
+    path: str,
+    limit: int,
+    offset: int,
+    files: list[str] | None,
 ) -> dict[str, Any]:
-    """Search file paths via glob pattern (#3701 Issue 1A).
+    """Execute a glob request and assemble the paginated response.
 
-    Mirrors the ``nexus_glob`` MCP tool with HTTP-side ReBAC filtering.
-    Supports the ``files=[...]`` stateless narrowing parameter (#3701
-    Issue 2A).
+    Shared by ``GET /glob`` (query params) and ``POST /glob`` (JSON body).
     """
     from nexus.contracts.constants import ROOT_ZONE_ID
+    from nexus.contracts.exceptions import InvalidPathError
+    from nexus.server.dependencies import get_operation_context
 
     start_time = time.perf_counter()
     zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
@@ -808,27 +802,21 @@ async def search_glob(
         raise HTTPException(status_code=503, detail="NexusFS not initialized")
     search_service = _get_search_service(nexus_fs)
 
-    from nexus.server.dependencies import get_operation_context
-
     op_context = get_operation_context(auth_result)
-
     permission_enforcer = getattr(request.app.state, "permission_enforcer", None)
-
-    from nexus.contracts.exceptions import InvalidPathError
 
     try:
         all_matches: list[str] = search_service.glob(
             pattern=pattern, path=path, context=op_context, files=files
         )
     except (ValueError, InvalidPathError) as exc:
-        # Same client-error classification as the grep handler.
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         logger.error("glob failed: %s", exc, exc_info=True)
         raise HTTPException(status_code=500, detail=f"glob failed: {type(exc).__name__}") from exc
 
-    # ReBAC filtering: glob returns bare paths, wrap them in a shim that
-    # exposes a ``.path`` attribute so we can reuse ``_apply_rebac_filter``.
+    # ReBAC filtering: wrap bare paths in a shim with a ``.path`` attribute
+    # so we can reuse ``_apply_rebac_filter``.
     pre_filter_count = len(all_matches)
 
     class _GlobResultShim:
@@ -858,6 +846,276 @@ async def search_glob(
     }
     return build_paginated_list_response(
         items=paginated, total=total, offset=offset, limit=limit, extras=extras
+    )
+
+
+def _body_get_int(body: dict[str, Any], key: str, default: int, *, ge: int | None = None) -> int:
+    """Extract an int from a JSON body with validation.
+
+    Raises HTTPException(400) if the value is the wrong type or below
+    a minimum bound. Used by POST handlers to validate body fields
+    that would otherwise be validated by ``Query(..., ge=N)``.
+    """
+    raw = body.get(key, default)
+    if not isinstance(raw, int) or isinstance(raw, bool):
+        raise HTTPException(
+            status_code=400, detail=f"Field {key!r} must be an int, got {type(raw).__name__}"
+        )
+    if ge is not None and raw < ge:
+        raise HTTPException(status_code=400, detail=f"Field {key!r} must be >= {ge}, got {raw}")
+    return raw
+
+
+def _body_get_files(body: dict[str, Any]) -> list[str] | None:
+    """Extract a ``files`` list from a JSON body with validation.
+
+    ``None`` when absent (so the server walks the tree). ``[]`` is a
+    legitimate empty-set short-circuit and is preserved. Non-list values
+    or lists with non-string entries are 400s.
+    """
+    raw = body.get("files")
+    if raw is None:
+        return None
+    if not isinstance(raw, list):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Field 'files' must be a list, got {type(raw).__name__}",
+        )
+    for i, item in enumerate(raw):
+        if not isinstance(item, str):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Field 'files[{i}]' must be a str, got {type(item).__name__}",
+            )
+    return raw
+
+
+@router.get("/grep")
+async def search_grep(
+    request: Request,
+    pattern: str = Query(..., description="Regex pattern to search for", min_length=1),
+    path: str = Query("/", description="Base path to search from"),
+    ignore_case: bool = Query(False, description="Case-insensitive match"),
+    limit: int = Query(100, ge=1, le=10000, description="Max results to return"),
+    offset: int = Query(0, ge=0, description="Offset into the full result set"),
+    before_context: int = Query(0, ge=0, le=50, description="Context lines before each match"),
+    after_context: int = Query(0, ge=0, le=50, description="Context lines after each match"),
+    invert_match: bool = Query(False, description="Return non-matching lines"),
+    files: list[str] | None = Query(
+        None,
+        description=(
+            "Optional stateless narrowing: restrict grep to this working "
+            "set of file paths instead of walking the tree (#3701)."
+        ),
+    ),
+    auth_result: dict[str, Any] = Depends(require_auth),
+) -> dict[str, Any]:
+    """Search file contents via regex (#3701 Issue 1A).
+
+    Mirrors the ``nexus_grep`` MCP tool but routes through the HTTP
+    permission path (``_apply_rebac_filter``). Results are paginated via
+    offset/limit and include ``permission_denial_rate`` /
+    ``truncated_by_permissions`` when a permission enforcer is active.
+
+    The ``files=[...]`` parameter (#3701 Issue 2A) lets agents pass a
+    pre-narrowed working set so grep skips the tree walk. Repeat the
+    query param for each path, e.g.
+    ``?files=/src/a.py&files=/src/b.py``.
+
+    **HTTP URL length limit**: very large file lists (typically >500–2000
+    paths) can exceed the URL length limit of common HTTP clients. For
+    those, use ``POST /api/v2/search/grep`` which accepts the same fields
+    as a JSON body — no URL length constraint.
+    """
+    return await _do_grep_operation(
+        request,
+        auth_result,
+        pattern=pattern,
+        path=path,
+        ignore_case=ignore_case,
+        limit=limit,
+        offset=offset,
+        before_context=before_context,
+        after_context=after_context,
+        invert_match=invert_match,
+        files=files,
+    )
+
+
+@router.post("/grep")
+async def search_grep_post(
+    request: Request,
+    auth_result: dict[str, Any] = Depends(require_auth),
+) -> dict[str, Any]:
+    """POST variant of ``/api/v2/search/grep`` accepting a JSON body.
+
+    Use this when the ``files=[...]`` working set is large enough to
+    exceed the URL length limit of your HTTP client (typically >500–2000
+    paths). The JSON body has no length constraint up to the 10,000-file
+    ``FILES_FILTER_SIZE_CAP`` enforced server-side.
+
+    Request body:
+
+    .. code-block:: json
+
+        {
+            "pattern": "TODO",
+            "path": "/workspace",
+            "ignore_case": false,
+            "limit": 100,
+            "offset": 0,
+            "before_context": 0,
+            "after_context": 0,
+            "invert_match": false,
+            "files": ["/src/a.py", "/src/b.py", "..."]
+        }
+
+    Only ``pattern`` is required. All other fields default to the same
+    values as the GET handler's ``Query(...)`` defaults.
+
+    Response shape is identical to the GET handler.
+    """
+    try:
+        body = await request.json()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON body: {exc}") from exc
+
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Request body must be a JSON object")
+
+    pattern = body.get("pattern")
+    if not isinstance(pattern, str) or not pattern:
+        raise HTTPException(
+            status_code=400, detail="Field 'pattern' is required and must be a non-empty string"
+        )
+
+    path = body.get("path", "/")
+    if not isinstance(path, str):
+        raise HTTPException(status_code=400, detail="Field 'path' must be a string")
+
+    ignore_case = bool(body.get("ignore_case", False))
+    invert_match = bool(body.get("invert_match", False))
+    limit = _body_get_int(body, "limit", 100, ge=1)
+    if limit > 10000:
+        raise HTTPException(status_code=400, detail="Field 'limit' must be <= 10000")
+    offset = _body_get_int(body, "offset", 0, ge=0)
+    before_context = _body_get_int(body, "before_context", 0, ge=0)
+    after_context = _body_get_int(body, "after_context", 0, ge=0)
+    if before_context > 50 or after_context > 50:
+        raise HTTPException(status_code=400, detail="Context lines must be <= 50")
+
+    files = _body_get_files(body)
+
+    return await _do_grep_operation(
+        request,
+        auth_result,
+        pattern=pattern,
+        path=path,
+        ignore_case=ignore_case,
+        limit=limit,
+        offset=offset,
+        before_context=before_context,
+        after_context=after_context,
+        invert_match=invert_match,
+        files=files,
+    )
+
+
+@router.get("/glob")
+async def search_glob(
+    request: Request,
+    pattern: str = Query(..., description="Glob pattern (e.g. '**/*.py')", min_length=1),
+    path: str = Query("/", description="Base path to search from"),
+    limit: int = Query(100, ge=1, le=10000, description="Max results to return"),
+    offset: int = Query(0, ge=0, description="Offset into the full result set"),
+    files: list[str] | None = Query(
+        None,
+        description=(
+            "Optional stateless narrowing: match the glob pattern against "
+            "this working set only instead of walking the tree (#3701)."
+        ),
+    ),
+    auth_result: dict[str, Any] = Depends(require_auth),
+) -> dict[str, Any]:
+    """Search file paths via glob pattern (#3701 Issue 1A).
+
+    Mirrors the ``nexus_glob`` MCP tool with HTTP-side ReBAC filtering.
+    Supports the ``files=[...]`` stateless narrowing parameter.
+
+    For very large ``files=[...]`` working sets that exceed the URL
+    length limit of your HTTP client (typically >500–2000 paths), use
+    ``POST /api/v2/search/glob`` with a JSON body.
+    """
+    return await _do_glob_operation(
+        request,
+        auth_result,
+        pattern=pattern,
+        path=path,
+        limit=limit,
+        offset=offset,
+        files=files,
+    )
+
+
+@router.post("/glob")
+async def search_glob_post(
+    request: Request,
+    auth_result: dict[str, Any] = Depends(require_auth),
+) -> dict[str, Any]:
+    """POST variant of ``/api/v2/search/glob`` accepting a JSON body.
+
+    Use this when the ``files=[...]`` working set is large enough to
+    exceed the URL length limit of your HTTP client (typically >500–2000
+    paths). The JSON body has no length constraint up to the 10,000-file
+    ``FILES_FILTER_SIZE_CAP`` enforced server-side.
+
+    Request body:
+
+    .. code-block:: json
+
+        {
+            "pattern": "**/*.py",
+            "path": "/workspace",
+            "limit": 100,
+            "offset": 0,
+            "files": ["/src/a.py", "/src/b.py", "..."]
+        }
+
+    Only ``pattern`` is required. Response shape is identical to the GET
+    handler.
+    """
+    try:
+        body = await request.json()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON body: {exc}") from exc
+
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Request body must be a JSON object")
+
+    pattern = body.get("pattern")
+    if not isinstance(pattern, str) or not pattern:
+        raise HTTPException(
+            status_code=400, detail="Field 'pattern' is required and must be a non-empty string"
+        )
+
+    path = body.get("path", "/")
+    if not isinstance(path, str):
+        raise HTTPException(status_code=400, detail="Field 'path' must be a string")
+
+    limit = _body_get_int(body, "limit", 100, ge=1)
+    if limit > 10000:
+        raise HTTPException(status_code=400, detail="Field 'limit' must be <= 10000")
+    offset = _body_get_int(body, "offset", 0, ge=0)
+    files = _body_get_files(body)
+
+    return await _do_glob_operation(
+        request,
+        auth_result,
+        pattern=pattern,
+        path=path,
+        limit=limit,
+        offset=offset,
+        files=files,
     )
 
 

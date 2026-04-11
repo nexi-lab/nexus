@@ -767,6 +767,44 @@ class TestSearchTools:
             "*.py", "/", files=["/src/a.py", "/src/b.py"]
         )
 
+    async def test_grep_before_and_after_context_forwarded(self, mock_nx_basic):
+        """#3701 follow-up: before_context/after_context flow through MCP."""
+        mock_nx_basic._mock_search.grep.return_value = []
+        server = await create_mcp_server(nx=mock_nx_basic)
+
+        grep_tool = get_tool(server, "nexus_grep")
+        await grep_tool.fn(pattern="TODO", before_context=3, after_context=2)
+
+        kwargs = mock_nx_basic._mock_search.grep.call_args.kwargs
+        assert kwargs["before_context"] == 3
+        assert kwargs["after_context"] == 2
+
+    async def test_grep_invert_match_forwarded(self, mock_nx_basic):
+        """#3701 follow-up: invert_match flows through MCP."""
+        mock_nx_basic._mock_search.grep.return_value = []
+        server = await create_mcp_server(nx=mock_nx_basic)
+
+        grep_tool = get_tool(server, "nexus_grep")
+        await grep_tool.fn(pattern="TODO", invert_match=True)
+
+        kwargs = mock_nx_basic._mock_search.grep.call_args.kwargs
+        assert kwargs["invert_match"] is True
+
+    async def test_grep_no_context_flags_omitted_from_kwargs(self, mock_nx_basic):
+        """Defaults (before_context=0, after_context=0, invert_match=False)
+        must NOT appear in the kwargs forwarded to SearchService — old
+        servers without these fields would reject them otherwise."""
+        mock_nx_basic._mock_search.grep.return_value = []
+        server = await create_mcp_server(nx=mock_nx_basic)
+
+        grep_tool = get_tool(server, "nexus_grep")
+        await grep_tool.fn(pattern="TODO")
+
+        kwargs = mock_nx_basic._mock_search.grep.call_args.kwargs
+        assert "before_context" not in kwargs
+        assert "after_context" not in kwargs
+        assert "invert_match" not in kwargs
+
     async def test_grep_error(self, mock_nx_basic):
         """Test grep error handling."""
         mock_nx_basic._mock_search.grep.side_effect = ValueError("Invalid regex")

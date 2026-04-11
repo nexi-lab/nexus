@@ -747,6 +747,9 @@ async def create_mcp_server(
         offset: int = 0,
         response_format: str = "json",
         files: list[str] | None = None,
+        before_context: int = 0,
+        after_context: int = 0,
+        invert_match: bool = False,
         ctx: Context | None = None,
     ) -> str:
         """Search file contents using regex pattern with pagination.
@@ -762,13 +765,21 @@ async def create_mcp_server(
                 provided, grep searches only these files instead of walking
                 the tree. Agents should pass the file list from a previous
                 search/grep to drill down into its results.
+            before_context: Number of lines to include before each match
+                (#3701 follow-up). Use for displaying code context around
+                hits — equivalent to ``grep -B N``.
+            after_context: Number of lines to include after each match
+                (#3701 follow-up). Equivalent to ``grep -A N``.
+            invert_match: Return non-matching lines instead of matches
+                (#3701 follow-up). Equivalent to ``grep -v`` / ``--invert-match``.
 
         Returns:
             Formatted string with paginated search results containing:
             - total: Total number of matches found
             - count: Number of matches in this page
             - offset: Current offset
-            - items: List of matches (file paths, line numbers, content)
+            - items: List of matches (file paths, line numbers, content, and
+              before_context/after_context arrays when requested)
             - has_more: Whether more results are available
             - next_offset: Offset for next page (if has_more is true)
 
@@ -776,6 +787,8 @@ async def create_mcp_server(
             To get first 50 matches: nexus_grep("TODO", "/workspace", limit=50)
             To get next 50 matches: nexus_grep("TODO", "/workspace", limit=50, offset=50)
             Narrowed: nexus_grep("TODO", files=["/src/a.py", "/src/b.py"])
+            With context lines: nexus_grep("error", before_context=2, after_context=2)
+            Non-matching lines: nexus_grep("debug", invert_match=True)
         """
         nx_instance: Any = _get_nexus_instance(ctx)
         _search = nx_instance.service("search")
@@ -785,13 +798,21 @@ async def create_mcp_server(
         # Also (#3701 Issue 14): we pass max_results so SearchService returns
         # enough matches for the caller's requested page rather than silently
         # capping at its default of 100.
-        all_results = await _search.grep(
-            pattern,
-            path,
-            ignore_case=ignore_case,
-            max_results=max(limit + offset, 1),
-            files=files,
-        )
+        grep_kwargs: dict[str, Any] = {
+            "ignore_case": ignore_case,
+            "max_results": max(limit + offset, 1),
+            "files": files,
+        }
+        # Only forward the context/invert flags when set so older servers
+        # without the #3701 fields still accept the request.
+        if before_context:
+            grep_kwargs["before_context"] = before_context
+        if after_context:
+            grep_kwargs["after_context"] = after_context
+        if invert_match:
+            grep_kwargs["invert_match"] = True
+
+        all_results = await _search.grep(pattern, path, **grep_kwargs)
         total = len(all_results)
 
         # Apply pagination

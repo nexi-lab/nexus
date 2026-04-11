@@ -571,3 +571,270 @@ class TestHttpFilesParameter:
         client = TestClient(_build_app(search_service=svc))
         resp = client.get("/api/v2/search/glob?pattern=*.py&files=../etc/passwd")
         assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v2/search/grep (#3701 follow-up: JSON body for large files=)
+# ---------------------------------------------------------------------------
+
+
+class TestPostGrep:
+    """POST /grep accepts the same fields as GET but from a JSON body."""
+
+    def test_post_grep_basic(self) -> None:
+        svc = _make_search_service(
+            grep_return=[
+                {"file": "/a.py", "line": 1, "content": "TODO", "match": "TODO"},
+            ]
+        )
+        client = TestClient(_build_app(search_service=svc))
+        resp = client.post("/api/v2/search/grep", json={"pattern": "TODO"})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total"] == 1
+        assert data["items"][0]["file"] == "/a.py"
+
+    def test_post_grep_forwards_all_body_fields(self) -> None:
+        svc = _make_search_service(grep_return=[])
+        client = TestClient(_build_app(search_service=svc))
+        client.post(
+            "/api/v2/search/grep",
+            json={
+                "pattern": "TODO",
+                "path": "/src",
+                "ignore_case": True,
+                "limit": 20,
+                "offset": 5,
+                "before_context": 2,
+                "after_context": 3,
+                "invert_match": True,
+                "files": ["/src/a.py", "/src/b.py"],
+            },
+        )
+        kwargs = svc.grep.await_args.kwargs
+        assert kwargs["pattern"] == "TODO"
+        assert kwargs["path"] == "/src"
+        assert kwargs["ignore_case"] is True
+        assert kwargs["before_context"] == 2
+        assert kwargs["after_context"] == 3
+        assert kwargs["invert_match"] is True
+        assert kwargs["files"] == ["/src/a.py", "/src/b.py"]
+
+    def test_post_grep_large_files_list(self) -> None:
+        """The whole point of POST: 5000 files over JSON body, no URL limit."""
+        svc = _make_search_service(grep_return=[])
+        client = TestClient(_build_app(search_service=svc))
+        paths = [f"/f{i}.py" for i in range(5000)]
+        resp = client.post("/api/v2/search/grep", json={"pattern": "x", "files": paths})
+        assert resp.status_code == 200
+        assert svc.grep.await_args.kwargs["files"] == paths
+
+    def test_post_grep_missing_pattern_returns_400(self) -> None:
+        svc = _make_search_service(grep_return=[])
+        client = TestClient(_build_app(search_service=svc))
+        resp = client.post("/api/v2/search/grep", json={"path": "/src"})
+        assert resp.status_code == 400
+        assert "pattern" in resp.json()["detail"]
+
+    def test_post_grep_empty_pattern_returns_400(self) -> None:
+        svc = _make_search_service(grep_return=[])
+        client = TestClient(_build_app(search_service=svc))
+        resp = client.post("/api/v2/search/grep", json={"pattern": ""})
+        assert resp.status_code == 400
+
+    def test_post_grep_invalid_json_returns_400(self) -> None:
+        svc = _make_search_service(grep_return=[])
+        client = TestClient(_build_app(search_service=svc))
+        resp = client.post(
+            "/api/v2/search/grep",
+            content=b"not valid json {{{",
+            headers={"Content-Type": "application/json"},
+        )
+        assert resp.status_code == 400
+
+    def test_post_grep_body_not_object_returns_400(self) -> None:
+        svc = _make_search_service(grep_return=[])
+        client = TestClient(_build_app(search_service=svc))
+        resp = client.post("/api/v2/search/grep", json=["not", "an", "object"])
+        assert resp.status_code == 400
+
+    def test_post_grep_limit_out_of_range_returns_400(self) -> None:
+        svc = _make_search_service(grep_return=[])
+        client = TestClient(_build_app(search_service=svc))
+        resp = client.post("/api/v2/search/grep", json={"pattern": "x", "limit": 50000})
+        assert resp.status_code == 400
+
+    def test_post_grep_negative_offset_returns_400(self) -> None:
+        svc = _make_search_service(grep_return=[])
+        client = TestClient(_build_app(search_service=svc))
+        resp = client.post("/api/v2/search/grep", json={"pattern": "x", "offset": -5})
+        assert resp.status_code == 400
+
+    def test_post_grep_context_exceeds_max_returns_400(self) -> None:
+        svc = _make_search_service(grep_return=[])
+        client = TestClient(_build_app(search_service=svc))
+        resp = client.post(
+            "/api/v2/search/grep",
+            json={"pattern": "x", "before_context": 100},
+        )
+        assert resp.status_code == 400
+
+    def test_post_grep_files_not_list_returns_400(self) -> None:
+        svc = _make_search_service(grep_return=[])
+        client = TestClient(_build_app(search_service=svc))
+        resp = client.post(
+            "/api/v2/search/grep",
+            json={"pattern": "x", "files": "not-a-list"},
+        )
+        assert resp.status_code == 400
+        assert "files" in resp.json()["detail"]
+
+    def test_post_grep_files_contains_non_string_returns_400(self) -> None:
+        svc = _make_search_service(grep_return=[])
+        client = TestClient(_build_app(search_service=svc))
+        resp = client.post(
+            "/api/v2/search/grep",
+            json={"pattern": "x", "files": ["/ok.py", 42, "/also-ok.py"]},
+        )
+        assert resp.status_code == 400
+
+    def test_post_grep_files_empty_list_preserved(self) -> None:
+        """files=[] must reach SearchService (empty short-circuit), not be
+        coalesced to None."""
+        svc = _make_search_service(grep_return=[])
+        client = TestClient(_build_app(search_service=svc))
+        client.post("/api/v2/search/grep", json={"pattern": "x", "files": []})
+        assert svc.grep.await_args.kwargs["files"] == []
+
+    def test_post_grep_files_absent_becomes_none(self) -> None:
+        """When ``files`` is not in the body, the kwarg is None (walk tree)."""
+        svc = _make_search_service(grep_return=[])
+        client = TestClient(_build_app(search_service=svc))
+        client.post("/api/v2/search/grep", json={"pattern": "x"})
+        assert svc.grep.await_args.kwargs["files"] is None
+
+    def test_post_grep_traversal_returns_400(self) -> None:
+        from nexus.contracts.exceptions import InvalidPathError
+
+        svc = _make_search_service(
+            grep_raises=InvalidPathError("path traversal rejected: ../etc/passwd")
+        )
+        client = TestClient(_build_app(search_service=svc))
+        resp = client.post(
+            "/api/v2/search/grep",
+            json={"pattern": "x", "files": ["../etc/passwd"]},
+        )
+        assert resp.status_code == 400
+
+    def test_post_grep_rebac_filter_strips_denied_files(self) -> None:
+        """POST handler shares the same ReBAC hook as GET."""
+        svc = _make_search_service(
+            grep_return=[
+                {"file": "/public/a.py", "line": 1, "content": "x", "match": "x"},
+                {"file": "/secret/b.py", "line": 1, "content": "x", "match": "x"},
+            ]
+        )
+        enforcer = MagicMock()
+        enforcer.filter_search_results = MagicMock(return_value=["/public/a.py"])
+        client = TestClient(_build_app(search_service=svc, permission_enforcer=enforcer))
+        resp = client.post("/api/v2/search/grep", json={"pattern": "x"})
+        data = resp.json()
+        files = [r["file"] for r in data["items"]]
+        assert "/secret/b.py" not in files
+        assert files == ["/public/a.py"]
+        assert data["permission_denial_rate"] == 0.5
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v2/search/glob (#3701 follow-up)
+# ---------------------------------------------------------------------------
+
+
+class TestPostGlob:
+    """POST /glob mirrors POST /grep semantics."""
+
+    def test_post_glob_basic(self) -> None:
+        svc = _make_search_service(glob_return=["/a.py", "/b.py"])
+        client = TestClient(_build_app(search_service=svc))
+        resp = client.post("/api/v2/search/glob", json={"pattern": "*.py"})
+        assert resp.status_code == 200
+        assert resp.json()["items"] == ["/a.py", "/b.py"]
+
+    def test_post_glob_large_files_list(self) -> None:
+        svc = _make_search_service(glob_return=[])
+        client = TestClient(_build_app(search_service=svc))
+        paths = [f"/f{i}.py" for i in range(5000)]
+        resp = client.post("/api/v2/search/glob", json={"pattern": "*.py", "files": paths})
+        assert resp.status_code == 200
+        assert svc.glob.call_args.kwargs["files"] == paths
+
+    def test_post_glob_missing_pattern_returns_400(self) -> None:
+        svc = _make_search_service(glob_return=[])
+        client = TestClient(_build_app(search_service=svc))
+        resp = client.post("/api/v2/search/glob", json={})
+        assert resp.status_code == 400
+
+    def test_post_glob_files_empty_list_preserved(self) -> None:
+        svc = _make_search_service(glob_return=[])
+        client = TestClient(_build_app(search_service=svc))
+        client.post("/api/v2/search/glob", json={"pattern": "*.py", "files": []})
+        assert svc.glob.call_args.kwargs["files"] == []
+
+    def test_post_glob_rebac_filter_strips_denied(self) -> None:
+        svc = _make_search_service(glob_return=["/public/a.py", "/secret/b.py"])
+        enforcer = MagicMock()
+        enforcer.filter_search_results = MagicMock(return_value=["/public/a.py"])
+        client = TestClient(_build_app(search_service=svc, permission_enforcer=enforcer))
+        resp = client.post("/api/v2/search/glob", json={"pattern": "*.py"})
+        data = resp.json()
+        assert "/secret/b.py" not in data["items"]
+        assert data["permission_denial_rate"] == 0.5
+
+
+# ---------------------------------------------------------------------------
+# GET/POST parity — same user, same request, identical response
+# ---------------------------------------------------------------------------
+
+
+class TestGetPostParity:
+    """Lock in that GET and POST return identical envelopes for the same
+    user and request parameters. Prevents drift when one is refactored."""
+
+    def test_grep_get_and_post_return_equivalent_results(self) -> None:
+        svc = _make_search_service(
+            grep_return=[
+                {"file": "/a.py", "line": 1, "content": "x", "match": "x"},
+                {"file": "/b.py", "line": 1, "content": "x", "match": "x"},
+            ]
+        )
+        client = TestClient(_build_app(search_service=svc))
+
+        get_resp = client.get("/api/v2/search/grep?pattern=x&files=/a.py&files=/b.py")
+        post_resp = client.post(
+            "/api/v2/search/grep",
+            json={"pattern": "x", "files": ["/a.py", "/b.py"]},
+        )
+
+        # Envelope fields that should match between GET and POST
+        for key in (
+            "total",
+            "count",
+            "offset",
+            "has_more",
+            "next_offset",
+            "permission_denial_rate",
+            "truncated_by_permissions",
+        ):
+            assert get_resp.json()[key] == post_resp.json()[key], f"mismatch on {key}"
+        # Items should also match (order matters)
+        assert get_resp.json()["items"] == post_resp.json()["items"]
+
+    def test_glob_get_and_post_return_equivalent_results(self) -> None:
+        svc = _make_search_service(glob_return=["/a.py", "/b.py"])
+        client = TestClient(_build_app(search_service=svc))
+
+        get_resp = client.get("/api/v2/search/glob?pattern=*.py")
+        post_resp = client.post("/api/v2/search/glob", json={"pattern": "*.py"})
+
+        assert get_resp.json()["items"] == post_resp.json()["items"]
+        assert get_resp.json()["total"] == post_resp.json()["total"]

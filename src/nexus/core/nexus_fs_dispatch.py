@@ -41,11 +41,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from nexus.contracts.vfs_hooks import (
-    VFSMountHook,
-    VFSObserver,
-    VFSUnmountHook,
-)
+from nexus.contracts.vfs_hooks import VFSObserver
 from nexus.core.file_events import FileEvent
 
 if TYPE_CHECKING:
@@ -70,21 +66,12 @@ class DispatchMixin:
         self._trie_resolvers: dict[int, Any] = {}
         self._fallback_resolvers: list[Any] = []
         self._next_resolver_idx: int = 0
-        self._mount_hooks: list[tuple[Any, Any]] = []  # (hook, adapter) pairs
-        self._unmount_hooks: list[tuple[Any, Any]] = []  # (hook, adapter) pairs
-        # Observer registry — pure Python list (§11 Phase 22: eliminated Rust ObserverRegistry)
         # Observer registry: Rust kernel SSOT. No Python-side list.
-        import concurrent.futures
-
-        self._observer_executor = concurrent.futures.ThreadPoolExecutor(
-            max_workers=4, thread_name_prefix="observe"
-        )
 
     # ── Lifecycle (Issue #3391) ──────────────────────────────────────────
 
     async def shutdown(self) -> None:
-        """Shutdown observer executor (call during kernel teardown)."""
-        self._observer_executor.shutdown(wait=False)
+        """Shutdown dispatch state (call during kernel teardown)."""
 
     # ── PRE-DISPATCH: virtual path resolvers (Issue #889, #1317) ──────
 
@@ -280,95 +267,15 @@ class DispatchMixin:
         This stub prevents AttributeError; the calls should be cleaned up.
         """
 
-    # ── MOUNT/UNMOUNT hooks (unified into OBSERVE phase) ────────────────
-    #
-    # Mount/unmount hooks are registered as observers with MOUNT/UNMOUNT
-    # event_mask bits. Legacy API preserved — wraps hooks as observers.
+    def dispatch_event(self, event_type: str, path: str) -> None:
+        """Dispatch a FileEvent through Rust kernel observer pipeline.
 
-    def register_mount_hook(self, hook: VFSMountHook) -> None:
-        """Register a mount hook as an OBSERVE observer with MOUNT event mask."""
-        from nexus.core.file_events import FILE_EVENT_BIT, FileEventType
-
-        # Wrap VFSMountHook as an observer with on_mutation
-        class _MountObserverAdapter:
-            def __init__(self, h: VFSMountHook):
-                self._hook = h
-                self.event_mask = FILE_EVENT_BIT[FileEventType.MOUNT]
-
-            def on_mutation(self, event: Any) -> None:
-                from nexus.contracts.vfs_hooks import MountHookContext
-
-                ctx = MountHookContext(
-                    mount_point=event.path, backend=getattr(event, "_backend", None)
-                )
-                self._hook.on_mount(ctx)
-
-        adapter = _MountObserverAdapter(hook)
-        self._mount_hooks.append((hook, adapter))
-        self.register_observe(adapter)
-
-    def register_unmount_hook(self, hook: VFSUnmountHook) -> None:
-        """Register an unmount hook as an OBSERVE observer with UNMOUNT event mask."""
-        from nexus.core.file_events import FILE_EVENT_BIT, FileEventType
-
-        class _UnmountObserverAdapter:
-            def __init__(self, h: VFSUnmountHook):
-                self._hook = h
-                self.event_mask = FILE_EVENT_BIT[FileEventType.UNMOUNT]
-
-            def on_mutation(self, event: Any) -> None:
-                from nexus.contracts.vfs_hooks import UnmountHookContext
-
-                ctx = UnmountHookContext(
-                    mount_point=event.path, backend=getattr(event, "_backend", None)
-                )
-                self._hook.on_unmount(ctx)
-
-        adapter = _UnmountObserverAdapter(hook)
-        self._unmount_hooks.append((hook, adapter))
-        self.register_observe(adapter)
-
-    def unregister_mount_hook(self, hook: VFSMountHook) -> bool:
-        for i, (h, adapter) in enumerate(self._mount_hooks):
-            if h is hook:
-                self._mount_hooks.pop(i)
-                self.unregister_observe(adapter)
-                return True
-        return False
-
-    def unregister_unmount_hook(self, hook: VFSUnmountHook) -> bool:
-        for i, (h, adapter) in enumerate(self._unmount_hooks):
-            if h is hook:
-                self._unmount_hooks.pop(i)
-                self.unregister_observe(adapter)
-                return True
-        return False
-
-    def notify_mount(self, mount_point: str, backend: Any) -> None:
-        """Fire-and-forget mount notification (synchronous)."""
-        from nexus.contracts.vfs_hooks import MountHookContext
-
-        if not self._mount_hooks:
-            return
-        ctx = MountHookContext(mount_point=mount_point, backend=backend)
-        for hook, _adapter in self._mount_hooks:
-            try:
-                hook.on_mount(ctx)
-            except Exception as exc:
-                logger.warning("Mount hook %s failed: %s", type(hook).__name__, exc)
-
-    def notify_unmount(self, mount_point: str, backend: Any) -> None:
-        """Fire-and-forget unmount notification (synchronous)."""
-        from nexus.contracts.vfs_hooks import UnmountHookContext
-
-        if not self._unmount_hooks:
-            return
-        ctx = UnmountHookContext(mount_point=mount_point, backend=backend)
-        for hook, _adapter in self._unmount_hooks:
-            try:
-                hook.on_unmount(ctx)
-            except Exception as exc:
-                logger.warning("Unmount hook %s failed: %s", type(hook).__name__, exc)
+        Used by DLC (mount/unmount) and Python fallback paths to fire
+        events through the same Rust dispatch_observers path that sys_*
+        methods use internally.
+        """
+        if self._kernel is not None:
+            self._kernel.dispatch_kernel_event(event_type, path)
 
     # ── Hook counts — delegate to Rust Kernel ────────────────────────
 
@@ -386,5 +293,3 @@ class DispatchMixin:
     rmdir_hook_count = property(lambda self: self._hook_count("rmdir"))
     stat_hook_count = property(lambda self: self._hook_count("stat"))
     access_hook_count = property(lambda self: self._hook_count("access"))
-    mount_hook_count = property(lambda self: len(self._mount_hooks))
-    unmount_hook_count = property(lambda self: len(self._unmount_hooks))

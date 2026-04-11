@@ -232,23 +232,34 @@ class CASLocalBackend(CASAddressingEngine, MultipartUpload):
         return service
 
     def hook_spec(self) -> Any:
-        """Declare VFS hooks — mount + unmount for tiering lifecycle."""
+        """Declare VFS hooks — OBSERVE (MOUNT|UNMOUNT) for tiering lifecycle."""
         from nexus.contracts.protocols.service_hooks import HookSpec
 
         return HookSpec(
-            mount_hooks=(self,),
-            unmount_hooks=(self,),
+            observers=(self,),
         )
 
-    def on_mount(self, ctx: Any) -> None:
-        """VFSMountHook: start background services when the backend is mounted.
+    @property
+    def event_mask(self) -> int:
+        """Observer event mask: MOUNT + UNMOUNT events."""
+        from nexus.core.file_events import FILE_EVENT_BIT, FileEventType
 
-        Called by KernelDispatch at mount time (async event loop is running).
-        Uses asyncio.ensure_future() to schedule background tasks.
-        """
+        return FILE_EVENT_BIT[FileEventType.MOUNT] | FILE_EVENT_BIT[FileEventType.UNMOUNT]
+
+    def on_mutation(self, event: Any) -> None:
+        """VFSObserver: handle mount/unmount via Rust dispatch_observers."""
+        from nexus.core.file_events import FileEventType
+
+        if event.type == FileEventType.MOUNT:
+            self._on_mount(event.path)
+        elif event.type == FileEventType.UNMOUNT:
+            self._on_unmount()
+
+    def _on_mount(self, mount_point: str) -> None:
+        """Start background services when the backend is mounted."""
         import asyncio
 
-        super().on_mount(ctx)
+        logger.info("CAS engine mounted at %s (backend=%s)", mount_point, self._backend_name)
         if self._compactor is not None:
             asyncio.ensure_future(self._compactor.start())
             logger.info("Volume compactor scheduled to start on mount")
@@ -256,11 +267,8 @@ class CASLocalBackend(CASAddressingEngine, MultipartUpload):
             asyncio.ensure_future(self._tiering_service.start())
             logger.info("Cold tiering service scheduled to start on mount")
 
-    def on_unmount(self, ctx: Any) -> None:
-        """VFSUnmountHook: stop background services when the backend is unmounted.
-
-        Schedules graceful shutdown of background tasks.
-        """
+    def _on_unmount(self) -> None:
+        """Stop background services when the backend is unmounted."""
         import asyncio
 
         if self._compactor is not None:

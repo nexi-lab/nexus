@@ -1044,7 +1044,7 @@ impl Kernel {
         }
         registry
             .dispatch_pre(ctx)
-            .map_err(|msg| KernelError::PermissionDenied(msg))
+            .map_err(KernelError::PermissionDenied)
     }
 
     // ── Zone revision counter (§10 A2) ────────────────────────────────

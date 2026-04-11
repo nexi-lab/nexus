@@ -1628,6 +1628,35 @@ impl PyKernel {
         self.inner.observer_count()
     }
 
+    /// Dispatch a FileEvent through Rust observer pipeline.
+    ///
+    /// Used by Python callers (DLC mount/unmount, hit=false fallback)
+    /// to fire events through the Rust dispatch_observers path.
+    /// Rust sys_* methods call dispatch_observers internally (hit=true).
+    #[pyo3(signature = (event_type, path))]
+    fn dispatch_kernel_event(&self, event_type: &str, path: &str) -> PyResult<()> {
+        use crate::dispatch::{FileEvent, FileEventType};
+        let etype = match event_type {
+            "file_write" => FileEventType::FileWrite,
+            "file_delete" => FileEventType::FileDelete,
+            "file_rename" => FileEventType::FileRename,
+            "metadata_change" => FileEventType::MetadataChange,
+            "dir_create" => FileEventType::DirCreate,
+            "dir_delete" => FileEventType::DirDelete,
+            "file_copy" => FileEventType::FileCopy,
+            "mount" => FileEventType::Mount,
+            "unmount" => FileEventType::Unmount,
+            other => {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "unknown event type: {other}"
+                )))
+            }
+        };
+        let event = FileEvent::new(etype, path);
+        self.inner.dispatch_observers(&event);
+        Ok(())
+    }
+
     // ── Hook counts ────────────────────────────────────────────────────
 
     fn set_hook_count(&self, op: &str, count: u64) {

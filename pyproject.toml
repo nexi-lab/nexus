@@ -562,6 +562,11 @@ module = "nexus.storage.cache"
 disable_error_code = ["no-any-return", "misc", "call-overload", "import-untyped"]
 
 [[tool.mypy.overrides]]
+module = "nexus.backends.storage.cas_local"
+# cachetools stubs may not be installed in all environments
+disable_error_code = ["import-untyped"]
+
+[[tool.mypy.overrides]]
 module = "nexus.bricks.search.embeddings"
 # Provider wrapper class has complex inheritance, openai stubs mismatch
 disable_error_code = ["override", "attr-defined"]

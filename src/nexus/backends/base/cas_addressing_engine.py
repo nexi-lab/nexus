@@ -470,7 +470,7 @@ class CASAddressingEngine(Backend):
     def hook_spec(self) -> "HookSpec":
         """Declare VFS hooks for CAS lifecycle.
 
-        - MOUNT: on_mount — mount-time logging
+        - OBSERVE (MOUNT mask): mount-time logging
 
         Called by DriverLifecycleCoordinator at mount time to register
         hooks with KernelDispatch (Issue #1811).
@@ -481,12 +481,22 @@ class CASAddressingEngine(Backend):
         from nexus.contracts.protocols.service_hooks import HookSpec
 
         return HookSpec(
-            mount_hooks=(self,),
+            observers=(self,),
         )
 
-    def on_mount(self, ctx: Any) -> None:
-        """VFSMountHook: receive mount notification from KernelDispatch."""
-        logger.info("CAS engine mounted at %s (backend=%s)", ctx.mount_point, self._backend_name)
+    @property
+    def event_mask(self) -> int:
+        """Observer event mask: MOUNT events only."""
+        from nexus.core.file_events import FILE_EVENT_BIT, FileEventType
+
+        return FILE_EVENT_BIT[FileEventType.MOUNT]
+
+    def on_mutation(self, event: Any) -> None:
+        """VFSObserver: receive mount notification via Rust dispatch_observers."""
+        from nexus.core.file_events import FileEventType
+
+        if event.type == FileEventType.MOUNT:
+            logger.info("CAS engine mounted at %s (backend=%s)", event.path, self._backend_name)
 
     def stream_content(
         self,

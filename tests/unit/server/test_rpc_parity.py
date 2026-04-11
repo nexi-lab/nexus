@@ -198,10 +198,7 @@ def test_all_public_methods_are_exposed_or_excluded():
         "unregister_intercept_rmdir",  # Internal - INTERCEPT hook unregistration
         "unregister_intercept_stat",  # Internal - INTERCEPT hook unregistration
         "unregister_intercept_access",  # Internal - INTERCEPT hook unregistration
-        "register_mount_hook",  # Internal - mount lifecycle hook
-        "register_unmount_hook",  # Internal - unmount lifecycle hook
-        "unregister_mount_hook",  # Internal - mount lifecycle hook
-        "unregister_unmount_hook",  # Internal - unmount lifecycle hook
+        "dispatch_event",  # Internal - Rust kernel event dispatch
         "resolve_read",  # Internal - PRE-DISPATCH resolver
         "resolve_write",  # Internal - PRE-DISPATCH resolver
         "resolve_delete",  # Internal - PRE-DISPATCH resolver
@@ -216,8 +213,6 @@ def test_all_public_methods_are_exposed_or_excluded():
         "intercept_pre_access",  # Internal - PRE-INTERCEPT dispatch
         # POST-INTERCEPT dispatch deleted — now via Rust dispatch_post_hooks
         "notify",  # Internal - OBSERVE dispatch
-        "notify_mount",  # Internal - mount notification
-        "notify_unmount",  # Internal - unmount notification
         "has_hooks",  # Internal - hook existence check
         "shutdown",  # Internal - background task drain
         # ABC compliance stubs (Issue #2033 LEGO decomposition)

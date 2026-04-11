@@ -17,7 +17,13 @@ from nexus.bricks.mcp.server import create_mcp_server
 
 
 def get_tool(server, tool_name: str):
-    """Helper to get a tool from the MCP server."""
+    """Helper to get a tool from the MCP server (FastMCP 2.x and 3.x compat)."""
+    # FastMCP 3.x API
+    if hasattr(server, "_local_provider"):
+        lp = server._local_provider
+        tools = {v.name: v for k, v in lp._components.items() if k.startswith("tool:")}
+        return tools[tool_name]
+    # FastMCP 2.x API
     return server._tool_manager._tools[tool_name]
 
 
@@ -36,7 +42,11 @@ def get_resource_template(server, uri_pattern: str):
 
 
 def tool_exists(server, tool_name: str) -> bool:
-    """Check if a tool exists in the server."""
+    """Check if a tool exists in the server (FastMCP 2.x and 3.x compat)."""
+    if hasattr(server, "_local_provider"):
+        lp = server._local_provider
+        names = {v.name for k, v in lp._components.items() if k.startswith("tool:")}
+        return tool_name in names
     return tool_name in server._tool_manager._tools
 
 
@@ -103,7 +113,7 @@ def mock_nx_with_search():
     nx.sys_write = AsyncMock()
 
     # Add async semantic_search method
-    async def mock_semantic_search(query, path="/", limit=10, **kwargs):
+    async def mock_semantic_search(query, path="/", search_mode="semantic", limit=10, **kwargs):
         return [{"path": "/file1.txt", "score": 0.95, "snippet": "relevant content"}]
 
     nx.semantic_search = AsyncMock(side_effect=mock_semantic_search)
@@ -691,16 +701,42 @@ class TestSearchTools:
         server = await create_mcp_server(nx=mock_nx_with_search)
 
         search_tool = get_tool(server, "nexus_semantic_search")
-        result = search_tool.fn(query="authentication code", limit=5)
+        result = await search_tool.fn(query="authentication code", limit=5)
 
         response = json.loads(result)
         assert isinstance(response, dict)
         assert "items" in response
         assert "total" in response
         assert isinstance(response["items"], list)
-        # Note: With pagination, we now fetch limit*2 to check for more results
+        # Over-fetches limit*2 to allow has_more detection without a second round-trip
         mock_nx_with_search.semantic_search.assert_called_once_with(
-            "authentication code", path="/", limit=10
+            "authentication code", path="/", search_mode="semantic", limit=10
+        )
+
+    async def test_semantic_search_with_scoped_path(self, mock_nx_with_search):
+        """Test that path parameter is forwarded to semantic_search (regression for #3702)."""
+        server = await create_mcp_server(nx=mock_nx_with_search)
+
+        search_tool = get_tool(server, "nexus_semantic_search")
+        result = await search_tool.fn(query="auth", path="/workspace/src", limit=5)
+
+        response = json.loads(result)
+        assert "items" in response
+        mock_nx_with_search.semantic_search.assert_called_once_with(
+            "auth", path="/workspace/src", search_mode="semantic", limit=10
+        )
+
+    async def test_semantic_search_with_search_mode(self, mock_nx_with_search):
+        """Test that search_mode is forwarded to semantic_search."""
+        server = await create_mcp_server(nx=mock_nx_with_search)
+
+        search_tool = get_tool(server, "nexus_semantic_search")
+        result = await search_tool.fn(query="token refresh", search_mode="hybrid", limit=5)
+
+        response = json.loads(result)
+        assert "items" in response
+        mock_nx_with_search.semantic_search.assert_called_once_with(
+            "token refresh", path="/", search_mode="hybrid", limit=10
         )
 
     async def test_semantic_search_not_available(self, mock_nx_basic):
@@ -712,7 +748,7 @@ class TestSearchTools:
         server = await create_mcp_server(nx=mock_nx_basic)
 
         search_tool = get_tool(server, "nexus_semantic_search")
-        result = search_tool.fn(query="test")
+        result = await search_tool.fn(query="test")
 
         assert "Semantic search not available" in result
 
@@ -722,7 +758,7 @@ class TestSearchTools:
         server = await create_mcp_server(nx=mock_nx_with_search)
 
         search_tool = get_tool(server, "nexus_semantic_search")
-        result = search_tool.fn(query="test")
+        result = await search_tool.fn(query="test")
 
         assert "Error in semantic search" in result
         assert "Search service down" in result

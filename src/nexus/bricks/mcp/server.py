@@ -798,8 +798,11 @@ async def create_mcp_server(
             "openWorldHint": True,
         }
     )
-    def nexus_semantic_search(
+    @handle_tool_errors("semantic search")
+    async def nexus_semantic_search(
         query: str,
+        path: str = "/",
+        search_mode: str = "semantic",
         limit: int = 10,
         offset: int = 0,
         response_format: str = "json",
@@ -809,6 +812,10 @@ async def create_mcp_server(
 
         Args:
             query: Natural language search query
+            path: Directory path to scope the search (default: "/" searches everywhere)
+            search_mode: Search mode - "semantic" (default, embedding-based),
+                "keyword" (BM25/text, faster), or "hybrid" (both pipelines,
+                higher quality but more expensive)
             limit: Maximum number of results to return (default: 10)
             offset: Number of results to skip (default: 0)
             response_format: Output format - "json" or "markdown" (default: "json")
@@ -823,6 +830,8 @@ async def create_mcp_server(
             - next_offset: Offset for next page (if has_more is true)
 
         Example:
+            Scoped search: nexus_semantic_search("auth logic", path="/workspace/src")
+            Hybrid mode: nexus_semantic_search("token refresh", search_mode="hybrid")
             First page: nexus_semantic_search("machine learning algorithms", limit=10)
             Next page: nexus_semantic_search("machine learning algorithms", limit=10, offset=10)
         """
@@ -834,10 +843,11 @@ async def create_mcp_server(
             )
 
         try:
-            from nexus.lib.sync_bridge import run_sync
-
+            # Over-fetch to allow has_more detection without a second round-trip
             fetch_limit = offset + limit * 2
-            all_results = run_sync(nx_instance.semantic_search(query, path="/", limit=fetch_limit))
+            all_results = await nx_instance.semantic_search(
+                query, path=path, search_mode=search_mode, limit=fetch_limit
+            )
         except Exception as e:
             if "not initialized" in str(e).lower():
                 return tool_error("unavailable", "Semantic search not available (not initialized).")

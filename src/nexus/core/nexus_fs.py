@@ -527,6 +527,39 @@ class NexusFS(  # type: ignore[misc]
             "zone_id": self._zone_id,
         }
 
+    def _try_virtual_readme_bytes(
+        self,
+        path: str,
+        context: OperationContext | None,
+    ) -> bytes | None:
+        """Return the bytes for a virtual ``.readme/`` path, or ``None``.
+
+        Synchronous sibling of ``_try_virtual_readme_stat`` used by
+        ``read_bulk`` (which is sync and cannot ``await sys_read``) to
+        serve virtual skill docs when the Rust fast path misses.
+        """
+        try:
+            _, _, is_admin = self._get_context_identity(context)
+            route = self.router.route(
+                path, is_admin=is_admin, check_write=False, zone_id=self._zone_id
+            )
+        except Exception:
+            return None
+
+        backend = getattr(route, "backend", None)
+        if backend is None:
+            return None
+
+        mount_point = getattr(route, "mount_point", "") or ""
+        backend_path = getattr(route, "backend_path", "") or ""
+
+        from nexus.backends.connectors.schema_generator import dispatch_virtual_readme_read
+
+        try:
+            return dispatch_virtual_readme_read(backend, mount_point, backend_path)
+        except Exception:
+            return None
+
     # Issue #1790: _check_zone_writable() deleted — now handled by
     def _build_write_metadata(
         self,
@@ -1524,12 +1557,20 @@ class NexusFS(  # type: ignore[misc]
         for path in allowed_set:
             try:
                 result = self._kernel.sys_read(path, _rust_ctx)
-                if not result.hit:
+                content: bytes | None = None
+                if result.hit:
+                    content = result.data or b""
+                else:
+                    # Rust fast path missed.  Virtual ``.readme/`` paths
+                    # (Issue #3728) are not in the metastore, so we
+                    # route through the same dispatch helper that the
+                    # async ``sys_read`` uses before declaring "not found".
+                    content = self._try_virtual_readme_bytes(path, context)
+                if content is None:
                     if skip_errors:
                         results[path] = None
                         continue
                     raise NexusFileNotFoundError(path)
-                content = result.data or b""
                 if return_metadata:
                     assert batch_meta is not None
                     meta = batch_meta.get(path)
@@ -4934,17 +4975,31 @@ class NexusFS(  # type: ignore[misc]
                     )
                     # Virtual .readme/ overlay check (Issue #3728).
                     from nexus.backends.connectors.schema_generator import (
+                        _has_skill_name,
+                        _readme_dir_for,
                         dispatch_virtual_readme_list,
                     )
 
                     _virtual_entries = dispatch_virtual_readme_list(
                         backend, mount_point, backend_path
                     )
-                    entries = (
-                        _virtual_entries
-                        if _virtual_entries is not None
-                        else backend.list_dir(backend_path, context=_ctx)
-                    )
+                    if _virtual_entries is not None:
+                        entries = _virtual_entries
+                    else:
+                        entries = backend.list_dir(backend_path, context=_ctx)
+                        # Mount-root listing (backend_path is empty or just
+                        # "/") — inject the virtual ``.readme/`` entry so the
+                        # doc overlay is discoverable from ``ls /<mount>``
+                        # instead of only via a direct ``.readme/`` path.
+                        if (
+                            entries is not None
+                            and _has_skill_name(backend)
+                            and not backend_path.strip("/")
+                        ):
+                            readme_dir_name = _readme_dir_for(backend).strip("/")
+                            virtual_entry = f"{readme_dir_name}/"
+                            if virtual_entry not in entries and readme_dir_name not in entries:
+                                entries = list(entries) + [virtual_entry]
                     if entries is not None:
                         if details:
                             return [

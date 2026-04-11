@@ -20,13 +20,13 @@ from nexus.services.gateway import NexusFSGateway
 def mock_fs():
     """Create a mock NexusFS instance."""
     fs = MagicMock()
-    fs.mkdir = AsyncMock()
-    fs.sys_write = AsyncMock(
+    fs.mkdir = MagicMock()
+    fs.sys_write = MagicMock(
         return_value={"path": "/test/file.txt", "bytes_written": 7, "created": True}
     )
-    fs.sys_read = AsyncMock(return_value=b"file content")
-    fs.sys_readdir = AsyncMock(return_value=["file1.txt", "file2.txt"])
-    fs.access = AsyncMock(return_value=True)
+    fs.sys_read = MagicMock(return_value=b"file content")
+    fs.sys_readdir = MagicMock(return_value=["file1.txt", "file2.txt"])
+    fs.access = MagicMock(return_value=True)
     fs.metadata = MagicMock()
     fs.metadata.get = MagicMock(return_value=MagicMock(path="/test"))
     fs.metadata.put = MagicMock()

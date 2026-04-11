@@ -14,7 +14,7 @@ import sqlite3
 import threading
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -309,8 +309,8 @@ class TestFsspecErrorPaths:
 
     @pytest.fixture
     def mock_nexus_fs(self):
-        fs = AsyncMock()
-        fs.stat = AsyncMock(return_value={"path": "/test", "size": 11, "is_directory": False})
+        fs = MagicMock()
+        fs.stat = MagicMock(return_value={"path": "/test", "size": 11, "is_directory": False})
         return fs
 
     def test_unsupported_mode_raises(self, mock_nexus_fs):

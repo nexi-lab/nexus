@@ -527,6 +527,62 @@ class NexusFS(  # type: ignore[misc]
             "zone_id": self._zone_id,
         }
 
+    def _reject_if_virtual_readme(
+        self,
+        path: str,
+        context: OperationContext | None,
+        op: str = "write",
+    ) -> None:
+        """Raise ``PermissionError`` if ``path`` is under a virtual ``.readme/``.
+
+        Issue #3728: the overlay advertises virtual files as mode 0o444
+        (read-only), but the write/delete/rename/mkdir paths route on
+        backend_path directly — without this guard, a caller writing to
+        ``/<mount>/.readme/README.md`` would create a real file in the
+        backend (e.g. a stray ``.readme/README.md`` in the user's Google
+        Drive).  This helper blocks every mutating entry point at the
+        kernel layer so the virtual tree cannot be mutated.
+
+        Called from: ``_write_content``, ``sys_write``, ``write``,
+        ``mkdir``, ``rmdir``, ``sys_unlink``, ``sys_rename``,
+        ``write_batch``, ``delete_batch``, ``rename_batch``.
+        """
+        try:
+            _, _, is_admin = self._get_context_identity(context)
+            route = self.router.route(
+                path, is_admin=is_admin, check_write=False, zone_id=self._zone_id
+            )
+        except Exception:
+            return  # non-routable path — let the real call surface the error
+
+        backend = getattr(route, "backend", None)
+        if backend is None:
+            return
+
+        from nexus.backends.connectors.schema_generator import (
+            _has_skill_name,
+            _parse_readme_path_parts,
+            _readme_dir_for,
+        )
+
+        if not _has_skill_name(backend):
+            return
+
+        backend_path = getattr(route, "backend_path", "") or ""
+        try:
+            parts = _parse_readme_path_parts(backend_path, readme_dir=_readme_dir_for(backend))
+        except ValueError:
+            # Malformed path (traversal etc.) — let the real call surface it
+            return
+
+        if parts is None:
+            return  # not a virtual readme path
+
+        raise PermissionError(
+            f"Cannot {op} virtual .readme/ path: {path} "
+            f"(skill docs are read-only and generated from class metadata)"
+        )
+
     def _try_virtual_readme_bytes(
         self,
         path: str,
@@ -1863,6 +1919,9 @@ class NexusFS(  # type: ignore[misc]
         if route.readonly:
             raise PermissionError(f"Path is read-only: {path}")
 
+        # Virtual .readme/ paths are read-only (Issue #3728).
+        self._reject_if_virtual_readme(path, context, op="write_stream")
+
         # PRE-INTERCEPT: pre-write hooks (Issue #899)
         from nexus.contracts.vfs_hooks import WriteHookContext as _WHC
 
@@ -1991,6 +2050,10 @@ class NexusFS(  # type: ignore[misc]
 
         # [INTERMEDIATE] PRE-DISPATCH: resolve — migrates to Rust dispatch middleware in PR 7
         context = self._parse_context(context)
+
+        # Virtual .readme/ paths are read-only (Issue #3728).
+        self._reject_if_virtual_readme(path, context, op="sys_write")
+
         _handled, _result = self.resolve_write(path, buf)
         if _handled:
             base: dict[str, Any] = {"path": path, "bytes_written": len(buf)}
@@ -2085,6 +2148,9 @@ class NexusFS(  # type: ignore[misc]
 
         if route.readonly:
             raise PermissionError(f"Cannot create directory in read-only path: {path}")
+
+        # Virtual .readme/ paths are read-only (Issue #3728).
+        self._reject_if_virtual_readme(path, context, op="mkdir")
 
         # Check if directory already exists
         existing = route.metastore.get(path)
@@ -2343,6 +2409,9 @@ class NexusFS(  # type: ignore[misc]
         # Check if path is read-only
         if route.readonly:
             raise PermissionError(f"Path is read-only: {path}")
+
+        # Virtual .readme/ paths are read-only (Issue #3728).
+        self._reject_if_virtual_readme(path, context, op="write")
 
         # Get existing metadata for permission check and update detection (single query)
         now = datetime.now(UTC)
@@ -2953,7 +3022,10 @@ class NexusFS(  # type: ignore[misc]
         # Validate paths
         validated_files: list[tuple[str, bytes]] = []
         for path, content in files:
-            validated_files.append((self._validate_path(path), content))
+            validated_path = self._validate_path(path)
+            # Virtual .readme/ paths are read-only (Issue #3728).
+            self._reject_if_virtual_readme(validated_path, context, op="write_batch")
+            validated_files.append((validated_path, content))
 
         zone_id, agent_id, is_admin = self._get_context_identity(context)
         paths = [p for p, _ in validated_files]
@@ -3424,6 +3496,9 @@ class NexusFS(  # type: ignore[misc]
         if route.readonly:
             raise PermissionError(f"Cannot delete from read-only path: {path}")
 
+        # Virtual .readme/ paths are read-only (Issue #3728).
+        self._reject_if_virtual_readme(path, context, op="delete")
+
         # Check if file exists in metadata.
         # Use prefetched hint from resolve_delete() if available (#1311)
         meta = _result if _result is not None else route.metastore.get(path)
@@ -3639,6 +3714,10 @@ class NexusFS(  # type: ignore[misc]
             raise PermissionError(f"Cannot rename from read-only path: {old_path}")
         if new_route.readonly:
             raise PermissionError(f"Cannot rename to read-only path: {new_path}")
+
+        # Virtual .readme/ paths are read-only on both ends (Issue #3728).
+        self._reject_if_virtual_readme(old_path, context, op="rename")
+        self._reject_if_virtual_readme(new_path, context, op="rename")
 
         # ── Fast-fail (unlocked, optimization only) ──
         # Avoids lock acquisition for the common "file not found" error case.
@@ -4492,6 +4571,9 @@ class NexusFS(  # type: ignore[misc]
 
         for path in validated:
             try:
+                # Virtual .readme/ paths are read-only (Issue #3728).
+                self._reject_if_virtual_readme(path, context, op="delete")
+
                 meta = batch_meta.get(path)
 
                 # Check for implicit directory (exists because it has files beneath it)
@@ -4978,6 +5060,7 @@ class NexusFS(  # type: ignore[misc]
                         _has_skill_name,
                         _readme_dir_for,
                         dispatch_virtual_readme_list,
+                        get_virtual_readme_tree_for_backend,
                     )
 
                     _virtual_entries = dispatch_virtual_readme_list(
@@ -4988,18 +5071,57 @@ class NexusFS(  # type: ignore[misc]
                     else:
                         entries = backend.list_dir(backend_path, context=_ctx)
                         # Mount-root listing (backend_path is empty or just
-                        # "/") — inject the virtual ``.readme/`` entry so the
-                        # doc overlay is discoverable from ``ls /<mount>``
-                        # instead of only via a direct ``.readme/`` path.
+                        # "/") — inject the virtual ``.readme/`` subtree
+                        # (flattened for recursive=True) so the doc overlay
+                        # is discoverable from ``ls`` and also indexable by
+                        # search/recursive walkers that only enumerate from
+                        # the mount root (Issue #3728 finding #5 + #8).
                         if (
                             entries is not None
                             and _has_skill_name(backend)
                             and not backend_path.strip("/")
                         ):
                             readme_dir_name = _readme_dir_for(backend).strip("/")
-                            virtual_entry = f"{readme_dir_name}/"
-                            if virtual_entry not in entries and readme_dir_name not in entries:
-                                entries = list(entries) + [virtual_entry]
+                            entries = list(entries)
+                            if recursive:
+                                # Flatten the virtual tree to every leaf path
+                                # so callers that recurse from the mount root
+                                # (indexing, search, TUI tree) descend into
+                                # README.md + schemas/ + examples/ without a
+                                # second sys_readdir round-trip.
+                                try:
+                                    _vtree = get_virtual_readme_tree_for_backend(
+                                        backend, mount_point
+                                    )
+                                except Exception:
+                                    _vtree = None
+                                if _vtree is not None:
+
+                                    def _walk(node, prefix: str) -> list[str]:
+                                        out: list[str] = []
+                                        if node.is_dir:
+                                            # Include the directory itself
+                                            if prefix:
+                                                out.append(f"{prefix}/")
+                                            for child_name, child in node.children.items():
+                                                child_prefix = (
+                                                    f"{prefix}/{child_name}"
+                                                    if prefix
+                                                    else child_name
+                                                )
+                                                out.extend(_walk(child, child_prefix))
+                                        else:
+                                            out.append(prefix)
+                                        return out
+
+                                    flattened = _walk(_vtree, readme_dir_name)
+                                    for rel in flattened:
+                                        if rel not in entries:
+                                            entries.append(rel)
+                            else:
+                                virtual_entry = f"{readme_dir_name}/"
+                                if virtual_entry not in entries and readme_dir_name not in entries:
+                                    entries.append(virtual_entry)
                     if entries is not None:
                         if details:
                             return [

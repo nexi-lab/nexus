@@ -184,9 +184,18 @@ class ZoektPipeConsumer:
         while True:
             # If nothing pending, block until first event
             if not pending_paths and not has_sync:
-                try:
-                    first = await asyncio.to_thread(nx.sys_read, _ZOEKT_PIPE_PATH)
-                except NexusFileNotFoundError:
+                # Poll with async sleep to let flush_loop and other tasks run
+                first = None
+                while first is None:
+                    try:
+                        first = nx.sys_read(_ZOEKT_PIPE_PATH)
+                    except NexusFileNotFoundError:
+                        # Pipe empty or closed — yield to event loop then retry
+                        await asyncio.sleep(0.01)
+                        # Check if pipe was closed (consumer stopping)
+                        if not self._pipe_ready:
+                            break
+                if first is None:
                     logger.debug("Zoekt pipe closed, consumer exiting")
                     break
                 msg = json.loads(first)
@@ -202,7 +211,7 @@ class ZoektPipeConsumer:
                 if remaining <= 0:
                     break
                 try:
-                    data = await asyncio.to_thread(nx.sys_read, _ZOEKT_PIPE_PATH)
+                    data = nx.sys_read(_ZOEKT_PIPE_PATH)
                     msg = json.loads(data)
                     if msg["type"] == "write":
                         pending_paths.add(msg["path"])

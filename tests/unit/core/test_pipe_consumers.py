@@ -83,23 +83,17 @@ class MockNexusFS:
     def sys_read(self, path: str, **kwargs: object) -> bytes:  # noqa: ARG002
         """Read data from the pipe queue.
 
-        Blocks briefly (50ms) when empty — simulates the real DT_PIPE
-        fast-path where read_nowait() fails and the blocking wait is
-        bounded.  This lets the consumer's drain loop break quickly
-        when no more events are queued.
+        Blocks briefly (50ms) when empty — simulates bounded blocking read.
+        Raises NexusFileNotFoundError when empty after timeout or pipe closed.
         """
-        if path in self._closed:
-            from nexus.contracts.exceptions import NexusFileNotFoundError
-
-            raise NexusFileNotFoundError(path=path)
-        if path not in self._pipes:
-            from nexus.contracts.exceptions import NexusFileNotFoundError
-
-            raise NexusFileNotFoundError(path=path)
         import queue as _queue
 
+        if path in self._closed or path not in self._pipes:
+            from nexus.contracts.exceptions import NexusFileNotFoundError
+
+            raise NexusFileNotFoundError(path=path)
         try:
-            return self._pipes[path].get(timeout=2.0)
+            return self._pipes[path].get(timeout=0.05)
         except _queue.Empty:
             from nexus.contracts.exceptions import NexusFileNotFoundError
 

@@ -779,6 +779,18 @@ async def _do_grep_operation(
     # total of matches visible to this caller.
     total = post_filter_count
     paginated = filtered_results[offset : offset + limit]
+
+    # Codex review of #3701 (finding #2): unscope every result entry's
+    # ``file`` so the HTTP response surfaces user-facing paths
+    # (``/docs/a.py``) instead of leaking the internal zone-scoped
+    # storage path (``/zone/<tenant>/docs/a.py``). This matches what
+    # the existing RPC ``handle_grep`` does and prevents tenant
+    # identifier / storage layout leakage to clients. ``unscope_result``
+    # is a no-op for already-user-facing paths, so root callers see no
+    # behavioural change.
+    from nexus.server.path_utils import unscope_result
+
+    paginated = [unscope_result(r) for r in paginated]
     latency_ms = (time.perf_counter() - start_time) * 1000
 
     extras: dict[str, Any] = {
@@ -857,6 +869,14 @@ async def _do_glob_operation(
 
     total = len(filtered_paths)
     paginated = filtered_paths[offset : offset + limit]
+
+    # Codex review of #3701 (finding #2): unscope every glob path so
+    # the HTTP response surfaces user-facing paths and never leaks the
+    # internal ``/zone/<tenant>/...`` form. Mirrors the unscope pass in
+    # the existing RPC ``handle_glob`` and the grep fix above.
+    from nexus.server.path_utils import unscope_internal_path
+
+    paginated = [unscope_internal_path(p) for p in paginated]
     latency_ms = (time.perf_counter() - start_time) * 1000
 
     extras = {

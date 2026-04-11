@@ -2705,11 +2705,21 @@ class SearchService:
         # actually allowed to see under ``path``. self.list already
         # enforces permissions via ``context``; anything the caller
         # named that isn't in the permitted set is treated as stale.
-        permitted_paths = cast(
+        #
+        # Codex review of #3701 (finding #1): for non-root tenants
+        # ``self.list`` returns *zone-scoped* internal paths like
+        # ``/zone/<tenant>/docs/a.py`` while the caller passes user-facing
+        # paths like ``/docs/a.py``. Compare them in the same namespace
+        # by unscoping the list output before building the permitted
+        # set, otherwise every entry is silently dropped for non-root
+        # callers (the bug Codex flagged).
+        from nexus.core.path_utils import unscope_internal_path
+
+        permitted_paths_internal = cast(
             builtins.list[str],
             self.list(path, recursive=True, context=context),
         )
-        permitted_set = set(permitted_paths)
+        permitted_set = {unscope_internal_path(p) for p in permitted_paths_internal}
 
         # (e) Stale silent skip — drop entries not in permitted_set and
         # report the count so the caller can detect drift.

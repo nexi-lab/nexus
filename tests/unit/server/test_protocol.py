@@ -320,16 +320,22 @@ class TestCodegenConsistency:
     def test_method_params_count(self):
         """METHOD_PARAMS should have a reasonable number of entries.
 
-        Threshold lowered from 113 → 90 in #3701: when
-        ``_rpc_params_generated.py`` was regenerated to fix sys_access
-        drift, ~20 entries for ``nexus.system_services.*`` methods
-        (workspace, agents, lifecycle) were dropped because those
-        modules no longer exist as @rpc_expose surfaces. The methods
-        moved into HTTP routers / internal services and intentionally
-        do not have generated Param classes.
+        Threshold history:
+        * Lowered from 113 → 90 in #3701 (commit d9d429abd) under the
+          mistaken assumption that ``nexus.system_services.*`` methods
+          had been deleted; in reality those methods just *moved* and
+          the codegen MODULES_TO_SCAN entries were stale.
+        * Restored to ≥150 after Codex review of #3701 (finding #3)
+          repaired MODULES_TO_SCAN to point at the post-refactor
+          canonical locations (``nexus.services.*``,
+          ``nexus.server.rpc.services.*``, ``nexus.bricks.auth.oauth.*``).
+          This guards against silently re-introducing stale module
+          paths that would once again drop METHOD_PARAMS entries and
+          break ``RemoteServiceProxy`` positional binding for any
+          missing RPC.
         """
-        assert len(METHOD_PARAMS) >= 90, (
-            f"Expected at least 90 METHOD_PARAMS entries, got {len(METHOD_PARAMS)}"
+        assert len(METHOD_PARAMS) >= 150, (
+            f"Expected at least 150 METHOD_PARAMS entries, got {len(METHOD_PARAMS)}"
         )
 
     def test_method_params_names_are_strings(self):
@@ -415,6 +421,49 @@ class TestCodegenConsistency:
             RmdirAliasParams, parse_method_params("sys_rmdir", {"path": "/foo"})
         )
         assert parsed_sys_rmdir.recursive is False
+
+    def test_remote_proxy_positional_arg_resolution_for_critical_rpcs(self):
+        """Regression test for Codex review #2 finding #3.
+
+        ``RemoteServiceProxy``/``RPCProxyBase`` use METHOD_PARAMS to map
+        positional call arguments to parameter names. When an exposed
+        RPC is missing from METHOD_PARAMS, ``_get_param_names`` returns
+        ``[]`` and the positional caller's first argument is silently
+        dropped from the JSON-RPC body — the call serializes without
+        e.g. ``query`` for ``semantic_search``, ``path`` for
+        ``register_workspace``, ``agent_id`` for ``register_agent``.
+
+        Codex caught this for ``semantic_search`` (already exposed via
+        SearchService and called positionally). The root cause was a
+        stale ``MODULES_TO_SCAN`` in ``scripts/generate_rpc_params.py``
+        that pointed at deleted ``nexus.system_services.*`` paths,
+        causing the codegen to silently skip those modules. This test
+        guards the critical positional-call surface so future regen
+        drift can't reintroduce the same silent breakage.
+        """
+        from nexus.remote.rpc_proxy import RPCProxyBase
+
+        # Each tuple: (rpc_name, expected first positional param)
+        critical_positional_rpcs = [
+            ("semantic_search", "query"),
+            ("register_workspace", "path"),
+            ("register_agent", "agent_id"),
+        ]
+        for rpc_name, expected_first_param in critical_positional_rpcs:
+            assert rpc_name in METHOD_PARAMS, (
+                f"METHOD_PARAMS missing {rpc_name!r} — positional remote calls "
+                f"will silently misserialize. Check MODULES_TO_SCAN in "
+                f"scripts/generate_rpc_params.py."
+            )
+            param_names = RPCProxyBase._get_param_names(rpc_name)
+            assert param_names, (
+                f"_get_param_names({rpc_name!r}) returned [] — positional binding broken"
+            )
+            assert param_names[0] == expected_first_param, (
+                f"{rpc_name}: expected first positional={expected_first_param!r}, "
+                f"got {param_names[0]!r}. RemoteServiceProxy.{rpc_name}({expected_first_param}, ...) "
+                f"would serialize without {expected_first_param!r}."
+            )
 
 
 # ============================================================

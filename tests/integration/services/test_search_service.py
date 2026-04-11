@@ -952,6 +952,77 @@ class TestValidateAndNormalizeFiles:
             assert files == ["/public/a.py"]
             assert stale == 1
 
+    def test_non_root_zone_unscope_intersection(self, service, mock_gateway, context):
+        """Regression for Codex review #2 finding #1.
+
+        For non-root tenants, ``self.list()`` returns *zone-scoped*
+        internal paths like ``/zone/<tenant>/docs/a.py`` while callers
+        pass user-facing paths like ``/docs/a.py``. The intersection
+        must happen in the same namespace — otherwise every entry is
+        silently dropped and the caller sees ``stale_count == n``.
+
+        Codex repro:
+            files=['/docs/a.py'], list -> ['/zone/tenant-1/docs/a.py']
+            BUG: returned ([], 1)
+            FIX: returns (['/docs/a.py'], 0)
+        """
+        mock_gateway.get_routing_params.return_value = ("tenant-1", None, False)
+        with patch.object(
+            service,
+            "list",
+            return_value=[
+                "/zone/tenant-1/docs/a.py",
+                "/zone/tenant-1/docs/b.py",
+                "/zone/tenant-1/docs/c.py",
+            ],
+        ):
+            files, stale = service._validate_and_normalize_files(
+                files=["/docs/a.py", "/docs/b.py"],
+                path="/",
+                context=context,
+            )
+            assert files == ["/docs/a.py", "/docs/b.py"]
+            assert stale == 0
+
+    def test_non_root_zone_stale_path_still_counted(self, service, mock_gateway, context):
+        """Codex review #2 finding #1: stale paths still counted correctly
+        for non-root tenants after the unscope normalisation."""
+        mock_gateway.get_routing_params.return_value = ("tenant-1", None, False)
+        with patch.object(
+            service,
+            "list",
+            return_value=[
+                "/zone/tenant-1/docs/a.py",
+                "/zone/tenant-1/docs/b.py",
+            ],
+        ):
+            files, stale = service._validate_and_normalize_files(
+                files=["/docs/a.py", "/docs/missing.py"],
+                path="/",
+                context=context,
+            )
+            assert files == ["/docs/a.py"]
+            assert stale == 1
+
+    def test_tenant_prefix_format_unscope(self, service, mock_gateway, context):
+        """Codex review #2 finding #1: ``/tenant:<id>/...`` format also unscopes."""
+        mock_gateway.get_routing_params.return_value = ("acme", None, False)
+        with patch.object(
+            service,
+            "list",
+            return_value=[
+                "/tenant:acme/workspace/a.py",
+                "/tenant:acme/workspace/b.py",
+            ],
+        ):
+            files, stale = service._validate_and_normalize_files(
+                files=["/workspace/a.py"],
+                path="/",
+                context=context,
+            )
+            assert files == ["/workspace/a.py"]
+            assert stale == 0
+
 
 # =============================================================================
 # files=[...] end-to-end via grep/glob (#3701 — Issue 2A + 15A + 13A)

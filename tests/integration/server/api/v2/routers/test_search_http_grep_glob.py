@@ -432,6 +432,112 @@ class TestRebacInteraction:
         assert data["permission_denial_rate"] == 0.0
         assert data["truncated_by_permissions"] is False
 
+    def test_grep_response_unscopes_zone_paths(self) -> None:
+        """Regression for Codex review #2 finding #2.
+
+        For non-root tenants, ``SearchService.grep`` returns
+        ``/zone/<tenant>/...`` internal storage paths. The HTTP grep
+        endpoint must unscope them before responding so clients see
+        user-facing ``/...`` paths and the tenant identifier never
+        leaks into the response.
+        """
+        svc = _make_search_service(
+            grep_return=[
+                {
+                    "file": "/zone/tenant-acme/docs/a.py",
+                    "line": 1,
+                    "content": "hello",
+                    "match": "hello",
+                },
+                {
+                    "file": "/zone/tenant-acme/docs/b.py",
+                    "line": 2,
+                    "content": "hello",
+                    "match": "hello",
+                },
+            ]
+        )
+        # ReBAC enforcer must permit the SCOPED paths (since SearchService
+        # returns scoped paths and the second-layer filter sees them
+        # before unscope happens).
+        enforcer = MagicMock()
+        enforcer.filter_search_results = MagicMock(
+            return_value=[
+                "/zone/tenant-acme/docs/a.py",
+                "/zone/tenant-acme/docs/b.py",
+            ]
+        )
+        client = TestClient(_build_app(search_service=svc, permission_enforcer=enforcer))
+        resp = client.get("/api/v2/search/grep?pattern=hello")
+        data = resp.json()
+        files = [r["file"] for r in data["items"]]
+        # No internal /zone/... prefix in response items.
+        assert files == ["/docs/a.py", "/docs/b.py"]
+        for f in files:
+            assert "/zone/" not in f
+            assert "tenant-acme" not in f
+
+    def test_grep_response_unscopes_tenant_prefix_paths(self) -> None:
+        """Codex review #2 finding #2: ``/tenant:<id>/...`` form also unscoped."""
+        svc = _make_search_service(
+            grep_return=[
+                {
+                    "file": "/tenant:acme/docs/a.py",
+                    "line": 1,
+                    "content": "x",
+                    "match": "x",
+                },
+            ]
+        )
+        enforcer = MagicMock()
+        enforcer.filter_search_results = MagicMock(return_value=["/tenant:acme/docs/a.py"])
+        client = TestClient(_build_app(search_service=svc, permission_enforcer=enforcer))
+        resp = client.get("/api/v2/search/grep?pattern=x")
+        data = resp.json()
+        assert data["items"][0]["file"] == "/docs/a.py"
+
+    def test_glob_response_unscopes_zone_paths(self) -> None:
+        """Codex review #2 finding #2: glob HTTP endpoint also unscopes."""
+        svc = _make_search_service(
+            glob_return=[
+                "/zone/tenant-acme/src/a.py",
+                "/zone/tenant-acme/src/b.py",
+            ]
+        )
+        enforcer = MagicMock()
+        enforcer.filter_search_results = MagicMock(
+            return_value=[
+                "/zone/tenant-acme/src/a.py",
+                "/zone/tenant-acme/src/b.py",
+            ]
+        )
+        client = TestClient(_build_app(search_service=svc, permission_enforcer=enforcer))
+        resp = client.get("/api/v2/search/glob?pattern=*.py")
+        data = resp.json()
+        items = data["items"]
+        assert items == ["/src/a.py", "/src/b.py"]
+        for p in items:
+            assert "/zone/" not in p
+            assert "tenant-acme" not in p
+
+    def test_root_zone_paths_unchanged(self) -> None:
+        """Codex review #2 finding #2: root-zone callers see no change.
+
+        unscope is a no-op for already-user-facing paths, so the
+        existing root-callers' contract is preserved.
+        """
+        svc = _make_search_service(
+            grep_return=[
+                {"file": "/docs/a.py", "line": 1, "content": "x", "match": "x"},
+            ],
+            glob_return=["/docs/a.py"],
+        )
+        client = TestClient(_build_app(search_service=svc))
+        grep_resp = client.get("/api/v2/search/grep?pattern=x").json()
+        glob_resp = client.get("/api/v2/search/glob?pattern=*.py").json()
+        assert grep_resp["items"][0]["file"] == "/docs/a.py"
+        assert glob_resp["items"] == ["/docs/a.py"]
+
 
 # ---------------------------------------------------------------------------
 # Parity — HTTP grep/glob and HTTP query share response envelope shape (#3701 10A)

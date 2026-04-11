@@ -70,6 +70,11 @@ from nexus.storage.models.filesystem import WorkspaceSnapshotModel as WorkspaceS
 from nexus.storage.models.identity import AgentCredentialModel as AgentCredentialModel
 from nexus.storage.models.identity import AgentKeyModel as AgentKeyModel
 
+# Domain: Indexed Directories (Per-directory semantic index scoping, Issue #3698)
+from nexus.storage.models.indexed_directory import (
+    IndexedDirectoryModel as IndexedDirectoryModel,
+)
+
 # Domain: Infrastructure (Sandbox, Config, Sessions, Migrations, Settings)
 from nexus.storage.models.infrastructure import MigrationHistoryModel as MigrationHistoryModel
 from nexus.storage.models.infrastructure import SandboxMetadataModel as SandboxMetadataModel

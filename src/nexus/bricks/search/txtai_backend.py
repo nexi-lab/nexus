@@ -631,7 +631,33 @@ class TxtaiBackend:
             pass
 
     async def delete(self, ids: list[str], *, zone_id: str) -> int:  # noqa: ARG002
-        """Delete documents by id."""
+        """Delete documents by id.
+
+        Calls ``Embeddings.delete()`` and then persists with ``_save()`` so
+        that pgvector + the content tables drop the rows immediately. Without
+        the save, txtai's delete is in-memory only and the rows linger in
+        ``sections``/``vectors`` until the next index/upsert flush.
+
+        **Fail-closed with rollback**: ``Embeddings.delete()`` mutates the
+        in-memory ANN/scoring/ids state immediately. If a subsequent
+        ``_save()`` fails, the in-memory state is now inconsistent with
+        the durable state — searches on this worker would stop returning
+        the rows even though the durable record still has them, AND a
+        later unrelated successful ``_save()`` could persist the failed
+        delete by accident.
+
+        Recovery: on any failure, we
+          1. roll back the pgvector session,
+          2. **reload** ``_embeddings`` from durable state via
+             ``Embeddings.load(self._config_path)`` so the in-memory
+             view matches what's actually on disk + in pgvector,
+          3. re-raise so the caller knows the deletion is NOT durable.
+
+        Reporting an optimistic count would let admin cleanup endpoints
+        like ``/api/v2/search/purge-unscoped`` claim success while stale
+        embeddings remain in the index — exactly the silent-failure
+        mode the purge endpoint exists to prevent.
+        """
         if not ids:
             return 0
         await self.startup()
@@ -639,7 +665,37 @@ class TxtaiBackend:
         async with self._lock:
             if not self._embeddings:
                 return 0
-            await asyncio.to_thread(self._embeddings.delete, ids)
+            try:
+                await asyncio.to_thread(self._embeddings.delete, ids)
+                await asyncio.to_thread(self._save)
+            except Exception:
+                logger.error(
+                    "txtai delete failed for %d ids; rolling back, "
+                    "reloading durable state, and re-raising",
+                    len(ids),
+                    exc_info=True,
+                )
+                await asyncio.to_thread(self._rollback_db_sessions)
+                # Restore the in-memory state from durable storage so
+                # subsequent searches don't see a phantom delete that
+                # never persisted, AND so the next successful _save()
+                # cannot accidentally durable-ize the failed delete.
+                try:
+                    await asyncio.to_thread(self._embeddings.load, self._config_path)
+                except Exception:
+                    # If reload itself fails, the only safe move is to
+                    # mark the embeddings unusable so the worker stops
+                    # serving from a dirty cache. The next operation
+                    # will trigger ``startup()`` which rebuilds.
+                    logger.error(
+                        "txtai delete: post-failure reload also failed; "
+                        "dropping in-memory _embeddings so the next "
+                        "operation re-initializes from durable state",
+                        exc_info=True,
+                    )
+                    self._embeddings = None
+                    self._started = False
+                raise
         return len(ids)
 
     # ----- Search -------------------------------------------------------------

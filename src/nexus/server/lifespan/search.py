@@ -73,8 +73,13 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
             txtai_vectors=txtai_vectors,
             txtai_reranker=os.environ.get("NEXUS_TXTAI_RERANKER") or None,
             txtai_sparse=os.environ.get("NEXUS_TXTAI_SPARSE", "").lower() in ("true", "1", "yes"),
-            txtai_graph=os.environ.get("NEXUS_TXTAI_GRAPH", "true").lower()
-            not in ("false", "0", "no"),
+            # Semantic graph is off by default — txtai's graph upsert path
+            # trips a pre-existing NotNullViolation in grand's edges table
+            # that drops every co-batched document write. Operators who
+            # want the rarely-used ``graph_mode`` query parameter can set
+            # NEXUS_TXTAI_GRAPH=true to re-enable (at their own risk).
+            txtai_graph=os.environ.get("NEXUS_TXTAI_GRAPH", "false").lower()
+            in ("true", "1", "yes"),
         )
 
         # Inject async_session_factory from RecordStoreABC when available

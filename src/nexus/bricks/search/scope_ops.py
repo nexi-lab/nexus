@@ -147,13 +147,15 @@ async def add_indexed_directory(daemon: SearchDaemon, zone_id: str, directory_pa
                 await session.commit()
 
         daemon._indexed_directories.setdefault(zone_id, set()).add(canonical)
+        daemon._scope_generation += 1
+        backfill_generation = daemon._scope_generation
 
     logger.info("Registered indexed directory %s under zone %s", canonical, zone_id)
 
     # Backfill OUTSIDE the refresh lock so the txtai upsert (which can
-    # take seconds) doesn't block other refreshes. Best-effort: backfill
-    # failures are logged but don't roll back the registration.
-    await backfill_zone_from_chunks(daemon, zone_id)
+    # take seconds) doesn't block other refreshes. Pass the captured
+    # generation so the backfill bails if scope changes mid-flight.
+    await backfill_zone_from_chunks(daemon, zone_id, expected_generation=backfill_generation)
 
     return canonical
 
@@ -161,9 +163,10 @@ async def add_indexed_directory(daemon: SearchDaemon, zone_id: str, directory_pa
 async def remove_indexed_directory(daemon: SearchDaemon, zone_id: str, directory_path: str) -> str:
     """Unregister ``directory_path`` from scoped indexing.
 
-    Does NOT purge existing embeddings — use ``purge_unscoped_embeddings``
-    for that. Policies (Issue #6): #6 unregistering an absent entry
-    raises ``DirectoryNotRegisteredError``.
+    Does NOT purge existing embeddings — the caller (typically the
+    HTTP endpoint) follows up with ``purge_unscoped_embeddings`` so
+    the auto-purge happens at the API boundary. Policies (Issue #6):
+    #6 unregistering an absent entry raises ``DirectoryNotRegisteredError``.
     """
     canonical = validate_directory_path(directory_path)
 
@@ -190,6 +193,8 @@ async def remove_indexed_directory(daemon: SearchDaemon, zone_id: str, directory
             # Drop empty sets so _current_index_scope doesn't carry
             # stale keys.
             daemon._indexed_directories.pop(zone_id, None)
+        # Bump generation so any in-flight backfill captures it and bails.
+        daemon._scope_generation += 1
 
     logger.info("Unregistered indexed directory %s under zone %s", canonical, zone_id)
     return canonical
@@ -200,7 +205,11 @@ def list_indexed_directories(daemon: SearchDaemon, zone_id: str) -> list[str]:
     return sorted(daemon._indexed_directories.get(zone_id, set()))
 
 
-async def backfill_zone_from_chunks(daemon: SearchDaemon, zone_id: str) -> int:
+async def backfill_zone_from_chunks(
+    daemon: SearchDaemon,
+    zone_id: str,
+    expected_generation: int | None = None,
+) -> int:
     """Re-upsert in-scope ``document_chunks`` for ``zone_id`` into txtai.
 
     Called when scope expands (a directory is registered, or a zone
@@ -210,13 +219,24 @@ async def backfill_zone_from_chunks(daemon: SearchDaemon, zone_id: str) -> int:
     daemon was restarted (because bootstrap is the only other path
     that replays ``document_chunks`` into txtai).
 
+    **Generation guard**: ``expected_generation`` should be captured by
+    the caller while holding ``_refresh_lock`` immediately after the
+    scope mutation that triggered this backfill. The backfill checks
+    ``daemon._scope_generation`` again immediately before issuing the
+    txtai upsert; if the generation has advanced (a concurrent
+    unregister/mode-flip happened), the backfill bails without
+    upserting. This prevents a stale backfill from resurrecting
+    documents that another worker just de-scoped.
+
     Reads from ``document_chunks`` JOIN ``file_paths``, applies the
     current scope rule (in Python, after fetch — the scope is in
     memory and trivial to evaluate), groups chunks by virtual_path,
     and upserts each in-scope file into the txtai backend.
 
-    Returns the number of files re-upserted. Best-effort: backfill
-    failures are logged but do not raise.
+    Returns the number of files re-upserted. Best-effort on the
+    SELECT/upsert path itself — those failures log and return 0 —
+    but generation skew returns 0 silently because that is the
+    correct outcome.
     """
     if daemon._async_session is None or daemon._backend is None:
         return 0
@@ -258,7 +278,12 @@ async def backfill_zone_from_chunks(daemon: SearchDaemon, zone_id: str) -> int:
     if not rows:
         return 0
 
-    # Group chunks by virtual_path and filter through scope.
+    # Group chunks by virtual_path and filter through scope. Use the
+    # CURRENT scope (not the captured snapshot) so per-file filtering
+    # always reflects the latest in-memory state.
+    current_scope = daemon._current_index_scope()
+    if current_scope is None:
+        return 0
     grouped: dict[str, list[str]] = {}
     for row in rows:
         vpath = row[0]
@@ -266,7 +291,7 @@ async def backfill_zone_from_chunks(daemon: SearchDaemon, zone_id: str) -> int:
         if not vpath:
             continue
         try:
-            if not is_path_indexed(scope, zone_id, vpath):
+            if not is_path_indexed(current_scope, zone_id, vpath):
                 continue
         except ValueError:
             continue
@@ -291,6 +316,21 @@ async def backfill_zone_from_chunks(daemon: SearchDaemon, zone_id: str) -> int:
         )
 
     if not docs:
+        return 0
+
+    # Generation check IMMEDIATELY before the upsert. If a concurrent
+    # unregister/mode-flip bumped the generation while we were
+    # SELECTing/grouping, bail without upserting — those documents
+    # have just become out-of-scope and we must not resurrect them.
+    if expected_generation is not None and daemon._scope_generation != expected_generation:
+        logger.info(
+            "backfill_zone_from_chunks: scope generation advanced "
+            "(%d → %d) for zone %s while backfilling; bailing without "
+            "upsert to avoid resurrecting newly out-of-scope files",
+            expected_generation,
+            daemon._scope_generation,
+            zone_id,
+        )
         return 0
 
     try:
@@ -327,6 +367,7 @@ async def set_zone_indexing_mode(daemon: SearchDaemon, zone_id: str, mode: str) 
         raise ZoneNotFoundError(f"zone {zone_id!r} does not exist")
 
     previous_mode: str | None = None
+    backfill_generation: int | None = None
     async with daemon._refresh_lock:
         previous_mode = daemon._zone_indexing_modes.get(zone_id)
         if daemon._async_session is not None:
@@ -337,15 +378,18 @@ async def set_zone_indexing_mode(daemon: SearchDaemon, zone_id: str, mode: str) 
                 )
                 await session.commit()
         daemon._zone_indexing_modes[zone_id] = mode
+        daemon._scope_generation += 1
+        backfill_generation = daemon._scope_generation
 
     logger.info("Set indexing_mode=%s for zone %s", mode, zone_id)
 
     # Backfill on widening (scoped → all) so previously excluded files
     # become searchable without waiting for the next write/restart.
     # Done outside the refresh lock so the txtai upsert doesn't block
-    # other refreshes.
+    # other refreshes. Pass the captured generation so the backfill
+    # bails if scope changes mid-flight.
     if previous_mode == INDEX_MODE_SCOPED and mode == INDEX_MODE_ALL:
-        await backfill_zone_from_chunks(daemon, zone_id)
+        await backfill_zone_from_chunks(daemon, zone_id, expected_generation=backfill_generation)
 
 
 async def purge_unscoped_embeddings(
@@ -447,18 +491,20 @@ async def purge_unscoped_embeddings(
 
             # Prune the txtai backend via its delete API so the in-memory
             # index and pgvector rows both drop the entries.
+            #
+            # **Fail-closed**: do NOT swallow backend.delete failures.
+            # ``TxtaiBackend.delete`` raises if persistence to pgvector
+            # fails; we re-raise from here so the HTTP endpoint surfaces
+            # a 5xx and the caller knows the cleanup is not durable.
+            # Reporting partial counts on failure would let admins
+            # believe stale out-of-scope embeddings were removed when
+            # they were not — exactly the silent-failure mode the
+            # purge endpoint exists to prevent.
             if daemon._backend is not None and txtai_ids_to_delete:
-                try:
-                    deleted = int(
-                        await daemon._backend.delete(txtai_ids_to_delete, zone_id=target_zone)
-                    )
-                    counts["txtai_docs"] += deleted
-                except Exception:
-                    logger.warning(
-                        "Failed to prune txtai backend during purge for zone %s",
-                        target_zone,
-                        exc_info=True,
-                    )
+                deleted = int(
+                    await daemon._backend.delete(txtai_ids_to_delete, zone_id=target_zone)
+                )
+                counts["txtai_docs"] += deleted
 
     logger.info(
         "Purged unscoped txtai artifacts: %d docs across %d zones "

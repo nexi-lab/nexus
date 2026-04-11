@@ -269,6 +269,12 @@ class SearchDaemon:
         # ``DaemonConfig.scope_refresh_seconds``.
         self._zone_indexing_modes: dict[str, str] = {}
         self._indexed_directories: dict[str, set[str]] = {}
+        # Monotonic counter incremented on every scope mutation (local
+        # CRUD or refresh tick that detects external changes).
+        # Long-running backfills capture this at start and bail if it
+        # advances mid-flight, so they cannot resurrect documents that
+        # another worker just de-scoped.
+        self._scope_generation: int = 0
         self._scope_refresh_task: asyncio.Task[None] | None = None
 
     @property
@@ -343,6 +349,10 @@ class SearchDaemon:
                 for row in result.fetchall():
                     dirs_by_zone.setdefault(row[0], set()).add(row[1])
                 self._indexed_directories = dirs_by_zone
+
+            # Bump generation so any in-flight backfill captured before
+            # startup completes can detect the change and bail.
+            self._scope_generation += 1
         except Exception as exc:
             # Reset state so a partial read can't leave the daemon in a
             # confusing half-loaded state if someone catches this upstream.
@@ -382,6 +392,14 @@ class SearchDaemon:
         on transient DB failure it logs and retries on the next tick
         rather than crashing the daemon. The startup load is still the
         fail-closed path that establishes the initial trusted state.
+
+        **Self-healing on shrink**: when the refresh detects that scope
+        SHRANK (a directory disappeared OR a zone flipped from 'all'
+        to 'scoped') it runs ``purge_unscoped_embeddings`` for the
+        affected zones. This bounds the leak window from any
+        cross-worker write that landed before the local view caught up
+        to ``scope_refresh_seconds`` instead of "forever until manual
+        cleanup".
         """
         interval = max(0.5, self.config.scope_refresh_seconds)
         while not self._shutting_down:
@@ -408,9 +426,51 @@ class SearchDaemon:
                     for row in dirs_result.fetchall():
                         new_dirs.setdefault(row[0], set()).add(row[1])
 
+                shrunk_zones: set[str] = set()
                 async with self._refresh_lock:
+                    old_modes = self._zone_indexing_modes
+                    old_dirs = self._indexed_directories
+                    # Detect "shrink" per zone: any of
+                    #   (a) flipped 'all' → 'scoped'
+                    #   (b) had directories removed (set difference non-empty)
+                    # triggers a self-healing purge for that zone.
+                    for zid in set(old_modes) | set(new_modes):
+                        old_mode = old_modes.get(zid, "all")
+                        new_mode = new_modes.get(zid, "all")
+                        if old_mode == "all" and new_mode == "scoped":
+                            shrunk_zones.add(zid)
+                            continue
+                        if new_mode == "scoped":
+                            old_set = old_dirs.get(zid, set())
+                            new_set = new_dirs.get(zid, set())
+                            if old_set - new_set:
+                                shrunk_zones.add(zid)
+
+                    state_changed = new_modes != old_modes or new_dirs != old_dirs
                     self._zone_indexing_modes = new_modes
                     self._indexed_directories = new_dirs
+                    if state_changed:
+                        self._scope_generation += 1
+
+                # Run purge OUTSIDE the refresh lock so it doesn't block
+                # other refreshes. Best-effort: failures are logged.
+                for zid in sorted(shrunk_zones):
+                    try:
+                        purged = await self.purge_unscoped_embeddings(zid)
+                        if purged.get("txtai_docs", 0):
+                            logger.info(
+                                "scope refresh tick: zone %s shrank — "
+                                "self-healed by purging %d stale txtai docs",
+                                zid,
+                                purged.get("txtai_docs", 0),
+                            )
+                    except Exception:
+                        logger.warning(
+                            "scope refresh tick: self-healing purge failed "
+                            "for zone %s; stale rows may remain until next tick",
+                            zid,
+                            exc_info=True,
+                        )
             except asyncio.CancelledError:
                 return
             except Exception:

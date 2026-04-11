@@ -95,6 +95,7 @@ def _make_daemon(
     daemon._async_session = _session_factory(session)
     daemon._zone_indexing_modes = dict(initial_modes or {})
     daemon._indexed_directories = {z: set(d) for z, d in (initial_dirs or {}).items()}
+    daemon._scope_generation = 0
     daemon._refresh_lock = asyncio.Lock()
     daemon._backend = None
     return daemon, session

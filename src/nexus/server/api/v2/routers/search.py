@@ -243,6 +243,25 @@ async def search_query(
             effective_limit,
         )
 
+    # Coerce graph_mode to 'none' when the txtai backend has graph
+    # disabled (the default — see DaemonConfig.txtai_graph). Without
+    # this, an explicit graph_mode=low|high|dual|auto request would
+    # silently fall through to ``graph_search`` which returns ``[]``
+    # for empty graph state, regressing to zero results instead of
+    # ordinary hybrid search. We log a warning so operators can flip
+    # ``NEXUS_TXTAI_GRAPH=true`` if they actually need graph queries.
+    _txtai_graph_enabled = bool(
+        getattr(getattr(search_daemon, "config", None), "txtai_graph", False)
+    )
+    if effective_graph_mode != "none" and not _txtai_graph_enabled:
+        logger.info(
+            "graph_mode=%s requested but txtai graph is disabled; "
+            "falling back to graph_mode=none. Set NEXUS_TXTAI_GRAPH=true "
+            "to enable graph-augmented search.",
+            effective_graph_mode,
+        )
+        effective_graph_mode = "none"
+
     # Over-fetch when permission filtering is active to compensate for filtered results
     fetch_limit = effective_limit
     if permission_enforcer is not None:
@@ -733,7 +752,22 @@ async def register_indexed_directory(
       follow-up.
     - Path escapes (``..``) → 400.
     - Missing zone → 404.
-    - Duplicate registration → 409.
+    - Duplicate registration: **idempotent recovery**. Instead of 409,
+      we re-trigger the backfill so an operator who hit a previous
+      backfill failure can retry by re-issuing the same POST. The
+      response includes ``status: "already_registered"`` so the
+      caller can distinguish from a fresh registration.
+
+    Backfill outcomes (``backfill_status``):
+    - ``ok``: backfill ran cleanly (``backfill_files`` may be 0 if
+      the zone genuinely has no in-scope chunks yet).
+    - ``skewed``: a concurrent scope mutation superseded this
+      backfill. Response includes ``degraded: true``; operator should
+      retry by re-issuing this POST.
+    - ``failed``: hard failure reading or writing txtai. Metadata
+      change is committed; response includes ``degraded: true`` and
+      the error message. Operator can retry by re-issuing.
+    - ``no_op``: daemon has no DB or backend (test scaffolding).
     """
     from nexus.bricks.search.index_scope import (
         DirectoryAlreadyRegisteredError,
@@ -753,27 +787,47 @@ async def register_indexed_directory(
 
     await _require_admin_or_path_write(request, auth_result, zone_id, directory_path)
 
+    canonical = directory_path
+    status_label = "registered"
     backfill_status = "ok"
+    backfill_files = 0
     backfill_error: str | None = None
     backfill_attempted = 0
+
     try:
-        canonical = await search_daemon.add_indexed_directory(zone_id, directory_path)
+        canonical, result = await search_daemon.add_indexed_directory(zone_id, directory_path)
+        backfill_status = result.status
+        backfill_files = result.files
     except ZoneNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except InvalidDirectoryPathError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except DirectoryAlreadyRegisteredError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except DirectoryAlreadyRegisteredError:
+        # **Idempotent retry**: instead of 409, re-trigger backfill so
+        # an operator who hit an earlier backfill failure can recover
+        # by re-issuing the same POST. Mark the response so the caller
+        # can distinguish from a fresh registration.
+        from nexus.bricks.search.scope_ops import validate_directory_path
+
+        canonical = validate_directory_path(directory_path)
+        status_label = "already_registered"
+        try:
+            result = await search_daemon.rerun_backfill_for_directory(zone_id, directory_path)
+            backfill_status = result.status
+            backfill_files = result.files
+        except BackfillFailedError as exc:
+            backfill_status = "failed"
+            backfill_error = str(exc)
+            backfill_attempted = exc.files_attempted
+            logger.warning(
+                "rerun backfill for already-registered %s failed: %s",
+                canonical,
+                exc,
+            )
     except BackfillFailedError as exc:
-        # The metadata change committed BUT the backfill (replaying
-        # historical document_chunks into txtai) failed. Surface as a
-        # degraded-state response so operators know the directory is
-        # registered but pre-existing files under it are not yet
-        # searchable. The path is recoverable: re-issuing the same
-        # POST will trigger backfill again.
-        canonical = exc.args[0] if exc.args else directory_path
-        # The canonical name from the failed call is buried in the
-        # exception message; recompute from the input.
+        # The metadata change committed BUT the backfill failed.
+        # Recompute canonical from the input since the exception
+        # doesn't carry it.
         from nexus.bricks.search.scope_ops import validate_directory_path
 
         try:
@@ -789,16 +843,25 @@ async def register_indexed_directory(
             exc,
         )
 
-    response = {
+    response: dict[str, Any] = {
         "zone_id": zone_id,
         "path": canonical,
-        "status": "registered",
+        "status": status_label,
         "backfill_status": backfill_status,
+        "backfill_files": backfill_files,
     }
     if backfill_status == "failed":
         response["backfill_error"] = backfill_error
         response["backfill_attempted"] = backfill_attempted
         response["degraded"] = True
+    elif backfill_status == "skewed":
+        # Concurrent mutation superseded this backfill. The metadata
+        # change is committed but historical content was not
+        # backfilled. Operator should retry by re-issuing this POST.
+        response["degraded"] = True
+        response["backfill_hint"] = (
+            "concurrent scope mutation superseded the backfill; re-issue this POST to retry"
+        )
     return response
 
 
@@ -846,38 +909,46 @@ async def unregister_indexed_directory(
 
     # Auto-purge stale derived txtai rows so query results stop showing
     # the now-unscoped files immediately. The metadata change is the
-    # source of truth and is already committed; a purge failure does
-    # NOT roll it back, but it IS surfaced via ``purge_status`` and
-    # ``degraded`` so operators know to retry /purge-unscoped. The
-    # periodic _scope_refresh_loop will also retry the purge on its
-    # next tick as a self-healing mechanism.
-    purge_status = "ok"
-    purge_error: str | None = None
-    purged: dict[str, int] = {}
+    # source of truth and is already committed.
+    #
+    # **Fail-closed at the HTTP boundary**: if purge raises, return
+    # 503 Service Unavailable so clients keying off HTTP status know
+    # the request did NOT fully succeed and stale txtai data may
+    # still be searchable. Returning 200 with ``degraded=true`` was
+    # misleading — automation that only inspects status codes would
+    # treat the de-scope as complete while txtai still served the
+    # old data, which is a real data-exposure risk at this trust
+    # boundary. The metadata change is NOT rolled back: the periodic
+    # _scope_refresh_loop will retry the purge on its next tick, and
+    # operators can also retry via /purge-unscoped explicitly.
     try:
         purged = await search_daemon.purge_unscoped_embeddings(zone_id)
     except Exception as exc:
-        purge_status = "failed"
-        purge_error = str(exc)
         logger.warning(
             "auto-purge after unregister failed for zone %s; "
-            "stale txtai rows may remain until next /purge-unscoped "
-            "or scope_refresh_loop self-heal tick",
+            "metadata committed, returning 503 so the caller retries",
             zone_id,
             exc_info=True,
         )
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "purge_failed",
+                "message": str(exc),
+                "zone_id": zone_id,
+                "path": canonical,
+                "metadata_committed": True,
+                "retry_via": "/api/v2/search/purge-unscoped",
+            },
+        ) from exc
 
-    response = {
+    return {
         "zone_id": zone_id,
         "path": canonical,
         "status": "unregistered",
         "purged": purged,
-        "purge_status": purge_status,
+        "purge_status": "ok",
     }
-    if purge_status == "failed":
-        response["purge_error"] = purge_error
-        response["degraded"] = True
-    return response
 
 
 @router.get("/indexed-dirs")
@@ -945,10 +1016,14 @@ async def set_indexing_mode(
     zone_id = payload.get("zone_id") or auth_result.get("zone_id") or ROOT_ZONE_ID
 
     backfill_status = "ok"
+    backfill_files = 0
     backfill_error: str | None = None
     backfill_attempted = 0
     try:
-        await search_daemon.set_zone_indexing_mode(zone_id, mode)
+        result = await search_daemon.set_zone_indexing_mode(zone_id, mode)
+        if result is not None:
+            backfill_status = result.status
+            backfill_files = result.files
     except ZoneNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except InvalidDirectoryPathError as exc:
@@ -968,27 +1043,39 @@ async def set_indexing_mode(
             exc,
         )
 
-    purge_status: str | None = None
-    purge_error: str | None = None
     purged: dict[str, int] | None = None
     if mode == INDEX_MODE_SCOPED:
         # Auto-purge stale derived rows so de-scoping is enforced
         # immediately at query time, not just at the next write.
-        # Failures here become a degraded response (NOT a 5xx)
-        # because the metadata change has already committed.
+        #
+        # **Fail-closed at the HTTP boundary**: if purge raises,
+        # return 503 so clients keying off HTTP status know the
+        # request did NOT fully succeed and stale txtai data may
+        # still be searchable. Returning 200 with ``degraded=true``
+        # was misleading at this trust boundary. The metadata change
+        # is NOT rolled back: the periodic _scope_refresh_loop will
+        # retry the purge on its next tick, and operators can also
+        # retry via /purge-unscoped explicitly.
         try:
             purged = await search_daemon.purge_unscoped_embeddings(zone_id)
-            purge_status = "ok"
         except Exception as exc:
-            purge_status = "failed"
-            purge_error = str(exc)
             logger.warning(
                 "auto-purge after mode=scoped flip failed for zone %s; "
-                "stale txtai rows may remain until next /purge-unscoped "
-                "or scope_refresh_loop self-heal tick",
+                "metadata committed, returning 503 so the caller retries",
                 zone_id,
                 exc_info=True,
             )
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "purge_failed",
+                    "message": str(exc),
+                    "zone_id": zone_id,
+                    "indexing_mode": mode,
+                    "metadata_committed": True,
+                    "retry_via": "/api/v2/search/purge-unscoped",
+                },
+            ) from exc
 
     response: dict[str, Any] = {
         "zone_id": zone_id,
@@ -997,17 +1084,20 @@ async def set_indexing_mode(
     }
     if mode == INDEX_MODE_ALL:
         response["backfill_status"] = backfill_status
+        response["backfill_files"] = backfill_files
         if backfill_status == "failed":
             response["backfill_error"] = backfill_error
             response["backfill_attempted"] = backfill_attempted
             response["degraded"] = True
+        elif backfill_status == "skewed":
+            response["degraded"] = True
+            response["backfill_hint"] = (
+                "concurrent scope mutation superseded the backfill; re-issue this POST to retry"
+            )
     if mode == INDEX_MODE_SCOPED:
-        response["purge_status"] = purge_status
+        response["purge_status"] = "ok"
         if purged is not None:
             response["purged"] = purged
-        if purge_status == "failed":
-            response["purge_error"] = purge_error
-            response["degraded"] = True
     return response
 
 

@@ -413,8 +413,18 @@ def main() -> None:
     # -------------------------------------------------------------------------
     print("\n=== 3. API CRUD — edge cases (Issue #6 policies) ===")
     # -------------------------------------------------------------------------
+    # Round-5 change (codex review): re-registering an already-registered
+    # directory is now idempotent — instead of 409, the router catches
+    # DirectoryAlreadyRegisteredError and re-runs the backfill so an
+    # operator who hit a previous backfill failure can retry by re-issuing
+    # the same POST. The response carries status="already_registered" so
+    # callers can still tell it wasn't a fresh add.
     status, body = http_call("POST", "/api/v2/search/index-directory", {"path": INDEXED_DIR})
-    check("duplicate register → 409", status == 409)
+    check(
+        "duplicate register → 200 (idempotent retry)",
+        status == 200 and isinstance(body, dict) and body.get("status") == "already_registered",
+        f"got status={status} body={body}",
+    )
 
     status, body = http_call("POST", "/api/v2/search/index-directory", {"path": "/foo/../etc"})
     check("path escape (..) → 400", status == 400)

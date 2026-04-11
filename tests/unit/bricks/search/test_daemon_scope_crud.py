@@ -110,8 +110,9 @@ def _make_daemon(
 async def test_policy1_register_nonexistent_directory_is_allowed() -> None:
     """The daemon does not check VFS existence — register-for-future is OK."""
     daemon, _ = _make_daemon(zone_exists=True)
-    result = await daemon.add_indexed_directory("zone_a", "/workspace/future")
-    assert result == "/workspace/future"
+    canonical, backfill = await daemon.add_indexed_directory("zone_a", "/workspace/future")
+    assert canonical == "/workspace/future"
+    assert backfill.status in ("ok", "no_op")
     assert "/workspace/future" in daemon._indexed_directories["zone_a"]
 
 
@@ -240,8 +241,8 @@ async def test_round_trip_register_list_unregister() -> None:
 @pytest.mark.asyncio
 async def test_canonicalization_strips_trailing_slash() -> None:
     daemon, _ = _make_daemon(zone_exists=True)
-    result = await daemon.add_indexed_directory("zone_a", "/src/")
-    assert result == "/src"
+    canonical, _ = await daemon.add_indexed_directory("zone_a", "/src/")
+    assert canonical == "/src"
     assert "/src" in daemon._indexed_directories["zone_a"]
     assert "/src/" not in daemon._indexed_directories["zone_a"]
 

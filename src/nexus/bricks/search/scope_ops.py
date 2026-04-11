@@ -17,6 +17,7 @@ See the 8 Issue #6 policies documented per function and in
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -40,15 +41,41 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "BackfillFailedError",
+    "BackfillResult",
     "add_indexed_directory",
     "backfill_zone_from_chunks",
     "list_indexed_directories",
     "purge_unscoped_embeddings",
     "remove_indexed_directory",
+    "rerun_backfill_for_directory",
     "set_zone_indexing_mode",
     "validate_directory_path",
     "zone_exists",
 ]
+
+
+@dataclass(frozen=True)
+class BackfillResult:
+    """Outcome of a ``backfill_zone_from_chunks`` call.
+
+    The previous int return type couldn't distinguish "no rows to
+    backfill" from "concurrent scope mutation made us bail" — both
+    looked like 0 to the caller, hiding a real partial-failure mode.
+    The dataclass exposes the status explicitly so routers can
+    surface degraded states properly.
+
+    Statuses:
+      - ``ok``      — backfill completed (``files`` may be 0 if the
+                       zone genuinely had no in-scope chunks).
+      - ``skewed``  — generation guard fired; a concurrent mutation
+                       superseded this backfill. Caller should treat
+                       as degraded and prompt operator retry.
+      - ``no_op``   — daemon has no DB session or backend; nothing
+                       to do, not an error.
+    """
+
+    status: str  # 'ok' | 'skewed' | 'no_op'
+    files: int
 
 
 def validate_directory_path(directory_path: str) -> str:
@@ -104,17 +131,26 @@ async def zone_exists(daemon: SearchDaemon, zone_id: str) -> bool:
     return row is not None
 
 
-async def add_indexed_directory(daemon: SearchDaemon, zone_id: str, directory_path: str) -> str:
+async def add_indexed_directory(
+    daemon: SearchDaemon, zone_id: str, directory_path: str
+) -> tuple[str, BackfillResult]:
     """Register ``directory_path`` for scoped indexing under ``zone_id``.
 
     Policies (Issue #6): #1 non-existent dirs allowed, #4 missing zone
     → ``ZoneNotFoundError``, #5 path escape → ``InvalidDirectoryPathError``.
     Mutates in-memory + DB state under ``_refresh_lock``.
 
-    After successful registration, kicks off a backfill from
+    After successful registration, runs a backfill from
     ``document_chunks`` so files that already exist under the new
     directory become semantically searchable immediately rather than
     waiting for the next write or restart.
+
+    Returns ``(canonical_path, BackfillResult)``. The router uses the
+    ``BackfillResult.status`` to distinguish ``ok`` (clean success)
+    from ``skewed`` (concurrent mutation superseded the backfill —
+    operator should retry via :func:`rerun_backfill_for_directory`).
+    Hard backfill failure raises ``BackfillFailedError`` which
+    propagates to the router as a degraded response.
     """
     canonical = validate_directory_path(directory_path)
 
@@ -157,14 +193,15 @@ async def add_indexed_directory(daemon: SearchDaemon, zone_id: str, directory_pa
     # Backfill OUTSIDE the refresh lock so the txtai upsert (which can
     # take seconds) doesn't block other refreshes. Pass the captured
     # generation so the backfill bails if scope changes mid-flight.
-    # BackfillFailedError propagates to the caller so the API endpoint
-    # can return a degraded-state response — the metadata change has
-    # already committed but the historical content is not yet
-    # searchable. Operators can retry by re-issuing the registration
-    # or by triggering a manual rebuild.
-    await backfill_zone_from_chunks(daemon, zone_id, expected_generation=backfill_generation)
+    # BackfillFailedError propagates to the caller; BackfillResult
+    # carries the (ok | skewed | no_op) status so the router can
+    # surface a degraded response on skew without conflating it with
+    # a clean success.
+    result = await backfill_zone_from_chunks(
+        daemon, zone_id, expected_generation=backfill_generation
+    )
 
-    return canonical
+    return canonical, result
 
 
 async def remove_indexed_directory(daemon: SearchDaemon, zone_id: str, directory_path: str) -> str:
@@ -229,7 +266,7 @@ async def backfill_zone_from_chunks(
     daemon: SearchDaemon,
     zone_id: str,
     expected_generation: int | None = None,
-) -> int:
+) -> BackfillResult:
     """Re-upsert in-scope ``document_chunks`` for ``zone_id`` into txtai.
 
     Called when scope expands (a directory is registered, or a zone
@@ -244,31 +281,27 @@ async def backfill_zone_from_chunks(
     scope mutation that triggered this backfill. The backfill checks
     ``daemon._scope_generation`` again immediately before issuing the
     txtai upsert; if the generation has advanced (a concurrent
-    unregister/mode-flip happened), the backfill bails without
-    upserting. This prevents a stale backfill from resurrecting
-    documents that another worker just de-scoped.
+    unregister/mode-flip happened), the backfill bails with
+    ``BackfillResult(status='skewed')`` so the caller can surface the
+    superseded outcome instead of pretending it succeeded.
 
-    Reads from ``document_chunks`` JOIN ``file_paths``, applies the
-    current scope rule (in Python, after fetch — the scope is in
-    memory and trivial to evaluate), groups chunks by virtual_path,
-    and upserts each in-scope file into the txtai backend.
+    Returns a ``BackfillResult``:
+      - ``ok`` — backfill ran to completion (``files`` may be 0 if
+        the zone genuinely had no in-scope chunks).
+      - ``skewed`` — concurrent scope mutation; we did not upsert.
+      - ``no_op`` — daemon has no DB or backend wired (test mode).
 
-    **Returns** the number of files re-upserted. ``0`` means "nothing
-    to backfill" — distinct from failure, which raises
-    ``BackfillFailedError`` so the caller can mark the originating
-    mutation as degraded.
-
-    A generation skew returns ``0`` (not raise) because that is the
-    correct outcome — the metadata change has been superseded.
+    Hard failures (SELECT or upsert raise) propagate as
+    ``BackfillFailedError``.
     """
     if daemon._async_session is None or daemon._backend is None:
-        return 0
+        return BackfillResult(status="no_op", files=0)
 
     from nexus.bricks.search.index_scope import is_path_indexed
 
     scope = daemon._current_index_scope()
     if scope is None:
-        return 0
+        return BackfillResult(status="no_op", files=0)
 
     try:
         async with daemon._async_session() as session:
@@ -302,14 +335,14 @@ async def backfill_zone_from_chunks(
         ) from exc
 
     if not rows:
-        return 0
+        return BackfillResult(status="ok", files=0)
 
     # Group chunks by virtual_path and filter through scope. Use the
     # CURRENT scope (not the captured snapshot) so per-file filtering
     # always reflects the latest in-memory state.
     current_scope = daemon._current_index_scope()
     if current_scope is None:
-        return 0
+        return BackfillResult(status="no_op", files=0)
     grouped: dict[str, list[str]] = {}
     for row in rows:
         vpath = row[0]
@@ -324,7 +357,7 @@ async def backfill_zone_from_chunks(
         grouped.setdefault(vpath, []).append(text)
 
     if not grouped:
-        return 0
+        return BackfillResult(status="ok", files=0)
 
     docs: list[dict[str, Any]] = []
     for vpath, parts in grouped.items():
@@ -342,7 +375,7 @@ async def backfill_zone_from_chunks(
         )
 
     if not docs:
-        return 0
+        return BackfillResult(status="ok", files=0)
 
     # Generation check IMMEDIATELY before the upsert. If a concurrent
     # unregister/mode-flip bumped the generation while we were
@@ -357,7 +390,7 @@ async def backfill_zone_from_chunks(
             daemon._scope_generation,
             zone_id,
         )
-        return 0
+        return BackfillResult(status="skewed", files=0)
 
     try:
         await daemon._backend.upsert(docs, zone_id=zone_id)
@@ -377,10 +410,46 @@ async def backfill_zone_from_chunks(
         len(docs),
         zone_id,
     )
-    return len(docs)
+    return BackfillResult(status="ok", files=len(docs))
 
 
-async def set_zone_indexing_mode(daemon: SearchDaemon, zone_id: str, mode: str) -> None:
+async def rerun_backfill_for_directory(
+    daemon: SearchDaemon,
+    zone_id: str,
+    directory_path: str,
+) -> BackfillResult:
+    """Re-trigger backfill for an already-registered directory.
+
+    Used by the recovery path when ``add_indexed_directory`` was
+    called against a directory that is already registered. Without
+    this, the duplicate-registration check would return 409 and
+    the operator would have no way to retry a failed backfill
+    short of unregister + re-register (which is destructive).
+
+    Captures a fresh generation token under the refresh lock and
+    runs the backfill. Returns the same ``BackfillResult`` shape so
+    the caller can distinguish ``ok`` from ``skewed`` from failure.
+    """
+    canonical = validate_directory_path(directory_path)
+
+    async with daemon._refresh_lock:
+        # Verify the directory IS registered. We surface a clear
+        # message if not — the caller should use add_indexed_directory
+        # in that case (which itself triggers backfill).
+        existing = daemon._indexed_directories.get(zone_id, set())
+        if canonical not in existing:
+            raise DirectoryNotRegisteredError(
+                f"directory {canonical!r} is not registered for zone {zone_id!r}; "
+                f"use add_indexed_directory instead"
+            )
+        backfill_generation = daemon._scope_generation
+
+    return await backfill_zone_from_chunks(daemon, zone_id, expected_generation=backfill_generation)
+
+
+async def set_zone_indexing_mode(
+    daemon: SearchDaemon, zone_id: str, mode: str
+) -> BackfillResult | None:
     """Flip a zone between ``'all'`` and ``'scoped'`` indexing modes.
 
     When flipping from ``'scoped'`` to ``'all'``, kicks off a backfill
@@ -388,6 +457,10 @@ async def set_zone_indexing_mode(daemon: SearchDaemon, zone_id: str, mode: str) 
     semantically searchable immediately. The router calls
     ``purge_unscoped_embeddings`` after the reverse flip
     (``'all'`` → ``'scoped'``) to keep both directions symmetric.
+
+    Returns the ``BackfillResult`` from the widening backfill, or
+    ``None`` when no backfill ran (mode unchanged or shrinking flip).
+    Hard backfill failure raises ``BackfillFailedError``.
     """
     if mode not in (INDEX_MODE_ALL, INDEX_MODE_SCOPED):
         raise InvalidDirectoryPathError(f"mode must be 'all' or 'scoped', got {mode!r}")
@@ -418,7 +491,10 @@ async def set_zone_indexing_mode(daemon: SearchDaemon, zone_id: str, mode: str) 
     # other refreshes. Pass the captured generation so the backfill
     # bails if scope changes mid-flight.
     if previous_mode == INDEX_MODE_SCOPED and mode == INDEX_MODE_ALL:
-        await backfill_zone_from_chunks(daemon, zone_id, expected_generation=backfill_generation)
+        return await backfill_zone_from_chunks(
+            daemon, zone_id, expected_generation=backfill_generation
+        )
+    return None
 
 
 async def purge_unscoped_embeddings(

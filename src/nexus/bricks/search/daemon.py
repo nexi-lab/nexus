@@ -480,11 +480,24 @@ class SearchDaemon:
                     exc_info=True,
                 )
 
-    async def add_indexed_directory(self, zone_id: str, directory_path: str) -> str:
-        """Register ``directory_path`` for scoped indexing. See scope_ops."""
+    async def add_indexed_directory(self, zone_id: str, directory_path: str) -> Any:
+        """Register ``directory_path`` for scoped indexing. See scope_ops.
+
+        Returns ``(canonical_path, BackfillResult)``.
+        """
         from nexus.bricks.search import scope_ops
 
         return await scope_ops.add_indexed_directory(self, zone_id, directory_path)
+
+    async def rerun_backfill_for_directory(self, zone_id: str, directory_path: str) -> Any:
+        """Re-trigger backfill for an already-registered directory.
+
+        Used by the registration recovery path so an operator who hit a
+        backfill failure can retry without unregister + re-register.
+        """
+        from nexus.bricks.search import scope_ops
+
+        return await scope_ops.rerun_backfill_for_directory(self, zone_id, directory_path)
 
     async def remove_indexed_directory(self, zone_id: str, directory_path: str) -> str:
         """Unregister ``directory_path`` from scoped indexing. See scope_ops."""
@@ -533,11 +546,14 @@ class SearchDaemon:
             # helper is a fast-path optimization only.
             return True
 
-    async def set_zone_indexing_mode(self, zone_id: str, mode: str) -> None:
-        """Flip zone between ``'all'`` and ``'scoped'``. See scope_ops."""
+    async def set_zone_indexing_mode(self, zone_id: str, mode: str) -> Any:
+        """Flip zone between ``'all'`` and ``'scoped'``. See scope_ops.
+
+        Returns ``BackfillResult | None`` — ``None`` when no backfill ran.
+        """
         from nexus.bricks.search import scope_ops
 
-        await scope_ops.set_zone_indexing_mode(self, zone_id, mode)
+        return await scope_ops.set_zone_indexing_mode(self, zone_id, mode)
 
     async def startup(self) -> None:
         """Initialize and pre-warm all search indexes.

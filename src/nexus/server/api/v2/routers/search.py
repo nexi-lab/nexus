@@ -958,11 +958,25 @@ async def list_indexed_dirs(
 ) -> dict[str, Any]:
     """List directories currently registered for scoped semantic indexing.
 
-    Returns an empty list if no directories are registered for the caller's
-    zone (which, combined with zone mode 'all', means the zone indexes
-    everything).
+    **Admin-only**: returning the registered directory list verbatim
+    leaks the prefix layout (e.g., customer / repo / project names
+    embedded in paths) to anyone who can authenticate against the
+    zone, even if they have no read permission on the prefixes
+    themselves. The mutation endpoints already require admin or
+    explicit ReBAC write; this read should match.
+
+    Returns an empty list if no directories are registered for the
+    zone (which, combined with zone mode 'all', means the zone
+    indexes everything).
     """
     from nexus.contracts.constants import ROOT_ZONE_ID
+
+    if not auth_result.get("is_admin", False):
+        raise HTTPException(
+            status_code=403,
+            detail="indexed-dirs is admin-only (registered directory "
+            "names can encode sensitive metadata)",
+        )
 
     zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
     mode = search_daemon._zone_indexing_modes.get(zone_id, "all")

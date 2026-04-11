@@ -192,13 +192,14 @@ async def add_indexed_directory(
 
     # Backfill OUTSIDE the refresh lock so the txtai upsert (which can
     # take seconds) doesn't block other refreshes. Pass the captured
-    # generation so the backfill bails if scope changes mid-flight.
-    # BackfillFailedError propagates to the caller; BackfillResult
-    # carries the (ok | skewed | no_op) status so the router can
-    # surface a degraded response on skew without conflating it with
-    # a clean success.
+    # generation so the backfill bails if scope changes mid-flight,
+    # AND pass the canonical directory_path so the SQL is prefix-
+    # scoped instead of scanning the whole zone.
     result = await backfill_zone_from_chunks(
-        daemon, zone_id, expected_generation=backfill_generation
+        daemon,
+        zone_id,
+        expected_generation=backfill_generation,
+        directory_path=canonical,
     )
 
     return canonical, result
@@ -266,6 +267,7 @@ async def backfill_zone_from_chunks(
     daemon: SearchDaemon,
     zone_id: str,
     expected_generation: int | None = None,
+    directory_path: str | None = None,
 ) -> BackfillResult:
     """Re-upsert in-scope ``document_chunks`` for ``zone_id`` into txtai.
 
@@ -275,6 +277,20 @@ async def backfill_zone_from_chunks(
     invisible to semantic search until they were re-written or the
     daemon was restarted (because bootstrap is the only other path
     that replays ``document_chunks`` into txtai).
+
+    **Prefix scoping**: when ``directory_path`` is provided, the SQL
+    query is restricted to files under that prefix only — using the
+    same wildcard-escaping rules as the bootstrap path. This prevents
+    a single ``add_indexed_directory`` call from re-embedding the
+    entire zone (which would be a latency bomb on large workspaces
+    AND blow up embedding API budget). Without ``directory_path``,
+    falls back to a full-zone scan, which is the right behavior for
+    the ``scoped → all`` mode flip path.
+
+    **Skip when zone is in 'all' mode**: zones in ``'all'`` mode
+    embed everything by default — there is nothing to backfill on
+    register because the directory was already covered. Returns
+    ``BackfillResult(status='ok', files=0)`` immediately.
 
     **Generation guard**: ``expected_generation`` should be captured by
     the caller while holding ``_refresh_lock`` immediately after the
@@ -297,32 +313,102 @@ async def backfill_zone_from_chunks(
     if daemon._async_session is None or daemon._backend is None:
         return BackfillResult(status="no_op", files=0)
 
-    from nexus.bricks.search.index_scope import is_path_indexed
+    from nexus.bricks.search.index_scope import (
+        INDEX_MODE_ALL,
+        canonical_directory_path,
+        is_path_indexed,
+    )
 
     scope = daemon._current_index_scope()
     if scope is None:
         return BackfillResult(status="no_op", files=0)
 
+    # Skip backfill entirely when the call originates from a
+    # directory-register (``directory_path`` set) AND the zone is in
+    # 'all' mode — every file is already in scope, so registering a
+    # directory adds no new files to embed. The mode-flip path
+    # (``directory_path is None``) intentionally runs even in 'all'
+    # mode because that's when previously-skipped files need to be
+    # replayed into txtai.
+    current_mode = daemon._zone_indexing_modes.get(zone_id, INDEX_MODE_ALL)
+    if directory_path is not None and current_mode == INDEX_MODE_ALL:
+        logger.debug(
+            "backfill_zone_from_chunks: zone %s is in 'all' mode; "
+            "skipping prefix backfill (everything already in scope)",
+            zone_id,
+        )
+        return BackfillResult(status="ok", files=0)
+
+    # Build the SELECT. When ``directory_path`` is set we push the
+    # prefix filter into SQL so we don't materialize the whole zone
+    # in Python. The escape pattern matches the bootstrap path so
+    # ``_`` and ``%`` in directory names cannot be interpreted as
+    # SQL wildcards.
+    canonical_dir: str | None = None
+    if directory_path is not None:
+        try:
+            canonical_dir = canonical_directory_path(directory_path)
+        except ValueError as exc:
+            raise BackfillFailedError(
+                f"invalid directory_path for backfill: {exc}",
+                files_attempted=0,
+            ) from exc
+
     try:
         async with daemon._async_session() as session:
-            rows = (
-                await session.execute(
-                    sa_text(
-                        """
-                        SELECT
-                            fp.virtual_path,
-                            c.chunk_index,
-                            c.chunk_text
-                        FROM document_chunks c
-                        JOIN file_paths fp ON c.path_id = fp.path_id
-                        WHERE fp.zone_id = :zid
-                          AND fp.deleted_at IS NULL
-                        ORDER BY fp.virtual_path, c.chunk_index
-                        """
-                    ),
-                    {"zid": zone_id},
-                )
-            ).fetchall()
+            if canonical_dir is None:
+                rows = (
+                    await session.execute(
+                        sa_text(
+                            """
+                            SELECT
+                                fp.virtual_path,
+                                c.chunk_index,
+                                c.chunk_text
+                            FROM document_chunks c
+                            JOIN file_paths fp ON c.path_id = fp.path_id
+                            WHERE fp.zone_id = :zid
+                              AND fp.deleted_at IS NULL
+                            ORDER BY fp.virtual_path, c.chunk_index
+                            """
+                        ),
+                        {"zid": zone_id},
+                    )
+                ).fetchall()
+            else:
+                # Prefix-scoped path. Match either the directory itself
+                # (rare — directories don't usually have chunks) OR a
+                # descendant via LIKE escape, identical to the bootstrap
+                # rule that prevents '/src' from matching '/srcX/foo'.
+                rows = (
+                    await session.execute(
+                        sa_text(
+                            r"""
+                            SELECT
+                                fp.virtual_path,
+                                c.chunk_index,
+                                c.chunk_text
+                            FROM document_chunks c
+                            JOIN file_paths fp ON c.path_id = fp.path_id
+                            WHERE fp.zone_id = :zid
+                              AND fp.deleted_at IS NULL
+                              AND (
+                                fp.virtual_path = :dp
+                                OR fp.virtual_path LIKE
+                                    REPLACE(
+                                      REPLACE(
+                                        REPLACE(:dp, '\', '\\'),
+                                        '%', '\%'
+                                      ),
+                                      '_', '\_'
+                                    ) || '/%' ESCAPE '\'
+                              )
+                            ORDER BY fp.virtual_path, c.chunk_index
+                            """
+                        ),
+                        {"zid": zone_id, "dp": canonical_dir},
+                    )
+                ).fetchall()
     except Exception as exc:
         logger.warning(
             "backfill_zone_from_chunks: SELECT failed for zone %s",
@@ -444,7 +530,16 @@ async def rerun_backfill_for_directory(
             )
         backfill_generation = daemon._scope_generation
 
-    return await backfill_zone_from_chunks(daemon, zone_id, expected_generation=backfill_generation)
+    # Pass the canonical directory_path so the backfill is prefix-
+    # scoped instead of scanning the entire zone — important for
+    # recovery on large workspaces where the broad scan would be a
+    # latency / embedding-cost bomb.
+    return await backfill_zone_from_chunks(
+        daemon,
+        zone_id,
+        expected_generation=backfill_generation,
+        directory_path=canonical,
+    )
 
 
 async def set_zone_indexing_mode(

@@ -634,6 +634,21 @@ def main() -> None:
         f"got {status}: {body}",
     )
 
+    # GET /indexed-dirs is also admin-only — registered directory
+    # names can encode customer / repo / project names that should
+    # not leak to non-admin callers (round 6 codex finding).
+    status, body = http_call_with_key(
+        "GET",
+        "/api/v2/search/indexed-dirs",
+        None,
+        nonadmin_key,
+    )
+    check(
+        "non-admin GET /indexed-dirs → 403 (admin-only, prevents prefix leak)",
+        status == 403,
+        f"got {status}: {body}",
+    )
+
     # ---- Non-admin WITH explicit ReBAC grant should SUCCEED ----------------
     # Issue the key via the admin /api/v2/auth/keys endpoint with a --grant.
     # This is the proper write path: it creates the api_keys row AND the

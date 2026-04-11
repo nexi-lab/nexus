@@ -86,7 +86,7 @@ class ContextualNexusFS:
         from nexus.fs._facade import SlimNexusFS
 
         try:
-            result = await SlimNexusFS(self._kernel).stat(path)
+            result = SlimNexusFS(self._kernel).stat(path)
             if result is not None:
                 return result
         except Exception:
@@ -805,7 +805,7 @@ class PlaygroundApp(App[None]):
         failed: list[str] = []
 
         async def _search_mount(mount: str) -> list[dict]:
-            entries = await self._fs.ls(mount, detail=True, recursive=True)
+            entries = self._fs.ls(mount, detail=True, recursive=True)
             return [e for e in entries if query.lower() in e.get("path", "").lower()]
 
         tasks = {mp: _search_mount(mp) for mp in self._mount_points}
@@ -908,7 +908,7 @@ class PlaygroundApp(App[None]):
             parent = old_path.rstrip("/").rsplit("/", 1)[0]
             new_path = f"{parent}/{new_name}"
             try:
-                await self._fs.rename(old_path, new_path)
+                self._fs.rename(old_path, new_path)
                 self.notify(f"Renamed → {new_name}", timeout=2)
                 await browser.load_directory(self._current_path)
                 self._update_status_bar()
@@ -1029,7 +1029,7 @@ class PlaygroundApp(App[None]):
             return
         path = self._resolve_command_path(name)
         try:
-            await self._fs.delete(path)
+            self._fs.delete(path)
             browser = self.query_one("#file-browser", FileBrowser)
             await browser.load_directory(self._current_path)
             self._update_status_bar()
@@ -1392,7 +1392,7 @@ class PlaygroundApp(App[None]):
                 self._fs.rmdir(path, recursive=True)
                 self.notify(f"Deleted directory: {name}", timeout=2)
             else:
-                await self._fs.delete(path)
+                self._fs.delete(path)
                 self.notify(f"Deleted: {name}", timeout=2)
 
             await browser.load_directory(self._current_path)

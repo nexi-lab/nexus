@@ -16,38 +16,73 @@ from nexus.bricks.mcp.server import create_mcp_server
 # ============================================================================
 
 
-def get_tool(server, tool_name: str):
-    """Helper to get a tool from the MCP server (FastMCP 2.x and 3.x compat)."""
-    # FastMCP 3.x API
+def _components_of(server, prefix: str) -> dict[str, object]:
+    """Return all components of ``prefix`` type (``tool`` / ``prompt`` /
+    ``resource`` / ``template``) keyed by their public name.
+
+    Shim that works for both FastMCP 2.x and 3.x so individual test
+    helpers don't have to repeat the version split.
+    """
+    # FastMCP 3.x — single component registry keyed by "<type>:<name>@..."
     if hasattr(server, "_local_provider"):
         lp = server._local_provider
-        tools = {v.name: v for k, v in lp._components.items() if k.startswith("tool:")}
-        return tools[tool_name]
-    # FastMCP 2.x API
-    return server._tool_manager._tools[tool_name]
+        return {v.name: v for k, v in lp._components.items() if k.startswith(f"{prefix}:")}
+    # FastMCP 2.x — per-type managers. Only the attribute mappings we
+    # still exercise are listed here; anything else raises.
+    attr = {
+        "tool": "_tool_manager",
+        "prompt": "_prompt_manager",
+        "resource": "_resource_manager",
+        "template": "_resource_manager",
+    }[prefix]
+    mgr = getattr(server, attr)
+    if prefix == "tool":
+        return dict(mgr._tools)
+    if prefix == "prompt":
+        return dict(mgr._prompts)
+    if prefix == "resource":
+        return dict(getattr(mgr, "_resources", {}))
+    if prefix == "template":
+        return dict(getattr(mgr, "_templates", {}))
+    raise ValueError(f"unknown component prefix: {prefix}")
+
+
+def get_tool(server, tool_name: str):
+    """Helper to get a tool from the MCP server (FastMCP 2.x and 3.x compat)."""
+    return _components_of(server, "tool")[tool_name]
 
 
 def get_prompt(server, prompt_name: str):
-    """Helper to get a prompt from the MCP server."""
-    return server._prompt_manager._prompts[prompt_name]
+    """Helper to get a prompt from the MCP server (FastMCP 2.x and 3.x compat)."""
+    return _components_of(server, "prompt")[prompt_name]
 
 
 def get_resource_template(server, uri_pattern: str):
-    """Helper to get a resource template from the MCP server."""
-    templates = server._resource_manager._templates
-    for template_key, template in templates.items():
-        if uri_pattern in str(template_key):
-            return template
+    """Helper to get a resource template from the MCP server (FastMCP 2.x+3.x).
+
+    FastMCP 3.x separates static resources from URI-pattern templates
+    into two component buckets. We search the templates bucket first
+    (matching by URI pattern) and fall back to resources for the
+    static case so older tests keep working.
+    """
+    for prefix in ("template", "resource"):
+        for key, template in _components_of(server, prefix).items():
+            # In 3.x the component key is the component's .name (so we
+            # match on the registered URI via the template's
+            # ``uri_template`` or ``uri`` attribute). Fall back to
+            # substring matching the key itself so pre-3.x templates
+            # keyed by URI string still match.
+            candidate_uri = (
+                getattr(template, "uri_template", None) or getattr(template, "uri", None) or key
+            )
+            if uri_pattern in str(candidate_uri):
+                return template
     raise KeyError(f"Resource template with pattern '{uri_pattern}' not found")
 
 
 def tool_exists(server, tool_name: str) -> bool:
     """Check if a tool exists in the server (FastMCP 2.x and 3.x compat)."""
-    if hasattr(server, "_local_provider"):
-        lp = server._local_provider
-        names = {v.name for k, v in lp._components.items() if k.startswith("tool:")}
-        return tool_name in names
-    return tool_name in server._tool_manager._tools
+    return tool_name in _components_of(server, "tool")
 
 
 # ============================================================================
@@ -1030,7 +1065,6 @@ class TestSandboxAvailability:
         """Test sandbox tools registered when Docker provider available."""
         server = await create_mcp_server(nx=mock_nx_with_sandbox)
 
-        list(server._tool_manager._tools.keys())
         assert tool_exists(server, "nexus_python")
         assert tool_exists(server, "nexus_bash")
         assert tool_exists(server, "nexus_sandbox_create")
@@ -1044,7 +1078,6 @@ class TestSandboxAvailability:
 
         server = await create_mcp_server(nx=mock_nx_no_sandbox)
 
-        list(server._tool_manager._tools.keys())
         assert not tool_exists(server, "nexus_python")
         assert not tool_exists(server, "nexus_bash")
         assert not tool_exists(server, "nexus_sandbox_create")
@@ -1378,7 +1411,7 @@ class TestServerCreation:
         server = await create_mcp_server(nx=mock_nx_full)
 
         assert server is not None
-        assert len(server._tool_manager._tools) > 0
+        assert len(_components_of(server, "tool")) > 0
 
     async def test_server_with_remote_url(self):
         """Test creating server with remote URL."""
@@ -1429,16 +1462,14 @@ class TestServerCreation:
         # glob, grep, semantic_search, store_memory, query_memory,
         # list_workflows, execute_workflow
         # = 14 tools minimum
-        assert len(server._tool_manager._tools) >= 15
+        assert len(_components_of(server, "tool")) >= 15
 
     async def test_server_tool_count_with_all_features(self, mock_nx_full):
         """Test server has correct tool count with all features."""
         server = await create_mcp_server(nx=mock_nx_full)
 
-        # All basic tools + 5 sandbox tools = 19 tools minimum
-        list(server._tool_manager._tools.keys())
-
-        # Verify sandbox tools are included
+        # Verify sandbox tools are included (all basic tools + 5 sandbox
+        # tools = 19 tools minimum on the full-featured server).
         assert tool_exists(server, "nexus_python")
         assert tool_exists(server, "nexus_bash")
         assert tool_exists(server, "nexus_sandbox_create")

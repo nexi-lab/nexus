@@ -85,7 +85,7 @@ class SlimNexusFS:
 
     # -- Read operations --
 
-    async def read(self, path: str) -> bytes:
+    def read(self, path: str) -> bytes:
         """Read file content.
 
         Args:
@@ -191,7 +191,7 @@ class SlimNexusFS:
 
     # -- Directory operations --
 
-    async def ls(
+    def ls(
         self,
         path: str = "/",
         detail: bool = False,
@@ -214,7 +214,7 @@ class SlimNexusFS:
             context=self._ctx,
         )
 
-    async def mkdir(self, path: str, parents: bool = True) -> None:
+    def mkdir(self, path: str, parents: bool = True) -> None:
         """Create a directory.
 
         Args:
@@ -228,7 +228,7 @@ class SlimNexusFS:
             context=self._ctx,
         )
 
-    async def rmdir(self, path: str, recursive: bool = False) -> None:
+    def rmdir(self, path: str, recursive: bool = False) -> None:
         """Remove a directory.
 
         Args:
@@ -239,7 +239,7 @@ class SlimNexusFS:
 
     # -- File operations --
 
-    async def delete(self, path: str) -> None:
+    def delete(self, path: str) -> None:
         """Delete a file.
 
         Args:
@@ -259,7 +259,7 @@ class SlimNexusFS:
             )
         self._kernel.sys_unlink(path, context=self._ctx)
 
-    async def rename(self, old_path: str, new_path: str) -> None:
+    def rename(self, old_path: str, new_path: str) -> None:
         """Rename/move a file.
 
         Args:
@@ -268,7 +268,7 @@ class SlimNexusFS:
         """
         self._kernel.sys_rename(old_path, new_path, context=self._ctx)
 
-    async def exists(self, path: str) -> bool:
+    def exists(self, path: str) -> bool:
         """Check if a path exists.
 
         Args:
@@ -341,7 +341,7 @@ class SlimNexusFS:
 
     # -- Metadata (optimized single-lookup) --
 
-    async def stat(self, path: str) -> dict[str, Any] | None:
+    def stat(self, path: str) -> dict[str, Any] | None:
         """Get file/directory metadata with a single metadata lookup.
 
         Optimized for the slim package — avoids the kernel's double-lookup
@@ -411,7 +411,7 @@ class SlimNexusFS:
 
     # -- Search operations --
 
-    async def grep(
+    def grep(
         self,
         pattern: str,
         path: str = "/",
@@ -514,7 +514,7 @@ class SlimNexusFS:
                             return matches
         return matches
 
-    async def glob(
+    def glob(
         self,
         pattern: str,
         path: str = "/",
@@ -567,7 +567,7 @@ class SlimNexusFS:
         """
         return sorted(m.mount_point for m in self._kernel.router.list_mounts())
 
-    async def unmount(self, mount_point: str) -> None:
+    def unmount(self, mount_point: str) -> None:
         """Remove a mount and clean up all associated state.
 
         Removes the mount from the runtime router, deletes its metadata entry
@@ -626,12 +626,12 @@ class SlimNexusFS:
 
     # -- Lifecycle --
 
-    async def close(self) -> None:
+    def close(self) -> None:
         """Close the filesystem and release resources.
 
-        Closes the kernel (if it exposes a close method) and then
-        closes the metastore's SQLite connection.  Safe to call
-        multiple times — subsequent calls are no-ops.
+        Closes the kernel (NexusFS.close is sync) and then closes
+        the metastore's SQLite connection.  Safe to call multiple
+        times — subsequent calls are no-ops.
         """
         if self._closed:
             return
@@ -639,21 +639,16 @@ class SlimNexusFS:
         import contextlib
 
         try:
-            # Close the kernel (may be sync or async)
             _close = getattr(self._kernel, "close", None)
             if _close is not None:
-                result = _close()
-                if result is not None:
-                    await result
+                _close()
         finally:
-            # Always close the metastore — even if kernel close raises —
-            # to release the SQLite/WAL lock.
             with contextlib.suppress(Exception):
                 self._kernel.metadata.close()
             self._closed = True
 
-    async def __aenter__(self) -> SlimNexusFS:
+    def __enter__(self) -> SlimNexusFS:
         return self
 
-    async def __aexit__(self, *exc: Any) -> None:
-        await self.close()
+    def __exit__(self, *exc: Any) -> None:
+        self.close()

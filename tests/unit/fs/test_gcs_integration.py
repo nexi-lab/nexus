@@ -176,7 +176,7 @@ class TestGCSBackendLifecycle:
     async def test_stat(self, gcs_fs):
         fs, mp = gcs_fs
         fs.write(f"{mp}/meta.txt", b"metadata test")
-        stat = await fs.stat(f"{mp}/meta.txt")
+        stat = fs.stat(f"{mp}/meta.txt")
         assert stat is not None
         assert stat["size"] == 13
         assert stat["is_directory"] is False
@@ -186,7 +186,7 @@ class TestGCSBackendLifecycle:
         fs, mp = gcs_fs
         fs.write(f"{mp}/a.txt", b"aaa")
         fs.write(f"{mp}/b.txt", b"bbb")
-        entries = await fs.ls(f"{mp}/", detail=False, recursive=True)
+        entries = fs.ls(f"{mp}/", detail=False, recursive=True)
         paths = [e for e in entries if e.endswith(".txt")]
         assert f"{mp}/a.txt" in paths
         assert f"{mp}/b.txt" in paths
@@ -194,16 +194,16 @@ class TestGCSBackendLifecycle:
     @pytest.mark.asyncio
     async def test_exists(self, gcs_fs):
         fs, mp = gcs_fs
-        assert not await fs.exists(f"{mp}/nofile.txt")
+        assert not fs.exists(f"{mp}/nofile.txt")
         fs.write(f"{mp}/nofile.txt", b"now I exist")
-        assert await fs.exists(f"{mp}/nofile.txt")
+        assert fs.exists(f"{mp}/nofile.txt")
 
     @pytest.mark.asyncio
     async def test_delete(self, gcs_fs):
         fs, mp = gcs_fs
         fs.write(f"{mp}/delete-me.txt", b"bye")
-        await fs.delete(f"{mp}/delete-me.txt")
-        stat = await fs.stat(f"{mp}/delete-me.txt")
+        fs.delete(f"{mp}/delete-me.txt")
+        stat = fs.stat(f"{mp}/delete-me.txt")
         assert stat is None
 
     @pytest.mark.asyncio
@@ -219,7 +219,7 @@ class TestGCSBackendLifecycle:
     async def test_mkdir(self, gcs_fs):
         fs, mp = gcs_fs
         fs.mkdir(f"{mp}/subdir")
-        stat = await fs.stat(f"{mp}/subdir")
+        stat = fs.stat(f"{mp}/subdir")
         assert stat is not None
         assert stat["is_directory"] is True
 

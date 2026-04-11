@@ -48,9 +48,11 @@ class MockNexusFS:
         queue = self._pipes.get(path)
         if queue is None or queue.empty():
             return None
+        import queue as _queue
+
         try:
             return queue.get_nowait()
-        except asyncio.QueueEmpty:
+        except _queue.Empty:
             return None
 
     def pipe_write_nowait(self, path: str, data: bytes) -> None:
@@ -63,9 +65,11 @@ class MockNexusFS:
         self.write_count += 1
 
     def sys_setattr(self, path: str, **kwargs: object) -> None:  # noqa: ARG002
-        """Create a pipe (asyncio.Queue)."""
+        """Create a pipe (stdlib Queue)."""
+        import queue as _queue
+
         if path not in self._pipes:
-            self._pipes[path] = asyncio.Queue()
+            self._pipes[path] = _queue.Queue()
         self._closed.discard(path)
 
     def sys_write(self, path: str, data: bytes, **kwargs: object) -> None:  # noqa: ARG002
@@ -92,9 +96,11 @@ class MockNexusFS:
             from nexus.contracts.exceptions import NexusFileNotFoundError
 
             raise NexusFileNotFoundError(path=path)
+        import queue as _queue
+
         try:
-            return self._pipes[path].get_nowait()
-        except asyncio.QueueEmpty:
+            return self._pipes[path].get(timeout=0.05)
+        except _queue.Empty:
             from nexus.contracts.exceptions import NexusFileNotFoundError
 
             raise NexusFileNotFoundError(path=path) from None

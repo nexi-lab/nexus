@@ -86,7 +86,7 @@ class TestS3BackendLifecycle:
     async def test_stat(self, s3_fs):
         fs, mp = s3_fs
         fs.write(f"{mp}/meta.txt", b"metadata test")
-        stat = await fs.stat(f"{mp}/meta.txt")
+        stat = fs.stat(f"{mp}/meta.txt")
         assert stat is not None
         assert stat["size"] == 13
         assert stat["is_directory"] is False
@@ -96,7 +96,7 @@ class TestS3BackendLifecycle:
         fs, mp = s3_fs
         fs.write(f"{mp}/a.txt", b"aaa")
         fs.write(f"{mp}/b.txt", b"bbb")
-        entries = await fs.ls(f"{mp}/", detail=False, recursive=True)
+        entries = fs.ls(f"{mp}/", detail=False, recursive=True)
         paths = [e for e in entries if e.endswith(".txt")]
         assert f"{mp}/a.txt" in paths
         assert f"{mp}/b.txt" in paths
@@ -104,16 +104,16 @@ class TestS3BackendLifecycle:
     @pytest.mark.asyncio
     async def test_exists(self, s3_fs):
         fs, mp = s3_fs
-        assert not await fs.exists(f"{mp}/nofile.txt")
+        assert not fs.exists(f"{mp}/nofile.txt")
         fs.write(f"{mp}/nofile.txt", b"now I exist")
-        assert await fs.exists(f"{mp}/nofile.txt")
+        assert fs.exists(f"{mp}/nofile.txt")
 
     @pytest.mark.asyncio
     async def test_delete(self, s3_fs):
         fs, mp = s3_fs
         fs.write(f"{mp}/delete-me.txt", b"bye")
-        await fs.delete(f"{mp}/delete-me.txt")
-        stat = await fs.stat(f"{mp}/delete-me.txt")
+        fs.delete(f"{mp}/delete-me.txt")
+        stat = fs.stat(f"{mp}/delete-me.txt")
         assert stat is None
 
     @pytest.mark.asyncio
@@ -134,7 +134,7 @@ class TestS3BackendLifecycle:
     async def test_rename(self, s3_fs):
         fs, mp = s3_fs
         fs.write(f"{mp}/old.txt", b"rename me")
-        await fs.rename(f"{mp}/old.txt", f"{mp}/new.txt")
+        fs.rename(f"{mp}/old.txt", f"{mp}/new.txt")
         result = fs.read(f"{mp}/new.txt")
         assert result == b"rename me"
 
@@ -142,7 +142,7 @@ class TestS3BackendLifecycle:
     async def test_mkdir(self, s3_fs):
         fs, mp = s3_fs
         fs.mkdir(f"{mp}/subdir")
-        stat = await fs.stat(f"{mp}/subdir")
+        stat = fs.stat(f"{mp}/subdir")
         assert stat is not None
         assert stat["is_directory"] is True
 

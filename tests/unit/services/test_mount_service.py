@@ -269,7 +269,7 @@ class TestAddMountAuthResolution:
         service._setup_mount_point = MagicMock()
         service._driver_coordinator = mock_driver_coordinator
 
-        with patch("nexus.bricks.mount.mount_service.ConnectorRegistry") as mock_cr:
+        with patch("nexus.backends.base.registry.ConnectorRegistry") as mock_cr:
             mock_cr.get_info.return_value = MagicMock(
                 auth_fields=["access_key_id", "secret_access_key"]
             )

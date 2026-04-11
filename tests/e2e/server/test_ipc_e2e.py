@@ -508,8 +508,8 @@ class TestIPCLocal:
         proc = MessageProcessor(vfs, "bob", failing, zone_id=zone)
         await proc.process_inbox()
 
-        inbox_files = await vfs.list_dir(inbox_path("bob"), zone)
-        dl_files = await vfs.list_dir(dead_letter_path("bob"), zone)
+        inbox_files = vfs.list_dir(inbox_path("bob"), zone)
+        dl_files = vfs.list_dir(dead_letter_path("bob"), zone)
         dl_msgs = [f for f in dl_files if not f.endswith(".reason.json")]
         assert len(inbox_files) == 0
         assert len(dl_msgs) == 1

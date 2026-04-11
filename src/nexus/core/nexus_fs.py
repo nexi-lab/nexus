@@ -5162,13 +5162,33 @@ class NexusFS(  # type: ignore[misc]
                         # (flattened for recursive=True) so the doc overlay
                         # is discoverable from ``ls`` and also indexable by
                         # search/recursive walkers that only enumerate from
-                        # the mount root (Issue #3728 finding #5 + #8).
+                        # the mount root (Issue #3728 findings #5, #8, #18).
+                        #
+                        # Round 7 finding #18: gate the injection on
+                        # ownership — on a deferring backend whose real
+                        # ``.readme/`` already exists, the overlay has
+                        # handed the subtree over and we must not splice
+                        # virtual entries back in.
+                        readme_dir_name = _readme_dir_for(backend).strip("/")
+                        from nexus.backends.connectors.schema_generator import (
+                            overlay_owns_path as _overlay_owns_path,
+                        )
+
+                        try:
+                            _overlay_owns_root = _overlay_owns_path(
+                                backend,
+                                mount_point,
+                                readme_dir_name,
+                                context=_ctx,
+                            )
+                        except ValueError:
+                            _overlay_owns_root = False
                         if (
                             entries is not None
                             and _has_skill_name(backend)
                             and not backend_path.strip("/")
+                            and _overlay_owns_root
                         ):
-                            readme_dir_name = _readme_dir_for(backend).strip("/")
                             entries = list(entries)
                             if recursive:
                                 # Flatten the virtual tree to every leaf path

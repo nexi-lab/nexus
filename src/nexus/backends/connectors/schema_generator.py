@@ -165,43 +165,16 @@ def _real_content_exists(
 ) -> bool:
     """Best-effort probe: does the real backend have content at this path?
 
-    When a caller context is supplied, we reuse its ``user_id`` / ``zone_id``
-    so user-scoped connectors (native Google Drive, etc.) can actually
-    resolve an auth token and answer the question.  If no context is
-    supplied, fall back to a synthetic system context — this path is
-    safe for CLI-backed connectors whose ``content_exists`` is a stub
-    that returns ``False`` without needing auth.
+    Reuses the caller's context via ``_build_probe_context`` so
+    user-scoped connectors (native Google Drive, etc.) can actually
+    resolve an auth token and answer the question.
 
     Returns ``True`` only when the backend explicitly confirms existence.
     Any exception or missing probe method is treated as "does not exist"
     so the overlay still works on backends without a cheap exists check.
     """
     try:
-        from dataclasses import replace as _replace
-
-        from nexus.contracts.types import OperationContext
-
-        probe_ctx: Any
-        if context is not None:
-            # Reuse the caller's identity and zone so auth-sensitive probes
-            # execute against the same credentials the original request did.
-            try:
-                probe_ctx = _replace(context, backend_path=backend_path)
-            except Exception:
-                probe_ctx = OperationContext(
-                    user_id=getattr(context, "user_id", "system") or "system",
-                    groups=list(getattr(context, "groups", []) or []),
-                    zone_id=getattr(context, "zone_id", None),
-                    is_system=getattr(context, "is_system", False),
-                    backend_path=backend_path,
-                )
-        else:
-            probe_ctx = OperationContext(
-                user_id="system",
-                groups=[],
-                is_system=True,
-                backend_path=backend_path,
-            )
+        probe_ctx = _build_probe_context(context, backend_path)
         exists_fn = getattr(backend, "content_exists", None)
         if callable(exists_fn):
             return bool(exists_fn(backend_path, context=probe_ctx))
@@ -245,53 +218,87 @@ def overlay_owns_path(
     return not (_defers_to_backend(backend) and _real_readme_root_exists(backend, context=context))
 
 
+def _build_probe_context(context: Any | None, backend_path: str) -> Any:
+    """Build an OperationContext for backend probes (auth-preserving).
+
+    When a caller context is supplied, reuse its ``user_id`` /
+    ``zone_id`` / ``groups`` so user-scoped connectors can resolve an
+    auth token.  Otherwise fall back to a synthetic system context.
+    """
+    from dataclasses import replace as _replace
+
+    from nexus.contracts.types import OperationContext
+
+    if context is None:
+        return OperationContext(
+            user_id="system",
+            groups=[],
+            is_system=True,
+            backend_path=backend_path,
+        )
+    try:
+        return _replace(context, backend_path=backend_path)
+    except Exception:
+        return OperationContext(
+            user_id=getattr(context, "user_id", "system") or "system",
+            groups=list(getattr(context, "groups", []) or []),
+            zone_id=getattr(context, "zone_id", None),
+            is_system=getattr(context, "is_system", False),
+            backend_path=backend_path,
+        )
+
+
 def _real_readme_root_exists(backend: Any, context: Any | None = None) -> bool:
     """Probe the backend for a real ``.readme/`` directory (subtree root).
 
-    Issue #3728 round 6 finding #16: deferral must be subtree-atomic to
-    avoid "partly real, partly virtual" mixed states.  We probe the
-    root ``.readme`` path only — if it exists, the whole subtree is
-    considered user data and the overlay steps aside entirely.
+    Issue #3728 round 6/7: deferral must be subtree-atomic AND an
+    *empty* real directory must still count as existing — otherwise
+    the overlay shadows user-created folders on gdrive where
+    ``list_dir`` returns ``[]`` for both missing and empty directories.
 
-    Returns ``True`` only when the backend confirms existence via
-    either ``content_exists`` or ``list_dir`` returning a non-empty
-    result.  Any exception or missing probe method → ``False``.
+    Probe order (first definite "yes" wins):
+    1. ``backend.is_directory(readme_dir, context)`` — dedicated
+       directory-existence check (implemented by
+       ``PathAddressingEngine`` and most connector backends);
+       detects empty directories that ``list_dir`` can't distinguish
+       from "missing".
+    2. ``backend.content_exists(readme_dir, context)`` — file-level
+       existence, useful for connectors where the readme path can
+       appear as a file-like entry.
+    3. Non-empty ``backend.list_dir(readme_dir, context)`` — last-
+       resort fallback for backends that implement neither of the
+       above but expose real children through listing.
+
+    Returns ``False`` on any exception or when every probe says the
+    directory isn't there.
     """
     readme_dir = _readme_dir_for(backend)
-    # 1) content_exists probe (cheap for backends that implement it)
+    probe_ctx = _build_probe_context(context, readme_dir)
+
+    # 1) is_directory probe — handles the empty-directory case.
+    is_dir_fn = getattr(backend, "is_directory", None)
+    if callable(is_dir_fn):
+        try:
+            if is_dir_fn(readme_dir, context=probe_ctx):
+                return True
+        except Exception:
+            pass  # fall through to the remaining probes
+
+    # 2) content_exists probe (cheap for backends that implement it).
     if _real_content_exists(backend, readme_dir, context=context):
         return True
-    # 2) list_dir probe (for backends whose content_exists is a stub
-    #    but whose list_dir returns real directory entries).
-    try:
-        from dataclasses import replace as _replace
 
-        from nexus.contracts.types import OperationContext
-
-        if context is not None:
-            try:
-                probe_ctx: Any = _replace(context, backend_path=readme_dir)
-            except Exception:
-                probe_ctx = OperationContext(
-                    user_id=getattr(context, "user_id", "system") or "system",
-                    groups=list(getattr(context, "groups", []) or []),
-                    zone_id=getattr(context, "zone_id", None),
-                    is_system=getattr(context, "is_system", False),
-                    backend_path=readme_dir,
-                )
-        else:
-            probe_ctx = OperationContext(
-                user_id="system",
-                groups=[],
-                is_system=True,
-                backend_path=readme_dir,
-            )
-        list_fn = getattr(backend, "list_dir", None)
-        if callable(list_fn):
+    # 3) list_dir probe (only detects *non-empty* directories, which is
+    #    why we run it last — list_dir returning ``[]`` for both
+    #    "empty" and "missing" was the original finding-#17 bug).
+    list_fn = getattr(backend, "list_dir", None)
+    if callable(list_fn):
+        try:
             entries = list_fn(readme_dir, context=probe_ctx)
-            return bool(entries)
-    except Exception:
-        return False
+            if entries:
+                return True
+        except Exception:
+            return False
     return False
 
 

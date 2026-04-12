@@ -1106,14 +1106,17 @@ class SearchDaemon:
         pushed into SQL so we never materialize out-of-scope rows in
         Python memory — critical for large workspaces.
 
-        Issue #3704: rows are now *streamed* in partitions via
-        ``session.stream()`` instead of a single ``fetchall()``.  The
-        query is sorted by ``(zone_id, virtual_path, chunk_index)`` so
-        chunks for the same file arrive consecutively; a running
-        current-file accumulator assembles them without a second dict.
-        Assembled documents are pushed to txtai in batches of at most
-        ``_UPSERT_BATCH`` docs per zone, capping peak memory regardless
-        of corpus size.
+        Issue #3704: uses keyset-paginated ``session.execute()`` so the
+        read cursor is closed **before** each call to ``_backend.upsert()``.
+        On PostgreSQL this prevents the long-lived read snapshot that the
+        old ``session.stream()`` approach caused, which blocked autovacuum
+        on ``document_chunks`` / ``file_paths`` during large restarts.
+
+        Each page selects at most ``_PAGE_FILES`` complete files via a
+        subquery, guaranteeing no file is split across pages.  Within each
+        page a running-accumulator assembles chunks; a per-doc cap
+        (``_MAX_CHUNKS_PER_DOC``) prevents one pathological file from
+        spiking transient memory.
         """
         if self._backend is None or self._async_session is None:
             self._txtai_bootstrapped = self._backend is None
@@ -1122,80 +1125,89 @@ class SearchDaemon:
         from sqlalchemy import bindparam
         from sqlalchemy import text as sa_text
 
-        # How many assembled documents to buffer per zone before flushing
-        # to the txtai backend.  Lower = less peak memory; higher = fewer
-        # round-trips.  200 is a good balance for typical chunk sizes.
+        # Distinct files fetched per DB round-trip.  Each page is a
+        # bounded ``fetchall()``; the cursor closes before any upsert.
+        _PAGE_FILES = 200
+
+        # Per-document chunk truncation cap.  Files with more chunks than
+        # this are indexed with only their first _MAX_CHUNKS_PER_DOC chunks.
+        # Prevents a single giant JSONL/log file from spiking transient
+        # allocation during the join + "\n".join() step.
+        _MAX_CHUNKS_PER_DOC = 500
+
+        # Maximum assembled docs buffered per zone before flushing to txtai.
         _UPSERT_BATCH = 200
 
         try:
-            # Figure out which zones are in scoped mode. Zones in 'all'
-            # mode (the default) bypass the filter and replay everything.
             scoped_zone_ids = sorted(
                 zid for zid, mode in self._zone_indexing_modes.items() if mode == "scoped"
             )
 
+            # Build the per-page query.  The inner subquery selects the next
+            # _PAGE_FILES distinct (zone_id, virtual_path) pairs after the
+            # keyset (kz, kp), guaranteeing that every file in the outer
+            # result is complete — no file spans a page boundary.
             if not scoped_zone_ids:
-                # Fast path: no scoped zones = legacy behavior.
-                stmt = sa_text(
+                # Fast path: no scope filter.
+                page_stmt = sa_text(
                     """
-                    SELECT
-                        fp.zone_id,
-                        fp.virtual_path,
-                        c.chunk_index,
-                        c.chunk_text
+                    SELECT fp.zone_id, fp.virtual_path, c.chunk_index, c.chunk_text
                     FROM document_chunks c
                     JOIN file_paths fp ON c.path_id = fp.path_id
                     WHERE fp.deleted_at IS NULL
+                      AND fp.path_id IN (
+                          SELECT path_id FROM file_paths
+                          WHERE deleted_at IS NULL
+                            AND (zone_id > :kz OR (zone_id = :kz AND virtual_path > :kp))
+                          ORDER BY zone_id, virtual_path
+                          LIMIT :n_files
+                      )
                     ORDER BY fp.zone_id, fp.virtual_path, c.chunk_index
                     """
                 )
-                params: dict[str, Any] | None = None
+                base_params: dict[str, Any] = {}
             else:
-                # SQL-pushed scope filter (Issue #3698, review Issue #7).
-                # For zones in 'scoped' mode, a row is kept only if it
-                # has a matching row in ``indexed_directories`` where
-                # ``virtual_path`` equals the directory OR starts with
-                # ``directory || '/'``. The ``/`` suffix rule prevents
-                # '/src' from matching '/srcX/foo' (Rule 6 bug guard).
-                # Zones NOT in scoped mode bypass the filter entirely.
+                # Scoped path: inner subquery applies the same scope filter
+                # so out-of-scope files are excluded from the page count.
                 #
                 # WILDCARD ESCAPING: ``LIKE`` interprets ``_`` and ``%``
                 # as wildcards. A directory like ``/team_a`` would
                 # otherwise match ``/teamXa/foo`` and reintroduce
-                # out-of-scope rows after restart. We escape the
-                # pattern via nested REPLACE() inside SQL so the match
-                # is a literal prefix only, with ``ESCAPE '\'`` to
-                # honour the escapes. Both Postgres and SQLite
-                # support this form.
-                stmt = sa_text(
+                # out-of-scope rows after restart. We escape the pattern
+                # via nested REPLACE() so the match is a literal prefix
+                # only, with ``ESCAPE '\'`` honoured by both Postgres and
+                # SQLite.
+                page_stmt = sa_text(
                     r"""
-                    SELECT
-                        fp.zone_id,
-                        fp.virtual_path,
-                        c.chunk_index,
-                        c.chunk_text
+                    SELECT fp.zone_id, fp.virtual_path, c.chunk_index, c.chunk_text
                     FROM document_chunks c
                     JOIN file_paths fp ON c.path_id = fp.path_id
                     WHERE fp.deleted_at IS NULL
-                      AND (
-                        fp.zone_id NOT IN :scoped_zones
-                        OR EXISTS (
-                            SELECT 1
-                            FROM indexed_directories d
-                            WHERE d.zone_id = fp.zone_id
-                              AND (
-                                d.directory_path = '/'
-                                OR fp.virtual_path = d.directory_path
-                                OR fp.virtual_path LIKE
-                                    REPLACE(
-                                      REPLACE(
-                                        REPLACE(d.directory_path, '\', '\\'),
-                                        '%', '\%'
-                                      ),
-                                      '_', '\_'
-                                    ) || '/%' ESCAPE '\'
+                      AND fp.path_id IN (
+                          SELECT fp2.path_id FROM file_paths fp2
+                          WHERE fp2.deleted_at IS NULL
+                            AND (fp2.zone_id > :kz OR (fp2.zone_id = :kz AND fp2.virtual_path > :kp))
+                            AND (
+                              fp2.zone_id NOT IN :scoped_zones
+                              OR EXISTS (
+                                  SELECT 1 FROM indexed_directories d
+                                  WHERE d.zone_id = fp2.zone_id
+                                    AND (
+                                      d.directory_path = '/'
+                                      OR fp2.virtual_path = d.directory_path
+                                      OR fp2.virtual_path LIKE
+                                          REPLACE(
+                                            REPLACE(
+                                              REPLACE(d.directory_path, '\', '\\'),
+                                              '%', '\%'
+                                            ),
+                                            '_', '\_'
+                                          ) || '/%' ESCAPE '\'
+                                    )
                               )
-                        )
+                            )
+                          ORDER BY fp2.zone_id, fp2.virtual_path
+                          LIMIT :n_files
                       )
                     ORDER BY fp.zone_id, fp.virtual_path, c.chunk_index
                     """
@@ -1204,82 +1216,76 @@ class SearchDaemon:
                     # from a Python sequence for both Postgres and SQLite.
                     bindparam("scoped_zones", expanding=True),
                 )
-                params = {"scoped_zones": scoped_zone_ids}
+                base_params = {"scoped_zones": scoped_zone_ids}
 
             total = 0
-            # Per-zone document buffer; flushed to txtai every _UPSERT_BATCH docs.
-            docs_batch: dict[str, list[dict[str, Any]]] = {}
+            kz: str = ""  # keyset zone  — '' sorts before all real zone_ids
+            kp: str = ""  # keyset path  — '' sorts before all real paths
 
-            async def _flush() -> int:
-                n = 0
-                for zid, docs in docs_batch.items():
-                    if docs:
-                        n += int(await self._backend.upsert(docs, zone_id=zid))
-                docs_batch.clear()
-                return n
+            while True:
+                page_params = {**base_params, "kz": kz, "kp": kp, "n_files": _PAGE_FILES}
 
-            async with self._async_session() as session:
-                # stream() uses server-side cursors on Postgres and
-                # incremental reads on SQLite; the full result set is
-                # never materialised in Python memory.
-                result = await (
-                    session.stream(stmt) if params is None else session.stream(stmt, params)
-                )
+                # --- Read phase: cursor opens and closes here ---
+                async with self._async_session() as session:
+                    result = await session.execute(page_stmt, page_params)
+                    rows = result.fetchall()
+                # Cursor is fully released before any upsert call.
 
-                # Process 500 rows per round-trip. The ORDER BY guarantees
-                # all chunks for a given (zone, path) arrive consecutively,
-                # so we can assemble documents with a simple running-file
-                # accumulator instead of a full grouping dict.
+                if not rows:
+                    break
+
+                # --- Assemble + Upsert phase (no DB connection held) ---
                 cur_zone: str | None = None
                 cur_path: str | None = None
                 cur_chunks: list[str] = []
+                docs_batch: dict[str, list[dict[str, Any]]] = {}
 
-                async for batch in result.partitions(500):
-                    for row in batch:
-                        zone = row.zone_id or "root"
-                        path = row.virtual_path
+                for row in rows:
+                    zone = row.zone_id or "root"
+                    path = row.virtual_path
 
-                        if (zone, path) != (cur_zone, cur_path):
-                            # Completed document — push to batch.
-                            if cur_path and cur_chunks:
-                                content = "\n".join(c for c in cur_chunks if c)
-                                if content.strip():
-                                    doc_id = (
-                                        f"{cur_zone}:{cur_path}" if cur_zone != "root" else cur_path
-                                    )
-                                    docs_batch.setdefault(cur_zone, []).append(
-                                        {
-                                            "id": doc_id,
-                                            "text": content,
-                                            "path": cur_path,
-                                            "zone_id": cur_zone,
-                                        }
-                                    )
+                    if (zone, path) != (cur_zone, cur_path):
+                        # Completed document — push to batch.
+                        if cur_path and cur_chunks:
+                            content = "\n".join(c for c in cur_chunks if c)
+                            if content.strip():
+                                doc_id = (
+                                    f"{cur_zone}:{cur_path}" if cur_zone != "root" else cur_path
+                                )
+                                docs_batch.setdefault(cur_zone, []).append(
+                                    {
+                                        "id": doc_id,
+                                        "text": content,
+                                        "path": cur_path,
+                                        "zone_id": cur_zone,
+                                    }
+                                )
 
-                            # When the zone changes, all rows for cur_zone
-                            # have been seen (ORDER BY zone_id guarantees
-                            # this). Flush that zone immediately so
-                            # multi-zone deployments with many small zones
-                            # — each staying under _UPSERT_BATCH — don't
-                            # accumulate every document across all zones
-                            # before the first flush fires.
-                            if cur_zone is not None and zone != cur_zone:
-                                zone_docs = docs_batch.pop(cur_zone, [])
-                                if zone_docs:
-                                    total += int(
-                                        await self._backend.upsert(zone_docs, zone_id=cur_zone)
-                                    )
+                        # Zone boundary: flush the completed zone immediately.
+                        # All rows for cur_zone are present in this page
+                        # (the inner subquery guarantees complete files).
+                        if cur_zone is not None and zone != cur_zone:
+                            zone_docs = docs_batch.pop(cur_zone, [])
+                            if zone_docs:
+                                total += int(
+                                    await self._backend.upsert(zone_docs, zone_id=cur_zone)
+                                )
 
-                            cur_zone = zone
-                            cur_path = path
-                            cur_chunks = []
+                        cur_zone = zone
+                        cur_path = path
+                        cur_chunks = []
 
+                    # Per-doc chunk cap: silently truncate pathological files
+                    # so one huge file cannot spike transient memory.
+                    if len(cur_chunks) < _MAX_CHUNKS_PER_DOC:
                         cur_chunks.append(row.chunk_text or "")
 
-                    # Also flush when any single zone's buffer hits the
-                    # per-zone cap (handles very large single-zone corpora).
+                    # Mid-page flush for zones that hit the per-zone cap.
                     if any(len(v) >= _UPSERT_BATCH for v in docs_batch.values()):
-                        total += await _flush()
+                        for zid in [z for z, v in docs_batch.items() if len(v) >= _UPSERT_BATCH]:
+                            total += int(
+                                await self._backend.upsert(docs_batch.pop(zid), zone_id=zid)
+                            )
 
                 # Flush the final in-flight document.
                 if cur_path and cur_chunks:
@@ -1295,8 +1301,14 @@ class SearchDaemon:
                             }
                         )
 
-            # Flush whatever remains after the stream closes.
-            total += await _flush()
+                # Flush all remaining zones for this page.
+                for zid, docs in list(docs_batch.items()):
+                    if docs:
+                        total += int(await self._backend.upsert(docs, zone_id=zid))
+
+                # Advance keyset to after the last file seen in this page.
+                kz = rows[-1].zone_id or "root"
+                kp = rows[-1].virtual_path
 
             self._txtai_bootstrapped = True
             if total:

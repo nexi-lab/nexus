@@ -11,8 +11,10 @@ to intercept the SQL string and assert its shape. Kept intentionally
 fragile to the filter clauses so a refactor that drops the filter will
 fail loudly.
 
-Issue #3704: Updated mocks to match the new ``session.stream()`` API
-(replaces the old ``session.execute()`` + ``fetchall()`` path).
+Issue #3704: bootstrap now uses keyset-paginated ``session.execute()``
+(not ``session.stream()``).  The mock returns empty rows on the first
+call so the pagination loop terminates immediately; the captured SQL
+from that first call is what we verify.
 """
 
 from __future__ import annotations
@@ -22,21 +24,19 @@ from typing import Any
 import pytest
 
 # ---------------------------------------------------------------------------
-# Fake stream result — supports result.partitions(n) as an async generator
+# Fake result — empty rows terminate the keyset pagination loop
 # ---------------------------------------------------------------------------
 
 
-class _FakeStreamResult:
-    """Minimal AsyncResult stand-in: yields no rows (empty corpus)."""
+class _FakeResult:
+    """Returns no rows so the while-True page loop exits after one call."""
 
-    async def partitions(self, n: int):  # noqa: ARG002
-        # Empty async generator: the bootstrap loop iterates but finds nothing.
-        return
-        yield  # pragma: no cover — makes this an async generator
+    def fetchall(self) -> list:
+        return []
 
 
 # ---------------------------------------------------------------------------
-# Fake session — captures SQL + params via stream(), returns empty result
+# Fake session — captures SQL + params via execute(), returns empty result
 # ---------------------------------------------------------------------------
 
 
@@ -44,11 +44,11 @@ class _FakeSession:
     def __init__(self, captured: dict[str, Any]) -> None:
         self._captured = captured
 
-    async def stream(self, stmt: Any, params: dict[str, Any] | None = None) -> _FakeStreamResult:
-        # Record both the compiled SQL string and the bound params.
+    async def execute(self, stmt: Any, params: dict[str, Any] | None = None) -> _FakeResult:
+        # Record the SQL string and bound params from the first page query.
         self._captured["sql"] = str(stmt)
         self._captured["params"] = params or {}
-        return _FakeStreamResult()
+        return _FakeResult()
 
     async def __aenter__(self) -> "_FakeSession":
         return self
@@ -79,16 +79,12 @@ def _make_daemon(
 
     captured: dict[str, Any] = {}
     daemon = SearchDaemon.__new__(SearchDaemon)
-    # Use setattr for protected-attribute injection so mypy doesn't
-    # need a per-line suppression here.
     daemon._async_session = _FakeSessionFactory(captured)
     daemon._backend = _FakeBackend()
     daemon._zone_indexing_modes = zone_modes or {}
     daemon._indexed_directories = indexed_directories or {}
     daemon._txtai_bootstrapped = False
 
-    # Minimal stats stub so the bootstrap path's ``self.stats.last_index_refresh``
-    # assignment doesn't crash.
     class _Stats:
         last_index_refresh: float | None = None
 

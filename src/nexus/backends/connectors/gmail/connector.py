@@ -407,24 +407,25 @@ class PathGmailBackend(
             self._bind_transport(context)
             return super().read_content(content_id, context)
 
-        # Pool-based: rotate credentials for the same mailbox on rate-limit.
-        # account_identifier scopes selection to this connector's mailbox so
-        # the pool never selects a profile for a different Gmail user.
+        # Pool-based: rotate credentials on rate-limit.
+        # user_email_override routes the transport to the selected profile's
+        # account (e.g. a different service account with the same data access).
         # bypass_exceptions prevents path-level errors (deleted messages, stale
         # paths) from being misclassified as credential failures.
+        # Note: pool correctness (only accounts with appropriate access) is the
+        # operator's responsibility when building the CredentialPool.
         from nexus.bricks.auth.classifiers.google import classify_google_error
         from nexus.bricks.auth.profile import AuthProfile
 
-        account_id = self._user_email or (getattr(context, "user_id", None) if context else None)
-
-        def _call(_profile: AuthProfile) -> bytes:
-            self._transport = self._gmail_transport.with_context(context)
+        def _call(profile: AuthProfile) -> bytes:
+            self._transport = self._gmail_transport.with_context(
+                context, user_email_override=profile.account_identifier
+            )
             return super(PathGmailBackend, self).read_content(content_id, context)
 
         return self._pool.execute_sync(
             _call,
             classify_google_error,
-            account_identifier=account_id,
             bypass_exceptions=(NexusFileNotFoundError,),
         )
 
@@ -549,24 +550,22 @@ class PathGmailBackend(
                 self._bind_transport(context)
                 keys, _prefixes = self._transport.list_keys(prefix=path, delimiter="/")
             else:
-                # Pool-based: rotate credentials for this mailbox on rate-limit.
-                # account_identifier scopes to connector's mailbox; bypass_exceptions
-                # prevents directory-not-found from poisoning healthy credentials.
+                # Pool-based: rotate credentials on rate-limit.
+                # user_email_override routes the transport to the selected profile's
+                # account. bypass_exceptions prevents directory-not-found from
+                # poisoning healthy credentials.
                 from nexus.bricks.auth.classifiers.google import classify_google_error
                 from nexus.bricks.auth.profile import AuthProfile
 
-                account_id = self._user_email or (
-                    getattr(context, "user_id", None) if context else None
-                )
-
-                def _list(_profile: AuthProfile) -> tuple[list[str], list[str]]:
-                    transport = self._gmail_transport.with_context(context)
+                def _list(profile: AuthProfile) -> tuple[list[str], list[str]]:
+                    transport = self._gmail_transport.with_context(
+                        context, user_email_override=profile.account_identifier
+                    )
                     return transport.list_keys(prefix=path, delimiter="/")
 
                 keys, _prefixes = self._pool.execute_sync(
                     _list,
                     classify_google_error,
-                    account_identifier=account_id,
                     bypass_exceptions=(NexusFileNotFoundError,),
                 )
 

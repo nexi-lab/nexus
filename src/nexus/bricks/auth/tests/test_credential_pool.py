@@ -296,9 +296,9 @@ async def test_all_profiles_exhausted_raises_structured_error() -> None:
     assert reasons["p1"] == AuthProfileFailureReason.RATE_LIMIT
     assert reasons["p2"] == AuthProfileFailureReason.BILLING
 
-    # Error message should include provider and 'nexus-fs auth pool status'
+    # Error message should include provider and guidance on recovery
     assert "openai" in str(err)
-    assert "nexus-fs auth pool status" in str(err)
+    assert "cooldown" in str(err).lower()
 
 
 async def test_no_profiles_raises_with_empty_list() -> None:

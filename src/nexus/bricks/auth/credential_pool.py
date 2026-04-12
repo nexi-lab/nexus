@@ -130,7 +130,8 @@ class NoAvailableCredentialError(Exception):
         super().__init__(
             f"No available credential for provider '{provider}':\n"
             f"{detail_block}\n"
-            f"Run 'nexus-fs auth pool status {provider}' for details."
+            f"Check AuthProfileStore for current cooldown state, or wait for "
+            f"cooldowns to expire before retrying."
         )
 
 

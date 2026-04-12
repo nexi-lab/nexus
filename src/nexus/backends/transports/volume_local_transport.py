@@ -133,7 +133,7 @@ class VolumeLocalTransport:
                 "VolumeEngine is unavailable (stale or absent nexus_kernel). "
                 "VolumeLocalTransport requires a working nexus_kernel binary — "
                 "there is no safe degraded mode. "
-                "Rebuild the extension: cd rust/nexus_kernel && maturin develop --release"
+                "Rebuild the extension: cd rust/kernel && maturin develop --release"
             )
         self._VolumeEngine = _VolumeEngine
         self._volume_available = True

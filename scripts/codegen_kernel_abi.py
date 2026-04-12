@@ -27,7 +27,7 @@ from pathlib import Path
 # ── Paths ──────────────────────────────────────────────────────────
 
 ROOT = Path(__file__).resolve().parent.parent
-RUST_SRC = ROOT / "rust" / "nexus_kernel" / "src"
+RUST_SRC = ROOT / "rust" / "kernel" / "src"
 
 STUBS_PATH = ROOT / "stubs" / "nexus_kernel" / "__init__.pyi"
 EXPORTS_PATH = ROOT / "src" / "nexus" / "core" / "kernel_exports.py"
@@ -677,11 +677,11 @@ def generate_stubs(
     """Generate the full .pyi stub file."""
     lines = [
         MARKER,
-        "# Source: rust/nexus_kernel/src/*.rs",
+        "# Source: rust/kernel/src/*.rs",
         "",
         '"""Type stubs for nexus_kernel — Rust-accelerated PyO3 extension module.',
         "",
-        "Auto-generated from rust/nexus_kernel/src/*.rs exports.",
+        "Auto-generated from rust/kernel/src/*.rs exports.",
         "Re-run: python scripts/codegen_kernel_abi.py",
         '"""',
         "",
@@ -781,7 +781,7 @@ def generate_protocols(traits: list[TraitDef]) -> str:
     """Generate Python Protocol classes from Rust trait definitions."""
     lines = [
         MARKER,
-        "# Source: rust/nexus_kernel/src/dispatch.rs, metastore.rs, backend.rs",
+        "# Source: rust/kernel/src/dispatch.rs, metastore.rs, backend.rs",
         "",
         '"""Kernel dispatch protocols — Python typing contracts for Rust traits.',
         "",
@@ -831,7 +831,7 @@ def generate_exports(all_names: list[str]) -> str:
 
     lines = [
         MARKER,
-        "# Source: rust/nexus_kernel/src/lib.rs",
+        "# Source: rust/kernel/src/lib.rs",
         "",
         '"""Kernel re-export module — consolidated kernel boundary.',
         "",
@@ -885,7 +885,7 @@ def generate_api_groups(classes: dict[str, "ClassDef"]) -> str:
 
     lines = [
         MARKER,
-        "# Source: rust/nexus_kernel/src/kernel.rs (PyKernel methods)",
+        "# Source: rust/kernel/src/kernel.rs (PyKernel methods)",
         "",
         '"""Auto-generated API surface groups for nexus_kernel version validation.',
         "",
@@ -910,7 +910,7 @@ def generate_api_groups(classes: dict[str, "ClassDef"]) -> str:
         "}",
         "",
         "# All public methods that must exist on nexus_kernel.PyKernel.",
-        "# Auto-derived from #[pymethods] in rust/nexus_kernel/src/kernel.rs.",
+        "# Auto-derived from #[pymethods] in rust/kernel/src/kernel.rs.",
         "# A stale binary missing any of these triggers an actionable ImportError.",
         "KERNEL_REQUIRED_METHODS: frozenset[str] = frozenset({",
     ]
@@ -1185,7 +1185,7 @@ def generate_pillar_adapters(traits: list[TraitDef]) -> str:
     """Generate Rust adapter implementations from parsed traits.
 
     Direction 3 (PILLAR): Wraps Python ABCs → Rust traits via PyO3.
-    Output: rust/nexus_kernel/src/generated_adapters.rs
+    Output: rust/kernel/src/generated_adapters.rs
     """
     trait_map = {t.name: t for t in traits}
 

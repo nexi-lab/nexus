@@ -168,7 +168,7 @@ def _open_local_metastore(metadata_path: str, kernel: object = None) -> "Metasto
                     f"RustMetastoreProxy failed for existing {_redb_path}: {e}. "
                     "Refusing to fall back to a different metadata format — that "
                     "would hide existing Redb data. "
-                    "Rebuild: cd rust/nexus_kernel && maturin develop --release"
+                    "Rebuild: cd rust/kernel && maturin develop --release"
                 ) from e
             logger.warning("RustMetastoreProxy failed, falling back: %s", e)
 
@@ -180,7 +180,7 @@ def _open_local_metastore(metadata_path: str, kernel: object = None) -> "Metasto
         raise RuntimeError(
             f"Rust metastore {_redb_path} exists but nexus_kernel is stale or "
             "unavailable — refusing to fall back to a different metadata format. "
-            "Rebuild the extension: cd rust/nexus_kernel && maturin develop --release"
+            "Rebuild the extension: cd rust/kernel && maturin develop --release"
         )
 
     try:
@@ -193,7 +193,7 @@ def _open_local_metastore(metadata_path: str, kernel: object = None) -> "Metasto
         dict_metastore_path = Path(metadata_path).with_suffix(".json")
         logger.info(
             "Rust metastore not available; using JSON-backed DictMetastore fallback at %s. "
-            "Build rust/nexus_raft with maturin develop -m rust/nexus_raft/Cargo.toml "
+            "Build rust/raft with maturin develop -m rust/raft/Cargo.toml "
             "--features python for the durable metastore.",
             dict_metastore_path,
         )

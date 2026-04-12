@@ -1,6 +1,6 @@
 """Type stubs for _nexus_raft PyO3 extension module.
 
-SSOT: rust/nexus_raft/src/pyo3_bindings.rs
+SSOT: rust/raft/src/pyo3_bindings.rs
 Update this file when adding/changing #[pymethods] in the Rust source.
 """
 

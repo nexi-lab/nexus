@@ -9,7 +9,7 @@ Prerequisites:
 
     # Build Rust extension with full features (requires protobuf 3.x)
     PROTOC=/opt/homebrew/opt/protobuf@21/bin/protoc \
-      maturin develop -m rust/nexus_raft/Cargo.toml --features full
+      maturin develop -m rust/raft/Cargo.toml --features full
 
 Usage:
     python3 examples/tutorials/deployment-profiles/test_profiles_federation.py
@@ -37,7 +37,7 @@ def main() -> int:
         print("Build the Rust extension with full features first:")
         print()
         print("  PROTOC=/opt/homebrew/opt/protobuf@21/bin/protoc \\")
-        print("    maturin develop -m rust/nexus_raft/Cargo.toml --features full")
+        print("    maturin develop -m rust/raft/Cargo.toml --features full")
         return 1
 
     results: dict[str, str] = {}

@@ -1,0 +1,14 @@
+[package]
+name = "services"
+version = "0.1.0"
+edition = "2021"
+description = "Rust service implementations — observers, audit trail"
+
+[lib]
+name = "services"
+crate-type = ["rlib"]
+
+[dependencies]
+contracts = { workspace = true }
+redb = "2"
+parking_lot = "0.12"

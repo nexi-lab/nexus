@@ -43,7 +43,7 @@ COPY Cargo.toml Cargo.lock ./
 COPY proto/ ./proto/
 COPY rust/ ./rust/
 
-WORKDIR /build/rust/nexus_raft
+WORKDIR /build/rust/raft
 RUN maturin build --release --features full \
     && pip install --no-cache-dir --prefix=/install /build/target/wheels/nexus_raft-*.whl
 

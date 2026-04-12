@@ -111,7 +111,7 @@ RUN --mount=type=cache,target=/root/.cargo/registry \
                SIMSIMD_TARGET_SVE_F16=0 \
                SIMSIMD_TARGET_SVE_I8=0; \
     fi && \
-    maturin build --release --out /build/dist -m rust/nexus_kernel/Cargo.toml
+    maturin build --release --out /build/dist -m rust/kernel/Cargo.toml
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
     --mount=type=cache,id=cargo-target-${TARGETARCH},target=/build/target \
@@ -122,7 +122,7 @@ RUN --mount=type=cache,target=/root/.cargo/registry \
                SIMSIMD_TARGET_SVE_F16=0 \
                SIMSIMD_TARGET_SVE_I8=0; \
     fi && \
-    maturin build --release --features full --out /build/dist -m rust/nexus_raft/Cargo.toml
+    maturin build --release --features full --out /build/dist -m rust/raft/Cargo.toml
 RUN pip install --no-cache-dir /build/dist/nexus_kernel-*.whl /build/dist/nexus_raft-*.whl
 
 # ---------- Copy real application source and reinstall local package ----------

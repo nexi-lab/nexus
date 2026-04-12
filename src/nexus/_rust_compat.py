@@ -86,7 +86,7 @@ except ImportError:
 RUST_HASH_AVAILABLE: bool = False
 RUST_IPC_AVAILABLE: bool = False
 
-_REBUILD_CMD = "cd rust/nexus_kernel && maturin develop --release"
+_REBUILD_CMD = "cd rust/kernel && maturin develop --release"
 
 # Initialised to empty/False — filled in by the validation block below when
 # RUST_AVAILABLE is True.  Declaring them here makes them unconditionally

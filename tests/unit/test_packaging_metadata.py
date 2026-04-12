@@ -59,7 +59,7 @@ def test_release_workflow_builds_and_publishes_nexus_kernel() -> None:
     assert "build-rust-sdist:" in workflow
     assert "publish-rust:" in workflow
     assert (
-        "maturin build --release --compatibility off --manifest-path rust/nexus_kernel/Cargo.toml"
+        "maturin build --release --compatibility off --manifest-path rust/kernel/Cargo.toml"
         in workflow
     )
-    assert "maturin sdist --manifest-path rust/nexus_kernel/Cargo.toml --out dist" in workflow
+    assert "maturin sdist --manifest-path rust/kernel/Cargo.toml --out dist" in workflow

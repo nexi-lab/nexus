@@ -11,9 +11,9 @@ name: Build Standalone Binary (profile=cluster)
 #
 # Build order per runner:
 #   1. pip install . (non-editable → site-packages, no local pathex needed)
-#   2. Build nexus_kernel → nexus_kernel   (ReBAC permission computation)
-#   3. Build nexus_raft  → _nexus_raft     (Raft consensus + embedded storage)
-#   4. Build nexus_tasks → _nexus_tasks    (durable task queue)
+#   2. Build kernel → nexus_kernel   (ReBAC permission computation)
+#   3. Build raft  → _nexus_raft     (Raft consensus + embedded storage)
+#   4. Build tasks → _nexus_tasks    (durable task queue)
 #   5. pip install all three wheels
 #   6. Patch pyinstaller_spec_cluster.py hardcoded paths using importlib
 #   7. PyInstaller → single-file nexus-cluster binary
@@ -121,9 +121,9 @@ jobs:
         with:
           shared-key: pyinstaller-cluster-rust-${{ matrix.os }}
           workspaces: |
-            rust/nexus_kernel
-            rust/nexus_raft
-            rust/nexus_tasks
+            rust/kernel
+            rust/raft
+            rust/tasks
 
       # ── Install nexus into site-packages (non-editable) ──────────────────
       # Non-editable install means PyInstaller locates all modules through
@@ -140,7 +140,7 @@ jobs:
           # Remove it entirely so pip install . proceeds cleanly.
           python - <<'PY'
           from pathlib import Path
-          
+
           pyproject = Path("pyproject.toml")
           lines = pyproject.read_text().splitlines()
           pyproject.write_text(
@@ -207,15 +207,15 @@ jobs:
       - name: Install maturin
         run: pip install maturin
 
-      - name: Build nexus_kernel wheel  (rust/nexus_kernel)
+      - name: Build kernel wheel  (rust/kernel)
         shell: bash
         run: |
           mkdir -p build/dist
           maturin build --release \
             --out build/dist \
-            -m rust/nexus_kernel/Cargo.toml
+            -m rust/kernel/Cargo.toml
 
-      - name: Build nexus_raft wheel  (rust/nexus_raft --features full)
+      - name: Build raft wheel  (rust/raft --features full)
         shell: bash
         env:
           PROTOC: ${{ env.NEXUS_PROTOC }}
@@ -223,15 +223,15 @@ jobs:
           maturin build --release \
             --features full \
             --out build/dist \
-            -m rust/nexus_raft/Cargo.toml
+            -m rust/raft/Cargo.toml
 
-      - name: Build nexus_tasks wheel  (rust/nexus_tasks)
+      - name: Build tasks wheel  (rust/tasks)
         shell: bash
         run: |
           maturin build --release \
             --features mimalloc \
             --out build/dist \
-            -m rust/nexus_tasks/Cargo.toml
+            -m rust/tasks/Cargo.toml
 
       - name: Install Rust wheels
         shell: bash

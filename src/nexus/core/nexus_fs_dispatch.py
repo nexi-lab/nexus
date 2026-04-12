@@ -233,30 +233,20 @@ class DispatchMixin:
     # Zero Py<PyAny> in Rust observer pipeline. Safe Drop. No shutdown flag.
 
     def register_observe(self, obs: VFSObserver) -> None:
-        """Register an OBSERVE event buffer on Rust kernel.
+        """Register an OBSERVE observer — no-op pending Rust-native conversion.
 
-        Creates a Rust-side EventBuffer with Condvar notification.
-        Events matching ``event_mask`` are buffered in pure Rust.
-        The observer's consumer thread pulls events via
-        ``kernel.drain_event_buffer_blocking(name, timeout_ms)``
-        which blocks on the Condvar (GIL released by PyO3).
-
-        Zero Py<PyAny> in Rust. Safe Drop. No drain calls in NexusFS.
+        Python observers were deleted (PyMutationObserverAdapter crash fix).
+        Rust-native MutationObserver impls register directly on Kernel.
+        This method is a no-op stub for backward compat with HookSpec callers.
         """
-        from nexus.core.file_events import ALL_FILE_EVENTS
-
-        mask = getattr(obs, "event_mask", ALL_FILE_EVENTS)
-        name = getattr(obs, "__class__", type(obs)).__name__
-        self._kernel.create_event_buffer(name, mask, 4096)
 
     def has_hooks(self, op: str) -> bool:
         """O(1) check: any hooks registered for *op*? Delegates to Rust Kernel."""
         return bool(self._kernel.hook_count(op) > 0)
 
-    def unregister_observe(self, obs: VFSObserver) -> bool:
-        """Remove an OBSERVE event buffer from Rust kernel."""
-        name = getattr(obs, "__class__", type(obs)).__name__
-        return bool(self._kernel.remove_event_buffer(name))
+    def unregister_observe(self, obs: VFSObserver) -> bool:  # noqa: ARG002
+        """Unregister OBSERVE observer — no-op stub."""
+        return True
 
     @property
     def observer_count(self) -> int:

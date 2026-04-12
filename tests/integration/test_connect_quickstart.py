@@ -21,7 +21,7 @@ async def test_local_connect_falls_back_when_full_federation_build_is_unavailabl
     def _raise_missing_full_build(*args, **kwargs):
         raise RuntimeError(
             "ZoneManager requires PyO3 build with --features full. "
-            "Build with: maturin develop -m rust/nexus_raft/Cargo.toml --features full"
+            "Build with: maturin develop -m rust/raft/Cargo.toml --features full"
         )
 
     monkeypatch.setattr(zone_manager, "ZoneManager", _raise_missing_full_build)

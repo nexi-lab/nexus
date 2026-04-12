@@ -20,6 +20,29 @@ import types
 from typing import cast
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+# ---------------------------------------------------------------------------
+# Isolation fixture — MUST be first so it runs for every test in this file.
+# _reload_rust_compat() mutates sys.modules[nexus._rust_compat] to a version
+# where RUST_AVAILABLE=False.  Without cleanup that poisoned module leaks to
+# other test files that share the same pytest-xdist worker process, causing
+# cascading failures.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _restore_sys_modules():
+    """Snapshot and restore nexus._rust_compat + nexus_kernel around each test."""
+    saved = {k: sys.modules.get(k) for k in ("nexus._rust_compat", "nexus_kernel")}
+    yield
+    for name, mod in saved.items():
+        if mod is None:
+            sys.modules.pop(name, None)
+        else:
+            sys.modules[name] = mod
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

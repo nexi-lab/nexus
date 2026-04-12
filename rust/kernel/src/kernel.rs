@@ -23,8 +23,6 @@ use dashmap::DashMap;
 use parking_lot::{Condvar, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::sync::OnceLock;
-use threadpool::ThreadPool;
 
 // ── KernelError ────────────────────────────────────────────────────────────
 
@@ -419,9 +417,6 @@ pub struct Kernel {
     // delegate here. Until then this is intentional pre-built infrastructure.
     #[allow(dead_code)]
     observers: Mutex<KernelObserverRegistry>,
-    // OBSERVE dispatch via lazy ThreadPool (OnceLock — fork-safe).
-    // Pure Rust MutationObserver only.
-    observer_pool: OnceLock<ThreadPool>,
     //
     // OBSERVE is fire-and-forget by contract: the syscall returns as soon
     // as the event is queued; observer callbacks run on this pool, off
@@ -484,7 +479,6 @@ impl Kernel {
             access_hook_count: AtomicU64::new(0),
             write_batch_hook_count: AtomicU64::new(0),
             observers: Mutex::new(KernelObserverRegistry::new()),
-            observer_pool: OnceLock::new(),
             zone_revisions: DashMap::new(),
             file_watches: Arc::new(FileWatcher::new()),
             agent_registry: crate::agent_registry::AgentRegistry::new(),
@@ -983,50 +977,29 @@ impl Kernel {
         self.observers.lock().unregister(name)
     }
 
-    /// OBSERVE-phase dispatch — submit all observers whose event_mask
-    /// matches `event.event_type` to the kernel observer ThreadPool.
+    /// OBSERVE-phase dispatch — call all matching observers inline.
     ///
-    /// Fire-and-forget by contract: this returns immediately once the
-    /// jobs are queued. Observer callbacks run on `observer_pool` workers,
-    /// off the syscall hot path. Each callback is handed an owned clone
-    /// of the event so the worker doesn't borrow caller state.
+    /// Fire-and-forget by contract. Observers are pure Rust (~0.5μs each:
+    /// FileWatcher Condvar notify + StreamEventObserver stream_write_nowait).
+    /// Inline dispatch avoids ThreadPool + fork() incompatibility in xdist CI.
     ///
-    /// Snapshot-then-drop-lock pattern: we collect Arc clones of the
-    /// matching observers under the registry lock, then release the lock
-    /// before submitting to the pool. This prevents deadlocks if an
-    /// observer's callback re-enters the kernel (e.g. an audit logger
-    /// that itself does sys_write).
+    /// Snapshot-then-drop-lock pattern: collect Arc clones under the registry
+    /// lock, release lock, then call each observer. Prevents deadlocks if an
+    /// observer re-enters the kernel.
     ///
-    /// Called by every successful Tier 1 mutation syscall (sys_write,
-    /// sys_unlink, sys_rename, sys_mkdir, sys_rmdir) via the
-    /// `dispatch_mutation` helper.
+    /// Called by every successful Tier 1 mutation syscall via dispatch_mutation.
     pub fn dispatch_observers(&self, event: &FileEvent) {
-        // Dispatch ALL registered MutationObserver impls on ThreadPool.
-        // All observers are pure Rust (registered via register_observer). Safe Drop.
         let observers = self.observers.lock().matching(event.event_type as u32);
-        if observers.is_empty() {
-            return;
-        }
-        let pool = self
-            .observer_pool
-            .get_or_init(|| ThreadPool::with_name("nexus-observe".to_string(), 4));
         for obs in observers {
-            let event_owned = event.clone();
-            pool.execute(move || {
-                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    obs.on_mutation(&event_owned);
-                }));
-            });
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                obs.on_mutation(event);
+            }));
         }
     }
 
-    /// Block until all queued observer jobs have completed.
-    /// Test-only: wait for async observer callbacks to finish before assertions.
-    pub fn flush_observers(&self) {
-        if let Some(pool) = self.observer_pool.get() {
-            pool.join();
-        }
-    }
+    /// No-op — observers dispatch inline (no background pool).
+    /// Kept for API compat with tests that call flush_observers().
+    pub fn flush_observers(&self) {}
 
     /// Total registered Rust-native observers.
     pub fn observer_count(&self) -> usize {

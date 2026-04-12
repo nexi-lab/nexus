@@ -10,6 +10,9 @@ These tests don't run a real database — they patch the session factory
 to intercept the SQL string and assert its shape. Kept intentionally
 fragile to the filter clauses so a refactor that drops the filter will
 fail loudly.
+
+Issue #3704: Updated mocks to match the new ``session.stream()`` API
+(replaces the old ``session.execute()`` + ``fetchall()`` path).
 """
 
 from __future__ import annotations
@@ -18,21 +21,34 @@ from typing import Any
 
 import pytest
 
+# ---------------------------------------------------------------------------
+# Fake stream result — supports result.partitions(n) as an async generator
+# ---------------------------------------------------------------------------
 
-class _FakeResult:
-    def fetchall(self) -> list:
-        return []
+
+class _FakeStreamResult:
+    """Minimal AsyncResult stand-in: yields no rows (empty corpus)."""
+
+    async def partitions(self, n: int):  # noqa: ARG002
+        # Empty async generator: the bootstrap loop iterates but finds nothing.
+        return
+        yield  # pragma: no cover — makes this an async generator
+
+
+# ---------------------------------------------------------------------------
+# Fake session — captures SQL + params via stream(), returns empty result
+# ---------------------------------------------------------------------------
 
 
 class _FakeSession:
     def __init__(self, captured: dict[str, Any]) -> None:
         self._captured = captured
 
-    async def execute(self, stmt: Any, params: dict[str, Any] | None = None) -> _FakeResult:
+    async def stream(self, stmt: Any, params: dict[str, Any] | None = None) -> _FakeStreamResult:
         # Record both the compiled SQL string and the bound params.
         self._captured["sql"] = str(stmt)
         self._captured["params"] = params or {}
-        return _FakeResult()
+        return _FakeStreamResult()
 
     async def __aenter__(self) -> "_FakeSession":
         return self

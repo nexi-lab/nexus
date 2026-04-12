@@ -1105,6 +1105,15 @@ class SearchDaemon:
         under a registered ``indexed_directories`` row. The filter is
         pushed into SQL so we never materialize out-of-scope rows in
         Python memory — critical for large workspaces.
+
+        Issue #3704: rows are now *streamed* in partitions via
+        ``session.stream()`` instead of a single ``fetchall()``.  The
+        query is sorted by ``(zone_id, virtual_path, chunk_index)`` so
+        chunks for the same file arrive consecutively; a running
+        current-file accumulator assembles them without a second dict.
+        Assembled documents are pushed to txtai in batches of at most
+        ``_UPSERT_BATCH`` docs per zone, capping peak memory regardless
+        of corpus size.
         """
         if self._backend is None or self._async_session is None:
             self._txtai_bootstrapped = self._backend is None
@@ -1113,6 +1122,11 @@ class SearchDaemon:
         from sqlalchemy import bindparam
         from sqlalchemy import text as sa_text
 
+        # How many assembled documents to buffer per zone before flushing
+        # to the txtai backend.  Lower = less peak memory; higher = fewer
+        # round-trips.  200 is a good balance for typical chunk sizes.
+        _UPSERT_BATCH = 200
+
         try:
             # Figure out which zones are in scoped mode. Zones in 'all'
             # mode (the default) bypass the filter and replay everything.
@@ -1120,111 +1134,153 @@ class SearchDaemon:
                 zid for zid, mode in self._zone_indexing_modes.items() if mode == "scoped"
             )
 
-            async with self._async_session() as session:
-                if not scoped_zone_ids:
-                    # Fast path: no scoped zones = legacy behavior.
-                    result = await session.execute(
-                        sa_text(
-                            """
-                            SELECT
-                                fp.zone_id,
-                                fp.virtual_path,
-                                c.chunk_index,
-                                c.chunk_text
-                            FROM document_chunks c
-                            JOIN file_paths fp ON c.path_id = fp.path_id
-                            WHERE fp.deleted_at IS NULL
-                            ORDER BY fp.zone_id, fp.virtual_path, c.chunk_index
-                            """
-                        )
-                    )
-                else:
-                    # SQL-pushed scope filter (Issue #3698, review Issue #7).
-                    # For zones in 'scoped' mode, a row is kept only if it
-                    # has a matching row in ``indexed_directories`` where
-                    # ``virtual_path`` equals the directory OR starts with
-                    # ``directory || '/'``. The ``/`` suffix rule prevents
-                    # '/src' from matching '/srcX/foo' (Rule 6 bug guard).
-                    # Zones NOT in scoped mode bypass the filter entirely.
-                    #
-                    # WILDCARD ESCAPING: ``LIKE`` interprets ``_`` and ``%``
-                    # as wildcards. A directory like ``/team_a`` would
-                    # otherwise match ``/teamXa/foo`` and reintroduce
-                    # out-of-scope rows after restart. We escape the
-                    # pattern via nested REPLACE() inside SQL so the match
-                    # is a literal prefix only, with ``ESCAPE '\'`` to
-                    # honour the escapes. Both Postgres and SQLite
-                    # support this form.
-                    result = await session.execute(
-                        sa_text(
-                            r"""
-                            SELECT
-                                fp.zone_id,
-                                fp.virtual_path,
-                                c.chunk_index,
-                                c.chunk_text
-                            FROM document_chunks c
-                            JOIN file_paths fp ON c.path_id = fp.path_id
-                            WHERE fp.deleted_at IS NULL
-                              AND (
-                                fp.zone_id NOT IN :scoped_zones
-                                OR EXISTS (
-                                    SELECT 1
-                                    FROM indexed_directories d
-                                    WHERE d.zone_id = fp.zone_id
-                                      AND (
-                                        d.directory_path = '/'
-                                        OR fp.virtual_path = d.directory_path
-                                        OR fp.virtual_path LIKE
-                                            REPLACE(
-                                              REPLACE(
-                                                REPLACE(d.directory_path, '\', '\\'),
-                                                '%', '\%'
-                                              ),
-                                              '_', '\_'
-                                            ) || '/%' ESCAPE '\'
-                                      )
-                                )
-                              )
-                            ORDER BY fp.zone_id, fp.virtual_path, c.chunk_index
-                            """
-                        ).bindparams(
-                            # expanding=True lets SQLAlchemy render an IN-list
-                            # from a Python sequence for both Postgres and SQLite.
-                            bindparam("scoped_zones", expanding=True),
-                        ),
-                        {"scoped_zones": scoped_zone_ids},
-                    )
-                rows = result.fetchall()
-
-            if not rows:
-                self._txtai_bootstrapped = True
-                return
-
-            docs_by_zone: dict[str, list[dict[str, Any]]] = {}
-            grouped_content: dict[tuple[str, str], list[str]] = {}
-            for row in rows:
-                zone = row.zone_id or "root"
-                path = row.virtual_path
-                grouped_content.setdefault((zone, path), []).append(row.chunk_text or "")
-
-            for (zone, path), parts in grouped_content.items():
-                content = "\n".join(part for part in parts if part)
-                if not path or not content.strip():
-                    continue
-                doc_id = f"{zone}:{path}" if zone != "root" else path
-                docs_by_zone.setdefault(zone, []).append(
-                    {
-                        "id": doc_id,
-                        "text": content,
-                        "path": path,
-                        "zone_id": zone,
-                    }
+            if not scoped_zone_ids:
+                # Fast path: no scoped zones = legacy behavior.
+                stmt = sa_text(
+                    """
+                    SELECT
+                        fp.zone_id,
+                        fp.virtual_path,
+                        c.chunk_index,
+                        c.chunk_text
+                    FROM document_chunks c
+                    JOIN file_paths fp ON c.path_id = fp.path_id
+                    WHERE fp.deleted_at IS NULL
+                    ORDER BY fp.zone_id, fp.virtual_path, c.chunk_index
+                    """
                 )
+                params: dict[str, Any] | None = None
+            else:
+                # SQL-pushed scope filter (Issue #3698, review Issue #7).
+                # For zones in 'scoped' mode, a row is kept only if it
+                # has a matching row in ``indexed_directories`` where
+                # ``virtual_path`` equals the directory OR starts with
+                # ``directory || '/'``. The ``/`` suffix rule prevents
+                # '/src' from matching '/srcX/foo' (Rule 6 bug guard).
+                # Zones NOT in scoped mode bypass the filter entirely.
+                #
+                # WILDCARD ESCAPING: ``LIKE`` interprets ``_`` and ``%``
+                # as wildcards. A directory like ``/team_a`` would
+                # otherwise match ``/teamXa/foo`` and reintroduce
+                # out-of-scope rows after restart. We escape the
+                # pattern via nested REPLACE() inside SQL so the match
+                # is a literal prefix only, with ``ESCAPE '\'`` to
+                # honour the escapes. Both Postgres and SQLite
+                # support this form.
+                stmt = sa_text(
+                    r"""
+                    SELECT
+                        fp.zone_id,
+                        fp.virtual_path,
+                        c.chunk_index,
+                        c.chunk_text
+                    FROM document_chunks c
+                    JOIN file_paths fp ON c.path_id = fp.path_id
+                    WHERE fp.deleted_at IS NULL
+                      AND (
+                        fp.zone_id NOT IN :scoped_zones
+                        OR EXISTS (
+                            SELECT 1
+                            FROM indexed_directories d
+                            WHERE d.zone_id = fp.zone_id
+                              AND (
+                                d.directory_path = '/'
+                                OR fp.virtual_path = d.directory_path
+                                OR fp.virtual_path LIKE
+                                    REPLACE(
+                                      REPLACE(
+                                        REPLACE(d.directory_path, '\', '\\'),
+                                        '%', '\%'
+                                      ),
+                                      '_', '\_'
+                                    ) || '/%' ESCAPE '\'
+                              )
+                        )
+                      )
+                    ORDER BY fp.zone_id, fp.virtual_path, c.chunk_index
+                    """
+                ).bindparams(
+                    # expanding=True lets SQLAlchemy render an IN-list
+                    # from a Python sequence for both Postgres and SQLite.
+                    bindparam("scoped_zones", expanding=True),
+                )
+                params = {"scoped_zones": scoped_zone_ids}
 
             total = 0
-            for zone_id, docs in docs_by_zone.items():
-                total += int(await self._backend.upsert(docs, zone_id=zone_id))
+            # Per-zone document buffer; flushed to txtai every _UPSERT_BATCH docs.
+            docs_batch: dict[str, list[dict[str, Any]]] = {}
+
+            async def _flush() -> int:
+                n = 0
+                for zid, docs in docs_batch.items():
+                    if docs:
+                        n += int(await self._backend.upsert(docs, zone_id=zid))
+                docs_batch.clear()
+                return n
+
+            async with self._async_session() as session:
+                # stream() uses server-side cursors on Postgres and
+                # incremental reads on SQLite; the full result set is
+                # never materialised in Python memory.
+                result = await (
+                    session.stream(stmt) if params is None else session.stream(stmt, params)
+                )
+
+                # Process 500 rows per round-trip. The ORDER BY guarantees
+                # all chunks for a given (zone, path) arrive consecutively,
+                # so we can assemble documents with a simple running-file
+                # accumulator instead of a full grouping dict.
+                cur_zone: str | None = None
+                cur_path: str | None = None
+                cur_chunks: list[str] = []
+
+                async for batch in result.partitions(500):
+                    for row in batch:
+                        zone = row.zone_id or "root"
+                        path = row.virtual_path
+
+                        if (zone, path) != (cur_zone, cur_path):
+                            # Completed document — push to batch.
+                            if cur_path and cur_chunks:
+                                content = "\n".join(c for c in cur_chunks if c)
+                                if content.strip():
+                                    doc_id = (
+                                        f"{cur_zone}:{cur_path}" if cur_zone != "root" else cur_path
+                                    )
+                                    docs_batch.setdefault(cur_zone, []).append(
+                                        {
+                                            "id": doc_id,
+                                            "text": content,
+                                            "path": cur_path,
+                                            "zone_id": cur_zone,
+                                        }
+                                    )
+                            cur_zone = zone
+                            cur_path = path
+                            cur_chunks = []
+
+                        cur_chunks.append(row.chunk_text or "")
+
+                    # Flush when any zone's buffer is full.
+                    if any(len(v) >= _UPSERT_BATCH for v in docs_batch.values()):
+                        total += await _flush()
+
+                # Flush the final in-flight document.
+                if cur_path and cur_chunks:
+                    content = "\n".join(c for c in cur_chunks if c)
+                    if content.strip():
+                        doc_id = f"{cur_zone}:{cur_path}" if cur_zone != "root" else cur_path
+                        docs_batch.setdefault(cur_zone, []).append(
+                            {
+                                "id": doc_id,
+                                "text": content,
+                                "path": cur_path,
+                                "zone_id": cur_zone,
+                            }
+                        )
+
+            # Flush whatever remains after the stream closes.
+            total += await _flush()
 
             self._txtai_bootstrapped = True
             if total:

@@ -328,11 +328,18 @@ async def _wire_skeleton_indexer(app: "FastAPI", svc: "LifespanServices") -> Non
         )
         app.state.skeleton_indexer = _indexer
 
-        _consumer = SkeletonPipeConsumer(indexer=_indexer)
-        _consumer.bind_fs(_nx)
-        await _consumer.start()
+        # Capture running loop now (startup_search runs in the event loop).
+        # Passed to the consumer so _buffer() can use call_soon_threadsafe when
+        # VFS hooks fire from asyncio.to_thread (sync context).
+        _loop = asyncio.get_running_loop()
+
+        # Consumer is created here but NOT started — startup_services calls
+        # _startup_pipe_consumers after startup_search completes, and the Nexus
+        # kernel pipe registry isn't ready until that phase.  The consumer is
+        # stored on app.state so _startup_pipe_consumers can bind_fs + start it.
+        _consumer = SkeletonPipeConsumer(indexer=_indexer, fallback_loop=_loop)
         app.state.skeleton_pipe_consumer = _consumer
-        logger.debug("[SKELETON] SkeletonIndexer + SkeletonPipeConsumer created")
+        logger.debug("[SKELETON] SkeletonIndexer + SkeletonPipeConsumer created (pending start)")
 
         if not hasattr(_nx, "register_intercept_write"):
             return  # NexusFS doesn't support VFS hooks in this mode

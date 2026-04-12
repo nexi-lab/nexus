@@ -1,7 +1,7 @@
 """Add document_skeleton table for global path+title index (Issue #3725).
 
 Revision ID: add_document_skeleton
-Revises: update_file_namespace_shared
+Revises: idx_dirs_3698
 Create Date: 2026-04-11
 
 Adds the document_skeleton table — a lightweight, globally-indexed record for
@@ -24,7 +24,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "add_document_skeleton"
-down_revision: Union[str, Sequence[str], None] = "update_file_namespace_shared"
+down_revision: Union[str, Sequence[str], None] = "idx_dirs_3698"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

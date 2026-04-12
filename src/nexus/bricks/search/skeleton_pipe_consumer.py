@@ -54,9 +54,14 @@ class SkeletonPipeConsumer:
         indexer: "SkeletonIndexer",
         *,
         debounce_seconds: float = 0.5,
+        fallback_loop: Any | None = None,
     ) -> None:
         self._indexer = indexer
         self._debounce = debounce_seconds
+        # Captured event loop for call_soon_threadsafe fallback when the pipe is
+        # not ready and _buffer() is called from a synchronous thread
+        # (asyncio.to_thread).  Set at construction time from the running loop.
+        self._fallback_loop = fallback_loop
 
         self._nx: Any | None = None
         self._pipe_ready = False
@@ -122,10 +127,16 @@ class SkeletonPipeConsumer:
                 )
             self._write_buffer.append(json.dumps(msg).encode())
             return
-        # Fallback: direct call when pipe not ready (CLI mode / pre-startup).
-        # No running loop (import-time / sync CLI context): event dropped safely.
-        with contextlib.suppress(RuntimeError):
-            asyncio.get_running_loop().create_task(self._dispatch_single(msg))
+        # Fallback: VFS hooks fire from asyncio.to_thread (sync thread) — use
+        # call_soon_threadsafe with the captured loop so the coroutine is safely
+        # scheduled on the event loop without needing get_running_loop().
+        loop = self._fallback_loop
+        if loop is not None:
+            with contextlib.suppress(RuntimeError):  # loop closed at shutdown
+                loop.call_soon_threadsafe(
+                    loop.create_task,
+                    self._dispatch_single(msg),
+                )
 
     # ------------------------------------------------------------------
     # Async lifecycle
@@ -138,7 +149,8 @@ class SkeletonPipeConsumer:
         if self._nx is None:
             return  # CLI mode — no pipe infrastructure
 
-        await self._nx.sys_setattr(_SKELETON_PIPE_PATH)
+        # pipe_create is idempotent: creates on first run, no-ops if already exists.
+        self._nx.pipe_create(_SKELETON_PIPE_PATH, capacity=_SKELETON_PIPE_CAPACITY)
         self._pipe_ready = True
         self._consumer_task = asyncio.create_task(self._consume())
         self._flush_task = asyncio.create_task(self._flush_loop())
@@ -154,7 +166,8 @@ class SkeletonPipeConsumer:
         if self._consumer_task is not None and not self._consumer_task.done():
             if self._nx is not None and self._pipe_ready:
                 with contextlib.suppress(Exception):
-                    await self._nx.sys_unlink(_SKELETON_PIPE_PATH)
+                    # destroy_pipe signals consumer to exit (NexusFileNotFoundError)
+                    self._nx._kernel.destroy_pipe(_SKELETON_PIPE_PATH)
             try:
                 await asyncio.wait_for(asyncio.shield(self._consumer_task), timeout=5.0)
             except (TimeoutError, asyncio.CancelledError):
@@ -176,7 +189,11 @@ class SkeletonPipeConsumer:
             while self._write_buffer:
                 data = self._write_buffer.popleft()
                 try:
-                    await nx.sys_write(_SKELETON_PIPE_PATH, data)
+                    # pipe_write_nowait bypasses sys_write's metastore check — the
+                    # skeleton pipe is registered in the Rust kernel by pipe_create()
+                    # but does not have a Python metastore entry, so sys_write raises
+                    # NexusFileNotFoundError.
+                    nx.pipe_write_nowait(_SKELETON_PIPE_PATH, data)
                 except Exception:
                     logger.warning("[SKELETON] pipe write failed, dropping event")
             await asyncio.sleep(0.01)  # 10ms poll
@@ -186,41 +203,51 @@ class SkeletonPipeConsumer:
     # ------------------------------------------------------------------
 
     async def _consume(self) -> None:
+        # Use pipe_read_nowait (polling) instead of sys_read — the skeleton pipe is
+        # registered in the Rust kernel by pipe_create() but has no Python metastore
+        # entry, so sys_read would raise NexusFileNotFoundError on every call.
+        # pipe_read_nowait returns None on empty and raises NexusFileNotFoundError
+        # when the pipe is destroyed (stop() signal).
         from nexus.contracts.exceptions import NexusFileNotFoundError
 
         assert self._nx is not None
         nx = self._nx
+        _POLL = 0.01  # 10ms poll interval
 
         pending: list[dict[str, Any]] = []
 
         while True:
-            # Block until first event if nothing pending
+            # Block until first event: poll with sleep
             if not pending:
-                try:
-                    first = await nx.sys_read(_SKELETON_PIPE_PATH)
-                except NexusFileNotFoundError:
-                    logger.debug("[SKELETON] pipe closed, consumer exiting")
-                    break
-                pending.append(json.loads(first))
+                while True:
+                    try:
+                        data = nx.pipe_read_nowait(_SKELETON_PIPE_PATH)
+                    except NexusFileNotFoundError:
+                        logger.debug("[SKELETON] pipe closed, consumer exiting")
+                        return
+                    except Exception:
+                        return
+                    if data is not None:
+                        pending.append(json.loads(data))
+                        break
+                    await asyncio.sleep(_POLL)
 
-            # Debounce: drain events for debounce_seconds
+            # Debounce: drain additional events for debounce_seconds
             deadline = asyncio.get_event_loop().time() + self._debounce
             while True:
                 remaining = deadline - asyncio.get_event_loop().time()
                 if remaining <= 0:
                     break
                 try:
-                    data = await asyncio.wait_for(
-                        nx.sys_read(_SKELETON_PIPE_PATH),
-                        timeout=remaining,
-                    )
-                    pending.append(json.loads(data))
-                except TimeoutError:
-                    break
+                    data = nx.pipe_read_nowait(_SKELETON_PIPE_PATH)
                 except NexusFileNotFoundError:
                     break
                 except Exception:
                     break
+                if data is not None:
+                    pending.append(json.loads(data))
+                else:
+                    await asyncio.sleep(min(remaining, _POLL))
 
             # Process in micro-batches (15A)
             await self._process_batch(pending)

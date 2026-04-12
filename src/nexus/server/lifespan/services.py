@@ -676,6 +676,18 @@ async def _startup_pipe_consumers(app: "FastAPI", svc: "LifespanServices") -> No
         except Exception as e:
             logger.warning("[PIPE] TaskDispatchPipeConsumer start failed: %s", e, exc_info=True)
 
+    # Issue #3725: SkeletonPipeConsumer — created in startup_search, started here
+    # so the Nexus kernel pipe registry is fully ready (startup_services runs after
+    # startup_search in the lifespan sequence).
+    skpc = getattr(app.state, "skeleton_pipe_consumer", None)
+    if skpc is not None and nx is not None:
+        try:
+            skpc.bind_fs(nx)
+            await skpc.start()
+            logger.info("[PIPE] SkeletonPipeConsumer started")
+        except Exception as e:
+            logger.warning("[PIPE] SkeletonPipeConsumer start failed: %s", e, exc_info=True)
+
 
 async def _shutdown_pipe_consumers(app: "FastAPI") -> None:
     """Stop DT_PIPE consumers (Issue #809, #810).
@@ -713,7 +725,7 @@ async def _shutdown_pipe_consumers(app: "FastAPI") -> None:
         except Exception as e:
             logger.warning("[PIPE] Error stopping TaskDispatchPipeConsumer: %s", e, exc_info=True)
 
-    # Issue #3725: SkeletonPipeConsumer
+    # Issue #3725: SkeletonPipeConsumer (created in startup_search, stopped here)
     skpc = getattr(app.state, "skeleton_pipe_consumer", None)
     if skpc is not None and hasattr(skpc, "stop"):
         try:

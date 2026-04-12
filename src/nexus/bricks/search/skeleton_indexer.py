@@ -184,7 +184,7 @@ class SkeletonIndexer:
                         FilePathModel.deleted_at.is_(None),
                     )
                 )
-                return result.scalar_one_or_none()
+                return str(result.scalar_one_or_none() or "") or None
         except Exception:
             logger.debug("[SKELETON] path_id resolution failed for %s", virtual_path)
             return None
@@ -204,7 +204,7 @@ class SkeletonIndexer:
                     )
                 )
                 row = result.scalar_one_or_none()
-                return row
+                return str(row) if row is not None else None
         except Exception:
             logger.debug("[SKELETON] could not fetch existing hash for %s", path_id)
             return None
@@ -342,7 +342,7 @@ def _extract_title(
 
     try:
         result = extractor.extract(head)
-        return result.title
+        return str(result.title) if result.title is not None else None
     except Exception as e:
         logger.debug("[SKELETON] extractor error for %s: %s", virtual_path, e)
         return None

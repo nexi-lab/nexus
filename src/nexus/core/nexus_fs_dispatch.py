@@ -258,14 +258,18 @@ class DispatchMixin:
     # self._kernel.dispatch_post_hooks(op, ctx).
     # Sync post-hooks: serial in Rust (fire-and-forget).
 
-    def notify(self, event: FileEvent) -> None:  # noqa: ARG002
-        """No-op — Rust kernel dispatch_observers is SSOT.
+    def notify(self, event: FileEvent) -> None:
+        """Dispatch FileEvent to Rust kernel observers (hit=false fallback).
 
         hit=true path: Rust sys_* internally calls dispatch_observers.
-        hit=false fallback callers in nexus_fs.py still call this but
-        Rust kernel observers already received the event via the Rust path.
-        This stub prevents AttributeError; the calls should be cleaned up.
+        hit=false path: Python Tier 2 methods call this to ensure observers
+        still receive events when Rust fast path misses.
         """
+        if self._kernel is not None and hasattr(event, "type") and hasattr(event.type, "value"):
+            try:
+                self._kernel.dispatch_kernel_event(event.type.value, event.path)
+            except Exception:
+                pass  # fire-and-forget
 
     def dispatch_event(self, event_type: str, path: str) -> None:
         """Dispatch a FileEvent through Rust kernel observer pipeline.

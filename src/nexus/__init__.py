@@ -154,14 +154,34 @@ def _open_local_metastore(metadata_path: str, kernel: object = None) -> "Metasto
     from pathlib import Path
 
     # Preferred: Rust kernel owns redb exclusively (zero GIL crossing)
+    _redb_path = Path(metadata_path).with_suffix(".redb")
     if kernel is not None:
         try:
             from nexus.core.metastore import RustMetastoreProxy
 
-            redb_path = str(Path(metadata_path).with_suffix(".redb"))
-            return RustMetastoreProxy(kernel, redb_path)
+            return RustMetastoreProxy(kernel, str(_redb_path))
         except Exception as e:
+            # If the store already exists, failing here would silently hide data
+            # written by a previous healthy run.  Fail closed with a clear error.
+            if _redb_path.exists():
+                raise RuntimeError(
+                    f"RustMetastoreProxy failed for existing {_redb_path}: {e}. "
+                    "Refusing to fall back to a different metadata format — that "
+                    "would hide existing Redb data. "
+                    "Rebuild: cd rust/nexus_kernel && maturin develop --release"
+                ) from e
             logger.warning("RustMetastoreProxy failed, falling back: %s", e)
+
+    # Guard: if a Redb store already exists but the kernel is absent/stale,
+    # do NOT silently open a different backend — that would hide existing data
+    # and create a split-brain on the next good binary.  Fail with a clear error
+    # so the developer knows to rebuild nexus_kernel (Issue #3712).
+    if kernel is None and _redb_path.exists():
+        raise RuntimeError(
+            f"Rust metastore {_redb_path} exists but nexus_kernel is stale or "
+            "unavailable — refusing to fall back to a different metadata format. "
+            "Rebuild the extension: cd rust/nexus_kernel && maturin develop --release"
+        )
 
     try:
         from nexus.storage.raft_metadata_store import RaftMetadataStore
@@ -446,13 +466,17 @@ async def connect(
     overrides = cfg.features.to_overrides() if cfg.features else {}
     enabled_bricks = resolve_enabled_bricks(resolved_profile, overrides=overrides)
 
-    # Create Rust kernel early so RustMetastoreProxy can use it
+    # Create Rust kernel early so RustMetastoreProxy can use it.
+    # Route through _rust_compat so stale binaries (missing Kernel methods)
+    # are caught here and never passed to RustMetastoreProxy (Issue #3712).
     _early_kernel = None
     try:
-        from nexus_kernel import Kernel as _Kernel
+        from nexus._rust_compat import RUST_AVAILABLE as _RUST_AVAILABLE
+        from nexus._rust_compat import Kernel as _Kernel
 
-        _early_kernel = _Kernel()
-    except (ImportError, Exception):
+        if _RUST_AVAILABLE and _Kernel is not None:
+            _early_kernel = _Kernel()
+    except Exception:
         pass
 
     # Create metadata store — profile-gated federation (PR #3371 Phase 2)

@@ -9,6 +9,9 @@ on:
     paths:
       - 'src/**/*.py'
       - 'tests/**/*.py'
+      - 'rust/nexus_kernel/src/**/*.rs'
+      - 'scripts/codegen_kernel_abi.py'
+      - 'stubs/**/*.pyi'
 
 permissions:
   contents: read

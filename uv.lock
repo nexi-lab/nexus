@@ -2940,6 +2940,18 @@ wheels = [
 ]
 
 [[package]]
+name = "maturin-import-hook"
+version = "0.3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "filelock" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/75/a1/3b007a4132265d5da19096d6835cd4c7e9908afb9156afb96d19ff190f39/maturin_import_hook-0.3.0.tar.gz", hash = "sha256:cdd51ce267663c437c4aea1bfd5f7ee5884b54a9d866ea924227d68d758bbba2", size = 30785, upload-time = "2025-06-08T15:43:57.801Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9f/55/0c17a1fccec90dffbb1d904d7ddb7971e4e95f994c6264637e8fe66a5b86/maturin_import_hook-0.3.0-py3-none-any.whl", hash = "sha256:f5d20b4bc3056d84170dc08fe655160421b28d2b5128b48f55312315cdbb2cfe", size = 30848, upload-time = "2025-06-08T15:43:56.298Z" },
+]
+
+[[package]]
 name = "mcp"
 version = "1.20.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3407,7 +3419,7 @@ wheels = [
 
 [[package]]
 name = "nexus-ai-fs"
-version = "0.9.28"
+version = "0.9.29"
 source = { editable = "." }
 dependencies = [
     { name = "aiofiles" },
@@ -3597,6 +3609,7 @@ test = [
 dev = [
     { name = "freezegun" },
     { name = "grpcio-tools" },
+    { name = "maturin-import-hook" },
     { name = "mypy" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
@@ -3747,6 +3760,7 @@ provides-extras = ["performance", "pay", "compression", "monitoring", "mobile", 
 dev = [
     { name = "freezegun", specifier = ">=1.5.5" },
     { name = "grpcio-tools", specifier = ">=1.78.0" },
+    { name = "maturin-import-hook", specifier = ">=0.2.0" },
     { name = "mypy", specifier = ">=1.18.2" },
     { name = "pytest-asyncio", specifier = ">=1.3.0" },
     { name = "pytest-cov", specifier = ">=7.0.0" },

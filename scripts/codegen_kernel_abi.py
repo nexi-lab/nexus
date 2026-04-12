@@ -32,6 +32,7 @@ RUST_SRC = ROOT / "rust" / "nexus_kernel" / "src"
 STUBS_PATH = ROOT / "stubs" / "nexus_kernel" / "__init__.pyi"
 EXPORTS_PATH = ROOT / "src" / "nexus" / "core" / "kernel_exports.py"
 PROTOCOLS_PATH = ROOT / "src" / "nexus" / "core" / "kernel_protocols.py"
+API_GROUPS_PATH = ROOT / "src" / "nexus" / "_kernel_api_groups.py"
 # generated_pyo3.rs is the single PyO3 transport file (Phase H → PR 21: fully codegen).
 GENERATED_PYO3_PATH = RUST_SRC / "generated_pyo3.rs"
 
@@ -78,6 +79,40 @@ class TraitDef:
 FEATURE_GATED_EXPORTS: set[str] = {
     "openai_chat_completion",
     "openai_chat_completion_stream",
+}
+
+# ── Capability group config (single source of truth for _rust_compat.py) ─────
+# Defines which module-level symbols belong to each capability group.
+# Imported by _rust_compat.py via the generated _kernel_api_groups.py.
+# Groups: "core" failure disables all Rust; others disable only their feature.
+CAPABILITY_GROUP_CONFIG: dict[str, tuple[str, ...]] = {
+    "core": (
+        "Kernel",  # PyKernel exposed to Python as "Kernel" via #[pyclass(name = "Kernel")]
+        "normalize_path",
+        "validate_path",
+        "canonicalize_path",
+        "extract_zone_id",
+        "get_ancestors",
+        "get_parent",
+        "get_parent_chain",
+        "parent_path",
+        "path_matches_pattern",
+        "split_path",
+        "unscope_internal_path",
+    ),
+    "hash": ("hash_content_py", "hash_content_smart_py"),
+    "ipc": (
+        "SharedMemoryPipeBackend",
+        "SharedMemoryStreamBackend",
+    ),
+    "io": ("read_file", "read_files_bulk"),
+    "search": ("grep_bulk", "grep_files_mmap", "glob_match_bulk"),
+    "storage": (
+        "BloomFilter",
+        "VFSLockManager",
+        "VFSSemaphore",
+        "VolumeEngine",
+    ),
 }
 
 # ── Return-type overrides ──────────────────────────────────────────
@@ -826,6 +861,67 @@ def generate_exports(all_names: list[str]) -> str:
         lines.append(f'    "{name}",')
     lines.append("]")
     lines.append("")
+
+    return "\n".join(lines)
+
+
+def generate_api_groups(classes: dict[str, "ClassDef"]) -> str:
+    """Generate _kernel_api_groups.py — auto-derived API surface for version validation.
+
+    Emits:
+      MODULE_CAPABILITY_GROUPS — module-level symbol groups (moved from _rust_compat.py)
+      KERNEL_REQUIRED_METHODS  — all public methods on PyKernel (auto-derived from Rust)
+    """
+    kernel_cls = classes.get("PyKernel")
+    if kernel_cls is None:
+        raise ValueError("PyKernel class not found in parsed Rust sources")
+
+    # All public instance/static methods (skip __init__ and private _methods)
+    kernel_methods = sorted(
+        f.name
+        for f in kernel_cls.methods
+        if f.kind not in ("new", "getter") and not f.name.startswith("__")
+    )
+
+    lines = [
+        MARKER,
+        "# Source: rust/nexus_kernel/src/kernel.rs (PyKernel methods)",
+        "",
+        '"""Auto-generated API surface groups for nexus_kernel version validation.',
+        "",
+        "Used by nexus._rust_compat to validate the installed binary against the",
+        "expected API surface at import time.  Re-run: python scripts/codegen_kernel_abi.py",
+        '"""',
+        "",
+        "from __future__ import annotations",
+        "",
+        "# Module-level symbols grouped by capability area.",
+        "# Sourced from CAPABILITY_GROUP_CONFIG in scripts/codegen_kernel_abi.py.",
+        "MODULE_CAPABILITY_GROUPS: dict[str, tuple[str, ...]] = {",
+    ]
+
+    for group, symbols in CAPABILITY_GROUP_CONFIG.items():
+        lines.append(f'    "{group}": (')
+        for sym in symbols:
+            lines.append(f'        "{sym}",')
+        lines.append("    ),")
+
+    lines += [
+        "}",
+        "",
+        "# All public methods that must exist on nexus_kernel.PyKernel.",
+        "# Auto-derived from #[pymethods] in rust/nexus_kernel/src/kernel.rs.",
+        "# A stale binary missing any of these triggers an actionable ImportError.",
+        "KERNEL_REQUIRED_METHODS: frozenset[str] = frozenset({",
+    ]
+
+    for name in kernel_methods:
+        lines.append(f'    "{name}",')
+
+    lines += [
+        "})",
+        "",
+    ]
 
     return "\n".join(lines)
 
@@ -3529,11 +3625,13 @@ def main() -> int:
     stubs_content = generate_stubs(module_functions, classes, class_order)
     protocols_content = generate_protocols(traits)
     exports_content = generate_exports(all_names)
+    api_groups_content = generate_api_groups(classes)
     pyo3_content = generate_pyo3_rs(traits)
     outputs: list[tuple[Path, str]] = [
         (STUBS_PATH, stubs_content),
         (PROTOCOLS_PATH, protocols_content),
         (EXPORTS_PATH, exports_content),
+        (API_GROUPS_PATH, api_groups_content),
         (GENERATED_PYO3_PATH, pyo3_content),
     ]
 

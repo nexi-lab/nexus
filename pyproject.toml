@@ -195,6 +195,7 @@ dev = [
     "mypy>=1.8.0",
     "pre-commit>=3.6.0",
     "import-linter>=2.0",  # Architecture boundary enforcement (Issue #2286)
+    "maturin-import-hook>=0.2.0",  # Auto-rebuild Rust extensions on source change (Issue #3712)
 
     # Documentation
     "mkdocs>=1.5.3",
@@ -937,6 +938,7 @@ unmatched_ignore_imports_alerting = "warn"
 dev = [
     "freezegun>=1.5.5",
     "grpcio-tools>=1.78.0",
+    "maturin-import-hook>=0.2.0",
     "mypy>=1.18.2",
     "pytest-asyncio>=1.3.0",
     "pytest-cov>=7.0.0",

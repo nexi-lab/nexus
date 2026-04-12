@@ -62,8 +62,12 @@ def _init_bloom_from_transport(
     Uses transport.list_content_hashes() to seed the Bloom filter — works for
     both volume-packed storage and file-per-blob storage (Issue #3403).
     """
-    # RUST_FALLBACK: BloomFilter
-    from nexus_kernel import BloomFilter
+    # RUST_FALLBACK: BloomFilter (optional — stale/absent binary degrades gracefully)
+    from nexus._rust_compat import BloomFilter
+
+    if BloomFilter is None:
+        logger.debug("BloomFilter unavailable (stale or absent nexus_kernel) — skipping Bloom init")
+        return None
 
     bloom = BloomFilter(capacity, fp_rate)
     if hasattr(transport, "list_content_hashes"):

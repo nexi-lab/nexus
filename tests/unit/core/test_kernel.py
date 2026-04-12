@@ -9,12 +9,9 @@ from __future__ import annotations
 
 import unittest
 
-try:
-    from nexus_kernel import Kernel
-
-    RUST_AVAILABLE = True
-except ImportError:
-    RUST_AVAILABLE = False
+# Use _rust_compat so that the skip guard reflects both "not installed" and
+# "installed but stale/degraded" — matching the runtime availability check.
+from nexus._rust_compat import RUST_AVAILABLE, Kernel
 
 # Entry type constants
 DT_REG = 0

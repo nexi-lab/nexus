@@ -229,3 +229,77 @@ async def test_resolve_empty_scopes_becomes_empty_tuple(
     resolved = await manager.resolve("google", "alice@example.com")
     assert resolved.scopes == ()
     assert isinstance(resolved.scopes, tuple)
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for adversarial-review findings
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_resolve_zone_id_none_normalizes_to_root(
+    manager: TokenManager, valid_credential: OAuthCredential
+) -> None:
+    """zone_id=None must behave identically to ROOT_ZONE_ID.
+
+    Regression: get_valid_token() normalizes None→ROOT_ZONE_ID internally,
+    but get_credential() does not. Without explicit normalization in
+    resolve(), the second call fails to find the credential."""
+    provider = MagicMock()
+    provider.refresh_token = AsyncMock()
+    manager.register_provider("google", provider)
+
+    await manager.store_credential(
+        provider="google",
+        user_email="alice@example.com",
+        credential=valid_credential,
+    )
+
+    resolved = await manager.resolve("google", "alice@example.com", zone_id=None)
+    assert resolved.access_token == valid_credential.access_token
+    assert resolved.expires_at == valid_credential.expires_at
+
+
+@pytest.mark.asyncio
+async def test_resolve_returns_refreshed_scopes_not_stale(
+    manager: TokenManager,
+) -> None:
+    """When a provider returns new scopes during refresh, resolve() must
+    return them — not the stale scopes from the original store_credential().
+
+    Regression: get_valid_token()'s refresh path previously did not persist
+    updated scopes to the DB model, so the follow-up get_credential() read
+    returned stale data."""
+    expired_no_scopes = OAuthCredential(
+        access_token="ya29.expired",
+        refresh_token="1//will_refresh",
+        token_type="Bearer",
+        expires_at=datetime.now(UTC) - timedelta(hours=1),
+        scopes=None,
+        provider="google",
+        user_email="alice@example.com",
+    )
+
+    refreshed_with_scopes = OAuthCredential(
+        access_token="ya29.fresh",
+        refresh_token="1//will_refresh",
+        token_type="Bearer",
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
+        scopes=("https://www.googleapis.com/auth/gmail.readonly",),
+        provider="google",
+        user_email="alice@example.com",
+    )
+
+    provider = MagicMock()
+    provider.refresh_token = AsyncMock(return_value=refreshed_with_scopes)
+    manager.register_provider("google", provider)
+
+    await manager.store_credential(
+        provider="google",
+        user_email="alice@example.com",
+        credential=expired_no_scopes,
+    )
+
+    resolved = await manager.resolve("google", "alice@example.com")
+    assert resolved.access_token == "ya29.fresh"
+    assert resolved.scopes == ("https://www.googleapis.com/auth/gmail.readonly",)

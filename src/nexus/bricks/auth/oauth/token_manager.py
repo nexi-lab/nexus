@@ -383,6 +383,8 @@ class TokenManager:
 
                         model.encrypted_access_token = encrypted_access_token
                         model.expires_at = new_credential.expires_at
+                        if new_credential.scopes is not None:
+                            model.scopes = json.dumps(list(new_credential.scopes))
                         model.last_refreshed_at = datetime.now(UTC)
                         model.updated_at = datetime.now(UTC)
 
@@ -532,6 +534,8 @@ class TokenManager:
         a stable contract without importing ``OAuthCredential`` or touching
         the encryption/rotation internals.
         """
+        if zone_id is None:
+            zone_id = ROOT_ZONE_ID
         access_token = await self.get_valid_token(provider, user_email, zone_id=zone_id)
         credential = await self.get_credential(provider, user_email, zone_id=zone_id)
         if credential is None:

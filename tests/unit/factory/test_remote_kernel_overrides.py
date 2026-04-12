@@ -1,5 +1,3 @@
-import pytest
-
 from nexus.factory._remote import install_remote_kernel_rpc_overrides
 
 
@@ -17,8 +15,7 @@ class _DummyNfs:
         raise AssertionError("original client-side sys_rename should be replaced")
 
 
-@pytest.mark.asyncio
-async def test_install_remote_kernel_rpc_overrides_routes_sys_rename_to_server_rpc() -> None:
+def test_install_remote_kernel_rpc_overrides_routes_sys_rename_to_server_rpc() -> None:
     nfs = _DummyNfs()
     transport = _DummyTransport()
 

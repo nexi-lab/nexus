@@ -137,7 +137,8 @@ class TestBootRemoteServices:
 
         nfs = MagicMock()
         nfs._service_registry = AsyncMock()
-        nfs.sys_setattr = AsyncMock()
+        # sys_setattr is sync (Phase 7) — use MagicMock, not AsyncMock
+        nfs.sys_setattr = MagicMock()
 
         _, call_rpc = _make_recorder()
         with patch("nexus.factory.service_routing.enlist_wired_services") as mock_enlist:
@@ -156,8 +157,8 @@ class TestBootRemoteServices:
                 assert field in wired_dict
                 assert isinstance(wired_dict[field], RemoteServiceProxy)
 
-        # version_service registered via sys_setattr (not direct enlist)
-        setattr_calls = [c.args[0] for c in nfs.sys_setattr.await_args_list]
+        # version_service registered via sys_setattr (sync, not awaited)
+        setattr_calls = [c.args[0] for c in nfs.sys_setattr.call_args_list]
         assert "/__sys__/services/version_service" in setattr_calls
         # Coordinator stored on nfs
         assert nfs.service_coordinator is not None
@@ -172,7 +173,7 @@ class TestBootRemoteServices:
 
         nfs = MagicMock()
         nfs._service_registry = AsyncMock()
-        nfs.sys_setattr = AsyncMock()
+        nfs.sys_setattr = MagicMock()
 
         _, call_rpc = _make_recorder()
         with patch("nexus.factory.service_routing.enlist_wired_services") as mock_enlist:

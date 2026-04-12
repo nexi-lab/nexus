@@ -95,15 +95,18 @@ class TestUnregisterObserve:
     def test_unregister_missing(self, dispatch: _TestDispatch) -> None:
         assert dispatch.unregister_observe(MagicMock()) is False
 
-    async def test_multiple_observers(self, dispatch: _TestDispatch) -> None:
-        from unittest.mock import AsyncMock
+    def test_multiple_observers(self, dispatch: _TestDispatch) -> None:
+        from nexus.core.file_events import ALL_FILE_EVENTS, FileEventType
 
-        from nexus.core.file_events import ALL_FILE_EVENTS, FileEvent, FileEventType
-
-        obs1, obs2, obs3 = AsyncMock(), AsyncMock(), AsyncMock()
+        obs1 = MagicMock()
+        obs2 = MagicMock()
+        obs3 = MagicMock()
         obs1.event_mask = ALL_FILE_EVENTS
         obs2.event_mask = ALL_FILE_EVENTS
         obs3.event_mask = ALL_FILE_EVENTS
+        obs1.__class__.__name__ = "Obs1"
+        obs2.__class__.__name__ = "Obs2"
+        obs3.__class__.__name__ = "Obs3"
         dispatch.register_observe(obs1)
         dispatch.register_observe(obs2)
         dispatch.register_observe(obs3)
@@ -111,9 +114,8 @@ class TestUnregisterObserve:
 
         dispatch.unregister_observe(obs2)
         assert dispatch.observer_count == 2
-        # obs1 and obs3 remain — verify notify still reaches them
-        event = FileEvent(type=FileEventType.FILE_WRITE, path="/test")
-        dispatch.notify(event)
-        obs1.on_mutation.assert_called_once_with(event)
-        obs3.on_mutation.assert_called_once_with(event)
+        # obs1 and obs3 remain — verify dispatch_event still reaches them
+        dispatch.dispatch_event(FileEventType.FILE_WRITE.value, "/test")
+        obs1.on_mutation.assert_called_once()
+        obs3.on_mutation.assert_called_once()
         obs2.on_mutation.assert_not_called()

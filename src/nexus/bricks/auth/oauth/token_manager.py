@@ -139,6 +139,10 @@ class TokenManager:
         # Capped at _MAX_REFRESH_LOCKS entries; oldest evicted on overflow (Issue #2281).
         self._refresh_locks: dict[tuple[str, str, str], asyncio.Lock] = {}
 
+        # Metadata stash for resolve(): populated inside get_valid_token()'s
+        # locked section so resolve() can read token + metadata atomically.
+        self._last_resolved: tuple[datetime | None, tuple[str, ...] | None] = (None, None)
+
     def _get_refresh_lock(self, key: tuple[str, str, str]) -> asyncio.Lock:
         """Get or create a per-credential lock with LRU eviction (Issue #2281).
 
@@ -313,6 +317,8 @@ class TokenManager:
                 return cached_raw.decode()
 
         # Per-credential lock prevents concurrent refresh races (Issue #2281).
+        # _last_resolved stash: resolve() reads metadata from the same locked
+        # section that produced the access token, avoiding a second DB round-trip.
         lock_key = (provider, user_email, zone_id)
         lock = self._get_refresh_lock(lock_key)
         try:
@@ -514,6 +520,7 @@ class TokenManager:
                     f"Token expired for {provider}:{user_email} and no refresh token available"
                 )
 
+            self._last_resolved = (credential.expires_at, credential.scopes)
             return credential.access_token
         finally:
             lock.release()
@@ -527,30 +534,21 @@ class TokenManager:
     ) -> ResolvedToken:
         """Resolve a valid access token via the ``TokenResolver`` seam.
 
-        Delegates to ``get_valid_token()`` for the refresh/rotation flow, then
-        reads the freshly-updated credential metadata for ``expires_at`` and
-        ``scopes``. The extra read is deliberate: the seam exists so higher-
-        level backends (see Issue #3738's ``CredentialBackend``) can depend on
-        a stable contract without importing ``OAuthCredential`` or touching
-        the encryption/rotation internals.
+        Delegates to ``get_valid_token()``, which refreshes/rotates as needed
+        and stashes ``(expires_at, scopes)`` on ``self._last_resolved`` inside
+        its locked section. We read that stash here — no second DB round-trip,
+        no extra decryption, and token + metadata always come from the same
+        transactional read. Safe in asyncio because no other coroutine can
+        run between ``get_valid_token()`` returning and our stash read.
         """
         if zone_id is None:
             zone_id = ROOT_ZONE_ID
         access_token = await self.get_valid_token(provider, user_email, zone_id=zone_id)
-        credential = await self.get_credential(provider, user_email, zone_id=zone_id)
-        if credential is None:
-            # Should be impossible: get_valid_token() just succeeded on the
-            # same (provider, user_email, zone_id) tuple. If the credential
-            # disappeared between the two reads, something deleted it
-            # concurrently — surface that as an authentication error rather
-            # than masking it with a stale token.
-            raise AuthenticationError(
-                f"Credential for {provider}:{user_email} vanished mid-resolve"
-            )
+        expires_at, scopes = self._last_resolved
         return ResolvedToken(
             access_token=access_token,
-            expires_at=credential.expires_at,
-            scopes=credential.scopes or (),
+            expires_at=expires_at,
+            scopes=scopes or (),
         )
 
     def detect_reuse(self, token_family_id: str, refresh_token_hash: str) -> bool:

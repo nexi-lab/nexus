@@ -23,7 +23,7 @@ use dashmap::DashMap;
 use parking_lot::{Condvar, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use threadpool::ThreadPool;
+// ThreadPool removed — OBSERVE dispatch is inline (~1μs per observer).
 
 // ── KernelError ────────────────────────────────────────────────────────────
 
@@ -419,7 +419,7 @@ pub struct Kernel {
     // delegate here. Until then this is intentional pre-built infrastructure.
     #[allow(dead_code)]
     observers: Mutex<KernelObserverRegistry>,
-    // Background ThreadPool for OBSERVE-phase dispatch (§11 Phase 3).
+    // OBSERVE dispatch is inline (~1μs per observer — queue + reset timer).
     //
     // OBSERVE is fire-and-forget by contract: the syscall returns as soon
     // as the event is queued; observer callbacks run on this pool, off
@@ -440,7 +440,7 @@ pub struct Kernel {
     // up-front so the cost (4 OS threads, ~8MB stack each) is paid once
     // at kernel construction.
     #[allow(dead_code)]
-    observer_pool: ThreadPool,
+    // observer_pool removed — inline dispatch, no background threads.
     // Zone revision counter — AtomicU64 per zone + Condvar for waiters (§10 A2)
     zone_revisions: DashMap<String, Arc<ZoneRevisionEntry>>,
     // File watch registry — Rust-native pattern matching (§10 A3)
@@ -483,7 +483,7 @@ impl Kernel {
             access_hook_count: AtomicU64::new(0),
             write_batch_hook_count: AtomicU64::new(0),
             observers: Mutex::new(KernelObserverRegistry::new()),
-            observer_pool: ThreadPool::with_name("nexus-observer".to_string(), 4),
+            // No observer_pool — dispatch is inline.
             zone_revisions: DashMap::new(),
             file_watches: FileWatchRegistry::new(),
             agent_registry: crate::agent_registry::AgentRegistry::new(),
@@ -976,26 +976,18 @@ impl Kernel {
         if observers.is_empty() {
             return;
         }
+        // Inline dispatch: observers are ~1μs (queue + reset timer).
+        // No ThreadPool needed — heavy work runs on observer's own timer thread.
+        // Inline also avoids fork+threads deadlock in xdist test workers.
         for obs in observers {
-            let event_owned = event.clone();
-            self.observer_pool.execute(move || {
-                obs.on_mutation(&event_owned);
-            });
+            obs.on_mutation(event);
         }
     }
 
-    /// Block until all queued observer jobs have completed.
-    ///
-    /// Test-only helper for deterministic assertions: `dispatch_observers`
-    /// returns as soon as work is queued, but tests often need to assert
-    /// observer side-effects before teardown. This is the OBSERVE analogue
-    /// of fsync.
-    ///
-    /// Not for production: it blocks the calling thread until the entire
-    /// ThreadPool drains, which would defeat the fire-and-forget contract
-    /// if called on the syscall hot path.
+    /// No-op — dispatch is now inline (no ThreadPool to drain).
+    /// Kept for API compatibility with tests that call flush_observers().
     pub fn flush_observers(&self) {
-        self.observer_pool.join();
+        // Inline dispatch completes synchronously — nothing to flush.
     }
 
     /// Helper: build a `FileEvent` pre-populated with the syscall's

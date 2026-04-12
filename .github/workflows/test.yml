@@ -164,8 +164,8 @@ jobs:
         timeout-minutes: 30
         run: |
           start=$(date +%s)
-          uv run pytest tests/unit -v --durations=10 \
-            --timeout=30 --timeout-method=signal \
+          uv run pytest tests/unit -v --durations=10 -n auto --dist loadgroup \
+            --timeout=30 --timeout-method=thread \
             --cov=nexus --cov-report=term-missing --cov-report=xml
           status=$?
           echo $(( $(date +%s) - start )) > unit_test_duration_sec.txt

@@ -296,24 +296,10 @@ class PathGmailBackend(
             logger.warning(f"Failed to load static README.md: {e}, using auto-generated")
             return super().generate_readme(mount_path)
 
-    async def write_readme(self, mount_path: str, filesystem: Any = None) -> dict[str, Any]:
-        import posixpath
-
-        result: dict[str, Any] = {"readme_md": None, "examples": []}
-        if filesystem is None:
-            return result
-
-        readme_dir = posixpath.join(mount_path.rstrip("/"), self.README_DIR)
-        try:
-            filesystem.mkdir(readme_dir, parents=True, exist_ok=True)
-            readme_md_path = posixpath.join(readme_dir, "README.md")
-            content = self.generate_readme(mount_path)
-            filesystem.write(readme_md_path, content.encode("utf-8"))
-            result["readme_md"] = readme_md_path
-            return result
-        except Exception as e:
-            logger.warning("Failed to write readme docs to %s: %s", readme_dir, e)
-            return result
+    # NOTE (Issue #3728): ``write_readme`` override removed along with the
+    # base class method.  Gmail's static README.md (if present) is now read
+    # via ``generate_readme`` above, and the virtual ``.readme/`` overlay in
+    # ``schema_generator`` serves the result on-demand.
 
     # =================================================================
     # Content operations — override PathAddressingEngine for Gmail

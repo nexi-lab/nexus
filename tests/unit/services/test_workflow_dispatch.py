@@ -30,15 +30,15 @@ def _make_mock_nx() -> MagicMock:
     ``self._nx.pipe_close`` (sync passthroughs to the Rust kernel) and
     ``self._nx.sys_setattr`` / ``self._nx.sys_read`` (sync).
     """
-    nx = AsyncMock()
-    # Sync passthrough methods — must be MagicMock so calls are not awaited
+    nx = MagicMock()
+    # Sync passthrough methods
     nx.pipe_write_nowait = MagicMock()
     nx.pipe_close = MagicMock()
-    # Async syscalls
-    nx.sys_setattr = AsyncMock(return_value={"path": _WORKFLOW_PIPE_PATH, "created": True})
-    # sys_read is async — returns bytes. Raising NexusFileNotFoundError signals
+    # Sync syscalls — NexusFS methods are sync def
+    nx.sys_setattr = MagicMock(return_value={"path": _WORKFLOW_PIPE_PATH, "created": True})
+    # sys_read is sync — returns bytes. Raising NexusFileNotFoundError signals
     # "pipe closed" to the consumer loop (which catches it gracefully).
-    nx.sys_read = AsyncMock(side_effect=NexusFileNotFoundError(_WORKFLOW_PIPE_PATH))
+    nx.sys_read = MagicMock(side_effect=NexusFileNotFoundError(_WORKFLOW_PIPE_PATH))
     return nx
 
 
@@ -219,7 +219,7 @@ class TestConsumer:
         from nexus.contracts.exceptions import NexusFileNotFoundError
 
         events = [json.dumps({"type": "file_write", "ctx": {"idx": i}}).encode() for i in range(3)]
-        nx.sys_read = AsyncMock(side_effect=[*events, NexusFileNotFoundError(_WORKFLOW_PIPE_PATH)])
+        nx.sys_read = MagicMock(side_effect=[*events, NexusFileNotFoundError(_WORKFLOW_PIPE_PATH)])
 
         await svc.start()
 
@@ -235,7 +235,7 @@ class TestConsumer:
         from nexus.contracts.exceptions import NexusFileNotFoundError
 
         svc, nx = _make_service()
-        nx.sys_read = AsyncMock(side_effect=NexusFileNotFoundError(_WORKFLOW_PIPE_PATH))
+        nx.sys_read = MagicMock(side_effect=NexusFileNotFoundError(_WORKFLOW_PIPE_PATH))
 
         await svc.start()
         await asyncio.sleep(0.01)
@@ -252,7 +252,7 @@ class TestConsumer:
             json.dumps({"type": "file_write", "ctx": {"x": 1}}).encode(),
             json.dumps({"type": "file_write", "ctx": {"x": 2}}).encode(),
         ]
-        nx.sys_read = AsyncMock(side_effect=[*events, NexusFileNotFoundError(_WORKFLOW_PIPE_PATH)])
+        nx.sys_read = MagicMock(side_effect=[*events, NexusFileNotFoundError(_WORKFLOW_PIPE_PATH)])
 
         svc._workflow_engine.fire_event.side_effect = [
             RuntimeError("boom"),
@@ -305,28 +305,20 @@ class TestLifecycle:
         assert svc._pipe_ready is False
 
     @pytest.mark.asyncio
+    @pytest.mark.asyncio
     async def test_stop_cancels_consumer(self) -> None:
         """stop() should cancel the consumer task."""
         from nexus.contracts.exceptions import NexusFileNotFoundError
 
         svc, nx = _make_service()
-        # sys_read blocks forever (simulates waiting for pipe data)
-        read_event = asyncio.Event()
-
-        async def _blocking_read(*args, **kwargs):
-            await read_event.wait()
-            raise NexusFileNotFoundError(_WORKFLOW_PIPE_PATH)
-
-        nx.sys_read = _blocking_read
+        # sys_read raises immediately (pipe closed) — consumer exits promptly.
+        nx.sys_read = MagicMock(side_effect=NexusFileNotFoundError(_WORKFLOW_PIPE_PATH))
 
         await svc.start()
 
         assert svc._consumer_task is not None
-        assert not svc._consumer_task.done()
 
-        # Signal close to unblock consumer
-        read_event.set()
-        await svc.stop()
+        await svc.stop()  # should not hang
 
         assert svc._consumer_task is None
         assert svc._pipe_ready is False

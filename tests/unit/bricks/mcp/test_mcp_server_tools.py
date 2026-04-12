@@ -1417,8 +1417,8 @@ class TestServerCreation:
         """Test creating server with remote URL."""
         with patch("nexus.connect", new_callable=AsyncMock) as mock_connect:
             mock_instance = Mock()
-            mock_instance.sys_read = AsyncMock(return_value=b"test")
-            mock_instance.sys_write = AsyncMock()
+            mock_instance.sys_read = Mock(return_value=b"test")
+            mock_instance.sys_write = Mock()
             mock_connect.return_value = mock_instance
 
             server = await create_mcp_server(remote_url="http://localhost:2026", api_key="test-key")

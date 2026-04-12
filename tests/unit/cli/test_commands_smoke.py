@@ -9,7 +9,7 @@ These tests mock the filesystem layer and validate:
 
 import json
 from contextlib import asynccontextmanager
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
@@ -28,8 +28,8 @@ def _make_mock_nx() -> MagicMock:
     """Create a mock NexusFilesystem with common methods."""
     nx = MagicMock()
     nx.close = MagicMock()
-    # sys_readdir is async in the real NexusFilesystem
-    nx.sys_readdir = AsyncMock()
+    # sys_readdir is sync in the real NexusFilesystem
+    nx.sys_readdir = MagicMock()
     return nx
 
 

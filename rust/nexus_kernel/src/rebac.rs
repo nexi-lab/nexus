@@ -165,6 +165,7 @@ fn compute_permission_interned_shared(
             InternedRelationConfig::TupleToUserset {
                 tupleset,
                 computed_userset,
+                skip_reverse,
             } => {
                 // Forward: object as subject → find objects it relates to
                 let forward = graph
@@ -184,6 +185,12 @@ fn compute_permission_interned_shared(
                     });
                 if forward {
                     true
+                } else if *skip_reverse {
+                    // Fix nexi-lab/nexus#3733 Bug A: skip the reverse pattern
+                    // for ``parent`` tuplesets. See graph.rs for the full
+                    // rationale — the reverse direction inverts parent
+                    // semantics and causes privilege escalation.
+                    false
                 } else {
                     // Reverse: find subjects that have tupleset relation ON object
                     // (H25: must match graph.rs which checks both directions)

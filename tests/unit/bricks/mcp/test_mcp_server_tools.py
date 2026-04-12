@@ -5,7 +5,7 @@ for the Nexus MCP server implementation.
 """
 
 import json
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import ANY, AsyncMock, Mock, patch
 
 import pytest
 
@@ -16,38 +16,73 @@ from nexus.bricks.mcp.server import create_mcp_server
 # ============================================================================
 
 
-def get_tool(server, tool_name: str):
-    """Helper to get a tool from the MCP server (FastMCP 2.x and 3.x compat)."""
-    # FastMCP 3.x API
+def _components_of(server, prefix: str) -> dict[str, object]:
+    """Return all components of ``prefix`` type (``tool`` / ``prompt`` /
+    ``resource`` / ``template``) keyed by their public name.
+
+    Shim that works for both FastMCP 2.x and 3.x so individual test
+    helpers don't have to repeat the version split.
+    """
+    # FastMCP 3.x — single component registry keyed by "<type>:<name>@..."
     if hasattr(server, "_local_provider"):
         lp = server._local_provider
-        tools = {v.name: v for k, v in lp._components.items() if k.startswith("tool:")}
-        return tools[tool_name]
-    # FastMCP 2.x API
-    return server._tool_manager._tools[tool_name]
+        return {v.name: v for k, v in lp._components.items() if k.startswith(f"{prefix}:")}
+    # FastMCP 2.x — per-type managers. Only the attribute mappings we
+    # still exercise are listed here; anything else raises.
+    attr = {
+        "tool": "_tool_manager",
+        "prompt": "_prompt_manager",
+        "resource": "_resource_manager",
+        "template": "_resource_manager",
+    }[prefix]
+    mgr = getattr(server, attr)
+    if prefix == "tool":
+        return dict(mgr._tools)
+    if prefix == "prompt":
+        return dict(mgr._prompts)
+    if prefix == "resource":
+        return dict(getattr(mgr, "_resources", {}))
+    if prefix == "template":
+        return dict(getattr(mgr, "_templates", {}))
+    raise ValueError(f"unknown component prefix: {prefix}")
+
+
+def get_tool(server, tool_name: str):
+    """Helper to get a tool from the MCP server (FastMCP 2.x and 3.x compat)."""
+    return _components_of(server, "tool")[tool_name]
 
 
 def get_prompt(server, prompt_name: str):
-    """Helper to get a prompt from the MCP server."""
-    return server._prompt_manager._prompts[prompt_name]
+    """Helper to get a prompt from the MCP server (FastMCP 2.x and 3.x compat)."""
+    return _components_of(server, "prompt")[prompt_name]
 
 
 def get_resource_template(server, uri_pattern: str):
-    """Helper to get a resource template from the MCP server."""
-    templates = server._resource_manager._templates
-    for template_key, template in templates.items():
-        if uri_pattern in str(template_key):
-            return template
+    """Helper to get a resource template from the MCP server (FastMCP 2.x+3.x).
+
+    FastMCP 3.x separates static resources from URI-pattern templates
+    into two component buckets. We search the templates bucket first
+    (matching by URI pattern) and fall back to resources for the
+    static case so older tests keep working.
+    """
+    for prefix in ("template", "resource"):
+        for key, template in _components_of(server, prefix).items():
+            # In 3.x the component key is the component's .name (so we
+            # match on the registered URI via the template's
+            # ``uri_template`` or ``uri`` attribute). Fall back to
+            # substring matching the key itself so pre-3.x templates
+            # keyed by URI string still match.
+            candidate_uri = (
+                getattr(template, "uri_template", None) or getattr(template, "uri", None) or key
+            )
+            if uri_pattern in str(candidate_uri):
+                return template
     raise KeyError(f"Resource template with pattern '{uri_pattern}' not found")
 
 
 def tool_exists(server, tool_name: str) -> bool:
     """Check if a tool exists in the server (FastMCP 2.x and 3.x compat)."""
-    if hasattr(server, "_local_provider"):
-        lp = server._local_provider
-        names = {v.name for k, v in lp._components.items() if k.startswith("tool:")}
-        return tool_name in names
-    return tool_name in server._tool_manager._tools
+    return tool_name in _components_of(server, "tool")
 
 
 # ============================================================================
@@ -622,7 +657,15 @@ class TestSearchTools:
         assert "total" in response
         assert isinstance(response["items"], list)
         assert "test.py" in response["items"]
-        mock_nx_basic._mock_search.glob.assert_called_once_with("*.py", "/src")
+        # #3701: files=None forwarded by default so SearchService can
+        # distinguish "no filter" from "explicit empty filter".
+        # Codex review #3 finding #1: ``context=...`` is now always
+        # supplied (resolved from the connection's identity) so the
+        # underlying SearchService sees an explicit OperationContext
+        # instead of running under an ambient default.
+        mock_nx_basic._mock_search.glob.assert_called_once_with(
+            "*.py", "/src", files=None, context=ANY
+        )
 
     async def test_glob_default_path(self, mock_nx_basic):
         """Test glob with default path."""
@@ -631,7 +674,9 @@ class TestSearchTools:
         glob_tool = get_tool(server, "nexus_glob")
         glob_tool.fn(pattern="*.txt")
 
-        mock_nx_basic._mock_search.glob.assert_called_once_with("*.txt", "/")
+        mock_nx_basic._mock_search.glob.assert_called_once_with(
+            "*.txt", "/", files=None, context=ANY
+        )
 
     async def test_glob_error(self, mock_nx_basic):
         """Test glob error handling."""
@@ -645,7 +690,18 @@ class TestSearchTools:
         assert "Invalid pattern" in result
 
     async def test_grep_success(self, mock_nx_basic):
-        """Test grep content search successfully."""
+        """Test grep content search successfully.
+
+        Asserts the #3701 Issue 14 fix: MCP grep passes ``max_results`` to
+        SearchService so the underlying call can return enough matches for
+        the caller's requested page rather than silently capping at 100.
+
+        Codex review #1 finding #2: ``max_results`` is now
+        ``limit + offset + 1`` (sentinel fetch) so ``has_more`` can be
+        detected reliably. Codex review #3 finding #1: ``context=...``
+        is now always passed so SearchService runs under an explicit
+        identity.
+        """
         server = await create_mcp_server(nx=mock_nx_basic)
 
         grep_tool = get_tool(server, "nexus_grep")
@@ -656,7 +712,15 @@ class TestSearchTools:
         assert "items" in response
         assert "total" in response
         assert isinstance(response["items"], list)
-        mock_nx_basic._mock_search.grep.assert_called_once_with("TODO", "/src", ignore_case=False)
+        # Default limit=100, offset=0 → sentinel_window = 100 + 0 + 1 = 101
+        mock_nx_basic._mock_search.grep.assert_called_once_with(
+            "TODO",
+            "/src",
+            ignore_case=False,
+            max_results=101,
+            files=None,
+            context=ANY,
+        )
 
     async def test_grep_ignore_case(self, mock_nx_basic):
         """Test grep with case-insensitive search."""
@@ -665,7 +729,14 @@ class TestSearchTools:
         grep_tool = get_tool(server, "nexus_grep")
         await grep_tool.fn(pattern="error", path="/logs", ignore_case=True)
 
-        mock_nx_basic._mock_search.grep.assert_called_once_with("error", "/logs", ignore_case=True)
+        mock_nx_basic._mock_search.grep.assert_called_once_with(
+            "error",
+            "/logs",
+            ignore_case=True,
+            max_results=101,  # sentinel_window = 100 + 0 + 1
+            files=None,
+            context=ANY,
+        )
 
     async def test_grep_result_limiting(self, mock_nx_basic):
         """Test grep pagination with default limit of 100 matches."""
@@ -684,6 +755,133 @@ class TestSearchTools:
         assert len(response["items"]) == 100
         assert response["has_more"] is True
         assert response["next_offset"] == 100
+
+    async def test_grep_large_limit_requests_max_results_through(self, mock_nx_basic):
+        """Issue #3701 #14: caller asking for limit=200 must not be capped at 100.
+
+        The pre-fix behaviour silently truncated to 100 because MCP did
+        not pass ``max_results`` to SearchService. This test locks in the
+        new behaviour: MCP passes ``limit + offset + 1`` (sentinel fetch
+        from Codex review #1 finding #2) so SearchService returns enough
+        matches for the requested page plus a sentinel row for has_more
+        detection.
+        """
+        large_results = [{"file": f"file{i}.py", "line": i, "content": "match"} for i in range(200)]
+        mock_nx_basic._mock_search.grep.return_value = large_results
+        server = await create_mcp_server(nx=mock_nx_basic)
+
+        grep_tool = get_tool(server, "nexus_grep")
+        result = await grep_tool.fn(pattern="test", limit=200)
+
+        # sentinel_window = 200 + 0 + 1 = 201
+        mock_nx_basic._mock_search.grep.assert_called_once_with(
+            "test",
+            "/",
+            ignore_case=False,
+            max_results=201,
+            files=None,
+            context=ANY,
+        )
+        response = json.loads(result)
+        assert response["total"] == 200
+        assert response["count"] == 200
+        assert response["has_more"] is False
+
+    async def test_grep_offset_requests_enough_matches(self, mock_nx_basic):
+        """Issue #3701 #14: offset=150 with limit=50 must fetch at least 200.
+
+        Plus Codex review #1 finding #2 sentinel: request 201 to detect
+        has_more reliably.
+        """
+        large_results = [{"file": f"file{i}.py", "line": i, "content": "match"} for i in range(200)]
+        mock_nx_basic._mock_search.grep.return_value = large_results
+        server = await create_mcp_server(nx=mock_nx_basic)
+
+        grep_tool = get_tool(server, "nexus_grep")
+        result = await grep_tool.fn(pattern="test", limit=50, offset=150)
+
+        # sentinel_window = 50 + 150 + 1 = 201
+        mock_nx_basic._mock_search.grep.assert_called_once_with(
+            "test",
+            "/",
+            ignore_case=False,
+            max_results=201,
+            files=None,
+            context=ANY,
+        )
+        response = json.loads(result)
+        assert response["total"] == 200
+        assert response["count"] == 50
+        assert response["offset"] == 150
+        assert response["has_more"] is False
+
+    async def test_grep_files_parameter_forwarded(self, mock_nx_basic):
+        """Issue #3701 Issue 2A: files=[...] flows through to SearchService."""
+        mock_nx_basic._mock_search.grep.return_value = []
+        server = await create_mcp_server(nx=mock_nx_basic)
+
+        grep_tool = get_tool(server, "nexus_grep")
+        await grep_tool.fn(pattern="TODO", files=["/src/a.py", "/src/b.py"])
+
+        # sentinel_window = 100 + 0 + 1 = 101
+        mock_nx_basic._mock_search.grep.assert_called_once_with(
+            "TODO",
+            "/",
+            ignore_case=False,
+            max_results=101,
+            files=["/src/a.py", "/src/b.py"],
+            context=ANY,
+        )
+
+    async def test_glob_files_parameter_forwarded(self, mock_nx_basic):
+        """Issue #3701 Issue 2A: files=[...] flows through to SearchService."""
+        mock_nx_basic._mock_search.glob.return_value = []
+        server = await create_mcp_server(nx=mock_nx_basic)
+
+        glob_tool = get_tool(server, "nexus_glob")
+        glob_tool.fn(pattern="*.py", files=["/src/a.py", "/src/b.py"])
+
+        mock_nx_basic._mock_search.glob.assert_called_once_with(
+            "*.py", "/", files=["/src/a.py", "/src/b.py"], context=ANY
+        )
+
+    async def test_grep_before_and_after_context_forwarded(self, mock_nx_basic):
+        """#3701 follow-up: before_context/after_context flow through MCP."""
+        mock_nx_basic._mock_search.grep.return_value = []
+        server = await create_mcp_server(nx=mock_nx_basic)
+
+        grep_tool = get_tool(server, "nexus_grep")
+        await grep_tool.fn(pattern="TODO", before_context=3, after_context=2)
+
+        kwargs = mock_nx_basic._mock_search.grep.call_args.kwargs
+        assert kwargs["before_context"] == 3
+        assert kwargs["after_context"] == 2
+
+    async def test_grep_invert_match_forwarded(self, mock_nx_basic):
+        """#3701 follow-up: invert_match flows through MCP."""
+        mock_nx_basic._mock_search.grep.return_value = []
+        server = await create_mcp_server(nx=mock_nx_basic)
+
+        grep_tool = get_tool(server, "nexus_grep")
+        await grep_tool.fn(pattern="TODO", invert_match=True)
+
+        kwargs = mock_nx_basic._mock_search.grep.call_args.kwargs
+        assert kwargs["invert_match"] is True
+
+    async def test_grep_no_context_flags_omitted_from_kwargs(self, mock_nx_basic):
+        """Defaults (before_context=0, after_context=0, invert_match=False)
+        must NOT appear in the kwargs forwarded to SearchService — old
+        servers without these fields would reject them otherwise."""
+        mock_nx_basic._mock_search.grep.return_value = []
+        server = await create_mcp_server(nx=mock_nx_basic)
+
+        grep_tool = get_tool(server, "nexus_grep")
+        await grep_tool.fn(pattern="TODO")
+
+        kwargs = mock_nx_basic._mock_search.grep.call_args.kwargs
+        assert "before_context" not in kwargs
+        assert "after_context" not in kwargs
+        assert "invert_match" not in kwargs
 
     async def test_grep_error(self, mock_nx_basic):
         """Test grep error handling."""
@@ -867,7 +1065,6 @@ class TestSandboxAvailability:
         """Test sandbox tools registered when Docker provider available."""
         server = await create_mcp_server(nx=mock_nx_with_sandbox)
 
-        list(server._tool_manager._tools.keys())
         assert tool_exists(server, "nexus_python")
         assert tool_exists(server, "nexus_bash")
         assert tool_exists(server, "nexus_sandbox_create")
@@ -881,7 +1078,6 @@ class TestSandboxAvailability:
 
         server = await create_mcp_server(nx=mock_nx_no_sandbox)
 
-        list(server._tool_manager._tools.keys())
         assert not tool_exists(server, "nexus_python")
         assert not tool_exists(server, "nexus_bash")
         assert not tool_exists(server, "nexus_sandbox_create")
@@ -1215,7 +1411,7 @@ class TestServerCreation:
         server = await create_mcp_server(nx=mock_nx_full)
 
         assert server is not None
-        assert len(server._tool_manager._tools) > 0
+        assert len(_components_of(server, "tool")) > 0
 
     async def test_server_with_remote_url(self):
         """Test creating server with remote URL."""
@@ -1266,16 +1462,14 @@ class TestServerCreation:
         # glob, grep, semantic_search, store_memory, query_memory,
         # list_workflows, execute_workflow
         # = 14 tools minimum
-        assert len(server._tool_manager._tools) >= 15
+        assert len(_components_of(server, "tool")) >= 15
 
     async def test_server_tool_count_with_all_features(self, mock_nx_full):
         """Test server has correct tool count with all features."""
         server = await create_mcp_server(nx=mock_nx_full)
 
-        # All basic tools + 5 sandbox tools = 19 tools minimum
-        list(server._tool_manager._tools.keys())
-
-        # Verify sandbox tools are included
+        # Verify sandbox tools are included (all basic tools + 5 sandbox
+        # tools = 19 tools minimum on the full-featured server).
         assert tool_exists(server, "nexus_python")
         assert tool_exists(server, "nexus_bash")
         assert tool_exists(server, "nexus_sandbox_create")

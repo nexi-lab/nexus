@@ -45,6 +45,25 @@ from nexus.lib.rpc_decorator import rpc_expose
 LIST_PARALLEL_WORKERS = 10  # Thread pool size for parallel directory listing (FULL profile default)
 LIST_PARALLEL_MAX_DEPTH = 100  # Safety limit to prevent infinite traversal (e.g., symlink loops)
 
+# Issue #3701 (2A + 7A): hard cap on caller-supplied `files=[...]` list
+# size. Beyond this we reject with ValueError rather than silently
+# truncate — the whole point of the param is for an agent to pass the
+# narrowed working set it already has, and anything past this is almost
+# certainly an abuse of the parameter.
+FILES_FILTER_SIZE_CAP = 10_000
+
+# Issue #3701 (2A + 13A): when `files=[...]` is set, this threshold
+# decides between "grep the files directly" (O(files)) and "use the
+# zone trigram index then post-filter" (O(matches)). Below the threshold
+# we bypass trigram; above it we use trigram. Benchmark-backed in
+# tests/benchmarks/test_search_benchmarks.py::TestFilesFilterThreshold.
+FILES_FILTER_TRIGRAM_THRESHOLD = 200
+
+# Issue #3701 (13A): when trigram runs with a files filter we over-fetch
+# so post-filter truncation doesn't leave the caller short. 3x matches
+# the ReBAC over-fetch factor — adjust if benchmarks show a better value.
+_REBAC_OVERFETCH_FACTOR_FOR_FILES = 3
+
 # Zone-aware path prefixes for cross-zone filtering (Issue #899)
 ZONE_AWARE_PREFIXES: tuple[str, ...] = ("/zones/", "/shared/", "/archives/")
 
@@ -1007,6 +1026,27 @@ class SearchService:
             f"{len(all_files)} files"
         )
 
+        # Fix nexi-lab/nexus#3733 Bug B: drop synthetic metadata-store entries
+        # whose paths are not valid virtual filesystem paths. The ReBAC brick
+        # stores namespace configurations as ``FileMetadata(path="ns:rebac:{type}",
+        # backend_name="_namespace")`` via ``MetastoreNamespaceStore``. When a
+        # non-admin user's list request walks from ``/`` (e.g. the new POST
+        # ``/api/v2/search/grep`` endpoint defaults to ``path="/"``), those
+        # synthetic entries leak into the candidate set, then the permission
+        # filter's ``router.validate_path`` call rejects them with
+        # ``InvalidPathError: Path must be absolute: ns:rebac:memory``.
+        #
+        # The correct fix is to scope them: any FileMetadata whose path does
+        # not start with ``/`` is a synthetic/pseudo-path that should never
+        # enter the filesystem filter pipeline.
+        _pre_synthetic = len(all_files)
+        all_files = [f for f in all_files if f.path.startswith("/")]
+        if len(all_files) != _pre_synthetic:
+            logger.debug(
+                f"[LIST-SYNTHETIC] dropped {_pre_synthetic - len(all_files)} "
+                f"synthetic metadata entries (e.g. ns:rebac:*)"
+            )
+
         # Predicate pushdown: filter by accessible_int_ids at service layer
         if _accessible_int_ids is not None:
             tiger_cache = getattr(_rebac_manager, "_tiger_cache", None) if _rebac_manager else None
@@ -1040,6 +1080,9 @@ class SearchService:
                         list_prefix,
                         zone_id=list_zone_id,
                     )
+                    # Fix nexi-lab/nexus#3733 Bug B: same synthetic-entry
+                    # guard as the primary list path above.
+                    all_files = [f for f in all_files if f.path.startswith("/")]
                     logger.info(
                         f"[LIST-TIMING] metadata.list() retry: "
                         f"{(_time.time() - _meta_start) * 1000:.1f}ms, {len(all_files)} files"
@@ -1377,7 +1420,11 @@ class SearchService:
             from nexus.contracts.constants import SYSTEM_PATH_PREFIX
 
             batch.items = [
-                item for item in batch.items if not item.path.startswith(SYSTEM_PATH_PREFIX)
+                item
+                for item in batch.items
+                # Fix nexi-lab/nexus#3733 Bug B: drop synthetic metadata entries
+                # (e.g. ns:rebac:*) whose paths are not valid virtual paths.
+                if item.path.startswith("/") and not item.path.startswith(SYSTEM_PATH_PREFIX)
             ]
 
             if self._enforce_permissions and context:
@@ -1478,7 +1525,13 @@ class SearchService:
     # =========================================================================
 
     @rpc_expose(description="Find files by glob pattern")
-    def glob(self, pattern: str, path: str = "/", context: Any = None) -> builtins.list[str]:
+    def glob(
+        self,
+        pattern: str,
+        path: str = "/",
+        context: Any = None,
+        files: builtins.list[str] | None = None,
+    ) -> builtins.list[str]:
         """Find files matching a glob pattern.
 
         Supports *, **, ?, [...] patterns. Issue #538: Automatically excludes
@@ -1488,6 +1541,13 @@ class SearchService:
             pattern: Glob pattern (e.g., "**/*.py", "data/*.csv")
             path: Base path to search from (default: "/")
             context: Operation context for permission filtering
+            files: #3701 (2A): optional caller-supplied working set. When
+                provided, the glob pattern is evaluated against this list
+                instead of walking the tree under ``path``. This is the
+                stateless narrowing primitive for agent search workflows.
+                See ``_validate_and_normalize_files`` for the edge-case
+                spec (empty list, traversal, cross-zone, dedupe, stale,
+                size cap, permission intersection).
         """
         if path and path != "/":
             path = self._validate_path(path)
@@ -1507,15 +1567,28 @@ class SearchService:
                     else "/" + static_prefix.rstrip("/")
                 )
 
-        # Phase 2: Get accessible files
-        list_start = time.time()
-        accessible_files: list[str] = cast(
-            list[str], self.list(search_path, recursive=True, context=context)
-        )
-        logger.debug(
-            f"[GLOB] Phase 2: list() found {len(accessible_files)} files "
-            f"in {time.time() - list_start:.3f}s"
-        )
+        # Phase 2: Get accessible files.
+        # Issue #3701 (15A): when the caller passed an explicit files list
+        # we skip the full tree walk and use the validated working set as
+        # the universe to match against. O(files) instead of O(tree).
+        if files is not None:
+            validated, _stale = self._validate_and_normalize_files(
+                files=files, path=search_path, context=context
+            )
+            accessible_files: list[str] = validated
+            logger.debug(
+                f"[GLOB] Phase 2: files=[...] short-circuit "
+                f"({len(accessible_files)} files supplied)"
+            )
+        else:
+            list_start = time.time()
+            accessible_files = cast(
+                list[str], self.list(search_path, recursive=True, context=context)
+            )
+            logger.debug(
+                f"[GLOB] Phase 2: list() found {len(accessible_files)} files "
+                f"in {time.time() - list_start:.3f}s"
+            )
         if not accessible_files:
             return []
 
@@ -1683,6 +1756,7 @@ class SearchService:
         before_context: int = 0,
         after_context: int = 0,
         invert_match: bool = False,
+        files: builtins.list[str] | None = None,
     ) -> builtins.list[dict[str, Any]]:
         r"""Search file contents using regex patterns.
 
@@ -1699,6 +1773,14 @@ class SearchService:
             before_context: Number of lines to include before each match
             after_context: Number of lines to include after each match
             invert_match: If True, return non-matching lines
+            files: #3701 (2A): optional caller-supplied working set of
+                file paths. When provided, grep skips the tree walk
+                (``self.list``) and searches only the intersection of
+                ``files`` with the caller's permitted paths. Composes
+                with ``file_pattern``: the final candidate set is
+                ``files ∩ glob(file_pattern)`` when both are present.
+                See ``_validate_and_normalize_files`` for the full
+                edge-case spec.
         """
         if path and path != "/":
             path = self._validate_path(path)
@@ -1709,45 +1791,128 @@ class SearchService:
         except re.error as e:
             raise ValueError(f"Invalid regex pattern: {e}") from e
 
-        # Phase 1: Get files to search
-        if file_pattern:
-            files = self.glob(file_pattern, path, context=context)
+        # Phase 1: Get files to search.
+        #
+        # Issue #3701 precedence (Issue 7A edge (g)):
+        #   - files alone            → validated working set
+        #   - file_pattern alone     → glob result (pre-existing behaviour)
+        #   - both                   → intersection (files ∩ glob)
+        #   - neither                → full tree walk (pre-existing behaviour)
+        #
+        # The intersection ordering matters: validate files FIRST (so
+        # traversal/size/cross-zone errors fire before any expensive
+        # glob work), then intersect with the glob result.
+        candidate_files: list[str]
+        if files is not None:
+            validated, _stale = self._validate_and_normalize_files(
+                files=files, path=path, context=context
+            )
+            if file_pattern:
+                glob_result = set(self.glob(file_pattern, path, context=context))
+                candidate_files = [f for f in validated if f in glob_result]
+            else:
+                candidate_files = validated
+        elif file_pattern:
+            candidate_files = self.glob(file_pattern, path, context=context)
         else:
-            files = cast(list[str], self.list(path, recursive=True, context=context))
-            pre_filter_count = len(files)
-            files = _filter_ignored_paths(files)
-            if pre_filter_count != len(files):
-                logger.debug(f"[GREP] Issue #538: Filtered {pre_filter_count - len(files)} paths")
+            candidate_files = cast(list[str], self.list(path, recursive=True, context=context))
+            pre_filter_count = len(candidate_files)
+            candidate_files = _filter_ignored_paths(candidate_files)
+            if pre_filter_count != len(candidate_files):
+                logger.debug(
+                    f"[GREP] Issue #538: Filtered {pre_filter_count - len(candidate_files)} paths"
+                )
 
-        if not files:
+        if not candidate_files:
             return []
 
+        # #3701 Codex finding: only the Python path through ``_grep_lines``
+        # honours ``before_context`` / ``after_context`` / ``invert_match``.
+        # The accelerated paths (TRIGRAM_INDEX, ZOEKT_INDEX, PARALLEL_POOL,
+        # mmap, rust_bulk) all do raw regex scans and silently drop these
+        # flags. When any of them are set we route every file through the
+        # CACHED_TEXT/SEQUENTIAL Python loop so the flags actually take
+        # effect. ``CACHED_TEXT`` runs opportunistically on whatever the
+        # metastore has cached; everything else falls through to
+        # ``_grep_raw_content`` with ``force_python_path=True``.
+        needs_python_path = before_context > 0 or after_context > 0 or invert_match
+
         # Phase 2: Bulk fetch searchable text
-        searchable_texts = self.metadata.get_searchable_text_bulk(files)
-        cached_text_ratio = len(searchable_texts) / len(files) if files else 0.0
-        files_needing_raw = [f for f in files if f not in searchable_texts]
+        searchable_texts = self.metadata.get_searchable_text_bulk(candidate_files)
+        cached_text_ratio = len(searchable_texts) / len(candidate_files) if candidate_files else 0.0
+        files_needing_raw = [f for f in candidate_files if f not in searchable_texts]
 
         # Phase 3: Select strategy (Issue #929, #954)
+        # Issue #3701 (13A): when the caller supplied a ``files`` list AND
+        # the list is small enough to make direct scanning cheaper than
+        # trigram + post-filter, we bypass the trigram strategy. The
+        # threshold lives in ``FILES_FILTER_TRIGRAM_THRESHOLD`` and is
+        # benchmark-backed.
         zone_id, _, _ = self._get_routing_params(context)
-        strategy = self._select_grep_strategy(
-            file_count=len(files),
-            cached_text_ratio=cached_text_ratio,
-            zone_id=zone_id,
-        )
+        if needs_python_path:
+            # Force a Python-loop strategy so context/invert flags take
+            # effect. CACHED_TEXT is preferred when the metastore has
+            # text cached for most candidates; otherwise SEQUENTIAL
+            # routes through ``_grep_raw_content`` which will skip its
+            # mmap+rust accelerator branches via ``force_python_path``.
+            strategy = (
+                SearchStrategy.CACHED_TEXT
+                if cached_text_ratio >= GREP_CACHED_TEXT_RATIO
+                else SearchStrategy.SEQUENTIAL
+            )
+        else:
+            strategy = self._select_grep_strategy(
+                file_count=len(candidate_files),
+                cached_text_ratio=cached_text_ratio,
+                zone_id=zone_id,
+            )
+            if (
+                files is not None
+                and strategy == SearchStrategy.TRIGRAM_INDEX
+                and len(candidate_files) < FILES_FILTER_TRIGRAM_THRESHOLD
+            ):
+                logger.debug(
+                    "[GREP] files=[...] of size %d below trigram threshold %d — "
+                    "bypassing TRIGRAM_INDEX in favour of direct scan",
+                    len(candidate_files),
+                    FILES_FILTER_TRIGRAM_THRESHOLD,
+                )
+                strategy = (
+                    SearchStrategy.CACHED_TEXT
+                    if cached_text_ratio >= GREP_CACHED_TEXT_RATIO
+                    else SearchStrategy.RUST_BULK
+                )
+
+        # Remember whether the caller supplied a files filter so the
+        # trigram branch can post-filter its results (#3701 13A).
+        _files_filter_set: set[str] | None = set(candidate_files) if files is not None else None
 
         # Phase 4: Execute strategy-specific search
         results: list[dict[str, Any]] = []
 
         # Strategy: TRIGRAM_INDEX (Issue #954)
         if strategy == SearchStrategy.TRIGRAM_INDEX and zone_id:
+            # #3701 (13A): when trigram runs with a files filter, we over-
+            # fetch then post-filter its output so the caller's working
+            # set is honoured. Over-fetch factor compensates for the
+            # trigram hits that fall outside the filter.
+            trigram_max = (
+                max_results * _REBAC_OVERFETCH_FACTOR_FOR_FILES
+                if _files_filter_set is not None
+                else max_results
+            )
             trigram_results = await self._try_grep_with_trigram(
                 pattern=pattern,
                 ignore_case=ignore_case,
-                max_results=max_results,
+                max_results=trigram_max,
                 zone_id=zone_id,
                 context=context,
             )
             if trigram_results is not None:
+                if _files_filter_set is not None:
+                    trigram_results = [
+                        r for r in trigram_results if r.get("file") in _files_filter_set
+                    ][:max_results]
                 return trigram_results
             strategy = SearchStrategy.RUST_BULK  # Fallback
 
@@ -1816,6 +1981,7 @@ class SearchService:
                     before_context=before_context,
                     after_context=after_context,
                     invert_match=invert_match,
+                    force_python_path=needs_python_path,
                 )
             )
 
@@ -1920,13 +2086,25 @@ class SearchService:
         before_context: int = 0,
         after_context: int = 0,
         invert_match: bool = False,
+        force_python_path: bool = False,
     ) -> builtins.list[dict[str, Any]]:
-        """Process files needing raw content read (mmap, Rust bulk, sequential)."""
+        """Process files needing raw content read (mmap, Rust bulk, sequential).
+
+        When ``force_python_path`` is True the mmap and Rust bulk
+        accelerators are skipped and every file is run through the
+        Python sequential fallback. This exists because those
+        accelerators do raw regex scans without honouring
+        ``before_context`` / ``after_context`` / ``invert_match`` —
+        flags that ``_grep_lines`` (called from the sequential
+        fallback) does honour.
+        """
         results: builtins.list[dict[str, Any]] = []
         mmap_used = False
 
-        # Try mmap-accelerated grep first (Issue #893)
-        if grep_fast.is_mmap_available():
+        # Try mmap-accelerated grep first (Issue #893). Skipped when the
+        # caller asked for context/invert flags — mmap doesn't honour
+        # them and would silently drop them.
+        if not force_python_path and grep_fast.is_mmap_available():
             try:
                 zone_id, _, _ = self._extract_zone_info(context)
                 if zone_id and self._file_cache is not None:
@@ -2423,6 +2601,142 @@ class SearchService:
         from nexus.core.path_utils import validate_path
 
         return validate_path(path, allow_root=True)
+
+    def _validate_and_normalize_files(
+        self,
+        files: builtins.list[str],
+        path: str,  # noqa: ARG002 — kept for API compat; no longer used after Codex review #3 fix
+        context: Any,
+    ) -> tuple[builtins.list[str], int]:
+        """Validate and normalize a caller-supplied files list for grep/glob.
+
+        Implements the 9-row edge-case matrix from the #3701 review
+        (Issue 7A). Returns ``(validated_files, stale_count)`` where
+        ``validated_files`` is deduped, normalised, and intersected with
+        the files the caller is permitted to see under ``path`` +
+        ``context``. ``stale_count`` counts entries in ``files`` that
+        were dropped because they were not found in the permitted set
+        (deleted, permission-denied, or otherwise invisible).
+
+        Edge cases:
+            (a) ``files == []`` → returns ``([], 0)`` without calling
+                ``self.list`` — explicit no-op, fast.
+            (b) Path traversal (``..``) → ``InvalidPathError`` via
+                ``_validate_path``.
+            (c) Cross-zone entries → ``ValueError``. Callers that need
+                cross-zone searching must make separate per-zone calls.
+            (d) Duplicates → silently deduped (set semantics).
+            (e) Stale/deleted → silently skipped, counted in
+                ``stale_count`` so the response envelope can surface drift.
+            (f) ``len(files) > FILES_FILTER_SIZE_CAP`` → ``ValueError``
+                before any other work (fail fast on abuse).
+            (g) Interaction with ``file_pattern`` → caller performs the
+                intersection; this helper only deals with ``files``.
+            (h) Path normalisation → leading slash added, trailing
+                slashes preserved as-is, no case folding.
+            (i) Permissions → authorised directly via the injected
+                ``PermissionEnforcer.filter_list`` (Codex review #3
+                finding #2: no recursive tree walk — O(files) instead
+                of O(tree)).
+
+        Args:
+            files: Caller-supplied list of file paths.
+            path: Base path the operation is scoped to — used for the
+                permission intersection. If the caller supplies files
+                outside this subtree they are treated as stale (dropped).
+            context: Operation context for permission resolution.
+
+        Returns:
+            Tuple of ``(validated_files, stale_count)``.
+
+        Raises:
+            InvalidPathError: If any entry has a traversal segment.
+            ValueError: If the list is too large, or an entry refers to
+                a different zone than the current caller's context.
+        """
+        # (f) Size cap — fail fast before spending any time on other work.
+        if len(files) > FILES_FILTER_SIZE_CAP:
+            raise ValueError(
+                f"files list too large: {len(files)} > {FILES_FILTER_SIZE_CAP} (cap to avoid abuse)"
+            )
+
+        # (a) Empty list — explicit no-op, no tree walk.
+        if not files:
+            return [], 0
+
+        # Extract the caller's zone so we can reject cross-zone entries
+        # early. When context is None we cannot enforce zone scoping at
+        # this layer — fall back to permission-intersection only.
+        caller_zone: str | None = None
+        try:
+            caller_zone, _, _ = self._get_routing_params(context)
+        except Exception:
+            caller_zone = None
+
+        normalised: list[str] = []
+        seen: set[str] = set()
+        for raw in files:
+            # (b) Path traversal — delegates to the shared validator.
+            validated = self._validate_path(raw)
+
+            # (h) Normalise: ensure leading slash; keep the rest of the
+            # path byte-identical. Case is preserved (case-sensitive
+            # filesystems are the common case in nexus zones).
+            if not validated.startswith("/"):
+                validated = "/" + validated
+
+            # (c) Cross-zone rejection. We recognise zone-aware prefixes
+            # and compare against the caller's zone. Non-zone-prefixed
+            # paths are always allowed through; permission intersection
+            # below is the remaining defence.
+            if caller_zone is not None and validated.startswith("/zones/"):
+                parts = validated.split("/", 3)
+                if len(parts) >= 3 and parts[2] and parts[2] != caller_zone:
+                    raise ValueError(
+                        f"cross-zone file rejected: {validated!r} is in "
+                        f"zone {parts[2]!r} but caller is in {caller_zone!r}"
+                    )
+
+            # (d) Dedupe while preserving first-seen order.
+            if validated not in seen:
+                seen.add(validated)
+                normalised.append(validated)
+
+        # (i) Permission intersection: only keep files the caller is
+        # actually allowed to see. We must avoid the recursive tree
+        # walk here — Codex review #3 (finding #2) flagged that the
+        # previous implementation called
+        # ``self.list(path, recursive=True, context=context)`` which
+        # defeats the whole ``O(files)`` promise of ``files=[...]``
+        # (large repos hit the metastore for the entire subtree and
+        # time out under load). Instead we authorise the caller's list
+        # directly via ``filter_list``, which is implemented on the
+        # ReBAC enforcer as a bulk strategy chain — ``O(files)``, not
+        # ``O(tree)``.
+        #
+        # This also sidesteps Codex review #2 finding #1 (zone scoping
+        # mismatch) because we never call ``self.list`` here — there's
+        # no list output to unscope, and the enforcer's ``filter_list``
+        # accepts the caller's paths in the same namespace the caller
+        # supplied them (no internal zone prefix).
+        resolved_context = context if context is not None else self._default_context
+        if self._enforce_permissions and self._permission_enforcer is not None:
+            permitted_list = self._permission_enforcer.filter_list(normalised, resolved_context)
+            permitted_set = set(permitted_list)
+        else:
+            # Permissions disabled — no filtering, everything passes.
+            permitted_set = set(normalised)
+
+        # (e) Stale silent skip — drop entries not in permitted_set
+        # (either unreadable to the caller or filtered by the enforcer)
+        # and report the count so the caller can detect drift.
+        # Note: we intentionally do NOT do a separate existence check
+        # here; if the caller names a file that doesn't exist, the
+        # downstream grep/glob will simply produce zero matches for it,
+        # which is the same observable end result.
+        visible = [p for p in normalised if p in permitted_set]
+        stale_count = len(normalised) - len(visible)
+        return visible, stale_count
 
     # =========================================================================
     # Semantic Search (inlined from SemanticSearchMixin, Issue #1287, #2075)

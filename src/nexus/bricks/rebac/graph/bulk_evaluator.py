@@ -215,6 +215,22 @@ def compute_permission(
                     )
                     return _store(True)
 
+            # Fix nexi-lab/nexus#3733 Bug A: skip Pattern 2 for ``parent``
+            # tupleset. Pattern 2 finds tuples where ``obj`` is the OBJECT
+            # of a tuple with this relation — which for ``parent`` returns
+            # ``obj``'s CHILDREN, not its parent. That's the inverse of
+            # what ``parent_owner``/``parent_viewer`` mean, and causes a
+            # privilege escalation where owning any child grants access
+            # to all siblings (via the parent). The same guard already
+            # exists in ``zone_traversal.py``; it was missing here.
+            if tupleset_relation == "parent":
+                logger.debug(
+                    "compute_permission [depth=%d]: skipping Pattern 2 for 'parent' tupleset "
+                    "(not a group pattern, would cause privilege escalation)",
+                    depth,
+                )
+                return _store(False)
+
             # Pattern 2 (group-style): (?, tupleset_relation, obj)
             related_subjects = find_subjects(obj, tupleset_relation, tuples_graph)
             logger.debug(

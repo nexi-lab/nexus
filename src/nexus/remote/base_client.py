@@ -40,6 +40,14 @@ class BaseRemoteNexusFS:
     _negative_cache: NegativeCache
     _zone_id: str | None
     _agent_id: str | None
+    # Codex review #3 finding #1: identity fields populated from
+    # ``/api/auth/whoami`` so callers (e.g. the MCP server) can build
+    # an explicit ``OperationContext`` from the remote connection's
+    # authenticated subject instead of falling back to whatever the
+    # server-side auth context happens to be.
+    _subject_id: str | None = None
+    _subject_type: str | None = None
+    _is_admin: bool = False
 
     # ============================================================
     # Negative Cache
@@ -125,6 +133,31 @@ class BaseRemoteNexusFS:
     def agent_id(self, value: str | None) -> None:
         """Set agent ID for this filesystem instance."""
         self._agent_id = value
+
+    @property
+    def subject_id(self) -> str | None:
+        """Authenticated subject id (user or agent) for this connection.
+
+        Populated from ``/api/auth/whoami`` during connect. Used by
+        the MCP server to build an explicit ``OperationContext``
+        (Codex review #3 finding #1).
+        """
+        return self._subject_id
+
+    @property
+    def subject_type(self) -> str | None:
+        """Authenticated subject type (``user`` / ``agent`` / ``service``)."""
+        return self._subject_type
+
+    @property
+    def is_admin(self) -> bool:
+        """Whether the authenticated subject has admin privileges.
+
+        Populated from ``/api/auth/whoami``; defaults to ``False``
+        until whoami completes. Used by the MCP server to build an
+        explicit ``OperationContext``.
+        """
+        return self._is_admin
 
     # ============================================================
     # RPC Error Handling
@@ -287,16 +320,26 @@ class BaseRemoteNexusFS:
         """
         if auth_info.get("authenticated"):
             self._zone_id = auth_info.get("zone_id")
+            subject_type = auth_info.get("subject_type")
+            subject_id = auth_info.get("subject_id")
+            # Codex review #3 finding #1: retain the full subject + is_admin
+            # so the MCP server (and any other caller) can build an explicit
+            # ``OperationContext`` from the remote connection's authenticated
+            # identity. Previously only ``_zone_id`` and ``_agent_id`` were
+            # stored, so user-typed subjects lost their identity on the
+            # client side and any downstream caller had to re-query whoami.
+            self._subject_type = subject_type
+            self._subject_id = subject_id
+            self._is_admin = bool(auth_info.get("is_admin", False))
             # Only set agent_id if subject_type is "agent"
             # For users, agent_id should remain None
-            subject_type = auth_info.get("subject_type")
             if subject_type == "agent":
-                self._agent_id = auth_info.get("subject_id")
+                self._agent_id = subject_id
             else:
                 self._agent_id = None
             logger.info(
-                f"Authenticated as {subject_type}:{auth_info.get('subject_id')} "
-                f"(zone: {self._zone_id})"
+                f"Authenticated as {subject_type}:{subject_id} "
+                f"(zone: {self._zone_id}, admin: {self._is_admin})"
             )
         else:
             logger.debug("Not authenticated (anonymous access)")

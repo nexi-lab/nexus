@@ -2,7 +2,7 @@
 
 import asyncio
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -968,8 +968,15 @@ class TestDeadLetterCompaction:
         await vfs.mkdir(archive_dir, ZONE)
 
         # Archive for an OLD message day but RECENTLY created — should NOT be pruned.
-        # file_mtime returns None → fallback must parse creation ts (20260404T...) not day (20200101).
-        recent_archive = f"{archive_dir}/20200101_20260404T120000_abc12345.jsonl"
+        # file_mtime returns None → fallback must parse the creation ts
+        # (``<day>T<time>``) not the day prefix (``20200101``). Compute the
+        # "recent" creation timestamp from ``now - 1h`` so the test stays
+        # time-safe as the calendar marches forward (previously a
+        # hardcoded ``20260404T120000`` drifted past the 7-day retention
+        # window and started getting pruned, breaking the test).
+        now = datetime.now(UTC)
+        recent_creation_ts = (now - timedelta(hours=1)).strftime("%Y%m%dT%H%M%S")
+        recent_archive = f"{archive_dir}/20200101_{recent_creation_ts}_abc12345.jsonl"
         await vfs.write(recent_archive, b"data", ZONE)
         # Simulate mtime=None by removing it from the fake's mtime store
         vfs._mtimes.pop((recent_archive, ZONE), None)

@@ -252,6 +252,7 @@ pub fn compute_permission_interned(
             InternedRelationConfig::TupleToUserset {
                 tupleset,
                 computed_userset,
+                skip_reverse,
             } => {
                 // tupleToUserset checks BOTH directions:
                 //
@@ -262,6 +263,12 @@ pub fn compute_permission_interned(
                 // Reverse (group pattern): others have tupleset relation ON object
                 //   group_viewer = {tupleset: "direct_viewer", computedUserset: "member"}
                 //   group:team → direct_viewer → file:/path, then check member on group:team
+                //
+                // Fix nexi-lab/nexus#3733 Bug A: the reverse direction is
+                // skipped for ``parent`` tuplesets because it inverts
+                // parent semantics (finds children instead of the parent)
+                // and grants permission based on owning any child —
+                // which is a privilege escalation.
                 let mut allowed = false;
 
                 // Forward: object as subject → find objects it points to
@@ -282,8 +289,9 @@ pub fn compute_permission_interned(
                     }
                 }
 
-                // Reverse: find subjects that have tupleset relation ON object
-                if !allowed {
+                // Reverse: find subjects that have tupleset relation ON object.
+                // Skipped for ``parent`` tupleset (see comment above).
+                if !allowed && !skip_reverse {
                     let reverse_targets = graph.find_subjects_for_object(object, *tupleset);
                     for target in &reverse_targets {
                         if compute_permission_interned(

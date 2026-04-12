@@ -38,9 +38,16 @@ def mock_metadata_store():
 
 @pytest.fixture
 def mock_permission_enforcer():
-    """Create a mock PermissionEnforcer (permissive by default)."""
+    """Create a mock PermissionEnforcer (permissive by default).
+
+    ``filter_list`` defaults to a pass-through — any path supplied is
+    treated as readable unless the test overrides it. This matches the
+    mock_metadata_store pattern and keeps the ``files=[...]`` validator
+    tests oblivious to which enforcer strategy runs.
+    """
     enforcer = MagicMock()
     enforcer.check_permission.return_value = True
+    enforcer.filter_list = MagicMock(side_effect=lambda paths, context: list(paths))
     return enforcer
 
 
@@ -661,3 +668,709 @@ class TestGrepContext:
         regex = re.compile(r"world")
         results = SearchService._grep_lines(regex, lines, "/test.py")
         assert results[0]["match"] == "world"
+
+
+# =============================================================================
+# grep file_pattern parameter (backfill for #3701 review)
+# =============================================================================
+
+
+class TestGrepFilePattern:
+    """Tests for the `file_pattern` parameter on SearchService.grep.
+
+    This parameter has been present for a long time but had no dedicated
+    test coverage. The tests below lock in current behaviour so the
+    addition of `files=[...]` on top (issue #3701) builds on known ground.
+    """
+
+    async def test_file_pattern_triggers_glob_not_list(self, service, mock_metadata_store, context):
+        """When file_pattern is set, grep delegates file selection to glob()."""
+        with (
+            patch.object(service, "glob", return_value=["/src/a.py"]) as mock_glob,
+            patch.object(service, "list") as mock_list,
+        ):
+            mock_metadata_store.get_searchable_text_bulk.return_value = {
+                "/src/a.py": "def foo():\n    pass\n"
+            }
+            await service.grep(pattern="def foo", file_pattern="*.py", context=context)
+            mock_glob.assert_called_once()
+            mock_list.assert_not_called()
+
+    async def test_no_file_pattern_triggers_list_not_glob(
+        self, service, mock_metadata_store, context
+    ):
+        """Without file_pattern, grep walks the path via list()."""
+        with (
+            patch.object(service, "glob") as mock_glob,
+            patch.object(service, "list", return_value=["/src/a.py"]) as mock_list,
+        ):
+            mock_metadata_store.get_searchable_text_bulk.return_value = {
+                "/src/a.py": "def foo():\n    pass\n"
+            }
+            await service.grep(pattern="def foo", context=context)
+            mock_list.assert_called_once()
+            mock_glob.assert_not_called()
+
+    async def test_file_pattern_passes_path_and_context_to_glob(
+        self, service, mock_metadata_store, context
+    ):
+        """Pattern, path, and context are forwarded to glob() verbatim."""
+        with patch.object(service, "glob", return_value=[]) as mock_glob:
+            mock_metadata_store.get_searchable_text_bulk.return_value = {}
+            await service.grep(
+                pattern="foo",
+                path="/src",
+                file_pattern="**/*.py",
+                context=context,
+            )
+            mock_glob.assert_called_once_with("**/*.py", "/src", context=context)
+
+    async def test_file_pattern_empty_glob_result_returns_empty(
+        self, service, mock_metadata_store, context
+    ):
+        """glob() returning [] short-circuits grep to []."""
+        with patch.object(service, "glob", return_value=[]):
+            mock_metadata_store.get_searchable_text_bulk.return_value = {}
+            results = await service.grep(
+                pattern="anything", file_pattern="*.nonexistent", context=context
+            )
+            assert results == []
+
+    async def test_file_pattern_single_file_match(self, service, mock_metadata_store, context):
+        """grep returns matches only from files selected by file_pattern."""
+        with patch.object(service, "glob", return_value=["/src/target.py"]):
+            mock_metadata_store.get_searchable_text_bulk.return_value = {
+                "/src/target.py": "line 1\nhello world\nline 3\n",
+            }
+            results = await service.grep(pattern="hello", file_pattern="*.py", context=context)
+            assert len(results) == 1
+            assert results[0]["file"] == "/src/target.py"
+            assert "hello" in results[0]["content"]
+
+    async def test_file_pattern_multiple_files_all_searched(
+        self, service, mock_metadata_store, context
+    ):
+        """Every file returned by glob is searched for the pattern."""
+        with patch.object(
+            service,
+            "glob",
+            return_value=["/src/a.py", "/src/b.py", "/src/c.py"],
+        ):
+            mock_metadata_store.get_searchable_text_bulk.return_value = {
+                "/src/a.py": "TODO: fix\n",
+                "/src/b.py": "no match\n",
+                "/src/c.py": "TODO: other\n",
+            }
+            results = await service.grep(pattern="TODO", file_pattern="*.py", context=context)
+            matched_files = {r["file"] for r in results}
+            assert matched_files == {"/src/a.py", "/src/c.py"}
+
+    async def test_file_pattern_with_before_and_after_context(
+        self, service, mock_metadata_store, context
+    ):
+        """Context lines work together with file_pattern filtering."""
+        with patch.object(service, "glob", return_value=["/src/a.py"]):
+            mock_metadata_store.get_searchable_text_bulk.return_value = {
+                "/src/a.py": ("line 1\nline 2\nMATCH line 3\nline 4\nline 5\n"),
+            }
+            results = await service.grep(
+                pattern="MATCH",
+                file_pattern="*.py",
+                context=context,
+                before_context=2,
+                after_context=2,
+            )
+            assert len(results) == 1
+            r = results[0]
+            assert r["line"] == 3
+            assert [ln["content"] for ln in r["before_context"]] == [
+                "line 1",
+                "line 2",
+            ]
+            assert [ln["content"] for ln in r["after_context"]] == [
+                "line 4",
+                "line 5",
+            ]
+
+    async def test_file_pattern_respects_max_results(self, service, mock_metadata_store, context):
+        """When many files match, max_results still caps the output."""
+        files = [f"/src/f{i}.py" for i in range(10)]
+        with patch.object(service, "glob", return_value=files):
+            mock_metadata_store.get_searchable_text_bulk.return_value = {
+                f: f"TODO item {f}\n" for f in files
+            }
+            results = await service.grep(
+                pattern="TODO",
+                file_pattern="*.py",
+                context=context,
+                max_results=3,
+            )
+            assert len(results) == 3
+
+
+# =============================================================================
+# files=[...] validator helper (#3701 — Issue 7A)
+# =============================================================================
+
+
+class TestValidateAndNormalizeFiles:
+    """Tests for SearchService._validate_and_normalize_files.
+
+    Locks in the 9-row edge-case matrix from the #3701 review:
+    (a) empty list, (b) traversal, (c) cross-zone, (d) dedupe, (e) stale,
+    (f) size cap, (g) file_pattern interaction (caller-side),
+    (h) normalization, (i) permission intersection.
+    """
+
+    # --- (a) empty list ---
+
+    def test_empty_list_returns_empty(self, service, context):
+        """(a) Empty list short-circuits without touching self.list."""
+        with patch.object(service, "list") as mock_list:
+            files, stale = service._validate_and_normalize_files(
+                files=[], path="/", context=context
+            )
+            assert files == []
+            assert stale == 0
+            # Empty-list short-circuit must not walk the tree.
+            mock_list.assert_not_called()
+
+    # --- (b) path traversal ---
+
+    def test_traversal_path_rejected(self, service, context):
+        """(b) ``..`` segments are rejected via _validate_path."""
+        from nexus.contracts.exceptions import InvalidPathError
+
+        with pytest.raises((InvalidPathError, ValueError)):
+            service._validate_and_normalize_files(
+                files=["/src/a.py", "../../etc/passwd"],
+                path="/",
+                context=context,
+            )
+
+    # --- (c) cross-zone rejection ---
+
+    def test_cross_zone_rejected_when_prefix_differs(self, service, mock_gateway, context):
+        """(c) /zones/OTHER/... is rejected if the caller is in /zones/MY/."""
+        mock_gateway.get_routing_params.return_value = ("my-zone", None, False)
+        with pytest.raises(ValueError, match="cross-zone"):
+            service._validate_and_normalize_files(
+                files=["/zones/other-zone/a.py"],
+                path="/",
+                context=context,
+            )
+
+    def test_same_zone_prefix_accepted(self, service, mock_gateway, context):
+        mock_gateway.get_routing_params.return_value = ("my-zone", None, False)
+        with patch.object(service, "list", return_value=["/zones/my-zone/a.py"]):
+            files, stale = service._validate_and_normalize_files(
+                files=["/zones/my-zone/a.py"],
+                path="/",
+                context=context,
+            )
+            assert files == ["/zones/my-zone/a.py"]
+            assert stale == 0
+
+    # --- (d) dedupe ---
+
+    def test_duplicates_are_deduped_preserving_order(self, service, context):
+        """(d) Repeated entries collapse to one; order preserved."""
+        with patch.object(service, "list", return_value=["/a.py", "/b.py"]):
+            files, stale = service._validate_and_normalize_files(
+                files=["/a.py", "/b.py", "/a.py", "/b.py"],
+                path="/",
+                context=context,
+            )
+            assert files == ["/a.py", "/b.py"]
+            assert stale == 0
+
+    # --- (e) stale silent skip ---
+
+    def test_stale_entries_silently_skipped_with_count(
+        self, service, mock_permission_enforcer, context
+    ):
+        """(e) Entries not permitted by the enforcer are dropped silently.
+
+        Codex review #3 finding #2: validator now authorises the
+        supplied list directly via ``filter_list`` instead of walking
+        the tree, so stale/unreadable detection flows through the
+        enforcer.
+        """
+        mock_permission_enforcer.filter_list = MagicMock(return_value=["/a.py", "/b.py"])
+        files, stale = service._validate_and_normalize_files(
+            files=["/a.py", "/gone.py", "/b.py", "/also-gone.py"],
+            path="/",
+            context=context,
+        )
+        assert files == ["/a.py", "/b.py"]
+        assert stale == 2
+
+    def test_all_stale_returns_empty_with_full_count(
+        self, service, mock_permission_enforcer, context
+    ):
+        mock_permission_enforcer.filter_list = MagicMock(return_value=[])
+        files, stale = service._validate_and_normalize_files(
+            files=["/a.py", "/b.py", "/c.py"],
+            path="/",
+            context=context,
+        )
+        assert files == []
+        assert stale == 3
+
+    # --- (f) size cap ---
+
+    def test_size_cap_enforced(self, service, context):
+        """(f) Lists larger than FILES_FILTER_SIZE_CAP are rejected fast."""
+        from nexus.bricks.search.search_service import FILES_FILTER_SIZE_CAP
+
+        huge = [f"/f{i}.py" for i in range(FILES_FILTER_SIZE_CAP + 1)]
+        with patch.object(service, "list") as mock_list:
+            with pytest.raises(ValueError, match="too large"):
+                service._validate_and_normalize_files(files=huge, path="/", context=context)
+            # Fail-fast: the tree walk must not happen when the size cap fires.
+            mock_list.assert_not_called()
+
+    def test_at_exact_size_cap_allowed(self, service, context):
+        """Boundary: exactly FILES_FILTER_SIZE_CAP entries is allowed."""
+        from nexus.bricks.search.search_service import FILES_FILTER_SIZE_CAP
+
+        at_cap = [f"/f{i}.py" for i in range(FILES_FILTER_SIZE_CAP)]
+        with patch.object(service, "list", return_value=at_cap):
+            files, stale = service._validate_and_normalize_files(
+                files=at_cap, path="/", context=context
+            )
+            assert len(files) == FILES_FILTER_SIZE_CAP
+            assert stale == 0
+
+    # --- (h) normalisation ---
+
+    def test_relative_paths_get_leading_slash(self, service, context):
+        """(h) Relative paths are normalised to absolute before permission check."""
+        with patch.object(service, "list", return_value=["/a.py"]):
+            files, stale = service._validate_and_normalize_files(
+                files=["a.py"],
+                path="/",
+                context=context,
+            )
+            assert files == ["/a.py"]
+            assert stale == 0
+
+    # --- (i) permission intersection ---
+
+    def test_permission_filter_intersects_files(self, service, mock_permission_enforcer, context):
+        """(i) Only files the caller can see are returned.
+
+        Codex review #3 finding #2: the validator now authorises via
+        ``filter_list`` directly — no tree walk. The enforcer is the
+        source of truth for which files are visible.
+        """
+        mock_permission_enforcer.filter_list = MagicMock(return_value=["/public/a.py"])
+        files, stale = service._validate_and_normalize_files(
+            files=["/public/a.py", "/secret/c.py"],
+            path="/",
+            context=context,
+        )
+        assert "/secret/c.py" not in files
+        assert files == ["/public/a.py"]
+        assert stale == 1
+
+    def test_no_recursive_tree_walk(self, service, mock_permission_enforcer, context):
+        """Regression test for Codex review #3 finding #2.
+
+        ``_validate_and_normalize_files`` must NOT call
+        ``self.list(..., recursive=True)`` — that would defeat the
+        whole ``files=[...]`` ``O(files)`` promise. Instead it must
+        authorise the supplied list directly via ``filter_list``.
+
+        Codex critique: "large-repo grep/glob requests can still hit
+        the metadata store for the entire subtree and time out under
+        load" if the validator walks the tree.
+        """
+        mock_permission_enforcer.filter_list = MagicMock(
+            side_effect=lambda paths, context: list(paths)
+        )
+        with patch.object(service, "list") as tree_walk_mock:
+            files, stale = service._validate_and_normalize_files(
+                files=["/a.py", "/b.py", "/c.py"],
+                path="/",
+                context=context,
+            )
+        # ``self.list`` must NEVER be called — otherwise we're back to
+        # the O(tree) behaviour Codex flagged.
+        tree_walk_mock.assert_not_called()
+        # And ``filter_list`` was called exactly once with the caller's
+        # normalised list.
+        mock_permission_enforcer.filter_list.assert_called_once()
+        call_args = mock_permission_enforcer.filter_list.call_args
+        passed_paths = call_args[0][0] if call_args[0] else call_args.kwargs["paths"]
+        assert sorted(passed_paths) == ["/a.py", "/b.py", "/c.py"]
+        assert files == ["/a.py", "/b.py", "/c.py"]
+        assert stale == 0
+
+    def test_enforcer_filter_list_results_are_authoritative(
+        self, service, mock_permission_enforcer, context
+    ):
+        """Codex review #3 finding #2: authorisation delegates to the
+        enforcer's ``filter_list`` instead of comparing against a tree
+        listing. The enforcer is authoritative.
+        """
+        mock_permission_enforcer.filter_list = MagicMock(return_value=["/docs/a.py", "/docs/b.py"])
+        files, stale = service._validate_and_normalize_files(
+            files=["/docs/a.py", "/docs/b.py", "/docs/denied.py"],
+            path="/",
+            context=context,
+        )
+        assert files == ["/docs/a.py", "/docs/b.py"]
+        assert stale == 1  # /docs/denied.py was filtered by the enforcer
+
+    def test_permission_filter_sees_any_path_namespace(
+        self, service, mock_permission_enforcer, context
+    ):
+        """Codex review #3 finding #2: because we no longer call
+        ``self.list``, the validator is agnostic to zone-scoping quirks
+        — whatever path namespace the caller supplies, that's what
+        flows to the enforcer. Non-root tenants don't need special
+        unscoping handling in this layer.
+        """
+        # Caller supplies user-facing paths; enforcer accepts them as-is.
+        mock_permission_enforcer.filter_list = MagicMock(
+            side_effect=lambda paths, context: list(paths)
+        )
+        files, stale = service._validate_and_normalize_files(
+            files=["/docs/a.py", "/docs/b.py"],
+            path="/",
+            context=context,
+        )
+        assert files == ["/docs/a.py", "/docs/b.py"]
+        assert stale == 0
+        # No zone-prefix stripping, no list() walk.
+        call_args = mock_permission_enforcer.filter_list.call_args
+        passed_paths = call_args[0][0] if call_args[0] else call_args.kwargs["paths"]
+        assert sorted(passed_paths) == ["/docs/a.py", "/docs/b.py"]
+
+
+# =============================================================================
+# files=[...] end-to-end via grep/glob (#3701 — Issue 2A + 15A + 13A)
+# =============================================================================
+
+
+class TestGrepFilesParam:
+    """End-to-end tests for ``files=[...]`` on SearchService.grep.
+
+    Covers the short-circuit path (15A), the interaction with
+    ``file_pattern`` (7A edge g), and the trigram-bypass threshold (13A).
+    """
+
+    async def test_files_short_circuits_tree_walk(self, service, mock_metadata_store, context):
+        """15A: files=[...] should bypass self.list(path, recursive=True).
+
+        Updated after Codex review #3 finding #2: the validator no
+        longer calls ``self.list`` at all (it authorises via
+        ``filter_list`` directly), so the full grep path invokes
+        ``self.list`` exactly ZERO times when ``files=[...]`` is
+        supplied — neither the validator nor phase 1 walks the tree.
+        """
+        tree_walk_mock = MagicMock(return_value=["/a.py", "/b.py", "/c.py"])
+        with patch.object(service, "list", side_effect=tree_walk_mock):
+            mock_metadata_store.get_searchable_text_bulk.return_value = {
+                "/a.py": "TODO one\n",
+                "/b.py": "TODO two\n",
+            }
+            results = await service.grep(
+                pattern="TODO",
+                files=["/a.py", "/b.py"],
+                context=context,
+            )
+        assert tree_walk_mock.call_count == 0
+        assert {r["file"] for r in results} == {"/a.py", "/b.py"}
+
+    async def test_files_only_searches_supplied_files(self, service, mock_metadata_store, context):
+        """files=[...] limits search to its own entries even if tree has more."""
+        # Permitted tree contains 3 files but caller narrowed to 1. The
+        # metadata store only returns cached text for files grep asked
+        # about — real backends do exactly this, so the mock mirrors it.
+        corpus = {
+            "/a.py": "TODO only here\n",
+            "/b.py": "TODO also here\n",
+            "/c.py": "TODO and here\n",
+        }
+        mock_metadata_store.get_searchable_text_bulk.side_effect = lambda keys: {
+            k: corpus[k] for k in keys if k in corpus
+        }
+
+        with patch.object(service, "list", return_value=["/a.py", "/b.py", "/c.py"]):
+            results = await service.grep(
+                pattern="TODO",
+                files=["/a.py"],
+                context=context,
+            )
+        assert {r["file"] for r in results} == {"/a.py"}
+
+    async def test_files_intersects_with_file_pattern(self, service, mock_metadata_store, context):
+        """7A edge (g): both files and file_pattern → intersection."""
+        corpus = {
+            "/a.py": "TODO\n",
+            "/b.py": "TODO\n",
+            "/d.py": "TODO\n",
+        }
+        mock_metadata_store.get_searchable_text_bulk.side_effect = lambda keys: {
+            k: corpus[k] for k in keys if k in corpus
+        }
+
+        with (
+            patch.object(service, "list", return_value=["/a.py", "/b.py", "/c.md", "/d.py"]),
+            patch.object(
+                service,
+                "glob",
+                return_value=["/a.py", "/b.py", "/d.py"],  # all .py files
+            ),
+        ):
+            results = await service.grep(
+                pattern="TODO",
+                files=["/a.py", "/c.md", "/d.py"],  # caller narrows to 3
+                file_pattern="*.py",  # glob filters to .py
+                context=context,
+            )
+        # Intersection: {a.py, c.md, d.py} ∩ {a.py, b.py, d.py} = {a.py, d.py}
+        assert {r["file"] for r in results} == {"/a.py", "/d.py"}
+
+    async def test_empty_files_returns_empty_grep(self, service, mock_metadata_store, context):
+        """7A edge (a): files=[] short-circuits to empty result."""
+        with patch.object(service, "list") as mock_list:
+            results = await service.grep(
+                pattern="TODO",
+                files=[],
+                context=context,
+            )
+        assert results == []
+        # Empty list short-circuits — tree walk must not happen.
+        mock_list.assert_not_called()
+
+    async def test_files_rejects_traversal_path(self, service, context):
+        """7A edge (b): traversal in files triggers validation error."""
+        from nexus.contracts.exceptions import InvalidPathError
+
+        with pytest.raises((InvalidPathError, ValueError)):
+            await service.grep(
+                pattern="TODO",
+                files=["/a.py", "../../etc/shadow"],
+                context=context,
+            )
+
+    async def test_files_size_cap_rejected(self, service, context):
+        """7A edge (f): lists exceeding the size cap are rejected."""
+        from nexus.bricks.search.search_service import FILES_FILTER_SIZE_CAP
+
+        too_many = [f"/f{i}.py" for i in range(FILES_FILTER_SIZE_CAP + 1)]
+        with pytest.raises(ValueError, match="too large"):
+            await service.grep(pattern="TODO", files=too_many, context=context)
+
+    async def test_files_duplicates_deduped(self, service, mock_metadata_store, context):
+        """7A edge (d): duplicates in files collapse to unique entries."""
+        with patch.object(service, "list", return_value=["/a.py"]):
+            mock_metadata_store.get_searchable_text_bulk.return_value = {"/a.py": "TODO\n"}
+            results = await service.grep(
+                pattern="TODO",
+                files=["/a.py", "/a.py", "/a.py"],
+                context=context,
+            )
+        # Only one result even though /a.py was listed three times.
+        assert len([r for r in results if r["file"] == "/a.py"]) == 1
+
+
+class TestGrepContextAndInvertRouting:
+    """Regression tests for #3701 Codex finding #3.
+
+    The accelerated grep paths (TRIGRAM_INDEX, ZOEKT_INDEX,
+    PARALLEL_POOL, mmap, rust_bulk) all do raw regex scans and
+    silently drop ``before_context`` / ``after_context`` /
+    ``invert_match``. SearchService.grep is required to detect
+    those flags and force routing through ``_grep_lines`` so the
+    flags actually take effect, regardless of what
+    ``_select_grep_strategy`` would normally pick.
+    """
+
+    async def test_before_after_context_force_python_path_when_strategy_would_be_rust(
+        self, service, mock_metadata_store, context
+    ):
+        """before_context/after_context must take effect even on a corpus
+        that would normally select RUST_BULK / SEQUENTIAL routing."""
+        from nexus.bricks.search.search_service import SearchStrategy
+
+        files = [f"/src/f{i}.py" for i in range(50)]
+        # Empty cached text → strategy selector would pick a non-cached path.
+        mock_metadata_store.get_searchable_text_bulk.return_value = {}
+
+        strategy_calls: list[SearchStrategy] = []
+        original_select = service._select_grep_strategy
+
+        def spy(*args, **kwargs):
+            strategy = original_select(*args, **kwargs)
+            strategy_calls.append(strategy)
+            return strategy
+
+        # Stub _grep_raw_content so we can assert force_python_path was passed.
+        captured_kwargs: dict = {}
+
+        async def fake_raw(**kwargs):
+            captured_kwargs.update(kwargs)
+            return [
+                {
+                    "file": "/src/f0.py",
+                    "line": 3,
+                    "content": "MATCH",
+                    "before_context": [
+                        {"line": 1, "content": "before-1"},
+                        {"line": 2, "content": "before-2"},
+                    ],
+                    "after_context": [{"line": 4, "content": "after-1"}],
+                }
+            ]
+
+        with (
+            patch.object(service, "list", return_value=files),
+            patch.object(service, "_select_grep_strategy", side_effect=spy),
+            patch.object(service, "_grep_raw_content", side_effect=fake_raw),
+        ):
+            results = await service.grep(
+                pattern="MATCH",
+                context=context,
+                before_context=2,
+                after_context=1,
+            )
+        # The strategy selector should NOT have run (we override the
+        # strategy when context flags are set, so the selector is bypassed).
+        assert strategy_calls == []
+        # _grep_raw_content received force_python_path=True so the mmap
+        # and rust accelerator branches inside it are skipped.
+        assert captured_kwargs.get("force_python_path") is True
+        assert captured_kwargs.get("before_context") == 2
+        assert captured_kwargs.get("after_context") == 1
+        assert len(results) == 1
+        assert results[0]["before_context"][0]["content"] == "before-1"
+        assert results[0]["after_context"][0]["content"] == "after-1"
+
+    async def test_invert_match_forces_python_path(self, service, mock_metadata_store, context):
+        """invert_match must take effect even when accelerators are available."""
+        files = [f"/src/f{i}.py" for i in range(50)]
+        mock_metadata_store.get_searchable_text_bulk.return_value = {}
+
+        captured_kwargs: dict = {}
+
+        async def fake_raw(**kwargs):
+            captured_kwargs.update(kwargs)
+            return []
+
+        with (
+            patch.object(service, "list", return_value=files),
+            patch.object(service, "_grep_raw_content", side_effect=fake_raw),
+        ):
+            await service.grep(
+                pattern="MATCH",
+                context=context,
+                invert_match=True,
+            )
+        assert captured_kwargs.get("force_python_path") is True
+        assert captured_kwargs.get("invert_match") is True
+
+    async def test_no_flags_does_not_force_python_path(self, service, mock_metadata_store, context):
+        """When no context/invert flags are set, the normal strategy selector
+        runs and force_python_path stays False — accelerators remain in play.
+        """
+        files = [f"/src/f{i}.py" for i in range(50)]
+        mock_metadata_store.get_searchable_text_bulk.return_value = {}
+
+        captured_kwargs: dict = {}
+
+        async def fake_raw(**kwargs):
+            captured_kwargs.update(kwargs)
+            return []
+
+        with (
+            patch.object(service, "list", return_value=files),
+            patch.object(service, "_grep_raw_content", side_effect=fake_raw),
+        ):
+            await service.grep(pattern="MATCH", context=context)
+        assert captured_kwargs.get("force_python_path") is False
+
+    async def test_grep_raw_content_skips_mmap_when_force_python_path(self, service, context):
+        """``_grep_raw_content(force_python_path=True)`` must not call the
+        mmap accelerator even when it is available."""
+        import re as _re
+
+        from nexus.bricks.search import search_service as ss_mod
+
+        with (
+            patch.object(ss_mod.grep_fast, "is_mmap_available", return_value=True),
+            patch.object(ss_mod.grep_fast, "grep_files_mmap") as mmap_mock,
+            patch.object(ss_mod.grep_fast, "is_available", return_value=True),
+            patch.object(ss_mod.grep_fast, "grep_bulk") as rust_mock,
+            patch.object(
+                service,
+                "_read",
+                new=AsyncMock(return_value=b"line a\nMATCH line b\nline c\n"),
+            ),
+        ):
+            from nexus.bricks.search.search_service import SearchStrategy
+
+            results = await service._grep_raw_content(
+                regex=_re.compile("MATCH"),
+                pattern="MATCH",
+                files_needing_raw=["/a.py"],
+                strategy=SearchStrategy.SEQUENTIAL,
+                ignore_case=False,
+                remaining_results=10,
+                context=context,
+                before_context=1,
+                after_context=1,
+                invert_match=False,
+                force_python_path=True,
+            )
+        mmap_mock.assert_not_called()
+        rust_mock.assert_not_called()
+        assert len(results) == 1
+        assert results[0]["line"] == 2
+        assert results[0]["before_context"][0]["content"] == "line a"
+        assert results[0]["after_context"][0]["content"] == "line c"
+
+
+class TestGlobFilesParam:
+    """Tests for the ``files=[...]`` parameter on SearchService.glob."""
+
+    def test_files_short_circuits_tree_walk(self, service, mock_permission_enforcer, context):
+        """glob with files=[...] should not walk the full tree.
+
+        Codex review #3 finding #2: after the validator fix, glob's
+        files=[...] path invokes ``self.list`` zero times — authorisation
+        is delegated to the enforcer's ``filter_list``.
+        """
+        tree_walk_mock = MagicMock(return_value=["/a.py", "/b.py"])
+        # Enforcer permits only /a.py and /b.py (not /evil.py).
+        mock_permission_enforcer.filter_list = MagicMock(return_value=["/a.py", "/b.py"])
+        with patch.object(service, "list", side_effect=tree_walk_mock):
+            result = service.glob(
+                pattern="*.py",
+                files=["/a.py", "/b.py", "/evil.py"],
+                context=context,
+            )
+        assert tree_walk_mock.call_count == 0
+        # Only permitted files come back
+        assert set(result) == {"/a.py", "/b.py"}
+
+    def test_files_empty_returns_empty(self, service, context):
+        """Empty files list short-circuits without walking."""
+        with patch.object(service, "list") as mock_list:
+            result = service.glob(pattern="*.py", files=[], context=context)
+        assert result == []
+        mock_list.assert_not_called()
+
+    def test_files_respects_pattern(self, service, context):
+        """When files contains mixed extensions, glob filters by pattern."""
+        with patch.object(service, "list", return_value=["/a.py", "/b.md", "/c.py"]):
+            result = service.glob(
+                pattern="*.py",
+                files=["/a.py", "/b.md", "/c.py"],
+                context=context,
+            )
+        # Only .py files survive the glob pattern.
+        assert set(result) == {"/a.py", "/c.py"}

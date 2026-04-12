@@ -332,3 +332,52 @@ def unscope_internal_path(path: str) -> str:
         return path if path else "/"
     remaining = "/".join(parts[skip:])
     return f"/{remaining}" if remaining else "/"
+
+
+def split_zone_from_internal_path(path: str) -> tuple[str | None, str]:
+    """Split an internal storage path into ``(zone_id, user_facing_path)``.
+
+    Mirrors ``unscope_internal_path`` but also extracts the zone
+    identifier so callers can disambiguate cross-zone collisions.
+    This exists for Codex review #3 (finding #3): unscoping
+    ``/zone/acme/src/x.py`` and ``/zone/beta/src/x.py`` both produce
+    ``/src/x.py`` — the zone_id is the only way a caller with
+    multi-zone visibility can tell them apart and round-trip a result
+    back through ``files=[...]``.
+
+    Returns:
+        ``(zone_id, unscoped_path)``. ``zone_id`` is ``None`` when the
+        path has no recognisable zone/tenant/user prefix (i.e. the
+        unscoped form equals the input).
+
+    Examples:
+        >>> split_zone_from_internal_path("/zone/acme/src/x.py")
+        ('acme', '/src/x.py')
+        >>> split_zone_from_internal_path("/zone/acme/user:alice/src/x.py")
+        ('acme', '/src/x.py')
+        >>> split_zone_from_internal_path("/tenant:default/x.py")
+        ('default', '/x.py')
+        >>> split_zone_from_internal_path("/workspace/foo.py")
+        (None, '/workspace/foo.py')
+    """
+    parts = path.lstrip("/").split("/")
+    zone: str | None = None
+    skip = 0
+
+    if parts and parts[0].startswith("tenant:"):
+        zone = parts[0][len("tenant:") :] or None
+        skip = 1
+        if len(parts) > 1 and parts[1].startswith("user:"):
+            skip = 2
+    elif parts and parts[0] == "zone" and len(parts) >= 2:
+        zone = parts[1] or None
+        skip = 2
+        if len(parts) > 2 and parts[2].startswith("user:"):
+            skip = 3
+
+    if skip == 0:
+        return None, (path if path else "/")
+
+    remaining = "/".join(parts[skip:])
+    unscoped = f"/{remaining}" if remaining else "/"
+    return zone, unscoped

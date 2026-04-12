@@ -305,8 +305,23 @@ pub fn compute_permission(
                     }
                 }
 
-                // Reverse: find subjects that have tupleset relation ON object
-                if !allowed {
+                // Reverse: find subjects that have tupleset relation ON object.
+                //
+                // Fix nexi-lab/nexus#3733 Bug A: skip the reverse (group)
+                // pattern when the tupleset relation is "parent". For a
+                // parent relation, the forward pattern is the ONLY correct
+                // direction — "alice is parent_owner of Y iff alice owns
+                // parent(Y)". The reverse pattern finds Y's CHILDREN
+                // instead and incorrectly grants parent permission based
+                // on owning any child, causing a privilege escalation
+                // where owning /workspace/public grants access to all
+                // sibling files under /workspace/.
+                //
+                // The equivalent Python guards are in
+                // bricks/rebac/graph/bulk_evaluator.py,
+                // bricks/rebac/graph/traversal.py, and
+                // bricks/rebac/graph/zone_traversal.py.
+                if !allowed && tuple_to_userset.tupleset != "parent" {
                     let reverse_targets =
                         graph.find_subjects_for_object(object, &tuple_to_userset.tupleset);
                     for target in &reverse_targets {

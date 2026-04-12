@@ -350,6 +350,7 @@ class CredentialPool:
         classifier: CredentialErrorClassifier,
         *,
         account_identifier: str | None = None,
+        bypass_exceptions: tuple[type[Exception], ...] = (),
     ) -> Any:
         """Synchronous version of execute() for non-async call sites.
 
@@ -361,6 +362,10 @@ class CredentialPool:
             fn: Callable accepting an AuthProfile, returning T.
             classifier: Maps provider exceptions to AuthProfileFailureReason.
             account_identifier: Passed through to select_sync() for scoped pools.
+            bypass_exceptions: Exception types that are NOT credential failures.
+                Re-raised immediately without marking the profile or counting
+                toward cooldown. Use for path-level errors (e.g. FileNotFoundError)
+                that should never poison healthy credentials.
 
         Returns:
             Whatever fn returns.
@@ -375,6 +380,8 @@ class CredentialPool:
             self.mark_success(profile)
             return result
         except Exception as exc:
+            if bypass_exceptions and isinstance(exc, bypass_exceptions):
+                raise
             try:
                 reason = classifier(exc)
             except Exception:
@@ -390,6 +397,8 @@ class CredentialPool:
             self.mark_success(next_profile)
             return result
         except Exception as retry_exc:
+            if bypass_exceptions and isinstance(retry_exc, bypass_exceptions):
+                raise
             try:
                 retry_reason = classifier(retry_exc)
             except Exception:
@@ -403,6 +412,7 @@ class CredentialPool:
         classifier: CredentialErrorClassifier,
         *,
         account_identifier: str | None = None,
+        bypass_exceptions: tuple[type[Exception], ...] = (),
     ) -> Any:
         """Select a credential, call fn, handle failure, retry on retriable errors.
 
@@ -420,6 +430,9 @@ class CredentialPool:
                 Should use profile.credential to authenticate the API call.
             classifier: Maps the provider's exception to AuthProfileFailureReason.
             account_identifier: Passed through to select() for user-scoped pools.
+            bypass_exceptions: Exception types that are NOT credential failures.
+                Re-raised immediately without marking the profile or counting
+                toward cooldown.
 
         Returns:
             Whatever fn returns (awaited if it is a coroutine).
@@ -436,6 +449,8 @@ class CredentialPool:
             self.mark_success(profile)
             return result
         except Exception as exc:
+            if bypass_exceptions and isinstance(exc, bypass_exceptions):
+                raise
             try:
                 reason = classifier(exc)
             except Exception:
@@ -453,6 +468,8 @@ class CredentialPool:
             self.mark_success(next_profile)
             return result
         except Exception as retry_exc:
+            if bypass_exceptions and isinstance(retry_exc, bypass_exceptions):
+                raise
             try:
                 retry_reason = classifier(retry_exc)
             except Exception:

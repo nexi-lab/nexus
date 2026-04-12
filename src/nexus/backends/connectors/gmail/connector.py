@@ -407,17 +407,26 @@ class PathGmailBackend(
             self._bind_transport(context)
             return super().read_content(content_id, context)
 
-        # Pool-based: select account, bind transport to selected email, retry on rate-limit
+        # Pool-based: rotate credentials for the same mailbox on rate-limit.
+        # account_identifier scopes selection to this connector's mailbox so
+        # the pool never selects a profile for a different Gmail user.
+        # bypass_exceptions prevents path-level errors (deleted messages, stale
+        # paths) from being misclassified as credential failures.
         from nexus.bricks.auth.classifiers.google import classify_google_error
         from nexus.bricks.auth.profile import AuthProfile
 
-        def _call(profile: AuthProfile) -> bytes:
-            self._transport = self._gmail_transport.with_context(
-                context, user_email_override=profile.account_identifier
-            )
+        account_id = self._user_email or (getattr(context, "user_id", None) if context else None)
+
+        def _call(_profile: AuthProfile) -> bytes:
+            self._transport = self._gmail_transport.with_context(context)
             return super(PathGmailBackend, self).read_content(content_id, context)
 
-        return self._pool.execute_sync(_call, classify_google_error)
+        return self._pool.execute_sync(
+            _call,
+            classify_google_error,
+            account_identifier=account_id,
+            bypass_exceptions=(NexusFileNotFoundError,),
+        )
 
     def delete_content(self, content_id: str, context: "OperationContext | None" = None) -> None:
         """Trash a Gmail message (recoverable — not permanent delete).
@@ -540,17 +549,26 @@ class PathGmailBackend(
                 self._bind_transport(context)
                 keys, _prefixes = self._transport.list_keys(prefix=path, delimiter="/")
             else:
-                # Pool-based: select account + retry on rate-limit
+                # Pool-based: rotate credentials for this mailbox on rate-limit.
+                # account_identifier scopes to connector's mailbox; bypass_exceptions
+                # prevents directory-not-found from poisoning healthy credentials.
                 from nexus.bricks.auth.classifiers.google import classify_google_error
                 from nexus.bricks.auth.profile import AuthProfile
 
-                def _list(profile: AuthProfile) -> tuple[list[str], list[str]]:
-                    transport = self._gmail_transport.with_context(
-                        context, user_email_override=profile.account_identifier
-                    )
+                account_id = self._user_email or (
+                    getattr(context, "user_id", None) if context else None
+                )
+
+                def _list(_profile: AuthProfile) -> tuple[list[str], list[str]]:
+                    transport = self._gmail_transport.with_context(context)
                     return transport.list_keys(prefix=path, delimiter="/")
 
-                keys, _prefixes = self._pool.execute_sync(_list, classify_google_error)
+                keys, _prefixes = self._pool.execute_sync(
+                    _list,
+                    classify_google_error,
+                    account_identifier=account_id,
+                    bypass_exceptions=(NexusFileNotFoundError,),
+                )
 
             # Strip label prefix from keys: "LABEL/thread-msg.yaml" → "thread-msg.yaml"
             label_prefix = f"{path}/"

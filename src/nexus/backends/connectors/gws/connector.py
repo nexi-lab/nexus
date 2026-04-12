@@ -1448,10 +1448,11 @@ class CalendarConnector(PathCLIBackend):
                 break
 
             page_items = data.get("items") or []
-            all_items.extend(page_items)
+            remaining_after = self.MAX_LIST_RESULTS - len(all_items)
+            all_items.extend(page_items[:remaining_after])
             page_token = data.get("nextPageToken")
 
-            if not page_token:
+            if not page_token or len(all_items) >= self.MAX_LIST_RESULTS:
                 break
 
         items = all_items
@@ -1587,10 +1588,12 @@ class CalendarConnector(PathCLIBackend):
                 break
 
             items = data.get("items") or []
-            all_items.extend(items)
+            # Clip to remaining budget even if the API returns more than requested.
+            remaining_after = self.MAX_LIST_RESULTS - len(all_items)
+            all_items.extend(items[:remaining_after])
             page_token = data.get("nextPageToken")
 
-            if not page_token:
+            if not page_token or len(all_items) >= self.MAX_LIST_RESULTS:
                 break
 
         event_ids = [item["id"] for item in all_items if isinstance(item, dict) and item.get("id")]

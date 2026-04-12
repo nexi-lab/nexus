@@ -5456,8 +5456,8 @@ class NexusFS(  # type: ignore[misc]
                 data = data[offset : offset + count] if count is not None else data[offset:]
             return data
 
-        # Slow path: block in Rust (GIL released by PyO3)
-        _data = self._kernel.pipe_read_blocking(path, 30000)
+        # Slow path: block in Rust (GIL released by PyO3), 5s timeout
+        _data = self._kernel.pipe_read_blocking(path, 5000)
         if offset or count is not None:
             _data = _data[offset : offset + count] if count is not None else _data[offset:]
         return bytes(_data)

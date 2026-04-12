@@ -28,7 +28,6 @@ from nexus.core.config import (
     ParseConfig,
     PermissionConfig,
 )
-from nexus.core.file_events import FileEvent, FileEventType
 from nexus.core.hash_fast import hash_content
 from nexus.core.metastore import MetastoreABC
 from nexus.core.nexus_fs_dispatch import DispatchMixin
@@ -2045,21 +2044,6 @@ class NexusFS(  # type: ignore[misc]
 
         route.metastore.put(new_meta)
 
-        # Issue #3391: OBSERVE dispatch was missing for write_stream — add it.
-        self.notify(
-            FileEvent(
-                type=FileEventType.FILE_WRITE,
-                path=path,
-                zone_id=zone_id or ROOT_ZONE_ID,
-                agent_id=agent_id,
-                etag=content_hash,
-                size=size,
-                version=new_version,
-                is_new=(meta is None),
-                old_etag=meta.etag if meta else None,
-            )
-        )
-
         # Issue #900: Unified INTERCEPT for write_stream
         from nexus.contracts.vfs_hooks import WriteHookContext
 
@@ -2254,16 +2238,6 @@ class NexusFS(  # type: ignore[misc]
 
         # OBSERVE: Rust kernel fires DirCreate when hit=true (§11 Phase 5).
         # Only Python fires for the fallback path.
-        if not _mkdir_result.hit:
-            self.notify(
-                FileEvent(
-                    type=FileEventType.DIR_CREATE,
-                    path=path,
-                    zone_id=ctx.zone_id or ROOT_ZONE_ID,
-                    agent_id=ctx.agent_id,
-                    user_id=ctx.user_id,
-                )
-            )
         if _mkdir_result.post_hook_needed:
             from nexus.contracts.vfs_hooks import MkdirHookContext
 
@@ -2422,22 +2396,6 @@ class NexusFS(  # type: ignore[misc]
         """
         wr = self._write_content(
             path, content, context, offset=offset, consistency=consistency, _meta=_meta
-        )
-        # OBSERVE dispatch: this is the Python-only fallback path
-        # (sys_write hit=false → Rust kernel did not fire OBSERVE).
-        # Fire it from Python before INTERCEPT POST hooks.
-        self.notify(
-            FileEvent(
-                type=FileEventType.FILE_WRITE,
-                path=path,
-                zone_id=wr.zone_id or ROOT_ZONE_ID,
-                agent_id=wr.agent_id,
-                etag=wr.content_hash,
-                size=wr.size,
-                version=wr.new_version,
-                is_new=wr.is_new,
-                old_etag=wr.old_etag,
-            )
         )
         return self._dispatch_write_events(path, wr, content)
 
@@ -3212,20 +3170,7 @@ class NexusFS(  # type: ignore[misc]
         # Issue #900: Unified two-phase dispatch — OBSERVE (fire-and-forget)
         for metadata in metadata_list:
             old_meta = existing_metadata.get(metadata.path)
-            is_new = old_meta is None
-            self.notify(
-                FileEvent(
-                    type=FileEventType.FILE_WRITE,
-                    path=metadata.path,
-                    zone_id=zone_id or ROOT_ZONE_ID,
-                    agent_id=agent_id,
-                    etag=metadata.etag,
-                    size=metadata.size,
-                    version=metadata.version,
-                    is_new=is_new,
-                    old_etag=old_meta.etag if old_meta else None,
-                )
-            )
+            _ = old_meta is None  # is_new removed with notify
 
         # Issue #1682: Hierarchy tuples + owner grants moved to post_write_batch hooks.
 
@@ -3617,17 +3562,6 @@ class NexusFS(  # type: ignore[misc]
 
         # OBSERVE: Rust kernel fires FileDelete when hit=true (§11 Phase 5).
         # Only Python fires for the fallback path.
-        if not _unlink_result.hit:
-            self.notify(
-                FileEvent(
-                    type=FileEventType.FILE_DELETE,
-                    path=path,
-                    zone_id=zone_id or ROOT_ZONE_ID,
-                    agent_id=agent_id,
-                    etag=meta.etag,
-                    size=meta.size,
-                )
-            )
 
         return {}
 
@@ -3696,16 +3630,6 @@ class NexusFS(  # type: ignore[misc]
             except Exception as e:
                 logger.debug("Failed to clean up directory index for %s: %s", path, e)
 
-        # OBSERVE then INTERCEPT (Issue #3391)
-        self.notify(
-            FileEvent(
-                type=FileEventType.DIR_DELETE,
-                path=path,
-                zone_id=ctx.zone_id or ROOT_ZONE_ID,
-                agent_id=ctx.agent_id,
-                user_id=ctx.user_id,
-            )
-        )
         self._kernel.dispatch_post_hooks(
             "rmdir",
             RmdirHookContext(
@@ -3887,16 +3811,6 @@ class NexusFS(  # type: ignore[misc]
 
         # OBSERVE: Rust kernel fires FileRename when hit=true (§11 Phase 5).
         # Only Python fires for the fallback path.
-        if not _rename_result.hit:
-            self.notify(
-                FileEvent(
-                    type=FileEventType.FILE_RENAME,
-                    path=old_path,
-                    zone_id=zone_id or ROOT_ZONE_ID,
-                    agent_id=agent_id,
-                    new_path=new_path,
-                )
-            )
 
         # POST-INTERCEPT hooks
         if _rename_result.post_hook_needed:
@@ -4245,19 +4159,6 @@ class NexusFS(  # type: ignore[misc]
             from nexus.lib.lock_order import L1_VFS, mark_released
 
             mark_released(L1_VFS)
-
-        # Lock released — event dispatch + side effects
-        self.notify(
-            FileEvent(
-                type=FileEventType.FILE_COPY,
-                path=src_path,
-                zone_id=zone_id or ROOT_ZONE_ID,
-                agent_id=agent_id,
-                new_path=dst_path,
-                size=result.get("size"),
-                etag=result.get("etag"),
-            )
-        )
 
         self._kernel.dispatch_post_hooks("copy", _copy_ctx)
 

@@ -42,7 +42,6 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.vfs_hooks import VFSObserver
-from nexus.core.file_events import FileEvent
 
 if TYPE_CHECKING:
     from nexus.contracts.vfs_hooks import VFSPathResolver
@@ -226,7 +225,7 @@ class DispatchMixin:
     # ── register_observe: generic OBSERVE observers (Issue #1748) ───────
 
     def register_observe(self, obs: VFSObserver) -> None:
-        """Register OBSERVE observer on Rust kernel (SSOT)."""
+        """Register OBSERVE observer on Rust kernel + Python fallback list."""
         from nexus.core.file_events import ALL_FILE_EVENTS
 
         mask = getattr(obs, "event_mask", ALL_FILE_EVENTS)
@@ -257,19 +256,6 @@ class DispatchMixin:
     # ALL post-hook dispatch goes through Rust via
     # self._kernel.dispatch_post_hooks(op, ctx).
     # Sync post-hooks: serial in Rust (fire-and-forget).
-
-    def notify(self, event: FileEvent) -> None:
-        """Dispatch FileEvent to Rust kernel observers (hit=false fallback).
-
-        hit=true: Rust sys_* internally calls dispatch_observers.
-        hit=false: Python Tier 2 methods call this → Rust lazy ThreadPool
-        dispatches to observers (GIL-safe — pool threads acquire GIL independently).
-        """
-        if self._kernel is not None and hasattr(event, "type") and hasattr(event.type, "value"):
-            import contextlib
-
-            with contextlib.suppress(Exception):
-                self._kernel.dispatch_kernel_event(event.type.value, event.path)
 
     def dispatch_event(self, event_type: str, path: str) -> None:
         """Dispatch a FileEvent through Rust kernel observer pipeline.

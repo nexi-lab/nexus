@@ -36,6 +36,7 @@ if TYPE_CHECKING:
     from nexus.contracts.cache_store import CacheStoreABC
 
 from nexus.bricks.auth.oauth.crypto import OAuthCrypto
+from nexus.bricks.auth.oauth.token_resolver import ResolvedToken
 from nexus.bricks.auth.oauth.types import OAuthCredential, OAuthError
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import AuthenticationError
@@ -514,6 +515,39 @@ class TokenManager:
             return credential.access_token
         finally:
             lock.release()
+
+    async def resolve(
+        self,
+        provider: str,
+        user_email: str,
+        *,
+        zone_id: str = ROOT_ZONE_ID,
+    ) -> ResolvedToken:
+        """Resolve a valid access token via the ``TokenResolver`` seam.
+
+        Delegates to ``get_valid_token()`` for the refresh/rotation flow, then
+        reads the freshly-updated credential metadata for ``expires_at`` and
+        ``scopes``. The extra read is deliberate: the seam exists so higher-
+        level backends (see Issue #3738's ``CredentialBackend``) can depend on
+        a stable contract without importing ``OAuthCredential`` or touching
+        the encryption/rotation internals.
+        """
+        access_token = await self.get_valid_token(provider, user_email, zone_id=zone_id)
+        credential = await self.get_credential(provider, user_email, zone_id=zone_id)
+        if credential is None:
+            # Should be impossible: get_valid_token() just succeeded on the
+            # same (provider, user_email, zone_id) tuple. If the credential
+            # disappeared between the two reads, something deleted it
+            # concurrently — surface that as an authentication error rather
+            # than masking it with a stale token.
+            raise AuthenticationError(
+                f"Credential for {provider}:{user_email} vanished mid-resolve"
+            )
+        return ResolvedToken(
+            access_token=access_token,
+            expires_at=credential.expires_at,
+            scopes=credential.scopes or (),
+        )
 
     def detect_reuse(self, token_family_id: str, refresh_token_hash: str) -> bool:
         """Check if a refresh token hash exists in the rotation history.

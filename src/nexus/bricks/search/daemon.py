@@ -255,6 +255,13 @@ class SearchDaemon:
         self._txtai_bootstrapped = False
         self.last_search_timing: dict[str, float] = {}
 
+        # Skeleton index (Issue #3725) — in-memory BM25-lite for /locate endpoint.
+        # Bootstrapped from document_skeleton DB rows; no file reads on restart (13B).
+        # Keys: virtual_path; values: {path_id, zone_id, title, path_tokens}.
+        self._skeleton_docs: dict[str, dict[str, Any]] = {}
+        self._skeleton_bootstrap_task: asyncio.Task[None] | None = None
+        self._skeleton_bootstrapped: bool = False
+
         # Latency tracking (circular buffer)
         self._latencies: list[float] = []
         self._max_latency_samples = 1000
@@ -691,6 +698,13 @@ class SearchDaemon:
         if self._async_session is not None and self.config.scope_refresh_seconds > 0:
             self._scope_refresh_task = asyncio.create_task(self._scope_refresh_loop())
 
+        # Bootstrap skeleton index from DB rows (Issue #3725, 13B — no file reads).
+        # Warm after bootstrap so the first real /locate query is fast (16A).
+        if self._async_session is not None:
+            self._skeleton_bootstrap_task = asyncio.create_task(self._bootstrap_skeleton())
+            # Chain warmup probe as a non-blocking follow-on
+            asyncio.create_task(self._warm_skeleton_index())
+
         # If BM25S not loaded, count existing DB documents for stats
         if not self._bm25s_index and self._async_session:
             try:
@@ -736,6 +750,12 @@ class SearchDaemon:
             with contextlib.suppress(asyncio.CancelledError):
                 await self._txtai_bootstrap_task
         self._txtai_bootstrap_task = None
+
+        if self._skeleton_bootstrap_task and not self._skeleton_bootstrap_task.done():
+            self._skeleton_bootstrap_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._skeleton_bootstrap_task
+        self._skeleton_bootstrap_task = None
         if self._legacy_refresh_task:
             self._legacy_refresh_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -905,6 +925,154 @@ class SearchDaemon:
         except Exception as e:
             # Non-fatal - vector search will still work, just slower first time
             logger.debug(f"Vector index warmup skipped: {e}")
+
+    # ==========================================================================
+    # Skeleton index — Issue #3725
+    # ==========================================================================
+
+    async def _bootstrap_skeleton(self) -> None:
+        """Load document_skeleton rows from DB into _skeleton_docs (13B).
+
+        No file reads: DB rows are the authoritative cache.  Rebuilds the
+        in-memory index on every daemon restart.  Runs as a background task
+        so startup() is not blocked.
+        """
+        if self._async_session is None:
+            return
+
+        start = time.perf_counter()
+        count = 0
+        try:
+            from nexus.bricks.search.text_utils import tokenize_path
+
+            async with self._async_session() as session:
+                result = await session.execute(
+                    sa_text(
+                        "SELECT path_id, zone_id, title, "
+                        "       (SELECT virtual_path FROM file_paths fp "
+                        "        WHERE fp.path_id = ds.path_id) AS virtual_path "
+                        "FROM document_skeleton ds"
+                    )
+                )
+                rows = result.fetchall()
+
+            for row in rows:
+                path_id, zone_id, title, virtual_path = row
+                if not virtual_path:
+                    continue
+                self._skeleton_docs[virtual_path] = {
+                    "path_id": path_id,
+                    "zone_id": zone_id,
+                    "title": title,
+                    "path_tokens": tokenize_path(virtual_path),
+                }
+                count += 1
+
+            self._skeleton_bootstrapped = True
+            elapsed = (time.perf_counter() - start) * 1000
+            logger.info("[SKELETON] bootstrap complete: %d docs in %.1fms", count, elapsed)
+
+        except Exception as e:
+            logger.warning("[SKELETON] bootstrap failed: %s", e)
+
+    async def _warm_skeleton_index(self) -> None:
+        """Wait for skeleton bootstrap and log a warmup probe result (16A).
+
+        Fires a dummy locate() call to ensure the in-memory index is ready
+        and log timing for the first real query.
+        """
+        if self._skeleton_bootstrap_task is not None:
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(asyncio.shield(self._skeleton_bootstrap_task), timeout=10.0)
+        if self._skeleton_bootstrapped:
+            # Probe query — forces any lazy work and logs timing
+            await self.locate("warmup", zone_id="root", limit=1)
+            logger.debug("[SKELETON] index warmed: %d docs", len(self._skeleton_docs))
+
+    def upsert_skeleton_doc(
+        self,
+        *,
+        path_id: str,
+        virtual_path: str,
+        title: str | None,
+        zone_id: str,
+    ) -> None:
+        """Upsert a skeleton document into the in-memory index (sync, called by SkeletonIndexer)."""
+        from nexus.bricks.search.text_utils import tokenize_path
+
+        self._skeleton_docs[virtual_path] = {
+            "path_id": path_id,
+            "zone_id": zone_id,
+            "title": title,
+            "path_tokens": tokenize_path(virtual_path),
+        }
+
+    def delete_skeleton_doc(self, *, virtual_path: str, zone_id: str) -> None:  # noqa: ARG002
+        """Remove a skeleton document from the in-memory index (sync).
+
+        zone_id accepted for API symmetry with upsert_skeleton_doc; not used
+        here because _skeleton_docs is keyed by virtual_path.
+        """
+        self._skeleton_docs.pop(virtual_path, None)
+
+    async def locate(
+        self,
+        q: str,
+        *,
+        zone_id: str,
+        limit: int = 20,
+        path_prefix: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """BM25-lite path+title search over the skeleton index (Issue #3725).
+
+        Tokenizes q, scores each document by token overlap with title (weight 2)
+        and path_tokens (weight 1), returns top-limit results sorted by score.
+
+        Zone isolation: only documents whose zone_id == zone_id are returned.
+
+        Args:
+            q: Natural-language or keyword query.
+            zone_id: Caller's zone — results are filtered to this zone.
+            limit: Maximum number of candidates to return.
+            path_prefix: Optional path prefix filter (e.g. "/workspace/src/").
+
+        Returns:
+            List of dicts: {path, score, title}.
+        """
+        from nexus.bricks.search.text_utils import tokenize_path
+
+        if not q.strip():
+            return []
+
+        query_tokens = set(tokenize_path(q).split())
+        if not query_tokens:
+            return []
+
+        scored: list[tuple[float, str, str | None]] = []  # (score, path, title)
+
+        for virtual_path, doc in self._skeleton_docs.items():
+            if doc["zone_id"] != zone_id:
+                continue
+            if path_prefix and not virtual_path.startswith(path_prefix):
+                continue
+
+            path_tokens = set((doc.get("path_tokens") or "").split())
+            title_tokens = set(tokenize_path(doc.get("title") or "").split())
+
+            # Title match weighted higher than path match (review decision 6A)
+            title_overlap = len(query_tokens & title_tokens)
+            path_overlap = len(query_tokens & path_tokens)
+            score = title_overlap * 2.0 + path_overlap * 1.0
+
+            if score > 0:
+                scored.append((score, virtual_path, doc.get("title")))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+
+        return [
+            {"path": path, "score": round(score, 4), "title": title}
+            for score, path, title in scored[:limit]
+        ]
 
     async def _check_zoekt(self) -> None:
         """Check if Zoekt trigram search is available."""

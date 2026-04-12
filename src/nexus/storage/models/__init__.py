@@ -57,10 +57,11 @@ from nexus.storage.models.auth import ZoneModel as ZoneModel
 # Domain: Context Branching (Issue #1315)
 from nexus.storage.models.context_branch import ContextBranchModel as ContextBranchModel
 from nexus.storage.models.dead_letter import DeadLetterModel as DeadLetterModel
-from nexus.storage.models.exchange_audit_log import ExchangeAuditLogModel as ExchangeAuditLogModel
-from nexus.storage.models.file_path import FilePathModel as FilePathModel
 
 # Domain: Filesystem
+from nexus.storage.models.document_skeleton import DocumentSkeletonModel as DocumentSkeletonModel
+from nexus.storage.models.exchange_audit_log import ExchangeAuditLogModel as ExchangeAuditLogModel
+from nexus.storage.models.file_path import FilePathModel as FilePathModel
 from nexus.storage.models.filesystem import DirectoryEntryModel as DirectoryEntryModel
 from nexus.storage.models.filesystem import DocumentChunkModel as DocumentChunkModel
 from nexus.storage.models.filesystem import FileMetadataModel as FileMetadataModel

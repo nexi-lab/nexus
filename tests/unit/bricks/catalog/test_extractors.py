@@ -13,9 +13,15 @@ from nexus.bricks.catalog.extractors import (
     CSVExtractor,
     DocumentExtractionResult,
     ExtractionResult,
+    HtmlDocumentExtractor,
+    JsonDocumentExtractor,
     JSONExtractor,
     MarkdownExtractor,
     ParquetExtractor,
+    PythonDocumentExtractor,
+    TypeScriptDocumentExtractor,
+    YamlDocumentExtractor,
+    _load_json_head,
 )
 
 
@@ -722,3 +728,300 @@ class TestExtractorSelfRegistration:
         ext = ParquetExtractor()
         assert "application/parquet" in ext.mime_types
         assert "parquet" in ext.extensions
+
+
+# ============================================================================
+# _load_json_head helper (Issue #3725 — 8A)
+# ============================================================================
+
+
+class TestLoadJsonHead:
+    def test_returns_dict_for_simple_object(self) -> None:
+        content = b'{"name": "acme", "version": "1.0"}'
+        result = _load_json_head(content)
+        assert result == {"name": "acme", "version": "1.0"}
+
+    def test_returns_first_element_for_array(self) -> None:
+        content = b'[{"title": "first"}, {"title": "second"}]'
+        result = _load_json_head(content)
+        assert result == {"title": "first"}
+
+    def test_returns_none_for_empty_input(self) -> None:
+        assert _load_json_head(b"") is None
+
+    def test_returns_none_for_truncated_json(self) -> None:
+        # 2KB boundary cuts mid-object — must not raise
+        truncated = b'{"name": "acme", "long_key": "' + b"x" * 3000
+        result = _load_json_head(truncated, max_bytes=50)
+        assert result is None  # graceful degradation
+
+    def test_returns_none_for_binary_input(self) -> None:
+        binary = bytes(range(256))
+        assert _load_json_head(binary) is None
+
+    def test_returns_none_for_plain_string_json(self) -> None:
+        # Valid JSON but not a dict/array-of-dicts
+        assert _load_json_head(b'"just a string"') is None
+
+
+# ============================================================================
+# JsonDocumentExtractor (Issue #3725 — skeleton title extraction)
+# ============================================================================
+
+
+class TestJsonDocumentExtractor:
+    def setup_method(self) -> None:
+        self.ext = JsonDocumentExtractor()
+
+    # Happy path
+    def test_extracts_title_key(self) -> None:
+        content = b'{"title": "My Project", "version": "2.0"}'
+        result = self.ext.extract(content)
+        assert result.title == "My Project"
+        assert result.error is None
+
+    def test_prefers_title_over_name(self) -> None:
+        content = b'{"title": "Title Value", "name": "Name Value"}'
+        result = self.ext.extract(content)
+        assert result.title == "Title Value"
+
+    def test_falls_back_to_name_if_no_title(self) -> None:
+        content = b'{"name": "my-package", "version": "1.2.3"}'
+        result = self.ext.extract(content)
+        assert result.title == "my-package"
+
+    def test_falls_back_to_description(self) -> None:
+        content = b'{"description": "A useful tool", "scripts": {}}'
+        result = self.ext.extract(content)
+        assert result.title == "A useful tool"
+
+    # Adversarial / edge cases
+    def test_name_is_integer_returns_none(self) -> None:
+        # name=42 is not a string — should not set title
+        content = b'{"name": 42, "version": "1.0"}'
+        result = self.ext.extract(content)
+        assert result.title is None
+
+    def test_empty_content(self) -> None:
+        result = self.ext.extract(b"")
+        assert result.title is None
+        assert result.error is not None
+
+    def test_truncated_at_2kb_does_not_raise(self) -> None:
+        # Simulate what SkeletonIndexer passes: content[:2048] that ends mid-JSON
+        payload = (b'{"name": "partial", "data": "' + b"x" * 2000 + b'"')[:2048]
+        result = self.ext.extract(payload)
+        # May or may not extract a title, but must never raise
+        assert isinstance(result, DocumentExtractionResult)
+
+    def test_binary_blob_does_not_raise(self) -> None:
+        result = self.ext.extract(bytes(range(256)))
+        assert isinstance(result, DocumentExtractionResult)
+
+
+# ============================================================================
+# YamlDocumentExtractor (Issue #3725)
+# ============================================================================
+
+
+class TestYamlDocumentExtractor:
+    def setup_method(self) -> None:
+        self.ext = YamlDocumentExtractor()
+
+    # Happy path
+    def test_extracts_title_key(self) -> None:
+        content = b"title: My YAML Title\nversion: 1.0\n"
+        result = self.ext.extract(content)
+        assert result.title == "My YAML Title"
+
+    def test_extracts_name_key(self) -> None:
+        content = b"name: my-chart\ndescription: A Helm chart\n"
+        result = self.ext.extract(content)
+        assert result.title == "my-chart"
+
+    # Adversarial
+    def test_empty_file_returns_null_title(self) -> None:
+        result = self.ext.extract(b"")
+        assert result.title is None
+
+    def test_comment_only_file_returns_null_title(self) -> None:
+        content = b"# just a comment\n# another comment\n"
+        result = self.ext.extract(content)
+        # All lines start with # → no title extractable
+        assert result.title is None
+
+    def test_binary_blob_does_not_raise(self) -> None:
+        result = self.ext.extract(bytes(range(256)))
+        assert isinstance(result, DocumentExtractionResult)
+
+    def test_truncated_yaml_does_not_raise(self) -> None:
+        # Long YAML cut mid-value
+        content = (b"title: " + b"x" * 3000)[:2048]
+        result = self.ext.extract(content)
+        assert isinstance(result, DocumentExtractionResult)
+
+
+# ============================================================================
+# PythonDocumentExtractor (Issue #3725)
+# ============================================================================
+
+
+class TestPythonDocumentExtractor:
+    def setup_method(self) -> None:
+        self.ext = PythonDocumentExtractor()
+
+    # Happy path
+    def test_module_docstring_inline(self) -> None:
+        content = b'"""Authentication middleware for session management."""\n\nimport os\n'
+        result = self.ext.extract(content)
+        assert result.title == "Authentication middleware for session management."
+
+    def test_module_docstring_multiline(self) -> None:
+        content = b'"""\nOAuth2 provider integration.\n\nDetails follow.\n"""\n'
+        result = self.ext.extract(content)
+        assert result.title == "OAuth2 provider integration."
+
+    def test_falls_back_to_class_name(self) -> None:
+        content = b"# no docstring\nclass AuthHandler:\n    pass\n"
+        result = self.ext.extract(content)
+        assert result.title == "AuthHandler"
+
+    def test_falls_back_to_function_name(self) -> None:
+        content = b"# no docstring\ndef parse_user_auth(token):\n    pass\n"
+        result = self.ext.extract(content)
+        assert result.title == "parse_user_auth"
+
+    # Adversarial
+    def test_shebang_skipped(self) -> None:
+        content = b'#!/usr/bin/env python3\n\n"""Real module docstring."""\n'
+        result = self.ext.extract(content)
+        assert result.title == "Real module docstring."
+
+    def test_empty_file_returns_null_title(self) -> None:
+        result = self.ext.extract(b"")
+        assert result.title is None
+
+    def test_binary_blob_does_not_raise(self) -> None:
+        result = self.ext.extract(bytes(range(256)))
+        assert isinstance(result, DocumentExtractionResult)
+
+    def test_truncated_docstring_does_not_raise(self) -> None:
+        # Docstring opening with no closing quotes (truncated at 2KB)
+        content = b'"""' + b"x" * 2045  # no closing """
+        result = self.ext.extract(content)
+        assert isinstance(result, DocumentExtractionResult)
+
+
+# ============================================================================
+# TypeScriptDocumentExtractor (Issue #3725)
+# ============================================================================
+
+
+class TestTypeScriptDocumentExtractor:
+    def setup_method(self) -> None:
+        self.ext = TypeScriptDocumentExtractor()
+
+    # Happy path
+    def test_jsdoc_description(self) -> None:
+        content = (
+            b"/**\n * @description User authentication service\n */\nexport class AuthService {}\n"
+        )
+        result = self.ext.extract(content)
+        assert result.title == "User authentication service"
+
+    def test_jsdoc_fileoverview(self) -> None:
+        content = (
+            b"/**\n * @fileoverview OAuth middleware module\n */\nimport { foo } from './bar';\n"
+        )
+        result = self.ext.extract(content)
+        assert result.title == "OAuth middleware module"
+
+    def test_falls_back_to_exported_class(self) -> None:
+        content = b"export class LoginHandler {\n  handle() {}\n}\n"
+        result = self.ext.extract(content)
+        assert result.title == "LoginHandler"
+
+    def test_falls_back_to_exported_function(self) -> None:
+        content = b"export function parseUserToken(token: string) {\n  return null;\n}\n"
+        result = self.ext.extract(content)
+        assert result.title == "parseUserToken"
+
+    # Adversarial
+    def test_empty_file_returns_null_title(self) -> None:
+        result = self.ext.extract(b"")
+        assert result.title is None
+
+    def test_binary_blob_does_not_raise(self) -> None:
+        result = self.ext.extract(bytes(range(256)))
+        assert isinstance(result, DocumentExtractionResult)
+
+    def test_no_exports_returns_null_title(self) -> None:
+        content = b"const x = 1;\nconst y = 2;\n"
+        result = self.ext.extract(content)
+        assert result.title is None
+
+
+# ============================================================================
+# HtmlDocumentExtractor (Issue #3725)
+# ============================================================================
+
+
+class TestHtmlDocumentExtractor:
+    def setup_method(self) -> None:
+        self.ext = HtmlDocumentExtractor()
+
+    # Happy path
+    def test_extracts_title_tag(self) -> None:
+        content = b"<html><head><title>Authentication Guide</title></head></html>"
+        result = self.ext.extract(content)
+        assert result.title == "Authentication Guide"
+
+    def test_falls_back_to_h1(self) -> None:
+        content = b"<html><body><h1>OAuth2 Flow</h1></body></html>"
+        result = self.ext.extract(content)
+        assert result.title == "OAuth2 Flow"
+
+    def test_strips_html_tags_from_title(self) -> None:
+        content = b"<html><head><title><em>Welcome</em> Guide</title></head></html>"
+        result = self.ext.extract(content)
+        assert "Welcome" in (result.title or "")
+
+    # Adversarial
+    def test_empty_file_returns_null_title(self) -> None:
+        result = self.ext.extract(b"")
+        assert result.title is None
+
+    def test_no_title_or_h1_returns_null(self) -> None:
+        content = b"<html><body><p>No headings here.</p></body></html>"
+        result = self.ext.extract(content)
+        assert result.title is None
+
+    def test_binary_blob_does_not_raise(self) -> None:
+        result = self.ext.extract(bytes(range(256)))
+        assert isinstance(result, DocumentExtractionResult)
+
+
+# ============================================================================
+# MarkdownExtractor adversarial (augments existing happy-path tests)
+# ============================================================================
+
+
+class TestMarkdownExtractorAdversarial:
+    def setup_method(self) -> None:
+        self.ext = MarkdownExtractor()
+
+    def test_empty_file_returns_null_title(self) -> None:
+        result = self.ext.extract(b"")
+        assert result.title is None
+        assert result.confidence == 0.0
+
+    def test_truncated_at_2kb_does_not_raise(self) -> None:
+        # Markdown with an H1 near the 2KB boundary
+        long_md = b"# Title\n\n" + b"x " * 1000
+        result = self.ext.extract(long_md[:2048])
+        assert isinstance(result, DocumentExtractionResult)
+        assert result.title == "Title"
+
+    def test_binary_blob_does_not_raise(self) -> None:
+        result = self.ext.extract(bytes(range(256)))
+        assert isinstance(result, DocumentExtractionResult)

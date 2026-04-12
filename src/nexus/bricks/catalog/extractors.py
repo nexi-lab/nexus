@@ -838,3 +838,350 @@ def _resolve_types(types: set[str]) -> str:
     if "object" in types_no_null or "array" in types_no_null:
         return "string"  # Mixed complex types → string
     return "string"  # Mixed types → string
+
+
+# ============================================================================
+# Document title extractors (Issue #3725 — skeleton index)
+# ============================================================================
+# All extractors below implement DocumentExtractor and return DocumentExtractionResult
+# with only `title` populated.  Other fields (headings, word_count, etc.) are left at
+# zero/empty because the skeleton index only needs the title string.
+#
+# Shared parsing helpers are extracted to avoid duplication across extractor classes.
+# ============================================================================
+
+
+def _load_json_head(content: bytes, max_bytes: int = 2048) -> dict[str, Any] | None:
+    """Parse up to max_bytes of JSON content and return the top-level object.
+
+    Returns the first parseable dict, or None if parsing fails (including
+    truncation at the max_bytes boundary, binary input, or non-object JSON).
+    Never raises.  Used by both JSONExtractor (schema) and JsonDocumentExtractor
+    (title) to share the JSON parsing preamble.
+    """
+    import json as _json
+
+    try:
+        sample = content[:max_bytes].decode("utf-8", errors="replace").strip()
+        if not sample:
+            return None
+        obj = _json.loads(sample)
+        if isinstance(obj, dict):
+            return obj
+        # Array: peek at first element
+        if isinstance(obj, list) and obj and isinstance(obj[0], dict):
+            return obj[0]
+        return None
+    except Exception:
+        return None
+
+
+def _null_doc_result(format: str, error: str) -> "DocumentExtractionResult":
+    """Return a zero-confidence DocumentExtractionResult with no title."""
+    return DocumentExtractionResult(
+        title=None,
+        headings=[],
+        front_matter=None,
+        word_count=0,
+        link_count=0,
+        code_languages=[],
+        format=format,
+        confidence=0.0,
+        error=error,
+    )
+
+
+class JsonDocumentExtractor:
+    """JSON/YAML-style title extractor for the skeleton index (Issue #3725).
+
+    Looks for top-level ``name``, ``title``, or ``description`` keys and
+    returns the first string value found.  Reads at most max_bytes bytes.
+    """
+
+    mime_types: tuple[str, ...] = ("application/json", "text/json")
+    extensions: tuple[str, ...] = ("json",)
+
+    def extract(self, content: bytes) -> DocumentExtractionResult:
+        """Extract title from top-level name/title/description key."""
+        try:
+            obj = _load_json_head(content)
+            if obj is None:
+                return _null_doc_result("json", "No parseable JSON object")
+
+            title: str | None = None
+            for key in ("title", "name", "description"):
+                val = obj.get(key)
+                if isinstance(val, str) and val.strip():
+                    title = val.strip()
+                    break
+
+            return DocumentExtractionResult(
+                title=title,
+                headings=[],
+                front_matter=None,
+                word_count=0,
+                link_count=0,
+                code_languages=[],
+                format="json",
+                confidence=1.0 if title else 0.5,
+            )
+        except Exception as e:
+            return _null_doc_result("json", f"JSON title extraction failed: {e}")
+
+
+class YamlDocumentExtractor:
+    """YAML title extractor for the skeleton index (Issue #3725).
+
+    Looks for top-level ``name``, ``title``, or ``description`` keys.
+    Falls back to the first non-blank line if no key matches.
+    """
+
+    mime_types: tuple[str, ...] = ("application/x-yaml", "text/yaml")
+    extensions: tuple[str, ...] = ("yaml", "yml", "toml")
+
+    def extract(self, content: bytes) -> DocumentExtractionResult:
+        """Extract title from YAML/TOML top-level keys."""
+        try:
+            text = content.decode("utf-8", errors="replace")
+            if not text.strip():
+                return _null_doc_result("yaml", "Empty file")
+
+            title: str | None = None
+
+            # Try YAML parse for structured key lookup
+            try:
+                import yaml as _yaml
+
+                obj = _yaml.safe_load(text)
+                if isinstance(obj, dict):
+                    for key in ("title", "name", "description"):
+                        val = obj.get(key)
+                        if isinstance(val, str) and val.strip():
+                            title = val.strip()
+                            break
+            except Exception:
+                pass
+
+            # Fallback: first non-blank, non-comment line
+            if title is None:
+                for line in text.splitlines():
+                    stripped = line.strip()
+                    if stripped and not stripped.startswith("#"):
+                        title = stripped[:200]  # cap length
+                        break
+
+            return DocumentExtractionResult(
+                title=title,
+                headings=[],
+                front_matter=None,
+                word_count=0,
+                link_count=0,
+                code_languages=[],
+                format="yaml",
+                confidence=1.0 if title else 0.3,
+            )
+        except Exception as e:
+            return _null_doc_result("yaml", f"YAML title extraction failed: {e}")
+
+
+class PythonDocumentExtractor:
+    """Python module title extractor for the skeleton index (Issue #3725).
+
+    Priority order:
+    1. Module-level docstring (first non-blank line of the docstring)
+    2. First class/function with a docstring (name as title)
+    Falls back to NULL if none found.  Skips shebang lines.
+    """
+
+    mime_types: tuple[str, ...] = ("text/x-python",)
+    extensions: tuple[str, ...] = ("py", "pyi")
+
+    # Matches: def foo(, class Foo(, class Foo:
+    _DEF_RE = re.compile(r"^(?:class|def)\s+(\w+)")
+    # Matches triple-quoted docstring openings
+    _DOCSTRING_RE = re.compile(r'^\s*(?:"""|\'\'\')(.*)$')
+
+    def extract(self, content: bytes) -> DocumentExtractionResult:
+        """Extract title from module docstring or first definition."""
+        try:
+            text = content.decode("utf-8", errors="replace")
+            if not text.strip():
+                return _null_doc_result("python", "Empty file")
+
+            lines = text.splitlines()
+            title: str | None = None
+
+            i = 0
+            # Skip shebang and encoding declarations
+            while i < len(lines) and i < 3:
+                stripped = lines[i].strip()
+                if stripped.startswith("#") or not stripped:
+                    i += 1
+                    continue
+                break
+
+            # Check for module docstring at current position
+            if i < len(lines):
+                m = self._DOCSTRING_RE.match(lines[i])
+                if m:
+                    # Inline content on the opening line
+                    inline = m.group(1).strip().rstrip("'\"").strip()
+                    if inline:
+                        title = inline
+                    else:
+                        # Multi-line docstring: take next non-blank line
+                        for j in range(i + 1, min(i + 10, len(lines))):
+                            candidate = lines[j].strip().rstrip("'\"").strip()
+                            if candidate and not candidate.startswith(('"""', "'''")):
+                                title = candidate
+                                break
+
+            # Fallback: first class/def name
+            if title is None:
+                for line in lines:
+                    m2 = self._DEF_RE.match(line.strip())
+                    if m2:
+                        title = m2.group(1)
+                        break
+
+            return DocumentExtractionResult(
+                title=title,
+                headings=[],
+                front_matter=None,
+                word_count=0,
+                link_count=0,
+                code_languages=["python"],
+                format="python",
+                confidence=1.0 if title else 0.4,
+            )
+        except Exception as e:
+            return _null_doc_result("python", f"Python title extraction failed: {e}")
+
+
+class TypeScriptDocumentExtractor:
+    """TypeScript/JavaScript title extractor for the skeleton index (Issue #3725).
+
+    Priority order:
+    1. JSDoc ``@description`` or ``@fileoverview`` at the top of the file
+    2. First exported symbol name (export const/function/class/default)
+    Falls back to NULL if none found.
+    """
+
+    mime_types: tuple[str, ...] = (
+        "application/typescript",
+        "text/typescript",
+        "application/javascript",
+        "text/javascript",
+    )
+    extensions: tuple[str, ...] = ("ts", "tsx", "js", "jsx", "mjs", "cjs")
+
+    _JSDOC_DESC_RE = re.compile(
+        r"@(?:description|fileoverview)\s+(.+?)(?:\s*\*/\s*)?$", re.IGNORECASE
+    )
+    _EXPORT_RE = re.compile(
+        r"^export\s+(?:default\s+)?(?:const|function|class|async\s+function)\s+(\w+)"
+    )
+
+    def extract(self, content: bytes) -> DocumentExtractionResult:
+        """Extract title from JSDoc description or first exported symbol."""
+        try:
+            text = content.decode("utf-8", errors="replace")
+            if not text.strip():
+                return _null_doc_result("typescript", "Empty file")
+
+            title: str | None = None
+
+            # Scan for JSDoc block at top of file (first 30 lines)
+            lines = text.splitlines()
+            for line in lines[:30]:
+                m = self._JSDOC_DESC_RE.search(line)
+                if m:
+                    title = m.group(1).strip()
+                    break
+
+            # Fallback: first exported symbol
+            if title is None:
+                for line in lines:
+                    m2 = self._EXPORT_RE.match(line.strip())
+                    if m2:
+                        title = m2.group(1)
+                        break
+
+            return DocumentExtractionResult(
+                title=title,
+                headings=[],
+                front_matter=None,
+                word_count=0,
+                link_count=0,
+                code_languages=["typescript"],
+                format="typescript",
+                confidence=1.0 if title else 0.4,
+            )
+        except Exception as e:
+            return _null_doc_result("typescript", f"TypeScript title extraction failed: {e}")
+
+
+class HtmlDocumentExtractor:
+    """HTML title extractor for the skeleton index (Issue #3725).
+
+    Extracts the ``<title>`` tag content.  Falls back to first ``<h1>`` if
+    no ``<title>`` tag is present.
+    """
+
+    mime_types: tuple[str, ...] = ("text/html",)
+    extensions: tuple[str, ...] = ("html", "htm")
+
+    _TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
+    _H1_RE = re.compile(r"<h1[^>]*>(.*?)</h1>", re.IGNORECASE | re.DOTALL)
+    _TAG_RE = re.compile(r"<[^>]+>")
+
+    def extract(self, content: bytes) -> DocumentExtractionResult:
+        """Extract title from <title> or <h1> tag."""
+        try:
+            text = content.decode("utf-8", errors="replace")
+            if not text.strip():
+                return _null_doc_result("html", "Empty file")
+
+            title: str | None = None
+
+            m = self._TITLE_RE.search(text)
+            if m:
+                title = self._TAG_RE.sub("", m.group(1)).strip()
+
+            if not title:
+                m2 = self._H1_RE.search(text)
+                if m2:
+                    title = self._TAG_RE.sub("", m2.group(1)).strip()
+
+            return DocumentExtractionResult(
+                title=title or None,
+                headings=[],
+                front_matter=None,
+                word_count=0,
+                link_count=0,
+                code_languages=[],
+                format="html",
+                confidence=1.0 if title else 0.3,
+            )
+        except Exception as e:
+            return _null_doc_result("html", f"HTML title extraction failed: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Skeleton extractor registry
+# ---------------------------------------------------------------------------
+# Indexed by lowercase file extension.  Used by SkeletonIndexer to dispatch
+# title extraction without importing individual extractor classes.
+
+SKELETON_EXTRACTOR_REGISTRY: dict[str, DocumentExtractor] = {
+    ext: extractor
+    for extractor in (
+        MarkdownExtractor(),
+        JsonDocumentExtractor(),
+        YamlDocumentExtractor(),
+        PythonDocumentExtractor(),
+        TypeScriptDocumentExtractor(),
+        HtmlDocumentExtractor(),
+    )
+    for ext in extractor.extensions
+}

@@ -139,11 +139,11 @@ class ZoektPipeConsumer:
                     self._nx.sys_unlink(_ZOEKT_PIPE_PATH)
 
             try:
-                await asyncio.wait_for(asyncio.shield(self._consumer_task), timeout=5.0)
+                await asyncio.wait_for(asyncio.shield(self._consumer_task), timeout=2.0)
             except (TimeoutError, asyncio.CancelledError):
                 self._consumer_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await self._consumer_task
+                # Don't await cancelled task — it may be stuck in Rust blocking I/O
+                # (GIL released, cancellation can't interrupt). Fire-and-forget.
 
             self._consumer_task = None
         self._pipe_ready = False

@@ -1308,7 +1308,7 @@ class PlaygroundApp(App[None]):
         try:
             from types import SimpleNamespace
 
-            from nexus.fs import _infer_connector_user_email
+            from nexus.fs._backend_factory import _infer_connector_user_email
         except Exception:
             return "local"
 

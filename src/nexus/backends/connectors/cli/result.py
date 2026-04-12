@@ -62,6 +62,64 @@ class CLIResult:
         """Whether the command succeeded."""
         return self.status == CLIResultStatus.SUCCESS
 
+    def as_json(self) -> Any:
+        """Parse stdout as JSON, stripping any CLI preamble before the first ``{`` or ``[``.
+
+        Raises:
+            ValueError: If stdout cannot be parsed as JSON.
+        """
+        import json as _json
+
+        text = self.stdout
+        # Find the first JSON start character — object or array.
+        obj_idx = text.find("{")
+        arr_idx = text.find("[")
+        candidates = [i for i in (obj_idx, arr_idx) if i >= 0]
+        if candidates:
+            start = min(candidates)
+            if start > 0:
+                text = text[start:]
+        try:
+            return _json.loads(text)
+        except Exception as exc:
+            raise ValueError(f"Failed to parse CLI output as JSON: {exc}") from exc
+
+    def as_yaml(self) -> Any:
+        """Parse stdout as YAML, stripping any CLI preamble lines.
+
+        Skips leading lines that don't look like YAML content (e.g. ``Using
+        keyring backend…``).  Recognises the three common YAML document starts:
+        ``key:`` (mapping), ``- `` or ``-\n`` (sequence), and ``---`` (document
+        marker).  Then parses with ``yaml.safe_load``.
+
+        Raises:
+            ValueError: If stdout cannot be parsed as YAML.
+        """
+        import re as _re
+
+        import yaml as _yaml
+
+        text = self.stdout
+        # Advance past any preamble to the first line that looks like YAML:
+        # a mapping key, a sequence item, or a document-start marker.
+        match = _re.search(
+            r"^(?:[a-zA-Z_]\w*:|---|- |-$)",
+            text,
+            _re.MULTILINE,
+        )
+        if match and match.start() > 0:
+            text = text[match.start() :]
+        try:
+            parsed = _yaml.safe_load(text)
+        except Exception as exc:
+            raise ValueError(f"Failed to parse CLI output as YAML: {exc}") from exc
+        if not isinstance(parsed, (dict, list)):
+            raise ValueError(
+                f"CLI output parsed as YAML scalar ({type(parsed).__name__!r}), "
+                "expected a mapping or sequence"
+            )
+        return parsed
+
     def summary(self) -> str:
         """Human-readable summary for logging."""
         cmd_str = " ".join(self.command[:3])

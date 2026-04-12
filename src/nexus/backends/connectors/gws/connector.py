@@ -13,9 +13,12 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from datetime import UTC
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+import yaml
 
 from nexus.backends.base.registry import register_connector
 from nexus.backends.connectors.base import (
@@ -619,10 +622,116 @@ class GmailConnector(PathCLIBackend):
     _LABELS = ["INBOX", "SENT", "STARRED", "IMPORTANT", "DRAFTS"]
     _last_history_id: str | None = None
 
+    # Maximum messages returned by list_dir / list_dir_metadata combined.
+    # One Gmail API page is 500 messages; 500 is fast for interactive use
+    # and avoids fetching thousands of entries for large inboxes.
+    # Override via CONNECTION_ARGS or subclass for data-dump workflows.
+    MAX_LIST_RESULTS: int = 500
+    # Short TTL (seconds) for the per-label ID list cache so that
+    # list_dir and list_dir_metadata reuse the same API response when
+    # called in sequence for the same path.
+    _ID_LIST_CACHE_TTL: float = 5.0
+
     def __init__(self, **kwargs: Any) -> None:
         config = _load_gws_config("gmail.yaml")
         kwargs.setdefault("config", config)
         super().__init__(**kwargs)
+        # Per-instance cache: label_ids_key -> (timestamp, [(msg_id, thread_id)])
+        self._id_list_cache: dict[str, tuple[float, list[tuple[str, str]]]] = {}
+
+    # --- Shared paginated list helper ---
+
+    def _paginated_message_list(
+        self,
+        label_ids: list[str],
+        context: Any = None,
+    ) -> list[tuple[str, str]]:
+        """Fetch message (msg_id, thread_id) pairs for the given labels.
+
+        Pages through ``messages.list`` until ``MAX_LIST_RESULTS`` is reached
+        or the API signals no further pages.  Results are cached for
+        ``_ID_LIST_CACHE_TTL`` seconds so that a ``list_dir`` / ``list_dir_metadata``
+        pair for the same path shares one API round trip.
+
+        The cache key includes the caller's user identity so that per-user
+        data cannot leak across accounts on shared connector instances.
+
+        Returns:
+            List of ``(msg_id, thread_id)`` tuples, newest-first.
+        """
+        user_id = getattr(context, "user_id", None) or ""
+        zone_id = getattr(context, "zone_id", None) or ""
+        cache_key = f"{user_id}:{zone_id}:{','.join(sorted(label_ids))}"
+        now = time.monotonic()
+        cached = self._id_list_cache.get(cache_key)
+        if cached is not None:
+            cached_ts, cached_pairs = cached
+            if now - cached_ts < self._ID_LIST_CACHE_TTL:
+                return cached_pairs
+
+        pairs: list[tuple[str, str]] = []
+        page_token: str | None = None
+        completed_cleanly = False
+
+        while True:
+            remaining = self.MAX_LIST_RESULTS - len(pairs)
+            page_params: dict[str, Any] = {
+                "userId": "me",
+                "maxResults": min(500, remaining),
+                "labelIds": label_ids,
+            }
+            if page_token:
+                page_params["pageToken"] = page_token
+
+            result = self._execute_cli(
+                [
+                    "gws",
+                    "gmail",
+                    "users",
+                    "messages",
+                    "list",
+                    "--params",
+                    json.dumps(page_params),
+                    "--format",
+                    "yaml",
+                ],
+            )
+            if not result.ok:
+                break
+
+            try:
+                data = result.as_yaml() or {}
+            except ValueError:
+                logger.warning(
+                    "[GMAIL] Failed to parse messages.list YAML for labels=%s", label_ids
+                )
+                break
+
+            for msg in data.get("messages") or []:
+                if isinstance(msg, dict) and msg.get("id"):
+                    msg_id: str = str(msg["id"])
+                    thread_id: str = str(msg.get("threadId") or msg_id)
+                    pairs.append((msg_id, thread_id))
+
+            page_token = data.get("nextPageToken")
+            if not page_token or len(pairs) >= self.MAX_LIST_RESULTS:
+                completed_cleanly = True
+                break
+
+        if len(pairs) >= self.MAX_LIST_RESULTS:
+            logger.warning(
+                "[GMAIL] Listing truncated at %d messages for labels=%s. "
+                "Increase MAX_LIST_RESULTS on GmailConnector to see more.",
+                self.MAX_LIST_RESULTS,
+                label_ids,
+            )
+
+        result_pairs = pairs[: self.MAX_LIST_RESULTS]
+        # Only cache after a fully successful pass — partial results from a
+        # mid-pagination failure should not be served as authoritative for 5s.
+        if completed_cleanly:
+            self._id_list_cache[cache_key] = (now, result_pairs)
+        return result_pairs
 
     # --- Batch metadata via list_dir_metadata protocol (Issue #3266) ---
 
@@ -641,7 +750,6 @@ class GmailConnector(PathCLIBackend):
         Returns ``None`` for root or label-only paths (no per-file metadata).
         """
         import json as _json
-        import re
 
         path = path.strip("/")
 
@@ -714,31 +822,16 @@ class GmailConnector(PathCLIBackend):
             id_to_meta[msg_id] = meta
 
         # Now map from list_dir filenames to metadata.
-        # We need the actual list_dir entries — fetch message list to get
-        # threadId-msgId pairs, then match against triage metadata.
-        result = self._execute_cli(
-            [
-                "gws",
-                "gmail",
-                "users",
-                "messages",
-                "list",
-                "--params",
-                _json.dumps({"userId": "me", "maxResults": 50, "labelIds": [label]}),
-                "--format",
-                "yaml",
-            ],
-        )
-        if not result.ok:
-            # Return the id-keyed metadata anyway — callers can look up
-            # by extracting msg_id from the filename.
+        # _paginated_message_list is cached so this reuses the list_dir round trip
+        # when both are called in sequence for the same path.
+        pairs = self._paginated_message_list([label], context=context)
+        if not pairs:
+            # Fall back to id-keyed metadata — callers can look up by
+            # extracting msg_id from the filename.
             return id_to_meta
 
-        ids = re.findall(r'id:\s*"([^"]+)"', result.stdout)
-        thread_ids = re.findall(r'threadId:\s*"([^"]+)"', result.stdout)
-
         filename_to_meta: dict[str, dict[str, Any]] = {}
-        for i, msg_id in enumerate(ids):
+        for msg_id, tid in pairs:
             file_meta = id_to_meta.get(msg_id)
             if not file_meta:
                 continue
@@ -747,7 +840,6 @@ class GmailConnector(PathCLIBackend):
                 msg_category = _gmail_category_from_labels(file_meta.get("labels"))
                 if msg_category != category_filter:
                     continue
-            tid = thread_ids[i] if i < len(thread_ids) else msg_id
             filename = f"{tid}-{msg_id}.yaml"
             filename_to_meta[filename] = file_meta
 
@@ -948,9 +1040,6 @@ class GmailConnector(PathCLIBackend):
         context: Any = None,
     ) -> list[str]:
         """List Gmail labels, category subfolders, or messages."""
-        import json
-        import re
-
         path = path.strip("/")
 
         if not path:
@@ -974,47 +1063,35 @@ class GmailConnector(PathCLIBackend):
                     label_ids.append(gmail_label)
                     break
 
-        # Use messages.list to get IDs with threadIds.
-        result = self._execute_cli(
-            [
-                "gws",
-                "gmail",
-                "users",
-                "messages",
-                "list",
-                "--params",
-                json.dumps({"userId": "me", "maxResults": 50, "labelIds": label_ids}),
-                "--format",
-                "yaml",
-            ],
-        )
-        if not result.ok:
-            return []
-
-        ids = re.findall(r'id:\s*"([^"]+)"', result.stdout)
-        thread_ids = re.findall(r'threadId:\s*"([^"]+)"', result.stdout)
-        entries = []
-        for i, msg_id in enumerate(ids):
-            tid = thread_ids[i] if i < len(thread_ids) else msg_id
-            entries.append(f"{tid}-{msg_id}.yaml")
-        return entries
+        pairs = self._paginated_message_list(label_ids, context=context)
+        return [f"{tid}-{msg_id}.yaml" for msg_id, tid in pairs]
 
     def read_content(
         self,
         content_hash: str,
         context: Any = None,
     ) -> bytes:
-        """Read a Gmail message as YAML via gws CLI."""
-        import json
-        import re
+        """Read a Gmail message as YAML via gws CLI.
 
-        # Extract message ID from backend_path or content_hash
+        Fetches the full message with ``format=full`` so the body is available,
+        walks the MIME payload tree to extract ``text/plain`` (or ``text/html``
+        as a fallback), and returns all structured fields the API provides.
+        Raises ``BackendError`` on CLI failure so callers get an explicit error
+        instead of a silently empty file.
+        """
+        from nexus.backends.connectors.gws._gmail_utils import extract_body
+        from nexus.contracts.exceptions import BackendError
+
+        # Extract message ID from content_hash or context.backend_path.
+        # Filename format: threadId-msgId.yaml  →  msg_id is the last segment.
         msg_id = content_hash
+        filename = content_hash
         if context and hasattr(context, "backend_path") and context.backend_path:
-            # Path format: INBOX/threadId-msgId.yaml
             filename = context.backend_path.rstrip("/").rsplit("/", 1)[-1]
-            if "-" in filename:
-                msg_id = filename.replace(".yaml", "").split("-")[-1]
+        # Strip .yaml suffix then take the last "-" segment regardless of source.
+        stem = filename.replace(".yaml", "")
+        if "-" in stem:
+            msg_id = stem.split("-")[-1]
 
         result = self._execute_cli(
             [
@@ -1030,33 +1107,44 @@ class GmailConnector(PathCLIBackend):
             ],
         )
         if not result.ok:
-            return b""
+            raise BackendError(result.summary(), backend=self.name, path=msg_id)
 
-        # Extract useful fields into a clean YAML
-        stdout = result.stdout
-        fields: dict[str, Any] = {"id": msg_id}
+        try:
+            msg = result.as_yaml() or {}
+        except ValueError as exc:
+            raise BackendError(
+                f"Failed to parse Gmail message response: {exc}",
+                backend=self.name,
+                path=msg_id,
+            ) from exc
 
-        # Parse headers
-        for header_name in ["Subject", "From", "To", "Date"]:
-            match = re.search(rf'name:\s*"{header_name}"\s*\n\s*value:\s*"([^"]*)"', stdout)
-            if match:
-                fields[header_name.lower()] = match.group(1)
+        headers = {
+            h["name"]: h["value"]
+            for h in (msg.get("payload", {}).get("headers") or [])
+            if isinstance(h, dict) and h.get("name")
+        }
 
-        # Parse snippet
-        snippet_match = re.search(r'snippet:\s*"([^"]*)"', stdout)
-        if snippet_match:
-            fields["snippet"] = snippet_match.group(1)
+        body = extract_body(msg.get("payload") or {})
 
-        # Parse labels
-        labels = re.findall(r'- "([A-Z_]+)"', stdout)
-        if labels:
-            fields["labels"] = labels
+        out: dict[str, Any] = {
+            "id": msg.get("id", msg_id),
+            "threadId": msg.get("threadId"),
+            "labels": msg.get("labelIds", []),
+            "historyId": msg.get("historyId"),
+            "internalDate": msg.get("internalDate"),
+            "snippet": msg.get("snippet", ""),
+            "subject": headers.get("Subject", ""),
+            "from": headers.get("From", ""),
+            "to": headers.get("To", ""),
+            "cc": headers.get("Cc", ""),
+            "date": headers.get("Date", ""),
+            "body": body,
+        }
+        out = {k: v for k, v in out.items() if v not in (None, "", [])}
 
-        import importlib
-
-        yaml_module = importlib.import_module("yaml")
-        rendered = str(yaml_module.dump(fields, default_flow_style=False, allow_unicode=True))
-
+        rendered: str = (
+            yaml.dump(out, default_flow_style=False, allow_unicode=True, sort_keys=False) or ""
+        )
         return rendered.encode("utf-8")
 
     def sync_delta(self) -> dict[str, Any]:
@@ -1168,6 +1256,9 @@ class CalendarConnector(PathCLIBackend):
             fix_example="event_id: <valid event ID>",
         ),
     }
+
+    # Maximum events returned per calendar list_dir call.
+    MAX_LIST_RESULTS: int = 500
 
     def __init__(self, **kwargs: Any) -> None:
         config = _load_gws_config("calendar.yaml")
@@ -1307,46 +1398,67 @@ class CalendarConnector(PathCLIBackend):
         cal_id = self._resolve_calendar_id(parts[0])
         month_filter = parts[1] if len(parts) >= 2 else None
 
-        # Fetch events from API (same as list_dir).
-        params: dict[str, Any] = {
+        # Fetch events from API (mirrors list_dir pagination logic).
+        import calendar as _cal_mod
+        from datetime import datetime
+
+        _lookback_year = datetime.now(UTC).year - 3
+        base_params: dict[str, Any] = {
             "calendarId": cal_id,
-            "maxResults": 250,
+            "maxResults": self.MAX_LIST_RESULTS,
             "singleEvents": True,
             "orderBy": "startTime",
-            "timeMin": "2025-01-01T00:00:00Z",
+            "timeMin": f"{_lookback_year}-01-01T00:00:00Z",
         }
         if month_filter and re.match(r"^\d{4}-\d{2}$", month_filter):
-            import calendar as _cal_mod
-
             year, month = int(month_filter[:4]), int(month_filter[5:7])
             last_day = _cal_mod.monthrange(year, month)[1]
-            params["timeMin"] = f"{month_filter}-01T00:00:00Z"
-            params["timeMax"] = f"{month_filter}-{last_day}T23:59:59Z"
+            base_params["timeMin"] = f"{month_filter}-01T00:00:00Z"
+            base_params["timeMax"] = f"{month_filter}-{last_day}T23:59:59Z"
 
-        result = self._execute_cli(
-            [
-                "gws",
-                "calendar",
-                "events",
-                "list",
-                "--params",
-                _json.dumps(params),
-                "--format",
-                "json",
-            ],
-        )
-        if not result.ok:
-            return None
+        all_items: list[dict[str, Any]] = []
+        page_token: str | None = None
 
-        try:
-            raw = result.stdout
-            # Skip any preamble before the JSON.
-            idx = raw.index("{")
-            data = _json.loads(raw[idx:])
-        except Exception:
-            return None
+        while True:
+            remaining = self.MAX_LIST_RESULTS - len(all_items)
+            if remaining <= 0:
+                break
+            page_params = {**base_params, "maxResults": min(self.MAX_LIST_RESULTS, remaining)}
+            if page_token:
+                page_params["pageToken"] = page_token
 
-        items = data.get("items", [])
+            result = self._execute_cli(
+                [
+                    "gws",
+                    "calendar",
+                    "events",
+                    "list",
+                    "--params",
+                    _json.dumps(page_params),
+                    "--format",
+                    "json",
+                ],
+            )
+            if not result.ok:
+                break
+
+            try:
+                raw = result.stdout
+                # Skip any preamble before the JSON.
+                idx = raw.index("{")
+                data = _json.loads(raw[idx:])
+            except Exception:
+                break
+
+            page_items = data.get("items") or []
+            remaining_after = self.MAX_LIST_RESULTS - len(all_items)
+            all_items.extend(page_items[:remaining_after])
+            page_token = data.get("nextPageToken")
+
+            if not page_token or len(all_items) >= self.MAX_LIST_RESULTS:
+                break
+
+        items = all_items
         if not items:
             return None
 
@@ -1400,55 +1512,112 @@ class CalendarConnector(PathCLIBackend):
             return ["primary/"]
 
         # Inside a calendar (or calendar/month): list events
+        import calendar as _cal_mod
+
         parts = path.split("/")
         # Resolve human-readable folder name back to calendar ID for API calls.
         cal_id = self._resolve_calendar_id(parts[0])
         month_filter = parts[1] if len(parts) >= 2 else None
 
-        # Fetch events from API
-        params: dict[str, Any] = {
-            "calendarId": cal_id,
-            "maxResults": 50,
-            "timeMin": "2026-01-01T00:00:00Z",
-        }
-        # If filtering by month, narrow the time range
-        if month_filter and re.match(r"^\d{4}-\d{2}$", month_filter):
-            import calendar as _cal_mod
+        # For root listings we want to discover which months exist across all
+        # recent history, so use a 3-year lookback from today.  For month-specific
+        # listings the timeMin/timeMax are overridden below to the month bounds.
+        from datetime import datetime
 
+        _lookback_year = datetime.now(UTC).year - 3
+        _three_years_ago = f"{_lookback_year}-01-01T00:00:00Z"
+
+        # Root listing: expand recurring events (singleEvents=True) so each
+        # occurrence contributes its actual start date to month discovery.
+        # orderBy=updated is intentional: it surfaces recently active events first,
+        # which guarantees that current months appear within MAX_LIST_RESULTS even
+        # on calendars with years of dense recurring events.  orderBy=startTime
+        # would instead return the oldest occurrences first, hiding current months
+        # entirely on large calendars.  The trade-off is that months whose events
+        # have not been modified recently may not appear in root if the total event
+        # count exceeds MAX_LIST_RESULTS — accepted as a known limitation.
+        # Month-specific listings use orderBy=startTime to return events in
+        # chronological order within the requested month window.
+        if month_filter and re.match(r"^\d{4}-\d{2}$", month_filter):
             year, month = int(month_filter[:4]), int(month_filter[5:7])
             last_day = _cal_mod.monthrange(year, month)[1]
-            params["timeMin"] = f"{month_filter}-01T00:00:00Z"
-            params["timeMax"] = f"{month_filter}-{last_day}T23:59:59Z"
+            base_params: dict[str, Any] = {
+                "calendarId": cal_id,
+                "maxResults": self.MAX_LIST_RESULTS,
+                "singleEvents": True,
+                "orderBy": "startTime",
+                "timeMin": f"{month_filter}-01T00:00:00Z",
+                "timeMax": f"{month_filter}-{last_day}T23:59:59Z",
+            }
+        else:
+            base_params = {
+                "calendarId": cal_id,
+                "maxResults": self.MAX_LIST_RESULTS,
+                "singleEvents": True,
+                "orderBy": "updated",
+                "timeMin": _three_years_ago,
+            }
+        # Paginate until MAX_LIST_RESULTS or no further pages.  Clip each page's
+        # maxResults to the remaining budget so the total never exceeds the cap.
+        all_items: list[dict[str, Any]] = []
+        page_token: str | None = None
 
-        result = self._execute_cli(
-            [
-                "gws",
-                "calendar",
-                "events",
-                "list",
-                "--params",
-                json.dumps(params),
-                "--format",
-                "yaml",
-            ],
-        )
-        if not result.ok:
-            return []
+        while True:
+            remaining = self.MAX_LIST_RESULTS - len(all_items)
+            if remaining <= 0:
+                break
+            page_params = {**base_params, "maxResults": min(self.MAX_LIST_RESULTS, remaining)}
+            if page_token:
+                page_params["pageToken"] = page_token
 
-        event_ids = re.findall(r'^\s+id:\s*"([^"]+)"', result.stdout, re.MULTILINE)
+            result = self._execute_cli(
+                [
+                    "gws",
+                    "calendar",
+                    "events",
+                    "list",
+                    "--params",
+                    json.dumps(page_params),
+                    "--format",
+                    "yaml",
+                ],
+            )
+            if not result.ok:
+                break
+
+            try:
+                data = result.as_yaml() or {}
+            except ValueError:
+                break
+
+            items = data.get("items") or []
+            # Clip to remaining budget even if the API returns more than requested.
+            remaining_after = self.MAX_LIST_RESULTS - len(all_items)
+            all_items.extend(items[:remaining_after])
+            page_token = data.get("nextPageToken")
+
+            if not page_token or len(all_items) >= self.MAX_LIST_RESULTS:
+                break
+
+        event_ids = [item["id"] for item in all_items if isinstance(item, dict) and item.get("id")]
 
         # Calendar root listing: return month subfolders derived from event dates.
         if not month_filter:
-            start_dates = re.findall(r'dateTime:\s*"(\d{4}-\d{2})', result.stdout) + re.findall(
-                r'date:\s*"(\d{4}-\d{2})', result.stdout
-            )
+            start_dates: list[str] = []
+            for item in all_items:
+                if not isinstance(item, dict):
+                    continue
+                start = item.get("start") or {}
+                dt = start.get("dateTime", "") or start.get("date", "")
+                if dt and len(dt) >= 7:
+                    start_dates.append(dt[:7])
             months = sorted(set(start_dates))
             if months:
                 return [f"{m}/" for m in months]
-            # Fallback: no parseable dates, return flat event list
+            # Fallback: no parseable dates, return flat event list.
             return [f"{eid}.yaml" for eid in event_ids]
 
-        # Month listing: return event files
+        # Month listing: return event files.
         return [f"{eid}.yaml" for eid in event_ids]
 
     def read_content(
@@ -1457,8 +1626,6 @@ class CalendarConnector(PathCLIBackend):
         context: Any = None,
     ) -> bytes:
         """Read a calendar event as YAML via gws CLI."""
-        import json
-
         event_id = content_hash
         cal_id = "primary"
         if context and hasattr(context, "backend_path") and context.backend_path:

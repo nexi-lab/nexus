@@ -712,3 +712,12 @@ async def _shutdown_pipe_consumers(app: "FastAPI") -> None:
             logger.info("[PIPE] TaskDispatchPipeConsumer stopped")
         except Exception as e:
             logger.warning("[PIPE] Error stopping TaskDispatchPipeConsumer: %s", e, exc_info=True)
+
+    # Issue #3725: SkeletonPipeConsumer
+    skpc = getattr(app.state, "skeleton_pipe_consumer", None)
+    if skpc is not None and hasattr(skpc, "stop"):
+        try:
+            await skpc.stop()
+            logger.info("[PIPE] SkeletonPipeConsumer stopped")
+        except Exception as e:
+            logger.warning("[PIPE] Error stopping SkeletonPipeConsumer: %s", e, exc_info=True)

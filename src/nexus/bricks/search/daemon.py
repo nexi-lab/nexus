@@ -948,10 +948,10 @@ class SearchDaemon:
             async with self._async_session() as session:
                 result = await session.execute(
                     sa_text(
-                        "SELECT path_id, zone_id, title, "
-                        "       (SELECT virtual_path FROM file_paths fp "
-                        "        WHERE fp.path_id = ds.path_id) AS virtual_path "
-                        "FROM document_skeleton ds"
+                        "SELECT ds.path_id, ds.zone_id, ds.title, fp.virtual_path "
+                        "FROM document_skeleton ds "
+                        "JOIN file_paths fp ON fp.path_id = ds.path_id "
+                        "WHERE fp.deleted_at IS NULL"
                     )
                 )
                 rows = result.fetchall()

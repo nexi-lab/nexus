@@ -123,7 +123,9 @@ class SkeletonPipeConsumer:
             self._write_buffer.append(json.dumps(msg).encode())
             return
         # Fallback: direct call when pipe not ready (CLI mode / pre-startup).
-        asyncio.get_event_loop().create_task(self._dispatch_single(msg))
+        # No running loop (import-time / sync CLI context): event dropped safely.
+        with contextlib.suppress(RuntimeError):
+            asyncio.get_running_loop().create_task(self._dispatch_single(msg))
 
     # ------------------------------------------------------------------
     # Async lifecycle

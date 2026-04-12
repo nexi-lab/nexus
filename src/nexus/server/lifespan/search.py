@@ -225,7 +225,7 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
         # Creates the indexer (FileReaderProtocol + SkeletonBM25Protocol) and
         # registers VFS post-hooks so every write/delete/rename automatically
         # keeps the in-memory skeleton index fresh without a full re-bootstrap.
-        _wire_skeleton_indexer(app, svc)
+        await _wire_skeleton_indexer(app, svc)
 
         # Issue #3147: Initialize ZoneSearchRegistry for federated search.
         # Phase 1: All zones use the single global daemon.
@@ -284,20 +284,21 @@ def _init_zone_registry(app: "FastAPI", svc: "LifespanServices") -> None:
     app.state.zone_search_registry = registry
 
 
-def _wire_skeleton_indexer(app: "FastAPI", svc: "LifespanServices") -> None:
-    """Create SkeletonIndexer and register VFS post-hooks for live index updates.
+async def _wire_skeleton_indexer(app: "FastAPI", svc: "LifespanServices") -> None:
+    """Create SkeletonIndexer + SkeletonPipeConsumer, register VFS hooks.
 
     Called after SearchDaemon.startup() so the daemon's in-memory index is
     ready to receive upsert/delete calls via _DaemonSkeletonBM25.
 
-    VFS hooks follow the same call_soon_threadsafe pattern used by the
-    search auto-index hooks above — hooks may fire from synchronous threads
-    (asyncio.to_thread), so we schedule coroutines via the running loop.
+    VFS hooks call SkeletonPipeConsumer.notify_* (sync, deque-buffered) rather
+    than scheduling coroutines directly — the consumer's flush task drains the
+    deque via the DT_PIPE so events are debounced and micro-batched (15A).
 
     Issue #3725 review decisions honoured:
-        - 4A  Live updates go through VFS post-hooks (write/delete/rename).
+        - 4A  Async pipe consumer (write/delete/rename routed via DT_PIPE).
         - 7A  2KB head cap enforced inside SkeletonIndexer.
         - 14A Hash-based skip guard in index_file().
+        - 15A Micro-batched concurrent reads via asyncio.gather in consumer.
     """
     _nx = svc.nexus_fs
     _daemon = getattr(app.state, "search_daemon", None)
@@ -305,10 +306,9 @@ def _wire_skeleton_indexer(app: "FastAPI", svc: "LifespanServices") -> None:
         return
 
     try:
-        import asyncio as _asyncio
-
         from nexus.bricks.catalog.extractors import SKELETON_EXTRACTOR_REGISTRY
         from nexus.bricks.search.skeleton_indexer import SkeletonIndexer
+        from nexus.bricks.search.skeleton_pipe_consumer import SkeletonPipeConsumer
         from nexus.factory.adapters import _DaemonSkeletonBM25, _NexusFSFileReader
 
         _reader = _NexusFSFileReader(_nx)
@@ -327,27 +327,17 @@ def _wire_skeleton_indexer(app: "FastAPI", svc: "LifespanServices") -> None:
             async_session_factory=_session_factory,
         )
         app.state.skeleton_indexer = _indexer
-        logger.debug("[SKELETON] SkeletonIndexer created")
+
+        _consumer = SkeletonPipeConsumer(indexer=_indexer)
+        _consumer.bind_fs(_nx)
+        await _consumer.start()
+        app.state.skeleton_pipe_consumer = _consumer
+        logger.debug("[SKELETON] SkeletonIndexer + SkeletonPipeConsumer created")
 
         if not hasattr(_nx, "register_intercept_write"):
             return  # NexusFS doesn't support VFS hooks in this mode
 
-        _loop = _asyncio.get_running_loop()
         _zone_id = svc.zone_id or "root"
-
-        def _sk_write(path: str, zone_id: str | None) -> None:
-            with contextlib.suppress(RuntimeError):
-                _loop.call_soon_threadsafe(
-                    _loop.create_task,
-                    _indexer.index_file(virtual_path=path, zone_id=zone_id or _zone_id),
-                )
-
-        def _sk_delete(path: str, zone_id: str | None) -> None:
-            with contextlib.suppress(RuntimeError):
-                _loop.call_soon_threadsafe(
-                    _loop.create_task,
-                    _indexer.delete_file(virtual_path=path, zone_id=zone_id or _zone_id),
-                )
 
         class _SkeletonWriteHook:
             @property
@@ -355,7 +345,11 @@ def _wire_skeleton_indexer(app: "FastAPI", svc: "LifespanServices") -> None:
                 return "skeleton_auto_index"
 
             def on_post_write(self, ctx: object) -> None:
-                _sk_write(getattr(ctx, "path", ""), getattr(ctx, "zone_id", None))
+                _consumer.notify_write(
+                    getattr(ctx, "path", ""),
+                    getattr(ctx, "path_id", None),
+                    getattr(ctx, "zone_id", None) or _zone_id,
+                )
 
         class _SkeletonDeleteHook:
             @property
@@ -363,7 +357,11 @@ def _wire_skeleton_indexer(app: "FastAPI", svc: "LifespanServices") -> None:
                 return "skeleton_auto_delete"
 
             def on_post_delete(self, ctx: object) -> None:
-                _sk_delete(getattr(ctx, "path", ""), getattr(ctx, "zone_id", None))
+                _consumer.notify_delete(
+                    getattr(ctx, "path", ""),
+                    getattr(ctx, "path_id", None),
+                    getattr(ctx, "zone_id", None) or _zone_id,
+                )
 
         class _SkeletonRenameHook:
             @property
@@ -371,8 +369,12 @@ def _wire_skeleton_indexer(app: "FastAPI", svc: "LifespanServices") -> None:
                 return "skeleton_auto_rename"
 
             def on_post_rename(self, ctx: object) -> None:
-                _sk_delete(getattr(ctx, "old_path", ""), getattr(ctx, "zone_id", None))
-                _sk_write(getattr(ctx, "new_path", ""), getattr(ctx, "zone_id", None))
+                _consumer.notify_rename(
+                    getattr(ctx, "old_path", ""),
+                    getattr(ctx, "new_path", ""),
+                    getattr(ctx, "path_id", None),
+                    getattr(ctx, "zone_id", None) or _zone_id,
+                )
 
         _nx.register_intercept_write(_SkeletonWriteHook())
         _nx.register_intercept_delete(_SkeletonDeleteHook())

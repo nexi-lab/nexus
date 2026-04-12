@@ -1246,7 +1246,7 @@ class SearchDaemon:
 
                     if (zone, path) != (cur_zone, cur_path):
                         # Completed document — push to batch.
-                        if cur_path is not None and cur_chunks:
+                        if cur_path is not None and cur_zone is not None and cur_chunks:
                             content = "\n".join(c for c in cur_chunks if c)
                             if content.strip():
                                 doc_id = (
@@ -1289,7 +1289,7 @@ class SearchDaemon:
                         cur_chunks.append(row.chunk_text or "")
 
                 # Flush the final in-flight document.
-                if cur_path is not None and cur_chunks:
+                if cur_path is not None and cur_zone is not None and cur_chunks:
                     content = "\n".join(c for c in cur_chunks if c)
                     if content.strip():
                         doc_id = f"{cur_zone}:{cur_path}" if cur_zone != "root" else cur_path

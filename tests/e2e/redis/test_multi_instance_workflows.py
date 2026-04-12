@@ -133,7 +133,7 @@ async def nexus_fs(temp_nexus_dir, db_path_agent1, shared_event_bus):
         )
 
     # Inject shared Redis event bus into the observer.
-    # The observer publishes events on write; FileWatcher subscribes.
+    # The observer publishes events on write; Rust kernel FileWatcher subscribes.
     obs = nexus.service("event_bus_observer")
     assert obs is not None, "event_bus_observer not registered — events won't propagate"
     obs._event_bus = shared_event_bus

@@ -29,10 +29,7 @@ from collections import deque
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from nexus.core.file_events import FILE_EVENT_BIT, FileEventType
-
 if TYPE_CHECKING:
-    from nexus.contracts.protocols.service_hooks import HookSpec
     from nexus.core.file_events import FileEvent
     from nexus.storage.record_store import RecordStoreABC
 
@@ -67,21 +64,6 @@ class RecordStoreWriteObserver:
         Enlisted via factory orchestrator (hook_spec duck-typed),
         NOT via bind_fs + start/stop async lifecycle.
     """
-
-    event_mask: int = (
-        FILE_EVENT_BIT[FileEventType.FILE_WRITE]
-        | FILE_EVENT_BIT[FileEventType.FILE_DELETE]
-        | FILE_EVENT_BIT[FileEventType.FILE_RENAME]
-        | FILE_EVENT_BIT[FileEventType.DIR_CREATE]
-        | FILE_EVENT_BIT[FileEventType.DIR_DELETE]
-    )
-
-    # ── Hook spec (duck-typed) (Issue #1616) ──────────────────────────
-
-    def hook_spec(self) -> "HookSpec":
-        from nexus.contracts.protocols.service_hooks import HookSpec
-
-        return HookSpec(observers=(self,))
 
     def __init__(
         self,
@@ -119,29 +101,6 @@ class RecordStoreWriteObserver:
         Used by CatalogService for async-on-write extraction (Issue #2978).
         """
         self._post_flush_hooks.append(hook)
-
-    # ------------------------------------------------------------------
-    # VFSObserver callback (MutationObserver protocol)
-    # ------------------------------------------------------------------
-
-    def on_mutation(self, event: "FileEvent") -> None:
-        """VFSObserver callback -- accumulate event + debounce.
-
-        Called by Rust dispatch_observers on the OBSERVE phase (fire-and-forget).
-        Thread-safe: may be called from any thread.
-        """
-        # Convert FileEvent to the dict format used by _process_events_in_session
-        ev_dict = self._file_event_to_dict(event)
-        if ev_dict is None:
-            return
-
-        with self._lock:
-            self._pending.append(ev_dict)
-            if self._timer is not None:
-                self._timer.cancel()
-            self._timer = threading.Timer(self._debounce, self._flush)
-            self._timer.daemon = True
-            self._timer.start()
 
     # ------------------------------------------------------------------
     # Debounce flush

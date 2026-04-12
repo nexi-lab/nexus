@@ -181,9 +181,8 @@ class NexusFUSE:
             namespace_manager = getattr(self.nexus_fs, "namespace_manager", None)
 
         # Create FUSE operations
-        # Issue #1771: event_bus via kernel FileWatcher's remote watcher (kernel-knows)
-        _fw = getattr(self.nexus_fs, "_file_watcher", None) if self.nexus_fs else None
-        event_bus = _fw._remote_watcher if _fw is not None else None
+        # Issue #1771: event_bus via kernel-level _event_bus (FileWatcher is now Rust-only)
+        event_bus = getattr(self.nexus_fs, "_event_bus", None) if self.nexus_fs else None
         subscription_manager = getattr(self.nexus_fs, "subscription_manager", None)
         operations = NexusFUSEOperations(
             self.nexus_fs,

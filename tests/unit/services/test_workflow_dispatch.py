@@ -1,7 +1,8 @@
 """Unit tests for WorkflowDispatchService (#625 partial, #808, #1812).
 
-Tests the service directly — fire(), on_mutation(),
+Tests the service directly — fire(),
 start()/stop() lifecycle, and Rust kernel IPC pipe integration.
+on_mutation() tests deleted: Rust kernel now dispatches observers directly.
 """
 
 from __future__ import annotations
@@ -13,7 +14,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from nexus.contracts.exceptions import NexusFileNotFoundError
-from nexus.core.file_events import FileEvent, FileEventType
 from nexus.services.lifecycle.workflow_dispatch_service import WorkflowDispatchService
 
 # ======================================================================
@@ -121,85 +121,6 @@ class TestFire:
         await svc.fire("file_write", {"path": "/z"}, "file_write:/z")
         # Kernel pipe_write_nowait should NOT be called
         nx.pipe_write_nowait.assert_not_called()
-
-        await svc.stop()
-
-
-# ======================================================================
-# on_mutation() — VFSObserver
-# ======================================================================
-
-
-class TestOnMutation:
-    @pytest.mark.asyncio
-    async def test_write_event(self) -> None:
-        """on_mutation(WRITE) should call fire() with correct trigger type."""
-        svc, nx = _make_service()
-        await svc.start()
-
-        event = FileEvent(
-            type=FileEventType.FILE_WRITE,
-            path="/test/file.txt",
-            zone_id="root",
-            agent_id="agent-1",
-            user_id="user-1",
-            timestamp="2026-02-19T00:00:00",
-            etag="abc123",
-            size=1024,
-            version=3,
-            is_new=True,
-        )
-        svc.on_mutation(event)
-
-        call_args = nx.pipe_write_nowait.call_args
-        msg = json.loads(call_args[0][1])
-        assert msg["type"] == "file_write"
-        assert msg["ctx"]["file_path"] == "/test/file.txt"
-        assert msg["ctx"]["created"] is True
-
-        await svc.stop()
-
-    @pytest.mark.asyncio
-    async def test_delete_event(self) -> None:
-        """on_mutation(DELETE) should produce file_delete trigger."""
-        svc, nx = _make_service()
-        await svc.start()
-
-        event = FileEvent(
-            type=FileEventType.FILE_DELETE,
-            path="/test/gone.txt",
-            zone_id="root",
-            version=43,
-        )
-        svc.on_mutation(event)
-
-        call_args = nx.pipe_write_nowait.call_args
-        msg = json.loads(call_args[0][1])
-        assert msg["type"] == "file_delete"
-        assert msg["ctx"]["file_path"] == "/test/gone.txt"
-
-        await svc.stop()
-
-    @pytest.mark.asyncio
-    async def test_rename_event(self) -> None:
-        """on_mutation(RENAME) should produce file_rename trigger with old/new paths."""
-        svc, nx = _make_service()
-        await svc.start()
-
-        event = FileEvent(
-            type=FileEventType.FILE_RENAME,
-            path="/old/path.txt",
-            zone_id="root",
-            version=44,
-            new_path="/new/path.txt",
-        )
-        svc.on_mutation(event)
-
-        call_args = nx.pipe_write_nowait.call_args
-        msg = json.loads(call_args[0][1])
-        assert msg["type"] == "file_rename"
-        assert msg["ctx"]["old_path"] == "/old/path.txt"
-        assert msg["ctx"]["new_path"] == "/new/path.txt"
 
         await svc.stop()
 

@@ -209,12 +209,8 @@ class NexusFS(  # type: ignore[misc]
         self._custom_pipe_backends: dict[str, Any] = {}
         self._custom_stream_backends: dict[str, Any] = {}
 
-        from nexus.core.file_watcher import FileWatcher
-
-        self._file_watcher = FileWatcher()
-
         logger.info(
-            "IPC primitives initialized: DriverCoordinator + FileWatcher (self_address=%s)",
+            "IPC primitives initialized: DriverCoordinator (self_address=%s)",
             _ipc_self_addr or "none/single-node",
         )
 
@@ -374,7 +370,7 @@ class NexusFS(  # type: ignore[misc]
     def _upgrade_lock_manager(self, lock_manager: Any) -> None:
         """Hot-swap LocalLockManager → RaftLockManager at link time.
 
-        Like FileWatcher.set_remote_watcher() — kernel owns the hook point,
+        Kernel owns the hook point,
         federation injects the distributed implementation.
         """
         logger.info(

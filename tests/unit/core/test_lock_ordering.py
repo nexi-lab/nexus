@@ -174,7 +174,7 @@ class TestObserverContextRejection:
             mod.exit_observer_context()
 
     def test_observer_can_acquire_l4(self, monkeypatch):
-        """Observer context allows threading locks (L4) — FileWatcher pattern."""
+        """Observer context allows threading locks (L4) — observer pattern."""
         mod = _enable_lock_debug(monkeypatch)
 
         mod.enter_observer_context()

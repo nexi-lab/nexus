@@ -428,8 +428,8 @@ async def _register_vfs_hooks(
 
         strict = getattr(write_observer, "_strict_mode", True)
         if isinstance(write_observer, _ObsWO):
-            # OBSERVE-phase observer: registered via hook_spec (on_mutation).
-            # No DT_PIPE, no AuditWriteInterceptor, no bind_fs/start/stop.
+            # Registered as service. Rust kernel dispatches observers directly;
+            # no Python on_mutation or hook_spec needed.
             await _enlist("audit", write_observer)
         else:
             from nexus.storage.write_observer_hooks import SyncAuditWriteInterceptor
@@ -592,23 +592,17 @@ async def _register_vfs_hooks(
         await _enlist("zone_writability", ZoneWritabilityHook(_zl2))
 
     # ── OBSERVE observers (Issue #900, #922) ──────────────────────────
-    # FileWatcher: kernel inotify primitive — local OBSERVE waiters.
-    # Registers itself as VFSObserver via hook_spec() at enlist() time.
-    # Remote watcher (EventBus) wired later by federation or other services.
-    await _enlist("file_watcher", nx._file_watcher)
+    # FileWatcher is now Rust kernel-internal (sys_watch + dispatch_observers).
+    # No Python FileWatcher registration needed.
 
     # Remote watcher: default StreamRemoteWatcher (DT_STREAM, no external deps).
-    # If EventBus (NATS/Dragonfly) is configured, use EventBusRemoteWatcher instead.
     from nexus.core.remote_watcher import StreamEventObserver, StreamRemoteWatcher
 
     _stream_watcher = StreamRemoteWatcher(nx)
     _stream_observer = StreamEventObserver(_stream_watcher)
-    nx._file_watcher.set_remote_watcher(_stream_watcher)
     await _enlist("stream_event_observer", _stream_observer)
 
     # EventBus (optional): NATS/Dragonfly for distributed pub/sub.
-    # When configured, replaces StreamRemoteWatcher with EventBusRemoteWatcher
-    # and EventBusObserver for network-based event delivery.
     _event_bus = None
     _dist_cfg = getattr(nx, "_distributed_config", None)
     if _dist_cfg and getattr(_dist_cfg, "enable_events", False):
@@ -617,10 +611,6 @@ async def _register_vfs_hooks(
 
             _event_bus = create_event_bus()
             nx._event_bus = _event_bus
-
-            from nexus.services.event_bus.remote_watcher import EventBusRemoteWatcher
-
-            nx._file_watcher.set_remote_watcher(EventBusRemoteWatcher(_event_bus))
         except Exception as exc:
             logger.warning("EventBus creation skipped: %s", exc)
 

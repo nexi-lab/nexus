@@ -231,30 +231,6 @@ class CASLocalBackend(CASAddressingEngine, MultipartUpload):
         )
         return service
 
-    def hook_spec(self) -> Any:
-        """Declare VFS hooks — OBSERVE (MOUNT|UNMOUNT) for tiering lifecycle."""
-        from nexus.contracts.protocols.service_hooks import HookSpec
-
-        return HookSpec(
-            observers=(self,),
-        )
-
-    @property
-    def event_mask(self) -> int:
-        """Observer event mask: MOUNT + UNMOUNT events."""
-        from nexus.core.file_events import FILE_EVENT_BIT, FileEventType
-
-        return FILE_EVENT_BIT[FileEventType.MOUNT] | FILE_EVENT_BIT[FileEventType.UNMOUNT]
-
-    def on_mutation(self, event: Any) -> None:
-        """VFSObserver: handle mount/unmount via Rust dispatch_observers."""
-        from nexus.core.file_events import FileEventType
-
-        if event.type == FileEventType.MOUNT:
-            self._on_mount(event.path)
-        elif event.type == FileEventType.UNMOUNT:
-            self._on_unmount()
-
     def _on_mount(self, mount_point: str) -> None:
         """Start background services when the backend is mounted."""
         import asyncio

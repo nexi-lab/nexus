@@ -24,12 +24,8 @@ import logging
 import threading
 from typing import TYPE_CHECKING
 
-from nexus.core.file_events import FILE_EVENT_BIT, FileEventType
-
 if TYPE_CHECKING:
     from nexus.bricks.search.zoekt_client import ZoektIndexManager
-    from nexus.contracts.protocols.service_hooks import HookSpec
-    from nexus.core.file_events import FileEvent
 
 logger = logging.getLogger(__name__)
 
@@ -46,15 +42,6 @@ class ZoektWriteObserver:
         NOT via bind_fs + start/stop async lifecycle.
     """
 
-    event_mask: int = FILE_EVENT_BIT[FileEventType.FILE_WRITE]
-
-    # ── Hook spec (duck-typed) (Issue #1616) ──────────────────────────
-
-    def hook_spec(self) -> "HookSpec":
-        from nexus.contracts.protocols.service_hooks import HookSpec
-
-        return HookSpec(observers=(self,))
-
     def __init__(
         self,
         zoekt_index_manager: "ZoektIndexManager",
@@ -68,24 +55,6 @@ class ZoektWriteObserver:
         self._pending: set[str] = set()
         self._timer: threading.Timer | None = None
         self._lock = threading.Lock()
-
-    # ------------------------------------------------------------------
-    # VFSObserver callback (MutationObserver protocol)
-    # ------------------------------------------------------------------
-
-    def on_mutation(self, event: "FileEvent") -> None:
-        """VFSObserver callback -- accumulate path + debounce.
-
-        Called by Rust dispatch_observers on the OBSERVE phase (fire-and-forget).
-        Thread-safe: may be called from any thread.
-        """
-        with self._lock:
-            self._pending.add(event.path)
-            if self._timer is not None:
-                self._timer.cancel()
-            self._timer = threading.Timer(self._debounce, self._flush)
-            self._timer.daemon = True
-            self._timer.start()
 
     # ------------------------------------------------------------------
     # Debounce flush

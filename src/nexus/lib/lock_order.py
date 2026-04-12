@@ -18,7 +18,7 @@ Lock layers:
     L1 = VFS I/O locks      (core/lock_fast.py, lib/lock_order.py)
     L2 = Advisory/Raft locks (lib/distributed_lock.py, raft/lock_manager.py)
     L3 = asyncio primitives  (pipes, streams)
-    L4 = threading locks     (file_watcher._waiters_lock, semaphore._mu)
+    L4 = threading locks     (semaphore._mu)
 
 Rules enforced:
     1. A task holding L2 must not acquire L1.

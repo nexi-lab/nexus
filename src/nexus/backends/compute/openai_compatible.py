@@ -44,7 +44,6 @@ from nexus.contracts.exceptions import BackendError
 from nexus.core.object_store import WriteResult
 
 if TYPE_CHECKING:
-    from nexus.bricks.auth.credential_pool import CredentialPool
     from nexus.contracts.types import OperationContext
     from nexus.core.nexus_fs import NexusFS
 
@@ -137,7 +136,8 @@ class CASOpenAIBackend(CASAddressingEngine):
         api_key: str = "",
         default_model: str = "gpt-4o",
         timeout: float = 120.0,
-        pool: "CredentialPool | None" = None,
+        pool: Any = None,
+        pool_classifier: Any = None,
     ) -> None:
         self._base_url = base_url
         self._api_key = api_key
@@ -145,10 +145,12 @@ class CASOpenAIBackend(CASAddressingEngine):
         self._timeout = timeout
 
         # Optional credential pool for multi-key failover (Issue #3723).
-        # When set, generate_streaming() selects an API key from the pool each
-        # call and rotates on 429 / overload errors.
-        # When None (default), falls back to the single api_key (no change in behaviour).
-        self._pool: CredentialPool | None = pool
+        # pool: CredentialPool | None — injected as Any to avoid a bricks→backends
+        # import-layer violation (nexus.backends is below nexus.bricks in the tier stack).
+        # pool_classifier: CredentialErrorClassifier callable (e.g. classify_openai_error),
+        # also injected to keep nexus.bricks.auth imports out of this module.
+        self._pool: Any = pool
+        self._pool_classifier: Any = pool_classifier
 
         # Build OpenAI client (lazy import). Used when pool is None.
         self._client = _build_openai_client(base_url, api_key, timeout)
@@ -397,20 +399,17 @@ class CASOpenAIBackend(CASAddressingEngine):
         # Mid-stream failures (after the first byte) cannot be retried; they call
         # mark_failure directly and re-raise. When no pool is configured, fall back
         # to the single pre-built client (no change from pre-#3723 behaviour).
-        _pool_profile: "AuthProfile | None" = None
+        _pool_profile: Any = None
 
         if self._pool is not None:
-            from nexus.bricks.auth.classifiers.openai import classify_openai_error
-            from nexus.bricks.auth.profile import ApiKeyCredential, AuthProfile
 
-            def _open_stream(profile: AuthProfile):
+            def _open_stream(profile: Any) -> Any:
                 nonlocal _pool_profile
                 _pool_profile = profile  # capture so mid-stream failures can mark it
-                _key = (
-                    profile.credential.key
-                    if isinstance(profile.credential, ApiKeyCredential)
-                    else self._api_key
-                )
+                # Extract API key from profile credential (ApiKeyCredential.key), or
+                # fall back to the configured api_key if the credential type differs.
+                _cred = getattr(profile, "credential", None)
+                _key = getattr(_cred, "key", None) or self._api_key
                 _client = _build_openai_client(self._base_url, _key, self._timeout)
                 return _client.chat.completions.create(
                     model=model,
@@ -421,7 +420,7 @@ class CASOpenAIBackend(CASAddressingEngine):
                 )
 
             try:
-                stream = self._pool.execute_sync(_open_stream, classify_openai_error)
+                stream = self._pool.execute_sync(_open_stream, self._pool_classifier)
             except Exception as e:
                 raise BackendError(
                     f"LLM API call failed: {e}",
@@ -500,10 +499,12 @@ class CASOpenAIBackend(CASAddressingEngine):
                         "total_tokens": chunk.usage.total_tokens or 0,
                     }
         except Exception as e:
-            if _pool_profile is not None and self._pool is not None:
-                from nexus.bricks.auth.classifiers.openai import classify_openai_error
-
-                self._pool.mark_failure(_pool_profile, classify_openai_error(e))
+            if (
+                _pool_profile is not None
+                and self._pool is not None
+                and self._pool_classifier is not None
+            ):
+                self._pool.mark_failure(_pool_profile, self._pool_classifier(e))
             raise BackendError(
                 f"LLM streaming failed: {e}",
                 backend="openai_compatible",

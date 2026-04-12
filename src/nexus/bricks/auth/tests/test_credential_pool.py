@@ -146,8 +146,9 @@ async def test_round_robin_cycles_across_profiles() -> None:
     pool, store = make_pool("a", "b", "c", strategy="round_robin")
     results = [await pool.select() for _ in range(6)]
     ids = [r.id for r in results]
-    # Should cycle through all 3, repeating
+    # Should cycle through all 3, repeating, starting at index 0
     assert set(ids) == {"a", "b", "c"}
+    assert ids[0] == "a"  # first call must start at candidates[0], not candidates[1]
     assert ids[0] == ids[3]  # same position 3 apart in a 3-profile pool
 
 
@@ -545,10 +546,10 @@ def test_select_sync_round_robin_same_state_as_async() -> None:
     # Advance via async select
     import asyncio as _asyncio
 
-    _asyncio.run(pool.select())  # idx→1 → returns candidates[1] = "b"
-    # Next sync select should continue from idx=1 → idx=2 → "c"
+    _asyncio.run(pool.select())  # idx→0 → returns candidates[0] = "a"
+    # Next sync select should continue from idx=0 → idx=1 → "b"
     result = pool.select_sync()
-    assert result.id == "c"
+    assert result.id == "b"
 
 
 def test_select_sync_from_thread_no_event_loop() -> None:

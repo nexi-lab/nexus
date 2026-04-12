@@ -181,7 +181,8 @@ class CredentialPool:
         self.provider = provider
         self.store = store
         self.strategy: SelectionStrategy = strategy
-        self._last_index: int = 0
+        # round_robin increments before reading; -1 ensures first call returns index 0
+        self._last_index: int = -1
         # threading.Lock (not asyncio.Lock) so the same lock protects both
         # async select() callers and sync select_sync() callers from thread
         # executors (e.g. CASOpenAIBackend.generate_streaming runs in a thread).

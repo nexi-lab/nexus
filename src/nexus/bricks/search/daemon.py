@@ -1255,13 +1255,29 @@ class SearchDaemon:
                                             "zone_id": cur_zone,
                                         }
                                     )
+
+                            # When the zone changes, all rows for cur_zone
+                            # have been seen (ORDER BY zone_id guarantees
+                            # this). Flush that zone immediately so
+                            # multi-zone deployments with many small zones
+                            # — each staying under _UPSERT_BATCH — don't
+                            # accumulate every document across all zones
+                            # before the first flush fires.
+                            if cur_zone is not None and zone != cur_zone:
+                                zone_docs = docs_batch.pop(cur_zone, [])
+                                if zone_docs:
+                                    total += int(
+                                        await self._backend.upsert(zone_docs, zone_id=cur_zone)
+                                    )
+
                             cur_zone = zone
                             cur_path = path
                             cur_chunks = []
 
                         cur_chunks.append(row.chunk_text or "")
 
-                    # Flush when any zone's buffer is full.
+                    # Also flush when any single zone's buffer hits the
+                    # per-zone cap (handles very large single-zone corpora).
                     if any(len(v) >= _UPSERT_BATCH for v in docs_batch.values()):
                         total += await _flush()
 

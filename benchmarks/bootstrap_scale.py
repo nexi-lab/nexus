@@ -110,14 +110,20 @@ async def _create_schema(engine: Any) -> None:
             await conn.execute(sa_text(stmt))
 
 
-async def _populate(engine: Any, n_files: int, chunks_per_file: int) -> int:
-    """Insert ``n_files`` file rows + ``n_files * chunks_per_file`` chunk rows."""
+async def _populate(engine: Any, n_files: int, chunks_per_file: int, n_zones: int = 1) -> int:
+    """Insert ``n_files`` file rows + ``n_files * chunks_per_file`` chunk rows.
+
+    When ``n_zones > 1``, files are distributed round-robin across zones
+    named ``zone_0000`` … ``zone_NNNN``.  This exercises the multi-zone
+    bootstrap path where every zone has far fewer than ``_UPSERT_BATCH``
+    documents, which was the failure mode the per-zone flush fixes.
+    """
     from sqlalchemy import text as sa_text
 
     file_rows = [
         {
             "path_id": str(uuid.uuid4()),
-            "zone_id": "root",
+            "zone_id": f"zone_{i % n_zones:04d}" if n_zones > 1 else "root",
             "virtual_path": f"/herb/run_{n_files:07d}/file_{i:06d}.md",
         }
         for i in range(n_files)
@@ -175,15 +181,30 @@ class _NullBackend:
 # ---------------------------------------------------------------------------
 
 
-async def measure_one(n_files: int, chunks_per_file: int = CHUNKS_PER_FILE) -> dict[str, Any]:
-    """Return a timing/memory dict for a bootstrap run at *n_files* scale."""
+async def measure_one(
+    n_files: int,
+    chunks_per_file: int = CHUNKS_PER_FILE,
+    n_zones: int = 1,
+) -> dict[str, Any]:
+    """Return a timing/memory dict for a bootstrap run at *n_files* scale.
+
+    ``n_zones`` distributes files round-robin across that many zone IDs.
+    When ``n_zones`` is large and every zone stays well under
+    ``_UPSERT_BATCH``, the only flush that fires is the per-zone-boundary
+    flush added by Issue #3704.  This exercises the adversarial path.
+
+    Memory is reported as the **true peak** heap bytes allocated during
+    bootstrap, using ``tracemalloc.get_traced_memory()[1]`` (the high-water
+    mark since ``tracemalloc.start()``).  This captures transient spikes
+    that are freed before the final snapshot, unlike a before/after diff.
+    """
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
     from nexus.bricks.search.daemon import SearchDaemon
 
     engine = create_async_engine("sqlite+aiosqlite://", echo=False)
     await _create_schema(engine)
-    total_rows = await _populate(engine, n_files, chunks_per_file)
+    total_rows = await _populate(engine, n_files, chunks_per_file, n_zones=n_zones)
 
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
@@ -191,7 +212,7 @@ async def measure_one(n_files: int, chunks_per_file: int = CHUNKS_PER_FILE) -> d
     daemon = SearchDaemon.__new__(SearchDaemon)
     daemon._async_session = session_factory
     daemon._backend = _NullBackend()
-    daemon._zone_indexing_modes = {}   # no scoped zones → fast path
+    daemon._zone_indexing_modes = {}  # no scoped zones → fast path
     daemon._indexed_directories = {}
     daemon._txtai_bootstrapped = False
 
@@ -207,26 +228,23 @@ async def measure_one(n_files: int, chunks_per_file: int = CHUNKS_PER_FILE) -> d
         await sess.execute(sa_text("SELECT COUNT(*) FROM document_chunks"))
 
     # ---- timed section ----
+    # Use get_traced_memory()[1] for the true high-water mark (captures
+    # transient spikes freed before the run ends, unlike a before/after diff).
     tracemalloc.start()
-    snap_before = tracemalloc.take_snapshot()
     t0 = time.perf_counter()
 
     await daemon._bootstrap_txtai_backend()
 
     wall_s = time.perf_counter() - t0
-    snap_after = tracemalloc.take_snapshot()
+    _, peak_bytes = tracemalloc.get_traced_memory()
     tracemalloc.stop()
-
-    # Net Python heap bytes allocated during bootstrap (positive deltas only).
-    # tracemalloc.StatisticDiff uses ``size_diff`` (not ``size_delta``).
-    diff_stats = snap_after.compare_to(snap_before, "lineno")
-    peak_bytes = sum(s.size_diff for s in diff_stats if s.size_diff > 0)
 
     await engine.dispose()
 
     return {
         "scale": round(n_files / HERB_FILES, 1),
         "n_files": n_files,
+        "n_zones": n_zones,
         "total_rows": total_rows,
         "wall_s": round(wall_s, 3),
         "peak_mb": round(peak_bytes / 1_048_576, 2),
@@ -238,19 +256,21 @@ async def measure_one(n_files: int, chunks_per_file: int = CHUNKS_PER_FILE) -> d
 # ---------------------------------------------------------------------------
 
 
-def _print_header() -> None:
+def _print_header(label: str = "") -> None:
+    if label:
+        print(f"\n{label}")
     print(
-        f"{'Scale':>7}  {'Files':>8}  {'Chunk rows':>11}"
-        f"  {'Wall (s)':>9}  {'Peak alloc (MB)':>16}"
+        f"{'Scale':>7}  {'Files':>8}  {'Zones':>6}  {'Chunk rows':>11}"
+        f"  {'Wall (s)':>9}  {'Peak heap (MB)':>15}"
     )
-    print("-" * 62)
+    print("-" * 71)
 
 
 def _print_row(r: dict[str, Any]) -> None:
     scale_label = f"{r['scale']}x"
     print(
-        f"{scale_label:>7}  {r['n_files']:>8,}  {r['total_rows']:>11,}"
-        f"  {r['wall_s']:>9.3f}  {r['peak_mb']:>15.1f}"
+        f"{scale_label:>7}  {r['n_files']:>8,}  {r['n_zones']:>6,}  {r['total_rows']:>11,}"
+        f"  {r['wall_s']:>9.3f}  {r['peak_mb']:>14.1f}"
     )
 
 
@@ -263,26 +283,43 @@ async def _run(scales: list[int], emit_json: bool, chunks_per_file: int) -> None
     results = []
     if not emit_json:
         print(f"\nBootstrap scale benchmark  (HERB baseline = {HERB_FILES:,} files)\n")
-        _print_header()
+        _print_header("Single-zone (all files in 'root')")
 
     for scale in scales:
         n_files = HERB_FILES * scale
-        r = await measure_one(n_files, chunks_per_file=chunks_per_file)
+        r = await measure_one(n_files, chunks_per_file=chunks_per_file, n_zones=1)
         results.append(r)
         if not emit_json:
             _print_row(r)
 
+    # Multi-zone scenario: many small zones, each well below _UPSERT_BATCH.
+    # This exercises the zone-boundary flush path.  Use 500 zones so each
+    # zone has ~4 files × 3 chunks = ~4 docs at 1x — always sub-threshold.
+    multi_results = []
+    multi_zones = 500
+    if not emit_json:
+        _print_header(
+            f"Multi-zone ({multi_zones} zones — adversarial: each zone << _UPSERT_BATCH)"
+        )
+    for scale in scales:
+        n_files = HERB_FILES * scale
+        r = await measure_one(n_files, chunks_per_file=chunks_per_file, n_zones=multi_zones)
+        multi_results.append(r)
+        if not emit_json:
+            _print_row(r)
+
+    all_results = results + multi_results
+
     if not emit_json and len(results) > 1:
-        # Print linearity ratio: wall time at scale N / wall time at scale 1
         base = results[0]["wall_s"]
         print()
-        print("Linearity check (wall_s / wall_s@1x):")
+        print("Single-zone linearity check (wall_s / wall_s@1x):")
         for r in results:
             ratio = r["wall_s"] / base if base > 0 else float("nan")
             print(f"  {r['scale']}x → {ratio:.2f}x  (expected ≈ {r['scale']:.1f}x if linear)")
 
     if emit_json:
-        print(json.dumps(results, indent=2))
+        print(json.dumps(all_results, indent=2))
 
 
 def main() -> None:

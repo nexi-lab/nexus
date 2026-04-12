@@ -1467,7 +1467,7 @@ class NexusFS(  # type: ignore[misc]
                 if offset or count is not None:
                     _data = _data[offset : offset + count] if count is not None else _data[offset:]
                 return bytes(_data)
-            _data = self._kernel.pipe_read_blocking(path, 30000)
+            _data = self._kernel.pipe_read_blocking(path, 5000)
             if offset or count is not None:
                 _data = _data[offset : offset + count] if count is not None else _data[offset:]
             return bytes(_data)

@@ -35,7 +35,7 @@ class TestZoektWriteObserver:
 
         zoekt = MagicMock()
         zoekt.debounce_seconds = 0.05
-        zoekt.trigger_reindex = MagicMock()
+        zoekt.trigger_reindex_sync = MagicMock()
 
         observer = ZoektWriteObserver(zoekt, debounce_seconds=0.05)
 
@@ -45,7 +45,7 @@ class TestZoektWriteObserver:
         # Wait for debounce to fire
         time.sleep(0.15)
 
-        zoekt.trigger_reindex.assert_called_once()
+        zoekt.trigger_reindex_sync.assert_called_once()
         observer.cancel()
 
     def test_debounce_coalesces_writes(self) -> None:
@@ -54,7 +54,7 @@ class TestZoektWriteObserver:
 
         zoekt = MagicMock()
         zoekt.debounce_seconds = 0.1
-        zoekt.trigger_reindex = MagicMock()
+        zoekt.trigger_reindex_sync = MagicMock()
 
         observer = ZoektWriteObserver(zoekt, debounce_seconds=0.1)
 
@@ -66,7 +66,7 @@ class TestZoektWriteObserver:
         time.sleep(0.25)
 
         # Should coalesce into 1 reindex call (not 20)
-        assert zoekt.trigger_reindex.call_count == 1
+        assert zoekt.trigger_reindex_sync.call_count == 1
         observer.cancel()
 
     def test_debounce_resets_on_new_write(self) -> None:
@@ -75,7 +75,7 @@ class TestZoektWriteObserver:
 
         zoekt = MagicMock()
         zoekt.debounce_seconds = 0.15
-        zoekt.trigger_reindex = MagicMock()
+        zoekt.trigger_reindex_sync = MagicMock()
 
         observer = ZoektWriteObserver(zoekt, debounce_seconds=0.15)
 
@@ -85,11 +85,11 @@ class TestZoektWriteObserver:
         time.sleep(0.08)  # still < debounce from last write
 
         # Should NOT have fired yet (timer was reset)
-        assert zoekt.trigger_reindex.call_count == 0
+        assert zoekt.trigger_reindex_sync.call_count == 0
 
         # Wait for full debounce after last write
         time.sleep(0.15)
-        assert zoekt.trigger_reindex.call_count == 1
+        assert zoekt.trigger_reindex_sync.call_count == 1
         observer.cancel()
 
     def test_event_mask_is_file_write(self) -> None:
@@ -148,7 +148,7 @@ class TestZoektWriteObserver:
 
         zoekt = MagicMock()
         zoekt.debounce_seconds = 0.2
-        zoekt.trigger_reindex = MagicMock()
+        zoekt.trigger_reindex_sync = MagicMock()
 
         observer = ZoektWriteObserver(zoekt, debounce_seconds=0.2)
 
@@ -159,7 +159,7 @@ class TestZoektWriteObserver:
         time.sleep(0.35)
 
         # Reindex should NOT have been called (timer cancelled)
-        assert zoekt.trigger_reindex.call_count == 0
+        assert zoekt.trigger_reindex_sync.call_count == 0
 
     def test_paths_accumulated_and_cleared(self) -> None:
         """Pending paths are accumulated and cleared after flush."""
@@ -167,7 +167,7 @@ class TestZoektWriteObserver:
 
         zoekt = MagicMock()
         zoekt.debounce_seconds = 0.05
-        zoekt.trigger_reindex = MagicMock()
+        zoekt.trigger_reindex_sync = MagicMock()
 
         observer = ZoektWriteObserver(zoekt, debounce_seconds=0.05)
 
@@ -182,7 +182,7 @@ class TestZoektWriteObserver:
         time.sleep(0.15)
 
         assert len(observer._pending) == 0
-        zoekt.trigger_reindex.assert_called_once()
+        zoekt.trigger_reindex_sync.assert_called_once()
         observer.cancel()
 
 
@@ -244,11 +244,7 @@ class TestRecordStoreWriteObserverE2E:
 
         observer = RecordStoreWriteObserver(MagicMock(), debounce_seconds=0.05)
 
-        with patch.object(
-            RecordStoreWriteObserver,
-            "_process_events_in_session",
-            staticmethod(_noop_process_events),
-        ):
+        with patch.object(observer, "_flush_batch_sync"):
             observer.on_mutation(_make_write_file_event("/workspace/test.txt"))
             # Wait for debounce to fire
             time.sleep(0.2)
@@ -263,11 +259,7 @@ class TestRecordStoreWriteObserverE2E:
 
         observer = RecordStoreWriteObserver(MagicMock(), debounce_seconds=0.05)
 
-        with patch.object(
-            RecordStoreWriteObserver,
-            "_process_events_in_session",
-            staticmethod(_noop_process_events),
-        ):
+        with patch.object(observer, "_flush_batch_sync"):
             for i in range(5):
                 observer.on_mutation(_make_write_file_event(f"/workspace/file{i}.txt", size=i * 10))
             time.sleep(0.2)
@@ -282,11 +274,7 @@ class TestRecordStoreWriteObserverE2E:
 
         observer = RecordStoreWriteObserver(MagicMock(), debounce_seconds=0.05)
 
-        with patch.object(
-            RecordStoreWriteObserver,
-            "_process_events_in_session",
-            staticmethod(_noop_process_events),
-        ):
+        with patch.object(observer, "_flush_batch_sync"):
             observer.on_mutation(_make_delete_file_event("/workspace/deleted.txt"))
             time.sleep(0.2)
             assert observer._total_flushed >= 1
@@ -307,11 +295,7 @@ class TestRecordStoreWriteObserverE2E:
 
         observer = RecordStoreWriteObserver(mock_record_store, debounce_seconds=10.0)
 
-        with patch.object(
-            RecordStoreWriteObserver,
-            "_process_events_in_session",
-            staticmethod(_noop_process_events),
-        ):
+        with patch.object(observer, "_flush_batch_sync"):
             # Feed events via on_mutation (timer won't fire — 10s debounce)
             observer.on_mutation(_make_write_file_event("/workspace/cli.txt"))
             observer.on_mutation(_make_delete_file_event("/workspace/old.txt"))
@@ -334,11 +318,7 @@ class TestRecordStoreWriteObserverE2E:
 
         observer = RecordStoreWriteObserver(MagicMock(), debounce_seconds=0.05)
 
-        with patch.object(
-            RecordStoreWriteObserver,
-            "_process_events_in_session",
-            staticmethod(_noop_process_events),
-        ):
+        with patch.object(observer, "_flush_batch_sync"):
             observer.on_mutation(_make_write_file_event("/workspace/metrics.txt"))
             observer.on_mutation(_make_dir_create_event("/workspace/newdir"))
             observer.on_mutation(_make_dir_delete_event("/workspace/olddir"))
@@ -386,11 +366,7 @@ class TestRecordStoreWriteObserverE2E:
 
         observer = RecordStoreWriteObserver(MagicMock(), debounce_seconds=0.2)
 
-        with patch.object(
-            RecordStoreWriteObserver,
-            "_process_events_in_session",
-            staticmethod(_noop_process_events),
-        ):
+        with patch.object(observer, "_flush_batch_sync"):
             observer.on_mutation(_make_write_file_event("/workspace/file.txt"))
             observer.cancel()
 

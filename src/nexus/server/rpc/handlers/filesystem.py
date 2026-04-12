@@ -255,6 +255,9 @@ async def handle_list(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[st
     _list_start = _time.time()
     search = nexus_fs.service("search")
     if search is not None:
+        # SearchService.list injects virtual ``.readme/`` entries for
+        # connector mounts via ``_augment_with_virtual_readme_entries``
+        # (Issue #3728), so we don't need a handler-level augment.
         result = search.list(path=params.path, **kwargs)
     else:
         result = await nexus_fs.sys_readdir(params.path, **kwargs)

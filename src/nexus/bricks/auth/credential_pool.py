@@ -250,7 +250,7 @@ class CredentialPool:
             case "least_used":
                 return min(
                     candidates,
-                    key=lambda p: (p.usage_stats.success_count + p.usage_stats.failure_count),
+                    key=lambda p: p.usage_stats.success_count + p.usage_stats.failure_count,
                 )
             case _:
                 raise ValueError(f"Unknown strategy: {self.strategy!r}")
@@ -302,7 +302,7 @@ class CredentialPool:
             case "least_used":
                 return min(
                     candidates,
-                    key=lambda p: (p.usage_stats.success_count + p.usage_stats.failure_count),
+                    key=lambda p: p.usage_stats.success_count + p.usage_stats.failure_count,
                 )
             case _:
                 raise ValueError(f"Unknown strategy: {self.strategy!r}")

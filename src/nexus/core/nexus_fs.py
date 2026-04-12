@@ -1667,7 +1667,7 @@ class NexusFS(  # type: ignore[misc]
         for path in allowed_set:
             try:
                 result = self._kernel.sys_read(path, _rust_ctx)
-                content: bytes | None = None
+                content = None
                 if result.hit:
                     content = result.data or b""
                 else:
@@ -4048,7 +4048,7 @@ class NexusFS(  # type: ignore[misc]
             # wins overwrite semantics — the same behavior every
             # other caller of ``write()`` already tolerates.
             _check_dst_exists()
-            write_result = await self.write(dst_path, _virtual_src_bytes, context=context)
+            write_result = self.write(dst_path, _virtual_src_bytes, context=context)
             self._kernel.dispatch_post_hooks("copy", _virtual_copy_ctx)
             return {
                 "src_path": src_path,

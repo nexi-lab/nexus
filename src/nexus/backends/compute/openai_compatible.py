@@ -44,6 +44,7 @@ from nexus.contracts.exceptions import BackendError
 from nexus.core.object_store import WriteResult
 
 if TYPE_CHECKING:
+    from nexus.bricks.auth.credential_pool import CredentialPool
     from nexus.contracts.types import OperationContext
     from nexus.core.nexus_fs import NexusFS
 
@@ -136,12 +137,20 @@ class CASOpenAIBackend(CASAddressingEngine):
         api_key: str = "",
         default_model: str = "gpt-4o",
         timeout: float = 120.0,
+        pool: "CredentialPool | None" = None,
     ) -> None:
         self._base_url = base_url
         self._api_key = api_key
         self._default_model = default_model
+        self._timeout = timeout
 
-        # Build OpenAI client (lazy import)
+        # Optional credential pool for multi-key failover (Issue #3723).
+        # When set, generate_streaming() selects an API key from the pool each
+        # call and rotates on 429 / overload errors.
+        # When None (default), falls back to the single api_key (no change in behaviour).
+        self._pool: CredentialPool | None = pool
+
+        # Build OpenAI client (lazy import). Used when pool is None.
         self._client = _build_openai_client(base_url, api_key, timeout)
 
         # In-memory transport for CAS blobs
@@ -380,6 +389,25 @@ class CASOpenAIBackend(CASAddressingEngine):
         messages = request["messages"]
         extra_params = {k: v for k, v in request.items() if k not in ("model", "messages")}
 
+        # Pool-based credential selection (Issue #3723).
+        # select_sync() is used here because generate_streaming() is a sync
+        # generator executed inside a thread-pool executor (_producer thread).
+        # When no pool is configured, fall back to the single pre-built client.
+        _pool_profile = None
+        if self._pool is not None:
+            from nexus.bricks.auth.classifiers.openai import classify_openai_error
+            from nexus.bricks.auth.profile import ApiKeyCredential
+
+            _pool_profile = self._pool.select_sync()
+            key = (
+                _pool_profile.credential.key
+                if isinstance(_pool_profile.credential, ApiKeyCredential)
+                else self._api_key
+            )
+            client = _build_openai_client(self._base_url, key, self._timeout)
+        else:
+            client = self._client
+
         start_time = time.perf_counter()
         collected_model = model
         usage: dict[str, int] = {}
@@ -390,8 +418,9 @@ class CASOpenAIBackend(CASAddressingEngine):
         # and a partial function name or arguments fragment that must be concatenated.
         tool_calls_accum: dict[int, dict[str, Any]] = {}
 
+        _stream_succeeded = False
         try:
-            stream = self._client.chat.completions.create(
+            stream = client.chat.completions.create(
                 model=model,
                 messages=messages,
                 stream=True,
@@ -399,6 +428,10 @@ class CASOpenAIBackend(CASAddressingEngine):
                 **extra_params,
             )
         except Exception as e:
+            if _pool_profile is not None and self._pool is not None:
+                from nexus.bricks.auth.classifiers.openai import classify_openai_error
+
+                self._pool.mark_failure(_pool_profile, classify_openai_error(e))
             raise BackendError(
                 f"LLM API call failed: {e}",
                 backend="openai_compatible",
@@ -452,11 +485,16 @@ class CASOpenAIBackend(CASAddressingEngine):
                         "total_tokens": chunk.usage.total_tokens or 0,
                     }
         except Exception as e:
+            if _pool_profile is not None and self._pool is not None:
+                from nexus.bricks.auth.classifiers.openai import classify_openai_error
+
+                self._pool.mark_failure(_pool_profile, classify_openai_error(e))
             raise BackendError(
                 f"LLM streaming failed: {e}",
                 backend="openai_compatible",
             ) from e
 
+        _stream_succeeded = True
         elapsed_ms = (time.perf_counter() - start_time) * 1000
 
         # Build sorted tool_calls list from accumulated fragments
@@ -475,6 +513,13 @@ class CASOpenAIBackend(CASAddressingEngine):
                 "tool_calls": tool_calls,
             },
         )
+
+        # Mark pool success after generator is fully exhausted (after final yield).
+        # This runs when the caller's for-loop completes and the generator reaches
+        # its natural end. _stream_succeeded guards against marking success on a
+        # generator that was .close()d early.
+        if _stream_succeeded and _pool_profile is not None and self._pool is not None:
+            self._pool.mark_success(_pool_profile)
 
     # ------------------------------------------------------------------
     # CAS persistence — session envelope storage

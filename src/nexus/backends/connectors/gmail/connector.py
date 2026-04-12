@@ -180,6 +180,7 @@ class PathGmailBackend(
         max_message_per_label: int = 200,
         metadata_store: Any = None,
         encryption_key: str | None = None,
+        pool: "Any | None" = None,
     ):
         # 1. Initialize OAuth (sets self.token_manager, self.provider, etc.)
         self._init_oauth(
@@ -213,7 +214,10 @@ class PathGmailBackend(
         # 5. Initialize CheckpointMixin state
         self._checkpoints: dict[str, Any] = {}
 
-        # 6. Register OAuth provider using factory
+        # 6. Credential pool (multi-account failover, Issue #3723)
+        self._pool = pool
+
+        # 7. Register OAuth provider using factory
         self._register_oauth_provider()
 
     # -- Properties --
@@ -398,11 +402,22 @@ class PathGmailBackend(
                 backend="gmail",
             )
 
-        # Bind transport to request context for OAuth
-        self._bind_transport(context)
+        if self._pool is None:
+            # No pool — single-account behaviour (unchanged)
+            self._bind_transport(context)
+            return super().read_content(content_id, context)
 
-        # Delegate to PathAddressingEngine (which calls transport.fetch)
-        return super().read_content(content_id, context)
+        # Pool-based: select account, bind transport to selected email, retry on rate-limit
+        from nexus.bricks.auth.classifiers.google import classify_google_error
+        from nexus.bricks.auth.profile import AuthProfile
+
+        def _call(profile: AuthProfile) -> bytes:
+            self._transport = self._gmail_transport.with_context(
+                context, user_email_override=profile.account_identifier
+            )
+            return super(PathGmailBackend, self).read_content(content_id, context)
+
+        return self._pool.execute_sync(_call, classify_google_error)
 
     def delete_content(self, content_id: str, context: "OperationContext | None" = None) -> None:
         """Trash a Gmail message (recoverable — not permanent delete).
@@ -513,26 +528,39 @@ class PathGmailBackend(
         try:
             path = path.strip("/")
 
-            # Bind transport for OAuth
-            self._bind_transport(context)
-
-            # Root directory — list label folders
+            # Root directory — list label folders (no API call needed)
             if not path:
                 return [f"{label}/" for label in self.LABEL_FOLDERS]
 
-            # Label folder — list email files
-            if path in self.LABEL_FOLDERS:
-                keys, _prefixes = self._transport.list_keys(prefix=path, delimiter="/")
-                # keys are "LABEL/thread-msg.yaml" — strip label prefix
-                files = []
-                label_prefix = f"{path}/"
-                for key in keys:
-                    name = key[len(label_prefix) :] if key.startswith(label_prefix) else key
-                    if name:
-                        files.append(name)
-                return sorted(files)
+            if path not in self.LABEL_FOLDERS:
+                raise FileNotFoundError(f"Directory not found: {path}")
 
-            raise FileNotFoundError(f"Directory not found: {path}")
+            if self._pool is None:
+                # Single-account path
+                self._bind_transport(context)
+                keys, _prefixes = self._transport.list_keys(prefix=path, delimiter="/")
+            else:
+                # Pool-based: select account + retry on rate-limit
+                from nexus.bricks.auth.classifiers.google import classify_google_error
+                from nexus.bricks.auth.profile import AuthProfile
+
+                def _list(profile: AuthProfile) -> tuple[list[str], list[str]]:
+                    transport = self._gmail_transport.with_context(
+                        context, user_email_override=profile.account_identifier
+                    )
+                    return transport.list_keys(prefix=path, delimiter="/")
+
+                keys, _prefixes = self._pool.execute_sync(_list, classify_google_error)
+
+            # Strip label prefix from keys: "LABEL/thread-msg.yaml" → "thread-msg.yaml"
+            label_prefix = f"{path}/"
+            files = []
+            for key in keys:
+                name = key[len(label_prefix) :] if key.startswith(label_prefix) else key
+                if name:
+                    files.append(name)
+            return sorted(files)
+
         except FileNotFoundError:
             raise
         except Exception as e:

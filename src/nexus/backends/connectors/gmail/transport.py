@@ -83,10 +83,25 @@ class GmailTransport:
     # Context binding (not part of Transport protocol; Gmail-specific)
     # ------------------------------------------------------------------
 
-    def with_context(self, context: OperationContext | None) -> GmailTransport:
-        """Return a shallow copy bound to *context* (for OAuth token resolution)."""
+    def with_context(
+        self,
+        context: OperationContext | None,
+        *,
+        user_email_override: str | None = None,
+    ) -> GmailTransport:
+        """Return a shallow copy bound to *context* (for OAuth token resolution).
+
+        Args:
+            context: Per-request OperationContext (used to resolve user_email
+                when user_email_override is not set).
+            user_email_override: If provided, this email is used directly for
+                token lookup — bypasses context.user_id resolution. Used by the
+                credential pool to select a specific account for each request.
+        """
         clone = copy(self)
         clone._context = context
+        if user_email_override is not None:
+            clone._user_email = user_email_override
         return clone
 
     # ------------------------------------------------------------------

@@ -418,10 +418,14 @@ class PathGmailBackend(
         from nexus.bricks.auth.profile import AuthProfile
 
         def _call(profile: AuthProfile) -> bytes:
-            self._transport = self._gmail_transport.with_context(
+            # Use a *local* transport so concurrent pool calls don't race on
+            # self._transport (PathAddressingEngine stores it as instance state).
+            transport = self._gmail_transport.with_context(
                 context, user_email_override=profile.account_identifier
             )
-            return super(PathGmailBackend, self).read_content(content_id, context)
+            blob_path = self._get_key_path(context.backend_path)
+            content, _ = transport.fetch(blob_path, None)
+            return content
 
         return self._pool.execute_sync(
             _call,

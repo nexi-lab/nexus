@@ -323,6 +323,16 @@ class GmailTransport:
             )
             return self._parse_gmail_message(message)
         except Exception as e:
+            # Translate HTTP 404 to NexusFileNotFoundError so callers (e.g. the
+            # credential pool) can distinguish "message deleted" from "credential
+            # failure" and avoid incorrectly penalising healthy credentials.
+            try:
+                from googleapiclient.errors import HttpError
+
+                if isinstance(e, HttpError) and e.resp and e.resp.status == 404:
+                    raise NexusFileNotFoundError(message_id) from e
+            except ImportError:
+                pass
             raise BackendError(
                 f"Failed to fetch email {message_id}: {e}",
                 backend="gmail",

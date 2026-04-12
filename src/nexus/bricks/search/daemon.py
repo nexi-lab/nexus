@@ -1246,7 +1246,7 @@ class SearchDaemon:
 
                     if (zone, path) != (cur_zone, cur_path):
                         # Completed document — push to batch.
-                        if cur_path and cur_chunks:
+                        if cur_path is not None and cur_chunks:
                             content = "\n".join(c for c in cur_chunks if c)
                             if content.strip():
                                 doc_id = (
@@ -1260,10 +1260,18 @@ class SearchDaemon:
                                         "zone_id": cur_zone,
                                     }
                                 )
+                                # Mid-page flush: only cur_zone just grew, so
+                                # check only that zone — O(1) not O(zones).
+                                if len(docs_batch[cur_zone]) >= _UPSERT_BATCH:
+                                    total += int(
+                                        await self._backend.upsert(
+                                            docs_batch.pop(cur_zone), zone_id=cur_zone
+                                        )
+                                    )
 
                         # Zone boundary: flush the completed zone immediately.
-                        # All rows for cur_zone are present in this page
-                        # (the inner subquery guarantees complete files).
+                        # ORDER BY ensures zones are monotonically non-decreasing
+                        # within a page, so no rows for cur_zone can appear later.
                         if cur_zone is not None and zone != cur_zone:
                             zone_docs = docs_batch.pop(cur_zone, [])
                             if zone_docs:
@@ -1280,15 +1288,8 @@ class SearchDaemon:
                     if len(cur_chunks) < _MAX_CHUNKS_PER_DOC:
                         cur_chunks.append(row.chunk_text or "")
 
-                    # Mid-page flush for zones that hit the per-zone cap.
-                    if any(len(v) >= _UPSERT_BATCH for v in docs_batch.values()):
-                        for zid in [z for z, v in docs_batch.items() if len(v) >= _UPSERT_BATCH]:
-                            total += int(
-                                await self._backend.upsert(docs_batch.pop(zid), zone_id=zid)
-                            )
-
                 # Flush the final in-flight document.
-                if cur_path and cur_chunks:
+                if cur_path is not None and cur_chunks:
                     content = "\n".join(c for c in cur_chunks if c)
                     if content.strip():
                         doc_id = f"{cur_zone}:{cur_path}" if cur_zone != "root" else cur_path
@@ -1306,8 +1307,12 @@ class SearchDaemon:
                     if docs:
                         total += int(await self._backend.upsert(docs, zone_id=zid))
 
-                # Advance keyset to after the last file seen in this page.
-                kz = rows[-1].zone_id or "root"
+                # Advance keyset cursor using raw DB values — must not
+                # normalise zone_id here because the SQL predicate compares
+                # against the raw column values.  Normalising "" → "root"
+                # would break the cursor on deployments with legacy empty-string
+                # zone_ids and cause infinite re-fetching of those rows.
+                kz = rows[-1].zone_id
                 kp = rows[-1].virtual_path
 
             self._txtai_bootstrapped = True

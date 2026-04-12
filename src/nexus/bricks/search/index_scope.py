@@ -194,17 +194,22 @@ def is_path_indexed(
     if not dirs:
         return False
 
-    # Rules 4–8 — prefix match with the trailing-slash guard.
-    for directory in dirs:
-        if directory == "/":
-            # Root '/' matches everything in the zone.
-            return True
-        if virtual_path == directory:
-            # Rule 4 — exact match.
-            return True
-        if virtual_path.startswith(directory + "/"):
-            # Rule 5/6 — descendant match; '+ "/"' prevents '/src' from
-            # matching '/srcX/foo' (Rule 6 bug guard).
+    # Rules 4–8 — O(depth) ancestor lookup instead of O(n) linear scan.
+    #
+    # Strategy: split virtual_path into its ancestor directories and test
+    # each for membership in the frozenset (O(1) per test).  A realistic
+    # path has at most ~10 components, so total cost is O(depth) regardless
+    # of how many directories are registered.
+    #
+    # Exact match first (Rule 4) — path IS a registered directory.
+    if virtual_path in dirs:
+        return True
+    # Walk ancestor prefixes from shallowest to deepest (Rules 5/6/7/8).
+    # parts[0] is always '' (absolute path starts with '/').
+    parts = virtual_path.split("/")
+    for depth in range(1, len(parts)):
+        ancestor = "/".join(parts[:depth]) or "/"
+        if ancestor in dirs:
             return True
 
     # No directory in the zone covered this path.

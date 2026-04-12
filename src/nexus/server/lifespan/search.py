@@ -221,6 +221,12 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
             stats["startup_time_ms"],
         )
 
+        # Issue #3725: Wire SkeletonIndexer for live path+title index updates.
+        # Creates the indexer (FileReaderProtocol + SkeletonBM25Protocol) and
+        # registers VFS post-hooks so every write/delete/rename automatically
+        # keeps the in-memory skeleton index fresh without a full re-bootstrap.
+        await _wire_skeleton_indexer(app, svc)
+
         # Issue #3147: Initialize ZoneSearchRegistry for federated search.
         # Phase 1: All zones use the single global daemon.
         # Phase 2: Per-zone daemons can be registered if ZoneManager is available.
@@ -276,3 +282,111 @@ def _init_zone_registry(app: "FastAPI", svc: "LifespanServices") -> None:
             logger.warning("[ZONE-REGISTRY] Failed to register zones: %s", e)
 
     app.state.zone_search_registry = registry
+
+
+async def _wire_skeleton_indexer(app: "FastAPI", svc: "LifespanServices") -> None:
+    """Create SkeletonIndexer + SkeletonPipeConsumer, register VFS hooks.
+
+    Called after SearchDaemon.startup() so the daemon's in-memory index is
+    ready to receive upsert/delete calls via _DaemonSkeletonBM25.
+
+    VFS hooks call SkeletonPipeConsumer.notify_* (sync, deque-buffered) rather
+    than scheduling coroutines directly — the consumer's flush task drains the
+    deque via the DT_PIPE so events are debounced and micro-batched (15A).
+
+    Issue #3725 review decisions honoured:
+        - 4A  Async pipe consumer (write/delete/rename routed via DT_PIPE).
+        - 7A  2KB head cap enforced inside SkeletonIndexer.
+        - 14A Hash-based skip guard in index_file().
+        - 15A Micro-batched concurrent reads via asyncio.gather in consumer.
+    """
+    _nx = svc.nexus_fs
+    _daemon = getattr(app.state, "search_daemon", None)
+    if _nx is None or _daemon is None:
+        return
+
+    try:
+        from nexus.bricks.catalog.extractors import SKELETON_EXTRACTOR_REGISTRY
+        from nexus.bricks.search.skeleton_indexer import SkeletonIndexer
+        from nexus.bricks.search.skeleton_pipe_consumer import SkeletonPipeConsumer
+        from nexus.factory.adapters import _DaemonSkeletonBM25, _NexusFSFileReader
+
+        _reader = _NexusFSFileReader(_nx)
+        _bm25 = _DaemonSkeletonBM25(_daemon)
+
+        _session_factory = None
+        _rs = svc.record_store
+        if _rs is not None:
+            with contextlib.suppress(AttributeError):
+                _session_factory = _rs.async_session_factory
+
+        _indexer = SkeletonIndexer(
+            file_reader=_reader,
+            bm25=_bm25,
+            extractor_registry=SKELETON_EXTRACTOR_REGISTRY,
+            async_session_factory=_session_factory,
+        )
+        app.state.skeleton_indexer = _indexer
+
+        # Capture running loop now (startup_search runs in the event loop).
+        # Passed to the consumer so _buffer() can use call_soon_threadsafe when
+        # VFS hooks fire from asyncio.to_thread (sync context).
+        _loop = asyncio.get_running_loop()
+
+        # Consumer is created here but NOT started — startup_services calls
+        # _startup_pipe_consumers after startup_search completes, and the Nexus
+        # kernel pipe registry isn't ready until that phase.  The consumer is
+        # stored on app.state so _startup_pipe_consumers can bind_fs + start it.
+        _consumer = SkeletonPipeConsumer(indexer=_indexer, fallback_loop=_loop)
+        app.state.skeleton_pipe_consumer = _consumer
+        logger.debug("[SKELETON] SkeletonIndexer + SkeletonPipeConsumer created (pending start)")
+
+        if not hasattr(_nx, "register_intercept_write"):
+            return  # NexusFS doesn't support VFS hooks in this mode
+
+        _zone_id = svc.zone_id or "root"
+
+        class _SkeletonWriteHook:
+            @property
+            def name(self) -> str:
+                return "skeleton_auto_index"
+
+            def on_post_write(self, ctx: object) -> None:
+                _consumer.notify_write(
+                    getattr(ctx, "path", ""),
+                    getattr(ctx, "path_id", None),
+                    getattr(ctx, "zone_id", None) or _zone_id,
+                )
+
+        class _SkeletonDeleteHook:
+            @property
+            def name(self) -> str:
+                return "skeleton_auto_delete"
+
+            def on_post_delete(self, ctx: object) -> None:
+                _consumer.notify_delete(
+                    getattr(ctx, "path", ""),
+                    getattr(ctx, "path_id", None),
+                    getattr(ctx, "zone_id", None) or _zone_id,
+                )
+
+        class _SkeletonRenameHook:
+            @property
+            def name(self) -> str:
+                return "skeleton_auto_rename"
+
+            def on_post_rename(self, ctx: object) -> None:
+                _consumer.notify_rename(
+                    getattr(ctx, "old_path", ""),
+                    getattr(ctx, "new_path", ""),
+                    getattr(ctx, "path_id", None),
+                    getattr(ctx, "zone_id", None) or _zone_id,
+                )
+
+        _nx.register_intercept_write(_SkeletonWriteHook())
+        _nx.register_intercept_delete(_SkeletonDeleteHook())
+        _nx.register_intercept_rename(_SkeletonRenameHook())
+        logger.info("[SKELETON] VFS auto-index hooks registered (write/delete/rename)")
+
+    except Exception as e:
+        logger.warning("[SKELETON] Skeleton indexer wiring failed (non-fatal): %s", e)

@@ -102,6 +102,8 @@ EXPECTED_MODELS = [
     "SecretStoreVersionModel",
     # Per-directory semantic index scoping (Issue #3698)
     "IndexedDirectoryModel",
+    # Global path+title index for lightweight locate() (Issue #3725)
+    "DocumentSkeletonModel",
 ]
 
 

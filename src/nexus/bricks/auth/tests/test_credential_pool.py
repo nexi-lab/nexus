@@ -195,24 +195,54 @@ async def test_mark_failure_sets_cooldown() -> None:
     assert updated.usage_stats.failure_count == 1
 
 
-async def test_mark_success_clears_cooldown() -> None:
+async def test_mark_success_does_not_clear_active_cooldown() -> None:
+    """mark_success must not resurrect a credential with a future cooldown.
+
+    Scenario: request A selected the profile (no cooldown), request B then
+    hits RATE_LIMIT and sets cooldown_until = now + 1h.  When request A's
+    success is recorded later it must NOT clear the cooldown — otherwise the
+    throttled credential would re-enter rotation immediately.
+    """
     pool, store = make_pool("p1", strategy="first_ok")
     profile = store.get("p1")
     assert profile is not None
 
-    # First put it on cooldown
+    # Simulate concurrent failure setting a future cooldown
     pool.mark_failure(profile, AuthProfileFailureReason.RATE_LIMIT)
     profile = store.get("p1")
     assert profile is not None
     assert profile.usage_stats.cooldown_until is not None
 
-    # Then mark success — should clear cooldown
+    # Stale success from an earlier concurrent request must NOT clear cooldown
     pool.mark_success(profile)
-    recovered = store.get("p1")
-    assert recovered is not None
-    assert recovered.usage_stats.cooldown_until is None
-    assert recovered.usage_stats.cooldown_reason is None
-    assert recovered.usage_stats.success_count == 1
+    after = store.get("p1")
+    assert after is not None
+    assert after.usage_stats.cooldown_until is not None, (
+        "mark_success must not clear a future cooldown (stale-success race)"
+    )
+    assert after.usage_stats.cooldown_reason is not None
+    assert after.usage_stats.success_count == 1
+
+
+async def test_mark_success_clears_expired_cooldown() -> None:
+    """mark_success clears a cooldown that has already passed."""
+    from datetime import timedelta
+
+    pool, store = make_pool("p1", strategy="first_ok")
+    profile = store.get("p1")
+    assert profile is not None
+
+    # Manually set a cooldown in the past
+    profile.usage_stats.cooldown_until = datetime.utcnow() - timedelta(seconds=1)
+    profile.usage_stats.cooldown_reason = AuthProfileFailureReason.RATE_LIMIT
+    store.upsert(profile)
+
+    # Success should clear the already-expired cooldown
+    pool.mark_success(profile)
+    after = store.get("p1")
+    assert after is not None
+    assert after.usage_stats.cooldown_until is None
+    assert after.usage_stats.cooldown_reason is None
 
 
 async def test_no_cooldown_for_auth_transient() -> None:

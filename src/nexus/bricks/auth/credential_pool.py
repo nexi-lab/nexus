@@ -310,12 +310,24 @@ class CredentialPool:
     # ------------------------------------------------------------------
 
     def mark_success(self, profile: AuthProfile) -> None:
-        """Record a successful use; clear any active cooldown."""
+        """Record a successful use; clear cooldown only if no newer failure exists.
+
+        Under concurrent load a later request may already have recorded a
+        RATE_LIMIT/OVERLOADED failure (setting cooldown_until in the future)
+        before an earlier request's success is recorded.  Unconditionally
+        clearing cooldown_until here would allow a throttled credential back
+        into rotation immediately, causing repeated hammering.
+
+        Safe rule: only clear the cooldown if it has already passed (or was
+        never set), meaning no newer failure has imposed a future cooldown.
+        """
         stats = profile.usage_stats
         stats.success_count += 1
         stats.last_used_at = datetime.utcnow()
-        stats.cooldown_until = None
-        stats.cooldown_reason = None
+        now = datetime.utcnow()
+        if stats.cooldown_until is None or stats.cooldown_until <= now:
+            stats.cooldown_until = None
+            stats.cooldown_reason = None
         self.store.upsert(profile)
 
     def mark_failure(

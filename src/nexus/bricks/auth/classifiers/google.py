@@ -22,12 +22,32 @@ from nexus.bricks.auth.profile import AuthProfileFailureReason
 def classify_google_error(exc: Exception) -> AuthProfileFailureReason:
     """Map a Google API / google-auth exception to AuthProfileFailureReason.
 
+    Walks the full exception chain (__cause__ then __context__) so that
+    connectors which wrap raw SDK exceptions in BackendError still produce
+    correct cooldown/retry decisions.  The raw Google exception is preserved
+    as exc.__cause__ when ``raise BackendError(...) from e`` is used.
+
     Args:
-        exc: Any exception raised by a Google API call or token refresh.
+        exc: Any exception raised by a Google API call or token refresh,
+             including wrapped BackendError whose __cause__ is a Google exc.
 
     Returns:
         The matching AuthProfileFailureReason, or UNKNOWN as a fallback.
     """
+    candidate: BaseException | None = exc
+    seen: set[int] = set()
+    while candidate is not None and id(candidate) not in seen:
+        seen.add(id(candidate))
+        if isinstance(candidate, Exception):
+            result = _classify_single(candidate)
+            if result != AuthProfileFailureReason.UNKNOWN:
+                return result
+        candidate = candidate.__cause__ or candidate.__context__
+    return AuthProfileFailureReason.UNKNOWN
+
+
+def _classify_single(exc: Exception) -> AuthProfileFailureReason:
+    """Classify a single exception node (no chain-walking)."""
     # google-auth refresh / transport errors
     try:
         from google.auth import exceptions as google_auth_exc

@@ -5,7 +5,7 @@ Registered in KernelDispatch OBSERVE phase. Replaces the direct
 
 Issue #1701: event_bus is a system-tier service. The observer is constructed
 with a direct ``event_bus`` reference at factory time — no late-binding needed.
-Tests that need a different bus use ``await nx.swap_service("event_bus_observer",
+Tests that need a different bus use ``nx.swap_service("event_bus_observer",
 EventBusObserver(event_bus=shared_bus))`` to hot-swap the observer atomically.
 
 Issue #3646: sync on_mutation — fire-and-forget ``bus.publish()`` via
@@ -39,7 +39,7 @@ class EventBusObserver:
     runs as a background task outside the OBSERVE critical path.
 
     Constructed with a direct ``event_bus`` reference (Issue #1701).
-    Use ``await nx.swap_service("event_bus_observer", EventBusObserver(...))``
+    Use ``nx.swap_service("event_bus_observer", EventBusObserver(...))``
     to replace the bus at runtime (e.g. in E2E tests).
     """
 

@@ -9,6 +9,7 @@ One-dimension model: PersistentService protocol + duck-typed hook_spec().
 from __future__ import annotations
 
 import asyncio
+import threading
 from unittest.mock import MagicMock
 
 import pytest
@@ -171,8 +172,7 @@ class TestRegisterService:
         coordinator._set_hook_spec("search", spec)
         assert coordinator._get_hook_spec("search") is spec
 
-    @pytest.mark.asyncio()
-    async def test_enlist_ignores_synthetic_hook_spec(
+    def test_enlist_ignores_synthetic_hook_spec(
         self, coordinator: ServiceRegistry, dispatch: _TestDispatch
     ) -> None:
         svc = _DynamicProxyLikeService()
@@ -190,8 +190,7 @@ class TestRegisterService:
 
 
 class TestMountService:
-    @pytest.mark.asyncio()
-    async def test_mount_registers_hooks(
+    def test_mount_registers_hooks(
         self, coordinator: ServiceRegistry, dispatch: _TestDispatch
     ) -> None:
         svc = _FakeService()
@@ -205,8 +204,7 @@ class TestMountService:
         assert dispatch.read_hook_count == 1
         assert dispatch.observer_count == 1
 
-    @pytest.mark.asyncio()
-    async def test_mount_no_hooks_if_no_spec(
+    def test_mount_no_hooks_if_no_spec(
         self, coordinator: ServiceRegistry, dispatch: _TestDispatch
     ) -> None:
         svc = _FakeService()
@@ -222,8 +220,7 @@ class TestMountService:
 
 
 class TestUnmountService:
-    @pytest.mark.asyncio()
-    async def test_unmount_removes_hooks(
+    def test_unmount_removes_hooks(
         self, coordinator: ServiceRegistry, dispatch: _TestDispatch
     ) -> None:
         svc = _FakeService()
@@ -244,8 +241,7 @@ class TestUnmountService:
 
 
 class TestUnregisterServiceFull:
-    @pytest.mark.asyncio()
-    async def test_full_unregister(
+    def test_full_unregister(
         self,
         coordinator: ServiceRegistry,
     ) -> None:
@@ -264,8 +260,7 @@ class TestUnregisterServiceFull:
 
 
 class TestSwapService:
-    @pytest.mark.asyncio()
-    async def test_basic_swap(
+    def test_basic_swap(
         self,
         coordinator: ServiceRegistry,
         dispatch: _TestDispatch,
@@ -281,7 +276,7 @@ class TestSwapService:
         hook2 = MagicMock()
         spec2 = HookSpec(read_hooks=(hook2,))
         svc2 = _FakeHookServiceV2(hook_spec_value=spec2)
-        await coordinator.swap_service("search", svc2, exports=("glob", "grep"), hook_spec=spec2)
+        coordinator.swap_service("search", svc2, exports=("glob", "grep"), hook_spec=spec2)
 
         # New instance is served
         ref = coordinator.service("search")
@@ -291,8 +286,7 @@ class TestSwapService:
         # Old hooks removed, new hooks registered
         assert dispatch.read_hook_count == 1
 
-    @pytest.mark.asyncio()
-    async def test_swap_no_none_window(
+    def test_swap_no_none_window(
         self,
         coordinator: ServiceRegistry,
     ) -> None:
@@ -304,14 +298,13 @@ class TestSwapService:
         assert coordinator.service("search") is not None
 
         svc2 = _FakeHookServiceV2()
-        await coordinator.swap_service("search", svc2, exports=("glob",))
+        coordinator.swap_service("search", svc2, exports=("glob",))
 
         ref = coordinator.service("search")
         assert ref is not None
         assert ref._service_instance is svc2
 
-    @pytest.mark.asyncio()
-    async def test_swap_allows_non_hot_swappable(
+    def test_swap_allows_non_hot_swappable(
         self,
         coordinator: ServiceRegistry,
     ) -> None:
@@ -321,14 +314,13 @@ class TestSwapService:
         coordinator._mount_service("search")
 
         svc2 = _FakeServiceV2()
-        await coordinator.swap_service("search", svc2, exports=("glob",))
+        coordinator.swap_service("search", svc2, exports=("glob",))
 
         ref = coordinator.service("search")
         assert ref is not None
         assert ref._service_instance is svc2
 
-    @pytest.mark.asyncio()
-    async def test_swap_auto_detects_hook_spec_from_protocol(
+    def test_swap_auto_detects_hook_spec_from_protocol(
         self,
         coordinator: ServiceRegistry,
         dispatch: _TestDispatch,
@@ -347,45 +339,51 @@ class TestSwapService:
         spec2 = HookSpec(read_hooks=(hook2,))
         svc2 = _FakeHookServiceV2(hook_spec_value=spec2)
         # Swap WITHOUT explicit hook_spec — coordinator auto-detects from protocol
-        await coordinator.swap_service("search", svc2)
+        coordinator.swap_service("search", svc2)
 
         assert dispatch.read_hook_count == 1
 
-    @pytest.mark.asyncio()
-    async def test_swap_drains_in_flight_calls(
+    def test_swap_drains_in_flight_calls(
         self,
         coordinator: ServiceRegistry,
     ) -> None:
-        """Verify swap waits for in-flight async calls to complete."""
-        call_completed = asyncio.Event()
+        """Verify swap waits for in-flight sync calls to complete."""
+        call_completed = threading.Event()
 
-        class _SlowHookService(_FakeHookService):
-            async def glob(self, pattern: str) -> list[str]:
-                await asyncio.sleep(0.05)
+        class _SlowService:
+            def glob(self, pattern: str) -> list[str]:
+                import time
+
+                time.sleep(0.05)
                 call_completed.set()
                 return [pattern]
 
-        svc1 = _SlowHookService()
+            def hook_spec(self) -> HookSpec:
+                return HookSpec()
+
+        svc1 = _SlowService()
         coordinator._register_service("search", svc1, exports=("glob",))
         coordinator._mount_service("search")
 
-        # Start an in-flight call via ServiceRef
+        # Start an in-flight call via ServiceRef in a thread
         ref = coordinator.service("search")
         assert ref is not None
-        in_flight = asyncio.create_task(ref.glob("*.py"))
+        result_holder: list[list[str]] = []
+
+        def _call() -> None:
+            result_holder.append(ref.glob("*.py"))
+
+        t = threading.Thread(target=_call)
+        t.start()
 
         # Swap should wait for the in-flight call to drain
         svc2 = _FakeHookServiceV2()
-        swap_task = asyncio.create_task(
-            coordinator.swap_service("search", svc2, exports=("glob",), drain_timeout=2.0)
-        )
+        coordinator.swap_service("search", svc2, exports=("glob",), drain_timeout=2.0)
 
-        # Guard: whole test must finish in 5s (prevents xdist hang)
-        result = await asyncio.wait_for(in_flight, timeout=5.0)
-        assert result == ["*.py"]
+        t.join(timeout=5.0)
+        assert result_holder == [["*.py"]]
         assert call_completed.is_set()
 
-        await asyncio.wait_for(swap_task, timeout=5.0)
         new_ref = coordinator.service("search")
         assert new_ref is not None
         assert new_ref._service_instance is svc2
@@ -412,19 +410,17 @@ class TestHookSpecManagement:
 
 
 class TestDrain:
-    @pytest.mark.asyncio()
-    async def test_drain_immediate_when_no_inflight(self, coordinator: ServiceRegistry) -> None:
+    def test_drain_immediate_when_no_inflight(self, coordinator: ServiceRegistry) -> None:
         """Drain should return immediately if refcount is 0."""
         # No in-flight calls — drain should not block
-        await asyncio.wait_for(coordinator._drain("search", timeout=0.1), timeout=1.0)
+        coordinator._drain("search", timeout=0.1)
 
-    @pytest.mark.asyncio()
-    async def test_drain_timeout_when_stuck(self, coordinator: ServiceRegistry) -> None:
+    def test_drain_timeout_when_stuck(self, coordinator: ServiceRegistry) -> None:
         """Drain should timeout and warn if refcount doesn't reach 0."""
         # Manually set refcount > 0 to simulate stuck call
         coordinator._refcounts["stuck"] = 5
         # Should timeout, not hang forever
-        await coordinator._drain("stuck", timeout=0.05)
+        coordinator._drain("stuck", timeout=0.05)
         # Verify refcount wasn't magically cleared
         assert coordinator._refcounts["stuck"] == 5
 
@@ -459,8 +455,7 @@ class TestHookSpec:
 class TestSwapWithFullHookSpec:
     """Verify swap_service() correctly handles multi-channel HookSpecs."""
 
-    @pytest.mark.asyncio()
-    async def test_swap_unregisters_old_hooks_registers_new(
+    def test_swap_unregisters_old_hooks_registers_new(
         self,
         coordinator: ServiceRegistry,
         dispatch: _TestDispatch,
@@ -492,15 +487,14 @@ class TestSwapWithFullHookSpec:
             observers=(new_observer,),
         )
         svc2 = _FakeHookServiceV2(hook_spec_value=spec2)
-        await coordinator.swap_service("rebac", svc2, hook_spec=spec2)
+        coordinator.swap_service("rebac", svc2, hook_spec=spec2)
 
         # Counts unchanged (old removed, new added)
         assert dispatch.read_hook_count == 1
         assert dispatch.write_hook_count == 1
         assert dispatch.observer_count == 1
 
-    @pytest.mark.asyncio()
-    async def test_swap_with_no_new_spec_clears_old(
+    def test_swap_with_no_new_spec_clears_old(
         self,
         coordinator: ServiceRegistry,
         dispatch: _TestDispatch,
@@ -515,7 +509,7 @@ class TestSwapWithFullHookSpec:
         assert dispatch.read_hook_count == 1
 
         svc2 = _FakeHookServiceV2()  # empty hook_spec
-        await coordinator.swap_service("parser", svc2)
+        coordinator.swap_service("parser", svc2)
 
         # Old hook removed, no new hook registered
         assert dispatch.read_hook_count == 0
@@ -553,30 +547,26 @@ class TestProtocolConformance:
 class TestAutoLifecyclePersistentService:
     """Auto start/stop for PersistentService (Q3 + Q4)."""
 
-    @pytest.mark.asyncio()
-    async def test_start_calls_start_on_persistent(self, coordinator: ServiceRegistry) -> None:
+    def test_start_calls_start_on_persistent(self, coordinator: ServiceRegistry) -> None:
         svc = _PersistentFakeService()
         coordinator._register_service("worker", svc)
-        started = await coordinator.start_persistent_services()
+        started = coordinator.start_persistent_services()
         assert started == ["worker"]
         assert svc.started is True
 
-    @pytest.mark.asyncio()
-    async def test_start_skips_non_persistent(self, coordinator: ServiceRegistry) -> None:
+    def test_start_skips_non_persistent(self, coordinator: ServiceRegistry) -> None:
         coordinator._register_service("search", _FakeService())
-        started = await coordinator.start_persistent_services()
+        started = coordinator.start_persistent_services()
         assert started == []
 
-    @pytest.mark.asyncio()
-    async def test_stop_calls_stop_on_persistent(self, coordinator: ServiceRegistry) -> None:
+    def test_stop_calls_stop_on_persistent(self, coordinator: ServiceRegistry) -> None:
         svc = _PersistentFakeService()
         coordinator._register_service("worker", svc)
-        stopped = await coordinator.stop_persistent_services()
+        stopped = coordinator.stop_persistent_services()
         assert stopped == ["worker"]
         assert svc.stopped is True
 
-    @pytest.mark.asyncio()
-    async def test_start_handles_exception(self, coordinator: ServiceRegistry) -> None:
+    def test_start_handles_exception(self, coordinator: ServiceRegistry) -> None:
         """Exception during start() logs error, continues to next service."""
 
         class _FailStart:
@@ -589,13 +579,12 @@ class TestAutoLifecyclePersistentService:
         ok_svc = _PersistentFakeService()
         coordinator._register_service("fail", _FailStart())
         coordinator._register_service("ok", ok_svc)
-        started = await coordinator.start_persistent_services()
+        started = coordinator.start_persistent_services()
         assert "ok" in started
         assert "fail" not in started
         assert ok_svc.started is True
 
-    @pytest.mark.asyncio()
-    async def test_stop_handles_exception(self, coordinator: ServiceRegistry) -> None:
+    def test_stop_handles_exception(self, coordinator: ServiceRegistry) -> None:
         """Exception during stop() logs error, continues."""
 
         class _FailStop:
@@ -608,13 +597,12 @@ class TestAutoLifecyclePersistentService:
         ok_svc = _PersistentFakeService()
         coordinator._register_service("fail", _FailStop())
         coordinator._register_service("ok", ok_svc)
-        stopped = await coordinator.stop_persistent_services()
+        stopped = coordinator.stop_persistent_services()
         assert "ok" in stopped
         assert "fail" not in stopped
         assert ok_svc.stopped is True
 
-    @pytest.mark.asyncio()
-    async def test_start_handles_timeout(self, coordinator: ServiceRegistry) -> None:
+    def test_start_handles_timeout(self, coordinator: ServiceRegistry) -> None:
         """Timeout during start() logs error, continues."""
 
         class _SlowStart:
@@ -627,19 +615,18 @@ class TestAutoLifecyclePersistentService:
         ok_svc = _PersistentFakeService()
         coordinator._register_service("slow", _SlowStart())
         coordinator._register_service("ok", ok_svc)
-        started = await coordinator.start_persistent_services(timeout=0.01)
+        started = coordinator.start_persistent_services(timeout=0.01)
         assert "ok" in started
         assert "slow" not in started
 
-    @pytest.mark.asyncio()
-    async def test_start_stop_idempotent(self, coordinator: ServiceRegistry) -> None:
+    def test_start_stop_idempotent(self, coordinator: ServiceRegistry) -> None:
         svc = _PersistentFakeService()
         coordinator._register_service("worker", svc)
-        await coordinator.start_persistent_services()
-        await coordinator.start_persistent_services()
+        coordinator.start_persistent_services()
+        coordinator.start_persistent_services()
         assert svc.started is True
-        await coordinator.stop_persistent_services()
-        await coordinator.stop_persistent_services()
+        coordinator.stop_persistent_services()
+        coordinator.stop_persistent_services()
         assert svc.stopped is True
 
 
@@ -673,8 +660,7 @@ class TestUnregisterAllHooks:
 class TestEnlist:
     """Tests for ``reg.enlist()`` — the single entry point for all services."""
 
-    @pytest.mark.asyncio
-    async def test_enlist_on_demand(
+    def test_enlist_on_demand(
         self,
         coordinator: ServiceRegistry,
     ) -> None:
@@ -686,8 +672,7 @@ class TestEnlist:
         assert info is not None
         assert info.instance is svc
 
-    @pytest.mark.asyncio
-    async def test_enlist_persistent_pre_bootstrap(
+    def test_enlist_persistent_pre_bootstrap(
         self,
         coordinator: ServiceRegistry,
     ) -> None:
@@ -701,8 +686,7 @@ class TestEnlist:
         info = coordinator.service_info("svc")
         assert info is not None
 
-    @pytest.mark.asyncio
-    async def test_enlist_persistent_post_bootstrap(
+    def test_enlist_persistent_post_bootstrap(
         self,
         coordinator: ServiceRegistry,
     ) -> None:
@@ -717,8 +701,7 @@ class TestEnlist:
         info = coordinator.service_info("svc")
         assert info is not None
 
-    @pytest.mark.asyncio
-    async def test_enlist_auto_registers_hooks(
+    def test_enlist_auto_registers_hooks(
         self,
         coordinator: ServiceRegistry,
         dispatch: _TestDispatch,
@@ -734,8 +717,7 @@ class TestEnlist:
         assert coordinator._get_hook_spec("svc") is not None
         assert dispatch.read_hook_count == 1
 
-    @pytest.mark.asyncio
-    async def test_enlist_persistent_with_hooks_pre_bootstrap(
+    def test_enlist_persistent_with_hooks_pre_bootstrap(
         self,
         coordinator: ServiceRegistry,
         dispatch: _TestDispatch,
@@ -751,8 +733,7 @@ class TestEnlist:
         assert coordinator._get_hook_spec("svc") is not None
         assert dispatch.read_hook_count == 1
 
-    @pytest.mark.asyncio
-    async def test_enlist_persistent_with_hooks_post_bootstrap(
+    def test_enlist_persistent_with_hooks_post_bootstrap(
         self,
         coordinator: ServiceRegistry,
         dispatch: _TestDispatch,
@@ -768,8 +749,7 @@ class TestEnlist:
         assert coordinator._get_hook_spec("svc") is not None
         assert dispatch.read_hook_count == 1
 
-    @pytest.mark.asyncio
-    async def test_enlist_with_depends_on(
+    def test_enlist_with_depends_on(
         self,
         coordinator: ServiceRegistry,
     ) -> None:
@@ -787,7 +767,6 @@ class TestEnlist:
 class TestSwapUnifiedPath:
     """All services use the same swap path — no separate drain/activate."""
 
-    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "service_class,replacement_class",
         [
@@ -797,7 +776,7 @@ class TestSwapUnifiedPath:
             (_FakePersistentHookService, _FakePersistentHookService),
         ],
     )
-    async def test_swap_all_service_types(
+    def test_swap_all_service_types(
         self,
         coordinator: ServiceRegistry,
         service_class: type,
@@ -807,7 +786,7 @@ class TestSwapUnifiedPath:
         coordinator._register_service("svc", service_class())
         coordinator._mount_service("svc")
         svc2 = replacement_class()
-        await coordinator.swap_service("svc", svc2)
+        coordinator.swap_service("svc", svc2)
 
         ref = coordinator.service("svc")
         assert ref is not None
@@ -822,8 +801,7 @@ class TestSwapUnifiedPath:
 class TestSwapWithoutHooks:
     """Tests for swapping services that don't have hook_spec()."""
 
-    @pytest.mark.asyncio
-    async def test_swap_on_demand_succeeds(
+    def test_swap_on_demand_succeeds(
         self,
         coordinator: ServiceRegistry,
     ) -> None:
@@ -833,15 +811,14 @@ class TestSwapWithoutHooks:
         coordinator._mount_service("search")
 
         svc2 = _FakeServiceV2()
-        await coordinator.swap_service("search", svc2, exports=("glob",))
+        coordinator.swap_service("search", svc2, exports=("glob",))
 
         ref = coordinator.service("search")
         assert ref is not None
         assert ref._service_instance is svc2
         assert ref.glob("*.py") == ["v2:*.py"]
 
-    @pytest.mark.asyncio
-    async def test_swap_does_not_require_hook_spec(
+    def test_swap_does_not_require_hook_spec(
         self,
         coordinator: ServiceRegistry,
     ) -> None:
@@ -860,23 +837,24 @@ class TestSwapWithoutHooks:
         coordinator._mount_service("svc")
 
         svc2 = _PlainV2()
-        await coordinator.swap_service("svc", svc2)
+        coordinator.swap_service("svc", svc2)
 
         ref = coordinator.service("svc")
         assert ref is not None
         assert ref._service_instance is svc2
 
-    @pytest.mark.asyncio
-    async def test_swap_drains_in_flight_calls(
+    def test_swap_drains_in_flight_calls(
         self,
         coordinator: ServiceRegistry,
     ) -> None:
         """Swap waits for in-flight calls via ServiceRef refcount drain."""
-        call_completed = asyncio.Event()
+        call_completed = threading.Event()
 
         class _SlowService:
-            async def work(self) -> str:
-                await asyncio.sleep(0.05)
+            def work(self) -> str:
+                import time
+
+                time.sleep(0.05)
                 call_completed.set()
                 return "done"
 
@@ -886,23 +864,26 @@ class TestSwapWithoutHooks:
 
         ref = coordinator.service("svc")
         assert ref is not None
-        in_flight = asyncio.create_task(ref.work())
+        result_holder: list[str] = []
+
+        def _call() -> None:
+            result_holder.append(ref.work())
+
+        t = threading.Thread(target=_call)
+        t.start()
 
         svc2 = _FakeServiceV2()
-        swap_task = asyncio.create_task(coordinator.swap_service("svc", svc2, drain_timeout=2.0))
+        coordinator.swap_service("svc", svc2, drain_timeout=2.0)
 
-        # Guard: whole test must finish in 5s (prevents xdist hang)
-        result = await asyncio.wait_for(in_flight, timeout=5.0)
-        assert result == "done"
+        t.join(timeout=5.0)
+        assert result_holder == ["done"]
         assert call_completed.is_set()
 
-        await asyncio.wait_for(swap_task, timeout=5.0)
         new_ref = coordinator.service("svc")
         assert new_ref is not None
         assert new_ref._service_instance is svc2
 
-    @pytest.mark.asyncio
-    async def test_swap_plain_to_hookspec_registers_new_hooks(
+    def test_swap_plain_to_hookspec_registers_new_hooks(
         self,
         coordinator: ServiceRegistry,
         dispatch: _TestDispatch,
@@ -915,7 +896,7 @@ class TestSwapWithoutHooks:
         hook = MagicMock()
         spec = HookSpec(read_hooks=(hook,))
         svc2 = _FakeHookService(hook_spec_value=spec)
-        await coordinator.swap_service("svc", svc2, hook_spec=spec)
+        coordinator.swap_service("svc", svc2, hook_spec=spec)
 
         assert dispatch.read_hook_count == 1
 

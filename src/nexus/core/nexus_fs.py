@@ -333,7 +333,7 @@ class NexusFS(  # type: ignore[misc]
         # Auto-lifecycle: start PersistentService instances (Issue #1580)
         coord = self.service_coordinator
         if coord is not None:
-            await coord.start_persistent_services()
+            coord.start_persistent_services()
             coord.mark_bootstrapped()  # future enlist() calls auto-start
         self._bootstrapped = True
 
@@ -368,9 +368,9 @@ class NexusFS(  # type: ignore[misc]
         """ServiceRegistry with integrated lifecycle (formerly ServiceLifecycleCoordinator)."""
         return self._service_registry
 
-    async def swap_service(self, name: str, new_instance: Any, **kwargs: Any) -> None:
+    def swap_service(self, name: str, new_instance: Any, **kwargs: Any) -> None:
         """Hot-swap a service — all quadrants supported (#1452)."""
-        await self._service_registry.swap_service(name, new_instance, **kwargs)
+        self._service_registry.swap_service(name, new_instance, **kwargs)
 
     def _upgrade_lock_manager(self, lock_manager: Any) -> None:
         """Hot-swap LocalLockManager → RaftLockManager at link time.
@@ -5424,7 +5424,7 @@ class NexusFS(  # type: ignore[misc]
 
         coord = self.service_coordinator
         if coord is not None:
-            await coord.stop_persistent_services()
+            coord.stop_persistent_services()
             coord._unregister_all_hooks()
         self.close()
 

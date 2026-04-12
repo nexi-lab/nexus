@@ -255,6 +255,39 @@ class NamespaceGetParams:
 
 
 # ============================================================
+# 9. Semantic search initialization override
+# ============================================================
+#
+# ``ainitialize_semantic_search`` is a SearchService method that takes an
+# ``nx: NexusFS`` argument which cannot be serialized across RPC.  The
+# server-side handler ignores the param and injects the server's own
+# ``nexus_fs``, so we omit ``nx`` from the RPC params entirely and
+# accept only the embedding-pipeline config knobs.
+@dataclass
+class AInitializeSemanticSearchParams:
+    """Parameters for the RPC form of ``ainitialize_semantic_search``.
+
+    The client-side ``nexus search init`` CLI still passes ``nx=nx`` and
+    ``record_store_engine=None`` from its local-mode code path.  Accept
+    them as ignored optional fields so the dataclass construction
+    doesn't fail — the server-side handler injects its own ``nexus_fs``
+    for ``nx`` and leaves ``record_store_engine`` alone.
+    """
+
+    embedding_provider: str | None = None
+    embedding_model: str | None = None
+    api_key: str | None = None
+    chunk_size: int = 1024
+    chunk_strategy: str = "semantic"
+    async_mode: bool = True
+    cache_url: str | None = None
+    embedding_cache_ttl: int = 86400 * 3
+    # Ignored — client sends these but the server injects its own nx
+    nx: Any | None = None
+    record_store_engine: Any | None = None
+
+
+# ============================================================
 # Override METHOD_PARAMS entries for all override classes
 # ============================================================
 
@@ -301,4 +334,8 @@ OVERRIDE_METHOD_PARAMS: dict[str, type] = {
     "namespace_get": NamespaceGetParams,
     # RemoteMetastore
     "sys_setattr": SetMetadataParams,
+    # Semantic search init (Issue #3728 follow-up — the client calls this
+    # via RemoteServiceProxy, and without an entry here ``parse_method_params``
+    # rejects the RPC as "Unknown method".)
+    "ainitialize_semantic_search": AInitializeSemanticSearchParams,
 }

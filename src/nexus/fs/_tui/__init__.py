@@ -1238,15 +1238,20 @@ class PlaygroundApp(App[None]):
             return "x://timeline"
         if connector_name == "hn_connector":
             return "hn://top"
-        if connector_name == "gws_github":
-            return None
+        # ``github_connector`` is the canonical GitHub registry name
+        # (#3728).  ``gws_github`` is a deprecated alias kept for
+        # backward compatibility of persisted mounts — both must
+        # advertise the same ``github://`` URI example so the TUI and
+        # playground don't show the broken ``gws://github`` path.
+        if connector_name in {"github_connector", "gws_github"}:
+            return "github://me"
         if connector_name.startswith("gws_"):
             return f"gws://{connector_name.removeprefix('gws_')}"
         return None
 
     def _connector_auth_service(self, connector_name: str, service_name: str | None) -> str | None:
         """Map connector targets to the auth flow users should follow."""
-        if connector_name == "gws_github":
+        if connector_name in {"github_connector", "gws_github"}:
             return "github"
         if connector_name.startswith("gws_"):
             return "gws"
@@ -1261,7 +1266,15 @@ class PlaygroundApp(App[None]):
             return explicit
 
         if not uri.startswith(
-            ("gws://", "gdrive://", "gmail://", "calendar://", "slack://", "x://")
+            (
+                "gws://",
+                "gdrive://",
+                "gmail://",
+                "calendar://",
+                "slack://",
+                "x://",
+                "github://",
+            )
         ):
             return "local"
 
@@ -1269,6 +1282,8 @@ class PlaygroundApp(App[None]):
             providers = {"google"}
         elif uri.startswith("slack://"):
             providers = {"slack"}
+        elif uri.startswith("github://"):
+            providers = {"github"}
         else:
             providers = {"x", "twitter"}
 
@@ -1311,6 +1326,8 @@ class PlaygroundApp(App[None]):
             service_name = "slack"
         elif scheme == "x":
             service_name = "x"
+        elif scheme == "github":
+            service_name = "github"
 
         inferred = _infer_connector_user_email(
             scheme=scheme,

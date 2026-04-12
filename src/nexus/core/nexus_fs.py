@@ -449,6 +449,184 @@ class NexusFS(  # type: ignore[misc]
             )
         return context.zone_id, context.agent_id, getattr(context, "is_admin", False)
 
+    # =========================================================================
+    # Virtual .readme/ overlay helper (Issue #3728)
+    # =========================================================================
+
+    def _try_virtual_readme_stat(
+        self,
+        path: str,
+        ctx: OperationContext,
+    ) -> dict[str, Any] | None:
+        """Return a stat dict for a virtual ``.readme/`` entry, or ``None``.
+
+        Called from ``sys_stat`` when the metastore has no entry for the
+        path — if the path routes to a skill backend and falls under
+        ``.readme/``, synthesize a stat dict from the virtual tree.
+
+        Returns ``None`` for any of: path doesn't route anywhere, backend
+        has no skill docs, path isn't under ``.readme/``, or normalization
+        fails.  The caller treats ``None`` as "really not found" and
+        continues with the normal sys_stat miss path.
+        """
+        try:
+            _, _, is_admin = self._get_context_identity(ctx)
+            route = self.router.route(
+                path, is_admin=is_admin, check_write=False, zone_id=self._zone_id
+            )
+        except Exception:
+            return None
+
+        backend = getattr(route, "backend", None)
+        if backend is None:
+            return None
+
+        mount_point = getattr(route, "mount_point", "") or ""
+        backend_path = getattr(route, "backend_path", "") or ""
+
+        from nexus.backends.connectors.schema_generator import (
+            _parse_readme_path_parts,
+            _readme_dir_for,
+            get_virtual_readme_tree_for_backend,
+            overlay_owns_path,
+        )
+
+        # Round 5 finding #13: defer to real backend when it owns this
+        # path, so ``sys_stat`` can't report virtual metadata for a file
+        # that ``sys_read`` serves from real storage.  Malformed paths
+        # propagate as None so sys_stat returns its normal miss result.
+        try:
+            _owns = overlay_owns_path(backend, mount_point, backend_path, context=ctx)
+        except ValueError:
+            return None
+        if not _owns:
+            return None
+
+        try:
+            parts = _parse_readme_path_parts(backend_path, readme_dir=_readme_dir_for(backend))
+        except ValueError:
+            return None  # malformed path — let sys_stat return None
+
+        if parts is None:
+            return None  # not under .readme/
+
+        try:
+            tree = get_virtual_readme_tree_for_backend(backend, mount_point)
+        except Exception:
+            return None
+
+        entry = tree.find(parts)
+        if entry is None:
+            return None  # under .readme/ but not a known file
+
+        backend_name = getattr(backend, "name", "") or ""
+        return {
+            "path": path,
+            "backend_name": backend_name,
+            "physical_path": "",
+            "size": entry.size(),
+            "etag": None,
+            "mime_type": "inode/directory" if entry.is_dir else "text/markdown",
+            "created_at": None,
+            "modified_at": None,
+            "is_directory": entry.is_dir,
+            "entry_type": 1 if entry.is_dir else 0,
+            "owner": ctx.user_id,
+            "group": ctx.user_id,
+            # Read-only — virtual files cannot be modified.
+            "mode": 0o555 if entry.is_dir else 0o444,
+            "version": 1,
+            "zone_id": self._zone_id,
+        }
+
+    def _reject_if_virtual_readme(
+        self,
+        path: str,
+        context: OperationContext | None,
+        op: str = "write",
+    ) -> None:
+        """Raise ``PermissionError`` if ``path`` is under a virtual ``.readme/``.
+
+        Issue #3728: the overlay advertises virtual files as mode 0o444
+        (read-only), but the write/delete/rename/mkdir paths route on
+        backend_path directly — without this guard, a caller writing to
+        ``/<mount>/.readme/README.md`` would create a real file in the
+        backend (e.g. a stray ``.readme/README.md`` in the user's Google
+        Drive).  This helper blocks every mutating entry point at the
+        kernel layer so the virtual tree cannot be mutated.
+
+        Called from: ``_write_content``, ``sys_write``, ``write``,
+        ``mkdir``, ``rmdir``, ``sys_unlink``, ``sys_rename``,
+        ``write_batch``, ``delete_batch``, ``rename_batch``.
+        """
+        try:
+            _, _, is_admin = self._get_context_identity(context)
+            route = self.router.route(
+                path, is_admin=is_admin, check_write=False, zone_id=self._zone_id
+            )
+        except Exception:
+            return  # non-routable path — let the real call surface the error
+
+        backend = getattr(route, "backend", None)
+        if backend is None:
+            return
+
+        backend_path = getattr(route, "backend_path", "") or ""
+        mount_point = getattr(route, "mount_point", "") or ""
+
+        from nexus.backends.connectors.schema_generator import overlay_owns_path
+
+        # Shared ownership check — only reject when the virtual overlay
+        # is authoritative for this path.  On deferring backends
+        # (native gdrive) with real data here, the mutation is a
+        # legitimate operation against user data and passes through.
+        # Malformed paths (traversal etc.) fall through so the real
+        # call surfaces the underlying error with its own message.
+        try:
+            owns = overlay_owns_path(backend, mount_point, backend_path, context=context)
+        except ValueError:
+            return
+        if not owns:
+            return
+
+        raise PermissionError(
+            f"Cannot {op} virtual .readme/ path: {path} "
+            f"(skill docs are read-only and generated from class metadata)"
+        )
+
+    def _try_virtual_readme_bytes(
+        self,
+        path: str,
+        context: OperationContext | None,
+    ) -> bytes | None:
+        """Return the bytes for a virtual ``.readme/`` path, or ``None``.
+
+        Synchronous sibling of ``_try_virtual_readme_stat`` used by
+        ``read_bulk`` (which is sync and cannot ``await sys_read``) to
+        serve virtual skill docs when the Rust fast path misses.
+        """
+        try:
+            _, _, is_admin = self._get_context_identity(context)
+            route = self.router.route(
+                path, is_admin=is_admin, check_write=False, zone_id=self._zone_id
+            )
+        except Exception:
+            return None
+
+        backend = getattr(route, "backend", None)
+        if backend is None:
+            return None
+
+        mount_point = getattr(route, "mount_point", "") or ""
+        backend_path = getattr(route, "backend_path", "") or ""
+
+        from nexus.backends.connectors.schema_generator import dispatch_virtual_readme_read
+
+        try:
+            return dispatch_virtual_readme_read(backend, mount_point, backend_path, context=context)
+        except Exception:
+            return None
+
     # Issue #1790: _check_zone_writable() deleted — now handled by
     def _build_write_metadata(
         self,
@@ -736,6 +914,12 @@ class NexusFS(  # type: ignore[misc]
             }
 
         if file_meta is None:
+            # Virtual .readme/ overlay check (Issue #3728) — before giving
+            # up, see if this is a synthetic file under a skill backend's
+            # .readme/ directory.
+            _vstat = self._try_virtual_readme_stat(normalized, ctx)
+            if _vstat is not None:
+                return _vstat
             return None
 
         result: dict[str, Any] = {
@@ -1219,19 +1403,42 @@ class NexusFS(  # type: ignore[misc]
         )
         _route_backend = getattr(_route, "backend", None)
         _route_backend_path = getattr(_route, "backend_path", "") or ""
+        _route_mount_point = getattr(_route, "mount_point", "") or ""
         if isinstance(_route, ExternalRouteResult) and _route_backend is not None:
             _ctx = (
-                _dc_replace(context, backend_path=_route_backend_path, virtual_path=path)
+                _dc_replace(
+                    context,
+                    backend_path=_route_backend_path,
+                    virtual_path=path,
+                    mount_path=_route_mount_point,
+                )
                 if context
                 else OperationContext(
                     user_id="anonymous",
                     groups=[],
                     backend_path=_route_backend_path,
                     virtual_path=path,
+                    mount_path=_route_mount_point,
                 )
             )
             try:
-                data = _route_backend.read_content(_route_backend_path, context=_ctx)
+                # Virtual .readme/ overlay check (Issue #3728).  If the path
+                # is under a skill backend's .readme/ directory, serve from
+                # the generated tree instead of calling the real backend.
+                from nexus.backends.connectors.schema_generator import (
+                    dispatch_virtual_readme_read,
+                )
+
+                _virtual_data = dispatch_virtual_readme_read(
+                    _route_backend,
+                    _route_mount_point,
+                    _route_backend_path,
+                    context=_ctx,
+                )
+                if _virtual_data is not None:
+                    data = _virtual_data
+                else:
+                    data = _route_backend.read_content(_route_backend_path, context=_ctx)
                 if offset or count is not None:
                     data = data[offset : offset + count] if count is not None else data[offset:]
                 return data
@@ -1420,12 +1627,20 @@ class NexusFS(  # type: ignore[misc]
         for path in allowed_set:
             try:
                 result = self._kernel.sys_read(path, _rust_ctx)
-                if not result.hit:
+                content: bytes | None = None
+                if result.hit:
+                    content = result.data or b""
+                else:
+                    # Rust fast path missed.  Virtual ``.readme/`` paths
+                    # (Issue #3728) are not in the metastore, so we
+                    # route through the same dispatch helper that the
+                    # async ``sys_read`` uses before declaring "not found".
+                    content = self._try_virtual_readme_bytes(path, context)
+                if content is None:
                     if skip_errors:
                         results[path] = None
                         continue
                     raise NexusFileNotFoundError(path)
-                content = result.data or b""
                 if return_metadata:
                     assert batch_meta is not None
                     meta = batch_meta.get(path)
@@ -1519,6 +1734,23 @@ class NexusFS(  # type: ignore[misc]
         if _handled:
             return (_resolve_hint or b"")[start:end]
 
+        # Issue #3728 virtual ``.readme/`` overlay early-exit.
+        # Virtual skill docs have no metastore rows by design, so the
+        # meta-backed range path below would unconditionally raise
+        # ``NexusFileNotFoundError`` for them.  Serve from the overlay
+        # first and slice the returned bytes; fall through to the
+        # normal range path for real files.
+        #
+        # Defensive: unit tests use stub filesystems that may not
+        # subclass NexusFS and therefore lack ``_try_virtual_readme_bytes``.
+        # Fall through silently in that case — the stub isn't serving
+        # a skill backend anyway.
+        _virtual_probe = getattr(self, "_try_virtual_readme_bytes", None)
+        if callable(_virtual_probe):
+            _virtual_bytes = _virtual_probe(path, context)
+            if _virtual_bytes is not None:
+                return _virtual_bytes[start:end]
+
         # OPTIMISED PATH: no post-read hooks + backend has read_content_range
         from nexus.contracts.vfs_hooks import ReadHookContext as _RHC
 
@@ -1542,7 +1774,13 @@ class NexusFS(  # type: ignore[misc]
                 from dataclasses import replace as _replace
 
                 read_context = (
-                    _replace(context, backend_path=route.backend_path) if context else None
+                    _replace(
+                        context,
+                        backend_path=route.backend_path,
+                        mount_path=route.mount_point,
+                    )
+                    if context
+                    else None
                 )
                 return _rb.read_content_range(meta.etag, start, end, context=read_context)
 
@@ -1709,6 +1947,9 @@ class NexusFS(  # type: ignore[misc]
         if route.readonly:
             raise PermissionError(f"Path is read-only: {path}")
 
+        # Virtual .readme/ paths are read-only (Issue #3728).
+        self._reject_if_virtual_readme(path, context, op="write_stream")
+
         # PRE-INTERCEPT: pre-write hooks (Issue #899)
         from nexus.contracts.vfs_hooks import WriteHookContext as _WHC
 
@@ -1720,10 +1961,19 @@ class NexusFS(  # type: ignore[misc]
 
         # Add backend_path to context for path-based connectors
         if context:
-            context = _dc_replace(context, backend_path=route.backend_path, virtual_path=path)
+            context = _dc_replace(
+                context,
+                backend_path=route.backend_path,
+                virtual_path=path,
+                mount_path=route.mount_point,
+            )
         else:
             context = OperationContext(
-                user_id="anonymous", groups=[], backend_path=route.backend_path, virtual_path=path
+                user_id="anonymous",
+                groups=[],
+                backend_path=route.backend_path,
+                virtual_path=path,
+                mount_path=route.mount_point,
             )
 
         # Write content via streaming
@@ -1828,6 +2078,10 @@ class NexusFS(  # type: ignore[misc]
 
         # [INTERMEDIATE] PRE-DISPATCH: resolve — migrates to Rust dispatch middleware in PR 7
         context = self._parse_context(context)
+
+        # Virtual .readme/ paths are read-only (Issue #3728).
+        self._reject_if_virtual_readme(path, context, op="sys_write")
+
         _handled, _result = self.resolve_write(path, buf)
         if _handled:
             base: dict[str, Any] = {"path": path, "bytes_written": len(buf)}
@@ -1922,6 +2176,9 @@ class NexusFS(  # type: ignore[misc]
 
         if route.readonly:
             raise PermissionError(f"Cannot create directory in read-only path: {path}")
+
+        # Virtual .readme/ paths are read-only (Issue #3728).
+        self._reject_if_virtual_readme(path, context, op="mkdir")
 
         # Check if directory already exists
         existing = route.metastore.get(path)
@@ -2181,6 +2438,9 @@ class NexusFS(  # type: ignore[misc]
         if route.readonly:
             raise PermissionError(f"Path is read-only: {path}")
 
+        # Virtual .readme/ paths are read-only (Issue #3728).
+        self._reject_if_virtual_readme(path, context, op="write")
+
         # Get existing metadata for permission check and update detection (single query)
         now = datetime.now(UTC)
         meta = _meta if _meta is not None else route.metastore.get(path)
@@ -2203,12 +2463,21 @@ class NexusFS(  # type: ignore[misc]
         from dataclasses import replace
 
         if context:
-            context = replace(context, backend_path=route.backend_path, virtual_path=path)
+            context = replace(
+                context,
+                backend_path=route.backend_path,
+                virtual_path=path,
+                mount_path=route.mount_point,
+            )
         else:
             from nexus.contracts.types import OperationContext
 
             context = OperationContext(
-                user_id="anonymous", groups=[], backend_path=route.backend_path, virtual_path=path
+                user_id="anonymous",
+                groups=[],
+                backend_path=route.backend_path,
+                virtual_path=path,
+                mount_path=route.mount_point,
             )
 
         # DT_EXTERNAL_STORAGE: backend manages own content storage.
@@ -2781,7 +3050,10 @@ class NexusFS(  # type: ignore[misc]
         # Validate paths
         validated_files: list[tuple[str, bytes]] = []
         for path, content in files:
-            validated_files.append((self._validate_path(path), content))
+            validated_path = self._validate_path(path)
+            # Virtual .readme/ paths are read-only (Issue #3728).
+            self._reject_if_virtual_readme(validated_path, context, op="write_batch")
+            validated_files.append((validated_path, content))
 
         zone_id, agent_id, is_admin = self._get_context_identity(context)
         paths = [p for p, _ in validated_files]
@@ -2840,13 +3112,19 @@ class NexusFS(  # type: ignore[misc]
                     path, is_admin=is_admin, check_write=True, zone_id=self._zone_id
                 )
                 _write_ctx = (
-                    _dc_replace(context, backend_path=route.backend_path, virtual_path=path)
+                    _dc_replace(
+                        context,
+                        backend_path=route.backend_path,
+                        virtual_path=path,
+                        mount_path=route.mount_point,
+                    )
                     if context
                     else OperationContext(
                         user_id="anonymous",
                         groups=[],
                         backend_path=route.backend_path,
                         virtual_path=path,
+                        mount_path=route.mount_point,
                     )
                 )
                 content_hash = route.backend.write_content(content, context=_write_ctx).content_id
@@ -3246,6 +3524,9 @@ class NexusFS(  # type: ignore[misc]
         if route.readonly:
             raise PermissionError(f"Cannot delete from read-only path: {path}")
 
+        # Virtual .readme/ paths are read-only (Issue #3728).
+        self._reject_if_virtual_readme(path, context, op="delete")
+
         # Check if file exists in metadata.
         # Use prefetched hint from resolve_delete() if available (#1311)
         meta = _result if _result is not None else route.metastore.get(path)
@@ -3462,6 +3743,10 @@ class NexusFS(  # type: ignore[misc]
         if new_route.readonly:
             raise PermissionError(f"Cannot rename to read-only path: {new_path}")
 
+        # Virtual .readme/ paths are read-only on both ends (Issue #3728).
+        self._reject_if_virtual_readme(old_path, context, op="rename")
+        self._reject_if_virtual_readme(new_path, context, op="rename")
+
         # ── Fast-fail (unlocked, optimization only) ──
         # Avoids lock acquisition for the common "file not found" error case.
         # Not authoritative — re-checked under lock below.
@@ -3637,6 +3922,103 @@ class NexusFS(  # type: ignore[misc]
         if dst_route.readonly:
             raise PermissionError(f"Cannot copy to read-only path: {dst_path}")
 
+        # Virtual .readme/ destination is read-only (Issue #3728).
+        self._reject_if_virtual_readme(dst_path, context, op="copy")
+
+        # Virtual .readme/ source: bypass metastore and copy the virtual
+        # bytes to the destination.  Virtual docs have no metastore row
+        # so the normal ``src_meta.get`` path below would fail before
+        # hooks run — do the safety checks the normal branch does
+        # (source READ permission via the copy hook, destination
+        # existence on BOTH metastore and backend, locked re-check to
+        # close the concurrent-write race in round 8 finding #19) here
+        # first.  Round 6 findings #14+#15, round 8 finding #19.
+        _virtual_src_bytes = self._try_virtual_readme_bytes(src_path, context)
+        if _virtual_src_bytes is not None:
+            # Enforce source READ permission + destination WRITE
+            # permission via the same copy-hook pipeline the normal
+            # copy path runs.  Permission hooks receive a synthesized
+            # metadata dict since virtual docs have no row.
+            from nexus.contracts.vfs_hooks import CopyHookContext as _CHC
+
+            _virtual_copy_ctx = _CHC(
+                src_path=src_path,
+                dst_path=dst_path,
+                context=context,
+                zone_id=zone_id,
+                agent_id=agent_id,
+                metadata=None,  # virtual docs have no FileMetadata row
+            )
+            self._kernel.dispatch_pre_hooks("copy", _virtual_copy_ctx)
+
+            def _check_dst_exists() -> None:
+                """Raise FileExistsError if dst_path is occupied.
+
+                Probes both the metastore and the backend so a real
+                backend file that hasn't been synced to the metastore
+                still blocks the copy.
+                """
+                if dst_route.metastore.exists(dst_path):
+                    raise FileExistsError(f"Destination path already exists: {dst_path}")
+                _dst_bp = getattr(dst_route, "backend_path", "") or ""
+                _dst_be = getattr(dst_route, "backend", None)
+                _fn = getattr(_dst_be, "content_exists", None)
+                if _dst_be is not None and callable(_fn):
+                    from dataclasses import replace as _replace
+
+                    try:
+                        _pctx = (
+                            _replace(context, backend_path=_dst_bp) if context is not None else None
+                        )
+                    except Exception:
+                        _pctx = None
+                    try:
+                        if _fn(_dst_bp, context=_pctx):
+                            raise FileExistsError(
+                                f"Destination path already exists on backend: {dst_path}"
+                            )
+                    except FileExistsError:
+                        raise
+                    except Exception as _probe_err:
+                        # Probe failed — downgrade to debug-log and
+                        # fall through.  The follow-up ``write()`` call
+                        # will surface any permanent create-semantics
+                        # error with its own richer context, so
+                        # raising a best-effort probe error here would
+                        # just add noise.  Logged (not swallowed) so
+                        # ``test_no_silent_swallowers_in_nexus_fs``
+                        # stays green.
+                        logger.debug(
+                            "[VIRTUAL-COPY] backend.content_exists probe failed for %s: %s",
+                            _dst_bp,
+                            _probe_err,
+                        )
+
+            # Destination-exists fast-fail (round 6 finding #15 — the
+            # probe covers both metastore and backend).
+            #
+            # Round 9 finding #21: we do NOT wrap this in
+            # ``_vfs_locked(dst_path)`` because the follow-up
+            # ``self.write(dst_path, ...)`` takes the same path-level
+            # write lock internally, and the lock manager is not
+            # re-entrant — nesting the acquisition would deadlock
+            # until the 5-second timeout.  The residual TOCTOU
+            # window between this check and ``write()``'s own
+            # acquisition is bounded by ``write()``'s last-writer-
+            # wins overwrite semantics — the same behavior every
+            # other caller of ``write()`` already tolerates.
+            _check_dst_exists()
+            write_result = await self.write(dst_path, _virtual_src_bytes, context=context)
+            self._kernel.dispatch_post_hooks("copy", _virtual_copy_ctx)
+            return {
+                "src_path": src_path,
+                "dst_path": dst_path,
+                "size": len(_virtual_src_bytes),
+                "etag": write_result.get("etag"),
+                "version": write_result.get("version"),
+                "modified_at": write_result.get("modified_at"),
+            }
+
         # Fast-fail (unlocked — re-checked under lock)
         if not src_route.metastore.exists(src_path) and not self.metadata.is_implicit_directory(
             src_path
@@ -3779,6 +4161,7 @@ class NexusFS(  # type: ignore[misc]
                             _ctx_replace(
                                 context,
                                 backend_path=src_route.backend_path,
+                                mount_path=src_route.mount_point,
                             )
                             if context
                             else context
@@ -3914,6 +4297,11 @@ class NexusFS(  # type: ignore[misc]
         # Get file metadata
         meta = self.metadata.get(path)
         if meta is None:
+            # Virtual .readme/ overlay check (Issue #3728) — before raising,
+            # see if the path routes to a skill backend's .readme/ tree.
+            _vstat = self._try_virtual_readme_stat(path, ctx)
+            if _vstat is not None:
+                return _vstat
             raise NexusFileNotFoundError(path)
 
         # Get size from backend if not in metadata
@@ -3933,7 +4321,11 @@ class NexusFS(  # type: ignore[misc]
                 if context:
                     from dataclasses import replace
 
-                    size_context = replace(context, backend_path=route.backend_path)
+                    size_context = replace(
+                        context,
+                        backend_path=route.backend_path,
+                        mount_path=route.mount_point,
+                    )
                 size = route.backend.get_content_size(meta.etag, context=size_context)
             except Exception as exc:
                 logger.debug("Failed to get content size for %s: %s", path, exc)
@@ -4118,7 +4510,11 @@ class NexusFS(  # type: ignore[misc]
 
             if self.metadata.exists(path):
                 return True
-            return is_implicit_dir
+            if is_implicit_dir:
+                return True
+            # Virtual .readme/ overlay check (Issue #3728) — before reporting
+            # not-found, see if the path resolves to a virtual skill doc.
+            return self._try_virtual_readme_stat(path, ctx) is not None
         except (InvalidPathError, NexusFileNotFoundError, BackendError):
             return False
 
@@ -4300,6 +4696,9 @@ class NexusFS(  # type: ignore[misc]
 
         for path in validated:
             try:
+                # Virtual .readme/ paths are read-only (Issue #3728).
+                self._reject_if_virtual_readme(path, context, op="delete")
+
                 meta = batch_meta.get(path)
 
                 # Check for implicit directory (exists because it has files beneath it)
@@ -4764,18 +5163,118 @@ class NexusFS(  # type: ignore[misc]
                 backend = getattr(_route, "backend", None)
                 if isinstance(_route, ExternalRouteResult) and backend is not None:
                     backend_path = getattr(_route, "backend_path", "") or ""
+                    mount_point = getattr(_route, "mount_point", "") or ""
                     _ctx = (
-                        _dc_replace(context, backend_path=backend_path, virtual_path=path)
+                        _dc_replace(
+                            context,
+                            backend_path=backend_path,
+                            virtual_path=path,
+                            mount_path=mount_point,
+                        )
                         if context
                         else OperationContext(
                             user_id="anonymous",
                             groups=[],
                             backend_path=backend_path,
                             virtual_path=path,
+                            mount_path=mount_point,
                         )
                     )
-                    entries = backend.list_dir(backend_path, context=_ctx)
-                    if entries is not None:
+                    # Virtual .readme/ overlay check (Issue #3728).
+                    from nexus.backends.connectors.schema_generator import (
+                        _has_skill_name,
+                        _readme_dir_for,
+                        dispatch_virtual_readme_list,
+                        get_virtual_readme_tree_for_backend,
+                    )
+
+                    _virtual_entries = dispatch_virtual_readme_list(
+                        backend, mount_point, backend_path, context=_ctx
+                    )
+                    # Name this variable distinctly from the metastore
+                    # ``entries`` below so mypy doesn't try to unify a
+                    # ``list[str]`` narrowed here with the
+                    # ``list[FileMetadata]`` produced by ``metadata.list``.
+                    external_entries: list[str] | None
+                    if _virtual_entries is not None:
+                        external_entries = list(_virtual_entries)
+                    else:
+                        external_entries = list(backend.list_dir(backend_path, context=_ctx))
+                        # Mount-root listing (backend_path is empty or just
+                        # "/") — inject the virtual ``.readme/`` subtree
+                        # (flattened for recursive=True) so the doc overlay
+                        # is discoverable from ``ls`` and also indexable by
+                        # search/recursive walkers that only enumerate from
+                        # the mount root (Issue #3728 findings #5, #8, #18).
+                        #
+                        # Round 7 finding #18: gate the injection on
+                        # ownership — on a deferring backend whose real
+                        # ``.readme/`` already exists, the overlay has
+                        # handed the subtree over and we must not splice
+                        # virtual entries back in.
+                        readme_dir_name = _readme_dir_for(backend).strip("/")
+                        from nexus.backends.connectors.schema_generator import (
+                            overlay_owns_path as _overlay_owns_path,
+                        )
+
+                        try:
+                            _overlay_owns_root = _overlay_owns_path(
+                                backend,
+                                mount_point,
+                                readme_dir_name,
+                                context=_ctx,
+                            )
+                        except ValueError:
+                            _overlay_owns_root = False
+                        if (
+                            external_entries is not None
+                            and _has_skill_name(backend)
+                            and not backend_path.strip("/")
+                            and _overlay_owns_root
+                        ):
+                            if recursive:
+                                # Flatten the virtual tree to every leaf path
+                                # so callers that recurse from the mount root
+                                # (indexing, search, TUI tree) descend into
+                                # README.md + schemas/ + examples/ without a
+                                # second sys_readdir round-trip.
+                                try:
+                                    _vtree = get_virtual_readme_tree_for_backend(
+                                        backend, mount_point
+                                    )
+                                except Exception:
+                                    _vtree = None
+                                if _vtree is not None:
+
+                                    def _walk(node: Any, prefix: str) -> list[str]:
+                                        out: list[str] = []
+                                        if node.is_dir:
+                                            # Include the directory itself
+                                            if prefix:
+                                                out.append(f"{prefix}/")
+                                            for child_name, child in node.children.items():
+                                                child_prefix = (
+                                                    f"{prefix}/{child_name}"
+                                                    if prefix
+                                                    else child_name
+                                                )
+                                                out.extend(_walk(child, child_prefix))
+                                        else:
+                                            out.append(prefix)
+                                        return out
+
+                                    flattened = _walk(_vtree, readme_dir_name)
+                                    for rel in flattened:
+                                        if rel not in external_entries:
+                                            external_entries.append(rel)
+                            else:
+                                virtual_entry = f"{readme_dir_name}/"
+                                if (
+                                    virtual_entry not in external_entries
+                                    and readme_dir_name not in external_entries
+                                ):
+                                    external_entries.append(virtual_entry)
+                    if external_entries is not None:
                         if details:
                             return [
                                 {
@@ -4786,11 +5285,11 @@ class NexusFS(  # type: ignore[misc]
                                     "is_directory": e.endswith("/"),
                                     "size": 0,
                                 }
-                                for e in entries
+                                for e in external_entries
                             ]
                         return [
                             f"{path.rstrip('/')}/{e}" if not e.startswith("/") else e
-                            for e in entries
+                            for e in external_entries
                         ]
             except Exception as exc:
                 logger.debug("sys_readdir connector route failed for %s: %s", path, exc)

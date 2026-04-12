@@ -400,6 +400,13 @@ class SlimNexusFS:
                 entry_type=1,
             )
 
+        # Virtual .readme/ overlay check (Issue #3728).  The slim facade
+        # has its own fast stat path that bypasses NexusFS.stat(), so we
+        # run the same fallback helper here before returning None.
+        _vstat = self._kernel._try_virtual_readme_stat(normalized, self._ctx)
+        if _vstat is not None:
+            return _vstat
+
         return None
 
     # -- Search operations --

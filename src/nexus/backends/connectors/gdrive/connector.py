@@ -95,6 +95,10 @@ class PathGDriveBackend(
 
     # ReadmeDocMixin config
     SKILL_NAME = "gdrive"
+    # Drive stores arbitrary user files at arbitrary paths, so a real
+    # ``.readme/`` directory in the user's Drive must shadow the
+    # auto-generated virtual tree (Issue #3728 finding #9).
+    VIRTUAL_README_DEFERS_TO_BACKEND: bool = True
 
     # ValidatedMixin config
     SCHEMAS = {

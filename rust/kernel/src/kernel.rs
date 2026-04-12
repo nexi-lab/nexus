@@ -444,8 +444,8 @@ pub struct Kernel {
     // observer_pool removed — inline dispatch, no background threads.
     // Zone revision counter — AtomicU64 per zone + Condvar for waiters (§10 A2)
     zone_revisions: DashMap<String, Arc<ZoneRevisionEntry>>,
-    // File watch registry — Rust-native pattern matching (§10 A3)
-    file_watches: FileWatcher,
+    // FileWatcher — inotify equivalent. Arc-shared with observer registry.
+    file_watches: Arc<FileWatcher>,
     // Agent registry — DashMap backing store (§10 B1)
     pub(crate) agent_registry: crate::agent_registry::AgentRegistry,
     // Per-mount metastores — federation zones have independent redb instances.
@@ -455,7 +455,7 @@ pub struct Kernel {
     // IPC registry — PipeManager owns DashMap<String, Arc<dyn PipeBackend>>
     pub(crate) pipe_manager: crate::pipe_manager::PipeManager,
     // IPC registry — StreamManager owns DashMap<String, Arc<dyn StreamBackend>>
-    pub(crate) stream_manager: crate::stream_manager::StreamManager,
+    pub(crate) stream_manager: Arc<crate::stream_manager::StreamManager>,
     // Native hook registry — pure Rust hooks dispatched lock-free (§11 Phase 10)
     #[allow(dead_code)]
     pub(crate) native_hooks: Mutex<NativeHookRegistry>,
@@ -466,7 +466,7 @@ impl Kernel {
 
     /// Create an empty kernel. Components wired by wrapper after construction.
     pub fn new() -> Self {
-        Self {
+        let kernel = Self {
             dcache: DCache::new(),
             router: PathRouter::new(),
             trie: Trie::new(),
@@ -486,13 +486,42 @@ impl Kernel {
             observers: Mutex::new(KernelObserverRegistry::new()),
             observer_pool: OnceLock::new(),
             zone_revisions: DashMap::new(),
-            file_watches: FileWatcher::new(),
+            file_watches: Arc::new(FileWatcher::new()),
             agent_registry: crate::agent_registry::AgentRegistry::new(),
             mount_metastores: DashMap::new(),
             pipe_manager: crate::pipe_manager::PipeManager::new(),
-            stream_manager: crate::stream_manager::StreamManager::new(),
+            stream_manager: Arc::new(crate::stream_manager::StreamManager::new()),
             native_hooks: Mutex::new(NativeHookRegistry::new()),
+        };
+
+        // Register kernel-internal observers on the observer registry.
+        // ALL observers go through the same dispatch_observers path (ThreadPool).
+        kernel.observers.lock().register(
+            kernel.file_watches.clone() as Arc<dyn MutationObserver>,
+            "FileWatcher".to_string(),
+            0x1FFF, // ALL_FILE_EVENTS
+        );
+        // StreamEventObserver instances — write FileEvent JSON to DT_STREAM.
+        // Each consumer reads from its own stream path.
+        let sm = &kernel.stream_manager;
+        for (name, path) in [
+            ("StreamEventObserver", "/__sys__/events/watch"),
+            ("EventBusObserver", "/__sys__/events/bus"),
+            ("WorkflowObserver", "/__sys__/events/workflow"),
+            ("ZoektObserver", "/__sys__/events/zoekt"),
+            ("AuditObserver", "/__sys__/events/audit"),
+        ] {
+            kernel.observers.lock().register(
+                Arc::new(crate::stream_observer::StreamEventObserver::new(
+                    sm.clone(),
+                    path,
+                )) as Arc<dyn MutationObserver>,
+                name.to_string(),
+                0x1FFF, // ALL_FILE_EVENTS
+            );
         }
+
+        kernel
     }
 
     // ── VFS Lock wiring ────────────────────────────────────────────────
@@ -972,11 +1001,8 @@ impl Kernel {
     /// sys_unlink, sys_rename, sys_mkdir, sys_rmdir) via the
     /// `dispatch_mutation` helper.
     pub fn dispatch_observers(&self, event: &FileEvent) {
-        // FileWatcher: inline notify (Condvar, ~0ns). Always runs.
-        self.file_watches.on_mutation(event);
-
-        // Dispatch to registered Rust-native MutationObserver impls on ThreadPool.
-        // Zero Py<PyAny> — all observers are pure Rust. Safe Drop.
+        // Dispatch ALL registered MutationObserver impls on ThreadPool.
+        // All observers are pure Rust (registered via register_observer). Safe Drop.
         let observers = self.observers.lock().matching(event.event_type as u32);
         if observers.is_empty() {
             return;

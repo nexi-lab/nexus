@@ -142,6 +142,54 @@ pub(crate) struct FileEvent {
 
 #[allow(dead_code)]
 impl FileEvent {
+    /// Serialize to compact JSON for DT_STREAM / audit trail.
+    pub(crate) fn to_json(&self) -> String {
+        let mut s = String::with_capacity(256);
+        s.push('{');
+        s.push_str(&format!(
+            "\"type\":\"{}\",\"path\":\"{}\"",
+            self.event_type.as_str(),
+            self.path.replace('\\', "\\\\").replace('"', "\\\"")
+        ));
+        s.push_str(&format!(",\"event_id\":\"{}\"", self.event_id));
+        s.push_str(&format!(",\"timestamp\":\"{}\"", self.timestamp));
+        if let Some(ref v) = self.zone_id {
+            s.push_str(&format!(",\"zone_id\":\"{v}\""));
+        }
+        if let Some(ref v) = self.agent_id {
+            s.push_str(&format!(",\"agent_id\":\"{v}\""));
+        }
+        if let Some(ref v) = self.user_id {
+            s.push_str(&format!(",\"user_id\":\"{v}\""));
+        }
+        if let Some(ref v) = self.etag {
+            s.push_str(&format!(",\"etag\":\"{v}\""));
+        }
+        if let Some(v) = self.size {
+            s.push_str(&format!(",\"size\":{v}"));
+        }
+        if let Some(v) = self.version {
+            s.push_str(&format!(",\"version\":{v}"));
+        }
+        if self.is_new {
+            s.push_str(",\"is_new\":true");
+        }
+        if let Some(ref v) = self.old_path {
+            s.push_str(&format!(
+                ",\"old_path\":\"{}\"",
+                v.replace('\\', "\\\\").replace('"', "\\\"")
+            ));
+        }
+        if let Some(ref v) = self.new_path {
+            s.push_str(&format!(
+                ",\"new_path\":\"{}\"",
+                v.replace('\\', "\\\\").replace('"', "\\\"")
+            ));
+        }
+        s.push('}');
+        s
+    }
+
     /// Minimal-constructor convenience for sys_* call sites that only
     /// know `(type, path, zone_id)`. Auto-generates `event_id` and
     /// `timestamp`. Other fields default to None / false.

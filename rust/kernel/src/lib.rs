@@ -54,6 +54,7 @@ mod simd;
 mod slack_backend;
 mod stream;
 mod stream_manager;
+mod stream_observer;
 mod trigram;
 mod volume_engine;
 mod volume_index;

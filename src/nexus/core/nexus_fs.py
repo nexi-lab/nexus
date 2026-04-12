@@ -1734,6 +1734,23 @@ class NexusFS(  # type: ignore[misc]
         if _handled:
             return (_resolve_hint or b"")[start:end]
 
+        # Issue #3728 virtual ``.readme/`` overlay early-exit.
+        # Virtual skill docs have no metastore rows by design, so the
+        # meta-backed range path below would unconditionally raise
+        # ``NexusFileNotFoundError`` for them.  Serve from the overlay
+        # first and slice the returned bytes; fall through to the
+        # normal range path for real files.
+        #
+        # Defensive: unit tests use stub filesystems that may not
+        # subclass NexusFS and therefore lack ``_try_virtual_readme_bytes``.
+        # Fall through silently in that case — the stub isn't serving
+        # a skill backend anyway.
+        _virtual_probe = getattr(self, "_try_virtual_readme_bytes", None)
+        if callable(_virtual_probe):
+            _virtual_bytes = _virtual_probe(path, context)
+            if _virtual_bytes is not None:
+                return _virtual_bytes[start:end]
+
         # OPTIMISED PATH: no post-read hooks + backend has read_content_range
         from nexus.contracts.vfs_hooks import ReadHookContext as _RHC
 
@@ -1749,26 +1766,23 @@ class NexusFS(  # type: ignore[misc]
 
             meta = route.metastore.get(path)
 
-            if meta is not None and meta.etag is not None:
-                _rb = self._driver_coordinator.resolve_backend(meta.backend_name)
-                if hasattr(_rb, "read_content_range"):
-                    from dataclasses import replace as _replace
+            if meta is None or meta.etag is None:
+                raise NexusFileNotFoundError(path)
 
-                    read_context = (
-                        _replace(
-                            context,
-                            backend_path=route.backend_path,
-                            mount_path=route.mount_point,
-                        )
-                        if context
-                        else None
+            _rb = self._driver_coordinator.resolve_backend(meta.backend_name)
+            if hasattr(_rb, "read_content_range"):
+                from dataclasses import replace as _replace
+
+                read_context = (
+                    _replace(
+                        context,
+                        backend_path=route.backend_path,
+                        mount_path=route.mount_point,
                     )
-                    return _rb.read_content_range(meta.etag, start, end, context=read_context)
-            # Metadata miss or backend can't do range reads — fall through to
-            # the sys_read slice path below.  Virtual ``.readme/`` paths
-            # (Issue #3728) take this branch: their tree is served from
-            # sys_read's ExternalRouteResult dispatch, which the slice call
-            # then trims to [start, end).
+                    if context
+                    else None
+                )
+                return _rb.read_content_range(meta.etag, start, end, context=read_context)
 
         # FALLBACK: full read via sys_read + slice
         content = await self.sys_read(path, count=end, offset=0, context=context)
@@ -3965,10 +3979,20 @@ class NexusFS(  # type: ignore[misc]
                             )
                     except FileExistsError:
                         raise
-                    except Exception:
-                        # Probe failed — the write call below will
-                        # surface any permanent create-semantics error
-                        pass
+                    except Exception as _probe_err:
+                        # Probe failed — downgrade to debug-log and
+                        # fall through.  The follow-up ``write()`` call
+                        # will surface any permanent create-semantics
+                        # error with its own richer context, so
+                        # raising a best-effort probe error here would
+                        # just add noise.  Logged (not swallowed) so
+                        # ``test_no_silent_swallowers_in_nexus_fs``
+                        # stays green.
+                        logger.debug(
+                            "[VIRTUAL-COPY] backend.content_exists probe failed for %s: %s",
+                            _dst_bp,
+                            _probe_err,
+                        )
 
             # Destination-exists fast-fail (round 6 finding #15 — the
             # probe covers both metastore and backend).

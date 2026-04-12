@@ -5167,10 +5167,15 @@ class NexusFS(  # type: ignore[misc]
                     _virtual_entries = dispatch_virtual_readme_list(
                         backend, mount_point, backend_path, context=_ctx
                     )
+                    # Name this variable distinctly from the metastore
+                    # ``entries`` below so mypy doesn't try to unify a
+                    # ``list[str]`` narrowed here with the
+                    # ``list[FileMetadata]`` produced by ``metadata.list``.
+                    external_entries: list[str] | None
                     if _virtual_entries is not None:
-                        entries = _virtual_entries
+                        external_entries = list(_virtual_entries)
                     else:
-                        entries = backend.list_dir(backend_path, context=_ctx)
+                        external_entries = list(backend.list_dir(backend_path, context=_ctx))
                         # Mount-root listing (backend_path is empty or just
                         # "/") — inject the virtual ``.readme/`` subtree
                         # (flattened for recursive=True) so the doc overlay
@@ -5198,12 +5203,11 @@ class NexusFS(  # type: ignore[misc]
                         except ValueError:
                             _overlay_owns_root = False
                         if (
-                            entries is not None
+                            external_entries is not None
                             and _has_skill_name(backend)
                             and not backend_path.strip("/")
                             and _overlay_owns_root
                         ):
-                            entries = list(entries)
                             if recursive:
                                 # Flatten the virtual tree to every leaf path
                                 # so callers that recurse from the mount root
@@ -5218,7 +5222,7 @@ class NexusFS(  # type: ignore[misc]
                                     _vtree = None
                                 if _vtree is not None:
 
-                                    def _walk(node, prefix: str) -> list[str]:
+                                    def _walk(node: Any, prefix: str) -> list[str]:
                                         out: list[str] = []
                                         if node.is_dir:
                                             # Include the directory itself
@@ -5237,13 +5241,16 @@ class NexusFS(  # type: ignore[misc]
 
                                     flattened = _walk(_vtree, readme_dir_name)
                                     for rel in flattened:
-                                        if rel not in entries:
-                                            entries.append(rel)
+                                        if rel not in external_entries:
+                                            external_entries.append(rel)
                             else:
                                 virtual_entry = f"{readme_dir_name}/"
-                                if virtual_entry not in entries and readme_dir_name not in entries:
-                                    entries.append(virtual_entry)
-                    if entries is not None:
+                                if (
+                                    virtual_entry not in external_entries
+                                    and readme_dir_name not in external_entries
+                                ):
+                                    external_entries.append(virtual_entry)
+                    if external_entries is not None:
                         if details:
                             return [
                                 {
@@ -5254,11 +5261,11 @@ class NexusFS(  # type: ignore[misc]
                                     "is_directory": e.endswith("/"),
                                     "size": 0,
                                 }
-                                for e in entries
+                                for e in external_entries
                             ]
                         return [
                             f"{path.rstrip('/')}/{e}" if not e.startswith("/") else e
-                            for e in entries
+                            for e in external_entries
                         ]
             except Exception as exc:
                 logger.debug("sys_readdir connector route failed for %s: %s", path, exc)

@@ -65,7 +65,10 @@ class DispatchMixin:
         self._trie_resolvers: dict[int, Any] = {}
         self._fallback_resolvers: list[Any] = []
         self._next_resolver_idx: int = 0
-        # Observer registry: Rust kernel SSOT. No Python-side list.
+        # Observer registry: ALL observers managed by Rust kernel.
+        # Rust-native MutationObserver: dispatched on ThreadPool (fire-and-forget).
+        # Event buffers: Rust-side bounded queues with Condvar notification.
+        # Python consumers self-manage via drain_event_buffer_blocking() in their own threads.
 
     # ── Lifecycle (Issue #3391) ──────────────────────────────────────────
 
@@ -222,29 +225,43 @@ class DispatchMixin:
     def unregister_intercept_access(self, hook: Any) -> bool:
         return self.unregister_intercept("access", hook)
 
-    # ── register_observe: generic OBSERVE observers (Issue #1748) ───────
+    # ── OBSERVE: observer registration + dispatch (all Rust) ────────────
+    #
+    # ALL observer management lives in Rust kernel:
+    #   - Rust-native MutationObserver: dispatched on ThreadPool (fire-and-forget)
+    #   - Event buffers: Rust bounded queues, Python consumers drain via kernel API
+    # Zero Py<PyAny> in Rust observer pipeline. Safe Drop. No shutdown flag.
 
     def register_observe(self, obs: VFSObserver) -> None:
-        """Register OBSERVE observer on Rust kernel + Python fallback list."""
+        """Register an OBSERVE event buffer on Rust kernel.
+
+        Creates a Rust-side EventBuffer with Condvar notification.
+        Events matching ``event_mask`` are buffered in pure Rust.
+        The observer's consumer thread pulls events via
+        ``kernel.drain_event_buffer_blocking(name, timeout_ms)``
+        which blocks on the Condvar (GIL released by PyO3).
+
+        Zero Py<PyAny> in Rust. Safe Drop. No drain calls in NexusFS.
+        """
         from nexus.core.file_events import ALL_FILE_EVENTS
 
         mask = getattr(obs, "event_mask", ALL_FILE_EVENTS)
         name = getattr(obs, "__class__", type(obs)).__name__
-        self._kernel.register_kernel_observer(obs, name, mask)
+        self._kernel.create_event_buffer(name, mask, 4096)
 
     def has_hooks(self, op: str) -> bool:
         """O(1) check: any hooks registered for *op*? Delegates to Rust Kernel."""
         return bool(self._kernel.hook_count(op) > 0)
 
     def unregister_observe(self, obs: VFSObserver) -> bool:
-        """Unregister OBSERVE observer from Rust kernel."""
+        """Remove an OBSERVE event buffer from Rust kernel."""
         name = getattr(obs, "__class__", type(obs)).__name__
-        return bool(self._kernel.unregister_kernel_observer(name))
+        return bool(self._kernel.remove_event_buffer(name))
 
     @property
     def observer_count(self) -> int:
-        """Total registered observers."""
-        return int(self._kernel.kernel_observer_count())
+        """Total registered observers (Rust-native + event buffers)."""
+        return int(self._kernel.kernel_observer_count()) if self._kernel else 0
 
     # ── PRE-INTERCEPT dispatch ──────────────────────────────────────────
     # ALL pre-hook dispatch now goes through Rust InterceptHook trait via
@@ -260,12 +277,14 @@ class DispatchMixin:
     def dispatch_event(self, event_type: str, path: str) -> None:
         """Dispatch a FileEvent through Rust kernel observer pipeline.
 
-        Used by DLC (mount/unmount) and Python fallback paths to fire
-        events through the same Rust dispatch_observers path that sys_*
-        methods use internally.
+        Pushes event into ALL matching Rust event buffers + fires
+        Rust-native MutationObserver impls on ThreadPool.
+        Python consumer threads wake via Condvar and process asynchronously.
+        Called by DLC mount/unmount and Python Tier 2 fallback paths.
+        Rust sys_* methods call dispatch_observers internally (hit=true).
         """
         if self._kernel is not None:
-            self._kernel.dispatch_kernel_event(event_type, path)
+            self._kernel.dispatch_event(event_type, path)
 
     # ── Hook counts — delegate to Rust Kernel ────────────────────────
 

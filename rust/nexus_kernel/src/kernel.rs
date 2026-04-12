@@ -421,6 +421,7 @@ pub struct Kernel {
     #[allow(dead_code)]
     observers: Mutex<KernelObserverRegistry>,
     // OBSERVE dispatch via lazy ThreadPool (OnceLock — fork-safe, GIL-safe).
+    // Rust-native MutationObserver only — zero Py<PyAny> in pool workers.
     observer_pool: OnceLock<ThreadPool>,
     //
     // OBSERVE is fire-and-forget by contract: the syscall returns as soon
@@ -974,20 +975,18 @@ impl Kernel {
     /// sys_unlink, sys_rename, sys_mkdir, sys_rmdir) via the
     /// `dispatch_mutation` helper.
     pub fn dispatch_observers(&self, event: &FileEvent) {
+        // Dispatch to Rust-native MutationObserver impls on ThreadPool.
+        // Zero Py<PyAny> — all observers are pure Rust. Safe Drop.
         let observers = self.observers.lock().matching(event.event_type as u32);
         if observers.is_empty() {
             return;
         }
-        // Lazy ThreadPool: created on first dispatch (fork-safe — no threads
-        // at Kernel::new()). Pool threads acquire GIL independently, avoiding
-        // Python→Rust→Python reentrance deadlock on inline dispatch.
         let pool = self
             .observer_pool
             .get_or_init(|| ThreadPool::with_name("nexus-observe".to_string(), 4));
         for obs in observers {
             let event_owned = event.clone();
             pool.execute(move || {
-                // catch_unwind: bad observer cannot crash kernel or block others.
                 let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     obs.on_mutation(&event_owned);
                 }));
@@ -1001,6 +1000,17 @@ impl Kernel {
         if let Some(pool) = self.observer_pool.get() {
             pool.join();
         }
+    }
+
+    /// Total registered Rust-native observers.
+    pub fn observer_count(&self) -> usize {
+        self.observers.lock().count()
+    }
+
+    /// Dispatch a manually constructed FileEvent (for DLC mount/unmount, Python fallback).
+    pub fn dispatch_event(&self, event_type: FileEventType, path: &str) {
+        let event = FileEvent::new(event_type, path);
+        self.dispatch_observers(&event);
     }
 
     /// Helper: build a `FileEvent` pre-populated with the syscall's
@@ -1031,11 +1041,7 @@ impl Kernel {
         self.dispatch_observers(&event);
     }
 
-    /// Number of registered observers.
-    #[allow(dead_code)]
-    pub fn observer_count(&self) -> usize {
-        self.observers.lock().count()
-    }
+    // observer_count() is defined above (Rust-native + event buffers).
 
     // ── Native INTERCEPT hook dispatch (§11 Phase 14) ─────────────────
 

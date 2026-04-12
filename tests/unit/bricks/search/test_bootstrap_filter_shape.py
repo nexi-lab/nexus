@@ -10,6 +10,11 @@ These tests don't run a real database — they patch the session factory
 to intercept the SQL string and assert its shape. Kept intentionally
 fragile to the filter clauses so a refactor that drops the filter will
 fail loudly.
+
+Issue #3704: bootstrap now uses keyset-paginated ``session.execute()``
+(not ``session.stream()``).  The mock returns empty rows on the first
+call so the pagination loop terminates immediately; the captured SQL
+from that first call is what we verify.
 """
 
 from __future__ import annotations
@@ -18,10 +23,21 @@ from typing import Any
 
 import pytest
 
+# ---------------------------------------------------------------------------
+# Fake result — empty rows terminate the keyset pagination loop
+# ---------------------------------------------------------------------------
+
 
 class _FakeResult:
+    """Returns no rows so the while-True page loop exits after one call."""
+
     def fetchall(self) -> list:
         return []
+
+
+# ---------------------------------------------------------------------------
+# Fake session — captures SQL + params via execute(), returns empty result
+# ---------------------------------------------------------------------------
 
 
 class _FakeSession:
@@ -29,7 +45,7 @@ class _FakeSession:
         self._captured = captured
 
     async def execute(self, stmt: Any, params: dict[str, Any] | None = None) -> _FakeResult:
-        # Record both the compiled SQL string and the bound params.
+        # Record the SQL string and bound params from the first page query.
         self._captured["sql"] = str(stmt)
         self._captured["params"] = params or {}
         return _FakeResult()
@@ -63,16 +79,12 @@ def _make_daemon(
 
     captured: dict[str, Any] = {}
     daemon = SearchDaemon.__new__(SearchDaemon)
-    # Use setattr for protected-attribute injection so mypy doesn't
-    # need a per-line suppression here.
     daemon._async_session = _FakeSessionFactory(captured)
     daemon._backend = _FakeBackend()
     daemon._zone_indexing_modes = zone_modes or {}
     daemon._indexed_directories = indexed_directories or {}
     daemon._txtai_bootstrapped = False
 
-    # Minimal stats stub so the bootstrap path's ``self.stats.last_index_refresh``
-    # assignment doesn't crash.
     class _Stats:
         last_index_refresh: float | None = None
 

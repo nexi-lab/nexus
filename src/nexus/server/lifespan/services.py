@@ -584,14 +584,15 @@ async def _startup_workflow_engine(app: "FastAPI", svc: "LifespanServices") -> N
 
 
 async def _startup_pipe_consumers(app: "FastAPI", svc: "LifespanServices") -> None:
-    """Start DT_PIPE consumers (Issue #809, #810).
+    """Start DT_PIPE consumers + register OBSERVE-phase observers (Issue #809, #810).
 
-    Two consumers are started here:
+    Consumers started here:
     1. PipedRecordStoreWriteObserver — async RecordStore sync via kernel IPC
-    2. ZoektPipeConsumer — async Zoekt index notifications via kernel IPC
 
-    All consumers use NexusFS sys_read/sys_write for pipe I/O (Rust kernel).
-    PipeManager itself was deleted in PR #3671 — the kernel pipe registry
+    ZoektWriteObserver (Issue #810) is an OBSERVE-phase observer registered
+    via hook_spec at factory enlist time — no start/stop lifecycle needed.
+
+    PipeManager was deleted in PR #3671 — the kernel pipe registry
     is now managed entirely inside the Rust binary.
     """
     nx = svc.nexus_fs
@@ -620,19 +621,10 @@ async def _startup_pipe_consumers(app: "FastAPI", svc: "LifespanServices") -> No
     if svc.event_signal is not None:
         app.state.event_signal = svc.event_signal
 
-    # Issue #810: ZoektPipeConsumer
-    zpc = svc.zoekt_pipe_consumer
-    if zpc is not None:
-        try:
-            if hasattr(zpc, "bind_fs") and nx is not None:
-                zpc.bind_fs(nx)
-            else:
-                raise RuntimeError("zoekt consumer missing startup binding hook")
-            await zpc.start()
-            app.state.zoekt_pipe_consumer = zpc
-            logger.info("[PIPE] ZoektPipeConsumer started")
-        except Exception as e:
-            logger.warning("[PIPE] ZoektPipeConsumer start failed: %s", e, exc_info=True)
+    # Issue #810: ZoektWriteObserver — registered as OBSERVE-phase observer
+    # via hook_spec at factory enlist time. No start/stop lifecycle needed.
+    # Legacy callbacks (notify_write/notify_sync_complete) still work for
+    # CASLocalBackend fallback path.
 
     # TaskDispatchPipeConsumer (task lifecycle signals)
     tdc = svc.task_dispatch_consumer
@@ -707,14 +699,15 @@ async def _shutdown_pipe_consumers(app: "FastAPI") -> None:
                 "[PIPE] Error stopping PipedRecordStoreWriteObserver: %s", e, exc_info=True
             )
 
-    # Issue #810: ZoektPipeConsumer
-    zpc = getattr(app.state, "zoekt_pipe_consumer", None)
-    if zpc is not None and hasattr(zpc, "stop"):
+    # Issue #810: ZoektWriteObserver — no async stop needed (OBSERVE phase).
+    # Cancel any pending debounce timer for clean shutdown.
+    _zwo = getattr(app.state, "zoekt_write_observer", None)
+    if _zwo is not None and hasattr(_zwo, "cancel"):
         try:
-            await zpc.stop()
-            logger.info("[PIPE] ZoektPipeConsumer stopped")
+            _zwo.cancel()
+            logger.info("[OBSERVE] ZoektWriteObserver cancelled")
         except Exception as e:
-            logger.warning("[PIPE] Error stopping ZoektPipeConsumer: %s", e, exc_info=True)
+            logger.warning("[OBSERVE] Error cancelling ZoektWriteObserver: %s", e, exc_info=True)
 
     # TaskDispatchPipeConsumer
     tdc = getattr(app.state, "task_dispatch_consumer", None)

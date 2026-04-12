@@ -2,7 +2,7 @@
 
 Produces task signals into a kernel ring buffer pipe and consumes them
 in a background asyncio task, following the same pattern as
-``WorkflowDispatchService`` and ``ZoektPipeConsumer``.
+``WorkflowDispatchService`` and ``ZoektWriteObserver``.
 
 Flow::
 

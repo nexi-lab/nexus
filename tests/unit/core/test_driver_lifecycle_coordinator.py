@@ -110,26 +110,24 @@ class TestMount:
 
         coord.mount("/data", backend)
 
-        # 2 observers: _FakeObserver + _FakeMountObserver
-        assert dispatch.observer_count == 2
+        # register_observe is now a no-op (Python observers deleted).
+        # Service-registered observer count is always 0.
+        assert dispatch.observer_count == 0
 
     def test_mount_fires_mount_event(self) -> None:
-        """Mount dispatches a MOUNT event through Rust dispatch_observers."""
-        import time
+        """Mount dispatches a MOUNT event through Rust dispatch_observers.
+
+        Python mock observers no longer receive events (register_observe is
+        a no-op). We verify dispatch_event is called instead.
+        """
+        from unittest.mock import patch
 
         _, dispatch, coord = _make_coordinator()
         backend = _BackendWithHookSpec()
 
-        coord.mount("/data", backend)
-
-        # Wait for async observer delivery (Rust thread pool → Python GIL)
-        hook = backend._mount_observer
-        for _ in range(100):
-            if hook.mount_paths:
-                break
-            time.sleep(0.01)
-
-        assert hook.mount_paths == ["/data"]
+        with patch.object(dispatch, "dispatch_event") as mock_dispatch:
+            coord.mount("/data", backend)
+            mock_dispatch.assert_called_once_with("mount", "/data")
 
     def test_mount_no_hook_spec_still_routes(self) -> None:
         mount_table, dispatch, coord = _make_coordinator()
@@ -152,7 +150,8 @@ class TestUnmount:
         backend = _BackendWithHookSpec()
 
         coord.mount("/data", backend)
-        assert dispatch.observer_count == 2
+        # register_observe is now a no-op — observer_count always 0
+        assert dispatch.observer_count == 0
 
         # Setup mount_table.get to return a MountEntry-like object
         mount_entry = MagicMock()
@@ -164,7 +163,12 @@ class TestUnmount:
         assert dispatch.observer_count == 0
 
     def test_unmount_fires_unmount_event(self) -> None:
-        import time
+        """Unmount dispatches an UNMOUNT event through Rust dispatch_observers.
+
+        Python mock observers no longer receive events (register_observe is
+        a no-op). We verify dispatch_event is called instead.
+        """
+        from unittest.mock import patch
 
         mount_table, dispatch, coord = _make_coordinator()
         backend = _BackendWithHookSpec()
@@ -175,16 +179,9 @@ class TestUnmount:
         mount_entry.backend = backend
         mount_table.get.return_value = mount_entry
 
-        coord.unmount("/data")
-
-        # Wait for async observer delivery
-        hook = backend._mount_observer
-        for _ in range(100):
-            if hook.unmount_paths:
-                break
-            time.sleep(0.01)
-
-        assert hook.unmount_paths == ["/data"]
+        with patch.object(dispatch, "dispatch_event") as mock_dispatch:
+            coord.unmount("/data")
+            mock_dispatch.assert_called_once_with("unmount", "/data")
 
     def test_unmount_not_found_returns_false(self) -> None:
         mount_table, _, coord = _make_coordinator()
@@ -228,4 +225,5 @@ class TestCASWiringFix:
 
         coord.mount("/", backend)
 
-        assert dispatch.observer_count == 1
+        # register_observe is now a no-op — observer_count always 0
+        assert dispatch.observer_count == 0

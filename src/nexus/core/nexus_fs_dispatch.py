@@ -250,8 +250,8 @@ class DispatchMixin:
 
     @property
     def observer_count(self) -> int:
-        """Total registered observers (Rust-native + event buffers)."""
-        return int(self._kernel.kernel_observer_count()) if self._kernel else 0
+        """Service-registered observers (register_observe is currently no-op)."""
+        return 0
 
     # ── PRE-INTERCEPT dispatch ──────────────────────────────────────────
     # ALL pre-hook dispatch now goes through Rust InterceptHook trait via

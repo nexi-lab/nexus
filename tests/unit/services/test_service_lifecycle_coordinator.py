@@ -202,7 +202,8 @@ class TestMountService:
         coordinator._mount_service("search")
 
         assert dispatch.read_hook_count == 1
-        assert dispatch.observer_count == 1
+        # register_observe is now a no-op — observer_count always 0
+        assert dispatch.observer_count == 0
 
     def test_mount_no_hooks_if_no_spec(
         self, coordinator: ServiceRegistry, dispatch: _TestDispatch
@@ -476,7 +477,8 @@ class TestSwapWithFullHookSpec:
 
         assert dispatch.read_hook_count == 1
         assert dispatch.write_hook_count == 1
-        assert dispatch.observer_count == 1
+        # register_observe is now a no-op — observer_count always 0
+        assert dispatch.observer_count == 0
 
         new_read = MagicMock()
         new_write = MagicMock()
@@ -489,10 +491,10 @@ class TestSwapWithFullHookSpec:
         svc2 = _FakeHookServiceV2(hook_spec_value=spec2)
         coordinator.swap_service("rebac", svc2, hook_spec=spec2)
 
-        # Counts unchanged (old removed, new added)
+        # Counts unchanged (old removed, new added) — observer_count still 0
         assert dispatch.read_hook_count == 1
         assert dispatch.write_hook_count == 1
-        assert dispatch.observer_count == 1
+        assert dispatch.observer_count == 0
 
     def test_swap_with_no_new_spec_clears_old(
         self,
@@ -645,7 +647,8 @@ class TestUnregisterAllHooks:
         coordinator._register_hooks("svc1")
         coordinator._register_hooks("svc2")
         assert dispatch.read_hook_count == 1
-        assert dispatch.observer_count == 1
+        # register_observe is now a no-op — observer_count always 0
+        assert dispatch.observer_count == 0
 
         coordinator._unregister_all_hooks()
         assert dispatch.read_hook_count == 0

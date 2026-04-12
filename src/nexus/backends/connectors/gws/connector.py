@@ -1082,13 +1082,16 @@ class GmailConnector(PathCLIBackend):
         from nexus.backends.connectors.gws._gmail_utils import extract_body
         from nexus.contracts.exceptions import BackendError
 
-        # Extract message ID from backend_path or content_hash.
-        # Path format: INBOX/CATEGORY/threadId-msgId.yaml
+        # Extract message ID from content_hash or context.backend_path.
+        # Filename format: threadId-msgId.yaml  →  msg_id is the last segment.
         msg_id = content_hash
+        filename = content_hash
         if context and hasattr(context, "backend_path") and context.backend_path:
             filename = context.backend_path.rstrip("/").rsplit("/", 1)[-1]
-            if "-" in filename:
-                msg_id = filename.replace(".yaml", "").split("-")[-1]
+        # Strip .yaml suffix then take the last "-" segment regardless of source.
+        stem = filename.replace(".yaml", "")
+        if "-" in stem:
+            msg_id = stem.split("-")[-1]
 
         result = self._execute_cli(
             [

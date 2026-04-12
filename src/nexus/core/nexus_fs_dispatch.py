@@ -261,15 +261,15 @@ class DispatchMixin:
     def notify(self, event: FileEvent) -> None:
         """Dispatch FileEvent to Rust kernel observers (hit=false fallback).
 
-        hit=true path: Rust sys_* internally calls dispatch_observers.
-        hit=false path: Python Tier 2 methods call this to ensure observers
-        still receive events when Rust fast path misses.
+        hit=true: Rust sys_* internally calls dispatch_observers.
+        hit=false: Python Tier 2 methods call this → Rust lazy ThreadPool
+        dispatches to observers (GIL-safe — pool threads acquire GIL independently).
         """
         if self._kernel is not None and hasattr(event, "type") and hasattr(event.type, "value"):
-            try:
+            import contextlib
+
+            with contextlib.suppress(Exception):
                 self._kernel.dispatch_kernel_event(event.type.value, event.path)
-            except Exception:
-                pass  # fire-and-forget
 
     def dispatch_event(self, event_type: str, path: str) -> None:
         """Dispatch a FileEvent through Rust kernel observer pipeline.

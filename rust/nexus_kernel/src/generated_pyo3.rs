@@ -1619,8 +1619,9 @@ impl PyKernel {
     }
 
     /// Flush pending observer tasks (blocks until thread pool drains).
-    fn flush_observers(&self) {
-        self.inner.flush_observers();
+    fn flush_observers(&self, py: Python<'_>) {
+        // Release GIL so pool workers can complete Python callbacks.
+        py.detach(|| self.inner.flush_observers());
     }
 
     /// Total observers in kernel registry.
@@ -1634,7 +1635,7 @@ impl PyKernel {
     /// to fire events through the Rust dispatch_observers path.
     /// Rust sys_* methods call dispatch_observers internally (hit=true).
     #[pyo3(signature = (event_type, path))]
-    fn dispatch_kernel_event(&self, event_type: &str, path: &str) -> PyResult<()> {
+    fn dispatch_kernel_event(&self, py: Python<'_>, event_type: &str, path: &str) -> PyResult<()> {
         use crate::dispatch::{FileEvent, FileEventType};
         let etype = match event_type {
             "file_write" => FileEventType::FileWrite,
@@ -1653,7 +1654,8 @@ impl PyKernel {
             }
         };
         let event = FileEvent::new(etype, path);
-        self.inner.dispatch_observers(&event);
+        // Release GIL so ThreadPool workers can acquire it for Python callbacks.
+        py.detach(|| self.inner.dispatch_observers(&event));
         Ok(())
     }
 

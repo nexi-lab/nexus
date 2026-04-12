@@ -23,7 +23,8 @@ use dashmap::DashMap;
 use parking_lot::{Condvar, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-// ThreadPool removed — OBSERVE dispatch is inline (~1μs per observer).
+use std::sync::OnceLock;
+use threadpool::ThreadPool;
 
 // ── KernelError ────────────────────────────────────────────────────────────
 
@@ -419,7 +420,8 @@ pub struct Kernel {
     // delegate here. Until then this is intentional pre-built infrastructure.
     #[allow(dead_code)]
     observers: Mutex<KernelObserverRegistry>,
-    // OBSERVE dispatch is inline (~1μs per observer — queue + reset timer).
+    // OBSERVE dispatch via lazy ThreadPool (OnceLock — fork-safe, GIL-safe).
+    observer_pool: OnceLock<ThreadPool>,
     //
     // OBSERVE is fire-and-forget by contract: the syscall returns as soon
     // as the event is queued; observer callbacks run on this pool, off
@@ -483,7 +485,7 @@ impl Kernel {
             access_hook_count: AtomicU64::new(0),
             write_batch_hook_count: AtomicU64::new(0),
             observers: Mutex::new(KernelObserverRegistry::new()),
-            // No observer_pool — dispatch is inline.
+            observer_pool: OnceLock::new(),
             zone_revisions: DashMap::new(),
             file_watches: FileWatchRegistry::new(),
             agent_registry: crate::agent_registry::AgentRegistry::new(),
@@ -976,18 +978,29 @@ impl Kernel {
         if observers.is_empty() {
             return;
         }
-        // Inline dispatch: observers are ~1μs (queue + reset timer).
-        // No ThreadPool needed — heavy work runs on observer's own timer thread.
-        // Inline also avoids fork+threads deadlock in xdist test workers.
+        // Lazy ThreadPool: created on first dispatch (fork-safe — no threads
+        // at Kernel::new()). Pool threads acquire GIL independently, avoiding
+        // Python→Rust→Python reentrance deadlock on inline dispatch.
+        let pool = self
+            .observer_pool
+            .get_or_init(|| ThreadPool::with_name("nexus-observe".to_string(), 4));
         for obs in observers {
-            obs.on_mutation(event);
+            let event_owned = event.clone();
+            pool.execute(move || {
+                // catch_unwind: bad observer cannot crash kernel or block others.
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    obs.on_mutation(&event_owned);
+                }));
+            });
         }
     }
 
-    /// No-op — dispatch is now inline (no ThreadPool to drain).
-    /// Kept for API compatibility with tests that call flush_observers().
+    /// Block until all queued observer jobs have completed.
+    /// Test-only: wait for async observer callbacks to finish before assertions.
     pub fn flush_observers(&self) {
-        // Inline dispatch completes synchronously — nothing to flush.
+        if let Some(pool) = self.observer_pool.get() {
+            pool.join();
+        }
     }
 
     /// Helper: build a `FileEvent` pre-populated with the syscall's

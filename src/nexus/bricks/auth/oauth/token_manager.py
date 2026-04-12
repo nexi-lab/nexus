@@ -139,9 +139,12 @@ class TokenManager:
         # Capped at _MAX_REFRESH_LOCKS entries; oldest evicted on overflow (Issue #2281).
         self._refresh_locks: dict[tuple[str, str, str], asyncio.Lock] = {}
 
-        # Metadata stash for resolve(): populated inside get_valid_token()'s
-        # locked section so resolve() can read token + metadata atomically.
-        self._last_resolved: tuple[datetime | None, tuple[str, ...] | None] = (None, None)
+        # Per-key metadata stash for resolve(): populated inside
+        # get_valid_token()'s locked section. Keyed by (provider, user_email,
+        # zone_id) so different credentials never cross-contaminate.
+        self._resolved_metadata: dict[
+            tuple[str, str, str], tuple[datetime | None, tuple[str, ...] | None]
+        ] = {}
 
     def _get_refresh_lock(self, key: tuple[str, str, str]) -> asyncio.Lock:
         """Get or create a per-credential lock with LRU eviction (Issue #2281).
@@ -520,7 +523,10 @@ class TokenManager:
                     f"Token expired for {provider}:{user_email} and no refresh token available"
                 )
 
-            self._last_resolved = (credential.expires_at, credential.scopes)
+            self._resolved_metadata[(provider, user_email, zone_id)] = (
+                credential.expires_at,
+                credential.scopes,
+            )
             return credential.access_token
         finally:
             lock.release()
@@ -534,17 +540,30 @@ class TokenManager:
     ) -> ResolvedToken:
         """Resolve a valid access token via the ``TokenResolver`` seam.
 
-        Delegates to ``get_valid_token()``, which refreshes/rotates as needed
-        and stashes ``(expires_at, scopes)`` on ``self._last_resolved`` inside
-        its locked section. We read that stash here — no second DB round-trip,
-        no extra decryption, and token + metadata always come from the same
-        transactional read. Safe in asyncio because no other coroutine can
-        run between ``get_valid_token()`` returning and our stash read.
+        Reads metadata from a per-key stash populated inside
+        ``get_valid_token()``'s locked section. On a fresh worker backed
+        by an external cache (Dragonfly/Redis), the stash may be empty
+        because ``get_valid_token()`` returned from a cache hit without
+        touching the DB. In that case we fall back to ``get_credential()``
+        for the metadata — one extra read, but only on the first call per
+        credential per worker lifetime.
         """
         if zone_id is None:
             zone_id = ROOT_ZONE_ID
         access_token = await self.get_valid_token(provider, user_email, zone_id=zone_id)
-        expires_at, scopes = self._last_resolved
+        key = (provider, user_email, zone_id)
+        metadata = self._resolved_metadata.get(key)
+        if metadata is not None:
+            expires_at, scopes = metadata
+        else:
+            credential = await self.get_credential(provider, user_email, zone_id=zone_id)
+            if credential is not None:
+                expires_at = credential.expires_at
+                scopes = credential.scopes
+                self._resolved_metadata[key] = (expires_at, scopes)
+            else:
+                expires_at = None
+                scopes = None
         return ResolvedToken(
             access_token=access_token,
             expires_at=expires_at,

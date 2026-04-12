@@ -303,3 +303,89 @@ async def test_resolve_returns_refreshed_scopes_not_stale(
     resolved = await manager.resolve("google", "alice@example.com")
     assert resolved.access_token == "ya29.fresh"
     assert resolved.scopes == ("https://www.googleapis.com/auth/gmail.readonly",)
+
+
+@pytest.mark.asyncio
+async def test_resolve_cache_hit_returns_correct_metadata(
+    manager: TokenManager, valid_credential: OAuthCredential
+) -> None:
+    """On a cache hit, resolve() must still return the correct metadata
+    for the requested (provider, user_email, zone_id) — not stale data
+    from a previous resolve() of a different credential.
+
+    Regression: a global _last_resolved stash cross-contaminated
+    credentials on cache-hit paths."""
+    provider = MagicMock()
+    provider.refresh_token = AsyncMock()
+    manager.register_provider("google", provider)
+
+    cred_alice = OAuthCredential(
+        access_token="token-alice",
+        refresh_token="1//alice",
+        token_type="Bearer",
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
+        scopes=("scope.alice",),
+        provider="google",
+        user_email="alice@example.com",
+    )
+    cred_bob = OAuthCredential(
+        access_token="token-bob",
+        refresh_token="1//bob",
+        token_type="Bearer",
+        expires_at=datetime.now(UTC) + timedelta(hours=2),
+        scopes=("scope.bob",),
+        provider="google",
+        user_email="bob@example.com",
+    )
+    await manager.store_credential(
+        provider="google", user_email="alice@example.com", credential=cred_alice
+    )
+    await manager.store_credential(
+        provider="google", user_email="bob@example.com", credential=cred_bob
+    )
+
+    resolved_alice = await manager.resolve("google", "alice@example.com")
+    resolved_bob = await manager.resolve("google", "bob@example.com")
+    # Second call for alice — should hit cache but still return alice's metadata
+    resolved_alice_2 = await manager.resolve("google", "alice@example.com")
+
+    assert resolved_alice.scopes == ("scope.alice",)
+    assert resolved_bob.scopes == ("scope.bob",)
+    assert resolved_alice_2.scopes == ("scope.alice",)
+    assert resolved_alice_2.expires_at == cred_alice.expires_at
+
+
+@pytest.mark.asyncio
+async def test_resolve_fresh_worker_external_cache_hit(temp_db: str) -> None:
+    """Simulates a fresh worker where the token cache (external) is warm
+    but _resolved_metadata is empty. resolve() must fall back to
+    get_credential() for metadata rather than returning (None, None).
+
+    Regression: a global stash returned (None, None) on fresh workers."""
+    cache = InMemoryCacheStore()
+    mgr = TokenManager(db_path=temp_db, cache_store=cache)
+    provider = MagicMock()
+    provider.refresh_token = AsyncMock()
+    mgr.register_provider("google", provider)
+
+    cred = OAuthCredential(
+        access_token="token-cached",
+        refresh_token="1//cached",
+        token_type="Bearer",
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
+        scopes=("scope.cached",),
+        provider="google",
+        user_email="alice@example.com",
+    )
+    await mgr.store_credential(provider="google", user_email="alice@example.com", credential=cred)
+    # Warm the cache via get_valid_token
+    await mgr.get_valid_token("google", "alice@example.com")
+
+    # Simulate fresh worker: clear the metadata stash but keep the cache
+    mgr._resolved_metadata.clear()
+
+    resolved = await mgr.resolve("google", "alice@example.com")
+    assert resolved.access_token == "token-cached"
+    assert resolved.expires_at == cred.expires_at
+    assert resolved.scopes == ("scope.cached",)
+    mgr.close()

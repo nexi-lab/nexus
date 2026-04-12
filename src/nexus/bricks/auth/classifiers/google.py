@@ -130,7 +130,7 @@ def _extract_google_error_reason(exc: Any) -> str | None:
         parsed = json.loads(body)
         errors = parsed.get("error", {}).get("errors", [])
         if errors:
-            return errors[0].get("reason")
+            return str(errors[0].get("reason")) if errors[0].get("reason") is not None else None
     except Exception:
         pass
     return None

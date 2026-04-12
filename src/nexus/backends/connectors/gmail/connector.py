@@ -417,20 +417,24 @@ class PathGmailBackend(
         from nexus.bricks.auth.classifiers.google import classify_google_error
         from nexus.bricks.auth.profile import AuthProfile
 
+        backend_path: str = context.backend_path  # narrowed: checked non-None above
+
         def _call(profile: AuthProfile) -> bytes:
             # Use a *local* transport so concurrent pool calls don't race on
             # self._transport (PathAddressingEngine stores it as instance state).
             transport = self._gmail_transport.with_context(
                 context, user_email_override=profile.account_identifier
             )
-            blob_path = self._get_key_path(context.backend_path)
+            blob_path = self._get_key_path(backend_path)
             content, _ = transport.fetch(blob_path, None)
             return content
 
-        return self._pool.execute_sync(
-            _call,
-            classify_google_error,
-            bypass_exceptions=(NexusFileNotFoundError,),
+        return bytes(
+            self._pool.execute_sync(
+                _call,
+                classify_google_error,
+                bypass_exceptions=(NexusFileNotFoundError,),
+            )
         )
 
     def delete_content(self, content_id: str, context: "OperationContext | None" = None) -> None:

@@ -147,7 +147,7 @@ class CredentialErrorClassifier(Protocol):
     See nexus.bricks.auth.classifiers for implementations.
     """
 
-    def __call__(self, exc: Exception) -> AuthProfileFailureReason: ...
+    def __call__(self, __exc: Exception) -> AuthProfileFailureReason: ...
 
 
 # ---------------------------------------------------------------------------

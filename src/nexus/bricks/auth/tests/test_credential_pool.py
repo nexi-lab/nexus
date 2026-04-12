@@ -29,6 +29,7 @@ from nexus.bricks.auth.credential_pool import (
     CredentialPool,
     CredentialPoolRegistry,
     NoAvailableCredentialError,
+    SelectionStrategy,
 )
 from nexus.bricks.auth.profile import (
     ApiKeyCredential,
@@ -73,7 +74,7 @@ def make_profile(
 def make_pool(
     *profile_ids: str,
     provider: str = "openai",
-    strategy: str = "first_ok",
+    strategy: SelectionStrategy = "first_ok",
     cooldown_overrides=None,
 ) -> tuple[CredentialPool, InMemoryAuthProfileStore]:
     store = InMemoryAuthProfileStore()
@@ -618,13 +619,15 @@ def test_registry_shutdown_clears_pools() -> None:
 
 def _make_openai_exc(exc_class, *, code: str | None = None, message: str = "error") -> Exception:
     """Construct a minimal openai exception for classifier tests."""
-    exc = exc_class.__new__(exc_class)
+    from typing import Any, cast
+
+    exc: Any = exc_class.__new__(exc_class)
     Exception.__init__(exc, message)
     exc.code = code
     exc.status_code = 429
     exc.response = None
     exc.body = {"error": {"code": code, "message": message}}
-    return exc
+    return cast(Exception, exc)
 
 
 @pytest.mark.parametrize(

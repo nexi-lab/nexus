@@ -602,6 +602,7 @@ disable_error_code = ["no-any-return"]
 module = [
     "nexus.server.auth.oidc",
     "nexus.bricks.auth.providers.oidc",
+    "nexus.bricks.auth.classifiers.google",
 ]
 # requests stubs
 disable_error_code = ["import-untyped"]

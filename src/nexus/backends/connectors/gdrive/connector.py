@@ -25,7 +25,7 @@ Storage structure:
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from nexus.backends.base.backend import HandlerStatusResponse
 from nexus.backends.base.path_addressing_engine import PathAddressingEngine
@@ -187,8 +187,10 @@ class PathGDriveBackend(
         shared_drive_id: str | None = None,
         provider: str = "google-drive",
         encryption_key: str | None = None,
+        pool: Any = None,  # CredentialPool | None — see Issue #3723 for migration guide
     ):
         # 1. Initialize OAuth (sets self.token_manager, self.provider, etc.)
+        self._pool = pool  # stored for future migrate_to_pool() call (Issue #3723)
         self._init_oauth(
             token_manager_db,
             user_email=user_email,

@@ -136,12 +136,23 @@ class CASOpenAIBackend(CASAddressingEngine):
         api_key: str = "",
         default_model: str = "gpt-4o",
         timeout: float = 120.0,
+        pool: Any = None,
+        pool_classifier: Any = None,
     ) -> None:
         self._base_url = base_url
         self._api_key = api_key
         self._default_model = default_model
+        self._timeout = timeout
 
-        # Build OpenAI client (lazy import)
+        # Optional credential pool for multi-key failover (Issue #3723).
+        # pool: CredentialPool | None — injected as Any to avoid a bricks→backends
+        # import-layer violation (nexus.backends is below nexus.bricks in the tier stack).
+        # pool_classifier: CredentialErrorClassifier callable (e.g. classify_openai_error),
+        # also injected to keep nexus.bricks.auth imports out of this module.
+        self._pool: Any = pool
+        self._pool_classifier: Any = pool_classifier
+
+        # Build OpenAI client (lazy import). Used when pool is None.
         self._client = _build_openai_client(base_url, api_key, timeout)
 
         # In-memory transport for CAS blobs
@@ -380,6 +391,56 @@ class CASOpenAIBackend(CASAddressingEngine):
         messages = request["messages"]
         extra_params = {k: v for k, v in request.items() if k not in ("model", "messages")}
 
+        # Pool-based credential selection with pre-first-token failover (Issue #3723).
+        # execute_sync() opens the stream inside a select+retry wrapper: if the
+        # initial API call fails with a retriable reason (RATE_LIMIT, OVERLOADED,
+        # TIMEOUT) before any bytes are emitted, the pool marks the profile on
+        # cooldown and retries with the next available credential automatically.
+        # Mid-stream failures (after the first byte) cannot be retried; they call
+        # mark_failure directly and re-raise. When no pool is configured, fall back
+        # to the single pre-built client (no change from pre-#3723 behaviour).
+        _pool_profile: Any = None
+
+        if self._pool is not None:
+
+            def _open_stream(profile: Any) -> Any:
+                nonlocal _pool_profile
+                _pool_profile = profile  # capture so mid-stream failures can mark it
+                # Extract API key from profile credential (ApiKeyCredential.key), or
+                # fall back to the configured api_key if the credential type differs.
+                _cred = getattr(profile, "credential", None)
+                _key = getattr(_cred, "key", None) or self._api_key
+                _client = _build_openai_client(self._base_url, _key, self._timeout)
+                return _client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    stream=True,
+                    stream_options={"include_usage": True},
+                    **extra_params,
+                )
+
+            try:
+                stream = self._pool.execute_sync(_open_stream, self._pool_classifier)
+            except Exception as e:
+                raise BackendError(
+                    f"LLM API call failed: {e}",
+                    backend="openai_compatible",
+                ) from e
+        else:
+            try:
+                stream = self._client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    stream=True,
+                    stream_options={"include_usage": True},
+                    **extra_params,
+                )
+            except Exception as e:
+                raise BackendError(
+                    f"LLM API call failed: {e}",
+                    backend="openai_compatible",
+                ) from e
+
         start_time = time.perf_counter()
         collected_model = model
         usage: dict[str, int] = {}
@@ -389,20 +450,6 @@ class CASOpenAIBackend(CASAddressingEngine):
         # OpenAI streams tool_calls incrementally: each chunk carries an index
         # and a partial function name or arguments fragment that must be concatenated.
         tool_calls_accum: dict[int, dict[str, Any]] = {}
-
-        try:
-            stream = self._client.chat.completions.create(
-                model=model,
-                messages=messages,
-                stream=True,
-                stream_options={"include_usage": True},
-                **extra_params,
-            )
-        except Exception as e:
-            raise BackendError(
-                f"LLM API call failed: {e}",
-                backend="openai_compatible",
-            ) from e
 
         try:
             for chunk in stream:
@@ -452,6 +499,12 @@ class CASOpenAIBackend(CASAddressingEngine):
                         "total_tokens": chunk.usage.total_tokens or 0,
                     }
         except Exception as e:
+            if (
+                _pool_profile is not None
+                and self._pool is not None
+                and self._pool_classifier is not None
+            ):
+                self._pool.mark_failure(_pool_profile, self._pool_classifier(e))
             raise BackendError(
                 f"LLM streaming failed: {e}",
                 backend="openai_compatible",

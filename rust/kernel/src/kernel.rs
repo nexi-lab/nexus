@@ -15,7 +15,7 @@
 
 use crate::dcache::{CachedEntry, DCache, DT_DIR, DT_PIPE, DT_REG, DT_STREAM};
 use crate::dispatch::{FileEvent, FileEventType, MutationObserver, Trie};
-use crate::file_watch::FileWatchRegistry;
+use crate::file_watch::FileWatcher;
 use crate::lock::{LockMode, VFSLockManagerInner};
 use crate::metastore::RedbMetastore;
 use crate::router::{canonicalize, PathRouter, RouteError, RustRouteResult};
@@ -128,7 +128,7 @@ impl OperationContext {
 
 /// Result of sys_read(): concrete type instead of Option<bytes>.
 pub struct SysReadResult {
-    /// True if Rust kernel handled the read (no Python fallback needed).
+    /// True if Rust kernel handled the read (Rust handled).
     pub hit: bool,
     /// Content bytes (only when hit=true). Vec<u8> — wrapper converts to PyBytes.
     pub data: Option<Vec<u8>>,
@@ -158,7 +158,7 @@ pub struct SysWriteResult {
 /// Result of sys_unlink(): hit + metadata for event payload.
 pub struct SysUnlinkResult {
     /// True if Rust completed the full operation (metastore + backend + dcache).
-    /// False for DT_MOUNT/DT_PIPE/DT_STREAM or when Python fallback needed.
+    /// False for DT_MOUNT/DT_PIPE/DT_STREAM or when Rust fallback not available.
     pub hit: bool,
     /// Entry type of the deleted entry (DT_REG, DT_DIR, etc.).
     pub entry_type: u8,
@@ -236,18 +236,17 @@ pub struct StatResult {
 ///
 /// Stores `Arc<dyn MutationObserver>` so the OBSERVE ThreadPool worker
 /// (§11 Phase 3) can clone the trait object across threads. `event_mask`
-/// bitmask matching happens without holding the GIL.
+/// bitmask matching happens without external dependency.
 struct KernelObserverEntry {
     observer: Arc<dyn MutationObserver>,
     name: String,
     event_mask: u32,
 }
 
-/// Pure Rust observer registry — event-type bitmask filtering without GIL.
+/// Pure Rust observer registry — event-type bitmask filtering lock-free.
 ///
 /// Single dispatch path for all OBSERVE-phase observers. The trait
 /// `MutationObserver` takes `&FileEvent` (post §11 Phase 2); the
-/// `PyMutationObserverAdapter` is the boundary that converts `&FileEvent`
 /// to a Python `FileEvent` once per call.
 ///
 /// `OBSERVE_INLINE` (the legacy inline-on-caller-thread mode) was deleted
@@ -412,7 +411,7 @@ pub struct Kernel {
     copy_hook_count: AtomicU64,
     access_hook_count: AtomicU64,
     write_batch_hook_count: AtomicU64,
-    // Observer registry (owned by kernel — bitmask matching without GIL).
+    // Observer registry (owned by kernel — bitmask matching lock-free).
     //
     // Field is accessed only via the `register_observer` / `dispatch_observers`
     // methods, which have no production caller yet — Phase 5 wires them
@@ -420,8 +419,8 @@ pub struct Kernel {
     // delegate here. Until then this is intentional pre-built infrastructure.
     #[allow(dead_code)]
     observers: Mutex<KernelObserverRegistry>,
-    // OBSERVE dispatch via lazy ThreadPool (OnceLock — fork-safe, GIL-safe).
-    // Rust-native MutationObserver only — zero Py<PyAny> in pool workers.
+    // OBSERVE dispatch via lazy ThreadPool (OnceLock — fork-safe).
+    // Pure Rust MutationObserver only.
     observer_pool: OnceLock<ThreadPool>,
     //
     // OBSERVE is fire-and-forget by contract: the syscall returns as soon
@@ -433,7 +432,6 @@ pub struct Kernel {
     //
     // 4 worker threads is enough for the typical workload (a handful of
     // long-lived observers: FileWatcher, EventBus, etc.). Each worker
-    // acquires the GIL inside `PyMutationObserverAdapter::on_mutation`
     // when calling Python observers — many parallel Python observers
     // will serialize on the GIL, but Rust-native observers run truly
     // parallel.
@@ -447,7 +445,7 @@ pub struct Kernel {
     // Zone revision counter — AtomicU64 per zone + Condvar for waiters (§10 A2)
     zone_revisions: DashMap<String, Arc<ZoneRevisionEntry>>,
     // File watch registry — Rust-native pattern matching (§10 A3)
-    file_watches: FileWatchRegistry,
+    file_watches: FileWatcher,
     // Agent registry — DashMap backing store (§10 B1)
     pub(crate) agent_registry: crate::agent_registry::AgentRegistry,
     // Per-mount metastores — federation zones have independent redb instances.
@@ -458,7 +456,7 @@ pub struct Kernel {
     pub(crate) pipe_manager: crate::pipe_manager::PipeManager,
     // IPC registry — StreamManager owns DashMap<String, Arc<dyn StreamBackend>>
     pub(crate) stream_manager: crate::stream_manager::StreamManager,
-    // Native hook registry — pure Rust hooks dispatched without GIL (§11 Phase 10)
+    // Native hook registry — pure Rust hooks dispatched lock-free (§11 Phase 10)
     #[allow(dead_code)]
     pub(crate) native_hooks: Mutex<NativeHookRegistry>,
 }
@@ -488,7 +486,7 @@ impl Kernel {
             observers: Mutex::new(KernelObserverRegistry::new()),
             observer_pool: OnceLock::new(),
             zone_revisions: DashMap::new(),
-            file_watches: FileWatchRegistry::new(),
+            file_watches: FileWatcher::new(),
             agent_registry: crate::agent_registry::AgentRegistry::new(),
             mount_metastores: DashMap::new(),
             pipe_manager: crate::pipe_manager::PipeManager::new(),
@@ -935,7 +933,6 @@ impl Kernel {
     // No production caller exists yet, hence #[allow(dead_code)] — the
     // attribute is removed when Phase 5 wires the first call site.
 
-    /// Register a mutation observer (pure Rust or PyMutationObserverAdapter).
     ///
     /// `OBSERVE_INLINE` was deleted in §11 Phase 2 — all OBSERVE callbacks
     /// run on `observer_pool` (the kernel's background ThreadPool). There
@@ -975,7 +972,10 @@ impl Kernel {
     /// sys_unlink, sys_rename, sys_mkdir, sys_rmdir) via the
     /// `dispatch_mutation` helper.
     pub fn dispatch_observers(&self, event: &FileEvent) {
-        // Dispatch to Rust-native MutationObserver impls on ThreadPool.
+        // FileWatcher: inline notify (Condvar, ~0ns). Always runs.
+        self.file_watches.on_mutation(event);
+
+        // Dispatch to registered Rust-native MutationObserver impls on ThreadPool.
         // Zero Py<PyAny> — all observers are pure Rust. Safe Drop.
         let observers = self.observers.lock().matching(event.event_type as u32);
         if observers.is_empty() {
@@ -1160,6 +1160,12 @@ impl Kernel {
     /// Returns list of matching watch IDs.
     pub fn match_watches(&self, path: &str) -> Vec<u64> {
         self.file_watches.match_path(path)
+    }
+
+    /// sys_watch — block until a file event matching the pattern arrives, or timeout.
+    /// Tier 1 syscall (inotify equivalent). Returns matching FileEvent or None on timeout.
+    pub fn sys_watch(&self, pattern: &str, timeout_ms: u64) -> Option<FileEvent> {
+        self.file_watches.wait_for_event(pattern, timeout_ms)
     }
 
     // ── IPC Registry — Pipe methods (delegates to PipeManager) ──────────

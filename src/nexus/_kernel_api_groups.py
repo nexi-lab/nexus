@@ -133,6 +133,7 @@ KERNEL_REQUIRED_METHODS: frozenset[str] = frozenset(
         "sys_rmdir",
         "sys_stat",
         "sys_unlink",
+        "sys_watch",
         "sys_write",
         "trie_len",
         "trie_lookup",

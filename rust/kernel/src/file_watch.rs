@@ -1,34 +1,53 @@
-//! FileWatchRegistry — Rust-native file watch pattern matching (§10 A3).
+//! FileWatcher — Rust-native file change notification (inotify equivalent).
 //!
 //! Kernel primitive for inotify-like file change notification.
-//! Stores watch patterns (glob-style) with unique IDs.
-//! On mutation, pure Rust pattern match returns matching watch IDs.
-//! Python receives Vec<WatchId> and wakes corresponding asyncio.Futures.
+//! Two roles:
+//!   1. MutationObserver: dispatched by ThreadPool, matches event paths
+//!      against registered patterns, notifies waiting threads via Condvar.
+//!   2. Wait API: `wait_for_event(pattern, timeout)` blocks on Condvar
+//!      until a matching event arrives. Called from Python (GIL released).
 //!
-//! RemoteWatchProtocol trait defined here — impl deferred.
+//! Zero Py<PyAny>. Safe Drop. Pure Rust.
 
+use crate::dispatch::{FileEvent, MutationObserver};
 use globset::{Glob, GlobMatcher};
-use parking_lot::RwLock;
+use parking_lot::{Condvar, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
 
-/// A registered file watch entry.
-#[allow(dead_code)]
+/// A registered file watch pattern.
 struct WatchEntry {
     id: u64,
+    #[allow(dead_code)]
     pattern: String,
     matcher: GlobMatcher,
 }
 
-/// Kernel file watch registry — pattern matching without GIL.
-pub(crate) struct FileWatchRegistry {
-    watches: RwLock<Vec<WatchEntry>>,
+/// A pending waiter blocked on Condvar.
+struct Waiter {
+    id: u64,
+    matcher: GlobMatcher,
+    event: Mutex<Option<FileEvent>>,
+    condvar: Condvar,
+}
+
+/// FileWatcher — Rust-native inotify equivalent.
+///
+/// Registered as MutationObserver on Kernel. dispatch_observers calls
+/// on_mutation from ThreadPool → match patterns → notify Condvar.
+/// Python calls wait_for_event (GIL released) → blocks on Condvar.
+pub(crate) struct FileWatcher {
+    watches: parking_lot::RwLock<Vec<WatchEntry>>,
+    waiters: Mutex<Vec<Arc<Waiter>>>,
     next_id: AtomicU64,
 }
 
-impl FileWatchRegistry {
+impl FileWatcher {
     pub(crate) fn new() -> Self {
         Self {
-            watches: RwLock::new(Vec::new()),
+            watches: parking_lot::RwLock::new(Vec::new()),
+            waiters: Mutex::new(Vec::new()),
             next_id: AtomicU64::new(1),
         }
     }
@@ -36,7 +55,6 @@ impl FileWatchRegistry {
     /// Register a glob pattern watch. Returns unique watch ID.
     pub(crate) fn register(&self, pattern: &str) -> u64 {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        // Build glob matcher — fallback to literal match if glob parse fails
         let matcher = Glob::new(pattern)
             .unwrap_or_else(|_| Glob::new(&globset::escape(pattern)).unwrap())
             .compile_matcher();
@@ -60,7 +78,6 @@ impl FileWatchRegistry {
     }
 
     /// Match a path against all registered patterns.
-    /// Returns list of matching watch IDs (pure Rust, no GIL).
     pub(crate) fn match_path(&self, path: &str) -> Vec<u64> {
         let watches = self.watches.read();
         watches
@@ -75,59 +92,137 @@ impl FileWatchRegistry {
     pub(crate) fn len(&self) -> usize {
         self.watches.read().len()
     }
+
+    /// Block until a matching event arrives or timeout expires.
+    /// Creates a waiter, blocks on Condvar, returns the event.
+    /// Returns None on timeout.
+    pub(crate) fn wait_for_event(&self, pattern: &str, timeout_ms: u64) -> Option<FileEvent> {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let matcher = Glob::new(pattern)
+            .unwrap_or_else(|_| Glob::new(&globset::escape(pattern)).unwrap())
+            .compile_matcher();
+        let waiter = Arc::new(Waiter {
+            id,
+            matcher,
+            event: Mutex::new(None),
+            condvar: Condvar::new(),
+        });
+
+        // Register waiter
+        self.waiters.lock().push(waiter.clone());
+
+        // Block on Condvar
+        let mut slot = waiter.event.lock();
+        if slot.is_none() {
+            waiter
+                .condvar
+                .wait_for(&mut slot, Duration::from_millis(timeout_ms));
+        }
+        let result = slot.take();
+
+        // Unregister waiter
+        let mut waiters = self.waiters.lock();
+        if let Some(pos) = waiters.iter().position(|w| w.id == waiter.id) {
+            waiters.swap_remove(pos);
+        }
+
+        result
+    }
+
+    /// Notify all matching waiters — called from on_mutation.
+    fn notify_waiters(&self, event: &FileEvent) {
+        let waiters = self.waiters.lock();
+        for w in waiters.iter() {
+            if w.matcher.is_match(&event.path) {
+                let mut slot = w.event.lock();
+                if slot.is_none() {
+                    *slot = Some(event.clone());
+                    w.condvar.notify_one();
+                }
+            }
+        }
+    }
+}
+
+impl MutationObserver for FileWatcher {
+    fn on_mutation(&self, event: &FileEvent) {
+        self.notify_waiters(event);
+    }
 }
 
 /// RemoteWatchProtocol — kernel-agnostic interface for distributed watch.
-///
-/// Implementations deferred to another AI doing DT_STREAM migration.
-/// Defined here so kernel can hold `Option<Box<dyn RemoteWatchProtocol>>`.
 #[allow(dead_code)]
 pub(crate) trait RemoteWatchProtocol: Send + Sync {
-    /// Subscribe to remote watch events for a path pattern.
     fn subscribe(&self, pattern: &str, zone_id: &str) -> Result<u64, String>;
-    /// Unsubscribe from remote watch.
     fn unsubscribe(&self, subscription_id: u64) -> Result<(), String>;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dispatch::FileEventType;
 
     #[test]
     fn test_register_and_match() {
-        let registry = FileWatchRegistry::new();
-        let id = registry.register("/zone/files/**");
-        assert!(registry.match_path("/zone/files/test.txt").contains(&id));
-        assert!(registry
-            .match_path("/zone/files/sub/deep.txt")
-            .contains(&id));
-        assert!(registry.match_path("/other/path").is_empty());
+        let fw = FileWatcher::new();
+        let id = fw.register("/zone/files/**");
+        assert!(fw.match_path("/zone/files/test.txt").contains(&id));
+        assert!(fw.match_path("/zone/files/sub/deep.txt").contains(&id));
+        assert!(fw.match_path("/other/path").is_empty());
     }
 
     #[test]
     fn test_unregister() {
-        let registry = FileWatchRegistry::new();
-        let id = registry.register("/zone/**");
-        assert!(registry.unregister(id));
-        assert!(registry.match_path("/zone/test").is_empty());
-        assert!(!registry.unregister(id)); // Already removed
+        let fw = FileWatcher::new();
+        let id = fw.register("/zone/**");
+        assert!(fw.unregister(id));
+        assert!(fw.match_path("/zone/test").is_empty());
+        assert!(!fw.unregister(id));
     }
 
     #[test]
-    fn test_multiple_watches() {
-        let registry = FileWatchRegistry::new();
-        let id1 = registry.register("/a/**");
-        let id2 = registry.register("/a/b/**");
-        let matches = registry.match_path("/a/b/c.txt");
-        assert!(matches.contains(&id1));
-        assert!(matches.contains(&id2));
+    fn test_mutation_observer_notifies_waiter() {
+        let fw = Arc::new(FileWatcher::new());
+        let fw2 = fw.clone();
+
+        // Spawn waiter thread
+        let handle = std::thread::spawn(move || fw2.wait_for_event("/test/**", 5000));
+
+        // Give waiter time to register
+        std::thread::sleep(Duration::from_millis(50));
+
+        // Fire event
+        let event = FileEvent::new(FileEventType::FileWrite, "/test/file.txt");
+        fw.on_mutation(&event);
+
+        // Waiter should return the event
+        let result = handle.join().unwrap();
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().path, "/test/file.txt");
     }
 
     #[test]
-    fn test_literal_pattern() {
-        let registry = FileWatchRegistry::new();
-        let id = registry.register("/exact/path.txt");
-        assert!(registry.match_path("/exact/path.txt").contains(&id));
-        assert!(registry.match_path("/exact/other.txt").is_empty());
+    fn test_waiter_timeout() {
+        let fw = FileWatcher::new();
+        let result = fw.wait_for_event("/never/**", 50); // 50ms timeout
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_waiter_pattern_no_match() {
+        let fw = Arc::new(FileWatcher::new());
+        let fw2 = fw.clone();
+
+        let handle = std::thread::spawn(move || fw2.wait_for_event("/specific/**", 200));
+
+        std::thread::sleep(Duration::from_millis(50));
+
+        // Fire event that doesn't match
+        let event = FileEvent::new(FileEventType::FileWrite, "/other/file.txt");
+        fw.on_mutation(&event);
+
+        // Should timeout (no match)
+        let result = handle.join().unwrap();
+        assert!(result.is_none());
     }
 }

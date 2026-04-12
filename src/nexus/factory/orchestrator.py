@@ -418,33 +418,26 @@ async def _register_vfs_hooks(
             nx._permission_lease_table = _lease_table
 
     # ── Audit write interceptor (Issue #900, #1772) ──
-    # Piped observer → async AuditWriteInterceptor serializes mutations → DT_PIPE.
+    # Observer-based write observer → registered as VFSObserver via hook_spec.
     # Sync observer  → sync SyncAuditWriteInterceptor calls on_write() directly.
     write_observer = _ss.get("write_observer")
     if write_observer is not None:
-        from nexus.storage.piped_record_store_write_observer import PipedRecordStoreWriteObserver
+        from nexus.storage.piped_record_store_write_observer import (
+            RecordStoreWriteObserver as _ObsWO,
+        )
 
         strict = getattr(write_observer, "_strict_mode", True)
-        if isinstance(write_observer, PipedRecordStoreWriteObserver):
-            from nexus.storage.piped_record_store_write_observer import _AUDIT_PIPE_PATH
-            from nexus.storage.write_observer_hooks import AuditWriteInterceptor
-
-            # Issue #3399: bind + start the piped observer so the DT_PIPE
-            # is created before AuditWriteInterceptor emits.  The server
-            # lifespan does this in services.py, but create_nexus_fs() callers
-            # (benchmarks, tests, SDK) bypass that path.
-            if hasattr(write_observer, "bind_fs"):
-                write_observer.bind_fs(nx)
-                await write_observer.start()
-
-            audit: AuditWriteInterceptor | SyncAuditWriteInterceptor = AuditWriteInterceptor(
-                nx, _AUDIT_PIPE_PATH, strict_mode=strict
-            )
+        if isinstance(write_observer, _ObsWO):
+            # OBSERVE-phase observer: registered via hook_spec (on_mutation).
+            # No DT_PIPE, no AuditWriteInterceptor, no bind_fs/start/stop.
+            await _enlist("audit", write_observer)
         else:
             from nexus.storage.write_observer_hooks import SyncAuditWriteInterceptor
 
-            audit = SyncAuditWriteInterceptor(write_observer, strict_mode=strict)
-        await _enlist("audit", audit)
+            audit: SyncAuditWriteInterceptor = SyncAuditWriteInterceptor(
+                write_observer, strict_mode=strict
+            )
+            await _enlist("audit", audit)
 
     # DynamicViewerReadHook (post-read: column-level CSV filtering)
     has_viewer = (

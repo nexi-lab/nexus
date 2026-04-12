@@ -50,7 +50,7 @@ def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
         object=("file", "/"),
         context=admin_context,
     )
-    # Grant system user access to /nexus/pipes (required by PipedRecordStoreWriteObserver
+    # Grant system user access to /nexus/pipes (required by RecordStoreWriteObserver
     # when permissions are enforced)
     system_context = {"user_id": "system", "groups": [], "is_admin": False, "is_system": True}
     nx.service("rebac").rebac_create_sync(

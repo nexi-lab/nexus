@@ -2,15 +2,14 @@
 """Benchmark: write observer hot-path latency (Issue #995).
 
 Measures on_write() per-call latency for:
-  1. RecordStoreWriteObserver (sync DB — baseline)
-  2. PipedRecordStoreWriteObserver (DT_PIPE — ~5us target)
+  1. RecordStoreWriteObserver (sync DB -- baseline)
+  2. RecordStoreWriteObserver (OBSERVE-phase -- debounced batch)
 
 Run:
   uv run python tests/benchmarks/bench_write_observer.py
   uv run python tests/benchmarks/bench_write_observer.py --json
 """
 
-import asyncio
 import json
 import logging
 import statistics
@@ -19,12 +18,11 @@ import tempfile
 import time
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 
 from nexus.contracts.metadata import FileMetadata
+from nexus.core.file_events import FileEvent, FileEventType
 from nexus.storage.piped_record_store_write_observer import (
-    _AUDIT_PIPE_PATH,
-    PipedRecordStoreWriteObserver,
+    RecordStoreWriteObserver as ObserverWriteObserver,
 )
 from nexus.storage.record_store import SQLAlchemyRecordStore
 from nexus.storage.record_store_write_observer import RecordStoreWriteObserver
@@ -90,106 +88,52 @@ def bench_sync(tmp_dir: Path) -> list[float]:
     return times
 
 
-# ── Piped observer benchmark ──────────────────────────────────────────
-# Large capacity so the ring buffer never fills during the sync measurement
-# loop (the async consumer can't drain while we're in a tight sync loop).
-_BENCH_PIPE_CAPACITY = 4 * 1024 * 1024  # 4MB — holds ~8k serialized events
-
-
-async def _bench_piped_async(tmp_dir: Path) -> list[float]:
-    db_path = tmp_dir / "piped.db"
+# ── OBSERVE-phase observer benchmark ─────────────────────────────────
+def bench_observer(tmp_dir: Path) -> list[float]:
+    db_path = tmp_dir / "observer.db"
 
     record_store = SQLAlchemyRecordStore(db_path=str(db_path))
 
-    # Create Rust kernel for IPC pipe operations
-    from nexus_kernel import Kernel
-
-    kernel = Kernel()
-
-    # Pre-create the pipe with benchmark-sized capacity
-    kernel.create_pipe(_AUDIT_PIPE_PATH, _BENCH_PIPE_CAPACITY)
-
-    observer = PipedRecordStoreWriteObserver(record_store, strict_mode=False)
-
-    # Bind a minimal NexusFS-like object that satisfies the observer's
-    # runtime contract: _kernel for pipe operations, sys_read() for the
-    # background consumer, and sys_unlink() for stop().
-    class _BenchNx:
-        """Minimal NexusFS fake matching the observer's runtime contract.
-
-        Uses Rust kernel IPC directly. Translates pipe errors to
-        NexusFileNotFoundError so the consumer's shutdown path works.
-        """
-
-        def __init__(self, k: Any) -> None:
-            self._kernel = k
-            # Rust kernel handles IPC blocking internally (no Python IPCWaiter needed)
-
-        def sys_setattr(self, path: str, **kwargs: Any) -> dict:
-            """No-op — pipe already created via kernel.create_pipe."""
-            return {"path": path, "created": False}
-
-        def pipe_read_nowait(self, path: str) -> bytes | None:
-            """Tier 2 NexusFS public sync API — sync passthrough to kernel."""
-            return self._kernel.pipe_read_nowait(path)
-
-        def sys_read(self, path: str, **kwargs: Any) -> bytes:
-            from nexus.contracts.exceptions import NexusFileNotFoundError
-
-            # Blocking read: poll pipe_read_nowait with asyncio.sleep
-            while True:
-                try:
-                    data = self.pipe_read_nowait(path)
-                    if data is not None:
-                        return bytes(data)
-                    # No data available — yield and retry
-                    await asyncio.sleep(0.001)
-                except RuntimeError as exc:
-                    if "PipeClosed" in str(exc) or "not found" in str(exc):
-                        raise NexusFileNotFoundError(path, f"Pipe closed: {path}") from None
-                    raise
-
-        def sys_unlink(self, path: str, **kwargs: Any) -> dict:
-            try:
-                self._kernel.close_pipe(path)
-            except (RuntimeError, Exception):
-                pass  # Already cleaned up
-            return {"path": path}
-
-    fake_nx: Any = _BenchNx(kernel)
-    observer.bind_fs(fake_nx)
+    observer = ObserverWriteObserver(record_store, strict_mode=False, debounce_seconds=0.2)
 
     # Suppress observer warnings during benchmark
     obs_logger = logging.getLogger("nexus.storage.piped_record_store_write_observer")
     prev_level = obs_logger.level
     obs_logger.setLevel(logging.ERROR)
 
-    await observer.start()
-
     try:
         # Warmup
         for i in range(WARMUP):
-            md = _make_metadata(f"/warmup/{i}.txt", etag=f"w{i}")
-            observer.on_write(md, is_new=True, path=md.path)
+            event = FileEvent(
+                type=FileEventType.FILE_WRITE,
+                path=f"/warmup/{i}.txt",
+                is_new=True,
+                etag=f"w{i}",
+            )
+            observer.on_mutation(event)
 
-        # Measure
+        # Wait for warmup to flush
+        time.sleep(0.5)
+
+        # Measure on_mutation latency (fire-and-forget)
         times: list[float] = []
         for i in range(ITERATIONS):
-            md = _make_metadata(f"/bench/{i}.txt", etag=f"b{i}")
+            event = FileEvent(
+                type=FileEventType.FILE_WRITE,
+                path=f"/bench/{i}.txt",
+                is_new=True,
+                etag=f"b{i}",
+            )
             t0 = time.perf_counter()
-            observer.on_write(md, is_new=True, path=md.path)
+            observer.on_mutation(event)
             t1 = time.perf_counter()
             times.append((t1 - t0) * 1000)  # ms
     finally:
-        await observer.stop()
-        kernel.close_all_pipes()
+        observer.flush_sync()
+        observer.cancel()
         obs_logger.setLevel(prev_level)
 
     return times
-
-
-def bench_piped(tmp_dir: Path) -> list[float]:
-    return asyncio.run(_bench_piped_async(tmp_dir))
 
 
 # ── Reporting ─────────────────────────────────────────────────────────
@@ -227,13 +171,13 @@ def main() -> None:
 
         # Run benchmarks
         sync_times = bench_sync(tmp_dir)
-        piped_times = bench_piped(tmp_dir)
+        observer_times = bench_observer(tmp_dir)
 
     sync_stats = _compute_stats(sync_times)
-    piped_stats = _compute_stats(piped_times)
+    observer_stats = _compute_stats(observer_times)
     speedup = (
-        sync_stats["mean_ms"] / piped_stats["mean_ms"]
-        if piped_stats["mean_ms"] > 0
+        sync_stats["mean_ms"] / observer_stats["mean_ms"]
+        if observer_stats["mean_ms"] > 0
         else float("inf")
     )
 
@@ -244,7 +188,7 @@ def main() -> None:
                     "iterations": ITERATIONS,
                     "warmup": WARMUP,
                     "sync": sync_stats,
-                    "piped": piped_stats,
+                    "observer": observer_stats,
                     "speedup": round(speedup, 1),
                 },
                 indent=2,
@@ -258,14 +202,14 @@ def main() -> None:
     print("=" * 70)
 
     _print_stats("RecordStoreWriteObserver (sync DB)", 1, sync_stats)
-    _print_stats("PipedRecordStoreWriteObserver (DT_PIPE)", 2, piped_stats)
+    _print_stats("RecordStoreWriteObserver (OBSERVE-phase)", 2, observer_stats)
 
     print()
     print("=" * 70)
     print(
         f"SPEEDUP: {speedup:.0f}x "
         f"(sync={_fmt_latency(sync_stats['mean_ms'])} "
-        f"\u2192 piped={_fmt_latency(piped_stats['mean_ms'])})"
+        f"\u2192 observer={_fmt_latency(observer_stats['mean_ms'])})"
     )
     print("=" * 70)
 

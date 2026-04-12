@@ -21,7 +21,7 @@ MCL in operation_log (Issue #2929, Key Decision #2):
     metadata_snapshot stores the NEW aspect value (for replay), not the old
     value. ``OperationLogger.replay_changes()`` is the single replay source.
 
-For async DT_PIPE-backed implementation, see PipedRecordStoreWriteObserver
+For OBSERVE-phase batched implementation, see RecordStoreWriteObserver
 in ``nexus.storage.piped_record_store_write_observer``.
 
 Issue #900: Replaced snapshot_hash/metadata_snapshot params with metadata.
@@ -56,7 +56,7 @@ class RecordStoreWriteObserver:
         self._strict_mode = strict_mode
 
         # Post-flush hooks: called after successful commit (Issue #2978)
-        # Same interface as PipedRecordStoreWriteObserver so the factory
+        # Same interface as the OBSERVE-phase RecordStoreWriteObserver so the factory
         # can wire extraction hooks regardless of which observer is active.
         self._post_flush_hooks: list = []
 

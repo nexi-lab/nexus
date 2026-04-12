@@ -360,10 +360,9 @@ class AuditConfig:
 
     Note on async observers: ``strict_mode`` is enforced by the
     synchronous ``RecordStoreWriteObserver``. The async
-    ``PipedRecordStoreWriteObserver`` enqueues events into a DT_PIPE
-    where the enqueue path cannot fail; actual error handling
-    (retry + drop) is managed by the background consumer, not by
-    ``strict_mode``.
+    The OBSERVE-phase ``RecordStoreWriteObserver`` receives events
+    via on_mutation; actual error handling (retry + drop) is managed
+    by the debounced flush, not by ``strict_mode``.
     """
 
     strict_mode: bool = True

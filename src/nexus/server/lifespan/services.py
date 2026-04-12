@@ -586,32 +586,20 @@ async def _startup_workflow_engine(app: "FastAPI", svc: "LifespanServices") -> N
 async def _startup_pipe_consumers(app: "FastAPI", svc: "LifespanServices") -> None:
     """Start DT_PIPE consumers + register OBSERVE-phase observers (Issue #809, #810).
 
-    Consumers started here:
-    1. PipedRecordStoreWriteObserver — async RecordStore sync via kernel IPC
+    RecordStoreWriteObserver (OBSERVE-phase) is registered via hook_spec
+    at factory enlist time — no start/stop lifecycle needed here.
+    We just expose it on app.state for shutdown cleanup.
 
-    ZoektWriteObserver (Issue #810) is an OBSERVE-phase observer registered
-    via hook_spec at factory enlist time — no start/stop lifecycle needed.
-
-    PipeManager was deleted in PR #3671 — the kernel pipe registry
-    is now managed entirely inside the Rust binary.
+    ZoektWriteObserver (Issue #810) is also OBSERVE-phase — no lifecycle.
     """
     nx = svc.nexus_fs
 
-    # Issue #809: PipedRecordStoreWriteObserver
+    # Issue #809: RecordStoreWriteObserver (OBSERVE-phase)
+    # No bind_fs/start needed — registered via hook_spec at factory enlist time.
     wo = svc.write_observer
     if wo is not None:
-        try:
-            if hasattr(wo, "bind_fs") and nx is not None:
-                wo.bind_fs(nx)
-            else:
-                raise RuntimeError("write observer missing startup binding hook")
-            await wo.start()
-            app.state.write_observer = wo
-            logger.info("[PIPE] PipedRecordStoreWriteObserver started")
-        except Exception as e:
-            logger.warning(
-                "[PIPE] PipedRecordStoreWriteObserver start failed: %s", e, exc_info=True
-            )
+        app.state.write_observer = wo
+        logger.info("[OBSERVE] RecordStoreWriteObserver registered (OBSERVE-phase)")
 
     # Issue #3193: EventDeliveryWorker is started by ServiceRegistry
     # (PersistentService auto-start). We only expose it + event_signal on
@@ -688,15 +676,18 @@ async def _shutdown_pipe_consumers(app: "FastAPI") -> None:
     ServiceRegistry.stop_persistent_services() — no
     explicit stop here to avoid double-stop.
     """
-    # Issue #809: PipedRecordStoreWriteObserver
+    # Issue #809: RecordStoreWriteObserver (OBSERVE-phase)
     wo = getattr(app.state, "write_observer", None)
-    if wo is not None and hasattr(wo, "stop"):
+    if wo is not None:
         try:
-            await wo.stop()
-            logger.info("[PIPE] PipedRecordStoreWriteObserver stopped")
+            if hasattr(wo, "flush_sync"):
+                wo.flush_sync()
+            if hasattr(wo, "cancel"):
+                wo.cancel()
+            logger.info("[OBSERVE] RecordStoreWriteObserver stopped")
         except Exception as e:
             logger.warning(
-                "[PIPE] Error stopping PipedRecordStoreWriteObserver: %s", e, exc_info=True
+                "[OBSERVE] Error stopping RecordStoreWriteObserver: %s", e, exc_info=True
             )
 
     # Issue #810: ZoektWriteObserver — no async stop needed (OBSERVE phase).

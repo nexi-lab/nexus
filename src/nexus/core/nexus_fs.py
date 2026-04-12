@@ -5392,9 +5392,9 @@ class NexusFS(  # type: ignore[misc]
     ) -> dict[str, Any]:
         """Flush the async write observer so pending version/audit records are committed.
 
-        The PipedRecordStoreWriteObserver enqueues events asynchronously via
-        DT_PIPE.  This method drains the pipe and commits all pending events,
-        guaranteeing that subsequent queries (e.g. list_versions) see the data.
+        The OBSERVE-phase RecordStoreWriteObserver accumulates events via
+        on_mutation.  This method flushes all pending events, guaranteeing
+        that subsequent queries (e.g. list_versions) see the data.
 
         No-op when the synchronous RecordStoreWriteObserver is in use.
 

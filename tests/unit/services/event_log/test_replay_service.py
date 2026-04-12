@@ -663,7 +663,7 @@ class TestObserverEventNotification:
         signal = asyncio.Event()
         assert not signal.is_set()
 
-        # The PipedRecordStoreWriteObserver sets the signal in _flush_batch
+        # The RecordStoreWriteObserver sets the signal in _flush_batch
         # after successful commit. We test the signal mechanism directly here.
         signal.set()
         assert signal.is_set()

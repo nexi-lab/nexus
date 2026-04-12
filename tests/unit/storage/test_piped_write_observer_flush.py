@@ -1,20 +1,18 @@
-"""Tests for PipedRecordStoreWriteObserver.flush() — race condition fix.
+"""Tests for RecordStoreWriteObserver (OBSERVE-phase) flush behavior.
 
-Ensures that flush() drains the DT_PIPE and commits pending events to the
+Ensures that flush_sync() drains pending events and commits them to the
 database before returning, so that subsequent queries (e.g. list_versions)
 see version history created by immediately preceding writes.
 
-Also tests the pre-buffer sync flush path (before pipe is ready).
+Also tests the debounce → flush path for the OBSERVE-phase observer.
 """
 
 from __future__ import annotations
 
-import json
 import tempfile
 from collections.abc import Generator
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -25,7 +23,9 @@ from nexus.storage.models import (
     OperationLogModel,
     VersionHistoryModel,
 )
-from nexus.storage.piped_record_store_write_observer import PipedRecordStoreWriteObserver
+from nexus.storage.piped_record_store_write_observer import (
+    RecordStoreWriteObserver as ObserverWriteObserver,
+)
 from nexus.storage.record_store import SQLAlchemyRecordStore
 from nexus.storage.record_store_write_observer import RecordStoreWriteObserver
 
@@ -75,16 +75,14 @@ class TestSyncObserverFlush:
         assert result == 0
 
 
-class TestPipedObserverPreBufferFlush:
-    """flush() on piped observer before pipe is ready drains pre-buffer directly."""
+class TestObserverFlushSync:
+    """flush_sync() on the OBSERVE-phase observer drains pending events."""
 
     @pytest.mark.anyio
-    async def test_flush_pre_buffer_commits_to_db(
-        self, record_store: SQLAlchemyRecordStore
-    ) -> None:
-        observer = PipedRecordStoreWriteObserver(record_store)
-        # Pipe is NOT ready — manually populate pre-buffer (producer is now AuditWriteInterceptor)
+    async def test_flush_sync_commits_to_db(self, record_store: SQLAlchemyRecordStore) -> None:
+        observer = ObserverWriteObserver(record_store, debounce_seconds=10.0)
 
+        # Manually populate pending events (simulating on_mutation path)
         metadata = _make_metadata("/prebuf.txt", etag="h1")
         event = {
             "op": "write",
@@ -96,15 +94,14 @@ class TestPipedObserverPreBufferFlush:
             "metadata_snapshot": None,
             "metadata": metadata.to_dict(),
         }
-        observer._pre_buffer.append(json.dumps(event).encode())
+        observer._pending.append(event)
 
-        # Pre-buffer should have one event
-        assert len(observer._pre_buffer) == 1
+        assert len(observer._pending) == 1
 
-        # Flush should commit directly to DB
-        flushed = await observer.flush()
+        # flush_sync should commit directly to DB
+        flushed = observer.flush_sync()
         assert flushed == 1
-        assert len(observer._pre_buffer) == 0
+        assert len(observer._pending) == 0
 
         # Verify data is in the database
         with record_store.session_factory() as session:
@@ -119,21 +116,20 @@ class TestPipedObserverPreBufferFlush:
             vhs = session.query(VersionHistoryModel).all()
             assert len(vhs) == 1
 
+        observer.cancel()
+
     @pytest.mark.anyio
-    async def test_flush_empty_pre_buffer_returns_zero(
-        self, record_store: SQLAlchemyRecordStore
-    ) -> None:
-        observer = PipedRecordStoreWriteObserver(record_store)
+    async def test_flush_empty_returns_zero(self, record_store: SQLAlchemyRecordStore) -> None:
+        observer = ObserverWriteObserver(record_store)
         flushed = await observer.flush()
         assert flushed == 0
+        observer.cancel()
 
     @pytest.mark.anyio
-    async def test_flush_pre_buffer_handles_multiple_ops(
-        self, record_store: SQLAlchemyRecordStore
-    ) -> None:
-        observer = PipedRecordStoreWriteObserver(record_store)
+    async def test_flush_handles_multiple_ops(self, record_store: SQLAlchemyRecordStore) -> None:
+        observer = ObserverWriteObserver(record_store, debounce_seconds=10.0)
 
-        # Write, then update — populate pre-buffer directly
+        # Write, then update — populate pending directly
         m1 = _make_metadata("/multi.txt", etag="v1")
         e1 = {
             "op": "write",
@@ -145,7 +141,7 @@ class TestPipedObserverPreBufferFlush:
             "metadata_snapshot": None,
             "metadata": m1.to_dict(),
         }
-        observer._pre_buffer.append(json.dumps(e1).encode())
+        observer._pending.append(e1)
 
         m2 = _make_metadata("/multi.txt", etag="v2", version=2)
         e2 = {
@@ -158,92 +154,28 @@ class TestPipedObserverPreBufferFlush:
             "metadata_snapshot": None,
             "metadata": m2.to_dict(),
         }
-        observer._pre_buffer.append(json.dumps(e2).encode())
+        observer._pending.append(e2)
 
-        assert len(observer._pre_buffer) == 2
+        assert len(observer._pending) == 2
 
-        flushed = await observer.flush()
+        flushed = observer.flush_sync()
         assert flushed == 2
 
         with record_store.session_factory() as session:
             vhs = session.query(VersionHistoryModel).all()
             assert len(vhs) == 2
 
-
-class TestPipedObserverPipeFlush:
-    """flush() on piped observer with active pipe drains pipe events."""
-
-    @pytest.mark.anyio
-    async def test_flush_drains_pipe_events(self, record_store: SQLAlchemyRecordStore) -> None:
-        observer = PipedRecordStoreWriteObserver(record_store)
-
-        # Simulate pipe being ready with mocked NexusFS
-        metadata = _make_metadata("/piped.txt", etag="ph1")
-        event = {
-            "op": "write",
-            "path": "/piped.txt",
-            "is_new": True,
-            "zone_id": "root",
-            "agent_id": None,
-            "snapshot_hash": None,
-            "metadata_snapshot": None,
-            "metadata": metadata.to_dict(),
-        }
-
-        mock_nx = MagicMock()
-        observer._nx = mock_nx
-        observer._pipe_ready = True
-
-        # sys_read returns one event then raises NexusFileNotFoundError
-        from nexus.contracts.exceptions import NexusFileNotFoundError
-
-        call_count = 0
-
-        async def mock_sys_read(path, **kwargs):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return json.dumps(event).encode()
-            raise NexusFileNotFoundError(path)
-
-        mock_nx.sys_read = mock_sys_read
-
-        flushed = await observer.flush()
-        assert flushed == 1
-
-        # Verify DB commit
-        with record_store.session_factory() as session:
-            ops = session.query(OperationLogModel).all()
-            assert len(ops) == 1
-            assert ops[0].path == "/piped.txt"
-
-    @pytest.mark.anyio
-    async def test_flush_empty_pipe_returns_zero(self, record_store: SQLAlchemyRecordStore) -> None:
-        observer = PipedRecordStoreWriteObserver(record_store)
-
-        mock_nx = MagicMock()
-        observer._nx = mock_nx
-        observer._pipe_ready = True
-
-        from nexus.contracts.exceptions import NexusFileNotFoundError
-
-        async def mock_sys_read(path, **kwargs):
-            raise NexusFileNotFoundError(path)
-
-        mock_nx.sys_read = mock_sys_read
-
-        flushed = await observer.flush()
-        assert flushed == 0
+        observer.cancel()
 
 
-class TestPipedObserverFlushMetrics:
-    """flush() updates observer metrics correctly."""
+class TestObserverFlushMetrics:
+    """flush_sync() updates observer metrics correctly."""
 
     @pytest.mark.anyio
     async def test_flush_increments_total_flushed(
         self, record_store: SQLAlchemyRecordStore
     ) -> None:
-        observer = PipedRecordStoreWriteObserver(record_store)
+        observer = ObserverWriteObserver(record_store, debounce_seconds=10.0)
         metadata = _make_metadata("/metrics.txt", etag="mh1")
         event = {
             "op": "write",
@@ -255,28 +187,28 @@ class TestPipedObserverFlushMetrics:
             "metadata_snapshot": None,
             "metadata": metadata.to_dict(),
         }
-        observer._pre_buffer.append(json.dumps(event).encode())
+        observer._pending.append(event)
 
         assert observer.metrics["total_flushed"] == 0
 
-        await observer.flush()
+        observer.flush_sync()
 
         assert observer.metrics["total_flushed"] == 1
+        observer.cancel()
 
 
-class TestPipedObserverSQLiteIntegration:
-    """Issue #3399: verify piped observer produces correct records on SQLite.
+class TestObserverSQLiteIntegration:
+    """Verify OBSERVE-phase observer produces correct records on SQLite.
 
-    Now that _flush_pre_buffer_sync is replaced by flush_sync() →
-    _process_events_in_session(), pre-buffer flushes must produce the same
-    complete records as the batch flush path (entity_urn, aspect_name,
-    change_type, rename two-URN pattern, delete soft-delete).
+    _process_events_in_session() must produce complete records:
+    entity_urn, aspect_name, change_type, rename two-URN pattern,
+    delete soft-delete.
     """
 
     @pytest.mark.anyio
     async def test_write_event_has_entity_urn(self, record_store: SQLAlchemyRecordStore) -> None:
         """Write event must populate entity_urn, aspect_name, change_type."""
-        observer = PipedRecordStoreWriteObserver(record_store)
+        observer = ObserverWriteObserver(record_store, debounce_seconds=10.0)
         metadata = _make_metadata("/urn_test.txt", etag="u1")
         event = {
             "op": "write",
@@ -288,9 +220,9 @@ class TestPipedObserverSQLiteIntegration:
             "metadata_snapshot": None,
             "metadata": metadata.to_dict(),
         }
-        observer._pre_buffer.append(json.dumps(event).encode())
+        observer._pending.append(event)
 
-        flushed = await observer.flush()
+        flushed = observer.flush_sync()
         assert flushed == 1
 
         with record_store.session_factory() as session:
@@ -303,12 +235,14 @@ class TestPipedObserverSQLiteIntegration:
             assert ops[0].agent_id == "agent-1"
             assert ops[0].delivered is False
 
+        observer.cancel()
+
     @pytest.mark.anyio
     async def test_delete_event_produces_correct_records(
         self, record_store: SQLAlchemyRecordStore
     ) -> None:
         """Delete event must have entity_urn, change_type='delete'."""
-        observer = PipedRecordStoreWriteObserver(record_store)
+        observer = ObserverWriteObserver(record_store, debounce_seconds=10.0)
         metadata = _make_metadata("/del_test.txt", etag="d1")
 
         # First write the file so there's something to delete
@@ -322,7 +256,7 @@ class TestPipedObserverSQLiteIntegration:
             "metadata_snapshot": None,
             "metadata": metadata.to_dict(),
         }
-        observer._pre_buffer.append(json.dumps(write_event).encode())
+        observer._pending.append(write_event)
 
         delete_event = {
             "op": "delete",
@@ -332,9 +266,9 @@ class TestPipedObserverSQLiteIntegration:
             "snapshot_hash": "d1",
             "metadata_snapshot": metadata.to_dict(),
         }
-        observer._pre_buffer.append(json.dumps(delete_event).encode())
+        observer._pending.append(delete_event)
 
-        flushed = await observer.flush()
+        flushed = observer.flush_sync()
         assert flushed == 2
 
         with record_store.session_factory() as session:
@@ -348,12 +282,14 @@ class TestPipedObserverSQLiteIntegration:
             assert ops[1].entity_urn is not None
             assert ops[1].change_type == "delete"
 
+        observer.cancel()
+
     @pytest.mark.anyio
     async def test_rename_produces_two_operation_log_rows(
         self, record_store: SQLAlchemyRecordStore
     ) -> None:
         """Rename must produce two operation_log rows: DELETE old + UPSERT new."""
-        observer = PipedRecordStoreWriteObserver(record_store)
+        observer = ObserverWriteObserver(record_store, debounce_seconds=10.0)
         metadata = _make_metadata("/old_name.txt", etag="r1")
 
         # Write the file first
@@ -367,7 +303,7 @@ class TestPipedObserverSQLiteIntegration:
             "metadata_snapshot": None,
             "metadata": metadata.to_dict(),
         }
-        observer._pre_buffer.append(json.dumps(write_event).encode())
+        observer._pending.append(write_event)
 
         rename_event = {
             "op": "rename",
@@ -378,9 +314,9 @@ class TestPipedObserverSQLiteIntegration:
             "snapshot_hash": "r1",
             "metadata_snapshot": metadata.to_dict(),
         }
-        observer._pre_buffer.append(json.dumps(rename_event).encode())
+        observer._pending.append(rename_event)
 
-        flushed = await observer.flush()
+        flushed = observer.flush_sync()
         assert flushed == 2
 
         with record_store.session_factory() as session:
@@ -392,10 +328,12 @@ class TestPipedObserverSQLiteIntegration:
             change_types = {o.change_type for o in rename_ops}
             assert change_types == {"delete", "upsert"}
 
+        observer.cancel()
+
     @pytest.mark.anyio
     async def test_mkdir_and_rmdir_events(self, record_store: SQLAlchemyRecordStore) -> None:
         """mkdir and rmdir events should be recorded without entity_urn."""
-        observer = PipedRecordStoreWriteObserver(record_store)
+        observer = ObserverWriteObserver(record_store, debounce_seconds=10.0)
 
         mkdir_event = {
             "op": "mkdir",
@@ -410,10 +348,10 @@ class TestPipedObserverSQLiteIntegration:
             "agent_id": None,
             "recursive": True,
         }
-        observer._pre_buffer.append(json.dumps(mkdir_event).encode())
-        observer._pre_buffer.append(json.dumps(rmdir_event).encode())
+        observer._pending.append(mkdir_event)
+        observer._pending.append(rmdir_event)
 
-        flushed = await observer.flush()
+        flushed = observer.flush_sync()
         assert flushed == 2
 
         with record_store.session_factory() as session:
@@ -422,10 +360,12 @@ class TestPipedObserverSQLiteIntegration:
             assert ops[0].operation_type == "mkdir"
             assert ops[1].operation_type == "rmdir_recursive"
 
+        observer.cancel()
+
     @pytest.mark.anyio
     async def test_batch_flush_records_mcl(self, record_store: SQLAlchemyRecordStore) -> None:
         """Batch flush path (via _flush_batch_sync) should record MCL entries."""
-        observer = PipedRecordStoreWriteObserver(record_store)
+        observer = ObserverWriteObserver(record_store)
         metadata = _make_metadata("/mcl_test.txt", etag="m1")
         event = {
             "op": "write",
@@ -438,7 +378,7 @@ class TestPipedObserverSQLiteIntegration:
             "metadata": metadata.to_dict(),
         }
 
-        # Use _flush_batch_sync directly (the pipe consumer path)
+        # Use _flush_batch_sync directly (the flush path)
         observer._flush_batch_sync([event])
 
         with record_store.session_factory() as session:
@@ -454,14 +394,20 @@ class TestPipedObserverSQLiteIntegration:
             assert mcl[0].change_type == "upsert"
             assert "root" in mcl[0].entity_urn
 
+        observer.cancel()
+
     @pytest.mark.anyio
-    async def test_linger_parameter_defaults(self, record_store: SQLAlchemyRecordStore) -> None:
-        """Verify linger_s parameter is configurable and has correct default."""
-        observer_default = PipedRecordStoreWriteObserver(record_store)
-        assert observer_default._linger_s == 0.2
+    async def test_debounce_parameter_defaults(self, record_store: SQLAlchemyRecordStore) -> None:
+        """Verify debounce_seconds parameter is configurable and has correct default."""
+        observer_default = ObserverWriteObserver(record_store)
+        assert observer_default._debounce == 0.2
 
-        observer_custom = PipedRecordStoreWriteObserver(record_store, linger_s=0.5)
-        assert observer_custom._linger_s == 0.5
+        observer_custom = ObserverWriteObserver(record_store, debounce_seconds=0.5)
+        assert observer_custom._debounce == 0.5
 
-        observer_zero = PipedRecordStoreWriteObserver(record_store, linger_s=0)
-        assert observer_zero._linger_s == 0
+        observer_zero = ObserverWriteObserver(record_store, debounce_seconds=0)
+        assert observer_zero._debounce == 0
+
+        observer_default.cancel()
+        observer_custom.cancel()
+        observer_zero.cancel()

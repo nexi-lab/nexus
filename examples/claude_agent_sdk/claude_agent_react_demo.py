@@ -51,7 +51,7 @@ def connect_to_nexus(tenant_id: str = "claude-agent-demo", agent_id: str = "reac
         agent_id: Agent identifier for tracking
 
     Returns:
-        NexusFilesystem instance
+        NexusFS instance
     """
     # Check if using remote server
     server_url = os.getenv("NEXUS_SERVER_URL")
@@ -85,7 +85,7 @@ def create_nexus_tools(nx):
     Tools are bundled into an in-process MCP server.
 
     Args:
-        nx: NexusFilesystem instance
+        nx: NexusFS instance
 
     Returns:
         MCP server with Nexus tools

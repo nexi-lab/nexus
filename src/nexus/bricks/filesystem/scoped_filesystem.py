@@ -1,3 +1,4 @@
+# mypy: disable-error-code="no-any-return"
 """Scoped filesystem wrapper for multi-zone path isolation.
 
 This module provides a ScopedFilesystem wrapper that rebases all paths
@@ -23,7 +24,6 @@ import builtins
 from typing import Any, cast
 
 from nexus.bricks.filesystem._scoped_base import ScopedPathMixin
-from nexus.contracts.filesystem.filesystem_abc import NexusFilesystem
 from nexus.contracts.types import OperationContext
 
 
@@ -34,18 +34,18 @@ class ScopedFilesystem(ScopedPathMixin):
     Code using hardcoded paths like "/workspace/.nexus/skills/" will
     actually access "/zones/team_X/users/user_Y/workspace/.nexus/skills/".
 
-    The wrapper implements the NexusFilesystem protocol and delegates
+    The wrapper implements the NexusFS protocol and delegates
     all operations to the underlying filesystem after path translation.
 
     Service-level methods (workspace, sandbox, mount, memory, agent)
     are forwarded directly via ``__getattr__`` — no path scoping.
 
     Attributes:
-        _fs: The underlying NexusFilesystem instance
+        _fs: The underlying NexusFS instance
         _root: The root path prefix to prepend to all paths
     """
 
-    def __init__(self, fs: NexusFilesystem, root: str) -> None:
+    def __init__(self, fs: Any, root: str) -> None:
         """Initialize ScopedFilesystem.
 
         Args:
@@ -57,7 +57,7 @@ class ScopedFilesystem(ScopedPathMixin):
         self._fs = fs
 
     @property
-    def wrapped_fs(self) -> NexusFilesystem:
+    def wrapped_fs(self) -> Any:
         """The underlying wrapped filesystem."""
         return self._fs
 

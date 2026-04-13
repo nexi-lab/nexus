@@ -9,12 +9,13 @@ Phase 2: Core Refactoring (Issue #988, Task 2.8)
 Extracted from: nexus_fs_mcp.py (379 lines)
 """
 
+from __future__ import annotations
+
 import builtins
 import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from nexus.contracts.filesystem.filesystem_abc import NexusFilesystem
 from nexus.lib.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)
@@ -70,7 +71,7 @@ class MCPService:
 
     def __init__(
         self,
-        filesystem: NexusFilesystem | None = None,
+        filesystem: Any | None = None,
         *,
         credential_service: Any = None,
         mount_lister: Callable[[], list[tuple[str, str]]] | None = None,

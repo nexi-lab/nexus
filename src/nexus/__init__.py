@@ -74,7 +74,6 @@ if TYPE_CHECKING:
         NexusFileNotFoundError,
         NexusPermissionError,
     )
-    from nexus.contracts.filesystem.filesystem_abc import NexusFilesystem as NexusFilesystem
     from nexus.core.metastore import MetastoreABC
     from nexus.core.nexus_fs import NexusFS
 
@@ -108,7 +107,6 @@ _LAZY_IMPORTS = {
     "NexusConfig": ("nexus.config", "NexusConfig"),
     "load_config": ("nexus.config", "load_config"),
     # Core - heavy
-    "NexusFilesystem": ("nexus.contracts.filesystem.filesystem_abc", "NexusFilesystem"),
     "NexusFS": ("nexus.core.nexus_fs", "NexusFS"),
     # Slim package top-level API (nexus.mount / nexus.mount_sync)
     "mount": ("nexus.fs", "mount"),
@@ -202,7 +200,7 @@ def _open_local_metastore(metadata_path: str, kernel: object = None) -> "Metasto
 
 async def connect(
     config: "str | Path | dict | NexusConfig | None" = None,
-) -> "NexusFilesystem":
+) -> "NexusFS":
     """
     Connect to Nexus filesystem.
 
@@ -221,7 +219,7 @@ async def connect(
             - NexusConfig: Already loaded config
 
     Returns:
-        NexusFilesystem instance. All profiles implement the NexusFilesystem
+        NexusFS instance. All profiles implement the NexusFS
         interface, ensuring consistent API.
 
     Raises:
@@ -675,8 +673,6 @@ __all__ = [
     # Configuration
     "NexusConfig",
     "load_config",
-    # Core interfaces
-    "NexusFilesystem",  # Protocol for all filesystem modes
     # Filesystem implementation
     "NexusFS",
     # Backends

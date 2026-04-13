@@ -22,7 +22,7 @@ def get_nexus_tools(nx):
     Create OpenAI Agent SDK tools from a Nexus filesystem instance.
 
     Args:
-        nx: NexusFilesystem instance (local or remote)
+        nx: NexusFS instance (local or remote)
 
     Returns:
         List of function tool definitions decorated with @function_tool

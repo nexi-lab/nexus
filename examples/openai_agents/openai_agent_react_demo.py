@@ -63,7 +63,7 @@ def connect_to_nexus(tenant_id: str = "openai-agents-demo", agent_id: str = "rea
         agent_id: Agent identifier for tracking (default: "react-agent")
 
     Returns:
-        NexusFilesystem instance configured for the specified tenant
+        NexusFS instance configured for the specified tenant
 
     Multi-tenancy:
         Nexus supports multi-tenancy, allowing multiple agents or users to share

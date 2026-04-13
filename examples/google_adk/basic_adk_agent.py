@@ -54,7 +54,7 @@ def connect_to_nexus(tenant_id: str = "adk-demo", agent_id: str = "file-agent"):
         agent_id: Agent identifier for tracking
 
     Returns:
-        NexusFilesystem instance
+        NexusFS instance
     """
     # Check if using remote server
     server_url = os.getenv("NEXUS_URL")
@@ -88,7 +88,7 @@ def create_nexus_tools(nx):
     Google ADK automatically converts them to agent tools.
 
     Args:
-        nx: NexusFilesystem instance
+        nx: NexusFS instance
 
     Returns:
         List of functions that the agent can call

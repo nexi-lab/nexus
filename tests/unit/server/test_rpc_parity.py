@@ -116,9 +116,9 @@ def test_all_public_methods_are_exposed_or_excluded():
         "swap_service",  # Hot-swap via coordinator — server-only admin operation (Issue #1452 Phase 3)
         "load_all_saved_mounts",  # Internal initialization method - called automatically on startup
         # Tier 2 convenience wrappers — delegate to sys_lock/sys_unlock which ARE @rpc_expose
-        "lock",  # Tier 2 blocking wait over sys_lock (defined in NexusFilesystem)
-        "unlock",  # Tier 2 alias for sys_unlock (defined in NexusFilesystem)
-        "locked",  # Tier 2 async context manager for lock/unlock (defined in NexusFilesystem)
+        "lock",  # Tier 2 blocking wait over sys_lock (defined in NexusFS)
+        "unlock",  # Tier 2 alias for sys_unlock (defined in NexusFS)
+        "locked",  # Tier 2 async context manager for lock/unlock (defined in NexusFS)
         # Server-side only methods (clients get this via HTTP headers)
         "get_etag",  # Returns ETag for early 304 check - clients receive ETags via HTTP headers on read
         # Async methods - TODO: Add async RPC support
@@ -217,7 +217,7 @@ def test_all_public_methods_are_exposed_or_excluded():
         "shutdown",  # Internal - background task drain
         # ABC compliance stubs (Issue #2033 LEGO decomposition)
         # These delegate to extracted services which already have @rpc_expose.
-        # NexusFS defines them only to satisfy NexusFilesystem ABC requirements.
+        # NexusFS defines them only to satisfy NexusFS ABC requirements.
         # Workspace snapshots — delegates to _workspace_rpc_service
         "workspace_snapshot",  # ABC stub → _workspace_rpc_service.workspace_snapshot()
         "workspace_restore",  # ABC stub → _workspace_rpc_service.workspace_restore()

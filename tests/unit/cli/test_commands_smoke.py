@@ -25,10 +25,10 @@ def _disable_auto_json(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _make_mock_nx() -> MagicMock:
-    """Create a mock NexusFilesystem with common methods."""
+    """Create a mock NexusFS with common methods."""
     nx = MagicMock()
     nx.close = MagicMock()
-    # sys_readdir is sync in the real NexusFilesystem
+    # sys_readdir is sync in the real NexusFS
     nx.sys_readdir = MagicMock()
     return nx
 

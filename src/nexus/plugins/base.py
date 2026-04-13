@@ -1,13 +1,16 @@
 """Base plugin interface for Nexus plugins."""
 
+from __future__ import annotations
+
 import json
 import sys
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from nexus.contracts.filesystem.filesystem_abc import NexusFilesystem
+if TYPE_CHECKING:
+    from nexus.core.nexus_fs import NexusFS
 
 
 @dataclass
@@ -29,7 +32,7 @@ class NexusPlugin(ABC):
     - Custom CLI commands
     - Lifecycle hooks
     - Configuration
-    - Access to NexusFilesystem
+    - Access to NexusFS
 
     Example:
         class MyPlugin(NexusPlugin):
@@ -50,15 +53,15 @@ class NexusPlugin(ABC):
                 print(f"Hello, {name}!")
     """
 
-    def __init__(self, nexus_fs: NexusFilesystem | None = None):
-        """Initialize plugin with optional NexusFilesystem instance."""
+    def __init__(self, nexus_fs: NexusFS | None = None):
+        """Initialize plugin with optional NexusFS instance."""
         self._nexus_fs = nexus_fs
         self._config: dict[str, Any] = {}
         self._enabled = True
 
     @property
-    def nx(self) -> NexusFilesystem | None:
-        """Access to NexusFilesystem instance."""
+    def nx(self) -> NexusFS | None:
+        """Access to NexusFS instance."""
         return self._nexus_fs
 
     @abstractmethod

@@ -2,7 +2,7 @@
 
 Validates the __getattr__-based proxy dispatch works end-to-end:
 1. Start server with database auth + permissions enabled
-2. Connect via NexusFilesystem (new proxy client)
+2. Connect via NexusFS (new proxy client)
 3. Exercise: write, read, list, glob, grep, delete, stat, exists
 4. Verify permission denied for non-admin user
 5. Verify deprecated methods raise NotImplementedError
@@ -24,7 +24,7 @@ import httpx
 import pytest
 
 from nexus.contracts.exceptions import RemoteFilesystemError
-from nexus.contracts.filesystem.filesystem_abc import NexusFilesystem
+from nexus.core.nexus_fs import NexusFS
 
 # Clear proxy env vars so localhost connections work
 for _key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
@@ -226,7 +226,7 @@ def e2e_server(tmp_path_factory):
 
 
 @pytest.fixture(scope="module")
-def admin_client(e2e_server) -> NexusFilesystem:
+def admin_client(e2e_server) -> NexusFS:
     """NexusFS (REMOTE profile) connected as admin."""
     import nexus
 
@@ -263,7 +263,7 @@ def non_admin_key(e2e_server) -> str:
 
 
 @pytest.fixture(scope="module")
-def non_admin_client(e2e_server, non_admin_key) -> NexusFilesystem:
+def non_admin_client(e2e_server, non_admin_key) -> NexusFS:
     """NexusFS (REMOTE profile) connected as non-admin user with no permissions."""
     import nexus
 
@@ -288,33 +288,33 @@ class TestProxyFileOperations:
     """Test core file operations via the new proxy client."""
 
     @pytest.mark.asyncio
-    async def test_write_and_read(self, admin_client: NexusFilesystem) -> None:
+    async def test_write_and_read(self, admin_client: NexusFS) -> None:
         """Write file via proxy, read back via proxy (hand-written override)."""
         admin_client.write("/workspace/proxy-test.txt", b"Hello from RPC proxy!")
         content = admin_client.sys_read("/workspace/proxy-test.txt")
         assert content == b"Hello from RPC proxy!"
 
     @pytest.mark.asyncio
-    async def test_write_str_content(self, admin_client: NexusFilesystem) -> None:
+    async def test_write_str_content(self, admin_client: NexusFS) -> None:
         """Write string content (auto-encoded to bytes)."""
         admin_client.write("/workspace/str-test.txt", "String content here")
         content = admin_client.sys_read("/workspace/str-test.txt")
         assert content == b"String content here"
 
-    def test_stat(self, admin_client: NexusFilesystem) -> None:
+    def test_stat(self, admin_client: NexusFS) -> None:
         """Stat file via proxy (hand-written override with negative cache)."""
         info = admin_client.stat("/workspace/proxy-test.txt")
         assert isinstance(info, dict)
         assert info.get("size", 0) > 0
 
     @pytest.mark.asyncio
-    async def test_exists(self, admin_client: NexusFilesystem) -> None:
+    async def test_exists(self, admin_client: NexusFS) -> None:
         """Exists via proxy (hand-written override)."""
         assert admin_client.access("/workspace/proxy-test.txt") is True
         assert admin_client.access("/workspace/nonexistent-xyz.txt") is False
 
     @pytest.mark.asyncio
-    async def test_list_auto_dispatched(self, admin_client: NexusFilesystem) -> None:
+    async def test_list_auto_dispatched(self, admin_client: NexusFS) -> None:
         """List via proxy (__getattr__ dispatch with response_key='files')."""
         files = admin_client.sys_readdir("/workspace")
         assert isinstance(files, list)
@@ -322,20 +322,20 @@ class TestProxyFileOperations:
         paths = [f if isinstance(f, str) else f.get("path", "") for f in files]
         assert any("proxy-test.txt" in p for p in paths)
 
-    def test_glob_auto_dispatched(self, admin_client: NexusFilesystem) -> None:
+    def test_glob_auto_dispatched(self, admin_client: NexusFS) -> None:
         """Glob via proxy (__getattr__ dispatch with response_key='matches')."""
         matches = admin_client.glob("*.txt", "/workspace")
         assert isinstance(matches, list)
         assert any("proxy-test.txt" in m for m in matches)
 
-    def test_grep_auto_dispatched(self, admin_client: NexusFilesystem) -> None:
+    def test_grep_auto_dispatched(self, admin_client: NexusFS) -> None:
         """Grep via proxy (__getattr__ dispatch with response_key='results')."""
         results = admin_client.grep("Hello", "/workspace")
         assert isinstance(results, list)
         assert len(results) >= 1
 
     @pytest.mark.asyncio
-    async def test_delete(self, admin_client: NexusFilesystem) -> None:
+    async def test_delete(self, admin_client: NexusFS) -> None:
         """Delete file via proxy (hand-written override)."""
         admin_client.write("/workspace/to-delete.txt", b"delete me")
         assert admin_client.access("/workspace/to-delete.txt") is True
@@ -343,7 +343,7 @@ class TestProxyFileOperations:
         assert admin_client.access("/workspace/to-delete.txt") is False
 
     @pytest.mark.asyncio
-    async def test_rename(self, admin_client: NexusFilesystem) -> None:
+    async def test_rename(self, admin_client: NexusFS) -> None:
         """Rename file via proxy (hand-written override)."""
         admin_client.write("/workspace/old-name.txt", b"rename me")
         admin_client.sys_rename("/workspace/old-name.txt", "/workspace/new-name.txt")
@@ -353,7 +353,7 @@ class TestProxyFileOperations:
         admin_client.delete("/workspace/new-name.txt")
 
     @pytest.mark.asyncio
-    async def test_edit(self, admin_client: NexusFilesystem) -> None:
+    async def test_edit(self, admin_client: NexusFS) -> None:
         """Edit file via proxy (hand-written override with edit serialization)."""
         admin_client.write("/workspace/edit-test.txt", b"original text here")
         result = admin_client.edit(
@@ -376,13 +376,13 @@ class TestAutoDispatchedMethods:
     """Test methods that go through __getattr__ auto-dispatch."""
 
     @pytest.mark.asyncio
-    async def test_mkdir_and_rmdir(self, admin_client: NexusFilesystem) -> None:
+    async def test_mkdir_and_rmdir(self, admin_client: NexusFS) -> None:
         """mkdir and rmdir via auto-dispatch."""
         admin_client.mkdir("/workspace/proxy-dir")
         assert admin_client.is_directory("/workspace/proxy-dir") is True
         admin_client.rmdir("/workspace/proxy-dir")
 
-    def test_rebac_check(self, admin_client: NexusFilesystem) -> None:
+    def test_rebac_check(self, admin_client: NexusFS) -> None:
         """rebac_check via auto-dispatch."""
         result = admin_client.rebac_check(
             subject=("user", "admin"),
@@ -392,13 +392,13 @@ class TestAutoDispatchedMethods:
         )
         assert result is True
 
-    def test_get_etag(self, admin_client: NexusFilesystem) -> None:
+    def test_get_etag(self, admin_client: NexusFS) -> None:
         """get_etag via hand-written override with negative cache."""
         etag = admin_client.get_etag("/workspace/proxy-test.txt")
         assert etag is not None
         assert isinstance(etag, str)
 
-    def test_get_etag_nonexistent(self, admin_client: NexusFilesystem) -> None:
+    def test_get_etag_nonexistent(self, admin_client: NexusFS) -> None:
         """get_etag for nonexistent file returns None."""
         etag = admin_client.get_etag("/workspace/does-not-exist-abc.txt")
         assert etag is None
@@ -412,15 +412,15 @@ class TestAutoDispatchedMethods:
 class TestDeprecatedMethods:
     """Test deprecated methods raise NotImplementedError."""
 
-    def test_chmod_deprecated(self, admin_client: NexusFilesystem) -> None:
+    def test_chmod_deprecated(self, admin_client: NexusFS) -> None:
         with pytest.raises(NotImplementedError, match="rebac_create"):
             admin_client.chmod("/workspace/test.txt", 0o755)
 
-    def test_chown_deprecated(self, admin_client: NexusFilesystem) -> None:
+    def test_chown_deprecated(self, admin_client: NexusFS) -> None:
         with pytest.raises(NotImplementedError, match="rebac_create"):
             admin_client.chown("/workspace/test.txt", "owner")
 
-    def test_grant_user_deprecated(self, admin_client: NexusFilesystem) -> None:
+    def test_grant_user_deprecated(self, admin_client: NexusFS) -> None:
         with pytest.raises(NotImplementedError, match="rebac_create"):
             admin_client.grant_user("user1", "/workspace/test.txt", "read")
 
@@ -434,7 +434,7 @@ class TestPerformance:
     """Verify proxy dispatch doesn't add significant overhead."""
 
     @pytest.mark.asyncio
-    async def test_write_read_latency(self, admin_client: NexusFilesystem) -> None:
+    async def test_write_read_latency(self, admin_client: NexusFS) -> None:
         """Write+read round-trip should be under 500ms (localhost)."""
         start = time.monotonic()
         admin_client.write("/workspace/perf-test.txt", b"performance test payload")
@@ -446,7 +446,7 @@ class TestPerformance:
         admin_client.delete("/workspace/perf-test.txt")
 
     @pytest.mark.asyncio
-    async def test_list_latency(self, admin_client: NexusFilesystem) -> None:
+    async def test_list_latency(self, admin_client: NexusFS) -> None:
         """List should be under 200ms (auto-dispatched via proxy)."""
         start = time.monotonic()
         files = admin_client.sys_readdir("/workspace")
@@ -455,7 +455,7 @@ class TestPerformance:
         assert elapsed < 0.2, f"List took {elapsed:.3f}s, expected < 0.2s"
 
     @pytest.mark.asyncio
-    async def test_exists_latency(self, admin_client: NexusFilesystem) -> None:
+    async def test_exists_latency(self, admin_client: NexusFS) -> None:
         """Exists should be under 200ms (hand-written with negative cache)."""
         start = time.monotonic()
         admin_client.access("/workspace/proxy-test.txt")
@@ -463,7 +463,7 @@ class TestPerformance:
         assert elapsed < 0.2, f"Exists took {elapsed:.3f}s, expected < 0.2s"
 
     @pytest.mark.asyncio
-    async def test_batch_operations(self, admin_client: NexusFilesystem) -> None:
+    async def test_batch_operations(self, admin_client: NexusFS) -> None:
         """5 sequential writes + reads should complete under 10s."""
         start = time.monotonic()
         for i in range(5):
@@ -487,13 +487,13 @@ class TestPerformance:
 class TestVirtualSubclass:
     """Test that isinstance works with virtual subclass registration."""
 
-    def test_isinstance_nexus_filesystem(self, admin_client: NexusFilesystem) -> None:
-        from nexus.contracts.filesystem.filesystem_abc import NexusFilesystem
+    def test_isinstance_nexus_filesystem(self, admin_client: NexusFS) -> None:
+        from nexus.core.nexus_fs import NexusFS
 
-        assert isinstance(admin_client, NexusFilesystem)
+        assert isinstance(admin_client, NexusFS)
 
-    def test_isinstance_remote_nexusfs(self, admin_client: NexusFilesystem) -> None:
-        assert isinstance(admin_client, NexusFilesystem)
+    def test_isinstance_remote_nexusfs(self, admin_client: NexusFS) -> None:
+        assert isinstance(admin_client, NexusFS)
 
 
 # =============================================================================
@@ -513,7 +513,7 @@ class TestPermissionEnforcement:
     """
 
     @pytest.mark.asyncio
-    async def test_non_admin_denied_write(self, non_admin_client: NexusFilesystem) -> None:
+    async def test_non_admin_denied_write(self, non_admin_client: NexusFS) -> None:
         """Non-admin user without permissions should be denied write."""
         from nexus.contracts.exceptions import NexusError
 
@@ -521,7 +521,7 @@ class TestPermissionEnforcement:
             non_admin_client.write("/workspace/unauthorized.txt", b"should fail")
 
     @pytest.mark.asyncio
-    async def test_non_admin_denied_read(self, non_admin_client: NexusFilesystem) -> None:
+    async def test_non_admin_denied_read(self, non_admin_client: NexusFS) -> None:
         """Non-admin user without permissions should be denied read."""
         from nexus.contracts.exceptions import NexusError
 
@@ -529,7 +529,7 @@ class TestPermissionEnforcement:
             non_admin_client.sys_read("/workspace/proxy-test.txt")
 
     @pytest.mark.asyncio
-    async def test_non_admin_list_filtered(self, non_admin_client: NexusFilesystem) -> None:
+    async def test_non_admin_list_filtered(self, non_admin_client: NexusFS) -> None:
         """Non-admin list is filtered by permissions (empty or error)."""
         from nexus.contracts.exceptions import NexusError
 
@@ -541,7 +541,7 @@ class TestPermissionEnforcement:
             # Server may deny the list operation entirely
             pass
 
-    def test_non_admin_denied_delete(self, non_admin_client: NexusFilesystem) -> None:
+    def test_non_admin_denied_delete(self, non_admin_client: NexusFS) -> None:
         """Non-admin user without permissions should be denied delete."""
         from nexus.contracts.exceptions import NexusError
 

@@ -10,12 +10,9 @@ import json
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from nexus.bricks.mcp.models import MCPToolConfig, MCPToolDefinition, MCPToolExample
-
-if TYPE_CHECKING:
-    from nexus.contracts.filesystem.filesystem_abc import NexusFilesystem
 
 logger = logging.getLogger(__name__)
 
@@ -517,7 +514,7 @@ class MCPToolExporter:
     # Output path for exported tools
     OUTPUT_PATH = "/skills/system/mcp-tools/nexus/"
 
-    def __init__(self, filesystem: "NexusFilesystem | None" = None):
+    def __init__(self, filesystem: Any | None = None):
         """Initialize exporter.
 
         Args:

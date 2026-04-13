@@ -93,7 +93,7 @@ class TestRenderDryRun:
 
 
 def _make_mock_nx() -> MagicMock:
-    """Create a mock NexusFilesystem that tracks calls."""
+    """Create a mock NexusFS that tracks calls."""
     nx = MagicMock()
     nx.close = MagicMock()
     nx.access = MagicMock(return_value=True)

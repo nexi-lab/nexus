@@ -15,7 +15,7 @@ class _MockMountMode(Enum):
 
 @pytest.fixture()
 def mock_nexus_fs() -> MagicMock:
-    """Mock NexusFilesystem with standard methods."""
+    """Mock NexusFS with standard methods."""
     fs = MagicMock()
     # NexusFS syscalls are sync def — use MagicMock
     fs.access = MagicMock(return_value=True)

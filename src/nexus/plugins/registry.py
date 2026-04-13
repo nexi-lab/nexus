@@ -1,16 +1,20 @@
 """Plugin registry and discovery system."""
 
+from __future__ import annotations
+
 import importlib.metadata
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import yaml
 
-from nexus.contracts.filesystem.filesystem_abc import NexusFilesystem
 from nexus.lib.registry import BaseRegistry
 from nexus.plugins.base import NexusPlugin, PluginMetadata
+
+if TYPE_CHECKING:
+    from nexus.core.nexus_fs import NexusFS
 
 logger = logging.getLogger(__name__)
 
@@ -39,11 +43,11 @@ class PluginRegistry(BaseRegistry[NexusPlugin]):
     configuration.
     """
 
-    def __init__(self, nexus_fs: NexusFilesystem | None = None, config_dir: Path | None = None):
+    def __init__(self, nexus_fs: NexusFS | None = None, config_dir: Path | None = None):
         """Initialize plugin registry.
 
         Args:
-            nexus_fs: NexusFilesystem instance to pass to plugins
+            nexus_fs: NexusFS instance to pass to plugins
             config_dir: Directory for plugin configurations (default: ~/.nexus/plugins)
         """
         super().__init__(name="plugins")

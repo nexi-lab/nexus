@@ -4,20 +4,24 @@ This module implements a Model Context Protocol (MCP) server that exposes
 Nexus functionality to AI agents and tools using the fastmcp framework.
 """
 
+from __future__ import annotations
+
 import contextlib
 import contextvars
 import inspect
 import json
 import logging
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from cachetools import LRUCache
 from fastmcp import Context, FastMCP
 
 from nexus.bricks.mcp.formatters import format_response
 from nexus.bricks.mcp.tool_utils import handle_tool_errors, tool_error
-from nexus.contracts.filesystem.filesystem_abc import NexusFilesystem
 from nexus.lib.pagination import build_paginated_list_response
+
+if TYPE_CHECKING:
+    from nexus.core.nexus_fs import NexusFS
 
 logger = logging.getLogger(__name__)
 
@@ -75,13 +79,13 @@ def reset_request_api_key(token: contextvars.Token[str | None]) -> None:
     _request_api_key.reset(token)
 
 
-def _resolve_mcp_operation_context(nx_instance: NexusFilesystem) -> Any:
+def _resolve_mcp_operation_context(nx_instance: NexusFS) -> Any:
     """Resolve an explicit ``OperationContext`` for MCP search calls.
 
     Codex review #3 finding #1: the previous MCP grep/glob handlers
     called ``SearchService`` without any ``OperationContext`` at all,
     so permission filtering relied on whatever the underlying
-    NexusFilesystem connection happened to enforce at the
+    NexusFS connection happened to enforce at the
     service-lookup layer. On any deployment where the default
     connection is wider than the per-request subject, that was a
     tenant-isolation hole: an MCP caller could search a broader
@@ -157,7 +161,7 @@ def _resolve_mcp_operation_context(nx_instance: NexusFilesystem) -> Any:
     # remote mode (server re-authenticates via API key anyway).
     logger.warning(
         "MCP search tool could not resolve an explicit OperationContext "
-        "from the NexusFilesystem (no _init_cred, no _default_context, "
+        "from the NexusFS (no _init_cred, no _default_context, "
         "no whoami identity). Falling back to SearchService's default "
         "context — the server-side auth layer remains the source of truth."
     )
@@ -165,7 +169,7 @@ def _resolve_mcp_operation_context(nx_instance: NexusFilesystem) -> Any:
 
 
 async def create_mcp_server(
-    nx: NexusFilesystem | None = None,
+    nx: NexusFS | None = None,
     name: str = "nexus",
     remote_url: str | None = None,
     api_key: str | None = None,
@@ -175,7 +179,7 @@ async def create_mcp_server(
     """Create an MCP server for Nexus operations.
 
     Args:
-        nx: NexusFilesystem instance (if None, will auto-connect)
+        nx: NexusFS instance (if None, will auto-connect)
         name: Server name (default: "nexus")
         remote_url: Remote Nexus URL for connecting to remote server
         api_key: Optional API key for remote server authentication (default)
@@ -253,13 +257,13 @@ async def create_mcp_server(
 
     # Store default connection and config for per-request API key support
     assert nx is not None  # guaranteed by the if-block above
-    _default_nx: NexusFilesystem = nx
+    _default_nx: NexusFS = nx
     _remote_url = remote_url
 
     # Connection pool for per-request API keys (bounded LRU, cached by API key)
-    _connection_cache: LRUCache[str, NexusFilesystem] = LRUCache(maxsize=256)
+    _connection_cache: LRUCache[str, NexusFS] = LRUCache(maxsize=256)
 
-    def _get_nexus_instance(_ctx: Context | None = None) -> NexusFilesystem:
+    def _get_nexus_instance(_ctx: Context | None = None) -> NexusFS:
         """Get Nexus instance for current request using context API key.
 
         This function checks if infrastructure has set a per-request API key
@@ -270,7 +274,7 @@ async def create_mcp_server(
             ctx: Optional FastMCP Context object (if available from tool)
 
         Returns:
-            NexusFilesystem instance (default or per-request based on context)
+            NexusFS instance (default or per-request based on context)
 
         Note:
             Per-request API keys are only supported when remote_url is configured.
@@ -303,7 +307,7 @@ async def create_mcp_server(
 
         import nexus as _nexus
 
-        def _connect_sync() -> NexusFilesystem:
+        def _connect_sync() -> NexusFS:
             return asyncio.run(
                 _nexus.connect(
                     config={"profile": "remote", "url": _remote_url, "api_key": request_api_key}

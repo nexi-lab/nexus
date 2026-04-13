@@ -52,7 +52,7 @@ def connect_to_nexus(tenant_id: str = "openai-memory-demo", agent_id: str = "mem
         agent_id: Agent identifier for memory scoping
 
     Returns:
-        NexusFilesystem instance
+        NexusFS instance
     """
     server_url = os.getenv("NEXUS_SERVER_URL", "http://136.117.224.98")
     api_key = os.getenv("NEXUS_API_KEY")
@@ -99,7 +99,7 @@ def create_memory_tools(nx):
     Create memory-enabled tools using Nexus Memory API.
 
     Args:
-        nx: NexusFilesystem instance
+        nx: NexusFS instance
 
     Returns:
         List of function tools for memory operations

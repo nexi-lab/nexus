@@ -23,15 +23,12 @@ import os
 import webbrowser
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from nexus.bricks.mcp.klavis_client import KlavisClient, KlavisError
 from nexus.bricks.mcp.models import MCPMount
 from nexus.bricks.mcp.mount import MCPMountManager
 from nexus.bricks.mcp.provider_registry import MCPProviderRegistry, ProviderConfig, ProviderType
-
-if TYPE_CHECKING:
-    from nexus.contracts.filesystem.filesystem_abc import NexusFilesystem
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +105,7 @@ class MCPConnectionManager:
 
     def __init__(
         self,
-        filesystem: "NexusFilesystem | None" = None,
+        filesystem: Any | None = None,
         registry: MCPProviderRegistry | None = None,
         klavis_api_key: str | None = None,
     ):

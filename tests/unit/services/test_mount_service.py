@@ -41,7 +41,7 @@ def mock_mount_manager():
 
 @pytest.fixture
 def mock_nexus_fs():
-    """Create a mock NexusFilesystem."""
+    """Create a mock NexusFS."""
     fs = MagicMock()
     fs.mkdir = MagicMock()
     fs.sys_write = MagicMock()

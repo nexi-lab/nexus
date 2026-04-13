@@ -35,7 +35,7 @@ SYSCALL_METHODS = {
 
 # Files to SKIP (definitions themselves, or non-Python)
 SKIP_PATHS = {
-    "src/nexus/contracts/filesystem/filesystem_abc.py",
+    # filesystem_abc.py was deleted (NexusFilesystem Protocol removed)
     "scripts/migrate_async_syscalls.py",
 }
 

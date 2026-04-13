@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 from fuse import FUSE
 
 if TYPE_CHECKING:
-    from nexus.contracts.filesystem.filesystem_abc import NexusFilesystem
+    from nexus.core.nexus_fs import NexusFS
 
 from nexus.fuse.operations import NexusFUSEOperations
 
@@ -55,7 +55,7 @@ class NexusFUSE:
 
     def __init__(
         self,
-        nexus_fs: "NexusFilesystem",
+        nexus_fs: "NexusFS",
         mount_point: str,
         mode: MountMode = MountMode.SMART,
         cache_config: dict[str, int | bool] | None = None,
@@ -434,7 +434,7 @@ class NexusFUSE:
 
 
 def mount_nexus(
-    nexus_fs: "NexusFilesystem",
+    nexus_fs: "NexusFS",
     mount_point: str,
     mode: str = "smart",
     foreground: bool = True,

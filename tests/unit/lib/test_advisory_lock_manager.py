@@ -10,11 +10,10 @@ import pytest
 from nexus.lib.distributed_lock import ExtendResult, LocalLockManager
 from nexus.lib.semaphore import PythonVFSSemaphore
 
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-
-
 @pytest.fixture
 def sem():
     return PythonVFSSemaphore()
@@ -30,154 +29,142 @@ def mgr(sem):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_acquire_release(mgr):
+def test_acquire_release(mgr):
     """acquire returns lock_id, release returns True."""
-    lock_id = await mgr.acquire("/file.txt")
+    lock_id = mgr.acquire("/file.txt")
     assert lock_id is not None
     assert isinstance(lock_id, str)
     assert len(lock_id) == 36  # UUID format
 
-    released = await mgr.release(lock_id, "/file.txt")
+    released = mgr.release(lock_id, "/file.txt")
     assert released is True
 
 
-@pytest.mark.asyncio
-async def test_acquire_timeout_zero(mgr):
+def test_acquire_timeout_zero(mgr):
     """acquire with timeout=0 returns None on contention."""
     # Hold a lock so the second acquire contends
-    first = await mgr.acquire("/busy")
+    first = mgr.acquire("/busy")
     assert first is not None
 
-    result = await mgr.acquire("/busy", timeout=0)
+    result = mgr.acquire("/busy", timeout=0)
     assert result is None
 
     # Cleanup
-    await mgr.release(first, "/busy")
+    mgr.release(first, "/busy")
 
 
-@pytest.mark.asyncio
-async def test_acquire_retry_succeeds(mgr, sem):
+def test_acquire_retry_succeeds(mgr, sem):
     """acquire retries until success within timeout."""
-    import asyncio
+    import threading
 
     # Hold a lock, then release it after a short delay
-    first = await mgr.acquire("/contested")
+    first = mgr.acquire("/contested")
     assert first is not None
 
-    async def release_after_delay():
-        await asyncio.sleep(0.05)
-        await mgr.release(first, "/contested")
+    def release_after_delay():
+        time.sleep(0.05)
+        mgr.release(first, "/contested")
 
-    task = asyncio.create_task(release_after_delay())
-    lock_id = await mgr.acquire("/contested", timeout=2.0)
+    t = threading.Thread(target=release_after_delay)
+    t.start()
+    lock_id = mgr.acquire("/contested", timeout=2.0)
     assert lock_id is not None
-    await task
+    t.join()
 
     # Cleanup
-    await mgr.release(lock_id, "/contested")
+    mgr.release(lock_id, "/contested")
 
 
-@pytest.mark.asyncio
-async def test_acquire_retry_timeout(mgr):
+def test_acquire_retry_timeout(mgr):
     """acquire returns None when timeout expires during retries."""
     # Hold a lock and never release it
-    first = await mgr.acquire("/held")
+    first = mgr.acquire("/held")
     assert first is not None
 
     t0 = time.monotonic()
-    result = await mgr.acquire("/held", timeout=0.15)
+    result = mgr.acquire("/held", timeout=0.15)
     elapsed = time.monotonic() - t0
 
     assert result is None
     assert elapsed >= 0.1  # at least a couple retries
 
     # Cleanup
-    await mgr.release(first, "/held")
+    mgr.release(first, "/held")
 
 
-@pytest.mark.asyncio
-async def test_extend(mgr):
+def test_extend(mgr):
     """extend returns ExtendResult with success=True."""
-    lock_id = await mgr.acquire("/file.txt")
+    lock_id = mgr.acquire("/file.txt")
     assert lock_id is not None
 
-    result = await mgr.extend(lock_id, "/file.txt", ttl=60.0)
+    result = mgr.extend(lock_id, "/file.txt", ttl=60.0)
     assert isinstance(result, ExtendResult)
     assert result.success is True
     assert result.lock_info is not None
     assert result.lock_info.path == "/file.txt"
 
     # Cleanup
-    await mgr.release(lock_id, "/file.txt")
+    mgr.release(lock_id, "/file.txt")
 
 
-@pytest.mark.asyncio
-async def test_extend_failure(mgr):
+def test_extend_failure(mgr):
     """extend returns success=False when lock_id is unknown."""
-    result = await mgr.extend("bad-id", "/file.txt")
+    result = mgr.extend("bad-id", "/file.txt")
     assert result.success is False
     assert result.lock_info is None
 
 
-@pytest.mark.asyncio
-async def test_release_unknown(mgr):
+def test_release_unknown(mgr):
     """release unknown lock_id returns False."""
-    released = await mgr.release("nonexistent", "/file.txt")
+    released = mgr.release("nonexistent", "/file.txt")
     assert released is False
 
 
-@pytest.mark.asyncio
-async def test_semaphore_mode(mgr):
+def test_semaphore_mode(mgr):
     """acquire with max_holders>1 allows multiple holders."""
-    holder1 = await mgr.acquire("/slots", max_holders=5)
-    holder2 = await mgr.acquire("/slots", max_holders=5)
+    holder1 = mgr.acquire("/slots", max_holders=5)
+    holder2 = mgr.acquire("/slots", max_holders=5)
     assert holder1 is not None
     assert holder2 is not None
     assert holder1 != holder2
 
     # Cleanup
-    await mgr.release(holder1, "/slots")
-    await mgr.release(holder2, "/slots")
+    mgr.release(holder1, "/slots")
+    mgr.release(holder2, "/slots")
 
 
-@pytest.mark.asyncio
-async def test_health_check(mgr):
+def test_health_check(mgr):
     """health_check always returns True for local semaphore."""
-    assert await mgr.health_check() is True
+    assert mgr.health_check() is True
 
 
-@pytest.mark.asyncio
-async def test_force_release(mgr):
+def test_force_release(mgr):
     """force_release removes all holders."""
-    lock_id = await mgr.acquire("/locked")
+    lock_id = mgr.acquire("/locked")
     assert lock_id is not None
 
-    result = await mgr.force_release("/locked")
+    result = mgr.force_release("/locked")
     assert result is True
 
     # Should no longer be locked
     assert mgr.is_locked("/locked") is False
 
 
-@pytest.mark.asyncio
-async def test_force_release_no_lock(mgr):
+def test_force_release_no_lock(mgr):
     """force_release returns False when no lock exists."""
-    result = await mgr.force_release("/not-locked")
+    result = mgr.force_release("/not-locked")
     assert result is False
 
 
-@pytest.mark.asyncio
-async def test_get_lock_info_none(mgr):
+def test_get_lock_info_none(mgr):
     """get_lock_info returns None when not locked."""
     info = mgr.get_lock_info("/file.txt")
     assert info is None
 
 
-@pytest.mark.asyncio
-async def test_get_lock_info_with_data(mgr):
+def test_get_lock_info_with_data(mgr):
     """get_lock_info returns LockInfo when locked."""
-    lock_id = await mgr.acquire("/file.txt")
+    lock_id = mgr.acquire("/file.txt")
     assert lock_id is not None
 
     info = mgr.get_lock_info("/file.txt")
@@ -188,14 +175,13 @@ async def test_get_lock_info_with_data(mgr):
     assert info.holders[0].lock_id == lock_id
 
     # Cleanup
-    await mgr.release(lock_id, "/file.txt")
+    mgr.release(lock_id, "/file.txt")
 
 
-@pytest.mark.asyncio
-async def test_get_lock_info_semaphore(mgr):
+def test_get_lock_info_semaphore(mgr):
     """get_lock_info reports mode='semaphore' when multiple holders."""
-    h1 = await mgr.acquire("/slots", max_holders=3)
-    h2 = await mgr.acquire("/slots", max_holders=3)
+    h1 = mgr.acquire("/slots", max_holders=3)
+    h2 = mgr.acquire("/slots", max_holders=3)
     assert h1 is not None
     assert h2 is not None
 
@@ -204,22 +190,20 @@ async def test_get_lock_info_semaphore(mgr):
     assert info.mode == "semaphore"
 
     # Cleanup
-    await mgr.release(h1, "/slots")
-    await mgr.release(h2, "/slots")
+    mgr.release(h1, "/slots")
+    mgr.release(h2, "/slots")
 
 
-@pytest.mark.asyncio
-async def test_list_locks_empty(mgr):
+def test_list_locks_empty(mgr):
     """list_locks returns empty list when no locks."""
     locks = mgr.list_locks()
     assert locks == []
 
 
-@pytest.mark.asyncio
-async def test_list_locks_with_pattern(mgr):
+def test_list_locks_with_pattern(mgr):
     """list_locks filters by pattern."""
-    h1 = await mgr.acquire("/a/file.txt")
-    h2 = await mgr.acquire("/b/other.txt")
+    h1 = mgr.acquire("/a/file.txt")
+    h2 = mgr.acquire("/b/other.txt")
     assert h1 is not None
     assert h2 is not None
 
@@ -228,28 +212,26 @@ async def test_list_locks_with_pattern(mgr):
     assert locks[0].path == "/a/file.txt"
 
     # Cleanup
-    await mgr.release(h1, "/a/file.txt")
-    await mgr.release(h2, "/b/other.txt")
+    mgr.release(h1, "/a/file.txt")
+    mgr.release(h2, "/b/other.txt")
 
 
-@pytest.mark.asyncio
-async def test_is_locked(mgr):
+def test_is_locked(mgr):
     """is_locked returns True when locked, False otherwise."""
     assert mgr.is_locked("/file.txt") is False
 
-    lock_id = await mgr.acquire("/file.txt")
+    lock_id = mgr.acquire("/file.txt")
     assert lock_id is not None
     assert mgr.is_locked("/file.txt") is True
 
     # Cleanup
-    await mgr.release(lock_id, "/file.txt")
+    mgr.release(lock_id, "/file.txt")
 
 
-@pytest.mark.asyncio
-async def test_max_holders_validation(mgr):
+def test_max_holders_validation(mgr):
     """max_holders < 1 raises ValueError."""
     with pytest.raises(ValueError, match="max_holders must be >= 1"):
-        await mgr.acquire("/file.txt", max_holders=0)
+        mgr.acquire("/file.txt", max_holders=0)
 
 
 # ---------------------------------------------------------------------------
@@ -257,11 +239,10 @@ async def test_max_holders_validation(mgr):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_shared_locks_coexist(mgr):
+def test_shared_locks_coexist(mgr):
     """Two shared locks on same path succeed."""
-    h1 = await mgr.acquire("/shared.txt", mode="shared")
-    h2 = await mgr.acquire("/shared.txt", mode="shared")
+    h1 = mgr.acquire("/shared.txt", mode="shared")
+    h2 = mgr.acquire("/shared.txt", mode="shared")
     assert h1 is not None
     assert h2 is not None
     assert h1 != h2
@@ -270,19 +251,18 @@ async def test_shared_locks_coexist(mgr):
     assert mgr.is_locked("/shared.txt") is True
 
     # Cleanup
-    await mgr.release(h1, "/shared.txt")
-    await mgr.release(h2, "/shared.txt")
+    mgr.release(h1, "/shared.txt")
+    mgr.release(h2, "/shared.txt")
 
 
-@pytest.mark.asyncio
-async def test_exclusive_blocks_shared(mgr):
+def test_exclusive_blocks_shared(mgr):
     """An exclusive lock blocks new shared locks (attempt with timeout=0 should fail)."""
-    excl = await mgr.acquire("/exclusive.txt", mode="exclusive")
+    excl = mgr.acquire("/exclusive.txt", mode="exclusive")
     assert excl is not None
 
     # Shared lock should fail with timeout=0 because exclusive holds the gate
-    shared = await mgr.acquire("/exclusive.txt", mode="shared", timeout=0)
+    shared = mgr.acquire("/exclusive.txt", mode="shared", timeout=0)
     assert shared is None
 
     # Cleanup
-    await mgr.release(excl, "/exclusive.txt")
+    mgr.release(excl, "/exclusive.txt")

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -12,15 +12,15 @@ from nexus.services.agent_runtime.system_prompt import (
 )
 
 
-def _make_sys_read(files: dict[str, str]) -> AsyncMock:
+def _make_sys_read(files: dict[str, str]) -> MagicMock:
     """Create a mock sys_read that returns bytes for known paths."""
 
-    async def _read(path: str) -> bytes:
+    def _read(path: str) -> bytes:
         if path in files:
             return files[path].encode("utf-8")
         raise FileNotFoundError(path)
 
-    return AsyncMock(side_effect=_read)
+    return MagicMock(side_effect=_read)
 
 
 class TestAssembleSystemPrompt:

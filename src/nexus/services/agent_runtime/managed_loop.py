@@ -37,7 +37,7 @@ import asyncio
 import json
 import logging
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.exceptions import BackendError
@@ -68,9 +68,9 @@ logger = logging.getLogger(__name__)
 _DEFAULT_MAX_RETRIES = 5
 _DEFAULT_BASE_DELAY = 1.0  # seconds
 
-# Kernel syscall callables (injected from NexusFS).
-SysReadFn = Callable[[str], Awaitable[bytes]]
-SysWriteFn = Callable[[str, bytes], Awaitable[Any]]
+# Kernel syscall callables (injected from NexusFS — all sync after PR #3717).
+SysReadFn = Callable[[str], bytes]
+SysWriteFn = Callable[[str, bytes], Any]
 # StreamReadFn: (path, offset) → (data, next_offset)
 # Now sync (blocking) — callers in async context wrap via asyncio.to_thread.
 StreamReadFn = Callable[[str, int], tuple[bytes, int]]
@@ -198,7 +198,7 @@ class ManagedAgentLoop:
             self._tools = self._tool_registry.schemas()
         if not self._tools:
             try:
-                tools_bytes = await self._sys_read(f"{self._agent_path}/tools.json")
+                tools_bytes = self._sys_read(f"{self._agent_path}/tools.json")
                 self._tools = json.loads(tools_bytes)
             except Exception:
                 logger.debug("No tools config at %s/tools.json", self._agent_path)
@@ -455,13 +455,13 @@ class ManagedAgentLoop:
         try:
             if name == "read_file":
                 path = args.get("path", "")
-                data = await self._sys_read(path)
+                data = self._sys_read(path)
                 return data.decode("utf-8", errors="replace")
 
             elif name == "write_file":
                 path = args.get("path", "")
                 content = args.get("content", "")
-                await self._sys_write(path, content.encode("utf-8"))
+                self._sys_write(path, content.encode("utf-8"))
                 return json.dumps({"status": "ok", "path": path})
 
             else:
@@ -484,7 +484,7 @@ class ManagedAgentLoop:
         conv_bytes = json.dumps(self._messages, separators=(",", ":"), ensure_ascii=False).encode(
             "utf-8"
         )
-        await self._sys_write(self._conv_path, conv_bytes)
+        self._sys_write(self._conv_path, conv_bytes)
 
     async def _persist_result(self, result: AgentTurnResult) -> None:
         """Persist turn result to proc filesystem via VFS."""
@@ -498,14 +498,14 @@ class ManagedAgentLoop:
         }
         result_bytes = json.dumps(result_data, separators=(",", ":")).encode("utf-8")
         try:
-            await self._sys_write(f"{self._proc_path}/result", result_bytes)
+            self._sys_write(f"{self._proc_path}/result", result_bytes)
         except Exception:
             logger.debug("Could not persist result to %s/result", self._proc_path)
 
     async def load_conversation(self) -> None:
         """Resume conversation from VFS (CAS-addressed)."""
         try:
-            conv_bytes = await self._sys_read(self._conv_path)
+            conv_bytes = self._sys_read(self._conv_path)
             self._messages = json.loads(conv_bytes)
         except Exception:
             logger.debug("No conversation to resume at %s", self._conv_path)

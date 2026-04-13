@@ -238,8 +238,8 @@ async def _run_chat(
             return nx.write(path, buf)
 
         loop = ManagedAgentLoop(
-            sys_read=_async_sys_read,
-            sys_write=_async_write,
+            sys_read=nx.sys_read,
+            sys_write=nx.write,
             stream_read=_stream_read_adapter,
             llm_backend=llm_backend,
             agent_path=agent_path,
@@ -248,7 +248,7 @@ async def _run_chat(
             proc_path="/root/proc/chat-0",
             model=model,
             compactor=DefaultCompactionStrategy(
-                sys_write=_async_write,
+                sys_write=nx.write,
                 agent_path=agent_path,
             ),
             cwd=cwd,
@@ -288,12 +288,7 @@ async def _run_acp_mode(
     from nexus.services.agent_runtime.managed_loop import ManagedAgentLoop
     from nexus.services.agent_runtime.observer import AgentObserver
 
-    # Async wrappers for sync NexusFS syscalls (PR #3717: NexusFS is fully sync)
-    async def _async_sys_read(path: str) -> bytes:
-        return bytes(nx.sys_read(path))
-
-    async def _async_write(path: str, buf: bytes) -> dict:
-        return dict(nx.write(path, buf))
+    # NexusFS syscalls are sync (PR #3717). Pass directly to ManagedAgentLoop.
 
     _nx_stream_read = getattr(nx, "_stream_read", None)
 
@@ -306,8 +301,8 @@ async def _run_acp_mode(
     async def _loop_factory(session_id: str, cwd: str, observer: AgentObserver) -> ManagedAgentLoop:
         agent_path = "/root/agents/default"
         loop = ManagedAgentLoop(
-            sys_read=_async_sys_read,
-            sys_write=_async_write,
+            sys_read=nx.sys_read,
+            sys_write=nx.write,
             stream_read=_stream_read_adapter,
             llm_backend=llm_backend,
             agent_path=agent_path,
@@ -316,7 +311,7 @@ async def _run_acp_mode(
             proc_path=f"/root/proc/{session_id[:8]}",
             model=model,
             compactor=DefaultCompactionStrategy(
-                sys_write=_async_write,
+                sys_write=nx.write,
                 agent_path=agent_path,
             ),
             cwd=cwd or os.getcwd(),

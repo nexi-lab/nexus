@@ -18,12 +18,12 @@ import logging
 import os
 import platform
 import subprocess
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
-# Type alias for injected kernel callable
-SysReadFn = Callable[[str], Awaitable[bytes]]
+# Type alias for injected kernel callable (sync after PR #3717)
+SysReadFn = Callable[[str], bytes]
 
 # Optional prompt fragment names (loaded from {agent_path}/prompts/{name}.md)
 _PROMPT_FRAGMENTS = (
@@ -140,7 +140,7 @@ def _get_git_status(cwd: str) -> str:
 async def _read_vfs_text(sys_read: SysReadFn, path: str) -> str:
     """Read a VFS file as UTF-8 text, return empty string on failure."""
     try:
-        data = await sys_read(path)
+        data = sys_read(path)
         return data.decode("utf-8").strip()
     except Exception:
         return ""

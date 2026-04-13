@@ -96,7 +96,7 @@ def _make_vfs_loop(
     stream_tokens: list[bytes] | None = None,
     system_prompt: str = "",
     tools_json: str = "[]",
-) -> tuple[Any, dict[str, AsyncMock]]:
+) -> tuple[Any, dict[str, Any]]:
     """Create ManagedAgentLoop with mocked VFS syscalls."""
     from nexus.services.agent_runtime.managed_loop import ManagedAgentLoop
 
@@ -104,7 +104,7 @@ def _make_vfs_loop(
     read_store: dict[str, bytes] = {}
     write_store: dict[str, bytes] = {}
 
-    async def mock_sys_read(path: str) -> bytes:
+    def mock_sys_read(path: str) -> bytes:
         if path.endswith("/SYSTEM.md"):
             return system_prompt.encode()
         if path.endswith("/tools.json"):
@@ -113,7 +113,7 @@ def _make_vfs_loop(
             return read_store[path]
         raise FileNotFoundError(path)
 
-    async def mock_sys_write(path: str, data: bytes) -> None:
+    def mock_sys_write(path: str, data: bytes) -> None:
         write_store[path] = data
 
     # Mock stream_read: deliver tokens then "done" message
@@ -144,8 +144,8 @@ def _make_vfs_loop(
         return_value={"stream_path": "/zone/llm/.streams/test", "status": "streaming"}
     )
 
-    sys_read_mock = AsyncMock(side_effect=mock_sys_read)
-    sys_write_mock = AsyncMock(side_effect=mock_sys_write)
+    sys_read_mock = MagicMock(side_effect=mock_sys_read)
+    sys_write_mock = MagicMock(side_effect=mock_sys_write)
     stream_read_mock = MagicMock(side_effect=mock_stream_read)
 
     loop = ManagedAgentLoop(

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -139,7 +139,7 @@ class TestAutoCompact:
 
     @pytest.mark.asyncio
     async def test_saves_transcript(self) -> None:
-        sys_write = AsyncMock()
+        sys_write = MagicMock()
         strategy = DefaultCompactionStrategy(
             sys_write=sys_write,
             agent_path="/zone/agents/test",

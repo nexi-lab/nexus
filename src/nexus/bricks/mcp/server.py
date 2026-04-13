@@ -502,6 +502,12 @@ async def create_mcp_server(
             result = _md_section_read(nx_instance, path, content_bytes, section, block_type)
             if result is not None:
                 return result
+            # Section explicitly requested but not found — don't leak full doc.
+            if section not in ("*", "frontmatter"):
+                return tool_error(
+                    f"Section '{section}' not found in {path}. "
+                    f"Use section='*' to list available sections."
+                )
 
         return content_bytes.decode("utf-8", errors="replace")
 

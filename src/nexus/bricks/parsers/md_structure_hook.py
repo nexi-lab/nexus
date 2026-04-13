@@ -64,6 +64,10 @@ class MarkdownStructureWriteHook:
             return
         if not ctx.path.endswith(".md"):
             return
+        # Skip streamed/empty writes — they pass content=b'' with no hash.
+        # Persisting an empty index would poison the cache.
+        if not ctx.content:
+            return
 
         try:
             content_hash = ctx.content_hash or ""
@@ -112,13 +116,12 @@ class MarkdownStructureWriteHook:
                 data = json.loads(raw) if isinstance(raw, str) else raw
                 index = MarkdownStructureIndex.from_dict(data)
 
-                # Lazy hash validation
-                if current_hash and index.content_hash and index.content_hash != current_hash:
+                # Lazy hash validation.
+                # Treat empty content_hash in stored index as stale (streamed writes).
+                if current_hash and (not index.content_hash or index.content_hash != current_hash):
                     logger.debug("Stale md_structure for %s — re-parsing", path)
                     if current_content is not None:
                         return self._reindex(path, current_content, current_hash)
-                    # No content provided — return stale index (caller
-                    # doesn't have content, so we can't re-parse).
                     return index
                 return index
             except (json.JSONDecodeError, KeyError, TypeError):

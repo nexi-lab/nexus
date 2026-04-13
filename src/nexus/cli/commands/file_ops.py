@@ -182,7 +182,7 @@ def cat(
                             except Exception:
                                 file_size = 0
 
-                        if file_size > STREAM_THRESHOLD:
+                        if file_size > STREAM_THRESHOLD and not section:
                             console.print(
                                 f"[nexus.muted]Streaming large file ({file_size:,} bytes)...[/nexus.muted]"
                             )

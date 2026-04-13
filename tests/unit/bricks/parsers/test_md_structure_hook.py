@@ -128,10 +128,9 @@ class TestWriteHook:
     ) -> None:
         ctx = _make_write_ctx("/empty.md", b"")
         hook.on_post_write(ctx)
+        # Empty content is skipped to prevent poisoning the cache
         raw = meta.get_file_metadata("/empty.md", MD_STRUCTURE_KEY)
-        assert raw is not None
-        data = json.loads(raw)
-        assert len(data["sections"]) == 0
+        assert raw is None
 
     def test_no_metadata_no_crash(self) -> None:
         """Hook with no metastore should silently skip."""

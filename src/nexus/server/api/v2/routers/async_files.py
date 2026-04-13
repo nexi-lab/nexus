@@ -843,6 +843,12 @@ def create_async_files_router(
                         content=ReadResponse(content=partial).model_dump_json(),
                         media_type="application/json",
                     )
+                # Section explicitly requested but not found — don't leak full doc.
+                if section not in ("*", "frontmatter"):
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Section '{section}' not found in {path}",
+                    )
 
             if include_metadata and isinstance(result, dict):
                 file_content: str = result["content"]

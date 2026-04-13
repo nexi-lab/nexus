@@ -301,12 +301,13 @@ class TestMdStructureEdgeCases:
         assert "Just text." in result
 
     @pytest.mark.asyncio
-    async def test_missing_section_returns_full(self, mcp_server, md_file):
-        """Requesting a non-existent section falls back to full content."""
+    async def test_missing_section_returns_error(self, mcp_server, md_file):
+        """Requesting a non-existent section returns error, not full content."""
         read_tool = await get_tool(mcp_server, "nexus_read_file")
         result = await read_tool.fn(path=md_file, section="NonexistentSection")
-        # Should fall back to full content
-        assert "# Overview" in result
+        # Should NOT leak full content — should return error
+        assert "Error" in result or "not found" in result
+        assert "# Overview" not in result
 
     @pytest.mark.asyncio
     async def test_empty_md_file(self, mcp_server, nexus_fs):
@@ -321,12 +322,12 @@ class TestMdStructureEdgeCases:
 
     @pytest.mark.asyncio
     async def test_md_no_headings(self, mcp_server, nexus_fs):
-        """Markdown with no headings should handle section param gracefully."""
+        """Markdown with no headings should return error for section requests."""
         await nexus_fs.write("/plain.md", b"Just plain text.\nNo headings here.\n")
         read_tool = await get_tool(mcp_server, "nexus_read_file")
         result = await read_tool.fn(path="/plain.md", section="anything")
-        # Should fall back to full content
-        assert "Just plain text" in result
+        # Should NOT leak full content — section not found
+        assert "Error" in result or "not found" in result
 
     @pytest.mark.asyncio
     async def test_md_frontmatter_only(self, mcp_server, nexus_fs):

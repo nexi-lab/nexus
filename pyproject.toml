@@ -87,6 +87,9 @@ dependencies = [
     "google-auth-oauthlib>=1.2.0", # Google OAuth flow
     "slack-sdk>=3.39.0", # Slack API for Slack connector
     "tiktoken>=0.12", # Token counting for chunking
+    "markdown-it-py>=3.0.0", # CommonMark-compliant markdown AST parser (Issue #3718)
+    "mdit-py-plugins>=0.4.0", # markdown-it-py plugins: front_matter (Issue #3718)
+    "markdown-it-pyrs>=0.3.0", # Rust-backed parser — 10x faster (Issue #3718)
     "dotenv>=0.9.9",
     # MCP Server (v0.7.0)
     "fastmcp>=2.0.0", # Model Context Protocol server

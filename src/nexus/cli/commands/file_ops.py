@@ -97,6 +97,18 @@ def init(path: str) -> None:
     type=str,
     help="Read file content at a historical operation point (time-travel debugging)",
 )
+@click.option(
+    "--section",
+    type=str,
+    default=None,
+    help="(Markdown) Read a specific section by heading text (case-insensitive)",
+)
+@click.option(
+    "--block-type",
+    type=click.Choice(["code", "table"]),
+    default=None,
+    help="(Markdown) Filter by block type within --section",
+)
 @add_output_options
 @add_backend_options
 @add_context_options
@@ -104,6 +116,8 @@ def cat(
     path: str,
     metadata: bool,
     at_operation: str | None,
+    section: str | None,
+    block_type: str | None,
     output_opts: OutputOptions,
     remote_url: str | None,
     remote_api_key: str | None,
@@ -117,7 +131,13 @@ def cat(
         nexus cat /workspace/data.txt --metadata
         nexus cat /workspace/data.txt --json
         nexus cat /workspace/data.txt --at-operation op_abc123
+        nexus cat /workspace/docs/arch.md --section Authentication
+        nexus cat /workspace/docs/arch.md --section Auth --block-type code
+        nexus cat /workspace/docs/arch.md#authentication
     """
+    # Support fragment syntax: /path/file.md#section → path=/path/file.md, section=section
+    if "#" in path and section is None:
+        path, section = path.rsplit("#", 1)
 
     async def _impl() -> None:
         timing = CommandTiming()
@@ -175,6 +195,15 @@ def cat(
 
                         content = nx.sys_read(path, context=cast(Any, operation_context))
                         meta_data = None
+
+                # --- Markdown partial read (Issue #3718) ---
+                if section and path.endswith(".md"):
+                    content_bytes = (
+                        content if isinstance(content, bytes) else content.encode("utf-8")
+                    )
+                    partial = _cat_md_section(nx, path, content_bytes, section, block_type)
+                    if partial is not None:
+                        content = partial.encode("utf-8")
 
             # JSON mode: return structured data
             if output_opts.json_output:
@@ -283,6 +312,32 @@ def _cat_time_travel(
         console.print("[bold]Content:[/bold]")
 
     _print_content(path, content)
+
+
+def _cat_md_section(
+    nx: Any,
+    path: str,
+    content: bytes,
+    section: str,
+    block_type: str | None,
+) -> str | None:
+    """Attempt a partial markdown read using the structural index (Issue #3718)."""
+    try:
+        hook = nx.service("md_structure") if hasattr(nx, "service") else None
+        if hook is None or not hasattr(hook, "read_section"):
+            return None
+        content_hash = ""
+        meta = getattr(nx, "metadata", None)
+        if meta is not None:
+            try:
+                raw_meta = meta.get_file_metadata(path, "etag")
+                if raw_meta:
+                    content_hash = str(raw_meta)
+            except Exception:
+                pass
+        return hook.read_section(path, content, content_hash, section, block_type)
+    except Exception:
+        return None
 
 
 def _print_content(path: str, content: bytes) -> None:

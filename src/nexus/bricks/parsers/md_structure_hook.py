@@ -100,6 +100,12 @@ class MarkdownStructureWriteHook:
         if self._metadata is None:
             return None
 
+        # If the caller can't provide a hash (e.g. connector paths with no
+        # authoritative etag), skip the cache entirely and parse from content.
+        # This prevents stale cached indices from serving wrong byte ranges.
+        if not current_hash and current_content is not None:
+            return self._reindex(path, current_content, "")
+
         raw = self._metadata.get_file_metadata(path, MD_STRUCTURE_KEY)
         if raw is not None:
             try:
@@ -218,19 +224,16 @@ class MarkdownStructureWriteHook:
 
     def _reindex(
         self,
-        path: str,
+        _path: str,
         content: bytes,
         content_hash: str,
     ) -> MarkdownStructureIndex:
-        """Re-parse and store updated index."""
-        index = parse_markdown_structure(content, content_hash=content_hash)
-        if self._metadata is not None:
-            try:
-                self._metadata.set_file_metadata(
-                    path,
-                    MD_STRUCTURE_KEY,
-                    json.dumps(index.to_dict()),
-                )
-            except Exception:
-                logger.debug("Failed to store re-indexed md_structure for %s", path, exc_info=True)
-        return index
+        """Re-parse on demand (in-memory only — never persisted from read path).
+
+        Only the write hook (``on_post_write``) persists the index, because it
+        has an atomically-consistent content/hash pair.  Read-side rebuilds
+        cannot guarantee the caller-supplied hash matches the content bytes
+        (a write between the read and the hash fetch would create a mismatch),
+        so we return an ephemeral index without writing to the metastore.
+        """
+        return parse_markdown_structure(content, content_hash=content_hash)

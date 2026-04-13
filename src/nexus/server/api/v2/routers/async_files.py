@@ -799,7 +799,14 @@ def create_async_files_router(
                         )
 
             if connector_content is not None:
-                # Connector fast path — return content directly
+                # Connector fast path — apply section filtering before returning.
+                if section and path.endswith(".md"):
+                    partial = _md_partial_read(fs, path, connector_content, section, block_type)
+                    if partial is not None:
+                        return Response(
+                            content=ReadResponse(content=partial).model_dump_json(),
+                            media_type="application/json",
+                        )
                 text = connector_content.decode("utf-8", errors="replace")
                 if include_metadata:
                     resp = ReadResponse(

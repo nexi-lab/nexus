@@ -116,7 +116,7 @@ class NexusFilesystem(Protocol):
 
     # ── Locking ────────────────────────────────────────────────────
 
-    async def sys_lock(
+    def sys_lock(
         self,
         path: str,
         mode: str = "exclusive",
@@ -126,7 +126,7 @@ class NexusFilesystem(Protocol):
         context: "OperationContext | None" = None,
     ) -> str | None: ...
 
-    async def sys_unlock(
+    def sys_unlock(
         self, path: str, lock_id: str, *, context: "OperationContext | None" = None
     ) -> bool: ...
 
@@ -164,7 +164,7 @@ class NexusFilesystem(Protocol):
 
     def is_directory(self, path: str, *, context: OperationContext | None = None) -> bool: ...
 
-    async def lock(
+    def lock(
         self,
         path: str,
         mode: str = "exclusive",
@@ -175,7 +175,7 @@ class NexusFilesystem(Protocol):
         context: "OperationContext | None" = None,
     ) -> str | None: ...
 
-    async def unlock(
+    def unlock(
         self, lock_id: str, path: str, *, context: "OperationContext | None" = None
     ) -> bool: ...
 

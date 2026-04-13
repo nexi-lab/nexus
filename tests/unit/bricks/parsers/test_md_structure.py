@@ -237,6 +237,20 @@ More content.
         assert len(idx.sections) == 1
         assert idx.sections[0].heading == "Section"
 
+    def test_code_block_inside_blockquote(self) -> None:
+        """Code blocks nested inside blockquotes must be indexed."""
+        doc = b"## Section\n\n> Some quote:\n>\n> ```python\n> nested_code()\n> ```\n"
+        idx = parse_markdown_structure(doc)
+        code_blocks = filter_blocks(idx.sections[0], "code")
+        assert len(code_blocks) >= 1, "Code block inside blockquote was not indexed"
+
+    def test_code_block_inside_list_item(self) -> None:
+        """Code blocks nested inside list items must be indexed."""
+        doc = b"## Section\n\n- Item one\n\n  ```python\n  list_code()\n  ```\n\n- Item two\n"
+        idx = parse_markdown_structure(doc)
+        code_blocks = filter_blocks(idx.sections[0], "code")
+        assert len(code_blocks) >= 1, "Code block inside list item was not indexed"
+
     def test_section_boundary_respects_depth(self) -> None:
         """H2 section ends at next H2, not at nested H3."""
         doc = b"## A\nContent A.\n### A.1\nNested.\n## B\nContent B.\n"

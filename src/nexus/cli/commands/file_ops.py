@@ -330,9 +330,9 @@ def _cat_md_section(
         meta = getattr(nx, "metadata", None)
         if meta is not None:
             try:
-                raw_meta = meta.get_file_metadata(path, "etag")
-                if raw_meta:
-                    content_hash = str(raw_meta)
+                file_meta = meta.get(path)
+                if file_meta and file_meta.etag:
+                    content_hash = file_meta.etag
             except Exception:
                 pass
         return hook.read_section(path, content, content_hash, section, block_type)

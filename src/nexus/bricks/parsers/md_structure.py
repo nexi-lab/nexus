@@ -278,10 +278,14 @@ def _parse_rust(content: bytes, content_hash: str) -> MarkdownStructureIndex:
     blocks: list[BlockInfo] = []
     frontmatter: FrontmatterInfo | None = None
 
-    for node in tree.children:
+    def _walk(node: Any) -> None:
+        """Recursively walk the AST to find blocks nested inside containers."""
+        nonlocal frontmatter
         srcmap = node.srcmap
         if not srcmap:
-            continue
+            for child in node.children:
+                _walk(child)
+            return
 
         byte_start, byte_end = srcmap
 
@@ -356,6 +360,13 @@ def _parse_rust(content: bytes, content_hash: str) -> MarkdownStructureIndex:
                 )
             )
 
+        # Recurse into container blocks (blockquotes, list items, etc.)
+        # to find nested fences/tables.
+        if node.name not in ("fence", "front_matter", "heading", "lheading", "table"):
+            for child in node.children:
+                _walk(child)
+
+    _walk(tree)
     return _build_index(headings, blocks, frontmatter, line_offsets, content_hash)
 
 

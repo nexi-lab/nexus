@@ -897,11 +897,20 @@ def create_async_files_router(
         """
         try:
             fs = await _get_fs()
-            # Permission gate: verify read access before exposing structure.
+            # Permission gate + content fetch for lazy index rebuild.
             accessible = await fs.access(path, context=context)
             if not accessible:
                 raise NexusFileNotFoundError(path)
-            listing = _md_get_listing(fs, path)
+            raw = await fs.read(path, context=context)
+            content = (
+                raw
+                if isinstance(raw, bytes)
+                else (raw["content"] if isinstance(raw, dict) else str(raw).encode("utf-8"))
+            )
+            if isinstance(content, str):
+                content = content.encode("utf-8")
+            content_hash = _md_get_etag(fs, path)
+            listing = _md_get_listing(fs, path, content=content, content_hash=content_hash)
             if listing is None:
                 raise HTTPException(
                     status_code=404,
@@ -923,6 +932,17 @@ def create_async_files_router(
 
     # --- Markdown helpers (Issue #3718) ---
 
+    def _md_get_etag(fs: Any, path: str) -> str:
+        """Get the authoritative file etag from the metastore primary row."""
+        meta = getattr(fs, "metadata", None)
+        if meta is None:
+            return ""
+        try:
+            file_meta = meta.get(path)
+            return file_meta.etag if file_meta and file_meta.etag else ""
+        except Exception:
+            return ""
+
     def _md_partial_read(
         fs: Any,
         path: str,
@@ -935,27 +955,24 @@ def create_async_files_router(
             hook = fs.service("md_structure") if hasattr(fs, "service") else None
             if hook is None or not hasattr(hook, "read_section"):
                 return None
-            content_hash = ""
-            meta = getattr(fs, "metadata", None)
-            if meta is not None:
-                try:
-                    raw_meta = meta.get_file_metadata(path, "etag")
-                    if raw_meta:
-                        content_hash = str(raw_meta)
-                except Exception:
-                    pass
+            content_hash = _md_get_etag(fs, path)
             return hook.read_section(path, content, content_hash, section_name, block_type)
         except Exception:
             logger.debug("md partial read failed for %s", path, exc_info=True)
             return None
 
-    def _md_get_listing(fs: Any, path: str) -> list[dict[str, Any]] | None:
+    def _md_get_listing(
+        fs: Any,
+        path: str,
+        content: bytes | None = None,
+        content_hash: str = "",
+    ) -> list[dict[str, Any]] | None:
         """Get the structure listing for a markdown file."""
         try:
             hook = fs.service("md_structure") if hasattr(fs, "service") else None
             if hook is None or not hasattr(hook, "get_structure_listing"):
                 return None
-            return hook.get_structure_listing(path)
+            return hook.get_structure_listing(path, content=content, content_hash=content_hash)
         except Exception:
             logger.debug("md structure listing failed for %s", path, exc_info=True)
             return None

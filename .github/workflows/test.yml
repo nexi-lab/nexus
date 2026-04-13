@@ -164,7 +164,7 @@ jobs:
         timeout-minutes: 30
         run: |
           start=$(date +%s)
-          uv run pytest tests/unit -v --durations=10 -n auto --dist loadgroup \
+          uv run pytest tests/unit -v --durations=10 -n 3 --dist loadgroup \
             --timeout=30 --timeout-method=thread \
             --cov=nexus --cov-report=term-missing --cov-report=xml
           status=$?

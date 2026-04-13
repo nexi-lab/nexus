@@ -1,18 +1,16 @@
-"""EventBusObserver — VFSObserver that forwards FileEvents to distributed EventBus.
+"""EventBusObserver — forwards FileEvents to distributed EventBus.
 
-Registered in KernelDispatch OBSERVE phase. Replaces the direct
-``_publish_file_event()`` calls that previously bypassed the observer pattern.
+Registered as a service-registry entry for event_bus lifecycle and
+explicit publish calls from factory wiring.
 
 Issue #1701: event_bus is a system-tier service. The observer is constructed
 with a direct ``event_bus`` reference at factory time — no late-binding needed.
 Tests that need a different bus use ``nx.swap_service("event_bus_observer",
 EventBusObserver(event_bus=shared_bus))`` to hot-swap the observer atomically.
 
-Issue #3646: sync on_mutation — fire-and-forget ``bus.publish()`` via
-``create_task``. OBSERVE is fire-and-forget by contract; the async network
-I/O (Redis/NATS) runs as a background task, not on the OBSERVE critical path.
-This enables full Rust OBSERVE dispatch (all observers sync → no Python
-asyncio scheduling needed).
+Issue #3646: observer dispatch is now fully Rust-native. This class is
+retained for service lifecycle and explicit publish() calls, not for
+on_mutation dispatch.
 """
 
 from __future__ import annotations
@@ -29,10 +27,9 @@ logger = logging.getLogger(__name__)
 class EventBusObserver:
     """Wrapper for the distributed EventBus (Redis/NATS).
 
-    Formerly a VFSObserver (on_mutation via Rust dispatch_observers).
-    Now the Rust kernel dispatches observers directly. This class is
-    retained as a service-registry entry for event_bus lifecycle and
-    for explicit publish calls from factory wiring.
+    Retained as a service-registry entry for event_bus lifecycle and
+    for explicit publish calls from factory wiring. Observer dispatch
+    is handled by the Rust kernel's MutationObserver trait.
 
     Constructed with a direct ``event_bus`` reference (Issue #1701).
     Use ``nx.swap_service("event_bus_observer", EventBusObserver(...))``

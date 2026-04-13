@@ -3,8 +3,8 @@
 Dispatches workflow trigger events via Rust kernel DT_PIPE IPC
 and broadcasts to webhook subscriptions.
 
-Implements ``VFSObserver`` — registered in KernelDispatch's OBSERVE phase so
-the kernel fires a single ``FileEvent`` without knowing about workflows.
+Registered in KernelDispatch's OBSERVE phase so the Rust kernel fires
+a single ``FileEvent`` without knowing about workflows.
 
 DI dependencies (no god-object access):
     - nx: NexusFS for Rust-kernel pipe I/O
@@ -13,9 +13,7 @@ DI dependencies (no god-object access):
     - enable_workflows: Feature flag from DistributedConfig
 
 Issue #1812: event_mask filtering.
-Issue #3646: sync on_mutation — pipe_write_nowait is already sync; fallback
-and webhook broadcast fire-and-forget via create_task. Enables full Rust
-OBSERVE dispatch.
+Issue #3646: observer dispatch is now fully Rust-native.
 """
 
 import asyncio
@@ -40,7 +38,7 @@ _WORKFLOW_PIPE_CAPACITY = 65_536  # 64KB
 class WorkflowDispatchService:
     """Dispatches workflow trigger events via Rust kernel DT_PIPE and webhook subscriptions.
 
-    Implements ``WorkflowDispatchProtocol`` and ``VFSObserver``.
+    Implements ``WorkflowDispatchProtocol``.
     """
 
     def __init__(

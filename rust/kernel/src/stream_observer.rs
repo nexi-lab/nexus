@@ -13,12 +13,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 /// Default stream capacity.
+#[allow(dead_code)]
 const DEFAULT_CAPACITY: usize = 8192;
 
 /// Rust-native observer: serialize FileEvent → JSON → DT_STREAM.
 ///
-/// Registered via Kernel observer registry. dispatch_observers calls
-/// on_mutation from ThreadPool. Pure Rust, safe Drop.
+/// Registered on-demand by orchestrator at boot time.
+/// dispatch_observers calls on_mutation inline. Pure Rust, safe Drop.
+#[allow(dead_code)]
 pub(crate) struct StreamEventObserver {
     stream_manager: Arc<StreamManager>,
     stream_path: String,
@@ -26,6 +28,7 @@ pub(crate) struct StreamEventObserver {
     initialized: AtomicBool,
 }
 
+#[allow(dead_code)]
 impl StreamEventObserver {
     /// Create observer writing to the given stream path.
     pub(crate) fn new(stream_manager: Arc<StreamManager>, path: impl Into<String>) -> Self {

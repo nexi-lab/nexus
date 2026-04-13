@@ -418,7 +418,7 @@ async def _register_vfs_hooks(
             nx._permission_lease_table = _lease_table
 
     # ── Audit write interceptor (Issue #900, #1772) ──
-    # Observer-based write observer → registered as VFSObserver via hook_spec.
+    # Observer dispatch is now Rust-native (MutationObserver trait).
     # Sync observer  → sync SyncAuditWriteInterceptor calls on_write() directly.
     write_observer = _ss.get("write_observer")
     if write_observer is not None:

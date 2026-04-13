@@ -137,10 +137,9 @@ class StreamRemoteWatcher:
 class StreamEventObserver:
     """Publishes FileEvents to StreamRemoteWatcher.
 
-    Formerly a VFSObserver (on_mutation via Rust dispatch_observers).
-    Now the Rust kernel dispatches observers directly; this class is
-    retained for explicit publish() calls from the factory wiring.
-    stream_write_nowait is ~0.5μs (no network I/O).
+    Retained for explicit publish() calls from factory wiring.
+    Observer dispatch is handled by the Rust kernel's MutationObserver
+    trait. stream_write_nowait is ~0.5us (no network I/O).
     """
 
     def __init__(self, watcher: StreamRemoteWatcher) -> None:

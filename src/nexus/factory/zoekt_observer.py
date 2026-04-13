@@ -1,23 +1,15 @@
 """OBSERVE-phase observer for Zoekt search index updates.
 
-Receives FILE_WRITE events via Rust dispatch_observers and triggers
-Zoekt reindex after a debounce window. Replaces the former DT_PIPE-based ZoektPipeConsumer -- zero blocking I/O, zero async lifecycle.
+Receives FILE_WRITE events from the Rust kernel and triggers Zoekt
+reindex after a debounce window.
 
 Issue #810: Decouple Zoekt on_write_callback sync from ObjectStore write path.
 
-Architecture (before -- DT_PIPE, now deleted):
-    CASLocalBackend.write_content() (sync)
-      -> ZoektPipeConsumer.notify_write(path)   [deleted]
-        -> deque buffer -> flush task -> sys_write  # blocking I/O
-        -> async consumer (_consume loop)
-        -> trigger_reindex_async()
-
-Architecture (after -- OBSERVE):
-    Rust kernel sys_write dispatch_observers
-      -> ZoektWriteObserver.on_mutation(FileEvent)
-        -> accumulate path in set + reset debounce timer
-        -> threading.Timer fires _flush()
-        -> ZoektIndexManager.trigger_reindex_async()
+Architecture:
+    Rust kernel sys_write -> dispatch_observers (MutationObserver trait)
+      -> accumulate path in set + reset debounce timer
+      -> threading.Timer fires _flush()
+      -> ZoektIndexManager.trigger_reindex_sync()
 """
 
 import logging
@@ -33,13 +25,12 @@ logger = logging.getLogger(__name__)
 class ZoektWriteObserver:
     """OBSERVE-phase observer for Zoekt search index updates.
 
-    Receives FILE_WRITE events via Rust dispatch_observers and triggers
-    Zoekt reindex after a debounce window. Replaces DT_PIPE-based
-    the former DT_PIPE-based ZoektPipeConsumer -- zero blocking I/O, zero async lifecycle.
+    Receives FILE_WRITE events from the Rust kernel and triggers Zoekt
+    reindex after a debounce window.
 
     Registration:
-        Enlisted via factory orchestrator (hook_spec duck-typed),
-        NOT via bind_fs + start/stop async lifecycle.
+        Enlisted via factory orchestrator; events dispatched by the Rust
+        kernel's MutationObserver trait (not Python on_mutation).
     """
 
     def __init__(
@@ -84,9 +75,8 @@ class ZoektWriteObserver:
     def notify_write(self, path: str) -> None:
         """Sync callback for CASLocalBackend.on_write_callback.
 
-        When registered as a VFS observer, events arrive via on_mutation().
-        This method exists for fallback / CLI mode where the observer is
-        not registered in KernelDispatch.
+        Fallback path for CLI mode where the observer is not registered
+        in KernelDispatch.
         """
         self._zoekt.notify_write(path)
 

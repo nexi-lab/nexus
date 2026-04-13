@@ -358,11 +358,10 @@ class AuditConfig:
     trails. ``strict_mode=True`` (default) ensures writes fail if audit
     logging fails, preventing silent audit gaps.
 
-    Note on async observers: ``strict_mode`` is enforced by the
-    synchronous ``RecordStoreWriteObserver``. The async
-    The OBSERVE-phase ``RecordStoreWriteObserver`` receives events
-    via on_mutation; actual error handling (retry + drop) is managed
-    by the debounced flush, not by ``strict_mode``.
+    Note on observers: ``strict_mode`` is enforced by the synchronous
+    ``RecordStoreWriteObserver``.  The OBSERVE-phase observer receives
+    events from the Rust kernel; error handling (retry + drop) is
+    managed by the debounced flush, not by ``strict_mode``.
     """
 
     strict_mode: bool = True

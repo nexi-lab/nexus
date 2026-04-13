@@ -1,22 +1,14 @@
 """OBSERVE-phase observer for RecordStore audit trail + versioning.
 
 Receives FILE_WRITE / FILE_DELETE / FILE_RENAME / DIR_CREATE / DIR_DELETE
-events via Rust dispatch_observers and flushes them to RecordStore in
-debounced batches.  Replaces the former DT_PIPE-based
-PipedRecordStoreWriteObserver -- zero blocking I/O, zero async lifecycle.
+events from the Rust kernel and flushes them to RecordStore in debounced
+batches.
 
 Issue #809: Decouple write_observer.on_write() sync DB write from hot path.
 
-Architecture (before -- DT_PIPE, now deleted):
-    AuditWriteInterceptor (async POST hook)
-      -> JSON serialize -> nx.sys_write(pipe_path)  # blocking I/O
-    PipedRecordStoreWriteObserver (background consumer)
-      -> nx.sys_read(pipe_path) (blocking)  # hangs in xdist CI
-      -> batch coalesce -> single RecordStore transaction
-
-Architecture (after -- OBSERVE):
+Architecture:
     Rust kernel sys_write / sys_unlink / sys_mkdir / sys_rmdir
-      -> dispatch_observers -> RecordStoreWriteObserver.on_mutation(FileEvent)
+      -> dispatch_observers (Rust MutationObserver trait)
         -> accumulate event in deque + reset debounce timer
         -> threading.Timer fires _flush()
         -> single RecordStore transaction (OperationLogger + VersionRecorder)
@@ -55,14 +47,12 @@ def _metadata_from_dict(d: dict[str, Any]) -> Any:
 class RecordStoreWriteObserver:
     """OBSERVE-phase observer for RecordStore audit trail + versioning.
 
-    Receives mutation events via Rust dispatch_observers and flushes them
-    to RecordStore (OperationLogger + VersionRecorder) in debounced batches.
-    Replaces DT_PIPE-based PipedRecordStoreWriteObserver -- zero blocking
-    I/O, zero async lifecycle.
+    Receives mutation events from the Rust kernel and flushes them to
+    RecordStore (OperationLogger + VersionRecorder) in debounced batches.
 
     Registration:
-        Enlisted via factory orchestrator (hook_spec duck-typed),
-        NOT via bind_fs + start/stop async lifecycle.
+        Enlisted via factory orchestrator; events dispatched by the Rust
+        kernel's MutationObserver trait (not Python on_mutation).
     """
 
     def __init__(

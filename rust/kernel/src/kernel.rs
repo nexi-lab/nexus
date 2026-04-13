@@ -461,7 +461,7 @@ impl Kernel {
 
     /// Create an empty kernel. Components wired by wrapper after construction.
     pub fn new() -> Self {
-        let kernel = Self {
+        Self {
             dcache: DCache::new(),
             router: PathRouter::new(),
             trie: Trie::new(),
@@ -486,36 +486,10 @@ impl Kernel {
             pipe_manager: crate::pipe_manager::PipeManager::new(),
             stream_manager: Arc::new(crate::stream_manager::StreamManager::new()),
             native_hooks: Mutex::new(NativeHookRegistry::new()),
-        };
-
-        // Register kernel-internal observers on the observer registry.
-        // ALL observers go through the same dispatch_observers path (ThreadPool).
-        kernel.observers.lock().register(
-            kernel.file_watches.clone() as Arc<dyn MutationObserver>,
-            "FileWatcher".to_string(),
-            0x1FFF, // ALL_FILE_EVENTS
-        );
-        // StreamEventObserver instances — write FileEvent JSON to DT_STREAM.
-        // Each consumer reads from its own stream path.
-        let sm = &kernel.stream_manager;
-        for (name, path) in [
-            ("StreamEventObserver", "/__sys__/events/watch"),
-            ("EventBusObserver", "/__sys__/events/bus"),
-            ("WorkflowObserver", "/__sys__/events/workflow"),
-            ("ZoektObserver", "/__sys__/events/zoekt"),
-            ("AuditObserver", "/__sys__/events/audit"),
-        ] {
-            kernel.observers.lock().register(
-                Arc::new(crate::stream_observer::StreamEventObserver::new(
-                    sm.clone(),
-                    path,
-                )) as Arc<dyn MutationObserver>,
-                name.to_string(),
-                0x1FFF, // ALL_FILE_EVENTS
-            );
         }
-
-        kernel
+        // Observers registered on-demand (not at Kernel::new()).
+        // FileWatcher + StreamEventObservers are registered by orchestrator
+        // at boot time to avoid issues in lightweight test contexts.
     }
 
     // ── VFS Lock wiring ────────────────────────────────────────────────

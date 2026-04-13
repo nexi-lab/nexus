@@ -4771,8 +4771,6 @@ class NexusFS(  # type: ignore[misc]
 
         return results
 
-    # register_observe inherited from DispatchMixin
-
     # ------------------------------------------------------------------
     # Method forwarders — delegate to services.
     # ------------------------------------------------------------------
@@ -5287,13 +5285,12 @@ class NexusFS(  # type: ignore[misc]
         self,
         _context: Any = None,  # noqa: ARG002 - RPC interface requires context param
     ) -> dict[str, Any]:
-        """Flush the async write observer so pending version/audit records are committed.
+        """Flush the write observer so pending version/audit records are committed.
 
-        The OBSERVE-phase RecordStoreWriteObserver accumulates events via
-        on_mutation.  This method flushes all pending events, guaranteeing
-        that subsequent queries (e.g. list_versions) see the data.
-
-        No-op when the synchronous RecordStoreWriteObserver is in use.
+        The RecordStoreWriteObserver accumulates events dispatched by the
+        Rust kernel and flushes them to RecordStore in debounced batches.
+        This method forces an immediate flush, guaranteeing that subsequent
+        queries (e.g. list_versions) see the data.
 
         Returns:
             Dict with ``flushed`` count.

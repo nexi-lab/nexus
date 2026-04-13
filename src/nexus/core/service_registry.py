@@ -640,8 +640,7 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
             d.register_intercept_mkdir(h)
         for h in spec.rmdir_hooks:
             d.register_intercept_rmdir(h)
-        for h in spec.observers:
-            d.register_observe(h)
+        # spec.observers: no-op — observer dispatch is fully Rust-native.
 
     def _unregister_hooks(self, name: str) -> None:
         spec = self._hook_specs.get(name)
@@ -671,5 +670,4 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
             d.unregister_intercept_mkdir(h)
         for h in spec.rmdir_hooks:
             d.unregister_intercept_rmdir(h)
-        for h in spec.observers:
-            d.unregister_observe(h)
+        # spec.observers: no-op — observer dispatch is fully Rust-native.

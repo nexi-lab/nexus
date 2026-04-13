@@ -969,7 +969,10 @@ def create_async_files_router(
             if hook is None or not hasattr(hook, "read_section"):
                 return None
             content_hash = _md_get_etag(fs, path)
-            return hook.read_section(path, content, content_hash, section_name, block_type)
+            result: str | None = hook.read_section(
+                path, content, content_hash, section_name, block_type
+            )
+            return result
         except Exception:
             logger.debug("md partial read failed for %s", path, exc_info=True)
             return None
@@ -985,7 +988,10 @@ def create_async_files_router(
             hook = fs.service("md_structure") if hasattr(fs, "service") else None
             if hook is None or not hasattr(hook, "get_structure_listing"):
                 return None
-            return hook.get_structure_listing(path, content=content, content_hash=content_hash)
+            listing: list[dict[str, Any]] | None = hook.get_structure_listing(
+                path, content=content, content_hash=content_hash
+            )
+            return listing
         except Exception:
             logger.debug("md structure listing failed for %s", path, exc_info=True)
             return None

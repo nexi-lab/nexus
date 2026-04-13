@@ -335,7 +335,8 @@ def _cat_md_section(
                     content_hash = file_meta.etag
             except Exception:
                 pass
-        return hook.read_section(path, content, content_hash, section, block_type)
+        result: str | None = hook.read_section(path, content, content_hash, section, block_type)
+        return result
     except Exception:
         return None
 

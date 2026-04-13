@@ -122,7 +122,7 @@ async def mcp_server(nexus_fs):
 async def md_file(nexus_fs):
     """Write the sample markdown file and return its path."""
     path = "/docs/arch.md"
-    await nexus_fs.write(path, SAMPLE_MD.encode("utf-8"))
+    nexus_fs.write(path, SAMPLE_MD.encode("utf-8"))
     return path
 
 
@@ -130,7 +130,7 @@ async def md_file(nexus_fs):
 async def cjk_file(nexus_fs):
     """Write the CJK markdown file."""
     path = "/docs/cjk.md"
-    await nexus_fs.write(path, CJK_MD.encode("utf-8"))
+    nexus_fs.write(path, CJK_MD.encode("utf-8"))
     return path
 
 
@@ -293,7 +293,7 @@ class TestMdStructureEdgeCases:
     @pytest.mark.asyncio
     async def test_non_md_file_ignores_section(self, mcp_server, nexus_fs):
         """section param on non-.md files returns full content."""
-        await nexus_fs.write("/data.txt", b"# Not markdown\nJust text.")
+        nexus_fs.write("/data.txt", b"# Not markdown\nJust text.")
         read_tool = await get_tool(mcp_server, "nexus_read_file")
         result = await read_tool.fn(path="/data.txt", section="Not markdown")
         # Should return full content since it's not .md
@@ -312,7 +312,7 @@ class TestMdStructureEdgeCases:
     @pytest.mark.asyncio
     async def test_empty_md_file(self, mcp_server, nexus_fs):
         """Empty .md file should not crash."""
-        await nexus_fs.write("/empty.md", b"")
+        nexus_fs.write("/empty.md", b"")
         read_tool = await get_tool(mcp_server, "nexus_read_file")
         result = await read_tool.fn(path="/empty.md", section="*")
         # Should return empty listing
@@ -323,7 +323,7 @@ class TestMdStructureEdgeCases:
     @pytest.mark.asyncio
     async def test_md_no_headings(self, mcp_server, nexus_fs):
         """Markdown with no headings should return error for section requests."""
-        await nexus_fs.write("/plain.md", b"Just plain text.\nNo headings here.\n")
+        nexus_fs.write("/plain.md", b"Just plain text.\nNo headings here.\n")
         read_tool = await get_tool(mcp_server, "nexus_read_file")
         result = await read_tool.fn(path="/plain.md", section="anything")
         # Should NOT leak full content — section not found
@@ -332,7 +332,7 @@ class TestMdStructureEdgeCases:
     @pytest.mark.asyncio
     async def test_md_frontmatter_only(self, mcp_server, nexus_fs):
         """File with only frontmatter, no content."""
-        await nexus_fs.write("/fm_only.md", b"---\ntitle: Test\n---\n")
+        nexus_fs.write("/fm_only.md", b"---\ntitle: Test\n---\n")
         tool = await get_tool(mcp_server, "nexus_md_structure")
         result = await tool.fn(path="/fm_only.md")
         listing = json.loads(result)
@@ -380,7 +380,7 @@ Completely different content.
 
 Brand new section.
 """
-        await nexus_fs.write(md_file, new_content.encode("utf-8"))
+        nexus_fs.write(md_file, new_content.encode("utf-8"))
 
         # Read structure — should reflect the NEW content
         tool = await get_tool(mcp_server, "nexus_md_structure")
@@ -426,7 +426,7 @@ Brand new section.
 
 ## Another Real Heading
 """
-        await nexus_fs.write("/fenced.md", doc.encode("utf-8"))
+        nexus_fs.write("/fenced.md", doc.encode("utf-8"))
         tool = await get_tool(mcp_server, "nexus_md_structure")
         result = await tool.fn(path="/fenced.md")
         listing = json.loads(result)

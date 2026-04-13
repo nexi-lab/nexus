@@ -504,12 +504,13 @@ async def create_mcp_server(
                 return result
             # Any explicit section selector that returned None — don't leak full doc.
             if section == "frontmatter":
-                return tool_error(f"No frontmatter found in {path}")
+                return tool_error("not_found", f"No frontmatter found in {path}")
             if section == "*":
-                return tool_error(f"No markdown structure available for {path}")
+                return tool_error("not_found", f"No markdown structure available for {path}")
             return tool_error(
+                "not_found",
                 f"Section '{section}' not found in {path}. "
-                f"Use section='*' to list available sections."
+                f"Use section='*' to list available sections.",
             )
 
         return content_bytes.decode("utf-8", errors="replace")
@@ -543,14 +544,14 @@ async def create_mcp_server(
         try:
             raw = nx_instance.sys_read(path)
         except Exception as e:
-            return tool_error(f"Cannot access {path}: {e}")
+            return tool_error("access_denied", f"Cannot access {path}: {e}")
         content = raw if isinstance(raw, bytes) else str(raw).encode("utf-8")
         content_hash = _md_get_etag(nx_instance, path)
         listing = _md_get_structure_listing(
             nx_instance, path, content=content, content_hash=content_hash
         )
         if listing is None:
-            return tool_error(f"No markdown structure available for {path}")
+            return tool_error("not_found", f"No markdown structure available for {path}")
         return json.dumps(listing, indent=2)
 
     @mcp.tool(

@@ -222,16 +222,17 @@ async def _run_chat(
         async def _async_sys_read(path: str) -> bytes:
             return nx.sys_read(path)
 
-        # StreamManager stream_read for DT_STREAM token delivery
-        _nx_stream_read = getattr(nx, "_stream_read", None)
+        # DT_STREAM blocking read — call Rust kernel directly.
+        # NexusFS._stream_read returns bytes only (drops next_offset),
+        # but DT_STREAM frames have length prefixes so next_offset ≠ offset+len(data).
+        # Kernel.stream_read_at_blocking returns (bytes, next_offset) correctly.
+        _kernel = getattr(nx, "_kernel", None)
 
         def _stream_read_adapter(path: str, offset: int) -> tuple[bytes, int]:
-            if _nx_stream_read is None:
+            if _kernel is None:
                 raise NotImplementedError("Streaming not available in REMOTE mode")
-            # Sync-blocking (GIL released by Rust via py.detach).
-            # ManagedAgentLoop wraps this in asyncio.to_thread() internally.
-            data = _nx_stream_read(path, offset=offset)
-            return data, offset + len(data)
+            data, next_offset = _kernel.stream_read_at_blocking(path, offset, 30000)
+            return bytes(data), next_offset
 
         # Use nx.write (create-on-write) not nx.sys_write (requires existing file).
         async def _async_write(path: str, buf: bytes) -> dict:

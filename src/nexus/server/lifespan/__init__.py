@@ -163,7 +163,7 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
     # NexusFS lifecycle Phase 3: start async tasks owned by NexusFS
     nx = getattr(app.state, "nexus_fs", None)
     if nx is not None and hasattr(nx, "bootstrap"):
-        await nx.bootstrap()
+        nx.bootstrap()
 
     await startup_observability(app, svc)
     # Re-extract observability_registry after startup_observability writes it
@@ -234,7 +234,7 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
     # Close NexusFS kernel (async shutdown for PersistentService + hooks)
     if app.state.nexus_fs:
         if hasattr(app.state.nexus_fs, "aclose"):
-            await app.state.nexus_fs.aclose()
+            app.state.nexus_fs.aclose()
         elif hasattr(app.state.nexus_fs, "close"):
             app.state.nexus_fs.close()
 

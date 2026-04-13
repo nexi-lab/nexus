@@ -6,7 +6,7 @@ contention).  Distinct from kernel I/O locks (VFSLockManager, ~200ns,
 in-memory, process-scoped).
 
 Architecture:
-- AdvisoryLockManager: Async advisory lock API (POSIX flock(2))
+- AdvisoryLockManager: Sync advisory lock API (POSIX flock(2))
 - LocalLockManager: Standalone mode — wraps VFSSemaphore (this file)
 - RaftLockManager: Federation mode — wraps RaftMetadataStore (raft/)
 
@@ -25,7 +25,6 @@ References:
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 import uuid
@@ -99,7 +98,7 @@ class AdvisoryLockManager(ABC):
         return path
 
     @abstractmethod
-    async def acquire(
+    def acquire(
         self,
         path: str,
         mode: Literal["exclusive", "shared"] = "exclusive",
@@ -125,7 +124,7 @@ class AdvisoryLockManager(ABC):
         """
 
     @abstractmethod
-    async def release(
+    def release(
         self,
         lock_id: str,
         path: str,
@@ -133,7 +132,7 @@ class AdvisoryLockManager(ABC):
         """Release an advisory lock."""
 
     @abstractmethod
-    async def extend(
+    def extend(
         self,
         lock_id: str,
         path: str,
@@ -162,14 +161,14 @@ class AdvisoryLockManager(ABC):
         """List active locks."""
 
     @abstractmethod
-    async def force_release(
+    def force_release(
         self,
         path: str,
     ) -> bool:
         """Force-release all holders of a lock (admin operation)."""
 
     @abstractmethod
-    async def health_check(self) -> bool:
+    def health_check(self) -> bool:
         """Check if the lock manager is healthy."""
 
 
@@ -240,7 +239,7 @@ class LocalLockManager(AdvisoryLockManager):
 
     # -- acquire modes --------------------------------------------------------
 
-    async def acquire(
+    def acquire(
         self,
         path: str,
         mode: Literal["exclusive", "shared"] = "exclusive",
@@ -259,7 +258,7 @@ class LocalLockManager(AdvisoryLockManager):
         lock_id = str(uuid.uuid4())
 
         if max_holders > 1:
-            # Counting semaphore — async retry loop (VFSSemaphore.acquire blocks sync)
+            # Counting semaphore — sync retry loop
             holder = self._sem.acquire(key, max_holders=max_holders, timeout_ms=0, ttl_ms=ttl_ms)
             if holder is not None:
                 self._active_locks[lock_id] = (self._SEM_LOCK, (key, holder))
@@ -272,7 +271,7 @@ class LocalLockManager(AdvisoryLockManager):
                 return None
             deadline = time.monotonic() + timeout
             while time.monotonic() < deadline:
-                await asyncio.sleep(self.RETRY_INTERVAL)
+                time.sleep(self.RETRY_INTERVAL)
                 holder = self._sem.acquire(
                     key, max_holders=max_holders, timeout_ms=0, ttl_ms=ttl_ms
                 )
@@ -284,15 +283,15 @@ class LocalLockManager(AdvisoryLockManager):
 
         # Exclusive/shared (max_holders=1): prefer lock_fast (~200ns) over gate pattern
         if self._vfs_lock is not None:
-            return await self._acquire_via_vfs_lock(key, lock_id, mode, timeout)
+            return self._acquire_via_vfs_lock(key, lock_id, mode, timeout)
 
         # Fallback: VFSSemaphore gate pattern
         if mode == "exclusive":
-            return await self._acquire_exclusive(key, lock_id, timeout, ttl_ms)
+            return self._acquire_exclusive(key, lock_id, timeout, ttl_ms)
         else:  # shared
-            return await self._acquire_shared(key, lock_id, timeout, ttl_ms)
+            return self._acquire_shared(key, lock_id, timeout, ttl_ms)
 
-    async def _acquire_via_vfs_lock(
+    def _acquire_via_vfs_lock(
         self,
         key: str,
         lock_id: str,
@@ -317,7 +316,7 @@ class LocalLockManager(AdvisoryLockManager):
             return None
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            await asyncio.sleep(self.RETRY_INTERVAL)
+            time.sleep(self.RETRY_INTERVAL)
             handle = self._vfs_lock.acquire(key, vfs_mode, timeout_ms=0)
             if handle:
                 self._active_locks[lock_id] = (self._VFS_LOCK, (key, handle))
@@ -327,7 +326,7 @@ class LocalLockManager(AdvisoryLockManager):
         logger.debug("%s lock timeout (lock_fast): %s", mode.title(), key)
         return None
 
-    async def _acquire_exclusive(
+    def _acquire_exclusive(
         self,
         key: str,
         lock_id: str,
@@ -336,20 +335,19 @@ class LocalLockManager(AdvisoryLockManager):
     ) -> str | None:
         """Writer: hold gate for duration, wait for readers to drain.
 
-        Uses timeout_ms=0 on VFSSemaphore + async retry to avoid blocking
-        the event loop (VFSSemaphore.acquire with timeout_ms>0 blocks sync).
+        Uses timeout_ms=0 on VFSSemaphore + sync retry with time.sleep.
         """
         gate = f"{key}:gate"
         readers = f"{key}:readers"
         deadline = time.monotonic() + timeout
 
-        # Step 1: acquire gate with async retry
+        # Step 1: acquire gate with sync retry
         gate_holder = self._sem.acquire(gate, max_holders=1, timeout_ms=0, ttl_ms=ttl_ms)
         while gate_holder is None:
             if time.monotonic() >= deadline:
                 logger.debug("Exclusive lock timeout (gate): %s", key)
                 return None
-            await asyncio.sleep(self.RETRY_INTERVAL)
+            time.sleep(self.RETRY_INTERVAL)
             gate_holder = self._sem.acquire(gate, max_holders=1, timeout_ms=0, ttl_ms=ttl_ms)
 
         # Step 2: wait for existing readers to drain
@@ -361,7 +359,7 @@ class LocalLockManager(AdvisoryLockManager):
                 self._sem.release(gate, gate_holder)
                 logger.debug("Exclusive lock timeout (readers drain): %s", key)
                 return None
-            await asyncio.sleep(self.RETRY_INTERVAL)
+            time.sleep(self.RETRY_INTERVAL)
 
         self._active_locks[lock_id] = (self._SEM_LOCK, (gate, gate_holder))
         from nexus.lib.lock_order import L2_ADVISORY, mark_acquired
@@ -370,7 +368,7 @@ class LocalLockManager(AdvisoryLockManager):
         logger.debug("Exclusive lock acquired (gate pattern): %s -> %s", key, lock_id)
         return lock_id
 
-    async def _acquire_shared(
+    def _acquire_shared(
         self,
         key: str,
         lock_id: str,
@@ -382,13 +380,13 @@ class LocalLockManager(AdvisoryLockManager):
         readers = f"{key}:readers"
         deadline = time.monotonic() + timeout
 
-        # Step 1: acquire gate with async retry (blocks if writer holds it)
+        # Step 1: acquire gate with sync retry (blocks if writer holds it)
         gate_holder = self._sem.acquire(gate, max_holders=1, timeout_ms=0, ttl_ms=ttl_ms)
         while gate_holder is None:
             if time.monotonic() >= deadline:
                 logger.debug("Shared lock timeout (gate): %s", key)
                 return None
-            await asyncio.sleep(self.RETRY_INTERVAL)
+            time.sleep(self.RETRY_INTERVAL)
             gate_holder = self._sem.acquire(gate, max_holders=1, timeout_ms=0, ttl_ms=ttl_ms)
 
         # Step 2: acquire readers slot (should never fail — 1024 slots)
@@ -412,7 +410,7 @@ class LocalLockManager(AdvisoryLockManager):
 
     # -- release / extend / info ----------------------------------------------
 
-    async def release(self, lock_id: str, path: str) -> bool:  # noqa: ARG002 (path unused — lookup by lock_id)
+    def release(self, lock_id: str, path: str) -> bool:  # noqa: ARG002 (path unused — lookup by lock_id)
         entry = self._active_locks.pop(lock_id, None)
         if entry is None:
             return False
@@ -430,7 +428,7 @@ class LocalLockManager(AdvisoryLockManager):
             logger.debug("Lock released: %s (type=%s)", lock_id, lock_type)
         return released
 
-    async def extend(
+    def extend(
         self,
         lock_id: str,
         path: str,
@@ -531,7 +529,7 @@ class LocalLockManager(AdvisoryLockManager):
                 break
         return results
 
-    async def force_release(self, path: str) -> bool:
+    def force_release(self, path: str) -> bool:
         key = self._lock_key(path)
         released = False
         to_remove: list[str] = []
@@ -558,7 +556,7 @@ class LocalLockManager(AdvisoryLockManager):
             logger.debug("Lock force-released: %s", key)
         return released
 
-    async def health_check(self) -> bool:
+    def health_check(self) -> bool:
         return True  # VFSSemaphore is always healthy (in-process)
 
 

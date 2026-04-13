@@ -190,7 +190,7 @@ async def handle_write(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[s
     OCC checks (if_match, if_none_match) are done here at the RPC layer
     via ``occ_write()`` helper — not in the kernel. Distributed locking
     is also NOT in write() — callers should use lock()/unlock() or
-    ``async with locked(path)`` explicitly.
+    ``with locked(path)`` explicitly.
 
     Issue #1323: OCC + lock extracted from kernel.
     """

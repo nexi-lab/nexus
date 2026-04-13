@@ -35,7 +35,7 @@ class LockMixin:
     # ── Tier 1: Locking (POSIX flock equivalent) ─────────────────
 
     @rpc_expose(description="Acquire or extend advisory lock on a path")
-    async def sys_lock(
+    def sys_lock(
         self,
         path: str,
         mode: str = "exclusive",
@@ -59,11 +59,11 @@ class LockMixin:
 
         if lock_id is not None:
             # Extend existing lock TTL (heartbeat)
-            result = await self._lock_manager.extend(lock_id, path, ttl=ttl)
+            result = self._lock_manager.extend(lock_id, path, ttl=ttl)
             return lock_id if result.success else None
 
         # Try-acquire new lock
-        return await self._lock_manager.acquire(
+        return self._lock_manager.acquire(
             path,
             mode=_mode,
             ttl=ttl,
@@ -72,7 +72,7 @@ class LockMixin:
         )
 
     @rpc_expose(description="Release advisory lock (normal or force)")
-    async def sys_unlock(
+    def sys_unlock(
         self,
         path: str,
         lock_id: str | None = None,
@@ -91,15 +91,15 @@ class LockMixin:
         """
         path = self._validate_path(path)
         if force:
-            return await self._lock_manager.force_release(path)
+            return self._lock_manager.force_release(path)
         if not lock_id:
             raise ValueError("lock_id is required for non-force release")
-        return await self._lock_manager.release(lock_id, path)
+        return self._lock_manager.release(lock_id, path)
 
     # ── Tier 2: RPC-safe wrappers over Tier 1 ───────────────────
 
     @rpc_expose(description="Acquire advisory lock (blocking with timeout)")
-    async def lock_acquire(
+    def lock_acquire(
         self,
         path: str,
         mode: str = "exclusive",
@@ -112,9 +112,7 @@ class LockMixin:
 
         sys_lock returns raw str|None which gRPC encoder can't serialize.
         """
-        lock_id = await self.sys_lock(
-            path, mode=mode, ttl=ttl, max_holders=max_holders, context=context
-        )
+        lock_id = self.sys_lock(path, mode=mode, ttl=ttl, max_holders=max_holders, context=context)
         return {"acquired": lock_id is not None, "lock_id": lock_id}
 
     # ── Distributed lock helpers (sync bridge for write(lock=True)) ──
@@ -127,29 +125,11 @@ class LockMixin:
     ) -> str | None:
         """Acquire advisory lock synchronously via kernel _lock_manager.
 
-        This method bridges sync write() with async lock operations.
-        For async contexts, use `async with nx.locked()` instead.
+        Directly calls the (now sync) _lock_manager.acquire().
         """
-        import asyncio
-
         from nexus.contracts.exceptions import LockTimeout
 
-        try:
-            asyncio.get_running_loop()
-            raise RuntimeError(
-                "write(lock=True) cannot be used from async context (event loop detected). "
-                "Use `async with nx.locked(path):` and `write(lock=False)` instead."
-            )
-        except RuntimeError as e:
-            if "event loop detected" in str(e):
-                raise
-
-        async def acquire_lock() -> str | None:
-            return await self._lock_manager.acquire(path=path, timeout=timeout)
-
-        from nexus.lib.sync_bridge import run_sync
-
-        lock_id = run_sync(acquire_lock())
+        lock_id = self._lock_manager.acquire(path=path, timeout=timeout)
 
         if lock_id is None:
             raise LockTimeout(path=path, timeout=timeout)
@@ -166,12 +146,7 @@ class LockMixin:
         if not lock_id:
             return
 
-        async def release_lock() -> None:
-            await self._lock_manager.release(lock_id, path)
-
-        from nexus.lib.sync_bridge import run_sync
-
         try:
-            run_sync(release_lock())
+            self._lock_manager.release(lock_id, path)
         except Exception as e:
             logger.error(f"Failed to release lock {lock_id} for {path}: {e}")

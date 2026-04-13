@@ -71,8 +71,9 @@ _DEFAULT_BASE_DELAY = 1.0  # seconds
 # Kernel syscall callables (injected from NexusFS).
 SysReadFn = Callable[[str], Awaitable[bytes]]
 SysWriteFn = Callable[[str, bytes], Awaitable[Any]]
-# StreamReadFn: (path, offset, blocking) → (data, next_offset)
-StreamReadFn = Callable[[str, int], Awaitable[tuple[bytes, int]]]
+# StreamReadFn: (path, offset) → (data, next_offset)
+# Now sync (blocking) — callers in async context wrap via asyncio.to_thread.
+StreamReadFn = Callable[[str, int], tuple[bytes, int]]
 
 # Maximum reasoning turns before forced stop (prevent infinite loops).
 _MAX_TURNS = 50
@@ -385,7 +386,7 @@ class ManagedAgentLoop:
 
         while True:
             try:
-                data, offset = await self._stream_read(stream_path, offset)
+                data, offset = await asyncio.to_thread(self._stream_read, stream_path, offset)
             except Exception:
                 # StreamClosedError or similar — stream ended
                 break

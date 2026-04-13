@@ -459,7 +459,7 @@ class LockTimeout(NexusError):
 
     Examples:
         >>> try:
-        ...     async with nx.locked("/shared/config.json", timeout=5.0):
+        ...     with nx.locked("/shared/config.json", timeout=5.0):
         ...         # do work
         ... except LockTimeout:
         ...     print("Resource is busy, try again later")

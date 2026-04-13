@@ -6,7 +6,7 @@ import builtins
 import contextlib
 import logging
 import time
-from collections.abc import AsyncIterator, Callable, Generator, Iterator
+from collections.abc import Callable, Generator, Iterator
 from dataclasses import replace as _dc_replace
 from datetime import UTC, datetime
 from typing import Any, NamedTuple
@@ -282,7 +282,7 @@ class NexusFS(  # type: ignore[misc]
     # flags. These methods are now flag-only no-ops for backward compat.
     # =====================================================================
 
-    async def link(
+    def link(
         self,
         *,
         enabled_bricks: "frozenset[str] | None" = None,
@@ -299,7 +299,7 @@ class NexusFS(  # type: ignore[misc]
             return
         self._linked = True
 
-    async def initialize(self) -> None:
+    def initialize(self) -> None:
         """Phase 2: One-time side effects — flag-only no-op.
 
         Actual initialization is done by factory._lifecycle._initialize_services(),
@@ -309,11 +309,11 @@ class NexusFS(  # type: ignore[misc]
         if self._initialized:
             return
         if not self._linked:
-            await self.link()
+            self.link()
         self._initialized = True
 
-    async def bootstrap(self) -> None:
-        """Phase 3: Start async tasks.  Server/Worker only.
+    def bootstrap(self) -> None:
+        """Phase 3: Start persistent services.  Server/Worker only.
 
         Auto-starts all PersistentService instances (ZoneLifecycleService,
         EventDeliveryWorker, DeferredPermissionBuffer, etc.) via
@@ -324,7 +324,7 @@ class NexusFS(  # type: ignore[misc]
         if self._bootstrapped:
             return
         if not self._initialized:
-            await self.initialize()
+            self.initialize()
         # Auto-lifecycle: start PersistentService instances (Issue #1580)
         coord = self.service_coordinator
         if coord is not None:
@@ -2325,7 +2325,7 @@ class NexusFS(  # type: ignore[misc]
         to compose OCC + write at the caller level (RPC handler, CLI, SDK).
 
         Distributed locking is NOT here — use ``lock()``/``unlock()`` or
-        ``async with locked(path)`` to compose locking at the caller level.
+        ``with locked(path)`` to compose locking at the caller level.
         See Issue #1323.
 
         Args:
@@ -2603,7 +2603,7 @@ class NexusFS(  # type: ignore[misc]
             "size": result.size,
         }
 
-    async def atomic_update(
+    def atomic_update(
         self,
         path: str,
         update_fn: Callable[[bytes], bytes],
@@ -2623,7 +2623,7 @@ class NexusFS(  # type: ignore[misc]
         4. Writes modified content
         5. Releases lock (even on failure)
 
-        For multiple operations within one lock, use `async with locked()` instead.
+        For multiple operations within one lock, use ``with locked()`` instead.
 
         Args:
             path: Virtual path to update
@@ -2665,7 +2665,7 @@ class NexusFS(  # type: ignore[misc]
             ...     lambda c: json.dumps({**json.loads(c), "version": 2}).encode()
             ... )
         """
-        async with self.locked(path, timeout=timeout, ttl=ttl, context=context) as lock_id:  # noqa: F841
+        with self.locked(path, timeout=timeout, ttl=ttl, context=context) as lock_id:  # noqa: F841
             content = self.sys_read(path, context=context)
             new_content = update_fn(content)
             return self.write(path, new_content, context=context)
@@ -5306,15 +5306,14 @@ class NexusFS(  # type: ignore[misc]
 
     # Pipe/stream methods in nexus_fs_ipc.py (IPCMixin)
 
-    async def aclose(self) -> None:
-        """Async shutdown: stop PersistentService + unregister hooks, then close.
+    def aclose(self) -> None:
+        """Shutdown: stop PersistentService + unregister hooks, then close.
 
-        Preferred over close() when an event loop is available.
-        Calls coordinator lifecycle methods first (async), then
+        Calls coordinator lifecycle methods first, then
         delegates to close() for sync resource cleanup.
         """
         # Issue #3391: drain deferred OBSERVE background tasks before tearing down.
-        await self.shutdown()
+        self.shutdown()
 
         coord = self.service_coordinator
         if coord is not None:
@@ -5474,24 +5473,25 @@ class NexusFS(  # type: ignore[misc]
         """
         self._stream_destroy(path)
 
-    async def _stream_read(self, path: str, *, count: int | None = None, offset: int = 0) -> bytes:
+    def _stream_read(self, path: str, *, count: int | None = None, offset: int = 0) -> bytes:
         """Read from DT_STREAM — nowait hot path + Rust blocking slow path (GIL-free)."""
         # Hot path: try nowait first (zero GIL)
         _result = self._kernel.stream_read_at(path, offset)
         if _result is not None:
             return bytes(_result[0])
 
-        # Custom backend fallback
+        # Custom backend fallback (async stream backends bridged via run_sync)
         _buf = self._custom_stream_backends.get(path)
         if _buf is not None:
             from nexus.core.stream import StreamClosedError, StreamEmptyError
+            from nexus.lib.sync_bridge import run_sync
 
             try:
                 if count is not None and count > 1:
-                    items, _ = await _buf.read_batch_blocking(offset, count, blocking=True)
+                    items, _ = run_sync(_buf.read_batch_blocking(offset, count, blocking=True))
                     return b"".join(items)
                 sdata: bytes
-                sdata, _ = _buf.read(offset, blocking=True)
+                sdata, _ = run_sync(_buf.read(offset, blocking=True))
                 return sdata
             except StreamEmptyError:
                 raise NexusFileNotFoundError(path, f"Stream empty at offset {offset}") from None
@@ -5499,9 +5499,7 @@ class NexusFS(  # type: ignore[misc]
                 raise NexusFileNotFoundError(path, f"Stream closed: {path}") from None
 
         # Slow path: block in Rust, release GIL
-        _data, _next = await asyncio.to_thread(
-            self._kernel.stream_read_at_blocking, path, offset, 30000
-        )
+        _data, _next = self._kernel.stream_read_at_blocking(path, offset, 30000)
         return bytes(_data)
 
     def _stream_write(self, path: str, data: bytes) -> int:
@@ -5583,7 +5581,7 @@ class NexusFS(  # type: ignore[misc]
 
     # ── Tier 2: Lock Convenience (moved from ABC) ────────────────
 
-    async def lock(
+    def lock(
         self,
         path: str,
         mode: str = "exclusive",
@@ -5598,12 +5596,11 @@ class NexusFS(  # type: ignore[misc]
         Retries sys_lock() until acquired or timeout.
         Like fcntl(F_SETLKW) — blocking variant of sys_lock (F_SETLK).
         """
-        import asyncio
         import time as _time
 
         deadline = _time.monotonic() + timeout
         while True:
-            lock_id = await self.sys_lock(
+            lock_id = self.sys_lock(
                 path,
                 mode=mode,
                 ttl=ttl,
@@ -5615,16 +5612,14 @@ class NexusFS(  # type: ignore[misc]
             remaining = deadline - _time.monotonic()
             if remaining <= 0:
                 return None
-            await asyncio.sleep(min(0.05, remaining))
+            _time.sleep(min(0.05, remaining))
 
-    async def unlock(
-        self, lock_id: str, path: str, *, context: "OperationContext | None" = None
-    ) -> bool:
+    def unlock(self, lock_id: str, path: str, *, context: "OperationContext | None" = None) -> bool:
         """Release lock (Tier 2 alias for sys_unlock)."""
-        return await self.sys_unlock(path, lock_id, context=context)
+        return self.sys_unlock(path, lock_id, context=context)
 
-    @contextlib.asynccontextmanager
-    async def locked(
+    @contextlib.contextmanager
+    def locked(
         self,
         path: str,
         mode: str = "exclusive",
@@ -5633,15 +5628,15 @@ class NexusFS(  # type: ignore[misc]
         max_holders: int = 1,
         *,
         context: "OperationContext | None" = None,
-    ) -> "AsyncIterator[str]":
-        """Async context manager for advisory lock (Tier 2).
+    ) -> "Generator[str, None, None]":
+        """Context manager for advisory lock (Tier 2).
 
         Acquires lock via lock() (blocking wait), yields lock_id,
         releases on exit. Raises LockTimeout on failure.
         """
         from nexus.contracts.exceptions import LockTimeout
 
-        lock_id = await self.lock(
+        lock_id = self.lock(
             path,
             mode=mode,
             timeout=timeout,
@@ -5654,7 +5649,7 @@ class NexusFS(  # type: ignore[misc]
         try:
             yield lock_id
         finally:
-            await self.unlock(lock_id, path, context=context)
+            self.unlock(lock_id, path, context=context)
 
     # ── Tier 2: glob/grep (moved from ABC) ────────────────────────
 

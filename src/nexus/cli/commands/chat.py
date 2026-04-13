@@ -155,15 +155,18 @@ async def _run_chat(
             return nx.sys_write(path, buf)
 
         # StreamManager stream_read for DT_STREAM token delivery
-        _stream_read = getattr(nx, "_stream_read", None)
+        _nx_stream_read = getattr(nx, "_stream_read", None)
 
-        async def _fallback_stream_read(path: str, offset: int) -> tuple[bytes, int]:
-            raise NotImplementedError("Streaming not available in REMOTE mode")
+        def _stream_read_adapter(path: str, offset: int) -> tuple[bytes, int]:
+            if _nx_stream_read is None:
+                raise NotImplementedError("Streaming not available in REMOTE mode")
+            data = _nx_stream_read(path, offset=offset)
+            return data, offset + len(data)
 
         loop = ManagedAgentLoop(
             sys_read=_async_sys_read,
             sys_write=_async_sys_write,
-            stream_read=_stream_read or _fallback_stream_read,
+            stream_read=_stream_read_adapter,
             llm_backend=llm_backend,
             agent_path=agent_path,
             llm_path="/llm",

@@ -72,7 +72,7 @@ class DispatchMixin:
 
     # ── Lifecycle (Issue #3391) ──────────────────────────────────────────
 
-    async def shutdown(self) -> None:
+    def shutdown(self) -> None:
         """Shutdown dispatch state (call during kernel teardown)."""
 
     # ── PRE-DISPATCH: virtual path resolvers (Issue #889, #1317) ──────

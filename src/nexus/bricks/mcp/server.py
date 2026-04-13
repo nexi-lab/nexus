@@ -402,6 +402,58 @@ async def create_mcp_server(
         return result
 
     # =========================================================================
+    # Markdown structure helpers (Issue #3718)
+    # =========================================================================
+
+    def _md_get_etag(nx_instance: NexusFS, path: str) -> str:
+        """Get the authoritative file etag from the metastore primary row."""
+        meta = getattr(nx_instance, "metadata", None)
+        if meta is None:
+            return ""
+        try:
+            file_meta = meta.get(path)
+            return file_meta.etag if file_meta and file_meta.etag else ""
+        except Exception:
+            return ""
+
+    def _md_section_read(
+        nx_instance: NexusFS,
+        path: str,
+        content: bytes,
+        section: str,
+        block_type: str | None = None,
+    ) -> str | None:
+        """Attempt a partial markdown read using the structural index.
+
+        Returns section content as string, or None to fall back to full read.
+        Uses the service registry to access the md_structure hook (no
+        cross-brick imports).
+        """
+        hook = nx_instance.service("md_structure") if hasattr(nx_instance, "service") else None
+        if hook is None or not hasattr(hook, "read_section"):
+            return None
+
+        content_hash = _md_get_etag(nx_instance, path)
+        return hook.read_section(path, content, content_hash, section, block_type)
+
+    def _md_get_structure_listing(
+        nx_instance: NexusFS,
+        path: str,
+        content: bytes | None = None,
+        content_hash: str = "",
+    ) -> list[dict[str, Any]] | None:
+        """Get the structure listing for a markdown file.
+
+        Passes content + hash so the hook can lazily rebuild the index
+        for files that were never indexed (pre-existing or cache miss).
+        """
+        hook = nx_instance.service("md_structure") if hasattr(nx_instance, "service") else None
+        if hook is None or not hasattr(hook, "get_structure_listing"):
+            return None
+
+        return hook.get_structure_listing(path, content=content, content_hash=content_hash)
+
+    # =========================================================================
     # FILE OPERATIONS TOOLS
     # =========================================================================
 
@@ -414,21 +466,93 @@ async def create_mcp_server(
         }
     )
     @handle_tool_errors("reading file")
-    async def nexus_read_file(path: str, ctx: Context | None = None) -> str:
+    async def nexus_read_file(
+        path: str,
+        section: str | None = None,
+        block_type: str | None = None,
+        ctx: Context | None = None,
+    ) -> str:
         """Read file content from Nexus filesystem.
+
+        For markdown files (.md), supports partial reads by section and block type
+        to reduce context window usage (Issue #3718).
 
         Args:
             path: File path to read (e.g., "/workspace/data.txt")
+            section: (Markdown only) Read a specific section by heading text.
+                Case-insensitive, supports substring matching.
+                Special values:
+                  - ``"*"`` — list document structure (headings, token estimates, block types) without content
+                  - ``"frontmatter"`` — read only the YAML frontmatter block
+                Example: section="Authentication" reads only that section.
+            block_type: (Markdown only) Filter by block type within a section.
+                Requires ``section`` to be set. Values: "code", "table".
+                Example: section="Auth", block_type="code" returns only code blocks.
             ctx: FastMCP Context (automatically injected, optional for backward compatibility)
 
         Returns:
-            File content as string
+            File content as string (full file, or section/block subset for markdown)
         """
         nx_instance = _get_nexus_instance(ctx)
         content = nx_instance.sys_read(path)
-        if isinstance(content, bytes):
-            return content.decode("utf-8", errors="replace")
-        return str(content)
+        content_bytes = content if isinstance(content, bytes) else str(content).encode("utf-8")
+
+        # Partial read for markdown files when section is requested.
+        if section and path.endswith(".md"):
+            result = _md_section_read(nx_instance, path, content_bytes, section, block_type)
+            if result is not None:
+                return result
+            # Any explicit section selector that returned None — don't leak full doc.
+            if section == "frontmatter":
+                return tool_error("not_found", f"No frontmatter found in {path}")
+            if section == "*":
+                return tool_error("not_found", f"No markdown structure available for {path}")
+            return tool_error(
+                "not_found",
+                f"Section '{section}' not found in {path}. "
+                f"Use section='*' to list available sections.",
+            )
+
+        return content_bytes.decode("utf-8", errors="replace")
+
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        }
+    )
+    @handle_tool_errors("reading markdown structure")
+    async def nexus_md_structure(path: str, ctx: Context | None = None) -> str:
+        """List the structure of a markdown file without loading its content.
+
+        Returns headings, section token estimates, and block types — enabling
+        targeted reads via ``nexus_read_file(path, section=...)`` to minimize
+        context window usage.
+
+        Args:
+            path: Path to a markdown file (e.g., "/workspace/docs/arch.md")
+            ctx: FastMCP Context (automatically injected)
+
+        Returns:
+            JSON structure listing with sections, depths, token estimates,
+            and block types present in each section.
+        """
+        nx_instance = _get_nexus_instance(ctx)
+        # Permission gate + content fetch for lazy index rebuild.
+        try:
+            raw = nx_instance.sys_read(path)
+        except Exception as e:
+            return tool_error("access_denied", f"Cannot access {path}: {e}")
+        content = raw if isinstance(raw, bytes) else str(raw).encode("utf-8")
+        content_hash = _md_get_etag(nx_instance, path)
+        listing = _md_get_structure_listing(
+            nx_instance, path, content=content, content_hash=content_hash
+        )
+        if listing is None:
+            return tool_error("not_found", f"No markdown structure available for {path}")
+        return json.dumps(listing, indent=2)
 
     @mcp.tool(
         annotations={

@@ -477,6 +477,12 @@ async def _register_vfs_hooks(
         )
         await _enlist("auto_parse", _auto_parse_hook)
 
+    # MarkdownStructureWriteHook (post-write: sync structural index — Issue #3718)
+    from nexus.bricks.parsers.md_structure_hook import MarkdownStructureWriteHook
+
+    _md_struct_hook = MarkdownStructureWriteHook(metadata=nx.metadata)
+    await _enlist("md_structure", _md_struct_hook)
+
     # TigerCacheRenameHook (post-rename: bitmap updates)
     _rebac_mgr = _ss.get("rebac_manager")
     tiger_cache = getattr(_rebac_mgr, "_tiger_cache", None) if _rebac_mgr else None

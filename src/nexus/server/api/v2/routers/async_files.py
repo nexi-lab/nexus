@@ -27,6 +27,7 @@ All operations pass user context for permission enforcement.
 
 import asyncio
 import base64
+import json
 import logging
 from collections.abc import AsyncIterator, Iterator
 from typing import Any, cast
@@ -667,6 +668,14 @@ def create_async_files_router(
             None,
             description="Transaction ID — required when version is set to validate the hash belongs to this path",
         ),
+        section: str | None = Query(
+            None,
+            description="(Markdown only) Read a specific section by heading text (case-insensitive)",
+        ),
+        block_type: str | None = Query(
+            None,
+            description="(Markdown only) Filter by block type within section: 'code' or 'table'",
+        ),
         context: Any = Depends(get_context),
     ) -> Response:
         """
@@ -790,7 +799,14 @@ def create_async_files_router(
                         )
 
             if connector_content is not None:
-                # Connector fast path — return content directly
+                # Connector fast path — apply section filtering before returning.
+                if section and path.endswith(".md"):
+                    partial = _md_partial_read(fs, path, connector_content, section, block_type)
+                    if partial is not None:
+                        return Response(
+                            content=ReadResponse(content=partial).model_dump_json(),
+                            media_type="application/json",
+                        )
                 text = connector_content.decode("utf-8", errors="replace")
                 if include_metadata:
                     resp = ReadResponse(
@@ -809,6 +825,30 @@ def create_async_files_router(
 
             # Standard VFS read
             result = fs.read(path, return_metadata=include_metadata, context=context)
+
+            # --- Markdown partial read (Issue #3718) ---
+            if section and path.endswith(".md"):
+                raw_content: bytes
+                if include_metadata and isinstance(result, dict):
+                    _rc = result["content"]
+                    raw_content = _rc if isinstance(_rc, bytes) else _rc.encode("utf-8")
+                elif isinstance(result, bytes):
+                    raw_content = result
+                else:
+                    raw_content = str(result).encode("utf-8")
+
+                partial = _md_partial_read(fs, path, raw_content, section, block_type)
+                if partial is not None:
+                    return Response(
+                        content=ReadResponse(content=partial).model_dump_json(),
+                        media_type="application/json",
+                    )
+                # Section explicitly requested but not found — don't leak full doc.
+                # Any explicit section selector that returned None — don't leak full doc.
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Section '{section}' not found in {path}",
+                )
 
             if include_metadata and isinstance(result, dict):
                 file_content: str = result["content"]
@@ -853,6 +893,108 @@ def create_async_files_router(
         except Exception as e:
             logger.exception(f"Read error: {e}")
             raise HTTPException(status_code=500, detail=str(e)) from e
+
+    # =============================================================================
+    # Markdown Structure Endpoint (Issue #3718)
+    # =============================================================================
+
+    @router.get("/md-structure")
+    async def md_structure(
+        path: str = Query(..., description="Path to a markdown file"),
+        context: Any = Depends(get_context),
+    ) -> Response:
+        """Return the structural index of a markdown file (headings, blocks, token estimates).
+
+        No file content is returned — only metadata for targeted reads via
+        ``GET /read?section=...&block_type=...``.
+        """
+        try:
+            fs = await _get_fs()
+            # Permission gate + content fetch for lazy index rebuild.
+            accessible = await fs.access(path, context=context)
+            if not accessible:
+                raise NexusFileNotFoundError(path)
+            raw = await fs.read(path, context=context)
+            content = (
+                raw
+                if isinstance(raw, bytes)
+                else (raw["content"] if isinstance(raw, dict) else str(raw).encode("utf-8"))
+            )
+            if isinstance(content, str):
+                content = content.encode("utf-8")
+            content_hash = _md_get_etag(fs, path)
+            listing = _md_get_listing(fs, path, content=content, content_hash=content_hash)
+            if listing is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"No markdown structure available for {path}",
+                )
+            return Response(
+                content=json.dumps(listing),
+                media_type="application/json",
+            )
+        except HTTPException:
+            raise
+        except NexusPermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e)) from e
+        except NexusFileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        except Exception as e:
+            logger.exception(f"md-structure error: {e}")
+            raise HTTPException(status_code=500, detail=str(e)) from e
+
+    # --- Markdown helpers (Issue #3718) ---
+
+    def _md_get_etag(fs: Any, path: str) -> str:
+        """Get the authoritative file etag from the metastore primary row."""
+        meta = getattr(fs, "metadata", None)
+        if meta is None:
+            return ""
+        try:
+            file_meta = meta.get(path)
+            return file_meta.etag if file_meta and file_meta.etag else ""
+        except Exception:
+            return ""
+
+    def _md_partial_read(
+        fs: Any,
+        path: str,
+        content: bytes,
+        section_name: str,
+        block_type: str | None,
+    ) -> str | None:
+        """Attempt a partial markdown read. Returns content string or None."""
+        try:
+            hook = fs.service("md_structure") if hasattr(fs, "service") else None
+            if hook is None or not hasattr(hook, "read_section"):
+                return None
+            content_hash = _md_get_etag(fs, path)
+            result: str | None = hook.read_section(
+                path, content, content_hash, section_name, block_type
+            )
+            return result
+        except Exception:
+            logger.debug("md partial read failed for %s", path, exc_info=True)
+            return None
+
+    def _md_get_listing(
+        fs: Any,
+        path: str,
+        content: bytes | None = None,
+        content_hash: str = "",
+    ) -> list[dict[str, Any]] | None:
+        """Get the structure listing for a markdown file."""
+        try:
+            hook = fs.service("md_structure") if hasattr(fs, "service") else None
+            if hook is None or not hasattr(hook, "get_structure_listing"):
+                return None
+            listing: list[dict[str, Any]] | None = hook.get_structure_listing(
+                path, content=content, content_hash=content_hash
+            )
+            return listing
+        except Exception:
+            logger.debug("md structure listing failed for %s", path, exc_info=True)
+            return None
 
     # =============================================================================
     # Delete Endpoint

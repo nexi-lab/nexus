@@ -135,13 +135,13 @@ jobs:
               docker logs nexus-e2e 2>&1 | tail -200 || true
               exit 1
             fi
-            if curl -sf http://localhost:2026/health > /dev/null 2>&1; then
+            if curl -sf http://localhost:2026/healthz/ready > /dev/null 2>&1; then
               echo "Nexus is ready (${i}s)"
               break
             fi
             sleep 1
           done
-          if ! curl -sf http://localhost:2026/health > /dev/null 2>&1; then
+          if ! curl -sf http://localhost:2026/healthz/ready > /dev/null 2>&1; then
             echo "::error::nexus-e2e never became healthy within 90 seconds"
             docker inspect nexus-e2e --format 'exit_code={{.State.ExitCode}} status={{.State.Status}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} started_at={{.State.StartedAt}} finished_at={{.State.FinishedAt}} error={{json .State.Error}}' || true
             echo "Crash signatures from container logs:"

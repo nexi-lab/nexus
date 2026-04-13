@@ -83,7 +83,9 @@ class TestStreamingCopy:
         """File larger than one chunk triggers multi-chunk streaming."""
         # 1.5x chunk size to force 2 chunks
         size = STREAMING_COPY_CHUNK_SIZE + STREAMING_COPY_CHUNK_SIZE // 2
-        content = bytes(i % 256 for i in range(size))
+        # Use fast byte multiplication instead of slow generator (~100x faster)
+        pattern = bytes(range(256))
+        content = (pattern * (size // 256 + 1))[:size]
         slim_fs.write("/local/large.bin", content)
         slim_fs.copy("/local/large.bin", "/local/large_copy.bin")
         result = slim_fs.read("/local/large_copy.bin")

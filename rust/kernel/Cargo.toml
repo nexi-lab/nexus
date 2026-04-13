@@ -62,3 +62,4 @@ tempfile = "3"
 [[bench]]
 name = "prefix_bench"
 harness = false
+# §11 observer Rust-ification

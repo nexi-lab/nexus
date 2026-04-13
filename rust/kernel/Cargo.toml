@@ -44,7 +44,7 @@ chrono = { version = "0.4", default-features = false, features = ["std", "clock"
 mimalloc = { workspace = true, optional = true }
 
 [features]
-default = ["connectors", "py-hook-adapters"]
+default = ["mimalloc", "connectors", "py-hook-adapters"]
 mimalloc = ["dep:mimalloc"]
 connectors = ["dep:reqwest", "dep:hmac", "dep:sha2"]
 # §11 Phase 14: Python hook/resolver adapters. Enabled by default (POST hooks

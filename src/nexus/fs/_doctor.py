@@ -252,7 +252,7 @@ async def check_mount_connectivity(mount_point: str, fs: Any) -> DoctorCheckResu
     """
     start = time.perf_counter()
     try:
-        await fs.ls(mount_point)
+        fs.ls(mount_point)
         latency_ms = (time.perf_counter() - start) * 1000
         return DoctorCheckResult(
             name=mount_point,

@@ -80,33 +80,33 @@ repos:
 
       # Fast Rust format check (< 2s)
       - id: rust-fmt-fast
-        name: Rust Format Check (nexus_kernel)
-        entry: bash -c 'cd rust/nexus_kernel && cargo fmt --check'
+        name: Rust Format Check (kernel)
+        entry: bash -c 'cd rust/kernel && cargo fmt --check'
         language: system
         pass_filenames: false
-        files: ^rust/nexus_kernel/.*\.rs$
+        files: ^rust/kernel/.*\.rs$
 
       - id: rust-fmt-raft
-        name: Rust Format Check (nexus_raft)
-        entry: bash -c 'cd rust/nexus_raft && cargo fmt --check'
+        name: Rust Format Check (raft)
+        entry: bash -c 'cd rust/raft && cargo fmt --check'
         language: system
         pass_filenames: false
-        files: ^rust/nexus_raft/.*\.rs$
+        files: ^rust/raft/.*\.rs$
 
       # Rust clippy (requires compilation, ~10-30s per crate)
       - id: rust-clippy-fast
-        name: Rust Clippy (nexus_kernel)
-        entry: bash -c 'cd rust/nexus_kernel && cargo clippy --all-targets -- -D warnings'
+        name: Rust Clippy (kernel)
+        entry: bash -c 'cd rust/kernel && cargo clippy --all-targets -- -D warnings'
         language: system
         pass_filenames: false
-        files: ^rust/nexus_kernel/.*\.rs$
+        files: ^rust/kernel/.*\.rs$
 
       - id: rust-clippy-raft
-        name: Rust Clippy (nexus_raft)
-        entry: bash -c 'cd rust/nexus_raft && cargo clippy --all-targets --all-features -- -D warnings'
+        name: Rust Clippy (raft)
+        entry: bash -c 'cd rust/raft && cargo clippy --all-targets --all-features -- -D warnings'
         language: system
         pass_filenames: false
-        files: ^rust/nexus_raft/.*\.rs$
+        files: ^rust/raft/.*\.rs$
 
       # Codegen sync check — verify all 4 generated files (Python + Rust) are up-to-date
       - id: codegen-check
@@ -114,14 +114,14 @@ repos:
         entry: python3 scripts/codegen_kernel_abi.py --check
         language: system
         pass_filenames: false
-        files: ^(rust/nexus_kernel/src/.*\.rs|scripts/codegen_kernel_abi\.py|stubs/nexus_kernel/|src/nexus/core/kernel_)$
+        files: ^(rust/kernel/src/.*\.rs|scripts/codegen_kernel_abi\.py|stubs/nexus_kernel/|src/nexus/core/kernel_)$
 
       # Rust quality: no todo!()/unimplemented!() in committed code
       - id: rust-no-todo
         name: "No todo!/unimplemented! in Rust"
         entry: >-
-          bash -c 'grep -rn "todo!\|unimplemented!" rust/nexus_kernel/src/ --include="*.rs"
+          bash -c 'grep -rn "todo!\|unimplemented!" rust/kernel/src/ --include="*.rs"
           && echo "ERROR: Remove todo/unimplemented before committing" && exit 1 || exit 0'
         language: system
         pass_filenames: false
-        files: ^rust/nexus_kernel/.*\.rs$
+        files: ^rust/kernel/.*\.rs$

@@ -9,18 +9,20 @@ Phase 2: Core Refactoring (Issue #988, Task 2.8)
 Extracted from: nexus_fs_mcp.py (379 lines)
 """
 
+from __future__ import annotations
+
 import builtins
 import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from nexus.contracts.filesystem.filesystem_abc import NexusFilesystem
 from nexus.lib.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
+    from nexus.core.nexus_fs import NexusFS
 
 
 class MCPService:
@@ -70,7 +72,7 @@ class MCPService:
 
     def __init__(
         self,
-        filesystem: NexusFilesystem | None = None,
+        filesystem: NexusFS | None = None,
         *,
         credential_service: Any = None,
         mount_lister: Callable[[], list[tuple[str, str]]] | None = None,
@@ -214,7 +216,7 @@ class MCPService:
                 if self._filesystem is None:
                     raise RuntimeError("Filesystem not configured for MCPService")
 
-                items = await self._filesystem.sys_readdir(mount.tools_path, recursive=False)
+                items = self._filesystem.sys_readdir(mount.tools_path, recursive=False)
 
                 for item in items:
                     if isinstance(item, str) and item.endswith(".json"):
@@ -223,7 +225,7 @@ class MCPService:
                             continue
                         try:
                             # Read tool definition file
-                            raw = await self._filesystem.sys_read(item)
+                            raw = self._filesystem.sys_read(item)
                             if isinstance(raw, bytes):
                                 text = raw.decode("utf-8")
                             elif isinstance(raw, str):
@@ -745,10 +747,8 @@ class MCPService:
 
             try:
                 if self._filesystem is not None:
-                    await self._filesystem.mkdir(readme_path, parents=True, exist_ok=True)
-                    await self._filesystem.write(
-                        readme_file, readme_md.encode("utf-8"), context=context
-                    )
+                    self._filesystem.mkdir(readme_path, parents=True, exist_ok=True)
+                    self._filesystem.write(readme_file, readme_md.encode("utf-8"), context=context)
                     logger.info("Generated MCP readme: %s", readme_file)
 
                     now = datetime.now(UTC)
@@ -773,9 +773,7 @@ class MCPService:
                         tier="user",
                     )
                     mount_json = json_module.dumps(mount_config.to_dict(), indent=2)
-                    await self._filesystem.write(
-                        mount_file, mount_json.encode("utf-8"), context=context
-                    )
+                    self._filesystem.write(mount_file, mount_json.encode("utf-8"), context=context)
                     logger.info("Generated mount config: %s", mount_file)
 
                     for tool in tools:
@@ -800,7 +798,7 @@ class MCPService:
                         )
                         tool_file = f"{readme_path}{tool_name}.json"
                         tool_json = json_module.dumps(tool_def.to_dict(), indent=2)
-                        await self._filesystem.write(
+                        self._filesystem.write(
                             tool_file,
                             tool_json.encode("utf-8"),
                             context=context,

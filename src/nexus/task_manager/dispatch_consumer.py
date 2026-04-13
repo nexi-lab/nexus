@@ -2,7 +2,7 @@
 
 Produces task signals into a kernel ring buffer pipe and consumes them
 in a background asyncio task, following the same pattern as
-``WorkflowDispatchService`` and ``ZoektPipeConsumer``.
+``WorkflowDispatchService`` and ``ZoektWriteObserver``.
 
 Flow::
 
@@ -143,7 +143,7 @@ class TaskDispatchPipeConsumer:
         from nexus.contracts.metadata import DT_PIPE
 
         try:
-            await self._nx.sys_setattr(
+            self._nx.sys_setattr(
                 _TASK_DISPATCH_PIPE_PATH,
                 entry_type=DT_PIPE,
                 capacity=_TASK_DISPATCH_PIPE_CAPACITY,
@@ -185,7 +185,7 @@ class TaskDispatchPipeConsumer:
 
         while True:
             try:
-                data = await self._nx.sys_read(_TASK_DISPATCH_PIPE_PATH)
+                data = self._nx.sys_read(_TASK_DISPATCH_PIPE_PATH)
             except NexusFileNotFoundError:
                 logger.debug("[TASK-DISPATCH] pipe closed, consumer exiting")
                 break

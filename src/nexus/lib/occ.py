@@ -63,7 +63,7 @@ async def occ_write(
     if if_match is not None or if_none_match:
         from nexus.contracts.exceptions import ConflictError
 
-        meta = await fs.sys_stat(path, context=context)
+        meta = fs.sys_stat(path, context=context)
 
         if if_none_match and meta is not None:
             raise FileExistsError(f"File already exists: {path}")
@@ -85,5 +85,5 @@ async def occ_write(
                     current_etag=current_etag or "(no etag)",
                 )
 
-    result: dict[str, Any] = await fs.write(path, buf, context=context)
+    result: dict[str, Any] = fs.write(path, buf, context=context)
     return result

@@ -25,20 +25,20 @@ WORKDIR /build
 # so Cargo needs the workspace Cargo.toml to resolve them.
 COPY Cargo.toml Cargo.lock ./
 
-# Copy proto files (build.rs expects ../../proto relative to rust/nexus_raft/)
+# Copy proto files (build.rs expects ../../proto relative to rust/raft/)
 COPY proto/ ./proto/
 
-# Copy Rust source — nexus_raft is the build target; stub other workspace
+# Copy Rust source — raft is the build target; stub other workspace
 # members so Cargo can resolve the workspace without copying their full source.
-COPY rust/nexus_raft/ ./rust/nexus_raft/
-RUN for d in nexus_core nexus_kernel nexus_tasks; do \
+COPY rust/raft/ ./rust/raft/
+RUN for d in contracts library transport kernel services tasks; do \
         mkdir -p rust/$d/src && \
         printf '[package]\nname = "%s"\nversion = "0.1.0"\nedition = "2021"\n' "$d" > rust/$d/Cargo.toml && \
         echo '' > rust/$d/src/lib.rs; \
     done
 
 # Build the witness binary
-WORKDIR /build/rust/nexus_raft
+WORKDIR /build/rust/raft
 RUN cargo build --release --no-default-features --features grpc --bin nexus-witness
 
 # ---------- Production image ----------

@@ -57,7 +57,6 @@ except ImportError:
 
 if TYPE_CHECKING:
     from nexus.fs._facade import SlimNexusFS
-    from nexus.fs._sync import PortalRunner
 
 from nexus.fs._constants import DEFAULT_MAX_FILE_SIZE
 
@@ -102,9 +101,6 @@ class NexusFileSystem(AbstractFileSystem):
             self._nexus = nexus_fs
         else:
             self._nexus = self._auto_discover()
-        from nexus.fs._sync import PortalRunner
-
-        self._runner: PortalRunner = PortalRunner()
 
     # -- Auto-discovery --------------------------------------------------------
 
@@ -184,11 +180,11 @@ class NexusFileSystem(AbstractFileSystem):
             return [e["name"] for e in cached]
 
         # Verify path exists — fsspec contract requires FileNotFoundError
-        stat = self._runner(self._nexus.stat(path))
+        stat = self._nexus.stat(path)
         if stat is None:
             raise FileNotFoundError(path)
 
-        entries = self._runner(self._nexus.ls(path, detail=True, recursive=False))
+        entries: Any = self._nexus.ls(path, detail=True, recursive=False)
 
         result = [
             {
@@ -211,7 +207,7 @@ class NexusFileSystem(AbstractFileSystem):
     def info(self, path: str, **kwargs: Any) -> dict[str, Any]:  # noqa: ARG002
         """Return metadata for a single path."""
         path = self._strip_protocol(path)
-        stat = self._runner(self._nexus.stat(path))
+        stat = self._nexus.stat(path)
         if stat is None:
             raise FileNotFoundError(path)
         return {
@@ -245,7 +241,7 @@ class NexusFileSystem(AbstractFileSystem):
 
         if start is not None or end is not None:
             # Byte-range read — resolve negative indices, delegate to read_range
-            stat = self._runner(self._nexus.stat(path))
+            stat = self._nexus.stat(path)
             if stat is None:
                 raise FileNotFoundError(path)
             file_size = stat.get("size", 0)
@@ -256,10 +252,10 @@ class NexusFileSystem(AbstractFileSystem):
                 range_start = max(0, file_size + range_start)
             if range_end < 0:
                 range_end = max(0, file_size + range_end)
-            return cast(bytes, self._runner(self._nexus.read_range(path, range_start, range_end)))
+            return self._nexus.read_range(path, range_start, range_end)
 
         # Full read — apply size guard
-        stat = self._runner(self._nexus.stat(path))
+        stat = self._nexus.stat(path)
         if stat is None:
             raise FileNotFoundError(path)
         if stat.get("size", 0) > MAX_CAT_FILE_SIZE:
@@ -269,7 +265,7 @@ class NexusFileSystem(AbstractFileSystem):
                 f"Use open() for streaming access."
             )
 
-        return cast(bytes, self._runner(self._nexus.read(path)))
+        return self._nexus.read(path)
 
     # -- Write -----------------------------------------------------------------
 
@@ -282,7 +278,7 @@ class NexusFileSystem(AbstractFileSystem):
     ) -> None:
         """Write data to a file."""
         path = self._strip_protocol(path)
-        self._runner(self._nexus.write(path, value))
+        self._nexus.write(path, value)
 
     # -- Delete ----------------------------------------------------------------
 
@@ -296,11 +292,11 @@ class NexusFileSystem(AbstractFileSystem):
         """
         path = self._strip_protocol(path)
         # Check if it's a directory — if so, use rmdir
-        stat = self._runner(self._nexus.stat(path))
+        stat = self._nexus.stat(path)
         if stat and stat.get("is_directory"):
-            self._runner(self._nexus.rmdir(path, recursive=recursive))
+            self._nexus.rmdir(path, recursive=recursive)
         else:
-            self._runner(self._nexus.delete(path))
+            self._nexus.delete(path)
 
     # -- Copy ------------------------------------------------------------------
 
@@ -308,14 +304,14 @@ class NexusFileSystem(AbstractFileSystem):
         """Copy a single file."""
         path1 = self._strip_protocol(path1)
         path2 = self._strip_protocol(path2)
-        self._runner(self._nexus.copy(path1, path2))
+        self._nexus.copy(path1, path2)
 
     # -- Directories -----------------------------------------------------------
 
     def _mkdir(self, path: str, create_parents: bool = True, **kwargs: Any) -> None:  # noqa: ARG002
         """Create directory."""
         path = self._strip_protocol(path)
-        self._runner(self._nexus.mkdir(path, parents=create_parents))
+        self._nexus.mkdir(path, parents=create_parents)
 
     def mkdir(self, path: str, create_parents: bool = True, **kwargs: Any) -> None:  # noqa: ARG002
         """Create directory (public API).
@@ -330,7 +326,7 @@ class NexusFileSystem(AbstractFileSystem):
         """Create directory and parents (public API)."""
         path = self._strip_protocol(path)
         if not exist_ok:
-            stat = self._runner(self._nexus.stat(path))
+            stat = self._nexus.stat(path)
             if stat is not None and stat.get("is_directory"):
                 raise FileExistsError(path)
         try:
@@ -400,17 +396,16 @@ class NexusFileSystem(AbstractFileSystem):
 
         if "x" in mode:
             # Exclusive create — fail if file exists
-            if self._runner(self._nexus.stat(path)) is not None:
+            if self._nexus.stat(path) is not None:
                 raise FileExistsError(path)
             return NexusWriteFile(
                 fs=self,
                 path=path,
                 nexus_fs=self._nexus,
-                runner=self._runner,
             )
 
         if "r" in mode:
-            stat = self._runner(self._nexus.stat(path))
+            stat = self._nexus.stat(path)
             if stat is None:
                 raise FileNotFoundError(path)
             size = stat.get("size", 0)
@@ -421,14 +416,12 @@ class NexusFileSystem(AbstractFileSystem):
                 size=size,
                 block_size=block_size or 5 * 1024 * 1024,  # 5 MB default
                 nexus_fs=self._nexus,
-                runner=self._runner,
             )
         else:
             return NexusWriteFile(
                 fs=self,
                 path=path,
                 nexus_fs=self._nexus,
-                runner=self._runner,
             )
 
 
@@ -451,10 +444,8 @@ class NexusBufferedFile(AbstractBufferedFile):
         size: int,
         block_size: int,
         nexus_fs: SlimNexusFS,
-        runner: PortalRunner,
     ) -> None:
         self._nexus = nexus_fs
-        self._runner = runner
         # AbstractBufferedFile only accepts binary modes (rb, wb, ab, xb).
         # Normalize "r" → "rb" since our text mode returns bytes anyway.
         abf_mode = mode if mode.endswith("b") else mode + "b"
@@ -473,7 +464,7 @@ class NexusBufferedFile(AbstractBufferedFile):
 
     def _fetch_range(self, start: int, end: int) -> bytes:
         """Fetch byte range from nexus backend via ``read_range()``."""
-        return bytes(self._runner(self._nexus.read_range(self.path, start, end)))
+        return bytes(self._nexus.read_range(self.path, start, end))
 
 
 class NexusWriteFile:
@@ -491,12 +482,10 @@ class NexusWriteFile:
         fs: NexusFileSystem,
         path: str,
         nexus_fs: SlimNexusFS,
-        runner: PortalRunner,
     ) -> None:
         self.fs = fs
         self.path = path
         self._nexus = nexus_fs
-        self._runner = runner
         self._buffer = io.BytesIO()
         self._closed = False
         self._bytes_written = 0
@@ -534,7 +523,7 @@ class NexusWriteFile:
         if not self._closed:
             self._closed = True
             self._buffer.seek(0)
-            self._runner(self._nexus.write(self.path, self._buffer.read()))
+            self._nexus.write(self.path, self._buffer.read())
 
     @property
     def closed(self) -> bool:

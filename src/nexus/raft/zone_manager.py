@@ -115,7 +115,7 @@ class ZoneManager:
         if PyZoneManager is None:
             raise RuntimeError(
                 "ZoneManager requires PyO3 build with --features full. "
-                "Build with: maturin develop -m rust/nexus_raft/Cargo.toml --features full"
+                "Build with: maturin develop -m rust/raft/Cargo.toml --features full"
             )
 
         self._hostname = hostname

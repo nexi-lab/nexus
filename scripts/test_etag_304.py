@@ -943,7 +943,7 @@ class NexusTestServer:
 
         # Ensure workspace directory exists (may already exist by default)
         with contextlib.suppress(FileExistsError):
-            await self.nexus_fs.mkdir("/workspace")
+            self.nexus_fs.mkdir("/workspace")
 
         # Create FastAPI app
         app = create_app(

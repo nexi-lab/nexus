@@ -132,7 +132,7 @@ def llm(
         actual_path = result.get("stream_path", _stream_path)
         while True:
             try:
-                data = await nx.sys_read(actual_path, context=None)
+                data = nx.sys_read(actual_path, context=None)
                 if not data:
                     break
                 text = (

@@ -82,8 +82,8 @@ async def main():
         print()
 
         # Create directories
-        await nx.mkdir(f"{demo_base}/docs", parents=True)
-        await nx.mkdir(f"{demo_base}/reports", parents=True)
+        nx.mkdir(f"{demo_base}/docs", parents=True)
+        nx.mkdir(f"{demo_base}/reports", parents=True)
 
         # Create sample documentation
         auth_doc = """# Authentication System
@@ -109,7 +109,7 @@ Our system uses JWT (JSON Web Tokens) for authentication with these features:
 - "Missing authorization header" → Include Bearer token
 """
 
-        await nx.sys_write(f"{demo_base}/docs/authentication.md", auth_doc)
+        nx.sys_write(f"{demo_base}/docs/authentication.md", auth_doc)
         print("✓ Created authentication.md")
 
         # Create API documentation
@@ -154,7 +154,7 @@ Download file
 - Returns: File content
 """
 
-        await nx.sys_write(f"{demo_base}/docs/api-reference.md", api_doc)
+        nx.sys_write(f"{demo_base}/docs/api-reference.md", api_doc)
         print("✓ Created api-reference.md")
 
         # Create quarterly report
@@ -185,7 +185,7 @@ ACTION ITEMS FOR Q1 2025:
 4. Expand support team by 40%
 """
 
-        await nx.sys_write(f"{demo_base}/reports/q4-2024.txt", q4_report)
+        nx.sys_write(f"{demo_base}/reports/q4-2024.txt", q4_report)
         print("✓ Created q4-2024.txt")
 
         print()

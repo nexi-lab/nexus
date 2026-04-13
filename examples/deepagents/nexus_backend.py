@@ -106,7 +106,7 @@ class NexusBackend:
         resolved_path = self._resolve_path(path)
 
         try:
-            entries = await self.nx.sys_readdir(resolved_path)
+            entries = self.nx.sys_readdir(resolved_path)
             result = []
 
             for entry in entries:
@@ -125,7 +125,7 @@ class NexusBackend:
                     size = 0
                     if not is_dir:
                         try:
-                            content = await self.nx.sys_read(entry_path)
+                            content = self.nx.sys_read(entry_path)
                             size = len(content)
                         except Exception:
                             pass
@@ -164,7 +164,7 @@ class NexusBackend:
 
         try:
             # Read file from Nexus (returns bytes)
-            content_bytes = await self.nx.sys_read(resolved_path)
+            content_bytes = self.nx.sys_read(resolved_path)
             content = content_bytes.decode(self.encoding)
 
             # Split into lines
@@ -210,7 +210,7 @@ class NexusBackend:
             content_bytes = content.encode(self.encoding)
 
             # Write to Nexus (automatically versioned)
-            await self.nx.sys_write(resolved_path, content_bytes)
+            self.nx.sys_write(resolved_path, content_bytes)
 
             return WriteResult(error=None, path=file_path, files_update=None)
 
@@ -238,7 +238,7 @@ class NexusBackend:
 
         try:
             # Read current content
-            content_bytes = await self.nx.sys_read(resolved_path)
+            content_bytes = self.nx.sys_read(resolved_path)
             content = content_bytes.decode(self.encoding)
 
             # Count occurrences
@@ -269,7 +269,7 @@ class NexusBackend:
 
             # Write back (creates new version in Nexus)
             new_content_bytes = new_content.encode(self.encoding)
-            await self.nx.sys_write(resolved_path, new_content_bytes)
+            self.nx.sys_write(resolved_path, new_content_bytes)
 
             return EditResult(
                 error=None, path=file_path, files_update=None, occurrences=occurrences
@@ -322,7 +322,7 @@ class NexusBackend:
                     size = 0
                     if not is_dir:
                         try:
-                            content = await self.nx.sys_read(match_path)
+                            content = self.nx.sys_read(match_path)
                             size = len(content)
                         except Exception:
                             pass
@@ -383,7 +383,7 @@ class NexusBackend:
             for file_path in files_to_search:
                 try:
                     resolved_file = self._resolve_path(file_path)
-                    content_bytes = await self.nx.sys_read(resolved_file)
+                    content_bytes = self.nx.sys_read(resolved_file)
                     content = content_bytes.decode(self.encoding)
 
                     for line_num, line in enumerate(content.splitlines(), 1):

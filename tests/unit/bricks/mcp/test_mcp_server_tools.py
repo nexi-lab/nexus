@@ -94,11 +94,11 @@ def tool_exists(server, tool_name: str) -> bool:
 def mock_nx_basic():
     """Create a basic mock NexusFS with file operations."""
     nx = Mock()
-    nx.sys_read = AsyncMock(return_value=b"test content")
-    nx.sys_write = AsyncMock()
-    nx.write = AsyncMock()
-    nx.sys_unlink = AsyncMock()
-    nx.sys_readdir = AsyncMock(return_value=["/file1.txt", "/file2.txt"])
+    nx.sys_read = Mock(return_value=b"test content")
+    nx.sys_write = Mock()
+    nx.write = Mock()
+    nx.sys_unlink = Mock()
+    nx.sys_readdir = Mock(return_value=["/file1.txt", "/file2.txt"])
     _mock_search = Mock()
     _mock_search.glob = Mock(return_value=["test.py", "main.py"])
     _mock_search.grep = AsyncMock(
@@ -107,10 +107,10 @@ def mock_nx_basic():
     _service_map = {"search": _mock_search}
     nx.service = Mock(side_effect=lambda name: _service_map.get(name))
     nx._mock_search = _mock_search  # internal alias for assertion access
-    nx.access = AsyncMock(return_value=True)
-    nx.is_directory = AsyncMock(return_value=False)
-    nx.mkdir = AsyncMock()
-    nx.rmdir = AsyncMock()
+    nx.access = Mock(return_value=True)
+    nx.is_directory = Mock(return_value=False)
+    nx.mkdir = Mock()
+    nx.rmdir = Mock()
     nx.edit = Mock(
         return_value={
             "success": True,
@@ -127,8 +127,8 @@ def mock_nx_basic():
 def mock_nx_with_workflows():
     """Create mock NexusFS with workflow system."""
     nx = Mock()
-    nx.sys_read = AsyncMock(return_value=b"test")
-    nx.sys_write = AsyncMock()
+    nx.sys_read = Mock(return_value=b"test")
+    nx.sys_write = Mock()
 
     # Add workflows system
     nx.workflows = Mock()
@@ -144,8 +144,8 @@ def mock_nx_with_workflows():
 def mock_nx_with_search():
     """Create mock NexusFS with semantic search."""
     nx = Mock()
-    nx.sys_read = AsyncMock(return_value=b"test")
-    nx.sys_write = AsyncMock()
+    nx.sys_read = Mock(return_value=b"test")
+    nx.sys_write = Mock()
 
     # Add async semantic_search method
     async def mock_semantic_search(query, path="/", search_mode="semantic", limit=10, **kwargs):
@@ -160,8 +160,8 @@ def mock_nx_with_search():
 def mock_nx_with_sandbox():
     """Create mock NexusFS with sandbox support."""
     nx = Mock()
-    nx.sys_read = AsyncMock(return_value=b"test")
-    nx.sys_write = AsyncMock()
+    nx.sys_read = Mock(return_value=b"test")
+    nx.sys_write = Mock()
 
     # Add sandbox support
     nx.sandbox_available = True
@@ -198,8 +198,8 @@ def mock_nx_with_sandbox():
 def mock_nx_no_sandbox():
     """Create mock NexusFS without sandbox support."""
     nx = Mock()
-    nx.sys_read = AsyncMock(return_value=b"test")
-    nx.sys_write = AsyncMock()
+    nx.sys_read = Mock(return_value=b"test")
+    nx.sys_write = Mock()
     nx.sandbox_available = False
 
     return nx
@@ -211,17 +211,17 @@ def mock_nx_full():
     nx = Mock()
 
     # Basic file operations (async syscalls)
-    nx.sys_read = AsyncMock(return_value=b"test content")
-    nx.sys_write = AsyncMock()
-    nx.write = AsyncMock()
-    nx.sys_unlink = AsyncMock()
-    nx.sys_readdir = AsyncMock(return_value=["/file1.txt"])
+    nx.sys_read = Mock(return_value=b"test content")
+    nx.sys_write = Mock()
+    nx.write = Mock()
+    nx.sys_unlink = Mock()
+    nx.sys_readdir = Mock(return_value=["/file1.txt"])
     nx.glob = Mock(return_value=["test.py"])
     nx.grep = Mock(return_value=[{"file": "test.py", "line": 10, "content": "match"}])
-    nx.access = AsyncMock(return_value=True)
-    nx.is_directory = AsyncMock(return_value=False)
-    nx.mkdir = AsyncMock()
-    nx.rmdir = AsyncMock()
+    nx.access = Mock(return_value=True)
+    nx.is_directory = Mock(return_value=False)
+    nx.mkdir = Mock()
+    nx.rmdir = Mock()
 
     # Memory system via service("memory_provider") (get_memory_api() reads this)
     mock_memory = Mock()
@@ -1417,8 +1417,8 @@ class TestServerCreation:
         """Test creating server with remote URL."""
         with patch("nexus.connect", new_callable=AsyncMock) as mock_connect:
             mock_instance = Mock()
-            mock_instance.sys_read = AsyncMock(return_value=b"test")
-            mock_instance.sys_write = AsyncMock()
+            mock_instance.sys_read = Mock(return_value=b"test")
+            mock_instance.sys_write = Mock()
             mock_connect.return_value = mock_instance
 
             server = await create_mcp_server(remote_url="http://localhost:2026", api_key="test-key")
@@ -1432,9 +1432,9 @@ class TestServerCreation:
         """Test creating server with auto-connect."""
         with patch("nexus.connect", new_callable=AsyncMock) as mock_connect:
             mock_nx = Mock()
-            mock_nx.sys_read = AsyncMock(return_value=b"test")
-            mock_nx.sys_write = AsyncMock()
-            mock_nx.write = AsyncMock()
+            mock_nx.sys_read = Mock(return_value=b"test")
+            mock_nx.sys_write = Mock()
+            mock_nx.write = Mock()
             mock_connect.return_value = mock_nx
 
             server = await create_mcp_server()

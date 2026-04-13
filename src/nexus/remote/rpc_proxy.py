@@ -79,10 +79,10 @@ class RPCProxyBase:
         """
         if method_name not in cls._param_name_cache:
             # Lazy import to avoid circular dependency
-            from nexus.contracts.filesystem.filesystem_abc import NexusFilesystem
+            from nexus.core.nexus_fs import NexusFS
 
-            # Try NexusFilesystem first, then NexusFS, then RPC params
-            method = getattr(NexusFilesystem, method_name, None)
+            # Try NexusFS first, then RPC params
+            method = getattr(NexusFS, method_name, None)
             if method is None:
                 try:
                     import dataclasses as _dc

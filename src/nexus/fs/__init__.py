@@ -5,7 +5,7 @@ Two lines to mount any combination of S3, GCS, and local storage:
     import nexus.fs
 
     fs = await nexus.fs.mount("s3://my-bucket", "local://./data")
-    readme = await fs.read("/s3/my-bucket/README.md")
+    readme = fs.read("/s3/my-bucket/README.md")
 
 Sync usage:
 
@@ -107,7 +107,7 @@ async def mount(
 
         # Context manager (recommended for resource cleanup)
         async with await nexus.fs.mount("s3://my-bucket") as fs:
-            content = await fs.read("/s3/my-bucket/file.txt")
+            content = fs.read("/s3/my-bucket/file.txt")
     """
     from nexus.fs._uri import derive_mount_point, parse_uri, validate_mount_collision
 

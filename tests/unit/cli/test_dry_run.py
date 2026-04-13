@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager, contextmanager
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
@@ -93,17 +93,17 @@ class TestRenderDryRun:
 
 
 def _make_mock_nx() -> MagicMock:
-    """Create a mock NexusFilesystem that tracks calls."""
+    """Create a mock NexusFS that tracks calls."""
     nx = MagicMock()
     nx.close = MagicMock()
-    nx.access = AsyncMock(return_value=True)
-    nx.sys_write = AsyncMock()
-    nx.sys_read = AsyncMock()
-    nx.sys_unlink = AsyncMock()
-    nx.sys_rename = AsyncMock()
-    nx.mkdir = AsyncMock()
-    nx.rmdir = AsyncMock()
-    nx.sys_readdir = AsyncMock()
+    nx.access = MagicMock(return_value=True)
+    nx.sys_write = MagicMock()
+    nx.sys_read = MagicMock()
+    nx.sys_unlink = MagicMock()
+    nx.sys_rename = MagicMock()
+    nx.mkdir = MagicMock()
+    nx.rmdir = MagicMock()
+    nx.sys_readdir = MagicMock()
     return nx
 
 

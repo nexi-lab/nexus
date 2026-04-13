@@ -66,7 +66,7 @@ class TestSysReaddir:
         entry2 = SimpleNamespace(path="/data/b.txt", size=20, etag="e2")
         mock_fs.metadata.list = MagicMock(return_value=[entry1, entry2])
 
-        result = await mock_fs.sys_readdir(path="/data", recursive=False, context=context)
+        result = mock_fs.sys_readdir(path="/data", recursive=False, context=context)
 
         assert result == ["/data/a.txt", "/data/b.txt"]
         mock_fs.metadata.list.assert_called_once_with(prefix="/data/", recursive=False)
@@ -87,7 +87,7 @@ class TestSysReaddir:
         mock_fs.metadata.list = MagicMock(return_value=[entry])
         mock_fs.metadata.is_implicit_directory = MagicMock(return_value=False)
 
-        result = await mock_fs.sys_readdir(path="/data", details=True, context=context)
+        result = mock_fs.sys_readdir(path="/data", details=True, context=context)
 
         assert result == [
             {
@@ -107,7 +107,7 @@ class TestSysReaddir:
         """sys_readdir with path='/' uses empty prefix."""
         mock_fs.metadata.list = MagicMock(return_value=[])
 
-        await mock_fs.sys_readdir(path="/", context=context)
+        mock_fs.sys_readdir(path="/", context=context)
 
         mock_fs.metadata.list.assert_called_once_with(prefix="", recursive=True)
 

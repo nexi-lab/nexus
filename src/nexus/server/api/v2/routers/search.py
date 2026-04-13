@@ -651,7 +651,7 @@ async def search_query_batch(
 
 
 def _get_search_service(nexus_fs: Any) -> Any:
-    """Resolve SearchService from a NexusFilesystem handle.
+    """Resolve SearchService from a NexusFS handle.
 
     Returns the service or raises HTTP 503 if the search brick is absent.
     """

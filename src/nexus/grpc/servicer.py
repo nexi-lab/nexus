@@ -330,7 +330,7 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
         try:
             _, op_context = await self._auth_and_context(request.auth_token)
             self._scope_path_for_zone(request, op_context.zone_id)
-            content = await self._nexus_fs.sys_read(request.path, context=op_context)
+            content = self._nexus_fs.sys_read(request.path, context=op_context)
             return vfs_pb2.ReadResponse(content=content, size=len(content))
         except ZoneScopingError as e:
             return vfs_pb2.ReadResponse(
@@ -394,7 +394,7 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
                     if_match=request.etag,
                 )
             else:
-                result = await self._nexus_fs.write(request.path, content, context=op_context)
+                result = self._nexus_fs.write(request.path, content, context=op_context)
 
             etag = result.get("etag", "") if isinstance(result, dict) else ""
             size = result.get("size", len(content)) if isinstance(result, dict) else len(content)
@@ -466,13 +466,13 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
             is_dir = meta is not None and getattr(meta, "mime_type", "") == "inode/directory"
 
             if is_dir:
-                await self._nexus_fs.rmdir(
+                self._nexus_fs.rmdir(
                     request.path,
                     recursive=request.recursive,
                     context=op_context,
                 )
             else:
-                await self._nexus_fs.sys_unlink(request.path, context=op_context)
+                self._nexus_fs.sys_unlink(request.path, context=op_context)
             return vfs_pb2.DeleteResponse(success=True)
         except ZoneScopingError as e:
             return vfs_pb2.DeleteResponse(

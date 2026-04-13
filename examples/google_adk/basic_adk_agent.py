@@ -54,7 +54,7 @@ def connect_to_nexus(tenant_id: str = "adk-demo", agent_id: str = "file-agent"):
         agent_id: Agent identifier for tracking
 
     Returns:
-        NexusFilesystem instance
+        NexusFS instance
     """
     # Check if using remote server
     server_url = os.getenv("NEXUS_URL")
@@ -88,7 +88,7 @@ def create_nexus_tools(nx):
     Google ADK automatically converts them to agent tools.
 
     Args:
-        nx: NexusFilesystem instance
+        nx: NexusFS instance
 
     Returns:
         List of functions that the agent can call
@@ -186,7 +186,7 @@ def create_nexus_tools(nx):
             - read_file("/scripts/large.py", preview_only=True) → First 100 lines
         """
         try:
-            content = await nx.sys_read(path)
+            content = nx.sys_read(path)
 
             # Handle bytes
             if isinstance(content, bytes):
@@ -223,7 +223,7 @@ def create_nexus_tools(nx):
         """
         try:
             content_bytes = content.encode("utf-8") if isinstance(content, str) else content
-            await nx.sys_write(path, content_bytes)
+            nx.sys_write(path, content_bytes)
 
             if await nx.access(path):
                 return f"Successfully wrote {len(content_bytes)} bytes to {path}"
@@ -307,7 +307,7 @@ class DataProcessor:
 
     print(f"Creating {len(test_files)} test Python files...")
     for path, content in test_files.items():
-        await nx.sys_write(path, content.encode("utf-8"))
+        nx.sys_write(path, content.encode("utf-8"))
         print(f"✓ Created: {path}")
 
     print("\n✓ Test data setup complete!")
@@ -336,14 +336,14 @@ async def cleanup_test_data(nx, test_files):
     print("=" * 70)
     for path in test_files:
         try:
-            await nx.sys_unlink(path)
+            nx.sys_unlink(path)
             print(f"✓ Deleted: {path}")
         except Exception as e:
             print(f"⚠ Could not delete {path}: {e}")
 
     # Clean up reports directory
     try:
-        await nx.sys_unlink("/reports/async-patterns.md")
+        nx.sys_unlink("/reports/async-patterns.md")
         print("✓ Deleted: /reports/async-patterns.md")
     except Exception:
         pass

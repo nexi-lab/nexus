@@ -12,10 +12,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from nexus.bricks.mcp.models import MCPToolConfig, MCPToolDefinition, MCPToolExample
-
 if TYPE_CHECKING:
-    from nexus.contracts.filesystem.filesystem_abc import NexusFilesystem
+    from nexus.core.nexus_fs import NexusFS
+
+from nexus.bricks.mcp.models import MCPToolConfig, MCPToolDefinition, MCPToolExample
 
 logger = logging.getLogger(__name__)
 
@@ -517,7 +517,7 @@ class MCPToolExporter:
     # Output path for exported tools
     OUTPUT_PATH = "/skills/system/mcp-tools/nexus/"
 
-    def __init__(self, filesystem: "NexusFilesystem | None" = None):
+    def __init__(self, filesystem: "NexusFS | None" = None):
         """Initialize exporter.
 
         Args:
@@ -629,15 +629,15 @@ class MCPToolExporter:
         if self._filesystem:
             # Create directory
             try:
-                await self._filesystem.mkdir(tool_dir, parents=True)
+                self._filesystem.mkdir(tool_dir, parents=True)
             except FileExistsError:
                 pass
             except OSError as e:
                 logger.warning("Failed to create directory %s: %s", tool_dir, e)
 
             # Write files
-            await self._filesystem.write(tool_json_path, tool_json.encode("utf-8"))
-            await self._filesystem.write(readme_md_path, readme_md.encode("utf-8"))
+            self._filesystem.write(tool_json_path, tool_json.encode("utf-8"))
+            self._filesystem.write(readme_md_path, readme_md.encode("utf-8"))
         else:
             # Local filesystem
             tool_dir_path = Path(tool_dir.lstrip("/"))

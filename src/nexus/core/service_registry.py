@@ -29,6 +29,7 @@ import asyncio
 import functools
 import inspect
 import logging
+import threading
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
@@ -86,7 +87,7 @@ class ServiceRef:
         instance: Any,
         name: str,
         refcounts: dict[str, int],
-        drain_events: dict[str, asyncio.Event],
+        drain_events: dict[str, threading.Event],
     ) -> None:
         object.__setattr__(self, "_instance", instance)
         object.__setattr__(self, "_name", name)
@@ -178,7 +179,7 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
         super().__init__(name="services")
         # Shared ref-counting state for ServiceRef proxies / drain
         self._refcounts: dict[str, int] = {}
-        self._drain_events: dict[str, asyncio.Event] = {}
+        self._drain_events: dict[str, threading.Event] = {}
 
         # Lifecycle orchestration state (formerly SLC)
         self._dispatch: Any = dispatch
@@ -361,7 +362,7 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
 
     # -- enlist — the ONE entry point for all services --------------------
 
-    async def enlist(
+    def enlist(
         self,
         name: str,
         instance: Any,
@@ -391,7 +392,11 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
 
         # Auto-start persistent background work (only post-bootstrap)
         if isinstance(instance, PersistentService) and self._bootstrapped:
-            await instance.start()
+            from nexus.lib.sync_bridge import run_sync
+
+            coro = instance.start()
+            if asyncio.iscoroutine(coro):
+                run_sync(coro, timeout=30.0)
             logger.info("[COORDINATOR] enlist %r — started (PersistentService)", name)
 
         # Auto-capture hooks via duck-typed hook_spec()
@@ -406,30 +411,30 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
 
     # -- mount — register VFS hooks ----------------------------------------
 
-    async def _mount_service(self, name: str) -> None:
+    def _mount_service(self, name: str) -> None:
         """Mount a service: register VFS hooks."""
         self._register_hooks(name)
         logger.info("[COORDINATOR] mount %r — hooks registered", name)
 
     # -- umount — unregister VFS hooks ------------------------------------
 
-    async def _unmount_service(self, name: str) -> None:
+    def _unmount_service(self, name: str) -> None:
         """Unmount: unregister VFS hooks."""
         self._unregister_hooks(name)
         logger.info("[COORDINATOR] umount %r", name)
 
     # -- rmmod — unregister from Registry ----------------------------------
 
-    async def unregister_service_full(self, name: str) -> None:
+    def unregister_service_full(self, name: str) -> None:
         """Fully remove a service: unmount hooks, then unregister."""
-        await self._unmount_service(name)
+        self._unmount_service(name)
         self.unregister_service(name)
         self._hook_specs.pop(name, None)
         logger.info("[COORDINATOR] rmmod %r", name)
 
     # -- swap — atomic replace + drain + hook swap -------------------------
 
-    async def swap_service(
+    def swap_service(
         self,
         name: str,
         new_instance: Any,
@@ -456,7 +461,7 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
                 self._hook_specs[name] = old_hook_spec
 
         # Step 1: Drain ServiceRef refcount (wait for in-flight calls)
-        await self._drain(name, timeout=drain_timeout)
+        self._drain(name, timeout=drain_timeout)
 
         # Step 2: Unregister old hooks
         if old_hook_spec is not None:
@@ -482,8 +487,10 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
 
     # -- Auto-lifecycle — PersistentService management ----------------------
 
-    async def start_persistent_services(self, *, timeout: float = 30.0) -> list[str]:
+    def start_persistent_services(self, *, timeout: float = 30.0) -> list[str]:
         """Auto-start all PersistentService instances in dependency order."""
+        from nexus.lib.sync_bridge import run_sync
+
         started: list[str] = []
         for name in self._ordered_names():
             info = self.service_info(name)
@@ -492,7 +499,9 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
             if not isinstance(info.instance, PersistentService):
                 continue
             try:
-                await asyncio.wait_for(info.instance.start(), timeout=timeout)
+                coro = info.instance.start()
+                if asyncio.iscoroutine(coro):
+                    run_sync(coro, timeout=timeout)
                 started.append(name)
                 logger.info("[COORDINATOR] auto-started persistent service %r", name)
             except TimeoutError:
@@ -503,8 +512,10 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
             logger.info("[COORDINATOR] started %d persistent services: %s", len(started), started)
         return started
 
-    async def stop_persistent_services(self, *, timeout: float = 10.0) -> list[str]:
+    def stop_persistent_services(self, *, timeout: float = 10.0) -> list[str]:
         """Auto-stop all PersistentService instances in reverse dependency order."""
+        from nexus.lib.sync_bridge import run_sync
+
         stopped: list[str] = []
         for name in self._ordered_names(reverse=True):
             info = self.service_info(name)
@@ -513,7 +524,9 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
             if not isinstance(info.instance, PersistentService):
                 continue
             try:
-                await asyncio.wait_for(info.instance.stop(), timeout=timeout)
+                coro = info.instance.stop()
+                if asyncio.iscoroutine(coro):
+                    run_sync(coro, timeout=timeout)
                 stopped.append(name)
                 logger.info("[COORDINATOR] auto-stopped persistent service %r", name)
             except TimeoutError:
@@ -575,25 +588,25 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
 
     # -- Drain — wait for refcount → 0 ------------------------------------
 
-    async def _drain(self, name: str, *, timeout: float) -> None:
+    def _drain(self, name: str, *, timeout: float) -> None:
         """Wait for all in-flight calls on *name* to complete (refcount → 0)."""
         current = self._refcounts.get(name, 0)
         if current <= 0:
             return
 
-        evt = asyncio.Event()
+        evt = threading.Event()
         self._drain_events[name] = evt
         try:
-            await asyncio.wait_for(evt.wait(), timeout=timeout)
-            logger.debug("[COORDINATOR] drain %r — completed normally", name)
-        except TimeoutError:
-            remaining = self._refcounts.get(name, 0)
-            logger.warning(
-                "[COORDINATOR] drain %r — timed out after %.1fs (%d in-flight calls remaining)",
-                name,
-                timeout,
-                remaining,
-            )
+            if not evt.wait(timeout=timeout):
+                remaining = self._refcounts.get(name, 0)
+                logger.warning(
+                    "[COORDINATOR] drain %r — timed out after %.1fs (%d in-flight calls remaining)",
+                    name,
+                    timeout,
+                    remaining,
+                )
+            else:
+                logger.debug("[COORDINATOR] drain %r — completed normally", name)
         finally:
             self._drain_events.pop(name, None)
 
@@ -627,12 +640,7 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
             d.register_intercept_mkdir(h)
         for h in spec.rmdir_hooks:
             d.register_intercept_rmdir(h)
-        for h in spec.observers:
-            d.register_observe(h)
-        for h in spec.mount_hooks:
-            d.register_mount_hook(h)
-        for h in spec.unmount_hooks:
-            d.register_unmount_hook(h)
+        # spec.observers: no-op — observer dispatch is fully Rust-native.
 
     def _unregister_hooks(self, name: str) -> None:
         spec = self._hook_specs.get(name)
@@ -662,9 +670,4 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
             d.unregister_intercept_mkdir(h)
         for h in spec.rmdir_hooks:
             d.unregister_intercept_rmdir(h)
-        for h in spec.observers:
-            d.unregister_observe(h)
-        for h in spec.mount_hooks:
-            d.unregister_mount_hook(h)
-        for h in spec.unmount_hooks:
-            d.unregister_unmount_hook(h)
+        # spec.observers: no-op — observer dispatch is fully Rust-native.

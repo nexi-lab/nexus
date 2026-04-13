@@ -984,7 +984,7 @@ class TestRebacIntegration:
     async def test_file_access_with_rebac(self, nx_no_permissions: NexusFS) -> None:
         """Test that file access respects ReBAC permissions."""
         # Use non-permission version for writing
-        await nx_no_permissions.write("/protected.txt", b"Secret content")
+        nx_no_permissions.write("/protected.txt", b"Secret content")
 
         # Create read permission for alice with direct_owner relation
         nx_no_permissions.service("rebac").rebac_create_sync(

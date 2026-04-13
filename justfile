@@ -2,7 +2,7 @@
 # Install just: https://github.com/casey/just
 # Usage: just setup        # build all Rust crates
 #        just doctor       # verify env is healthy
-#        just build-kernel # rebuild only nexus_kernel
+#        just build-kernel # rebuild only kernel
 
 # Build every Rust crate as a Python extension (editable install).
 # Uses `uv run` so maturin and python operate on the repo-managed venv,
@@ -10,11 +10,9 @@
 # Run after: git clone, git pull, or switching branches with Rust changes.
 setup:
     @echo "Building all Rust crates..."
-    uv run maturin develop --release -m rust/nexus_kernel/Cargo.toml
-    uv run maturin develop --release -m rust/nexus_core/Cargo.toml
-    uv run maturin develop --release -m rust/nexus_raft/Cargo.toml
-    uv run maturin develop --release -m rust/nexus_tasks/Cargo.toml
-    uv run maturin develop --release -m rust/nexus_transport/Cargo.toml
+    uv run maturin develop --release -m rust/kernel/Cargo.toml
+    uv run maturin develop --release -m rust/raft/Cargo.toml
+    uv run maturin develop --release -m rust/tasks/Cargo.toml
     @echo "Done. Run 'just doctor' to verify."
 
 # Verify the environment is healthy (binary matches source ABI).
@@ -53,9 +51,9 @@ if errors:
 print(f'OK — {len(MODULE_CAPABILITY_GROUPS)} capability groups, {len(KERNEL_REQUIRED_METHODS)} Kernel methods all present')
 "
 
-# Rebuild only nexus_kernel (fastest for Kernel-only changes).
+# Rebuild only kernel (fastest for Kernel-only changes).
 build-kernel:
-    uv run maturin develop --release -m rust/nexus_kernel/Cargo.toml
+    uv run maturin develop --release -m rust/kernel/Cargo.toml
 
 # Verify generated files (stubs, kernel_exports.py, _kernel_api_groups.py) are up-to-date.
 codegen-check:

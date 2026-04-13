@@ -285,7 +285,7 @@ class RaftMetadataStore(MetastoreABC):
         if Metastore is None:
             raise RuntimeError(
                 "Metastore not available. Build with: "
-                "maturin develop -m rust/nexus_raft/Cargo.toml --features python"
+                "maturin develop -m rust/raft/Cargo.toml --features python"
             )
 
         metastore = Metastore(db_path)

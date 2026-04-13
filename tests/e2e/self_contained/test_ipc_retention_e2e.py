@@ -85,10 +85,10 @@ class TestFileMtimeReal:
         path = f"{inbox_path('agent:bob')}/msg_mtime_check.json"
 
         before = datetime.now(UTC)
-        await adapter.write(path, b'{"id":"x"}', ZONE)
+        adapter.write(path, b'{"id":"x"}', ZONE)
         after = datetime.now(UTC)
 
-        mtime = await adapter.file_mtime(path, ZONE)
+        mtime = adapter.file_mtime(path, ZONE)
         assert mtime is not None, "file_mtime must be non-None for LocalConnector"
         assert before <= mtime <= after + timedelta(seconds=2)
 
@@ -96,19 +96,19 @@ class TestFileMtimeReal:
     async def test_mtime_advances_on_overwrite(self, adapter: InMemoryStorageDriver) -> None:
         await _provision(adapter, "agent:bob")
         path = f"{inbox_path('agent:bob')}/msg_overwrite.json"
-        await adapter.write(path, b"v1", ZONE)
-        mtime1 = await adapter.file_mtime(path, ZONE)
+        adapter.write(path, b"v1", ZONE)
+        mtime1 = adapter.file_mtime(path, ZONE)
 
         await asyncio.sleep(0.1)
-        await adapter.write(path, b"v2", ZONE)
-        mtime2 = await adapter.file_mtime(path, ZONE)
+        adapter.write(path, b"v2", ZONE)
+        mtime2 = adapter.file_mtime(path, ZONE)
 
         assert mtime1 is not None and mtime2 is not None
         assert mtime2 >= mtime1
 
     @pytest.mark.asyncio
     async def test_mtime_none_for_missing_file(self, adapter: InMemoryStorageDriver) -> None:
-        mtime = await adapter.file_mtime("/agents/nobody/inbox/ghost.json", ZONE)
+        mtime = adapter.file_mtime("/agents/nobody/inbox/ghost.json", ZONE)
         assert mtime is None
 
 
@@ -128,10 +128,10 @@ class TestPruneRetentionReal:
         # Write 5 processed files
         for i in range(5):
             path = f"{proc}/20260101T{i:06d}_msg_{i}.json"
-            await adapter.write(path, b'{"id":"x"}', ZONE)
+            adapter.write(path, b'{"id":"x"}', ZONE)
 
         # Confirm files exist
-        files_before = await adapter.list_dir(proc, ZONE)
+        files_before = adapter.list_dir(proc, ZONE)
         assert len(files_before) == 5
 
         # Age the files: sleep past the tiny retention window
@@ -142,7 +142,7 @@ class TestPruneRetentionReal:
         sweeper = TTLSweeper(adapter, zone_id=ZONE, processed_retention_days=retention_days)
         await sweeper._prune_dir("agent:bob", "processed", retention_days)
 
-        files_after = await adapter.list_dir(proc, ZONE)
+        files_after = adapter.list_dir(proc, ZONE)
         assert len(files_after) == 0, (
             f"Expected 0 files after prune, got {len(files_after)}: {files_after}"
         )
@@ -153,7 +153,7 @@ class TestPruneRetentionReal:
         out = outbox_path("agent:bob")
 
         for i in range(3):
-            await adapter.write(f"{out}/20260101T{i:06d}_msg_{i}.json", b'{"id":"x"}', ZONE)
+            adapter.write(f"{out}/20260101T{i:06d}_msg_{i}.json", b'{"id":"x"}', ZONE)
 
         await asyncio.sleep(_SLEEP_SECS)
 
@@ -161,21 +161,21 @@ class TestPruneRetentionReal:
         sweeper = TTLSweeper(adapter, zone_id=ZONE, outbox_retention_days=retention_days)
         await sweeper._prune_dir("agent:bob", "outbox", retention_days)
 
-        files_after = await adapter.list_dir(out, ZONE)
+        files_after = adapter.list_dir(out, ZONE)
         assert len(files_after) == 0
 
     @pytest.mark.asyncio
     async def test_prune_does_not_delete_fresh_files(self, adapter: InMemoryStorageDriver) -> None:
         await _provision(adapter, "agent:bob")
         proc = processed_path("agent:bob")
-        await adapter.write(f"{proc}/20260101T000000_fresh.json", b'{"id":"fresh"}', ZONE)
+        adapter.write(f"{proc}/20260101T000000_fresh.json", b'{"id":"fresh"}', ZONE)
 
         # Prune immediately (no sleep) — file is fresh, should NOT be deleted
         retention_days = _TINY_RETENTION_SECS / 86400
         sweeper = TTLSweeper(adapter, zone_id=ZONE, processed_retention_days=retention_days)
         await sweeper._prune_dir("agent:bob", "processed", retention_days)
 
-        files = await adapter.list_dir(proc, ZONE)
+        files = adapter.list_dir(proc, ZONE)
         assert len(files) == 1, "Fresh file must not be pruned"
 
 
@@ -197,7 +197,7 @@ class TestStaleInboxDrainReal:
 
         msg = _make_msg("msg_drain_real")
         path = f"{inbox}/20260101T000000_{msg.id}.json"
-        await adapter.write(path, msg.to_bytes(), ZONE)
+        adapter.write(path, msg.to_bytes(), ZONE)
 
         await asyncio.sleep(_SLEEP_SECS)
 
@@ -208,11 +208,11 @@ class TestStaleInboxDrainReal:
         assert drained == 1
 
         # Inbox empty
-        inbox_files = await adapter.list_dir(inbox, ZONE)
+        inbox_files = adapter.list_dir(inbox, ZONE)
         assert len(inbox_files) == 0
 
         # Dead letter has the message
-        dl_files = await adapter.list_dir(dl, ZONE)
+        dl_files = adapter.list_dir(dl, ZONE)
         msg_files = [f for f in dl_files if not f.endswith(".reason.json")]
         assert len(msg_files) == 1
 
@@ -220,7 +220,7 @@ class TestStaleInboxDrainReal:
         reason_files = [f for f in dl_files if f.endswith(".reason.json")]
         assert len(reason_files) == 1
         reason_path = f"{dl}/{reason_files[0]}"
-        reason = json.loads(await adapter.sys_read(reason_path, ZONE))
+        reason = json.loads(adapter.sys_read(reason_path, ZONE))
         assert reason["reason"] == DLQReason.STALE_INBOX
 
     @pytest.mark.asyncio
@@ -230,7 +230,7 @@ class TestStaleInboxDrainReal:
 
         msg = _make_msg("msg_fresh")
         path = f"{inbox}/20260101T000000_{msg.id}.json"
-        await adapter.write(path, msg.to_bytes(), ZONE)
+        adapter.write(path, msg.to_bytes(), ZONE)
 
         # No sleep — message is fresh
         stale_hours = _TINY_RETENTION_SECS / 3600
@@ -238,7 +238,7 @@ class TestStaleInboxDrainReal:
         drained = await sweeper._drain_stale_inbox("agent:bob")
 
         assert drained == 0
-        inbox_files = await adapter.list_dir(inbox, ZONE)
+        inbox_files = adapter.list_dir(inbox, ZONE)
         assert len(inbox_files) == 1
 
     @pytest.mark.asyncio
@@ -250,7 +250,7 @@ class TestStaleInboxDrainReal:
         # Message with a far-future TTL (won't expire)
         msg = _make_msg("msg_with_ttl", ttl=999999)
         path = f"{inbox}/20260101T000000_{msg.id}.json"
-        await adapter.write(path, msg.to_bytes(), ZONE)
+        adapter.write(path, msg.to_bytes(), ZONE)
 
         await asyncio.sleep(_SLEEP_SECS)
 
@@ -259,7 +259,7 @@ class TestStaleInboxDrainReal:
         drained = await sweeper._drain_stale_inbox("agent:bob")
 
         assert drained == 0  # TTL message skipped by drain
-        inbox_files = await adapter.list_dir(inbox, ZONE)
+        inbox_files = adapter.list_dir(inbox, ZONE)
         assert len(inbox_files) == 1
 
     @pytest.mark.asyncio
@@ -272,7 +272,7 @@ class TestStaleInboxDrainReal:
 
         msg = _make_msg("msg_concurrent_drain")
         path = f"{inbox}/20260101T000000_{msg.id}.json"
-        await adapter.write(path, msg.to_bytes(), ZONE)
+        adapter.write(path, msg.to_bytes(), ZONE)
 
         await asyncio.sleep(_SLEEP_SECS)
 
@@ -289,7 +289,7 @@ class TestStaleInboxDrainReal:
         total = r1 + r2
         assert total == 1, f"Expected exactly 1 drained, got r1={r1} r2={r2}"
 
-        dl_files = await adapter.list_dir(dead_letter_path("agent:bob"), ZONE)
+        dl_files = adapter.list_dir(dead_letter_path("agent:bob"), ZONE)
         msg_files = [f for f in dl_files if not f.endswith(".reason.json")]
         assert len(msg_files) == 1, "Message must appear exactly once in dead_letter"
 
@@ -313,8 +313,8 @@ class TestDeadLetterCompactionReal:
         # Write 10 DLQ files
         for i in range(10):
             fn = f"20260101T{i:06d}_msg_{i:04d}.json"
-            await adapter.write(f"{dl}/{fn}", json.dumps({"id": f"msg_{i}"}).encode(), ZONE)
-            await adapter.write(
+            adapter.write(f"{dl}/{fn}", json.dumps({"id": f"msg_{i}"}).encode(), ZONE)
+            adapter.write(
                 f"{dl}/{fn}.reason.json",
                 json.dumps({"reason": "handler_error"}).encode(),
                 ZONE,
@@ -335,19 +335,19 @@ class TestDeadLetterCompactionReal:
         assert archived == 10
 
         # Archive segment created
-        archive_files = await adapter.list_dir(archive_dir, ZONE)
+        archive_files = adapter.list_dir(archive_dir, ZONE)
         jsonl_files = [f for f in archive_files if f.endswith(".jsonl")]
         assert len(jsonl_files) == 1, f"Expected 1 archive segment, got {jsonl_files}"
 
         # Archive is valid JSONL
-        content = await adapter.sys_read(f"{archive_dir}/{jsonl_files[0]}", ZONE)
+        content = adapter.sys_read(f"{archive_dir}/{jsonl_files[0]}", ZONE)
         records = [json.loads(line) for line in content.splitlines() if line]
         assert len(records) == 10
         for r in records:
             assert "file" in r and "envelope" in r and "reason" in r
 
         # Originals preserved (preserve mode)
-        dl_files = await adapter.list_dir(dl, ZONE)
+        dl_files = adapter.list_dir(dl, ZONE)
         msg_files = [
             f
             for f in dl_files
@@ -365,7 +365,7 @@ class TestDeadLetterCompactionReal:
 
         for i in range(10):
             fn = f"20260101T{i:06d}_msg_{i:04d}.json"
-            await adapter.write(f"{dl}/{fn}", json.dumps({"id": f"msg_{i}"}).encode(), ZONE)
+            adapter.write(f"{dl}/{fn}", json.dumps({"id": f"msg_{i}"}).encode(), ZONE)
 
         await asyncio.sleep(_SLEEP_SECS)
 
@@ -382,7 +382,7 @@ class TestDeadLetterCompactionReal:
         assert archived == 10
 
         # Originals deleted
-        dl_files = await adapter.list_dir(dl, ZONE)
+        dl_files = adapter.list_dir(dl, ZONE)
         msg_files = [
             f
             for f in dl_files
@@ -391,7 +391,7 @@ class TestDeadLetterCompactionReal:
         assert len(msg_files) == 0
 
         # Archive exists
-        archive_files = await adapter.list_dir(archive_dir, ZONE)
+        archive_files = adapter.list_dir(archive_dir, ZONE)
         jsonl_files = [f for f in archive_files if f.endswith(".jsonl")]
         assert len(jsonl_files) == 1
 
@@ -403,7 +403,7 @@ class TestDeadLetterCompactionReal:
 
         for i in range(5):
             fn = f"20260101T{i:06d}_msg_{i:04d}.json"
-            await adapter.write(f"{dl}/{fn}", json.dumps({"id": f"msg_{i}"}).encode(), ZONE)
+            adapter.write(f"{dl}/{fn}", json.dumps({"id": f"msg_{i}"}).encode(), ZONE)
 
         await asyncio.sleep(_SLEEP_SECS)
 
@@ -430,7 +430,7 @@ class TestDeadLetterCompactionReal:
 
         for i in range(10):
             fn = f"20260101T{i:06d}_msg_{i:04d}.json"
-            await adapter.write(f"{dl}/{fn}", json.dumps({"id": f"msg_{i}"}).encode(), ZONE)
+            adapter.write(f"{dl}/{fn}", json.dumps({"id": f"msg_{i}"}).encode(), ZONE)
 
         # No sleep — files are fresh
         min_age_hours = _TINY_RETENTION_SECS / 3600
@@ -463,24 +463,22 @@ class TestFullSweepOnceReal:
 
         # Write aged processed + outbox files
         for i in range(3):
-            await adapter.write(f"{proc}/20260101T{i:06d}_p{i}.json", b'{"id":"p"}', ZONE)
-            await adapter.write(f"{out}/20260101T{i:06d}_o{i}.json", b'{"id":"o"}', ZONE)
+            adapter.write(f"{proc}/20260101T{i:06d}_p{i}.json", b'{"id":"p"}', ZONE)
+            adapter.write(f"{out}/20260101T{i:06d}_o{i}.json", b'{"id":"o"}', ZONE)
 
         # Write a no-TTL inbox message that should be stale-drained
         msg = _make_msg("msg_stale_sweep")
-        await adapter.write(f"{inbox}/20260101T000000_{msg.id}.json", msg.to_bytes(), ZONE)
+        adapter.write(f"{inbox}/20260101T000000_{msg.id}.json", msg.to_bytes(), ZONE)
 
         # Write a FRESH inbox message — must not be touched
         fresh = _make_msg("msg_fresh_sweep")
-        await adapter.write(f"{inbox}/20260101T999999_{fresh.id}.json", fresh.to_bytes(), ZONE)
+        adapter.write(f"{inbox}/20260101T999999_{fresh.id}.json", fresh.to_bytes(), ZONE)
 
         await asyncio.sleep(_SLEEP_SECS)
 
         # Write fresh message AFTER sleep — should be protected
         very_fresh = _make_msg("msg_very_fresh")
-        await adapter.write(
-            f"{inbox}/20260101T888888_{very_fresh.id}.json", very_fresh.to_bytes(), ZONE
-        )
+        adapter.write(f"{inbox}/20260101T888888_{very_fresh.id}.json", very_fresh.to_bytes(), ZONE)
 
         retention = _TINY_RETENTION_SECS / 86400
         stale_hours = _TINY_RETENTION_SECS / 3600
@@ -495,16 +493,16 @@ class TestFullSweepOnceReal:
         await sweeper.sweep_once()
 
         # processed/ and outbox/ cleaned up
-        assert len(await adapter.list_dir(proc, ZONE)) == 0
-        assert len(await adapter.list_dir(out, ZONE)) == 0
+        assert len(adapter.list_dir(proc, ZONE)) == 0
+        assert len(adapter.list_dir(out, ZONE)) == 0
 
         # Old inbox msg drained
-        dl_files = await adapter.list_dir(dead_letter_path("agent:bob"), ZONE)
+        dl_files = adapter.list_dir(dead_letter_path("agent:bob"), ZONE)
         dl_msgs = [f for f in dl_files if not f.endswith(".reason.json")]
         assert any("msg_stale_sweep" in f for f in dl_msgs)
 
         # Fresh inbox messages untouched
-        inbox_files = await adapter.list_dir(inbox, ZONE)
+        inbox_files = adapter.list_dir(inbox, ZONE)
         assert any("msg_very_fresh" in f for f in inbox_files)
 
 
@@ -539,10 +537,10 @@ class TestProcClaimReal:
         assert "msg_proc_real" in received
 
         # Inbox empty
-        assert len(await adapter.list_dir(inbox_path("agent:bob"), ZONE)) == 0
+        assert len(adapter.list_dir(inbox_path("agent:bob"), ZONE)) == 0
 
         # Message moved to processed
-        proc_files = await adapter.list_dir(processed_path("agent:bob"), ZONE)
+        proc_files = adapter.list_dir(processed_path("agent:bob"), ZONE)
         assert any("msg_proc_real" in f for f in proc_files)
 
     @pytest.mark.asyncio
@@ -555,12 +553,12 @@ class TestProcClaimReal:
 
         msg = _make_msg("msg_race")
         path = f"{inbox}/20260101T000000_{msg.id}.json"
-        await adapter.write(path, msg.to_bytes(), ZONE)
+        adapter.write(path, msg.to_bytes(), ZONE)
 
         # Simulate processor claiming the file
         claim_ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
         proc_path = f"{path}.proc_{claim_ts}_abcd"
-        await adapter.rename(path, proc_path, ZONE)
+        adapter.rename(path, proc_path, ZONE)
 
         await asyncio.sleep(_SLEEP_SECS)
 
@@ -570,7 +568,7 @@ class TestProcClaimReal:
         drained = await sweeper._drain_stale_inbox("agent:bob")
 
         assert drained == 0
-        dl_files = await adapter.list_dir(dead_letter_path("agent:bob"), ZONE)
+        dl_files = adapter.list_dir(dead_letter_path("agent:bob"), ZONE)
         dl_msgs = [f for f in dl_files if not f.endswith(".reason.json")]
         assert len(dl_msgs) == 0, "Claimed message must not appear in DLQ"
 
@@ -591,13 +589,13 @@ class TestPerformanceReal:
         paths = []
         for i in range(20):
             p = f"{inbox_path('agent:perf_mtime')}/msg_{i:03d}.json"
-            await adapter.write(p, b'{"id":"x"}', ZONE)
+            adapter.write(p, b'{"id":"x"}', ZONE)
             paths.append(p)
 
         latencies = []
         for p in paths:
             t0 = time.perf_counter()
-            mtime = await adapter.file_mtime(p, ZONE)
+            mtime = adapter.file_mtime(p, ZONE)
             latencies.append(time.perf_counter() - t0)
             assert mtime is not None
 
@@ -613,7 +611,7 @@ class TestPerformanceReal:
         proc = processed_path("agent:perf_prune")
 
         for i in range(50):
-            await adapter.write(f"{proc}/20260101T{i:06d}_msg_{i:04d}.json", b"{}", ZONE)
+            adapter.write(f"{proc}/20260101T{i:06d}_msg_{i:04d}.json", b"{}", ZONE)
 
         await asyncio.sleep(_SLEEP_SECS)
 
@@ -624,7 +622,7 @@ class TestPerformanceReal:
         await sweeper._prune_dir("agent:perf_prune", "processed", retention_days)
         elapsed = time.perf_counter() - t0
 
-        remaining = await adapter.list_dir(proc, ZONE)
+        remaining = adapter.list_dir(proc, ZONE)
         assert len(remaining) == 0, f"Expected 0 files, got {len(remaining)}"
         print(f"\n[PERF] Prune 50 processed files (real NexusFS): {elapsed * 1000:.0f}ms")
         assert elapsed < 10.0, f"Prune of 50 files took {elapsed:.2f}s > 10s budget"
@@ -639,8 +637,8 @@ class TestPerformanceReal:
         for i in range(30):
             fn = f"20260101T{i:06d}_msg_{i:04d}.json"
             payload = json.dumps({"id": f"msg_{i}", "data": "x" * 512}).encode()
-            await adapter.write(f"{dl}/{fn}", payload, ZONE)
-            await adapter.write(
+            adapter.write(f"{dl}/{fn}", payload, ZONE)
+            adapter.write(
                 f"{dl}/{fn}.reason.json",
                 json.dumps({"reason": "handler_error", "detail": f"err {i}"}).encode(),
                 ZONE,
@@ -663,11 +661,11 @@ class TestPerformanceReal:
 
         assert archived == 30
         # _archive subdir will appear in listing — filter it out
-        dl_files = await adapter.list_dir(dl, ZONE)
+        dl_files = adapter.list_dir(dl, ZONE)
         remaining = [f for f in dl_files if f != "_archive"]
         assert len(remaining) == 0, f"Unexpected files remaining: {remaining}"
 
-        archive_files = await adapter.list_dir(archive_dir, ZONE)
+        archive_files = adapter.list_dir(archive_dir, ZONE)
         assert any(f.endswith(".jsonl") for f in archive_files)
 
         print(f"\n[PERF] Compact 30 DLQ files (real NexusFS): {elapsed * 1000:.0f}ms")
@@ -686,7 +684,7 @@ class TestPerformanceReal:
             await _provision(adapter, aid)
             proc = processed_path(aid)
             for j in range(N_FILES):
-                await adapter.write(f"{proc}/20260101T{j:06d}_msg_{j:04d}.json", b"{}", ZONE)
+                adapter.write(f"{proc}/20260101T{j:06d}_msg_{j:04d}.json", b"{}", ZONE)
 
         await asyncio.sleep(_SLEEP_SECS)
 
@@ -704,7 +702,7 @@ class TestPerformanceReal:
 
         # All processed files deleted across all agents
         for i in range(N_AGENTS):
-            remaining = await adapter.list_dir(processed_path(f"agent:sweepperf_{i:02d}"), ZONE)
+            remaining = adapter.list_dir(processed_path(f"agent:sweepperf_{i:02d}"), ZONE)
             assert len(remaining) == 0
 
         print(

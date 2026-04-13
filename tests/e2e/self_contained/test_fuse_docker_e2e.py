@@ -50,10 +50,10 @@ async def run_tests() -> int:
     )
 
     # Pre-populate
-    await nx.write("/test.txt", b"hello world")
-    await nx.write("/dir/file1.txt", b"content 1")
-    await nx.write("/dir/file2.txt", b"content 2")
-    await nx.write("/large.bin", b"x" * 100_000)
+    nx.write("/test.txt", b"hello world")
+    nx.write("/dir/file1.txt", b"content 1")
+    nx.write("/dir/file2.txt", b"content 2")
+    nx.write("/large.bin", b"x" * 100_000)
     print("Pre-mount data written\n")
 
     # Mount
@@ -194,7 +194,7 @@ async def run_tests() -> int:
         p = os.path.join(mp, "dir", "file2.txt")
         with open(p, "rb") as f:
             v1 = f.read()
-        await nx.write("/dir/file2.txt", b"backend update")
+        nx.write("/dir/file2.txt", b"backend update")
         # FUSE may cache; this tests that at least the read succeeds
         with open(p, "rb") as f:
             v2 = f.read()

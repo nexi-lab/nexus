@@ -584,33 +584,22 @@ async def _startup_workflow_engine(app: "FastAPI", svc: "LifespanServices") -> N
 
 
 async def _startup_pipe_consumers(app: "FastAPI", svc: "LifespanServices") -> None:
-    """Start DT_PIPE consumers (Issue #809, #810).
+    """Start DT_PIPE consumers + register OBSERVE-phase observers (Issue #809, #810).
 
-    Two consumers are started here:
-    1. PipedRecordStoreWriteObserver — async RecordStore sync via kernel IPC
-    2. ZoektPipeConsumer — async Zoekt index notifications via kernel IPC
+    RecordStoreWriteObserver (OBSERVE-phase) is registered via hook_spec
+    at factory enlist time — no start/stop lifecycle needed here.
+    We just expose it on app.state for shutdown cleanup.
 
-    All consumers use NexusFS sys_read/sys_write for pipe I/O (Rust kernel).
-    PipeManager itself was deleted in PR #3671 — the kernel pipe registry
-    is now managed entirely inside the Rust binary.
+    ZoektWriteObserver (Issue #810) is also OBSERVE-phase — no lifecycle.
     """
     nx = svc.nexus_fs
 
-    # Issue #809: PipedRecordStoreWriteObserver
+    # Issue #809: RecordStoreWriteObserver (OBSERVE-phase)
+    # No bind_fs/start needed — registered via hook_spec at factory enlist time.
     wo = svc.write_observer
     if wo is not None:
-        try:
-            if hasattr(wo, "bind_fs") and nx is not None:
-                wo.bind_fs(nx)
-            else:
-                raise RuntimeError("write observer missing startup binding hook")
-            await wo.start()
-            app.state.write_observer = wo
-            logger.info("[PIPE] PipedRecordStoreWriteObserver started")
-        except Exception as e:
-            logger.warning(
-                "[PIPE] PipedRecordStoreWriteObserver start failed: %s", e, exc_info=True
-            )
+        app.state.write_observer = wo
+        logger.info("[OBSERVE] RecordStoreWriteObserver registered (OBSERVE-phase)")
 
     # Issue #3193: EventDeliveryWorker is started by ServiceRegistry
     # (PersistentService auto-start). We only expose it + event_signal on
@@ -620,19 +609,10 @@ async def _startup_pipe_consumers(app: "FastAPI", svc: "LifespanServices") -> No
     if svc.event_signal is not None:
         app.state.event_signal = svc.event_signal
 
-    # Issue #810: ZoektPipeConsumer
-    zpc = svc.zoekt_pipe_consumer
-    if zpc is not None:
-        try:
-            if hasattr(zpc, "bind_fs") and nx is not None:
-                zpc.bind_fs(nx)
-            else:
-                raise RuntimeError("zoekt consumer missing startup binding hook")
-            await zpc.start()
-            app.state.zoekt_pipe_consumer = zpc
-            logger.info("[PIPE] ZoektPipeConsumer started")
-        except Exception as e:
-            logger.warning("[PIPE] ZoektPipeConsumer start failed: %s", e, exc_info=True)
+    # Issue #810: ZoektWriteObserver — registered as OBSERVE-phase observer
+    # via hook_spec at factory enlist time. No start/stop lifecycle needed.
+    # Legacy callbacks (notify_write/notify_sync_complete) still work for
+    # CASLocalBackend fallback path.
 
     # TaskDispatchPipeConsumer (task lifecycle signals)
     tdc = svc.task_dispatch_consumer
@@ -696,25 +676,29 @@ async def _shutdown_pipe_consumers(app: "FastAPI") -> None:
     ServiceRegistry.stop_persistent_services() — no
     explicit stop here to avoid double-stop.
     """
-    # Issue #809: PipedRecordStoreWriteObserver
+    # Issue #809: RecordStoreWriteObserver (OBSERVE-phase)
     wo = getattr(app.state, "write_observer", None)
-    if wo is not None and hasattr(wo, "stop"):
+    if wo is not None:
         try:
-            await wo.stop()
-            logger.info("[PIPE] PipedRecordStoreWriteObserver stopped")
+            if hasattr(wo, "flush_sync"):
+                wo.flush_sync()
+            if hasattr(wo, "cancel"):
+                wo.cancel()
+            logger.info("[OBSERVE] RecordStoreWriteObserver stopped")
         except Exception as e:
             logger.warning(
-                "[PIPE] Error stopping PipedRecordStoreWriteObserver: %s", e, exc_info=True
+                "[OBSERVE] Error stopping RecordStoreWriteObserver: %s", e, exc_info=True
             )
 
-    # Issue #810: ZoektPipeConsumer
-    zpc = getattr(app.state, "zoekt_pipe_consumer", None)
-    if zpc is not None and hasattr(zpc, "stop"):
+    # Issue #810: ZoektWriteObserver — no async stop needed (OBSERVE phase).
+    # Cancel any pending debounce timer for clean shutdown.
+    _zwo = getattr(app.state, "zoekt_write_observer", None)
+    if _zwo is not None and hasattr(_zwo, "cancel"):
         try:
-            await zpc.stop()
-            logger.info("[PIPE] ZoektPipeConsumer stopped")
+            _zwo.cancel()
+            logger.info("[OBSERVE] ZoektWriteObserver cancelled")
         except Exception as e:
-            logger.warning("[PIPE] Error stopping ZoektPipeConsumer: %s", e, exc_info=True)
+            logger.warning("[OBSERVE] Error cancelling ZoektWriteObserver: %s", e, exc_info=True)
 
     # TaskDispatchPipeConsumer
     tdc = getattr(app.state, "task_dispatch_consumer", None)

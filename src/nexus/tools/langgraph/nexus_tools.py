@@ -315,7 +315,7 @@ def get_nexus_tools() -> list[BaseTool]:
             if path.startswith("/mnt/nexus"):
                 path = path[len("/mnt/nexus") :]
 
-            content = await nx.sys_read(path)
+            content = nx.sys_read(path)
 
             # Handle dict response (when return_metadata=True or edge cases)
             if isinstance(content, dict):
@@ -444,10 +444,10 @@ def get_nexus_tools() -> list[BaseTool]:
             # Write file (Nexus creates parent directories automatically)
             if path.startswith("/mnt/nexus"):
                 path = path[len("/mnt/nexus") :]
-            await nx.sys_write(path, content_bytes)
+            nx.sys_write(path, content_bytes)
 
             # Verify write was successful
-            if await nx.access(path):
+            if nx.access(path):
                 size = len(content_bytes)
                 return f"Successfully wrote {size} bytes to {path}"
             else:

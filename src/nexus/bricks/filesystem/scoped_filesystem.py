@@ -19,11 +19,15 @@ Example:
     registry = SkillRegistry(filesystem=scoped_fs)
 """
 
+from __future__ import annotations
+
 import builtins
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from nexus.core.nexus_fs import NexusFS
 
 from nexus.bricks.filesystem._scoped_base import ScopedPathMixin
-from nexus.contracts.filesystem.filesystem_abc import NexusFilesystem
 from nexus.contracts.types import OperationContext
 
 
@@ -34,18 +38,18 @@ class ScopedFilesystem(ScopedPathMixin):
     Code using hardcoded paths like "/workspace/.nexus/skills/" will
     actually access "/zones/team_X/users/user_Y/workspace/.nexus/skills/".
 
-    The wrapper implements the NexusFilesystem protocol and delegates
+    The wrapper implements the NexusFS protocol and delegates
     all operations to the underlying filesystem after path translation.
 
     Service-level methods (workspace, sandbox, mount, memory, agent)
     are forwarded directly via ``__getattr__`` — no path scoping.
 
     Attributes:
-        _fs: The underlying NexusFilesystem instance
+        _fs: The underlying NexusFS instance
         _root: The root path prefix to prepend to all paths
     """
 
-    def __init__(self, fs: NexusFilesystem, root: str) -> None:
+    def __init__(self, fs: NexusFS, root: str) -> None:
         """Initialize ScopedFilesystem.
 
         Args:
@@ -57,7 +61,7 @@ class ScopedFilesystem(ScopedPathMixin):
         self._fs = fs
 
     @property
-    def wrapped_fs(self) -> NexusFilesystem:
+    def wrapped_fs(self) -> NexusFS:
         """The underlying wrapped filesystem."""
         return self._fs
 
@@ -69,7 +73,7 @@ class ScopedFilesystem(ScopedPathMixin):
     # Content I/O (path-scoped)
     # ============================================================
 
-    async def sys_read(
+    def sys_read(
         self,
         path: str,
         *,
@@ -78,11 +82,11 @@ class ScopedFilesystem(ScopedPathMixin):
         context: OperationContext | None = None,
     ) -> bytes:
         """Read file content as bytes (POSIX pread)."""
-        return await self._fs.sys_read(
+        return self._fs.sys_read(
             self._scope_path(path), count=count, offset=offset, context=context
         )
 
-    async def sys_write(
+    def sys_write(
         self,
         path: str,
         buf: bytes | str,
@@ -92,11 +96,11 @@ class ScopedFilesystem(ScopedPathMixin):
         context: OperationContext | None = None,
     ) -> dict[str, Any]:
         """Write content to a file (POSIX pwrite)."""
-        return await self._fs.sys_write(
+        return self._fs.sys_write(
             self._scope_path(path), buf, count=count, offset=offset, context=context
         )
 
-    async def read(
+    def read(
         self,
         path: str,
         *,
@@ -107,7 +111,7 @@ class ScopedFilesystem(ScopedPathMixin):
         **kwargs: Any,
     ) -> bytes | dict[str, Any]:
         """Read with optional metadata (VFS convenience)."""
-        result = await self._fs.read(
+        result = self._fs.read(
             self._scope_path(path),
             count=count,
             offset=offset,
@@ -119,7 +123,7 @@ class ScopedFilesystem(ScopedPathMixin):
             return self._unscope_dict(result, ["path"])
         return result
 
-    async def write(
+    def write(
         self,
         path: str,
         buf: bytes | str,
@@ -130,7 +134,7 @@ class ScopedFilesystem(ScopedPathMixin):
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Write with metadata update (VFS convenience)."""
-        result = await self._fs.write(
+        result = self._fs.write(
             self._scope_path(path), buf, count=count, offset=offset, context=context, **kwargs
         )
         return self._unscope_dict(result, ["path"])
@@ -139,37 +143,35 @@ class ScopedFilesystem(ScopedPathMixin):
     # Metadata I/O (path-scoped)
     # ============================================================
 
-    async def sys_stat(
+    def sys_stat(
         self, path: str, *, context: OperationContext | None = None
     ) -> dict[str, Any] | None:
         """Read all file metadata."""
-        result = await self._fs.sys_stat(self._scope_path(path), context=context)
+        result = self._fs.sys_stat(self._scope_path(path), context=context)
         if result is not None and isinstance(result, dict):
             return self._unscope_dict(result, ["path"])
         return result
 
-    async def sys_setattr(
+    def sys_setattr(
         self, path: str, *, context: OperationContext | None = None, **attrs: Any
     ) -> dict[str, Any]:
         """Update file metadata attributes."""
-        result = await self._fs.sys_setattr(self._scope_path(path), context=context, **attrs)
+        result = self._fs.sys_setattr(self._scope_path(path), context=context, **attrs)
         return self._unscope_dict(result, ["path"])
 
     # ============================================================
     # Namespace (path-scoped)
     # ============================================================
 
-    async def sys_unlink(
-        self, path: str, *, context: OperationContext | None = None
-    ) -> dict[str, Any]:
+    def sys_unlink(self, path: str, *, context: OperationContext | None = None) -> dict[str, Any]:
         """Remove a directory entry."""
-        return await self._fs.sys_unlink(self._scope_path(path), context=context)
+        return self._fs.sys_unlink(self._scope_path(path), context=context)
 
-    async def sys_rename(
+    def sys_rename(
         self, old_path: str, new_path: str, *, context: OperationContext | None = None
     ) -> dict[str, Any]:
         """Rename/move a file."""
-        return await self._fs.sys_rename(
+        return self._fs.sys_rename(
             self._scope_path(old_path), self._scope_path(new_path), context=context
         )
 
@@ -177,15 +179,15 @@ class ScopedFilesystem(ScopedPathMixin):
     # Query (path-scoped)
     # ============================================================
 
-    async def access(self, path: str, *, context: OperationContext | None = None) -> bool:
+    def access(self, path: str, *, context: OperationContext | None = None) -> bool:
         """Check if a file exists."""
-        return await self._fs.access(self._scope_path(path), context=context)
+        return self._fs.access(self._scope_path(path), context=context)
 
     # ============================================================
     # File Discovery Operations (path-scoped)
     # ============================================================
 
-    async def sys_readdir(
+    def sys_readdir(
         self,
         path: str = "/",
         recursive: bool = True,
@@ -195,7 +197,7 @@ class ScopedFilesystem(ScopedPathMixin):
         context: OperationContext | None = None,
     ) -> builtins.list[str] | builtins.list[dict[str, Any]]:
         """List files in a directory."""
-        result = await self._fs.sys_readdir(
+        result = self._fs.sys_readdir(
             self._scope_path(path), recursive, details, show_parsed, context=context
         )
         if details:
@@ -248,7 +250,7 @@ class ScopedFilesystem(ScopedPathMixin):
     # Directory Operations (path-scoped)
     # ============================================================
 
-    async def mkdir(
+    def mkdir(
         self,
         path: str,
         parents: bool = True,
@@ -257,23 +259,23 @@ class ScopedFilesystem(ScopedPathMixin):
         context: OperationContext | None = None,
     ) -> None:
         """Create a directory."""
-        await self._fs.mkdir(self._scope_path(path), parents, exist_ok, context=context)
+        self._fs.mkdir(self._scope_path(path), parents, exist_ok, context=context)
 
-    async def rmdir(
+    def rmdir(
         self, path: str, recursive: bool = True, *, context: OperationContext | None = None
     ) -> None:
         """Remove a directory."""
-        await self._fs.rmdir(self._scope_path(path), recursive=recursive, context=context)
+        self._fs.rmdir(self._scope_path(path), recursive=recursive, context=context)
 
-    async def is_directory(self, path: str, *, context: OperationContext | None = None) -> bool:
+    def is_directory(self, path: str, *, context: OperationContext | None = None) -> bool:
         """Check if path is a directory."""
-        return await self._fs.is_directory(self._scope_path(path), context=context)
+        return self._fs.is_directory(self._scope_path(path), context=context)
 
     # ============================================================
     # Convenience methods (path-scoped)
     # ============================================================
 
-    async def append(
+    def append(
         self,
         path: str,
         content: bytes | str,
@@ -281,10 +283,10 @@ class ScopedFilesystem(ScopedPathMixin):
         context: OperationContext | None = None,
     ) -> dict[str, Any]:
         """Append content to an existing file."""
-        result = await self._fs.append(self._scope_path(path), content, context=context)
+        result = self._fs.append(self._scope_path(path), content, context=context)
         return self._unscope_dict(result, ["path"])
 
-    async def edit(
+    def edit(
         self,
         path: str,
         edits: builtins.list[tuple[str, str]] | builtins.list[dict[str, Any]] | builtins.list[Any],
@@ -295,7 +297,7 @@ class ScopedFilesystem(ScopedPathMixin):
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Apply surgical search/replace edits to a file."""
-        result = await self._fs.edit(
+        result = self._fs.edit(
             self._scope_path(path),
             edits,
             context=context,
@@ -305,7 +307,7 @@ class ScopedFilesystem(ScopedPathMixin):
         )
         return self._unscope_dict(result, ["path"])
 
-    async def write_batch(
+    def write_batch(
         self,
         files: builtins.list[tuple[str, bytes]],
         *,
@@ -313,10 +315,10 @@ class ScopedFilesystem(ScopedPathMixin):
     ) -> builtins.list[dict[str, Any]]:
         """Write multiple files in a single transaction."""
         scoped_files = [(self._scope_path(path), content) for path, content in files]
-        results = await self._fs.write_batch(scoped_files, context=context)
+        results = self._fs.write_batch(scoped_files, context=context)
         return [self._unscope_dict(r, ["path"]) for r in results]
 
-    async def read_batch(
+    def read_batch(
         self,
         paths: builtins.list[str],
         *,
@@ -345,7 +347,7 @@ class ScopedFilesystem(ScopedPathMixin):
                         )
             scoped_paths.append(scoped)
 
-        results = await self._fs.read_batch(scoped_paths, partial=partial, context=context)
+        results = self._fs.read_batch(scoped_paths, partial=partial, context=context)
         return [self._unscope_dict(r, ["path"]) for r in results]
 
     # ============================================================

@@ -118,23 +118,23 @@ def populated_nexus(benchmark_nexus, sample_files, benchmark_loop):
     async def _populate():
         # Create directory structure
         for i in range(10):
-            await nx.mkdir(f"/dir_{i}", parents=True)
+            nx.mkdir(f"/dir_{i}", parents=True)
             for j in range(10):
-                await nx.mkdir(f"/dir_{i}/subdir_{j}", parents=True)
+                nx.mkdir(f"/dir_{i}/subdir_{j}", parents=True)
 
         # Create files of various sizes
         for size_name, content in sample_files.items():
             if size_name != "xlarge":  # Skip xlarge for setup speed
-                await nx.write(f"/test_{size_name}.bin", content)
+                nx.write(f"/test_{size_name}.bin", content)
                 # Create copies in subdirectories
                 for i in range(5):
-                    await nx.write(f"/dir_{i}/test_{size_name}.bin", content)
+                    nx.write(f"/dir_{i}/test_{size_name}.bin", content)
 
         # Create many small files for glob/list benchmarks
         for i in range(100):
-            await nx.write(f"/many_files/file_{i:04d}.txt", f"Content {i}".encode())
-            await nx.write(f"/many_files/file_{i:04d}.py", f"# Python {i}".encode())
-            await nx.write(f"/many_files/file_{i:04d}.json", f'{{"id": {i}}}'.encode())
+            nx.write(f"/many_files/file_{i:04d}.txt", f"Content {i}".encode())
+            nx.write(f"/many_files/file_{i:04d}.py", f"# Python {i}".encode())
+            nx.write(f"/many_files/file_{i:04d}.json", f'{{"id": {i}}}'.encode())
 
     benchmark_loop.run_until_complete(_populate())
     yield nx
@@ -149,8 +149,8 @@ def deep_directory_nexus(benchmark_nexus, benchmark_loop):
         current_path = ""
         for i in range(20):
             current_path += f"/level_{i}"
-            await nx.mkdir(current_path, parents=True)
-            await nx.write(f"{current_path}/file.txt", f"Content at depth {i}".encode())
+            nx.mkdir(current_path, parents=True)
+            nx.write(f"{current_path}/file.txt", f"Content at depth {i}".encode())
 
     benchmark_loop.run_until_complete(_populate())
     yield nx

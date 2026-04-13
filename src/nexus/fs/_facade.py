@@ -10,7 +10,7 @@ Usage:
     from nexus.fs._facade import SlimNexusFS
 
     facade = SlimNexusFS(kernel_fs)
-    content = await facade.read("/s3/bucket/file.txt")
+    content = facade.read("/s3/bucket/file.txt")
 """
 
 from __future__ import annotations
@@ -85,7 +85,7 @@ class SlimNexusFS:
 
     # -- Read operations --
 
-    async def read(self, path: str) -> bytes:
+    def read(self, path: str) -> bytes:
         """Read file content.
 
         Args:
@@ -97,9 +97,9 @@ class SlimNexusFS:
         Raises:
             NexusFileNotFoundError: If file does not exist.
         """
-        return await self._kernel.sys_read(path, context=self._ctx)
+        return self._kernel.sys_read(path, context=self._ctx)
 
-    async def read_range(self, path: str, start: int, end: int) -> bytes:
+    def read_range(self, path: str, start: int, end: int) -> bytes:
         """Read a specific byte range from a file.
 
         Memory-efficient — only fetches the requested range from the backend.
@@ -112,11 +112,11 @@ class SlimNexusFS:
         Returns:
             Bytes in the requested range.
         """
-        return await self._kernel.read_range(path, start, end, context=self._ctx)
+        return self._kernel.read_range(path, start, end, context=self._ctx)
 
     # -- Write operations --
 
-    async def write(self, path: str, content: bytes) -> dict[str, Any]:
+    def write(self, path: str, content: bytes) -> dict[str, Any]:
         """Write content to a file (creates or overwrites).
 
         Args:
@@ -126,9 +126,9 @@ class SlimNexusFS:
         Returns:
             Dict with path, size, etag, version.
         """
-        return await self._kernel.write(path, content, context=self._ctx)
+        return self._kernel.write(path, content, context=self._ctx)
 
-    async def write_batch(self, files: list[tuple[str, bytes]]) -> list[dict[str, Any]]:
+    def write_batch(self, files: list[tuple[str, bytes]]) -> list[dict[str, Any]]:
         """Write multiple files atomically in a single transaction.
 
         All files are written atomically — either all succeed or all fail.
@@ -145,9 +145,9 @@ class SlimNexusFS:
             NexusFileNotFoundError: Never — writes always create.
             InvalidPathError: If any path is invalid.
         """
-        return await self._kernel.write_batch(files, context=self._ctx)
+        return self._kernel.write_batch(files, context=self._ctx)
 
-    async def read_batch(
+    def read_batch(
         self,
         paths: list[str],
         *,
@@ -187,11 +187,11 @@ class SlimNexusFS:
             NexusFileNotFoundError: If any path is missing and ``partial=False``.
             InvalidPathError: If any path is invalid (always raised).
         """
-        return await self._kernel.read_batch(paths, partial=partial, context=self._ctx)
+        return self._kernel.read_batch(paths, partial=partial, context=self._ctx)
 
     # -- Directory operations --
 
-    async def ls(
+    def ls(
         self,
         path: str = "/",
         detail: bool = False,
@@ -207,39 +207,39 @@ class SlimNexusFS:
         Returns:
             List of paths (detail=False) or list of metadata dicts (detail=True).
         """
-        return await self._kernel.sys_readdir(
+        return self._kernel.sys_readdir(
             path,
             recursive=recursive,
             details=detail,
             context=self._ctx,
         )
 
-    async def mkdir(self, path: str, parents: bool = True) -> None:
+    def mkdir(self, path: str, parents: bool = True) -> None:
         """Create a directory.
 
         Args:
             path: Directory path to create.
             parents: If True, create parent directories as needed (mkdir -p).
         """
-        await self._kernel.mkdir(
+        self._kernel.mkdir(
             path,
             parents=parents,
             exist_ok=True,
             context=self._ctx,
         )
 
-    async def rmdir(self, path: str, recursive: bool = False) -> None:
+    def rmdir(self, path: str, recursive: bool = False) -> None:
         """Remove a directory.
 
         Args:
             path: Directory path to remove.
             recursive: If True, remove contents recursively (rm -rf).
         """
-        await self._kernel.rmdir(path, recursive=recursive, context=self._ctx)
+        self._kernel.rmdir(path, recursive=recursive, context=self._ctx)
 
     # -- File operations --
 
-    async def delete(self, path: str) -> None:
+    def delete(self, path: str) -> None:
         """Delete a file.
 
         Args:
@@ -257,18 +257,18 @@ class SlimNexusFS:
             raise ValueError(
                 f"Cannot delete mount root '{normalized}' — use unmount() to remove a mount."
             )
-        await self._kernel.sys_unlink(path, context=self._ctx)
+        self._kernel.sys_unlink(path, context=self._ctx)
 
-    async def rename(self, old_path: str, new_path: str) -> None:
+    def rename(self, old_path: str, new_path: str) -> None:
         """Rename/move a file.
 
         Args:
             old_path: Current file path.
             new_path: New file path.
         """
-        await self._kernel.sys_rename(old_path, new_path, context=self._ctx)
+        self._kernel.sys_rename(old_path, new_path, context=self._ctx)
 
-    async def exists(self, path: str) -> bool:
+    def exists(self, path: str) -> bool:
         """Check if a path exists.
 
         Args:
@@ -277,9 +277,9 @@ class SlimNexusFS:
         Returns:
             True if the path exists (file or directory).
         """
-        return await self._kernel.access(path, context=self._ctx)
+        return self._kernel.access(path, context=self._ctx)
 
-    async def copy(self, src: str, dst: str) -> dict[str, Any]:
+    def copy(self, src: str, dst: str) -> dict[str, Any]:
         """Copy a file from src to dst.
 
         Delegates to the kernel's sys_copy which uses backend-native
@@ -294,9 +294,9 @@ class SlimNexusFS:
         Returns:
             Dict with path, size, etag of the new file.
         """
-        return await self._kernel.sys_copy(src, dst, context=self._ctx)
+        return self._kernel.sys_copy(src, dst, context=self._ctx)
 
-    async def edit(
+    def edit(
         self,
         path: str,
         edits: list[tuple[str, str]] | list[dict[str, Any]],
@@ -330,7 +330,7 @@ class SlimNexusFS:
             between the ETag check and the write.  For concurrent-writer safety,
             use an external lock or wait for kernel-level OCC-aware writes.
         """
-        return await self._kernel.edit(
+        return self._kernel.edit(
             path,
             edits,
             context=self._ctx,
@@ -341,7 +341,7 @@ class SlimNexusFS:
 
     # -- Metadata (optimized single-lookup) --
 
-    async def stat(self, path: str) -> dict[str, Any] | None:
+    def stat(self, path: str) -> dict[str, Any] | None:
         """Get file/directory metadata with a single metadata lookup.
 
         Optimized for the slim package — avoids the kernel's double-lookup
@@ -411,7 +411,7 @@ class SlimNexusFS:
 
     # -- Search operations --
 
-    async def grep(
+    def grep(
         self,
         pattern: str,
         path: str = "/",
@@ -444,7 +444,7 @@ class SlimNexusFS:
 
         # Stream: list files, read and search each one incrementally.
         # Stop as soon as max_results is reached — no unbounded preloading.
-        entries = await self._kernel.sys_readdir(
+        entries = self._kernel.sys_readdir(
             path,
             recursive=True,
             details=True,
@@ -474,7 +474,7 @@ class SlimNexusFS:
             batch_contents: dict[str, bytes] = {}
             for fp in batch:
                 try:
-                    batch_contents[fp] = await self._kernel.sys_read(fp, context=self._ctx)
+                    batch_contents[fp] = self._kernel.sys_read(fp, context=self._ctx)
                 except Exception:
                     continue
 
@@ -514,7 +514,7 @@ class SlimNexusFS:
                             return matches
         return matches
 
-    async def glob(
+    def glob(
         self,
         pattern: str,
         path: str = "/",
@@ -532,7 +532,7 @@ class SlimNexusFS:
         Returns:
             List of matching file paths.
         """
-        entries = await self._kernel.sys_readdir(
+        entries = self._kernel.sys_readdir(
             path,
             recursive=True,
             details=False,
@@ -567,7 +567,7 @@ class SlimNexusFS:
         """
         return sorted(m.mount_point for m in self._kernel.router.list_mounts())
 
-    async def unmount(self, mount_point: str) -> None:
+    def unmount(self, mount_point: str) -> None:
         """Remove a mount and clean up all associated state.
 
         Removes the mount from the runtime router, deletes its metadata entry
@@ -626,12 +626,12 @@ class SlimNexusFS:
 
     # -- Lifecycle --
 
-    async def close(self) -> None:
+    def close(self) -> None:
         """Close the filesystem and release resources.
 
-        Closes the kernel (if it exposes a close method) and then
-        closes the metastore's SQLite connection.  Safe to call
-        multiple times — subsequent calls are no-ops.
+        Closes the kernel (NexusFS.close is sync) and then closes
+        the metastore's SQLite connection.  Safe to call multiple
+        times — subsequent calls are no-ops.
         """
         if self._closed:
             return
@@ -639,21 +639,16 @@ class SlimNexusFS:
         import contextlib
 
         try:
-            # Close the kernel (may be sync or async)
             _close = getattr(self._kernel, "close", None)
             if _close is not None:
-                result = _close()
-                if result is not None:
-                    await result
+                _close()
         finally:
-            # Always close the metastore — even if kernel close raises —
-            # to release the SQLite/WAL lock.
             with contextlib.suppress(Exception):
                 self._kernel.metadata.close()
             self._closed = True
 
-    async def __aenter__(self) -> SlimNexusFS:
+    def __enter__(self) -> SlimNexusFS:
         return self
 
-    async def __aexit__(self, *exc: Any) -> None:
-        await self.close()
+    def __exit__(self, *exc: Any) -> None:
+        self.close()

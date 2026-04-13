@@ -167,7 +167,7 @@ class TestVersionHistoryGC:
 
         # Create multiple versions
         for i in range(5):
-            await nx.write(path, f"Version {i + 1}".encode())
+            nx.write(path, f"Version {i + 1}".encode())
         await _flush(nx)
 
         # Run GC with very aggressive settings (0 retention, 1 max version)
@@ -183,7 +183,7 @@ class TestVersionHistoryGC:
         gc.run_gc(config, dry_run=True)
 
         # Verify current version still readable
-        content = await nx.sys_read(path)
+        content = nx.sys_read(path)
         assert content == b"Version 5"
 
     @pytest.mark.asyncio
@@ -193,7 +193,7 @@ class TestVersionHistoryGC:
 
         # Create multiple versions
         for i in range(3):
-            await nx.write(path, f"Version {i + 1}".encode())
+            nx.write(path, f"Version {i + 1}".encode())
         await _flush(nx)
 
         # Get initial version count
@@ -223,7 +223,7 @@ class TestVersionHistoryGC:
 
         # Create 10 versions
         for i in range(10):
-            await nx.write(path, f"Version {i + 1}".encode())
+            nx.write(path, f"Version {i + 1}".encode())
         await _flush(nx)
 
         # Get the resource_id (path_id) for this file
@@ -268,7 +268,7 @@ class TestVersionHistoryGC:
         """Test that GC reports accurate statistics."""
         # Create a file
         path = "/workspace/stats_test.txt"
-        await nx.write(path, b"Content")
+        nx.write(path, b"Content")
         await _flush(nx)
 
         gc = VersionHistoryGC(record_store)
@@ -290,7 +290,7 @@ class TestVersionHistoryGC:
         for file_num in range(3):
             path = f"/workspace/file{file_num}.txt"
             for version in range(5):
-                await nx.write(path, f"File {file_num} Version {version}".encode())
+                nx.write(path, f"File {file_num} Version {version}".encode())
         await _flush(nx)
 
         # Run GC with max 2 versions
@@ -308,7 +308,7 @@ class TestVersionHistoryGC:
         # All files should still be readable
         for file_num in range(3):
             path = f"/workspace/file{file_num}.txt"
-            content = await nx.sys_read(path)
+            content = nx.sys_read(path)
             assert b"Version 4" in content  # Latest version
 
     @pytest.mark.asyncio
@@ -316,7 +316,7 @@ class TestVersionHistoryGC:
         """Test parameter override functionality."""
         path = "/workspace/override_test.txt"
         for i in range(5):
-            await nx.write(path, f"V{i}".encode())
+            nx.write(path, f"V{i}".encode())
         await _flush(nx)
 
         gc = VersionHistoryGC(record_store)

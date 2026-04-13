@@ -50,8 +50,8 @@ async def run_tests() -> int:
     lease_mgr = LocalLeaseManager(zone_id="test", clock=SystemClock(), sweep_interval=3600.0)
 
     # Pre-populate data
-    await nx.write("/shared.txt", b"version-1")
-    await nx.write("/dir/child.txt", b"child-content")
+    nx.write("/shared.txt", b"version-1")
+    nx.write("/dir/child.txt", b"child-content")
     print("Data written\n")
 
     # Mount A

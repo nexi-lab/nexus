@@ -33,21 +33,21 @@ class VFSOperations(Protocol):
     never import from ``nexus.core`` at runtime.
     """
 
-    async def mkdir(
+    def mkdir(
         self, path: str, parents: bool = True, exist_ok: bool = True, context: Any = None
     ) -> None: ...
 
-    async def sys_write(self, path: str, buf: bytes | str, *, context: Any = None) -> int: ...
+    def sys_write(self, path: str, buf: bytes | str, *, context: Any = None) -> int: ...
 
-    async def write(self, path: str, buf: bytes | str, *, context: Any = None) -> dict: ...
+    def write(self, path: str, buf: bytes | str, *, context: Any = None) -> dict: ...
 
-    async def sys_read(self, path: str, *, context: Any = None) -> bytes: ...
+    def sys_read(self, path: str, *, context: Any = None) -> bytes: ...
 
-    async def access(self, path: str, context: Any = None) -> bool: ...
+    def access(self, path: str, context: Any = None) -> bool: ...
 
-    async def sys_readdir(self, path: str = "/", **kw: Any) -> list: ...
+    def sys_readdir(self, path: str = "/", **kw: Any) -> list: ...
 
-    async def sys_unlink(self, path: str, **kw: Any) -> None: ...
+    def sys_unlink(self, path: str, **kw: Any) -> None: ...
 
     # Tier 2 sync convenience methods (kernel passthroughs).  These exist
     # so callers don't need to reach into ``self._kernel`` for non-blocking
@@ -358,12 +358,10 @@ class AuditConfig:
     trails. ``strict_mode=True`` (default) ensures writes fail if audit
     logging fails, preventing silent audit gaps.
 
-    Note on async observers: ``strict_mode`` is enforced by the
-    synchronous ``RecordStoreWriteObserver``. The async
-    ``PipedRecordStoreWriteObserver`` enqueues events into a DT_PIPE
-    where the enqueue path cannot fail; actual error handling
-    (retry + drop) is managed by the background consumer, not by
-    ``strict_mode``.
+    Note on observers: ``strict_mode`` is enforced by the synchronous
+    ``RecordStoreWriteObserver``.  The OBSERVE-phase observer receives
+    events from the Rust kernel; error handling (retry + drop) is
+    managed by the debounced flush, not by ``strict_mode``.
     """
 
     strict_mode: bool = True

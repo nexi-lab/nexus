@@ -164,7 +164,7 @@ class MoveAction(BaseAction):
                 parent_dir = str(Path(destination).parent)
                 # Use VFS mkdir (not local Path.exists) — idempotent to avoid TOCTOU
                 with contextlib.suppress(Exception):
-                    await context.services.nexus_ops.mkdir(parent_dir, parents=True)
+                    context.services.nexus_ops.mkdir(parent_dir, parents=True)
 
             await context.services.nexus_ops.rename(source, destination)
 

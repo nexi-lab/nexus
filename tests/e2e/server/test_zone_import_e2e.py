@@ -48,10 +48,10 @@ async def source_nexus_fs(temp_dir):
     )
 
     # Create test files
-    await fs.write("/workspace/readme.md", b"# Test Project\n\nThis is a test.")
-    await fs.write("/workspace/src/main.py", b'print("Hello, World!")')
-    await fs.write("/workspace/src/utils.py", b"def helper(): pass")
-    await fs.write("/docs/guide.txt", b"User guide content here.")
+    fs.write("/workspace/readme.md", b"# Test Project\n\nThis is a test.")
+    fs.write("/workspace/src/main.py", b'print("Hello, World!")')
+    fs.write("/workspace/src/utils.py", b"def helper(): pass")
+    fs.write("/docs/guide.txt", b"User guide content here.")
 
     yield fs
     fs.close()
@@ -111,12 +111,12 @@ class TestZoneImportService:
         assert result.files_failed == 0
 
         # Verify files exist
-        assert await target_nexus_fs.access("/workspace/readme.md")
-        assert await target_nexus_fs.access("/workspace/src/main.py")
-        assert await target_nexus_fs.access("/docs/guide.txt")
+        assert target_nexus_fs.access("/workspace/readme.md")
+        assert target_nexus_fs.access("/workspace/src/main.py")
+        assert target_nexus_fs.access("/docs/guide.txt")
 
         # Verify content is correct
-        content = await target_nexus_fs.sys_read("/workspace/readme.md")
+        content = target_nexus_fs.sys_read("/workspace/readme.md")
         assert b"Test Project" in content
 
     def test_import_with_target_zone_remap(self, exported_bundle, target_nexus_fs):
@@ -148,8 +148,8 @@ class TestZoneImportService:
         assert result.files_created == 4
 
         # But files should not actually exist
-        assert not await target_nexus_fs.access("/workspace/readme.md")
-        assert not await target_nexus_fs.access("/docs/guide.txt")
+        assert not target_nexus_fs.access("/workspace/readme.md")
+        assert not target_nexus_fs.access("/docs/guide.txt")
 
 
 class TestConflictResolution:
@@ -159,7 +159,7 @@ class TestConflictResolution:
     async def test_conflict_skip(self, exported_bundle, target_nexus_fs):
         """Test SKIP mode keeps existing files."""
         # Create an existing file
-        await target_nexus_fs.write("/workspace/readme.md", b"Existing content")
+        target_nexus_fs.write("/workspace/readme.md", b"Existing content")
 
         options = ZoneImportOptions(
             bundle_path=exported_bundle,
@@ -174,14 +174,14 @@ class TestConflictResolution:
         assert result.files_created == 3  # Other 3 files created
 
         # Original content should be preserved
-        content = await target_nexus_fs.sys_read("/workspace/readme.md")
+        content = target_nexus_fs.sys_read("/workspace/readme.md")
         assert content == b"Existing content"
 
     @pytest.mark.asyncio
     async def test_conflict_overwrite(self, exported_bundle, target_nexus_fs):
         """Test OVERWRITE mode replaces existing files."""
         # Create an existing file
-        await target_nexus_fs.write("/workspace/readme.md", b"Existing content")
+        target_nexus_fs.write("/workspace/readme.md", b"Existing content")
 
         options = ZoneImportOptions(
             bundle_path=exported_bundle,
@@ -196,14 +196,14 @@ class TestConflictResolution:
         assert result.files_created == 3
 
         # Content should be from bundle
-        content = await target_nexus_fs.sys_read("/workspace/readme.md")
+        content = target_nexus_fs.sys_read("/workspace/readme.md")
         assert b"Test Project" in content
 
     @pytest.mark.asyncio
     async def test_conflict_fail(self, exported_bundle, target_nexus_fs):
         """Test FAIL mode stops on first conflict."""
         # Create an existing file
-        await target_nexus_fs.write("/workspace/readme.md", b"Existing content")
+        target_nexus_fs.write("/workspace/readme.md", b"Existing content")
 
         options = ZoneImportOptions(
             bundle_path=exported_bundle,
@@ -236,11 +236,11 @@ class TestPathRemapping:
         assert result.paths_remapped >= 3  # workspace files remapped
 
         # Files should be at new paths
-        assert await target_nexus_fs.access("/projects/readme.md")
-        assert await target_nexus_fs.access("/projects/src/main.py")
+        assert target_nexus_fs.access("/projects/readme.md")
+        assert target_nexus_fs.access("/projects/src/main.py")
 
         # Original paths should not exist
-        assert not await target_nexus_fs.access("/workspace/readme.md")
+        assert not target_nexus_fs.access("/workspace/readme.md")
 
     @pytest.mark.asyncio
     async def test_multiple_path_remaps(self, exported_bundle, target_nexus_fs):
@@ -259,8 +259,8 @@ class TestPathRemapping:
         assert result.success is True
 
         # Both remappings applied
-        assert await target_nexus_fs.access("/projects/readme.md")
-        assert await target_nexus_fs.access("/documentation/guide.txt")
+        assert target_nexus_fs.access("/projects/readme.md")
+        assert target_nexus_fs.access("/documentation/guide.txt")
 
 
 class TestImportConvenienceFunction:
@@ -276,7 +276,7 @@ class TestImportConvenienceFunction:
 
         assert result.success is True
         assert result.files_created == 4
-        assert await target_nexus_fs.access("/workspace/readme.md")
+        assert target_nexus_fs.access("/workspace/readme.md")
 
     def test_import_with_progress_callback(self, exported_bundle, target_nexus_fs):
         """Test import with progress callback."""
@@ -358,6 +358,6 @@ class TestRoundTrip:
             "/workspace/src/utils.py",
             "/docs/guide.txt",
         ]:
-            source_content = await source_nexus_fs.sys_read(path)
-            target_content = await target_nexus_fs.sys_read(path)
+            source_content = source_nexus_fs.sys_read(path)
+            target_content = target_nexus_fs.sys_read(path)
             assert source_content == target_content, f"Content mismatch for {path}"

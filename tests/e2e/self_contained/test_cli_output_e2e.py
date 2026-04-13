@@ -74,14 +74,14 @@ async def seeded_data_dir(nexus_data_dir: str) -> str:
     import gc
 
     nx = nexus.connect(config={"data_dir": nexus_data_dir})
-    await nx.mkdir("/workspace", exist_ok=True)
-    await nx.mkdir("/workspace/src", exist_ok=True)
-    await nx.mkdir("/workspace/docs", exist_ok=True)
+    nx.mkdir("/workspace", exist_ok=True)
+    nx.mkdir("/workspace/src", exist_ok=True)
+    nx.mkdir("/workspace/docs", exist_ok=True)
 
-    await nx.write("/workspace/src/main.py", b'# TODO: implement\nprint("hello")\n')
-    await nx.write("/workspace/src/utils.py", b"def helper():\n    return 42\n")
-    await nx.write("/workspace/docs/README.md", b"# Project\nThis is a test project.\n")
-    await nx.write("/workspace/data.txt", b"line one\nline two\nline three\n")
+    nx.write("/workspace/src/main.py", b'# TODO: implement\nprint("hello")\n')
+    nx.write("/workspace/src/utils.py", b"def helper():\n    return 42\n")
+    nx.write("/workspace/docs/README.md", b"# Project\nThis is a test project.\n")
+    nx.write("/workspace/data.txt", b"line one\nline two\nline three\n")
     nx.close()
     del nx
     gc.collect()

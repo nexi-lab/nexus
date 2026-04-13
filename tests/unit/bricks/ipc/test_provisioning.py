@@ -29,9 +29,9 @@ class TestAgentProvisioner:
         provisioner = AgentProvisioner(vfs, zone_id=ZONE)
         await provisioner.provision("analyst")
 
-        assert await vfs.access(agent_dir("analyst"), ZONE)
+        assert vfs.access(agent_dir("analyst"), ZONE)
         for subdir in AGENT_SUBDIRS:
-            assert await vfs.access(f"{agent_dir('analyst')}/{subdir}", ZONE)
+            assert vfs.access(f"{agent_dir('analyst')}/{subdir}", ZONE)
 
     @pytest.mark.asyncio
     async def test_provision_creates_agent_card(self, vfs: InMemoryVFS) -> None:
@@ -42,7 +42,7 @@ class TestAgentProvisioner:
             skills=["code_review", "security"],
         )
 
-        card_data = await vfs.sys_read(agent_card_path("reviewer"), ZONE)
+        card_data = vfs.sys_read(agent_card_path("reviewer"), ZONE)
         card = json.loads(card_data)
         assert card["name"] == "Code Reviewer"
         assert card["agent_id"] == "reviewer"
@@ -57,7 +57,7 @@ class TestAgentProvisioner:
         await provisioner.provision("analyst")
         await provisioner.provision("analyst")  # Should not raise
 
-        assert await vfs.access(inbox_path("analyst"), ZONE)
+        assert vfs.access(inbox_path("analyst"), ZONE)
 
     @pytest.mark.asyncio
     async def test_is_provisioned(self, vfs: InMemoryVFS) -> None:
@@ -73,7 +73,7 @@ class TestAgentProvisioner:
         await provisioner.provision("analyst")
         await provisioner.deprovision("analyst")
 
-        card_data = await vfs.sys_read(agent_card_path("analyst"), ZONE)
+        card_data = vfs.sys_read(agent_card_path("analyst"), ZONE)
         card = json.loads(card_data)
         assert card["status"] == "deprovisioned"
         assert "deprovisioned_at" in card
@@ -86,7 +86,7 @@ class TestAgentProvisioner:
             metadata={"model": "claude-opus", "version": "4.5"},
         )
 
-        card_data = await vfs.sys_read(agent_card_path("custom_agent"), ZONE)
+        card_data = vfs.sys_read(agent_card_path("custom_agent"), ZONE)
         card = json.loads(card_data)
         assert card["model"] == "claude-opus"
         assert card["version"] == "4.5"
@@ -97,4 +97,4 @@ class TestAgentProvisioner:
         provisioner = AgentProvisioner(vfs, zone_id=ZONE)
         await provisioner.provision("agent:bob")
 
-        assert await vfs.access(inbox_path("agent:bob"), ZONE)
+        assert vfs.access(inbox_path("agent:bob"), ZONE)

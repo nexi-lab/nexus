@@ -15,8 +15,9 @@ from typing import TYPE_CHECKING, Any
 from nexus.bricks.mcp.models import MCPMount, MCPToolConfig, MCPToolDefinition
 
 if TYPE_CHECKING:
-    from nexus.contracts.filesystem.filesystem_abc import NexusFilesystem
     from nexus.contracts.types import OperationContext
+    from nexus.core.nexus_fs import NexusFS
+
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +120,7 @@ class MCPMountManager:
     # Mount configuration filename (per-folder)
     MOUNT_CONFIG_FILENAME = "mount.json"
 
-    def __init__(self, filesystem: "NexusFilesystem | None" = None):
+    def __init__(self, filesystem: "NexusFS | None" = None):
         """Initialize MCP mount manager.
 
         Args:
@@ -164,19 +165,19 @@ class MCPMountManager:
         try:
             if self._filesystem:
                 # Check if base path exists
-                if not await self._filesystem.access(self.MCP_TOOLS_PATH):
+                if not self._filesystem.access(self.MCP_TOOLS_PATH):
                     return False
 
                 # List directories in MCP_TOOLS_PATH
-                items = await self._filesystem.sys_readdir(self.MCP_TOOLS_PATH)
+                items = self._filesystem.sys_readdir(self.MCP_TOOLS_PATH)
                 for item in items:
                     # Skip files at root level
                     item_path = f"{self.MCP_TOOLS_PATH}{item}"
                     mount_json_path = f"{item_path}/mount.json"
 
                     try:
-                        if await self._filesystem.access(mount_json_path):
-                            raw_content = await self._filesystem.sys_read(mount_json_path)
+                        if self._filesystem.access(mount_json_path):
+                            raw_content = self._filesystem.sys_read(mount_json_path)
                             content_str = (
                                 raw_content.decode("utf-8")
                                 if isinstance(raw_content, bytes)
@@ -240,13 +241,13 @@ class MCPMountManager:
                 # Ensure mount directory exists
                 mount_dir = f"{self.MCP_TOOLS_PATH}{mount.name}/"
                 try:
-                    await self._filesystem.mkdir(mount_dir, parents=True)
+                    self._filesystem.mkdir(mount_dir, parents=True)
                 except FileExistsError:
                     pass
                 except OSError as e:
                     logger.warning("Failed to create directory %s: %s", mount_dir, e)
 
-                await self._filesystem.write(mount_json_path, content.encode("utf-8"))
+                self._filesystem.write(mount_json_path, content.encode("utf-8"))
             else:
                 mount_path = Path(mount_json_path.lstrip("/"))
                 mount_path.parent.mkdir(parents=True, exist_ok=True)
@@ -816,14 +817,14 @@ class MCPMountManager:
             # Ensure directory exists
             if mount.tools_path:
                 try:
-                    await self._filesystem.mkdir(mount.tools_path, parents=True)
+                    self._filesystem.mkdir(mount.tools_path, parents=True)
                 except FileExistsError:
                     pass
                 except OSError as e:
                     logger.warning("Failed to create directory %s: %s", mount.tools_path, e)
 
             # Write tool.json
-            await self._filesystem.write(tool_json_path, tool_json.encode("utf-8"))
+            self._filesystem.write(tool_json_path, tool_json.encode("utf-8"))
         else:
             # Local filesystem
             if mount.tools_path:
@@ -852,12 +853,12 @@ class MCPMountManager:
         if self._filesystem:
             if mount.tools_path:
                 try:
-                    await self._filesystem.mkdir(mount.tools_path, parents=True)
+                    self._filesystem.mkdir(mount.tools_path, parents=True)
                 except FileExistsError:
                     pass
                 except OSError as e:
                     logger.warning("Failed to create directory %s: %s", mount.tools_path, e)
-            await self._filesystem.write(readme_md_path, readme_md.encode("utf-8"))
+            self._filesystem.write(readme_md_path, readme_md.encode("utf-8"))
         else:
             if mount.tools_path:
                 tools_dir = Path(mount.tools_path.lstrip("/"))
@@ -1034,19 +1035,19 @@ class MCPMountManager:
         try:
             if self._filesystem:
                 # Check if path exists
-                if not await self._filesystem.access(tier_path):
+                if not self._filesystem.access(tier_path):
                     logger.debug("MCP tier path does not exist: %s", tier_path)
                     return 0
 
                 # List directories in tier_path
-                items = await self._filesystem.sys_readdir(tier_path)
+                items = self._filesystem.sys_readdir(tier_path)
                 for item in items:
                     item_path = f"{tier_path}{item}"
                     mount_json_path = f"{item_path}/mount.json"
 
                     try:
-                        if await self._filesystem.access(mount_json_path):
-                            raw_content = await self._filesystem.sys_read(mount_json_path)
+                        if self._filesystem.access(mount_json_path):
+                            raw_content = self._filesystem.sys_read(mount_json_path)
                             content_str = (
                                 raw_content.decode("utf-8")
                                 if isinstance(raw_content, bytes)

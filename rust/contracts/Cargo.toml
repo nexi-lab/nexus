@@ -1,0 +1,9 @@
+[package]
+name = "contracts"
+version = "0.1.0"
+edition = "2021"
+description = "Shared Rust traits and types — MutationObserver, FileEvent, Metastore"
+
+[lib]
+name = "contracts"
+crate-type = ["rlib"]

@@ -49,13 +49,9 @@ async def source_nexus_fs_with_permissions(temp_dir):
     admin_context = OperationContext(user_id="admin", groups=[], is_admin=True)
 
     # Create test files as admin
-    await fs.write(
-        "/workspace/readme.md", b"# Test Project\n\nPermissions test.", context=admin_context
-    )
-    await fs.write(
-        "/workspace/src/main.py", b'print("Hello with permissions!")', context=admin_context
-    )
-    await fs.write("/docs/guide.txt", b"User guide with permissions.", context=admin_context)
+    fs.write("/workspace/readme.md", b"# Test Project\n\nPermissions test.", context=admin_context)
+    fs.write("/workspace/src/main.py", b'print("Hello with permissions!")', context=admin_context)
+    fs.write("/docs/guide.txt", b"User guide with permissions.", context=admin_context)
 
     yield fs
     fs.close()
@@ -158,7 +154,7 @@ class TestImportWithPermissions:
         assert meta is not None, "File metadata not found for /workspace/readme.md"
 
         # Read content as admin
-        content = await target_nexus_fs_with_permissions.sys_read(
+        content = target_nexus_fs_with_permissions.sys_read(
             "/workspace/readme.md", context=admin_context
         )
         assert b"Permissions test" in content
@@ -171,7 +167,7 @@ class TestImportWithPermissions:
         admin_context = OperationContext(user_id="admin", groups=[], is_admin=True)
 
         # Create existing file
-        await target_nexus_fs_with_permissions.write(
+        target_nexus_fs_with_permissions.write(
             "/workspace/readme.md", b"Existing content", context=admin_context
         )
 
@@ -188,7 +184,7 @@ class TestImportWithPermissions:
         assert result.files_created == 2
 
         # Original content preserved
-        content = await target_nexus_fs_with_permissions.sys_read(
+        content = target_nexus_fs_with_permissions.sys_read(
             "/workspace/readme.md", context=admin_context
         )
         assert content == b"Existing content"
@@ -201,7 +197,7 @@ class TestImportWithPermissions:
         admin_context = OperationContext(user_id="admin", groups=[], is_admin=True)
 
         # Create existing file
-        await target_nexus_fs_with_permissions.write(
+        target_nexus_fs_with_permissions.write(
             "/workspace/readme.md", b"Existing content", context=admin_context
         )
 
@@ -218,7 +214,7 @@ class TestImportWithPermissions:
         assert result.files_created == 2
 
         # Content should be from bundle
-        content = await target_nexus_fs_with_permissions.sys_read(
+        content = target_nexus_fs_with_permissions.sys_read(
             "/workspace/readme.md", context=admin_context
         )
         assert b"Permissions test" in content
@@ -255,10 +251,6 @@ class TestRoundTripWithPermissions:
 
         # Verify content matches
         for path in ["/workspace/readme.md", "/workspace/src/main.py", "/docs/guide.txt"]:
-            source_content = await source_nexus_fs_with_permissions.sys_read(
-                path, context=admin_context
-            )
-            target_content = await target_nexus_fs_with_permissions.sys_read(
-                path, context=admin_context
-            )
+            source_content = source_nexus_fs_with_permissions.sys_read(path, context=admin_context)
+            target_content = target_nexus_fs_with_permissions.sys_read(path, context=admin_context)
             assert source_content == target_content, f"Content mismatch for {path}"

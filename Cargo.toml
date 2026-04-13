@@ -1,17 +1,22 @@
 [workspace]
 resolver = "2"
 members = [
-    "rust/nexus_core",
-    "rust/nexus_transport",
-    "rust/nexus_kernel",
-    "rust/nexus_raft",
-    "rust/nexus_tasks",
+    "rust/contracts",
+    "rust/library",
+    "rust/transport",
+    "rust/kernel",
+    "rust/services",
+    "rust/raft",
+    "rust/tasks",
 ]
 # nexus-fuse excluded: standalone FUSE daemon with different dependency versions
 exclude = ["nexus-fuse"]
 
 [workspace.dependencies]
-nexus_core = { path = "rust/nexus_core" }
+contracts = { path = "rust/contracts" }
+library = { path = "rust/library" }
+transport = { path = "rust/transport" }
+services = { path = "rust/services" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 ahash = "0.8"
@@ -26,7 +31,6 @@ crc32fast = "1.4"
 mimalloc = { version = "0.1", default-features = false }
 tonic = { version = "0.13", features = ["transport", "tls-ring"] }
 prost = "0.13"
-nexus_transport = { path = "rust/nexus_transport" }
 
 [profile.dev]
 opt-level = 1

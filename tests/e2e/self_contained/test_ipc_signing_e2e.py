@@ -211,7 +211,7 @@ class TestSignedIPCE2E:
         assert path.endswith(".json")
 
         # 5. Verify envelope on disk has signature
-        data = await vfs.sys_read(path, ZONE)
+        data = vfs.sys_read(path, ZONE)
         restored = MessageEnvelope.from_bytes(data)
         assert restored.signature is not None
         assert restored.signer_did == alice_record.did
@@ -239,9 +239,9 @@ class TestSignedIPCE2E:
         assert received[0].sender == "agent:alice"
 
         # Inbox should be empty, processed should have 1
-        inbox_files = await vfs.list_dir(inbox_path("agent:bob"), ZONE)
+        inbox_files = vfs.list_dir(inbox_path("agent:bob"), ZONE)
         assert len(inbox_files) == 0
-        processed_files = await vfs.list_dir(processed_path("agent:bob"), ZONE)
+        processed_files = vfs.list_dir(processed_path("agent:bob"), ZONE)
         assert len(processed_files) == 1
 
     @pytest.mark.asyncio
@@ -288,7 +288,7 @@ class TestSignedIPCE2E:
         assert not handler_called, "Handler should NOT be called for unsigned message in ENFORCE"
 
         # Message should be in dead_letter
-        dl_files = await vfs.list_dir(dead_letter_path("agent:bob"), ZONE)
+        dl_files = vfs.list_dir(dead_letter_path("agent:bob"), ZONE)
         dl_msgs = [f for f in dl_files if not f.endswith(".reason.json")]
         assert len(dl_msgs) == 1
 
@@ -327,7 +327,7 @@ class TestSignedIPCE2E:
 
         # Write tampered envelope directly to inbox
         msg_path = message_path_in_inbox("agent:bob", tampered.id, tampered.timestamp)
-        await vfs.write(msg_path, tampered.to_bytes(), ZONE)
+        vfs.write(msg_path, tampered.to_bytes(), ZONE)
 
         handler_called = False
 
@@ -347,7 +347,7 @@ class TestSignedIPCE2E:
 
         assert not handler_called, "Handler should NOT be called for tampered message"
 
-        dl_files = await vfs.list_dir(dead_letter_path("agent:bob"), ZONE)
+        dl_files = vfs.list_dir(dead_letter_path("agent:bob"), ZONE)
         dl_msgs = [f for f in dl_files if not f.endswith(".reason.json")]
         assert len(dl_msgs) == 1
 

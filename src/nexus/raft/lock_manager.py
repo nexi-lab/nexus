@@ -13,7 +13,6 @@ References:
     - docs/architecture/lock-architecture.md
 """
 
-import asyncio
 import logging
 import uuid
 from typing import Any, Literal
@@ -52,13 +51,13 @@ class RaftLockManager(LockManagerBase):
         >>> from nexus.storage.raft_metadata_store import RaftMetadataStore
         >>> store = RaftMetadataStore.embedded("/var/lib/nexus/metadata")
         >>> manager = RaftLockManager(store, zone_id="zone-1")
-        >>> lock_id = await manager.acquire("/file.txt", timeout=5.0)
+        >>> lock_id = manager.acquire("/file.txt", timeout=5.0)
         >>> if lock_id:
         ...     try:
         ...         # Do exclusive work...
         ...         pass
         ...     finally:
-        ...         await manager.release(lock_id, "/file.txt")
+        ...         manager.release(lock_id, "/file.txt")
     """
 
     # Retry parameters for acquisition
@@ -96,7 +95,7 @@ class RaftLockManager(LockManagerBase):
             fence_token=store_info.get("fence_token", 0),
         )
 
-    async def acquire(
+    def acquire(
         self,
         path: str,
         mode: Literal["exclusive", "shared"] = "exclusive",  # noqa: ARG002 (Raft store has no shared mode yet)
@@ -114,7 +113,9 @@ class RaftLockManager(LockManagerBase):
         holder_id = str(uuid.uuid4())
         ttl_secs = max(1, int(ttl))
 
-        deadline = asyncio.get_running_loop().time() + timeout
+        import time as _time
+
+        deadline = _time.monotonic() + timeout
         retry_interval = self.RETRY_BASE_INTERVAL
 
         while True:
@@ -133,20 +134,20 @@ class RaftLockManager(LockManagerBase):
                 )
                 return holder_id
 
-            remaining = deadline - asyncio.get_running_loop().time()
+            remaining = deadline - _time.monotonic()
             if remaining <= 0:
                 logger.debug("Raft lock acquisition timeout: %s", lock_key)
                 return None
 
             sleep_time = min(retry_interval, remaining)
-            await asyncio.sleep(sleep_time)
+            _time.sleep(sleep_time)
 
             retry_interval = min(
                 retry_interval * self.RETRY_MULTIPLIER,
                 self.RETRY_MAX_INTERVAL,
             )
 
-    async def release(self, lock_id: str, path: str) -> bool:
+    def release(self, lock_id: str, path: str) -> bool:
         lock_key = self._lock_key(path)
         try:
             released: bool = self._store.release_lock(lock_key, lock_id)
@@ -162,7 +163,7 @@ class RaftLockManager(LockManagerBase):
             logger.error("Failed to release Raft lock %s: %s", lock_key, e)
             return False
 
-    async def extend(
+    def extend(
         self,
         lock_id: str,
         path: str,
@@ -177,13 +178,13 @@ class RaftLockManager(LockManagerBase):
                 return ExtendResult(success=False)
 
             logger.debug("Raft lock extended: %s (new TTL: %ss)", lock_key, ttl)
-            lock_info = await self.get_lock_info(path)
+            lock_info = self.get_lock_info(path)
             return ExtendResult(success=True, lock_info=lock_info)
         except Exception as e:
             logger.error("Failed to extend Raft lock %s: %s", lock_key, e)
             return ExtendResult(success=False)
 
-    async def get_lock_info(self, path: str) -> LockInfo | None:
+    def get_lock_info(self, path: str) -> LockInfo | None:
         lock_key = self._lock_key(path)
         try:
             store_info = self._store.get_lock_info(lock_key)
@@ -194,7 +195,7 @@ class RaftLockManager(LockManagerBase):
             logger.error("Failed to get lock info for %s: %s", lock_key, e)
             return None
 
-    async def list_locks(self, pattern: str = "", limit: int = 100) -> list[LockInfo]:
+    def list_locks(self, pattern: str = "", limit: int = 100) -> list[LockInfo]:
         try:
             store_locks = self._store.list_locks(prefix="", limit=limit)
             if store_locks is None:
@@ -207,7 +208,7 @@ class RaftLockManager(LockManagerBase):
             logger.error("Failed to list locks: %s", e)
             return []
 
-    async def force_release(self, path: str) -> bool:
+    def force_release(self, path: str) -> bool:
         lock_key = self._lock_key(path)
         try:
             released: bool = self._store.force_release_lock(lock_key)
@@ -220,7 +221,7 @@ class RaftLockManager(LockManagerBase):
             logger.error("Failed to force-release Raft lock %s: %s", lock_key, e)
             return False
 
-    async def health_check(self) -> bool:
+    def health_check(self) -> bool:
         try:
             self._store.get("/__health_check__")
             return True

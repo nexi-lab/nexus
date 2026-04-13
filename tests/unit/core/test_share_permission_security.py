@@ -50,7 +50,7 @@ def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
         object=("file", "/"),
         context=admin_context,
     )
-    # Grant system user access to /nexus/pipes (required by PipedRecordStoreWriteObserver
+    # Grant system user access to /nexus/pipes (required by RecordStoreWriteObserver
     # when permissions are enforced)
     system_context = {"user_id": "system", "groups": [], "is_admin": False, "is_system": True}
     nx.service("rebac").rebac_create_sync(
@@ -80,7 +80,7 @@ class TestIssue817ShareWithUserSecurity:
         """Test that file owner can share with another user."""
         # Create a file as admin
         test_file = "/test_file.txt"
-        await nx.write(test_file, b"test content", context=OperationContext(**admin_context))
+        nx.write(test_file, b"test content", context=OperationContext(**admin_context))
 
         # Grant admin ownership
         tuple_id = nx.service("rebac").rebac_create_sync(
@@ -114,7 +114,7 @@ class TestIssue817ShareWithUserSecurity:
         """Test that non-owner (viewer) cannot share file."""
         # Create a file as admin
         test_file = "/test_file.txt"
-        await nx.write(test_file, b"test content", context=OperationContext(**admin_context))
+        nx.write(test_file, b"test content", context=OperationContext(**admin_context))
 
         # Grant admin ownership
         nx.service("rebac").rebac_create_sync(
@@ -154,7 +154,7 @@ class TestIssue817ShareWithUserSecurity:
         """Test that admin users can share any file."""
         # Create a file as regular user
         test_file = "/test_file.txt"
-        await nx.write(test_file, b"test content", context=OperationContext(**admin_context))
+        nx.write(test_file, b"test content", context=OperationContext(**admin_context))
 
         # Admin can share without ownership
         share_id = nx.service("rebac").share_with_user_sync(
@@ -172,7 +172,7 @@ class TestIssue817ShareWithUserSecurity:
         """Test that system context can share any file."""
         # Create a file
         test_file = "/test_file.txt"
-        await nx.write(test_file, b"test content", context=OperationContext(**admin_context))
+        nx.write(test_file, b"test content", context=OperationContext(**admin_context))
 
         # System context can share without ownership
         system_context = {
@@ -200,7 +200,7 @@ class TestIssue818ShareWithGroup:
         """Test basic share_with_group functionality."""
         # Create a file as admin
         test_file = "/test_file.txt"
-        await nx.write(test_file, b"test content", context=OperationContext(**admin_context))
+        nx.write(test_file, b"test content", context=OperationContext(**admin_context))
 
         # Grant admin ownership
         nx.service("rebac").rebac_create_sync(
@@ -252,7 +252,7 @@ class TestIssue818ShareWithGroup:
         """Test that non-owner cannot share with group."""
         # Create a file as admin
         test_file = "/test_file.txt"
-        await nx.write(test_file, b"test content", context=OperationContext(**admin_context))
+        nx.write(test_file, b"test content", context=OperationContext(**admin_context))
 
         # Grant admin ownership
         nx.service("rebac").rebac_create_sync(
@@ -292,7 +292,7 @@ class TestIssue818ShareWithGroup:
         """Test different permission levels when sharing with group."""
         # Create a file as admin
         test_file = "/test_file.txt"
-        await nx.write(test_file, b"test content", context=OperationContext(**admin_context))
+        nx.write(test_file, b"test content", context=OperationContext(**admin_context))
 
         # Grant admin ownership
         nx.service("rebac").rebac_create_sync(
@@ -430,7 +430,7 @@ class TestHelperMethodIntegration:
         """Test that helper is properly integrated in rebac_create."""
         # Create a file
         test_file = "/test_file.txt"
-        await nx.write(test_file, b"test content", context=OperationContext(**admin_context))
+        nx.write(test_file, b"test content", context=OperationContext(**admin_context))
 
         # Grant admin ownership
         nx.service("rebac").rebac_create_sync(
@@ -462,7 +462,7 @@ class TestHelperMethodIntegration:
         """Test that operations without context are allowed (backward compatibility)."""
         # Create a file
         test_file = "/test_file.txt"
-        await nx.write(test_file, b"test content", context=OperationContext(**admin_context))
+        nx.write(test_file, b"test content", context=OperationContext(**admin_context))
 
         # Operation without context should succeed
         tuple_id = nx.service("rebac").rebac_create_sync(
@@ -487,7 +487,7 @@ class TestHelperMethodIntegration:
         try:
             # Create a file
             test_file = "/test_file.txt"
-            await nx.write(test_file, b"test content")
+            nx.write(test_file, b"test content")
 
             # Non-owner can share when permissions are not enforced
             alice_context = {
@@ -517,7 +517,7 @@ class TestCrossZoneSharing:
         """Test sharing file with user in different zone."""
         # Create a file as admin in zone1
         test_file = "/test_file.txt"
-        await nx.write(test_file, b"test content", context=OperationContext(**admin_context))
+        nx.write(test_file, b"test content", context=OperationContext(**admin_context))
 
         # Grant admin ownership
         admin_context_zone1 = {
@@ -553,7 +553,7 @@ class TestCrossZoneSharing:
         """Test sharing file with group in different zone."""
         # Create a file as admin in zone1
         test_file = "/test_file.txt"
-        await nx.write(test_file, b"test content", context=OperationContext(**admin_context))
+        nx.write(test_file, b"test content", context=OperationContext(**admin_context))
 
         # Grant admin ownership
         admin_context_zone1 = {

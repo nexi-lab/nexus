@@ -16,10 +16,10 @@ class TestChunkedStorageE2E:
         content = b"This is a small test file content."
 
         # Write
-        await nexus_fs.write("/test_small.txt", content)
+        nexus_fs.write("/test_small.txt", content)
 
         # Read back
-        read_content = await nexus_fs.sys_read("/test_small.txt")
+        read_content = nexus_fs.sys_read("/test_small.txt")
         assert read_content == content
 
         # Verify not chunked
@@ -34,7 +34,7 @@ class TestChunkedStorageE2E:
         large_content = os.urandom(CDC_THRESHOLD_BYTES + 1024 * 1024)
 
         # Write
-        await nexus_fs.write("/test_large.bin", large_content)
+        nexus_fs.write("/test_large.bin", large_content)
 
         # Verify it was chunked
         etag = nexus_fs.get_etag("/test_large.bin")
@@ -44,7 +44,7 @@ class TestChunkedStorageE2E:
         assert backend._cdc.is_chunked(etag), "Large file should be chunked"
 
         # Read back
-        read_content = await nexus_fs.sys_read("/test_large.bin")
+        read_content = nexus_fs.sys_read("/test_large.bin")
         assert read_content == large_content, "Content mismatch after chunked read"
 
     @pytest.mark.asyncio
@@ -54,7 +54,7 @@ class TestChunkedStorageE2E:
 
         large_content = os.urandom(CDC_THRESHOLD_BYTES + 1024 * 1024)
 
-        await nexus_fs.write("/chunks_test.bin", large_content)
+        nexus_fs.write("/chunks_test.bin", large_content)
 
         etag = nexus_fs.get_etag("/chunks_test.bin")
         backend = nexus_fs.router.route("/").backend
@@ -83,7 +83,7 @@ class TestChunkedStorageE2E:
         large_content = os.urandom(CDC_THRESHOLD_BYTES + 100_000)
 
         # Write
-        await nexus_fs.write("/delete_test.bin", large_content)
+        nexus_fs.write("/delete_test.bin", large_content)
         content_hash = nexus_fs.get_etag("/delete_test.bin")
 
         backend = nexus_fs.router.route("/").backend
@@ -99,10 +99,10 @@ class TestChunkedStorageE2E:
             assert backend._transport._resolve(backend._blob_key(ch)).exists()
 
         # Delete VFS metadata
-        await nexus_fs.sys_unlink("/delete_test.bin")
+        nexus_fs.sys_unlink("/delete_test.bin")
 
         # Verify file is gone from VFS
-        assert await nexus_fs.sys_stat("/delete_test.bin") is None
+        assert nexus_fs.sys_stat("/delete_test.bin") is None
 
         # Simulate GC cleanup: delete_content handles chunk ref-counting
         backend.delete_content(content_hash)
@@ -119,9 +119,9 @@ class TestChunkedStorageE2E:
         large_content = os.urandom(CDC_THRESHOLD_BYTES + 2_000_000)
         original_size = len(large_content)
 
-        await nexus_fs.write("/size_test.bin", large_content)
+        nexus_fs.write("/size_test.bin", large_content)
 
-        metadata = await nexus_fs.sys_stat("/size_test.bin")
+        metadata = nexus_fs.sys_stat("/size_test.bin")
         assert metadata["size"] == original_size
 
     @pytest.mark.asyncio
@@ -130,8 +130,8 @@ class TestChunkedStorageE2E:
         large_content = os.urandom(CDC_THRESHOLD_BYTES + 1024 * 1024)
 
         # Write same content twice
-        await nexus_fs.write("/dedup_a.bin", large_content)
-        await nexus_fs.write("/dedup_b.bin", large_content)
+        nexus_fs.write("/dedup_a.bin", large_content)
+        nexus_fs.write("/dedup_b.bin", large_content)
 
         etag_a = nexus_fs.get_etag("/dedup_a.bin")
         etag_b = nexus_fs.get_etag("/dedup_b.bin")
@@ -140,12 +140,12 @@ class TestChunkedStorageE2E:
         assert etag_a == etag_b
 
         # Read both back
-        assert await nexus_fs.sys_read("/dedup_a.bin") == large_content
-        assert await nexus_fs.sys_read("/dedup_b.bin") == large_content
+        assert nexus_fs.sys_read("/dedup_a.bin") == large_content
+        assert nexus_fs.sys_read("/dedup_b.bin") == large_content
 
         # Delete one, other should still work (dedup)
-        await nexus_fs.sys_unlink("/dedup_a.bin")
-        assert await nexus_fs.sys_read("/dedup_b.bin") == large_content
+        nexus_fs.sys_unlink("/dedup_a.bin")
+        assert nexus_fs.sys_read("/dedup_b.bin") == large_content
 
 
 class TestChunkedStorageBackwardCompatibility:
@@ -158,8 +158,8 @@ class TestChunkedStorageBackwardCompatibility:
         large_content = os.urandom(CDC_THRESHOLD_BYTES + 100_000)
 
         # Write both types
-        await nexus_fs.write("/small.txt", small_content)
-        await nexus_fs.write("/large.bin", large_content)
+        nexus_fs.write("/small.txt", small_content)
+        nexus_fs.write("/large.bin", large_content)
 
         backend = nexus_fs.router.route("/").backend
 
@@ -171,21 +171,21 @@ class TestChunkedStorageBackwardCompatibility:
         assert backend._cdc.is_chunked(large_etag)
 
         # Read both
-        assert await nexus_fs.sys_read("/small.txt") == small_content
-        assert await nexus_fs.sys_read("/large.bin") == large_content
+        assert nexus_fs.sys_read("/small.txt") == small_content
+        assert nexus_fs.sys_read("/large.bin") == large_content
 
         # List directory
-        files = await nexus_fs.sys_readdir("/")
+        files = nexus_fs.sys_readdir("/")
         assert "/small.txt" in files or "small.txt" in files
         assert "/large.bin" in files or "large.bin" in files
 
         # Delete both
-        await nexus_fs.sys_unlink("/small.txt")
-        await nexus_fs.sys_unlink("/large.bin")
+        nexus_fs.sys_unlink("/small.txt")
+        nexus_fs.sys_unlink("/large.bin")
 
         # Verify deleted
-        assert await nexus_fs.sys_stat("/small.txt") is None
-        assert await nexus_fs.sys_stat("/large.bin") is None
+        assert nexus_fs.sys_stat("/small.txt") is None
+        assert nexus_fs.sys_stat("/large.bin") is None
 
     @pytest.mark.asyncio
     async def test_overwrite_small_with_large(self, nexus_fs) -> None:
@@ -194,18 +194,18 @@ class TestChunkedStorageBackwardCompatibility:
         large_content = os.urandom(CDC_THRESHOLD_BYTES + 500_000)
 
         # Write small
-        await nexus_fs.write("/overwrite.bin", small_content)
+        nexus_fs.write("/overwrite.bin", small_content)
         etag1 = nexus_fs.get_etag("/overwrite.bin")
 
         backend = nexus_fs.router.route("/").backend
         assert not backend._cdc.is_chunked(etag1)
 
         # Overwrite with large
-        await nexus_fs.write("/overwrite.bin", large_content)
+        nexus_fs.write("/overwrite.bin", large_content)
         etag2 = nexus_fs.get_etag("/overwrite.bin")
 
         assert backend._cdc.is_chunked(etag2)
-        assert await nexus_fs.sys_read("/overwrite.bin") == large_content
+        assert nexus_fs.sys_read("/overwrite.bin") == large_content
 
     @pytest.mark.asyncio
     async def test_overwrite_large_with_small(self, nexus_fs) -> None:
@@ -214,18 +214,18 @@ class TestChunkedStorageBackwardCompatibility:
         small_content = b"New small content"
 
         # Write large
-        await nexus_fs.write("/overwrite2.bin", large_content)
+        nexus_fs.write("/overwrite2.bin", large_content)
         etag1 = nexus_fs.get_etag("/overwrite2.bin")
 
         backend = nexus_fs.router.route("/").backend
         assert backend._cdc.is_chunked(etag1)
 
         # Overwrite with small
-        await nexus_fs.write("/overwrite2.bin", small_content)
+        nexus_fs.write("/overwrite2.bin", small_content)
         etag2 = nexus_fs.get_etag("/overwrite2.bin")
 
         assert not backend._cdc.is_chunked(etag2)
-        assert await nexus_fs.sys_read("/overwrite2.bin") == small_content
+        assert nexus_fs.sys_read("/overwrite2.bin") == small_content
 
 
 class TestChunkedStorageCDCBehavior:
@@ -244,8 +244,8 @@ class TestChunkedStorageCDCBehavior:
         content_a = common_prefix + suffix_a
         content_b = common_prefix + suffix_b
 
-        await nexus_fs.write("/similar_a.bin", content_a)
-        await nexus_fs.write("/similar_b.bin", content_b)
+        nexus_fs.write("/similar_a.bin", content_a)
+        nexus_fs.write("/similar_b.bin", content_b)
 
         etag_a = nexus_fs.get_etag("/similar_a.bin")
         etag_b = nexus_fs.get_etag("/similar_b.bin")
@@ -273,5 +273,5 @@ class TestChunkedStorageCDCBehavior:
         assert len(chunks_a - chunks_b) > 0 or len(chunks_b - chunks_a) > 0
 
         # Verify both read correctly
-        assert await nexus_fs.sys_read("/similar_a.bin") == content_a
-        assert await nexus_fs.sys_read("/similar_b.bin") == content_b
+        assert nexus_fs.sys_read("/similar_a.bin") == content_a
+        assert nexus_fs.sys_read("/similar_b.bin") == content_b

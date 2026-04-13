@@ -126,7 +126,7 @@ async def _run_chat(
 
         from nexus.contracts.metadata import DT_MOUNT
 
-        await nx.sys_setattr("/llm", entry_type=DT_MOUNT, backend=llm_backend)
+        nx.sys_setattr("/llm", entry_type=DT_MOUNT, backend=llm_backend)
 
         # ── Mount external tool directories (Tier B, §1.5) ──
         if tools:
@@ -136,7 +136,7 @@ async def _run_chat(
                 tool_name = Path(tool_path).name
                 mount_point = f"/root/tools/{tool_name}"
                 tool_backend = PathLocalBackend(root_path=Path(tool_path))
-                await nx.sys_setattr(mount_point, entry_type=DT_MOUNT, backend=tool_backend)
+                nx.sys_setattr(mount_point, entry_type=DT_MOUNT, backend=tool_backend)
                 click.echo(f"  tools: {tool_path} → {mount_point}")
 
         # ── Create agent loop ──
@@ -146,15 +146,27 @@ async def _run_chat(
         cwd = os.getcwd()
         agent_path = "/root/agents/default"
 
-        _stream_read = getattr(nx, "_stream_read", None)
+        # Async wrappers for sync NexusFS syscalls — agent_runtime type
+        # aliases require Awaitable return types for mypy strict mode.
+        async def _async_sys_read(path: str) -> bytes:
+            return nx.sys_read(path)
 
-        async def _fallback_stream_read(path: str, offset: int) -> tuple[bytes, int]:
-            raise NotImplementedError("Streaming not available in REMOTE mode")
+        async def _async_sys_write(path: str, buf: bytes) -> dict:
+            return nx.sys_write(path, buf)
+
+        # StreamManager stream_read for DT_STREAM token delivery
+        _nx_stream_read = getattr(nx, "_stream_read", None)
+
+        def _stream_read_adapter(path: str, offset: int) -> tuple[bytes, int]:
+            if _nx_stream_read is None:
+                raise NotImplementedError("Streaming not available in REMOTE mode")
+            data = _nx_stream_read(path, offset=offset)
+            return data, offset + len(data)
 
         loop = ManagedAgentLoop(
-            sys_read=nx.sys_read,
-            sys_write=nx.sys_write,
-            stream_read=_stream_read or _fallback_stream_read,
+            sys_read=_async_sys_read,
+            sys_write=_async_sys_write,
+            stream_read=_stream_read_adapter,
             llm_backend=llm_backend,
             agent_path=agent_path,
             llm_path="/llm",
@@ -162,7 +174,7 @@ async def _run_chat(
             proc_path="/root/proc/chat-0",
             model=model,
             compactor=DefaultCompactionStrategy(
-                sys_write=nx.sys_write,
+                sys_write=_async_sys_write,
                 agent_path=agent_path,
             ),
             cwd=cwd,

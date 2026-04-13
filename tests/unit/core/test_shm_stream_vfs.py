@@ -59,7 +59,7 @@ class TestShmStreamVFS:
         nx = _make_nexus_fs(tmp_path)
         path = "/__sys__/test/shm-stream"
 
-        result = await nx.sys_setattr(
+        result = nx.sys_setattr(
             path,
             entry_type=DT_STREAM,
             capacity=4096,
@@ -81,7 +81,7 @@ class TestShmStreamVFS:
         nx = _make_nexus_fs(tmp_path)
         path = "/__sys__/test/shm-rt"
 
-        await nx.sys_setattr(
+        nx.sys_setattr(
             path,
             entry_type=DT_STREAM,
             capacity=4096,
@@ -93,7 +93,7 @@ class TestShmStreamVFS:
         backend.write_nowait(b"hello shm")
 
         # Read via sys_read — should hit the _custom_stream_backends branch
-        data = await nx.sys_read(path, offset=0)
+        data = nx.sys_read(path, offset=0)
         assert data == b"hello shm"
 
         nx.close()
@@ -105,7 +105,7 @@ class TestShmStreamVFS:
         nx = _make_nexus_fs(tmp_path)
         path = "/__sys__/test/default-stream"
 
-        await nx.sys_setattr(
+        nx.sys_setattr(
             path,
             entry_type=DT_STREAM,
             capacity=4096,
@@ -123,7 +123,7 @@ class TestShmStreamVFS:
         nx = _make_nexus_fs(tmp_path)
         path = "/__sys__/test/shm-close"
 
-        await nx.sys_setattr(
+        nx.sys_setattr(
             path,
             entry_type=DT_STREAM,
             capacity=4096,
@@ -143,7 +143,7 @@ class TestShmStreamVFS:
         nx = _make_nexus_fs(tmp_path)
         path = "/__sys__/test/shm-multi"
 
-        await nx.sys_setattr(
+        nx.sys_setattr(
             path,
             entry_type=DT_STREAM,
             capacity=8192,
@@ -156,7 +156,7 @@ class TestShmStreamVFS:
         backend.write_nowait(b"msg3")
 
         # Read offset 0 → first message
-        data1 = await nx.sys_read(path, offset=0)
+        data1 = nx.sys_read(path, offset=0)
         assert data1 == b"msg1"
 
         nx.close()

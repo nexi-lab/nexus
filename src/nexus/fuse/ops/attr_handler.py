@@ -40,7 +40,7 @@ class AttrHandler:
         await check_namespace_visible(ctx, original_path)
 
         permission_bits = mode & 0o777
-        await ctx.nexus_fs.sys_setattr(original_path, context=ctx.context, mode=permission_bits)
+        ctx.nexus_fs.sys_setattr(original_path, context=ctx.context, mode=permission_bits)
 
         ctx.cache.invalidate_path(original_path)
         if path != original_path:
@@ -59,7 +59,7 @@ class AttrHandler:
 
         await check_namespace_visible(ctx, original_path)
 
-        if not await ctx.nexus_fs.access(original_path):
+        if not ctx.nexus_fs.access(original_path):
             raise FuseOSError(errno.ENOENT)
 
         attrs: dict[str, str] = {}
@@ -83,7 +83,7 @@ class AttrHandler:
             attrs["group"] = group
 
         if attrs:
-            await ctx.nexus_fs.sys_setattr(original_path, context=ctx.context, **attrs)
+            ctx.nexus_fs.sys_setattr(original_path, context=ctx.context, **attrs)
 
         ctx.cache.invalidate_path(original_path)
         if path != original_path:
@@ -100,8 +100,8 @@ class AttrHandler:
         if view_type:
             raise FuseOSError(errno.EROFS)
 
-        if await ctx.nexus_fs.access(original_path):
-            raw_content = await ctx.nexus_fs.sys_read(original_path, context=ctx.context)
+        if ctx.nexus_fs.access(original_path):
+            raw_content = ctx.nexus_fs.sys_read(original_path, context=ctx.context)
             assert isinstance(raw_content, bytes), "Expected bytes from read()"
             content = raw_content
         else:
@@ -112,7 +112,7 @@ class AttrHandler:
         else:
             content += b"\x00" * (length - len(content))
 
-        await ctx.nexus_fs.write(original_path, content, context=ctx.context)
+        ctx.nexus_fs.write(original_path, content, context=ctx.context)
 
         ctx.cache.invalidate_path(original_path)
         if path != original_path:

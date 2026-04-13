@@ -2,7 +2,7 @@
 
 Produces task signals into a kernel ring buffer pipe and consumes them
 in a background asyncio task, following the same pattern as
-``WorkflowDispatchService`` and ``ZoektPipeConsumer``.
+``WorkflowDispatchService`` and ``ZoektWriteObserver``.
 
 Flow::
 
@@ -118,7 +118,7 @@ class TaskDispatchPipeConsumer:
 
         from nexus.contracts.metadata import DT_PIPE
 
-        await self._nx.sys_setattr(
+        self._nx.sys_setattr(
             _TASK_DISPATCH_PIPE_PATH,
             entry_type=DT_PIPE,
             capacity=_TASK_DISPATCH_PIPE_CAPACITY,
@@ -141,7 +141,7 @@ class TaskDispatchPipeConsumer:
         if self._consumer_task is not None and not self._consumer_task.done():
             if self._nx is not None and self._pipe_ready:
                 with contextlib.suppress(Exception):
-                    await self._nx.sys_unlink(_TASK_DISPATCH_PIPE_PATH)
+                    self._nx.sys_unlink(_TASK_DISPATCH_PIPE_PATH)
 
             try:
                 await asyncio.wait_for(asyncio.shield(self._consumer_task), timeout=5.0)
@@ -169,7 +169,7 @@ class TaskDispatchPipeConsumer:
                 while self._write_buffer:
                     data = self._write_buffer.popleft()
                     try:
-                        await nx.sys_write(_TASK_DISPATCH_PIPE_PATH, data)
+                        nx.sys_write(_TASK_DISPATCH_PIPE_PATH, data)
                     except Exception:
                         logger.warning("[TASK-DISPATCH] pipe write failed, dropping signal")
             await asyncio.sleep(0.01)  # 10ms poll interval
@@ -183,7 +183,7 @@ class TaskDispatchPipeConsumer:
 
         while True:
             try:
-                data = await nx.sys_read(_TASK_DISPATCH_PIPE_PATH)
+                data = nx.sys_read(_TASK_DISPATCH_PIPE_PATH)
             except NexusFileNotFoundError:
                 logger.debug("[TASK-DISPATCH] pipe closed, consumer exiting")
                 break

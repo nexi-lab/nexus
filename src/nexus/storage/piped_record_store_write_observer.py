@@ -1,46 +1,36 @@
-"""DT_PIPE consumer — async RecordStore sync via kernel IPC.
+"""OBSERVE-phase observer for RecordStore audit trail + versioning.
 
-Pure consumer: reads audit events from a DT_PIPE via ``nx.sys_read()``
-and flushes them to RecordStore in batches.  The producer side is
-``AuditWriteInterceptor`` which writes events via ``nx.sys_write()``.
+Receives FILE_WRITE / FILE_DELETE / FILE_RENAME / DIR_CREATE / DIR_DELETE
+events from the Rust kernel and flushes them to RecordStore in debounced
+batches.
 
 Issue #809: Decouple write_observer.on_write() sync DB write from hot path.
-Issue #1772: Migrated from PipeManager to sys_write/sys_read + Rust kernel pipe_read_nowait.
 
 Architecture:
-    AuditWriteInterceptor (async POST hook)
-      -> JSON serialize -> nx.sys_write(pipe_path)  # ~1μs via fast-path
-
-    PipedRecordStoreWriteObserver (background consumer)
-      -> nx.sys_read(pipe_path) (async, blocking)
-      -> batch coalesce (drain available events)
-      -> single RecordStore transaction (OperationLogger + VersionRecorder)
-      -> retry with exponential backoff on failure
+    Rust kernel sys_write / sys_unlink / sys_mkdir / sys_rmdir
+      -> dispatch_observers (Rust MutationObserver trait)
+        -> accumulate event in deque + reset debounce timer
+        -> threading.Timer fires _flush()
+        -> single RecordStore transaction (OperationLogger + VersionRecorder)
 """
 
-import asyncio
-import contextlib
-import json
 import logging
+import threading
 import time
 from collections import deque
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from nexus.core.nexus_fs import NexusFS
+    from nexus.core.file_events import FileEvent
     from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
 
-# Pipe path and capacity (parallel to WorkflowDispatchService constants)
-_AUDIT_PIPE_PATH = "/nexus/pipes/audit-events"
-_AUDIT_PIPE_CAPACITY = 262_144  # 256KB — headroom for batch writes (Issue #3399)
-
 # Consumer batch processing
-_MAX_BATCH_DRAIN = 100  # Max events to drain per batch
+_MAX_BATCH_DRAIN = 100  # Max events to drain per flush
 _MAX_RETRIES = 3
-_LINGER_S = 0.2  # Issue #3399: max wait for more events before flushing (200ms)
+_DEBOUNCE_S = 0.2  # Debounce window (200ms) — same as former linger_s
 
 
 def _metadata_from_dict(d: dict[str, Any]) -> Any:
@@ -54,18 +44,15 @@ def _metadata_from_dict(d: dict[str, Any]) -> Any:
     return FileMetadata(**d)
 
 
-class PipedRecordStoreWriteObserver:
-    """DT_PIPE consumer for async RecordStore sync.
+class RecordStoreWriteObserver:
+    """OBSERVE-phase observer for RecordStore audit trail + versioning.
 
-    Pure consumer — reads audit events from a DT_PIPE via ``nx.sys_read()``
-    and flushes them to RecordStore (OperationLogger + VersionRecorder).
-    The producer is ``AuditWriteInterceptor``.
+    Receives mutation events from the Rust kernel and flushes them to
+    RecordStore (OperationLogger + VersionRecorder) in debounced batches.
 
-    Lifecycle:
-        1. Created in factory (system tier) with record_store
-        2. NexusFS bound via bind_fs() (deferred)
-        3. start() creates pipe via sys_setattr, spawns consumer
-        4. stop() cancels consumer, flushes remaining events
+    Registration:
+        Enlisted via factory orchestrator; events dispatched by the Rust
+        kernel's MutationObserver trait (not Python on_mutation).
     """
 
     def __init__(
@@ -73,24 +60,20 @@ class PipedRecordStoreWriteObserver:
         record_store: "RecordStoreABC",
         *,
         strict_mode: bool = True,
-        event_signal: "asyncio.Event | None" = None,
-        linger_s: float = _LINGER_S,
+        event_signal: "Any | None" = None,
+        debounce_seconds: float = _DEBOUNCE_S,
     ) -> None:
         self._session_factory = record_store.session_factory
         self._strict_mode = strict_mode
         self._event_signal = event_signal  # Issue #3193: wake delivery worker
-        self._linger_s = linger_s  # Issue #3399: coalesce window for batch flush
+        self._debounce = debounce_seconds
 
-        # NexusFS reference (deferred injection)
-        self._nx: NexusFS | None = None
-        self._pipe_ready = False
-        self._consumer_task: asyncio.Task[None] | None = None
-
-        # Pre-startup buffer: holds events before pipe is ready
-        self._pre_buffer: deque[bytes] = deque(maxlen=1000)
+        # Debounce state — protected by _lock
+        self._pending: deque[dict[str, Any]] = deque(maxlen=10_000)
+        self._timer: threading.Timer | None = None
+        self._lock = threading.Lock()
 
         # Metrics
-        self._total_enqueued = 0
         self._total_flushed = 0
         self._total_failed = 0
         self._total_retries = 0
@@ -99,14 +82,6 @@ class PipedRecordStoreWriteObserver:
         # Post-flush hooks: called after successful commit (Issue #2978)
         # Used by CatalogService for async-on-write extraction
         self._post_flush_hooks: list[Any] = []
-
-    # ------------------------------------------------------------------
-    # Deferred injection
-    # ------------------------------------------------------------------
-
-    def bind_fs(self, nx: "NexusFS") -> None:
-        """Bind NexusFS for sys_read/sys_write pipe access."""
-        self._nx = nx
 
     def register_post_flush_hook(self, hook: Any) -> None:
         """Register a callback invoked after each successful flush.
@@ -118,201 +93,181 @@ class PipedRecordStoreWriteObserver:
         self._post_flush_hooks.append(hook)
 
     # ------------------------------------------------------------------
-    # Async lifecycle
+    # Debounce flush
     # ------------------------------------------------------------------
 
-    async def start(self) -> None:
-        """Create audit pipe via sys_setattr, spawn consumer."""
-        if self._pipe_ready:
+    def _flush(self) -> None:
+        """Fire after debounce window -- flush events to RecordStore."""
+        with self._lock:
+            events = list(self._pending)
+            self._pending.clear()
+            self._timer = None
+
+        if not events:
             return
 
-        if self._nx is None:
-            return  # CLI mode — no NexusFS
+        # Batch: take up to _MAX_BATCH_DRAIN at a time, retry remainder
+        self._flush_batch(events)
 
-        # Create audit pipe via sys_setattr (idempotent — reuses existing buffer)
-        from nexus.contracts.metadata import DT_PIPE
+    def _flush_batch(self, events: list[dict[str, Any]], attempt: int = 0) -> None:
+        """Flush a batch of events to RecordStore in a single transaction."""
+        t0 = time.monotonic()
+        try:
+            self._flush_batch_sync(events)
 
-        await self._nx.sys_setattr(
-            _AUDIT_PIPE_PATH,
-            entry_type=DT_PIPE,
-            capacity=_AUDIT_PIPE_CAPACITY,
-            owner_id="kernel",
-        )
+            duration = time.monotonic() - t0
+            self._total_flushed += len(events)
 
-        self._pipe_ready = True
-        self._consumer_task = asyncio.create_task(self._consume())
+            # Issue #3193: signal delivery worker immediately after commit
+            if self._event_signal is not None:
+                self._event_signal.set()
 
-    async def flush(self, timeout: float = 5.0) -> int:
-        """Drain the pipe and flush all pending events to RecordStore.
+            logger.info(
+                "[OBSERVE] Flushed %d audit events in %.3fs",
+                len(events),
+                duration,
+            )
 
-        Blocks until all enqueued events have been committed to the database,
-        ensuring that subsequent queries (e.g. list_versions) see the data.
+            # Post-flush hooks: extraction, etc. (Issue #2978)
+            # Runs AFTER commit — failures do not block audit trail.
+            for hook in self._post_flush_hooks:
+                try:
+                    hook(events)
+                except Exception as hook_err:
+                    logger.debug(
+                        "Post-flush hook %s failed (non-critical): %s",
+                        getattr(hook, "__name__", hook),
+                        hook_err,
+                    )
 
-        Args:
-            timeout: Maximum seconds to wait for events to appear. Defaults to 5.
-
-        Returns:
-            Number of events flushed.
-        """
-        if not self._pipe_ready or self._nx is None:
-            # Pipe not started — flush pre-buffer directly via sync path.
-            # Delegates to flush_sync() which uses _process_events_in_session()
-            # (single source of truth for event dispatch logic).
-            return self.flush_sync()
-
-        from nexus.contracts.exceptions import NexusFileNotFoundError
-
-        # Drain all available events from the pipe.  Each sys_read() blocks
-        # until data arrives or the pipe is closed, so we wrap every call in
-        # asyncio.wait_for() to avoid hanging on an open-but-empty pipe.
-        batch: list[dict[str, Any]] = []
-        remaining = timeout
-
-        while remaining > 0:
-            t0 = time.monotonic()
-            try:
-                data = await asyncio.wait_for(
-                    self._nx.sys_read(_AUDIT_PIPE_PATH),
-                    timeout=min(remaining, 0.5),  # per-read cap
+        except Exception as e:
+            if attempt < _MAX_RETRIES:
+                self._total_retries += 1
+                wait = 0.1 * (2**attempt)  # 100ms, 200ms, 400ms
+                logger.warning(
+                    "RecordStoreWriteObserver flush failed (attempt %d/%d, retry in %.1fs): %s",
+                    attempt + 1,
+                    _MAX_RETRIES,
+                    wait,
+                    e,
                 )
-                batch.append(json.loads(data))
-            except TimeoutError:
-                break  # pipe drained (open but empty)
-            except (NexusFileNotFoundError, Exception):
-                break  # pipe closed or error
-            remaining -= time.monotonic() - t0
+                threading.Timer(wait, self._flush_batch, args=(events, attempt + 1)).start()
+            else:
+                self._total_failed += len(events)
+                logger.error(
+                    "RecordStoreWriteObserver flush FAILED after %d retries, "
+                    "dropping %d events: %s",
+                    _MAX_RETRIES,
+                    len(events),
+                    e,
+                )
 
-        if batch:
-            await self._flush_batch(batch)
-
-        return len(batch)
-
-    async def stop(self) -> None:
-        """Graceful shutdown: signal pipe closed, drain remaining events, then stop."""
-        if self._consumer_task is not None and not self._consumer_task.done():
-            # Signal close — wakes blocked consumer via sys_unlink
-            if self._nx is not None and self._pipe_ready:
-                with contextlib.suppress(Exception):
-                    await self._nx.sys_unlink(_AUDIT_PIPE_PATH)
-
-            # Let consumer drain naturally, with timeout
-            try:
-                await asyncio.wait_for(asyncio.shield(self._consumer_task), timeout=5.0)
-            except (TimeoutError, asyncio.CancelledError):
-                self._consumer_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await self._consumer_task
-
-            self._consumer_task = None
-        self._pipe_ready = False
-
-        # Drain any residual _pre_buffer events (CLI mode or events that arrived
-        # after pipe closed but before enqueue path switched off)
-        self.flush_sync()
+    # ------------------------------------------------------------------
+    # Flush sync (for CLI shutdown / close callbacks)
+    # ------------------------------------------------------------------
 
     def flush_sync(self) -> int:
-        """Synchronously drain pipe buffer + ``_pre_buffer`` to the DB.
+        """Synchronously flush all pending events to the DB.
 
         Used by CLI shutdown path (NexusFS.close) where no asyncio loop
-        is running. Also called by close callbacks (Issue #3399) to drain
-        remaining pipe events before kernel close_all_pipes() clears buffers.
-        Returns count of flushed events.
+        is running. Returns count of flushed events.
         """
-        # Issue #3399: drain any remaining events from the Rust pipe buffer
-        # directly (bypassing sys_read) before it gets cleared on close.
-        if self._nx is not None:
-            while True:
-                try:
-                    _data = self._nx.pipe_read_nowait(_AUDIT_PIPE_PATH)
-                    if _data is None:
-                        break
-                    self._pre_buffer.append(bytes(_data))
-                except Exception:
-                    break
+        with self._lock:
+            events = list(self._pending)
+            self._pending.clear()
+            if self._timer is not None:
+                self._timer.cancel()
+                self._timer = None
 
-        if not self._pre_buffer:
+        if not events:
             return 0
 
-        events = [json.loads(data) for data in self._pre_buffer]
-        self._pre_buffer.clear()
-
         try:
-            with self._session_factory() as session:
-                self._process_events_in_session(session, events)
-                session.commit()
+            self._flush_batch_sync(events)
             count = len(events)
             self._total_flushed += count
-            logger.debug("flush_sync: flushed %d pre-buffer events", count)
+            logger.debug("flush_sync: flushed %d events", count)
             return count
         except Exception as e:
             logger.error("flush_sync failed, %d events lost: %s", len(events), e)
             self._total_failed += len(events)
             return 0
 
+    async def flush(self, timeout: float = 5.0) -> int:  # noqa: ARG002
+        """Flush pending events. Async signature for protocol compat.
+
+        Delegates to flush_sync() since no pipe draining is needed.
+        """
+        return self.flush_sync()
+
     # ------------------------------------------------------------------
-    # Background consumer
+    # Event conversion: FileEvent -> audit dict
     # ------------------------------------------------------------------
 
-    async def _consume(self) -> None:
-        """Background consumer: read from pipe via sys_read, batch, flush."""
-        from nexus.contracts.exceptions import NexusFileNotFoundError
+    @staticmethod
+    def _file_event_to_dict(event: "FileEvent") -> dict[str, Any] | None:
+        """Convert a kernel FileEvent to the dict format used by _process_events_in_session."""
+        from nexus.core.file_events import FileEventType
 
-        assert self._nx is not None
+        etype = event.type if isinstance(event.type, str) else event.type.value
 
-        nx = self._nx
-        while True:
-            # Block until first event arrives
-            try:
-                first = await nx.sys_read(_AUDIT_PIPE_PATH)
-            except NexusFileNotFoundError:
-                logger.debug("Audit pipe closed, consumer exiting")
-                break
+        if etype == FileEventType.FILE_WRITE:
+            return {
+                "op": "write",
+                "path": event.path,
+                "is_new": event.is_new,
+                "zone_id": event.zone_id,
+                "agent_id": event.agent_id,
+                "snapshot_hash": event.old_etag,
+                "metadata_snapshot": None,
+                "metadata": event.to_dict(),
+            }
+        elif etype == FileEventType.FILE_DELETE:
+            return {
+                "op": "delete",
+                "path": event.path,
+                "zone_id": event.zone_id,
+                "agent_id": event.agent_id,
+                "snapshot_hash": event.etag,
+                "metadata_snapshot": None,
+            }
+        elif etype == FileEventType.FILE_RENAME:
+            return {
+                "op": "rename",
+                "path": event.old_path or event.path,
+                "new_path": event.new_path or event.path,
+                "zone_id": event.zone_id,
+                "agent_id": event.agent_id,
+                "snapshot_hash": event.etag,
+                "metadata_snapshot": None,
+            }
+        elif etype == FileEventType.DIR_CREATE:
+            return {
+                "op": "mkdir",
+                "path": event.path,
+                "zone_id": event.zone_id,
+                "agent_id": event.agent_id,
+            }
+        elif etype == FileEventType.DIR_DELETE:
+            return {
+                "op": "rmdir",
+                "path": event.path,
+                "zone_id": event.zone_id,
+                "agent_id": event.agent_id,
+                "recursive": False,
+            }
+        else:
+            return None  # Unsupported event type — ignore
 
-            # Drain available events for batching (non-blocking Rust pipe_read_nowait)
-            batch: list[dict[str, Any]] = [json.loads(first)]
-            for _ in range(_MAX_BATCH_DRAIN - 1):
-                try:
-                    _data = nx.pipe_read_nowait(_AUDIT_PIPE_PATH)
-                    if _data is None:
-                        break
-                    batch.append(json.loads(bytes(_data)))
-                except Exception:
-                    break
-
-            # Issue #3399: linger window — if batch isn't full, wait briefly
-            # for more events to coalesce into a single DB transaction.
-            # OTel uses 200ms, Kafka uses 5ms; 200ms is a good default.
-            if len(batch) < _MAX_BATCH_DRAIN and self._linger_s > 0:
-                try:
-                    more = await asyncio.wait_for(
-                        nx.sys_read(_AUDIT_PIPE_PATH), timeout=self._linger_s
-                    )
-                    batch.append(json.loads(more))
-                    # Drain any additional events that arrived during linger
-                    for _ in range(_MAX_BATCH_DRAIN - len(batch)):
-                        try:
-                            _data = nx.pipe_read_nowait(_AUDIT_PIPE_PATH)
-                            if _data is None:
-                                break
-                            batch.append(json.loads(bytes(_data)))
-                        except Exception:
-                            break
-                except TimeoutError:
-                    pass  # Linger expired, flush what we have
-                except NexusFileNotFoundError:
-                    # Pipe closed during linger — flush collected events and exit
-                    if batch:
-                        await self._flush_batch(batch)
-                    logger.debug("Audit pipe closed during linger, consumer exiting")
-                    break
-
-            await self._flush_batch(batch)
+    # ------------------------------------------------------------------
+    # DB flush logic (shared by _flush_batch and flush_sync)
+    # ------------------------------------------------------------------
 
     @staticmethod
     def _build_urn(path: str, zone_id: str | None) -> str:
         """Build a locator URN for a file from its virtual path.
 
-        Delegates to NexusURN.for_file() — single source of truth for
+        Delegates to NexusURN.for_file() -- single source of truth for
         URN construction (Issue #2978, Issue #2929 Key Decision #3).
         """
         from nexus.contracts.urn import NexusURN
@@ -327,11 +282,6 @@ class PipedRecordStoreWriteObserver:
         """Record MCL entry for a single event. Non-critical, uses savepoint.
 
         MCL failures must NEVER corrupt the outer session transaction.
-        The begin_nested() savepoint isolates MCL errors, but internal
-        retry logic (e.g. MCLRecorder._next_sequence_fallback) can issue
-        queries after savepoint rollback, causing "closed transaction"
-        errors that escape the context manager.  The outer try/except
-        catches these to protect file_paths + version_history writes.
         """
         try:
             from nexus.storage.mcl_recorder import MCLRecorder
@@ -365,8 +315,6 @@ class PipedRecordStoreWriteObserver:
                     )
                     AspectService(session).soft_delete_entity_aspects(urn)
                 elif op == "rename":
-                    # URNs are locators (Issue #2929 Key Decision #3):
-                    # rename changes the URN. DELETE old + UPSERT new.
                     old_urn = self._build_urn(path, zone_id)
                     new_path = event.get("new_path", "")
                     new_urn = self._build_urn(new_path, zone_id)
@@ -390,7 +338,7 @@ class PipedRecordStoreWriteObserver:
     def _process_events_in_session(self, session: Any, events: list[dict[str, Any]]) -> None:
         """Dispatch events to OperationLogger + VersionRecorder within a session.
 
-        Shared by ``_flush_batch()`` (async consumer) and ``flush_sync()`` (CLI drain).
+        Shared by ``_flush_batch()`` and ``flush_sync()``.
         Caller is responsible for ``session.commit()``.
         """
         from nexus.storage.operation_logger import OperationLogger
@@ -436,13 +384,11 @@ class PipedRecordStoreWriteObserver:
                     change_type="delete",
                 )
                 recorder.record_delete(event["path"])
-                # Soft-delete entity aspects (Issue #2929)
                 from nexus.storage.aspect_service import AspectService
 
                 AspectService(session).soft_delete_entity_aspects(urn)
 
             elif op == "rename":
-                # Two rows: DELETE old + UPSERT new (locator URNs)
                 old_urn = self._build_urn(event["path"], zone_id)
                 new_path = event.get("new_path", "")
                 new_urn = self._build_urn(new_path, zone_id)
@@ -492,15 +438,12 @@ class PipedRecordStoreWriteObserver:
                     status="success",
                 )
 
-            # MCL recording moved to _flush_batch_sync Phase 2 (separate session)
-            # to prevent MCL failures from corrupting critical writes.
-
     def _flush_batch_sync(self, events: list[dict[str, Any]]) -> None:
         """Synchronous flush: critical writes first, MCL second.
 
         Phase 1 commits operation_log + file_paths + version_history.
         Phase 2 records MCL entries in a separate session so failures
-        (e.g. sequence_number issues) cannot corrupt the critical writes.
+        cannot corrupt the critical writes.
         """
         # Phase 1: Critical writes (operation_log + version_history)
         session = self._session_factory()
@@ -514,10 +457,6 @@ class PipedRecordStoreWriteObserver:
             session.close()
 
         # Phase 2: MCL recording (non-critical, separate session)
-        # Session creation is inside the try so that a factory failure
-        # is caught here (non-critical) instead of propagating to
-        # _flush_batch, which would retry the whole batch after Phase 1
-        # already committed — duplicating operation_log / version-history rows.
         mcl_session = None
         try:
             mcl_session = self._session_factory()
@@ -533,60 +472,16 @@ class PipedRecordStoreWriteObserver:
             if mcl_session is not None:
                 mcl_session.close()
 
-    async def _flush_batch(self, events: list[dict[str, Any]], attempt: int = 0) -> None:
-        """Flush a batch of events to RecordStore in a single transaction."""
-        t0 = time.monotonic()
-        try:
-            self._flush_batch_sync(events)
+    # ------------------------------------------------------------------
+    # Cleanup
+    # ------------------------------------------------------------------
 
-            duration = time.monotonic() - t0
-            self._total_flushed += len(events)
-
-            # Issue #3193: signal delivery worker immediately after commit
-            if self._event_signal is not None:
-                self._event_signal.set()
-
-            logger.info(
-                "[PIPE] Flushed %d events in %.3fs",
-                len(events),
-                duration,
-            )
-
-            # Post-flush hooks: extraction, etc. (Issue #2978)
-            # Runs AFTER commit — failures do not block audit trail.
-            for hook in self._post_flush_hooks:
-                try:
-                    hook(events)
-                except Exception as hook_err:
-                    logger.debug(
-                        "Post-flush hook %s failed (non-critical): %s",
-                        getattr(hook, "__name__", hook),
-                        hook_err,
-                    )
-
-        except Exception as e:
-            if attempt < _MAX_RETRIES:
-                self._total_retries += 1
-                wait = 0.1 * (2**attempt)  # 100ms, 200ms, 400ms
-                logger.warning(
-                    "PipedRecordStoreWriteObserver flush failed "
-                    "(attempt %d/%d, retry in %.1fs): %s",
-                    attempt + 1,
-                    _MAX_RETRIES,
-                    wait,
-                    e,
-                )
-                await asyncio.sleep(wait)
-                await self._flush_batch(events, attempt=attempt + 1)
-            else:
-                self._total_failed += len(events)
-                logger.error(
-                    "PipedRecordStoreWriteObserver flush FAILED after %d retries, "
-                    "dropping %d events: %s",
-                    _MAX_RETRIES,
-                    len(events),
-                    e,
-                )
+    def cancel(self) -> None:
+        """Cancel any pending debounce timer (for clean shutdown)."""
+        with self._lock:
+            if self._timer is not None:
+                self._timer.cancel()
+                self._timer = None
 
     # ------------------------------------------------------------------
     # Observability
@@ -596,10 +491,13 @@ class PipedRecordStoreWriteObserver:
     def metrics(self) -> dict[str, int]:
         """Return observer metrics."""
         return {
-            "total_enqueued": self._total_enqueued,
             "total_flushed": self._total_flushed,
             "total_failed": self._total_failed,
             "total_retries": self._total_retries,
             "total_dropped": self._total_dropped,
-            "pre_buffer_size": len(self._pre_buffer),
+            "pending_events": len(self._pending),
         }
+
+
+# Backward-compat alias so existing imports don't break during migration
+PipedRecordStoreWriteObserver = RecordStoreWriteObserver

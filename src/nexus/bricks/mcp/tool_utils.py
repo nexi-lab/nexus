@@ -97,7 +97,7 @@ def handle_tool_errors(operation: str) -> Any:
         @handle_tool_errors("reading file")
         async def nexus_read_file(path: str, ctx: Context | None = None) -> str:
             nx = _get_nexus_instance(ctx)
-            content = await nx.sys_read(path)
+            content = nx.sys_read(path)
             return content.decode("utf-8")
     """
 

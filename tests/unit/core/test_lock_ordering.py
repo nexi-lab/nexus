@@ -10,7 +10,6 @@ Validates:
 See: docs/architecture/LOCK-ORDERING.md
 """
 
-import asyncio
 import threading
 import time
 
@@ -174,7 +173,7 @@ class TestObserverContextRejection:
             mod.exit_observer_context()
 
     def test_observer_can_acquire_l4(self, monkeypatch):
-        """Observer context allows threading locks (L4) — FileWatcher pattern."""
+        """Observer context allows threading locks (L4) — observer pattern."""
         mod = _enable_lock_debug(monkeypatch)
 
         mod.enter_observer_context()
@@ -327,10 +326,11 @@ class TestCrossZoneConcurrentLocking:
         assert not alive, f"Starvation: {len(alive)} threads still running"
         assert len(results) == 7, f"Expected 7 completions, got {len(results)}"
 
-    @pytest.mark.asyncio
-    async def test_concurrent_advisory_locks_no_deadlock(self):
+    def test_concurrent_advisory_locks_no_deadlock(self):
         """Concurrent advisory lock acquisition across zones completes
         without deadlock."""
+        import threading
+
         from nexus.lib.distributed_lock import LocalLockManager
         from nexus.lib.semaphore import create_vfs_semaphore
 
@@ -339,14 +339,20 @@ class TestCrossZoneConcurrentLocking:
 
         results: list[str] = []
 
-        async def worker(mgr: LocalLockManager, path: str, label: str) -> None:
-            lock_id = await mgr.acquire(path, mode="exclusive", timeout=5.0, ttl=5.0)
+        def worker(mgr: LocalLockManager, path: str, label: str) -> None:
+            lock_id = mgr.acquire(path, mode="exclusive", timeout=5.0, ttl=5.0)
             if lock_id:
-                await asyncio.sleep(0.01)
-                await mgr.release(lock_id, path)
+                time.sleep(0.01)
+                mgr.release(lock_id, path)
                 results.append(label)
 
-        tasks = [worker(managers[i], f"/file-{i}.txt", f"zone-{i}") for i in range(3)]
-        await asyncio.wait_for(asyncio.gather(*tasks), timeout=10)
+        threads = [
+            threading.Thread(target=worker, args=(managers[i], f"/file-{i}.txt", f"zone-{i}"))
+            for i in range(3)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10)
 
         assert len(results) == 3, f"Expected 3 completions, got {results}"

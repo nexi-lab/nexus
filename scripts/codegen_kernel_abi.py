@@ -27,7 +27,7 @@ from pathlib import Path
 # ── Paths ──────────────────────────────────────────────────────────
 
 ROOT = Path(__file__).resolve().parent.parent
-RUST_SRC = ROOT / "rust" / "nexus_kernel" / "src"
+RUST_SRC = ROOT / "rust" / "kernel" / "src"
 
 STUBS_PATH = ROOT / "stubs" / "nexus_kernel" / "__init__.pyi"
 EXPORTS_PATH = ROOT / "src" / "nexus" / "core" / "kernel_exports.py"
@@ -677,11 +677,11 @@ def generate_stubs(
     """Generate the full .pyi stub file."""
     lines = [
         MARKER,
-        "# Source: rust/nexus_kernel/src/*.rs",
+        "# Source: rust/kernel/src/*.rs",
         "",
         '"""Type stubs for nexus_kernel — Rust-accelerated PyO3 extension module.',
         "",
-        "Auto-generated from rust/nexus_kernel/src/*.rs exports.",
+        "Auto-generated from rust/kernel/src/*.rs exports.",
         "Re-run: python scripts/codegen_kernel_abi.py",
         '"""',
         "",
@@ -781,7 +781,7 @@ def generate_protocols(traits: list[TraitDef]) -> str:
     """Generate Python Protocol classes from Rust trait definitions."""
     lines = [
         MARKER,
-        "# Source: rust/nexus_kernel/src/dispatch.rs, metastore.rs, backend.rs",
+        "# Source: rust/kernel/src/dispatch.rs, metastore.rs, backend.rs",
         "",
         '"""Kernel dispatch protocols — Python typing contracts for Rust traits.',
         "",
@@ -831,7 +831,7 @@ def generate_exports(all_names: list[str]) -> str:
 
     lines = [
         MARKER,
-        "# Source: rust/nexus_kernel/src/lib.rs",
+        "# Source: rust/kernel/src/lib.rs",
         "",
         '"""Kernel re-export module — consolidated kernel boundary.',
         "",
@@ -885,7 +885,7 @@ def generate_api_groups(classes: dict[str, "ClassDef"]) -> str:
 
     lines = [
         MARKER,
-        "# Source: rust/nexus_kernel/src/kernel.rs (PyKernel methods)",
+        "# Source: rust/kernel/src/kernel.rs (PyKernel methods)",
         "",
         '"""Auto-generated API surface groups for nexus_kernel version validation.',
         "",
@@ -910,7 +910,7 @@ def generate_api_groups(classes: dict[str, "ClassDef"]) -> str:
         "}",
         "",
         "# All public methods that must exist on nexus_kernel.PyKernel.",
-        "# Auto-derived from #[pymethods] in rust/nexus_kernel/src/kernel.rs.",
+        "# Auto-derived from #[pymethods] in rust/kernel/src/kernel.rs.",
         "# A stale binary missing any of these triggers an actionable ImportError.",
         "KERNEL_REQUIRED_METHODS: frozenset[str] = frozenset({",
     ]
@@ -1185,7 +1185,7 @@ def generate_pillar_adapters(traits: list[TraitDef]) -> str:
     """Generate Rust adapter implementations from parsed traits.
 
     Direction 3 (PILLAR): Wraps Python ABCs → Rust traits via PyO3.
-    Output: rust/nexus_kernel/src/generated_adapters.rs
+    Output: rust/kernel/src/generated_adapters.rs
     """
     trait_map = {t.name: t for t in traits}
 
@@ -1390,7 +1390,6 @@ def generate_pillar_adapters(traits: list[TraitDef]) -> str:
 DISPATCH_ADAPTERS: dict[str, dict[str, str]] = {
     "InterceptHook": {"adapter": "PyInterceptHookAdapter", "cached_name": "hook_name"},
     "PathResolver": {"adapter": "PyPathResolverAdapter", "cached_name": ""},
-    "MutationObserver": {"adapter": "PyMutationObserverAdapter", "cached_name": ""},
 }
 
 
@@ -1535,7 +1534,7 @@ def generate_dispatch_adapters(traits: list[TraitDef]) -> str:
         "",
         "use pyo3::prelude::*;",
         "",
-        "use crate::dispatch::{InterceptHook, MutationObserver, PathResolver};",
+        "use crate::dispatch::{InterceptHook, PathResolver};",
     ]
 
     for trait_name, config in DISPATCH_ADAPTERS.items():
@@ -1661,7 +1660,12 @@ def _store_adapter_bodies(traits: list[TraitDef]) -> list[str]:
 
 
 def _dispatch_adapter_bodies(traits: list[TraitDef]) -> list[str]:
-    """Generate Direction 2 (DISPATCH) adapter struct+impl blocks (no file header)."""
+    """Generate Direction 2 (DISPATCH) adapter struct+impl blocks (no file header).
+
+    All adapter structs are gated behind ``#[cfg(feature = "py-hook-adapters")]``
+    (§11 Phase 14). The feature is default-on; disable to compile out all
+    Python-to-Rust hook/resolver/observer bridging.
+    """
     trait_map = {t.name: t for t in traits}
     lines: list[str] = []
 
@@ -1754,6 +1758,7 @@ def _dispatch_adapter_bodies(traits: list[TraitDef]) -> list[str]:
         lines.append(f"// ── {adapter_name} " + "─" * (60 - len(adapter_name)))
         lines.append("")
         lines.append(f"/// Wraps Python -> Rust `{trait_name}` trait.")
+        lines.append('#[cfg(feature = "py-hook-adapters")]')
         lines.append(f"pub(crate) struct {adapter_name} {{")
         lines.append("    inner: Py<PyAny>,")
         if cached_name:
@@ -1837,8 +1842,8 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "    CasLocalBackend, LocalConnectorBackend, ObjectStore, PathLocalBackend, StorageError,",
             "    WriteResult,",
             "};",
-            "use crate::dispatch::{FileEvent, MutationObserver, PathResolver};",
-            "use crate::hook_registry::{HookRegistry, InterceptHook, ObserverPair, ObserverRegistry};",
+            "use crate::dispatch::PathResolver;",
+            "use crate::hook_registry::{HookRegistry, InterceptHook};",
             "use crate::kernel::{Kernel, KernelError, OperationContext};",
             "use crate::lock::VFSLockManager;",
             "use crate::metastore::{FileMetadata, MetastoreError};",
@@ -1945,6 +1950,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "                }",
             "            }),",
             '            KernelError::WouldBlock(msg) => pyo3::exceptions::PyRuntimeError::new_err(format!("WouldBlock:{msg}")),',
+            "            KernelError::PermissionDenied(msg) => pyo3::exceptions::PyPermissionError::new_err(msg),",
             "        }",
             "    }",
             "}",
@@ -2330,18 +2336,17 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
         [
             "",
             "// ═══════════════════════════════════════════════════════════════════════════",
-            "// PyKernel — wraps pure Rust Kernel + owns Hook/Observer registries",
+            "// PyKernel — wraps pure Rust Kernel + owns Hook registry",
             "// ═══════════════════════════════════════════════════════════════════════════",
             "",
             "/// Python-facing Kernel. Wraps the pure Rust `Kernel` and adds:",
-            "///   - Hook/Observer registries (PyO3-specific, stored here not in Rust Kernel)",
+            "///   - Hook registry (PyO3-specific, stored here not in Rust Kernel)",
             "///   - PRE-INTERCEPT dispatch (requires GIL for Python hook contexts)",
             "///   - Type conversion (Vec<u8> -> PyBytes, StatResult -> PyDict, etc.)",
             '#[pyclass(name = "Kernel")]',
             "pub struct PyKernel {",
             "    inner: Kernel,",
             "    hooks: Mutex<HookRegistry>,",
-            "    observers: Mutex<ObserverRegistry>,",
             "}",
             "",
             "#[pymethods]",
@@ -2353,7 +2358,6 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "        Self {",
             "            inner: Kernel::new(),",
             "            hooks: Mutex::new(HookRegistry::new()),",
-            "            observers: Mutex::new(ObserverRegistry::new()),",
             "        }",
             "    }",
             "",
@@ -2889,64 +2893,48 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "        self.hooks.lock().count(op)",
             "    }",
             "",
-            "    // ── Observer proxy methods ─────────────────────────────────────────",
-            "    //",
-            "    // §11 Phase 6: observers are registered in BOTH the legacy",
-            "    // Py<PyAny> ObserverRegistry (for Python fallback notify()) AND the",
-            "    // pure Rust KernelObserverRegistry (for Tier 1 sys_* dispatch).",
-            "    // The legacy path will be deleted once all Python fallback paths",
-            "    // are migrated to Rust Tier 1 syscalls.",
+            "    // ── sys_watch (inotify equivalent) ───────────────────────────────",
             "",
-            "    #[pyo3(signature = (obs, event_mask, is_inline=false))]",
-            "    fn register_observer(",
-            "        &self,",
-            "        py: Python<'_>,",
-            "        obs: Py<PyAny>,",
-            "        event_mask: u32,",
-            "        is_inline: bool,",
-            "    ) -> PyResult<()> {",
-            "        // 1. Legacy registry (Python fallback notify() queries this).",
-            "        self.observers",
-            "            .lock()",
-            "            .register(py, obs.clone_ref(py), event_mask, is_inline)?;",
-            "        // 2. Kernel registry (Rust sys_* dispatch_observers uses this).",
-            "        let name: String = obs",
-            "            .bind(py)",
-            "            .get_type()",
-            "            .name()",
-            "            .map(|n| n.to_string())",
-            '            .unwrap_or_else(|_| "<?>".to_string());',
-            "        let adapter = PyMutationObserverAdapter { inner: obs };",
-            "        self.inner",
-            "            .register_observer(Arc::new(adapter), name, event_mask);",
+            "    /// sys_watch — block until a matching file event or timeout.",
+            "    /// Returns (event_type, path) tuple or None.",
+            "    #[pyo3(signature = (pattern, timeout_ms))]",
+            "    fn sys_watch(&self, py: Python<'_>, pattern: &str, timeout_ms: u64) -> Option<(String, String)> {",
+            "        let event = py.detach(|| self.inner.sys_watch(pattern, timeout_ms));",
+            "        event.map(|e| (e.event_type.as_str().to_string(), e.path.clone()))",
+            "    }",
+            "",
+            "    // ── Observer dispatch (pure Rust) ────────────────────────────────",
+            "",
+            "    /// Dispatch event to all registered Rust-native observers (for DLC mount/unmount).",
+            "    #[pyo3(signature = (event_type, path))]",
+            "    fn dispatch_event(&self, event_type: &str, path: &str) -> PyResult<()> {",
+            "        use crate::dispatch::FileEventType;",
+            "        let etype = match event_type {",
+            '            "file_write" => FileEventType::FileWrite,',
+            '            "file_delete" => FileEventType::FileDelete,',
+            '            "file_rename" => FileEventType::FileRename,',
+            '            "metadata_change" => FileEventType::MetadataChange,',
+            '            "dir_create" => FileEventType::DirCreate,',
+            '            "dir_delete" => FileEventType::DirDelete,',
+            '            "file_copy" => FileEventType::FileCopy,',
+            '            "mount" => FileEventType::Mount,',
+            '            "unmount" => FileEventType::Unmount,',
+            "            other => return Err(pyo3::exceptions::PyValueError::new_err(",
+            '                format!("unknown event type: {other}"),',
+            "            )),",
+            "        };",
+            "        self.inner.dispatch_event(etype, path);",
             "        Ok(())",
             "    }",
             "",
-            "    fn unregister_observer(&self, py: Python<'_>, obs: &Bound<'_, PyAny>) -> bool {",
-            "        // Unregister from legacy registry. Kernel registry unregister",
-            "        // requires name (not identity); for now only legacy is cleaned.",
-            "        // The kernel registry observer becomes orphaned but harmless",
-            "        // (fire-and-forget no-op after Python ref is dropped).",
-            "        self.observers.lock().unregister(py, obs)",
+            "    /// Flush pending Rust-native observer tasks (blocks until pool drains).",
+            "    fn flush_observers(&self) {",
+            "        self.inner.flush_observers();",
             "    }",
             "",
-            "    fn get_matching_observers(&self, py: Python<'_>, event_type_bit: u32) -> Vec<ObserverPair> {",
-            "        self.observers.lock().get_matching(py, event_type_bit)",
-            "    }",
-            "",
-            "    fn observer_count(&self) -> usize {",
-            "        self.observers.lock().count()",
-            "    }",
-            "",
-            "    /// Block until all queued observer jobs complete (test helper).",
-            "    ///",
-            "    /// OBSERVE dispatch is fire-and-forget — `dispatch_observers` returns",
-            "    /// as soon as jobs are queued on the background ThreadPool. Tests need",
-            "    /// this helper to make assertions deterministic (drain the pool before",
-            "    /// checking observer side-effects). Not for production — blocks the",
-            "    /// calling thread until every worker finishes.",
-            "    fn flush_observers(&self, py: Python<'_>) {",
-            "        py.detach(|| self.inner.flush_observers());",
+            "    /// Total observers (Rust-native + event buffers).",
+            "    fn kernel_observer_count(&self) -> usize {",
+            "        self.inner.observer_count()",
             "    }",
             "",
             "    // ── Hook counts ────────────────────────────────────────────────────",

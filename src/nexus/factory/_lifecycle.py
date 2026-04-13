@@ -135,7 +135,7 @@ async def _wire_services(
     # Issue #1811: DriverLifecycleCoordinator is kernel-owned (created in
     # NexusFS.__init__). Root mount ("/") registered via coordinator.mount()
     # in create_nexus_fs() — unified lifecycle (pool + hooks + notify).
-    await nx.sys_setattr("/__sys__/services/driver_coordinator", service=nx._driver_coordinator)
+    nx.sys_setattr("/__sys__/services/driver_coordinator", service=nx._driver_coordinator)
 
     # Issue #1811 Phase 2: Inject coordinator into MountService so dynamic
     # mounts go through coordinator (hook_spec registration + KernelDispatch).
@@ -149,7 +149,7 @@ async def _wire_services(
 
     # Federation — wire from parameter (profile-gated, created before kernel).
     if federation is not None:
-        await nx.sys_setattr("/__sys__/services/federation", service=federation)
+        nx.sys_setattr("/__sys__/services/federation", service=federation)
         logger.debug("[LINK] Federation service enlisted")
 
         # Upgrade lock manager: LocalLockManager → RaftLockManager (kernel owns)
@@ -183,17 +183,16 @@ async def _wire_services(
 
         nx._close_callbacks.append(_close_write_observer)
 
-    # Cancel PipedRecordStoreWriteObserver's consumer task on sync close.
-    # Without this, the pipe consumer blocks event loop cleanup in tests.
-    if _wo is not None and hasattr(_wo, "_consumer_task"):
+    # Cancel RecordStoreWriteObserver's debounce timer + flush on sync close.
+    if _wo is not None and hasattr(_wo, "cancel"):
 
-        def _close_write_observer_task() -> None:
-            task = getattr(_wo, "_consumer_task", None)
-            if task is not None and not task.done():
-                task.cancel()
-                _wo._consumer_task = None
+        def _close_write_observer_cancel() -> None:
+            try:
+                _wo.cancel()
+            except Exception as exc:
+                logger.debug("close: write_observer cancel failed (best-effort): %s", exc)
 
-        nx._close_callbacks.append(_close_write_observer_task)
+        nx._close_callbacks.append(_close_write_observer_cancel)
 
     # Issue #3193: Cancel the delivery worker asyncio.Task on sync close.
     # The coordinator's stop_persistent_services() is async and only runs

@@ -100,7 +100,7 @@ class TestSysReaddirInternalFilter:
             ]
         )
 
-        result = await fs.sys_readdir("/", recursive=False, details=False)
+        result = fs.sys_readdir("/", recursive=False, details=False)
 
         assert result == ["/workspace"]
 
@@ -114,7 +114,7 @@ class TestSysReaddirInternalFilter:
             ]
         )
 
-        result = await fs.sys_readdir("/", recursive=False, details=True)
+        result = fs.sys_readdir("/", recursive=False, details=True)
 
         assert len(result) == 1
         assert result[0]["path"] == "/workspace"
@@ -129,7 +129,7 @@ class TestSysReaddirInternalFilter:
             ]
         )
 
-        result = await fs.sys_readdir("/", recursive=False, details=False, limit=10)
+        result = fs.sys_readdir("/", recursive=False, details=False, limit=10)
 
         assert list(result.items) == ["/workspace"]
 
@@ -142,6 +142,6 @@ class TestSysReaddirInternalFilter:
             ]
         )
 
-        result = await fs.sys_readdir("/workspace/demo", recursive=False, details=False)
+        result = fs.sys_readdir("/workspace/demo", recursive=False, details=False)
 
         assert len(result) == 2

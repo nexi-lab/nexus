@@ -113,7 +113,7 @@ async def test_files(nexus_fs, tmp_path):
     }
 
     for path, content in test_data.items():
-        await nexus_fs.write(path, content)
+        nexus_fs.write(path, content)
 
     return test_data
 
@@ -144,7 +144,7 @@ class TestFileOperationsIntegration:
         assert read_result == "Integration test content"
 
         # Verify directly with NexusFS
-        direct_read = await nexus_fs.sys_read("/integration_test.txt")
+        direct_read = nexus_fs.sys_read("/integration_test.txt")
         assert direct_read == b"Integration test content"
 
     @pytest.mark.asyncio
@@ -172,9 +172,9 @@ class TestFileOperationsIntegration:
         assert "Successfully deleted" in delete_result
 
         # Verify file is gone
-        assert not await nexus_fs.access("/workflow/file2.txt")
-        assert await nexus_fs.access("/workflow/file1.txt")
-        assert await nexus_fs.access("/workflow/file3.txt")
+        assert not nexus_fs.access("/workflow/file2.txt")
+        assert nexus_fs.access("/workflow/file1.txt")
+        assert nexus_fs.access("/workflow/file3.txt")
 
     @pytest.mark.asyncio
     async def test_directory_operations(self, mcp_server, nexus_fs):
@@ -186,19 +186,19 @@ class TestFileOperationsIntegration:
         # Create directory
         mkdir_result = await mkdir_tool.fn(path="/testdir")
         assert "Successfully created" in mkdir_result
-        assert await nexus_fs.is_directory("/testdir")
+        assert nexus_fs.is_directory("/testdir")
 
         # Write file in directory
         await write_tool.fn(path="/testdir/file.txt", content="test")
 
         # Try to remove non-empty directory without recursive (should fail)
         rmdir_result = await rmdir_tool.fn(path="/testdir", recursive=False)
-        assert "Error" in rmdir_result or await nexus_fs.access("/testdir")
+        assert "Error" in rmdir_result or nexus_fs.access("/testdir")
 
         # Remove with recursive
         rmdir_result_recursive = await rmdir_tool.fn(path="/testdir", recursive=True)
         assert "Successfully removed" in rmdir_result_recursive
-        assert not await nexus_fs.access("/testdir")
+        assert not nexus_fs.access("/testdir")
 
     @pytest.mark.asyncio
     async def test_file_info_integration(self, mcp_server, test_files):
@@ -240,13 +240,9 @@ class TestSearchIntegration:
     async def test_grep_search(self, mcp_server, nexus_fs):
         """Test grep search with real file content."""
         # Create files with searchable content
-        await nexus_fs.write(
-            "/search/file1.py", b"def hello():\n    print('Hello')\n# TODO: fix this"
-        )
-        await nexus_fs.write(
-            "/search/file2.py", b"class MyClass:\n    def __init__(self):\n        pass"
-        )
-        await nexus_fs.write("/search/file3.py", b"# TODO: implement feature\nimport sys")
+        nexus_fs.write("/search/file1.py", b"def hello():\n    print('Hello')\n# TODO: fix this")
+        nexus_fs.write("/search/file2.py", b"class MyClass:\n    def __init__(self):\n        pass")
+        nexus_fs.write("/search/file3.py", b"# TODO: implement feature\nimport sys")
 
         grep_tool = await get_tool(mcp_server, "nexus_grep")
 
@@ -727,7 +723,7 @@ class TestComprehensiveMCPToolsWorkflow:
         assert "Successfully removed" in rmdir_result
 
         # Verify directory was removed
-        assert not await nexus_fs.access("/mcp_integration_test")
+        assert not nexus_fs.access("/mcp_integration_test")
 
 
 class TestPerformanceCharacteristics:

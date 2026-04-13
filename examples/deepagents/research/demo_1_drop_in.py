@@ -123,7 +123,7 @@ async def main():
     workspace = "/research-demo"
     print(f"📂 Creating workspace: {workspace}")
     with contextlib.suppress(Exception):
-        await nx.mkdir(workspace, parents=True)  # Directory may already exist
+        nx.mkdir(workspace, parents=True)  # Directory may already exist
     print()
 
     # Create agent
@@ -175,14 +175,14 @@ Focus on: architecture components, attention mechanisms, and real-world applicat
     print("=" * 70)
     print()
 
-    files = await nx.sys_readdir(workspace)
+    files = nx.sys_readdir(workspace)
     for file_path in files:
         # Extract filename from full path
         file_name = file_path.split("/")[-1] if "/" in file_path else file_path
 
         # Get file size
         try:
-            content = await nx.sys_read(file_path)
+            content = nx.sys_read(file_path)
             size = len(content)
         except Exception:
             size = 0
@@ -208,7 +208,7 @@ Focus on: architecture components, attention mechanisms, and real-world applicat
     print()
 
     try:
-        report = await nx.sys_read(f"{workspace}/final_report.md").decode("utf-8")
+        report = nx.sys_read(f"{workspace}/final_report.md").decode("utf-8")
         print(report)
         print()
     except FileNotFoundError:

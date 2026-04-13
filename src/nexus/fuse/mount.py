@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 from fuse import FUSE
 
 if TYPE_CHECKING:
-    from nexus.contracts.filesystem.filesystem_abc import NexusFilesystem
+    from nexus.core.nexus_fs import NexusFS
 
 from nexus.fuse.operations import NexusFUSEOperations
 
@@ -55,7 +55,7 @@ class NexusFUSE:
 
     def __init__(
         self,
-        nexus_fs: "NexusFilesystem",
+        nexus_fs: "NexusFS",
         mount_point: str,
         mode: MountMode = MountMode.SMART,
         cache_config: dict[str, int | bool] | None = None,
@@ -181,9 +181,8 @@ class NexusFUSE:
             namespace_manager = getattr(self.nexus_fs, "namespace_manager", None)
 
         # Create FUSE operations
-        # Issue #1771: event_bus via kernel FileWatcher's remote watcher (kernel-knows)
-        _fw = getattr(self.nexus_fs, "_file_watcher", None) if self.nexus_fs else None
-        event_bus = _fw._remote_watcher if _fw is not None else None
+        # Issue #1771: event_bus via kernel-level _event_bus
+        event_bus = getattr(self.nexus_fs, "_event_bus", None) if self.nexus_fs else None
         subscription_manager = getattr(self.nexus_fs, "subscription_manager", None)
         operations = NexusFUSEOperations(
             self.nexus_fs,
@@ -435,7 +434,7 @@ class NexusFUSE:
 
 
 def mount_nexus(
-    nexus_fs: "NexusFilesystem",
+    nexus_fs: "NexusFS",
     mount_point: str,
     mode: str = "smart",
     foreground: bool = True,

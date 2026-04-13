@@ -38,9 +38,9 @@ class TestScopedReadBatchHappyPath:
     async def test_scoped_path_is_transparent(self, nx, scoped, user_root):
         """User writes to /workspace/file.txt, reads back the same path."""
         full_path = f"{user_root}/workspace/file.txt"
-        await nx.write(full_path, b"scoped content")
+        nx.write(full_path, b"scoped content")
 
-        results = await scoped.read_batch(["/workspace/file.txt"])
+        results = scoped.read_batch(["/workspace/file.txt"])
         assert len(results) == 1
         assert results[0]["content"] == b"scoped content"
         # Returned path should be user-relative, not the full scoped path.
@@ -51,9 +51,9 @@ class TestScopedReadBatchHappyPath:
     @pytest.mark.asyncio
     async def test_multiple_scoped_paths(self, nx, scoped, user_root):
         for name in ("a.txt", "b.txt"):
-            await nx.write(f"{user_root}/files/{name}", f"content_{name}".encode())
+            nx.write(f"{user_root}/files/{name}", f"content_{name}".encode())
 
-        results = await scoped.read_batch(["/files/a.txt", "/files/b.txt"])
+        results = scoped.read_batch(["/files/a.txt", "/files/b.txt"])
         assert len(results) == 2
         contents = {r["content"] for r in results}
         assert b"content_a.txt" in contents
@@ -66,35 +66,35 @@ class TestScopedReadBatchCrossScopeRejection:
     @pytest.mark.asyncio
     async def test_memory_namespace_raises(self, scoped):
         with pytest.raises(AccessDeniedError):
-            await scoped.read_batch(["/memory/other_user/secret.txt"])
+            scoped.read_batch(["/memory/other_user/secret.txt"])
 
     @pytest.mark.asyncio
     async def test_skills_namespace_raises(self, scoped):
         with pytest.raises(AccessDeniedError):
-            await scoped.read_batch(["/skills/some_skill.py"])
+            scoped.read_batch(["/skills/some_skill.py"])
 
     @pytest.mark.asyncio
     async def test_system_namespace_raises(self, scoped):
         with pytest.raises(AccessDeniedError):
-            await scoped.read_batch(["/system/config.json"])
+            scoped.read_batch(["/system/config.json"])
 
     @pytest.mark.asyncio
     async def test_mnt_namespace_raises(self, scoped):
         with pytest.raises(AccessDeniedError):
-            await scoped.read_batch(["/mnt/gmail/INBOX"])
+            scoped.read_batch(["/mnt/gmail/INBOX"])
 
     @pytest.mark.asyncio
     async def test_mixed_scoped_and_global_raises(self, nx, scoped, user_root):
         """A single global path in a mixed batch should raise before reading anything."""
-        await nx.write(f"{user_root}/workspace/ok.txt", b"ok")
+        nx.write(f"{user_root}/workspace/ok.txt", b"ok")
         with pytest.raises(AccessDeniedError):
-            await scoped.read_batch(["/workspace/ok.txt", "/memory/secret.txt"])
+            scoped.read_batch(["/workspace/ok.txt", "/memory/secret.txt"])
 
     @pytest.mark.asyncio
     async def test_partial_mode_still_raises_for_global_paths(self, scoped):
         """Scope violation is not swallowed by partial mode."""
         with pytest.raises(AccessDeniedError):
-            await scoped.read_batch(["/memory/secret.txt"], partial=True)
+            scoped.read_batch(["/memory/secret.txt"], partial=True)
 
 
 class TestScopedReadBatchAdminBypass:
@@ -112,8 +112,8 @@ class TestScopedReadBatchAdminBypass:
         )
         scoped = ScopedFilesystem(nx, root=user_root)
 
-        await nx.write("/memory/shared.txt", b"global data")
+        nx.write("/memory/shared.txt", b"global data")
         # Should not raise — admin bypasses scope enforcement.
-        results = await scoped.read_batch(["/memory/shared.txt"], context=admin_ctx)
+        results = scoped.read_batch(["/memory/shared.txt"], context=admin_ctx)
         assert len(results) == 1
         assert results[0]["content"] == b"global data"

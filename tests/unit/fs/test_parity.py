@@ -1,7 +1,7 @@
-"""Sync/async parity tests.
+"""Sync parity tests.
 
-Validates that SlimNexusFS (async) and SyncNexusFS (sync) produce
-identical results for all public API methods on the same backend.
+Validates that SlimNexusFS and SyncNexusFS produce identical results
+for all public API methods on the same backend.
 
 Uses a shared test class pattern (like httpx, httpcore) to avoid
 duplicating test logic.
@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import anyio
 import pytest
 
 from nexus.contracts.constants import ROOT_ZONE_ID
@@ -60,81 +59,71 @@ def _build_fs(tmp_path: Path) -> SlimNexusFS:
     return SlimNexusFS(kernel)
 
 
-# ── Async tests ───────────────────────────────────────────────────────────
+# ── SlimNexusFS tests (sync) ──────────────────────────────────────────
 
 
 @pytest.fixture
-def async_fs(tmp_path: Path) -> SlimNexusFS:
+def slim_fs(tmp_path: Path) -> SlimNexusFS:
     return _build_fs(tmp_path)
 
 
-class TestAsyncOperations:
-    """Full lifecycle via the async SlimNexusFS API."""
+class TestSlimOperations:
+    """Full lifecycle via the sync SlimNexusFS API."""
 
-    @pytest.mark.asyncio
-    async def test_write_read_parity(self, async_fs: SlimNexusFS):
+    def test_write_read_parity(self, slim_fs: SlimNexusFS):
         content = b"parity test content"
-        await async_fs.write("/local/parity.txt", content)
-        result = await async_fs.read("/local/parity.txt")
+        slim_fs.write("/local/parity.txt", content)
+        result = slim_fs.read("/local/parity.txt")
         assert result == content
 
-    @pytest.mark.asyncio
-    async def test_stat_parity(self, async_fs: SlimNexusFS):
-        await async_fs.write("/local/stat.txt", b"stat content")
-        stat = await async_fs.stat("/local/stat.txt")
+    def test_stat_parity(self, slim_fs: SlimNexusFS):
+        slim_fs.write("/local/stat.txt", b"stat content")
+        stat = slim_fs.stat("/local/stat.txt")
         assert stat is not None
         assert stat["size"] == 12
         assert stat["is_directory"] is False
         assert stat["path"] == "/local/stat.txt"
 
-    @pytest.mark.asyncio
-    async def test_ls_parity(self, async_fs: SlimNexusFS):
-        await async_fs.write("/local/ls_a.txt", b"a")
-        await async_fs.write("/local/ls_b.txt", b"b")
-        entries = await async_fs.ls("/local/", detail=False, recursive=True)
+    def test_ls_parity(self, slim_fs: SlimNexusFS):
+        slim_fs.write("/local/ls_a.txt", b"a")
+        slim_fs.write("/local/ls_b.txt", b"b")
+        entries = slim_fs.ls("/local/", detail=False, recursive=True)
         paths = sorted(e for e in entries if e.endswith(".txt"))
         assert "/local/ls_a.txt" in paths
         assert "/local/ls_b.txt" in paths
 
-    @pytest.mark.asyncio
-    async def test_exists_parity(self, async_fs: SlimNexusFS):
-        assert not await async_fs.exists("/local/nope.txt")
-        await async_fs.write("/local/nope.txt", b"now")
-        assert await async_fs.exists("/local/nope.txt")
+    def test_exists_parity(self, slim_fs: SlimNexusFS):
+        assert not slim_fs.exists("/local/nope.txt")
+        slim_fs.write("/local/nope.txt", b"now")
+        assert slim_fs.exists("/local/nope.txt")
 
-    @pytest.mark.asyncio
-    async def test_delete_parity(self, async_fs: SlimNexusFS):
-        await async_fs.write("/local/del.txt", b"bye")
-        await async_fs.delete("/local/del.txt")
-        assert await async_fs.stat("/local/del.txt") is None
+    def test_delete_parity(self, slim_fs: SlimNexusFS):
+        slim_fs.write("/local/del.txt", b"bye")
+        slim_fs.delete("/local/del.txt")
+        assert slim_fs.stat("/local/del.txt") is None
 
-    @pytest.mark.asyncio
-    async def test_rename_parity(self, async_fs: SlimNexusFS):
-        await async_fs.write("/local/old_p.txt", b"rename")
-        await async_fs.rename("/local/old_p.txt", "/local/new_p.txt")
-        assert await async_fs.read("/local/new_p.txt") == b"rename"
+    def test_rename_parity(self, slim_fs: SlimNexusFS):
+        slim_fs.write("/local/old_p.txt", b"rename")
+        slim_fs.rename("/local/old_p.txt", "/local/new_p.txt")
+        assert slim_fs.read("/local/new_p.txt") == b"rename"
 
-    @pytest.mark.asyncio
-    async def test_copy_parity(self, async_fs: SlimNexusFS):
-        await async_fs.write("/local/cp_src.txt", b"copy")
-        await async_fs.copy("/local/cp_src.txt", "/local/cp_dst.txt")
-        assert await async_fs.read("/local/cp_dst.txt") == b"copy"
+    def test_copy_parity(self, slim_fs: SlimNexusFS):
+        slim_fs.write("/local/cp_src.txt", b"copy")
+        slim_fs.copy("/local/cp_src.txt", "/local/cp_dst.txt")
+        assert slim_fs.read("/local/cp_dst.txt") == b"copy"
 
-    @pytest.mark.asyncio
-    async def test_mkdir_parity(self, async_fs: SlimNexusFS):
-        await async_fs.mkdir("/local/parity_dir")
-        stat = await async_fs.stat("/local/parity_dir")
+    def test_mkdir_parity(self, slim_fs: SlimNexusFS):
+        slim_fs.mkdir("/local/parity_dir")
+        stat = slim_fs.stat("/local/parity_dir")
         assert stat is not None
         assert stat["is_directory"] is True
 
-    @pytest.mark.asyncio
-    async def test_list_mounts_parity(self, async_fs: SlimNexusFS):
-        assert "/local" in async_fs.list_mounts()
+    def test_list_mounts_parity(self, slim_fs: SlimNexusFS):
+        assert "/local" in slim_fs.list_mounts()
 
-    @pytest.mark.asyncio
-    async def test_read_range_parity(self, async_fs: SlimNexusFS):
-        await async_fs.write("/local/range.txt", b"0123456789")
-        result = await async_fs.read_range("/local/range.txt", 2, 7)
+    def test_read_range_parity(self, slim_fs: SlimNexusFS):
+        slim_fs.write("/local/range.txt", b"0123456789")
+        result = slim_fs.read_range("/local/range.txt", 2, 7)
         assert result == b"23456"
 
 
@@ -143,8 +132,8 @@ class TestAsyncOperations:
 
 @pytest.fixture
 def sync_fs(tmp_path: Path) -> SyncNexusFS:
-    async_facade = _build_fs(tmp_path)
-    return SyncNexusFS(async_facade)
+    slim_facade = _build_fs(tmp_path)
+    return SyncNexusFS(slim_facade)
 
 
 class TestSyncOperations:
@@ -205,25 +194,3 @@ class TestSyncOperations:
         sync_fs.write("/local/range.txt", b"0123456789")
         result = sync_fs.read_range("/local/range.txt", 2, 7)
         assert result == b"23456"
-
-
-# ── Running event loop context (Jupyter-like) ────────────────────────────
-
-
-class TestRunningLoopContext:
-    """Verify SyncNexusFS works inside an already-running event loop."""
-
-    @pytest.mark.asyncio
-    async def test_sync_inside_async_via_thread(self, tmp_path: Path):
-        """SyncNexusFS must work when called from a worker thread
-        while an event loop is running (Jupyter notebook scenario)."""
-        async_facade = _build_fs(tmp_path)
-        sync_wrapper = SyncNexusFS(async_facade)
-
-        def _sync_work():
-            sync_wrapper.write("/local/jupyter.txt", b"from thread")
-            return sync_wrapper.read("/local/jupyter.txt")
-
-        result = await anyio.to_thread.run_sync(_sync_work)
-        assert result == b"from thread"
-        sync_wrapper.close()

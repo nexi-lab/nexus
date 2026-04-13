@@ -127,30 +127,30 @@ class TestSlimFileOperations:
 
     @pytest.mark.asyncio
     async def test_write_and_read(self, minimal_nx: "NexusFS") -> None:
-        await minimal_nx.write("/test.txt", b"hello kernel")
-        data = await minimal_nx.sys_read("/test.txt")
+        minimal_nx.write("/test.txt", b"hello kernel")
+        data = minimal_nx.sys_read("/test.txt")
         assert data == b"hello kernel"
 
     @pytest.mark.asyncio
     async def test_exists_true(self, minimal_nx: "NexusFS") -> None:
-        await minimal_nx.write("/exists_check.txt", b"data")
-        assert await minimal_nx.access("/exists_check.txt") is True
+        minimal_nx.write("/exists_check.txt", b"data")
+        assert minimal_nx.access("/exists_check.txt") is True
 
     @pytest.mark.asyncio
     async def test_exists_false(self, minimal_nx: "NexusFS") -> None:
-        assert await minimal_nx.access("/nonexistent.txt") is False
+        assert minimal_nx.access("/nonexistent.txt") is False
 
     @pytest.mark.asyncio
     async def test_delete(self, minimal_nx: "NexusFS") -> None:
-        await minimal_nx.write("/to_delete.txt", b"bye")
-        await minimal_nx.sys_unlink("/to_delete.txt")
-        assert await minimal_nx.access("/to_delete.txt") is False
+        minimal_nx.write("/to_delete.txt", b"bye")
+        minimal_nx.sys_unlink("/to_delete.txt")
+        assert minimal_nx.access("/to_delete.txt") is False
 
     @pytest.mark.asyncio
     async def test_list_directory(self, minimal_nx: "NexusFS") -> None:
-        await minimal_nx.write("/dir/a.txt", b"a")
-        await minimal_nx.write("/dir/b.txt", b"b")
-        listing = await minimal_nx.sys_readdir("/dir")
+        minimal_nx.write("/dir/a.txt", b"a")
+        minimal_nx.write("/dir/b.txt", b"b")
+        listing = minimal_nx.sys_readdir("/dir")
         paths = [item["path"] if isinstance(item, dict) else item for item in listing]
         assert "/dir/a.txt" in paths
         assert "/dir/b.txt" in paths
@@ -343,11 +343,11 @@ class TestSlimIntegrationViaConnect:
         assert nx.service("audit") is None
 
         # File operations should work
-        await nx.write("/hello.txt", b"slim mode")
-        assert await nx.sys_read("/hello.txt") == b"slim mode"
-        assert await nx.access("/hello.txt") is True
-        await nx.sys_unlink("/hello.txt")
-        assert await nx.access("/hello.txt") is False
+        nx.write("/hello.txt", b"slim mode")
+        assert nx.sys_read("/hello.txt") == b"slim mode"
+        assert nx.access("/hello.txt") is True
+        nx.sys_unlink("/hello.txt")
+        assert nx.access("/hello.txt") is False
 
     @pytest.mark.asyncio
     async def test_slim_factory_enabled_bricks_logged(
@@ -398,10 +398,10 @@ class TestSlimIntegrationViaConnect:
             enabled_bricks=resolve_enabled_bricks(DeploymentProfile.SLIM),
         )
 
-        # FileWatcher + StreamEventObserver + EventBusObserver are unconditionally
-        # registered. RevisionTrackingObserver deleted (§10 A2) — zone revision
-        # is now a kernel primitive (AtomicU64).
-        assert nx.observer_count == 3
+        # register_observe is now a no-op (Python observers deleted).
+        # All observers (FileWatcher, StreamEventObservers) are Rust kernel-internal.
+        # Service-registered observer count is always 0.
+        assert nx.observer_count == 0
 
     @pytest.mark.asyncio
     async def test_slim_profile_no_workflow_engine(self, tmp_path: "Path") -> None:

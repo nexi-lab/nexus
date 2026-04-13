@@ -206,7 +206,7 @@ class ShareLinkService:
 
             # Determine resource type
             resource_type = "file"
-            if await self._gw.access(normalized_path):
+            if self._gw.access(normalized_path):
                 meta = self._gw.metadata_get(normalized_path)
                 if meta and getattr(meta, "is_dir", False):
                     resource_type = "directory"

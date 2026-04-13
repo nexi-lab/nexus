@@ -252,7 +252,7 @@ async def test_in_process_thread_exhaustion(
         # Create test files (no permission check needed)
         for i in range(50):
             path = f"/test_file_{i}.txt"
-            await nx.write(path, f"Test content {i}".encode())
+            nx.write(path, f"Test content {i}".encode())
 
         # Now enable permissions
         nx._enforce_permissions = True
@@ -290,7 +290,7 @@ async def test_in_process_thread_exhaustion(
             start = time.time()
             try:
                 # This is the slow path - list with permission checks
-                _result = await nx.sys_readdir("/", recursive=False, context=context)
+                _result = nx.sys_readdir("/", recursive=False, context=context)
                 end = time.time()
                 return RequestResult(
                     request_id=request_id,
@@ -368,7 +368,7 @@ async def test_async_thread_exhaustion(
         # Create test files (no permission check needed)
         for i in range(100):
             path = f"/test_file_{i}.txt"
-            await nx.write(path, f"Test content {i}".encode())
+            nx.write(path, f"Test content {i}".encode())
 
         # Now enable permissions
         nx._enforce_permissions = True

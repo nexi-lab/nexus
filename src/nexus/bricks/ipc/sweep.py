@@ -271,9 +271,7 @@ class TTLSweeper:
         """
         expired_count = 0
         try:
-            agent_ids = await self._vfs.sys_readdir(
-                AGENTS_ROOT, recursive=False, context=self._ctx()
-            )
+            agent_ids = self._vfs.sys_readdir(AGENTS_ROOT, recursive=False, context=self._ctx())
         except Exception:
             logger.debug("Cannot list %s for sweep", AGENTS_ROOT)
             return 0
@@ -410,9 +408,7 @@ class TTLSweeper:
         expired = 0
 
         try:
-            filenames = await self._vfs.sys_readdir(
-                agent_inbox, recursive=False, context=self._ctx()
-            )
+            filenames = self._vfs.sys_readdir(agent_inbox, recursive=False, context=self._ctx())
         except Exception:
             return 0
 
@@ -426,7 +422,7 @@ class TTLSweeper:
 
             msg_path = f"{agent_inbox}/{filename}"
             try:
-                data = await self._vfs.sys_read(msg_path, context=self._ctx())
+                data = self._vfs.sys_read(msg_path, context=self._ctx())
                 envelope = MessageEnvelope.from_bytes(data)
                 if envelope.is_expired():
                     await dead_letter_message(
@@ -491,9 +487,7 @@ class TTLSweeper:
         drained = 0
 
         try:
-            filenames = await self._vfs.sys_readdir(
-                agent_inbox, recursive=False, context=self._ctx()
-            )
+            filenames = self._vfs.sys_readdir(agent_inbox, recursive=False, context=self._ctx())
         except Exception:
             return 0
 
@@ -512,12 +506,12 @@ class TTLSweeper:
             claim_ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
             claimed_path = f"{agent_inbox}/{filename}.drain_{claim_ts}_{run_id}"
             try:
-                await self._vfs.sys_rename(msg_path, claimed_path, context=self._ctx())
+                self._vfs.sys_rename(msg_path, claimed_path, context=self._ctx())
             except Exception:
                 continue  # processor or concurrent sweeper already moved it — skip
 
             try:
-                data = await self._vfs.sys_read(claimed_path, context=self._ctx())
+                data = self._vfs.sys_read(claimed_path, context=self._ctx())
                 envelope = MessageEnvelope.from_bytes(data)
                 if envelope.ttl_seconds is not None:
                     # Has TTL — restore and let _sweep_agent handle it
@@ -590,7 +584,7 @@ class TTLSweeper:
         deleted = 0
 
         try:
-            filenames = await self._vfs.sys_readdir(dir_path, recursive=False, context=self._ctx())
+            filenames = self._vfs.sys_readdir(dir_path, recursive=False, context=self._ctx())
         except Exception:
             return 0
 
@@ -601,7 +595,7 @@ class TTLSweeper:
             if not await self._file_is_older_than(file_path, filename, cutoff):
                 continue
             try:
-                await self._vfs.sys_unlink(file_path, context=self._ctx())
+                self._vfs.sys_unlink(file_path, context=self._ctx())
                 deleted += 1
             except Exception:
                 logger.debug("Failed to delete aged file %s", file_path)
@@ -643,7 +637,7 @@ class TTLSweeper:
         cutoff = datetime.now(UTC) - timedelta(hours=self._dead_letter_compact_min_age_hours)
 
         try:
-            filenames = await self._vfs.sys_readdir(dl_path, recursive=False, context=self._ctx())
+            filenames = self._vfs.sys_readdir(dl_path, recursive=False, context=self._ctx())
         except Exception:
             return 0
 
@@ -658,7 +652,7 @@ class TTLSweeper:
                 continue
             if ".arch_" in fn:
                 continue
-            if await self._vfs.access(f"{dl_path}/{fn}.archived", context=self._ctx()):
+            if self._vfs.access(f"{dl_path}/{fn}.archived", context=self._ctx()):
                 continue  # already archived in a previous preserve-originals sweep
             msg_files.append(fn)
         msg_files.sort()
@@ -734,7 +728,7 @@ class TTLSweeper:
         archive_final = dead_letter_archive_segment(agent_id, day, f"{now_ts}_{run_id}")
 
         with contextlib.suppress(Exception):
-            await self._vfs.mkdir(archive_dir, parents=True, exist_ok=True, context=self._ctx())
+            self._vfs.mkdir(archive_dir, parents=True, exist_ok=True, context=self._ctx())
 
         if delete_originals:
             # Phase 0: atomically claim each candidate via rename so concurrent
@@ -745,7 +739,7 @@ class TTLSweeper:
                 orig = f"{dl_path}/{fn}"
                 claimed = f"{dl_path}/{fn}.arch_{claim_ts}_{run_id}"
                 try:
-                    await self._vfs.sys_rename(orig, claimed, context=self._ctx())
+                    self._vfs.sys_rename(orig, claimed, context=self._ctx())
                     claims.append((fn, orig, claimed))
                 except Exception:
                     pass  # concurrent sweeper or already deleted
@@ -766,10 +760,10 @@ class TTLSweeper:
         for fn, orig, read_path in claims:
             reason_path = f"{dl_path}/{fn}.reason.json"
             try:
-                data = await self._vfs.sys_read(read_path, context=self._ctx())
+                data = self._vfs.sys_read(read_path, context=self._ctx())
                 reason_raw = b"{}"
-                if await self._vfs.access(reason_path, context=self._ctx()):
-                    reason_raw = await self._vfs.sys_read(reason_path, context=self._ctx())
+                if self._vfs.access(reason_path, context=self._ctx()):
+                    reason_raw = self._vfs.sys_read(reason_path, context=self._ctx())
                 record = json.dumps(
                     {
                         "file": fn,
@@ -795,7 +789,7 @@ class TTLSweeper:
 
         # Phase 1: write .tmp
         try:
-            await self._vfs.write(archive_tmp, archive_bytes, context=self._ctx())
+            self._vfs.write(archive_tmp, archive_bytes, context=self._ctx())
         except Exception:
             logger.warning("Failed to write archive tmp %s", archive_tmp)
             if delete_originals:
@@ -805,7 +799,7 @@ class TTLSweeper:
 
         # Phase 2: write final (archive is now durable)
         try:
-            await self._vfs.write(archive_final, archive_bytes, context=self._ctx())
+            self._vfs.write(archive_final, archive_bytes, context=self._ctx())
         except Exception:
             logger.warning("Failed to commit archive %s", archive_final)
             if delete_originals:
@@ -825,7 +819,7 @@ class TTLSweeper:
             # re-archiving the same messages on every poll cycle.
             for fn, orig, _ in good_claims:
                 try:
-                    await self._vfs.write(f"{orig}.archived", b"", context=self._ctx())
+                    self._vfs.write(f"{orig}.archived", b"", context=self._ctx())
                 except Exception:
                     logger.debug("Failed to write .archived marker for %s", fn)
 
@@ -858,7 +852,7 @@ class TTLSweeper:
         """
         stale_cutoff = datetime.now(UTC) - timedelta(minutes=_CLAIMED_STALE_MINUTES)
         try:
-            filenames = await self._vfs.sys_readdir(dl_path, recursive=False, context=self._ctx())
+            filenames = self._vfs.sys_readdir(dl_path, recursive=False, context=self._ctx())
         except Exception:
             return
 
@@ -866,7 +860,7 @@ class TTLSweeper:
         archive_files: set[str] = set()
         with contextlib.suppress(Exception):
             archive_files = set(
-                await self._vfs.sys_readdir(archive_dir, recursive=False, context=self._ctx())
+                self._vfs.sys_readdir(archive_dir, recursive=False, context=self._ctx())
             )
 
         for fn in filenames:
@@ -908,9 +902,7 @@ class TTLSweeper:
             (originals still intact). Delete ``.tmp``; next sweep re-compacts.
         """
         try:
-            filenames = await self._vfs.sys_readdir(
-                archive_dir, recursive=False, context=self._ctx()
-            )
+            filenames = self._vfs.sys_readdir(archive_dir, recursive=False, context=self._ctx())
         except Exception:
             return
 
@@ -933,9 +925,7 @@ class TTLSweeper:
         cutoff = datetime.now(UTC) - timedelta(days=retention_days)
 
         try:
-            filenames = await self._vfs.sys_readdir(
-                archive_dir, recursive=False, context=self._ctx()
-            )
+            filenames = self._vfs.sys_readdir(archive_dir, recursive=False, context=self._ctx())
         except Exception:
             return
 
@@ -1015,12 +1005,12 @@ class TTLSweeper:
         overwriting a concurrently restored copy.
         """
         try:
-            if not await self._vfs.access(orig_path, context=self._ctx()):
-                await self._vfs.sys_rename(claimed_path, orig_path, context=self._ctx())
+            if not self._vfs.access(orig_path, context=self._ctx()):
+                self._vfs.sys_rename(claimed_path, orig_path, context=self._ctx())
         except Exception:
             pass
 
     async def _maybe_unlink(self, path: str) -> None:
         """Delete a file, silently ignoring errors."""
         with contextlib.suppress(Exception):
-            await self._vfs.sys_unlink(path, context=self._ctx())
+            self._vfs.sys_unlink(path, context=self._ctx())

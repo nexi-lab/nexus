@@ -127,7 +127,7 @@ def _make_vfs_loop(
     token_iter = iter(tokens)
     offset_counter = [0]
 
-    async def mock_stream_read(path: str, offset: int) -> tuple[bytes, int]:
+    def mock_stream_read(path: str, offset: int) -> tuple[bytes, int]:
         try:
             data = next(token_iter)
             new_offset = offset_counter[0] + len(data)
@@ -146,7 +146,7 @@ def _make_vfs_loop(
 
     sys_read_mock = AsyncMock(side_effect=mock_sys_read)
     sys_write_mock = AsyncMock(side_effect=mock_sys_write)
-    stream_read_mock = AsyncMock(side_effect=mock_stream_read)
+    stream_read_mock = MagicMock(side_effect=mock_stream_read)
 
     loop = ManagedAgentLoop(
         sys_read=sys_read_mock,

@@ -98,7 +98,7 @@ async def main():
 
         # Create demo directory with parents flag
         try:
-            await nx.mkdir(base_path, parents=True)
+            nx.mkdir(base_path, parents=True)
             print(f"✓ Created directory: {base_path}")
         except Exception as e:
             if "already exists" in str(e).lower():
@@ -134,7 +134,7 @@ async def main():
 
         for path in nested_paths:
             try:
-                await nx.mkdir(path, parents=True)
+                nx.mkdir(path, parents=True)
                 print(f"✓ Created: {path}")
             except Exception as e:
                 if "already exists" in str(e).lower():
@@ -168,7 +168,7 @@ async def main():
 
         # Non-recursive listing
         print(f"📂 Contents of {base_path}:")
-        contents = await nx.sys_readdir(base_path, recursive=False)
+        contents = nx.sys_readdir(base_path, recursive=False)
         for item in sorted(contents):
             is_dir = await nx.is_directory(item)
             icon = "📁" if is_dir else "📄"
@@ -176,7 +176,7 @@ async def main():
 
         # Recursive listing
         print(f"\n📂 All items in {base_path} (recursive):")
-        all_items = await nx.sys_readdir(base_path, recursive=True)
+        all_items = nx.sys_readdir(base_path, recursive=True)
         for item in sorted(all_items):
             is_dir = await nx.is_directory(item)
             icon = "📁" if is_dir else "📄"
@@ -195,7 +195,7 @@ async def main():
 
         print("Creating test files...")
         for file_path in test_files:
-            await nx.sys_write(file_path, b"# Sample content")
+            nx.sys_write(file_path, b"# Sample content")
             print(f"✓ Created file: {file_path}")
 
         print("\nChecking path types:")
@@ -219,14 +219,14 @@ async def main():
 
         print(f"Attempting to create existing directory: {existing_dir}")
         try:
-            await nx.mkdir(existing_dir, exist_ok=False)
+            nx.mkdir(existing_dir, exist_ok=False)
             print("✗ Should have raised FileExistsError")
         except Exception as e:
             print(f"✓ Correctly raised error: {e.__class__.__name__}")
 
         print("\nWith exist_ok=True:")
         try:
-            await nx.mkdir(existing_dir, exist_ok=True)
+            nx.mkdir(existing_dir, exist_ok=True)
             print("✓ No error raised for existing directory")
         except Exception as e:
             print(f"✗ Unexpected error: {e}")
@@ -236,7 +236,7 @@ async def main():
 
         # Create a temporary directory to remove
         temp_dir = f"{base_path}/temp"
-        await nx.mkdir(temp_dir)
+        nx.mkdir(temp_dir)
         print(f"✓ Created temp directory: {temp_dir}")
 
         # Remove empty directory
@@ -252,9 +252,9 @@ async def main():
 
         # Create a directory with content
         test_tree = f"{base_path}/test-tree"
-        await nx.mkdir(f"{test_tree}/level1/level2", parents=True)
-        await nx.sys_write(f"{test_tree}/file1.txt", b"content")
-        await nx.sys_write(f"{test_tree}/level1/file2.txt", b"content")
+        nx.mkdir(f"{test_tree}/level1/level2", parents=True)
+        nx.sys_write(f"{test_tree}/file1.txt", b"content")
+        nx.sys_write(f"{test_tree}/level1/file2.txt", b"content")
         print(f"✓ Created test directory tree: {test_tree}")
 
         # Try to remove non-empty directory without recursive
@@ -295,7 +295,7 @@ async def main():
         print("Creating project structure:")
         for path in project_structure:
             try:
-                await nx.mkdir(path, parents=True, exist_ok=True)
+                nx.mkdir(path, parents=True, exist_ok=True)
                 print(f"  📁 {path}")
             except Exception as e:
                 print(f"  ⚠️  {path}: {e}")
@@ -305,7 +305,7 @@ async def main():
 
         stats_path = f"{base_path}/my-project"
         try:
-            all_items = await nx.sys_readdir(stats_path, recursive=True)
+            all_items = nx.sys_readdir(stats_path, recursive=True)
             print(f"Statistics for {stats_path}:")
             print(f"   Total items: {len(all_items)}")
             print("\nItems:")

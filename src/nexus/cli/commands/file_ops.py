@@ -68,8 +68,8 @@ def init(path: str) -> None:
             nx = await connect_local_workspace(str(data_dir))
 
             # Create default directories
-            await nx.mkdir("/workspace", exist_ok=True)
-            await nx.mkdir("/shared", exist_ok=True)
+            nx.mkdir("/workspace", exist_ok=True)
+            nx.mkdir("/shared", exist_ok=True)
 
             nx.close()
 
@@ -137,7 +137,7 @@ def cat(
 
                 with timing.phase("server"):
                     if metadata:
-                        read_result = await nx.read(
+                        read_result = nx.read(
                             path, context=cast(Any, operation_context), return_metadata=True
                         )
                         assert isinstance(read_result, dict), (
@@ -166,14 +166,14 @@ def cat(
                             console.print(
                                 f"[nexus.muted]Streaming large file ({file_size:,} bytes)...[/nexus.muted]"
                             )
-                            for chunk in nx.stream(  # type: ignore[attr-defined]
-                                path, chunk_size=65536, context=operation_context
+                            for chunk in nx.stream(
+                                path, chunk_size=65536, context=cast(Any, operation_context)
                             ):
                                 sys.stdout.buffer.write(chunk)
                             sys.stdout.buffer.flush()
                             return
 
-                        content = await nx.sys_read(path, context=cast(Any, operation_context))
+                        content = nx.sys_read(path, context=cast(Any, operation_context))
                         meta_data = None
 
             # JSON mode: return structured data
@@ -398,7 +398,7 @@ def write(
                         if_none_match=if_none_match,
                     )
                 else:
-                    result = await nx.write(path, file_content, context=ctx)
+                    result = nx.write(path, file_content, context=ctx)
 
             console.print(
                 f"[nexus.success]✓[/nexus.success] Wrote {len(file_content)} bytes to [nexus.path]{path}[/nexus.path]"
@@ -471,7 +471,7 @@ def append(
             ) as nx:
                 # Append with OCC parameters and context.
                 # CAS params (if_match, force) are NexusFS-specific (transitional, see #1323).
-                result = await cast(Any, nx).append(
+                result = cast(Any, nx).append(
                     path,
                     file_content,
                     context=operation_context,
@@ -643,7 +643,7 @@ def write_batch(
                         total_bytes += len(content)
 
                     # Write batch
-                    await nx.write_batch(batch_data)
+                    nx.write_batch(batch_data)
                     total_files += len(batch_data)
 
                     # Update progress
@@ -707,7 +707,7 @@ def cp(
             # Use sys_copy for backend-native server-side copy when
             # available (S3 CopyObject, GCS rewrite), streaming for
             # cross-backend, or read+write as fallback.
-            await nx.sys_copy(source, dest)
+            nx.sys_copy(source, dest)
 
             nx.close()
 
@@ -1014,7 +1014,7 @@ def rm(
             nx = await get_filesystem(remote_url, remote_api_key, allow_local_default=True)
 
             # Check if file exists
-            if not await nx.access(path):
+            if not nx.access(path):
                 console.print(f"[nexus.warning]File does not exist:[/nexus.warning] {path}")
                 nx.close()
                 return
@@ -1025,7 +1025,7 @@ def rm(
                 nx.close()
                 return
 
-            await nx.sys_unlink(path)
+            nx.sys_unlink(path)
             nx.close()
 
             console.print(
@@ -1102,7 +1102,7 @@ def edit(
             if if_match is not None:
                 kwargs["if_match"] = if_match
 
-            result = await nx.edit(path, **kwargs)
+            result = nx.edit(path, **kwargs)
             nx.close()
 
             success = result.get("success", False)

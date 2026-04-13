@@ -72,11 +72,9 @@ class AgentProvisioner:
         root = agent_dir(agent_id)
 
         # Create root and subdirectories
-        await self._vfs.mkdir(root, parents=True, exist_ok=True, context=self._ctx())
+        self._vfs.mkdir(root, parents=True, exist_ok=True, context=self._ctx())
         for subdir in AGENT_SUBDIRS:
-            await self._vfs.mkdir(
-                f"{root}/{subdir}", parents=True, exist_ok=True, context=self._ctx()
-            )
+            self._vfs.mkdir(f"{root}/{subdir}", parents=True, exist_ok=True, context=self._ctx())
 
         # Write AGENT.json card
         card = {
@@ -90,7 +88,7 @@ class AgentProvisioner:
         }
         card_data = json.dumps(card, indent=2).encode("utf-8")
         card_file = agent_card_path(agent_id)
-        await self._vfs.write(card_file, card_data, context=self._ctx())
+        self._vfs.write(card_file, card_data, context=self._ctx())
 
         logger.info(
             "Provisioned IPC directories for agent %s (%d subdirs + AGENT.json)",
@@ -121,7 +119,7 @@ class AgentProvisioner:
                 },
                 indent=2,
             ).encode("utf-8")
-            await self._vfs.write(card_file, card_data, context=self._ctx())
+            self._vfs.write(card_file, card_data, context=self._ctx())
             logger.info("Deprovisioned IPC for agent %s", agent_id)
         except Exception:
             logger.warning(
@@ -139,5 +137,5 @@ class AgentProvisioner:
         Returns:
             True if the agent's inbox directory exists.
         """
-        result: bool = await self._vfs.access(inbox_path(agent_id), context=self._ctx())
+        result: bool = self._vfs.access(inbox_path(agent_id), context=self._ctx())
         return result

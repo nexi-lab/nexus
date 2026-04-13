@@ -86,7 +86,7 @@ async def test_profile(profile: str) -> dict[str, str]:
     write_ok = True
     for path, content in FILES.items():
         try:
-            await nx.sys_write(path, content)
+            nx.sys_write(path, content)
             print(f"    OK   {path} ({len(content)} bytes)")
         except Exception as e:
             print(f"    FAIL {path}: {e}")
@@ -98,7 +98,7 @@ async def test_profile(profile: str) -> dict[str, str]:
     read_ok = True
     for path, expected in FILES.items():
         try:
-            got = await nx.sys_read(path)
+            got = nx.sys_read(path)
             if got == expected:
                 print(f"    OK   {path} — content matches ({len(got)} bytes)")
             else:
@@ -112,7 +112,7 @@ async def test_profile(profile: str) -> dict[str, str]:
     # --- STAT ---
     print("  STAT")
     try:
-        info = await nx.sys_stat("/project/src/main.py")
+        info = nx.sys_stat("/project/src/main.py")
         size_v = info.get("size", None) if isinstance(info, dict) else getattr(info, "size", None)
         expected_size = len(FILES["/project/src/main.py"])
         if size_v is not None and int(size_v) == expected_size:
@@ -131,7 +131,7 @@ async def test_profile(profile: str) -> dict[str, str]:
     # --- LIST ---
     print("  LIST")
     try:
-        entries = await nx.sys_readdir("/project/src")
+        entries = nx.sys_readdir("/project/src")
         names = sorted(entries) if isinstance(entries, list) else entries
         # Verify main.py and utils.py are listed
         found = {str(e) for e in (names if isinstance(names, list) else [])}

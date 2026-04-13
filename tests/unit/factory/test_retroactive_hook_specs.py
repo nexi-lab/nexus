@@ -79,11 +79,12 @@ class TestHookSpecConformance:
         )
         assert hasattr(hook, "hook_spec")
 
-    def test_event_bus_observer(self) -> None:
+    def test_event_bus_observer_no_hook_spec(self) -> None:
+        """EventBusObserver no longer has hook_spec — Rust kernel dispatches directly."""
         from nexus.services.event_bus.observer import EventBusObserver
 
         hook = EventBusObserver()
-        assert hasattr(hook, "hook_spec")
+        assert not hasattr(hook, "hook_spec")
 
     def test_revision_tracking_deleted(self) -> None:
         """RevisionTrackingObserver deleted (§10 A2) — kernel primitive."""
@@ -188,13 +189,9 @@ class TestHookSpecDeclarations:
         assert spec.write_hooks == (hook,)
         assert spec.total_hooks == 1
 
-    def test_event_bus_observer_1_channel(self) -> None:
-        from nexus.services.event_bus.observer import EventBusObserver
-
-        hook = EventBusObserver()
-        spec = hook.hook_spec()
-        assert spec.observers == (hook,)
-        assert spec.total_hooks == 1
+    def test_event_bus_observer_no_hook_spec(self) -> None:
+        """EventBusObserver no longer has hook_spec — Rust kernel dispatches directly."""
+        pass
 
     def test_revision_observer_deleted(self) -> None:
         """RevisionTrackingObserver deleted (§10 A2) — kernel primitive."""

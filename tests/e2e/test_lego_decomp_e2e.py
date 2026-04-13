@@ -201,45 +201,45 @@ class TestKernelSanity:
 
     @pytest.mark.asyncio
     async def test_write_read_roundtrip(self, nx):
-        await nx.write("/test.txt", b"hello world")
-        data = await nx.sys_read("/test.txt")
+        nx.write("/test.txt", b"hello world")
+        data = nx.sys_read("/test.txt")
         assert data == b"hello world"
 
     @pytest.mark.asyncio
     async def test_mkdir_and_list(self, nx):
-        await nx.mkdir("/mydir", parents=True, exist_ok=True)
-        await nx.write("/mydir/file.txt", b"content")
-        entries = await nx.sys_readdir("/mydir", recursive=False)
+        nx.mkdir("/mydir", parents=True, exist_ok=True)
+        nx.write("/mydir/file.txt", b"content")
+        entries = nx.sys_readdir("/mydir", recursive=False)
         assert "/mydir/file.txt" in entries
 
     @pytest.mark.asyncio
     async def test_delete_file(self, nx):
-        await nx.write("/del.txt", b"bye")
-        await nx.sys_unlink("/del.txt")
-        assert not await nx.access("/del.txt")
+        nx.write("/del.txt", b"bye")
+        nx.sys_unlink("/del.txt")
+        assert not nx.access("/del.txt")
 
     @pytest.mark.asyncio
     async def test_exists(self, nx):
-        await nx.write("/exists.txt", b"yes")
-        assert await nx.access("/exists.txt")
-        assert not await nx.access("/nope.txt")
+        nx.write("/exists.txt", b"yes")
+        assert nx.access("/exists.txt")
+        assert not nx.access("/nope.txt")
 
     @pytest.mark.asyncio
     async def test_is_directory(self, nx):
-        await nx.mkdir("/somedir", parents=True, exist_ok=True)
-        assert await nx.is_directory("/somedir")
+        nx.mkdir("/somedir", parents=True, exist_ok=True)
+        assert nx.is_directory("/somedir")
 
     @pytest.mark.asyncio
     async def test_get_metadata(self, nx):
-        await nx.write("/meta.txt", b"metadata test")
-        meta = await nx.sys_stat("/meta.txt")
+        nx.write("/meta.txt", b"metadata test")
+        meta = nx.sys_stat("/meta.txt")
         assert meta is not None
         assert meta["size"] == 13
         assert meta["is_directory"] is False
 
     @pytest.mark.asyncio
     async def test_get_etag(self, nx):
-        await nx.write("/etag.txt", b"etag test")
+        nx.write("/etag.txt", b"etag test")
         etag = nx.get_etag("/etag.txt")
         assert etag is not None
         assert isinstance(etag, str)
@@ -303,7 +303,7 @@ class TestVersionDelegation:
     async def test_list_versions_after_write(self, nx):
         """list_versions should return version history after writes."""
         path = f"/ver-{uuid.uuid4().hex[:8]}.txt"
-        await nx.write(path, b"v1")
+        nx.write(path, b"v1")
         from nexus.lib.sync_bridge import run_sync
 
         versions = run_sync(nx.version_service.list_versions(path))
@@ -316,7 +316,7 @@ class TestVersionDelegation:
         from nexus.lib.sync_bridge import run_sync
 
         path = f"/ver2-{uuid.uuid4().hex[:8]}.txt"
-        await nx.write(path, b"version-one")
+        nx.write(path, b"version-one")
         versions = run_sync(nx.version_service.list_versions(path))
         assert len(versions) >= 1
         ver_num = versions[0].get("version", 1)
@@ -329,8 +329,8 @@ class TestVersionDelegation:
         from nexus.lib.sync_bridge import run_sync
 
         path = f"/multi-ver-{uuid.uuid4().hex[:8]}.txt"
-        await nx.write(path, b"v1")
-        await nx.write(path, b"v2")
+        nx.write(path, b"v1")
+        nx.write(path, b"v2")
         versions = run_sync(nx.version_service.list_versions(path))
         assert len(versions) >= 2
 
@@ -354,8 +354,8 @@ class TestPermissionEnforcement:
             is_system=False,
         )
         path = f"/perm-test-{uuid.uuid4().hex[:8]}.txt"
-        await nx_perms.write(path, b"admin write", context=ctx)
-        data = await nx_perms.sys_read(path, context=ctx)
+        nx_perms.write(path, b"admin write", context=ctx)
+        data = nx_perms.sys_read(path, context=ctx)
         assert data == b"admin write"
 
     @pytest.mark.asyncio
@@ -369,8 +369,8 @@ class TestPermissionEnforcement:
             is_system=False,
         )
         dirname = f"/admin-dir-{uuid.uuid4().hex[:8]}"
-        await nx_perms.mkdir(dirname, parents=True, exist_ok=True, context=ctx)
-        assert await nx_perms.is_directory(dirname, context=ctx)
+        nx_perms.mkdir(dirname, parents=True, exist_ok=True, context=ctx)
+        assert nx_perms.is_directory(dirname, context=ctx)
 
     @pytest.mark.asyncio
     async def test_read_after_write_with_permissions(self, nx_perms):
@@ -383,8 +383,8 @@ class TestPermissionEnforcement:
             is_system=False,
         )
         path = f"/perm-rw-{uuid.uuid4().hex[:8]}.txt"
-        await nx_perms.write(path, b"perm data", context=ctx)
-        result = await nx_perms.sys_read(path, context=ctx)
+        nx_perms.write(path, b"perm data", context=ctx)
+        result = nx_perms.sys_read(path, context=ctx)
         assert result == b"perm data"
 
     @pytest.mark.asyncio
@@ -398,7 +398,7 @@ class TestPermissionEnforcement:
             is_system=False,
         )
         path = f"/perm-ver-{uuid.uuid4().hex[:8]}.txt"
-        await nx_perms.write(path, b"version with perms", context=ctx)
+        nx_perms.write(path, b"version with perms", context=ctx)
         from nexus.lib.sync_bridge import run_sync
 
         versions = run_sync(nx_perms.version_service.list_versions(path, ctx))

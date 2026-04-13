@@ -250,7 +250,7 @@ class MountService:
                 if not path.endswith((".yaml", ".json", ".md", ".txt")):
                     continue
                 try:
-                    content = await nx.sys_read(path, context=admin_ctx)
+                    content = nx.sys_read(path, context=admin_ctx)
                     if isinstance(content, bytes):
                         content = content.decode("utf-8", errors="ignore")
                     if content and len(content) > 10:

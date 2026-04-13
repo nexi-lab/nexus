@@ -35,7 +35,7 @@ SYSCALL_METHODS = {
 
 # Files to SKIP (definitions themselves, or non-Python)
 SKIP_PATHS = {
-    "src/nexus/contracts/filesystem/filesystem_abc.py",
+    # filesystem_abc.py was deleted (NexusFilesystem Protocol removed)
     "scripts/migrate_async_syscalls.py",
 }
 
@@ -124,8 +124,8 @@ def process_file(filepath: Path, dry_run: bool = False) -> dict[str, int]:
         # Don't add await if already has await before the object
         # Find the start of the expression containing .sys_read(
         # We need to add `await` before the object, not before `.sys_read(`
-        # e.g., `result = nx.sys_read(...)` → `result = await nx.sys_read(...)`
-        # e.g., `self._fs.sys_read(...)` → `await self._fs.sys_read(...)`
+        # e.g., `result = nx.sys_read(...)` → `result = nx.sys_read(...)`
+        # e.g., `self._fs.sys_read(...)` → `self._fs.sys_read(...)`
 
         # Check if `await` is already present on this line before the call
         if "await " in line and CALL_PATTERN.search(
@@ -177,9 +177,9 @@ def _add_await_to_line(line: str) -> str:
 
     # Pattern: captures everything before `.method(`
     # We need to find the start of the expression chain
-    # e.g., `result = self._fs.sys_read(path)` → `result = await self._fs.sys_read(path)`
-    # e.g., `nx.sys_write(p, d)` → `await nx.sys_write(p, d)`
-    # e.g., `return self.sys_stat(p)` → `return await self.sys_stat(p)`
+    # e.g., `result = self._fs.sys_read(path)` → `result = self._fs.sys_read(path)`
+    # e.g., `nx.sys_write(p, d)` → `nx.sys_write(p, d)`
+    # e.g., `return self.sys_stat(p)` → `return self.sys_stat(p)`
     # e.g., `if self.access(p):` → `if await self.access(p):`
 
     # Skip if already has await

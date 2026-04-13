@@ -131,7 +131,7 @@ class TestProxyWithRealFastAPIPermissions:
             await proxy.write("/proxy-e2e.txt", b"hello world", "root")
 
             # Read through proxy — exercises _forward + response decoding
-            data = await proxy.sys_read("/proxy-e2e.txt", "root")
+            data = proxy.sys_read("/proxy-e2e.txt", "root")
             assert data == b"hello world" or data == b"aGVsbG8gd29ybGQ="
         finally:
             await proxy.stop()
@@ -272,7 +272,7 @@ class TestProxyPermissionDeniedRealServer:
             # 5 auth failures — more than cb_failure_threshold
             for _ in range(5):
                 with pytest.raises(RemoteCallError):
-                    await proxy.mkdir("/denied", "root")
+                    proxy.mkdir("/denied", "root")
 
             # Circuit must still be CLOSED — auth errors are NOT connectivity failures
             assert proxy.circuit_state is CircuitState.CLOSED
@@ -309,7 +309,7 @@ class TestProxyPermissionDeniedMock:
 
         try:
             with pytest.raises(RemoteCallError) as exc_info:
-                await proxy.mkdir("/denied", "z1")
+                proxy.mkdir("/denied", "z1")
             assert exc_info.value.status_code == 403
             assert await proxy.pending_count() == 0
             assert proxy.circuit_state is CircuitState.CLOSED
@@ -358,9 +358,9 @@ class TestProxyOfflineQueueReplayE2E:
             await proxy.start()
             try:
                 with pytest.raises(OfflineQueuedError):
-                    await proxy.mkdir("/queued_dir1", "z1")
+                    proxy.mkdir("/queued_dir1", "z1")
                 with pytest.raises(OfflineQueuedError):
-                    await proxy.mkdir("/queued_dir2", "z1")
+                    proxy.mkdir("/queued_dir2", "z1")
 
                 assert await proxy.pending_count() == 2
 
@@ -428,7 +428,7 @@ class TestProxyOfflineQueueReplayE2E:
         await proxy.start()
         try:
             with pytest.raises(OfflineQueuedError):
-                await proxy.mkdir("/will_fail", "z1")
+                proxy.mkdir("/will_fail", "z1")
 
             await asyncio.sleep(1.5)
             assert await proxy.pending_count() == 0

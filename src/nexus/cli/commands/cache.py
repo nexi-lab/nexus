@@ -104,7 +104,7 @@ def warmup(
 
             # Create warmer
             warmer = CacheWarmer(
-                nexus_fs=nx,  # type: ignore[arg-type]
+                nexus_fs=nx,
                 config=config,
                 file_tracker=file_tracker,
             )

@@ -53,7 +53,7 @@ async def get_catalog_schema(
             # Verify caller has file access before returning cached schema
             # (prevents bypassing permission checks via cache)
             try:
-                await nexus_fs.sys_stat(full_path)
+                nexus_fs.sys_stat(full_path)
             except PermissionError as perm_err:
                 raise HTTPException(
                     status_code=403, detail=f"Access denied: {full_path}"
@@ -68,7 +68,7 @@ async def get_catalog_schema(
         # Extract on-the-fly — use caller's auth context for permission check
         try:
             op_ctx = get_operation_context(auth_result) if auth_result else None
-            raw = await nexus_fs.read(full_path, context=op_ctx)
+            raw = nexus_fs.read(full_path, context=op_ctx)
             content = raw.encode() if isinstance(raw, str) else raw
         except PermissionError as perm_err:
             raise HTTPException(status_code=403, detail=f"Access denied: {full_path}") from perm_err
@@ -112,7 +112,7 @@ async def search_by_column(
     """Search for data files containing a specific column name.
 
     Results are zone-scoped and additionally filtered by file-level access.
-    Each result is checked against await nexus_fs.sys_stat() to verify the caller
+    Each result is checked against nexus_fs.sys_stat() to verify the caller
     can read the underlying file. Entities whose URN cannot be reverse-mapped
     to a path are excluded.
     """
@@ -132,7 +132,7 @@ async def search_by_column(
             if path_payload and path_payload.get("virtual_path"):
                 file_path = path_payload["virtual_path"]
                 try:
-                    await nexus_fs.sys_stat(file_path)
+                    nexus_fs.sys_stat(file_path)
                     results.append(r)
                 except Exception:
                     continue  # Caller can't access this file

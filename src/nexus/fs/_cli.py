@@ -914,8 +914,8 @@ def ls(
 
     async def _run() -> dict:
         fs = await _boot_fs()
-        entries = await fs.ls(path, detail=detail, recursive=recursive)
-        await fs.close()
+        entries = fs.ls(path, detail=detail, recursive=recursive)
+        fs.close()
         return {"path": path, "entries": entries}
 
     try:
@@ -952,8 +952,8 @@ def cat(path: str) -> None:
 
     async def _run() -> bytes:
         fs = await _boot_fs()
-        content: bytes = await fs.read(path)
-        await fs.close()
+        content: bytes = fs.read(path)
+        fs.close()
         return content
 
     try:
@@ -1018,8 +1018,8 @@ def write(
 
     async def _run() -> dict:
         fs = await _boot_fs()
-        result = await fs.write(path, content)
-        await fs.close()
+        result = fs.write(path, content)
+        fs.close()
         return {"path": path, **result}
 
     try:
@@ -1082,13 +1082,13 @@ def edit(
 
     async def _run() -> dict:
         fs = await _boot_fs()
-        result = await fs.edit(
+        result = fs.edit(
             path,
             parsed_edits,
             preview=preview,
             fuzzy_threshold=fuzzy,
         )
-        await fs.close()
+        fs.close()
         # Strip new_content from result to prevent leaking full file body
         # into JSON output (auto-JSON in piped/CI contexts).
         result.pop("new_content", None)
@@ -1136,8 +1136,8 @@ def rm(path: str, output_opts: OutputOptions) -> None:
 
     async def _run() -> dict:
         fs = await _boot_fs()
-        await fs.delete(path)
-        await fs.close()
+        fs.delete(path)
+        fs.close()
         return {"path": path, "deleted": True}
 
     try:
@@ -1172,8 +1172,8 @@ def mkdir(
 
     async def _run() -> dict:
         fs = await _boot_fs()
-        await fs.mkdir(path, parents=parents)
-        await fs.close()
+        fs.mkdir(path, parents=parents)
+        fs.close()
         return {"path": path, "created": True}
 
     try:
@@ -1203,8 +1203,8 @@ def stat(path: str, output_opts: OutputOptions) -> None:
 
     async def _run() -> dict[str, Any]:
         fs = await _boot_fs()
-        info: dict[str, Any] | None = await fs.stat(path)
-        await fs.close()
+        info: dict[str, Any] | None = fs.stat(path)
+        fs.close()
         if info is None:
             raise FileNotFoundError(f"Not found: {path}")
         return info
@@ -1259,13 +1259,13 @@ def grep(
 
     async def _run() -> dict:
         fs = await _boot_fs()
-        matches = await fs.grep(
+        matches = fs.grep(
             pattern,
             path,
             ignore_case=ignore_case,
             max_results=max_results,
         )
-        await fs.close()
+        fs.close()
         return {"pattern": pattern, "path": path, "matches": matches, "count": len(matches)}
 
     try:
@@ -1306,8 +1306,8 @@ def glob_cmd(
 
     async def _run() -> dict:
         fs = await _boot_fs()
-        matches = await fs.glob(pattern, path)
-        await fs.close()
+        matches = fs.glob(pattern, path)
+        fs.close()
         return {"pattern": pattern, "path": path, "matches": matches, "count": len(matches)}
 
     try:

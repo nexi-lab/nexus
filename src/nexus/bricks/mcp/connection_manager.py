@@ -25,13 +25,13 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+if TYPE_CHECKING:
+    from nexus.core.nexus_fs import NexusFS
+
 from nexus.bricks.mcp.klavis_client import KlavisClient, KlavisError
 from nexus.bricks.mcp.models import MCPMount
 from nexus.bricks.mcp.mount import MCPMountManager
 from nexus.bricks.mcp.provider_registry import MCPProviderRegistry, ProviderConfig, ProviderType
-
-if TYPE_CHECKING:
-    from nexus.contracts.filesystem.filesystem_abc import NexusFilesystem
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +108,7 @@ class MCPConnectionManager:
 
     def __init__(
         self,
-        filesystem: "NexusFilesystem | None" = None,
+        filesystem: "NexusFS | None" = None,
         registry: MCPProviderRegistry | None = None,
         klavis_api_key: str | None = None,
     ):
@@ -146,8 +146,8 @@ class MCPConnectionManager:
     async def _load_connections(self) -> None:
         """Load existing connections from storage."""
         try:
-            if self.filesystem and await self.filesystem.access(self.CONNECTIONS_PATH):
-                items = await self.filesystem.sys_readdir(self.CONNECTIONS_PATH)
+            if self.filesystem and self.filesystem.access(self.CONNECTIONS_PATH):
+                items = self.filesystem.sys_readdir(self.CONNECTIONS_PATH)
                 for item in items:
                     # Item might be full path, just filename, or dict
                     if isinstance(item, dict):
@@ -158,7 +158,7 @@ class MCPConnectionManager:
                     if item_name.endswith(".json"):
                         path = f"{self.CONNECTIONS_PATH}{item_name}"
                         try:
-                            raw = await self.filesystem.sys_read(path)
+                            raw = self.filesystem.sys_read(path)
                             data = json.loads(
                                 raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
                             )
@@ -176,7 +176,7 @@ class MCPConnectionManager:
             if self.filesystem:
                 # Ensure directory exists
                 try:
-                    await self.filesystem.mkdir(self.CONNECTIONS_PATH, parents=True)
+                    self.filesystem.mkdir(self.CONNECTIONS_PATH, parents=True)
                 except FileExistsError:
                     pass
                 except OSError as e:
@@ -186,7 +186,7 @@ class MCPConnectionManager:
                 filename = f"{conn.provider}_{conn.user_id.replace('@', '_at_')}.json"
                 path = f"{self.CONNECTIONS_PATH}{filename}"
                 content = json.dumps(conn.to_dict(), indent=2)
-                await self.filesystem.write(path, content.encode("utf-8"))
+                self.filesystem.write(path, content.encode("utf-8"))
 
         except Exception as e:
             logger.error(f"Failed to save connection: {e}")
@@ -197,8 +197,8 @@ class MCPConnectionManager:
             if self.filesystem:
                 filename = f"{provider}_{user_id.replace('@', '_at_')}.json"
                 path = f"{self.CONNECTIONS_PATH}{filename}"
-                if await self.filesystem.access(path):
-                    await self.filesystem.sys_unlink(path)
+                if self.filesystem.access(path):
+                    self.filesystem.sys_unlink(path)
         except Exception as e:
             logger.warning(f"Failed to delete connection file: {e}")
 

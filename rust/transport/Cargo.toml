@@ -1,0 +1,14 @@
+[package]
+name = "transport"
+version = "0.1.0"
+edition = "2021"
+description = "Shared gRPC transport primitives for Nexus crates"
+
+[dependencies]
+tonic = { workspace = true }
+tokio = { version = "1", features = ["rt", "net", "sync", "time"] }
+parking_lot = "0.12"
+dashmap = "6.1"
+thiserror = "2"
+tracing = "0.1"
+sha2 = "0.10"

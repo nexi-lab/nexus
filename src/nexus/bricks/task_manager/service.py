@@ -100,13 +100,13 @@ class TaskManagerService:
     # ------------------------------------------------------------------
 
     async def _read_json(self, path: str) -> dict[str, Any]:
-        raw = await self._fs.sys_read(path)
+        raw = self._fs.sys_read(path)
         result: dict[str, Any] = json.loads(raw)
         return result
 
     async def _write_json(self, path: str, data: dict[str, Any]) -> None:
         await self._ensure_dirs()
-        await self._fs.write(path, json.dumps(data, default=str))
+        self._fs.write(path, json.dumps(data, default=str))
 
     @staticmethod
     def _audit_dir(task_id: str) -> str:
@@ -128,7 +128,7 @@ class TaskManagerService:
             "/.tasks/comments",
             "/.tasks/audit",
         ):
-            await self._fs.mkdir(d, parents=True, exist_ok=True)
+            self._fs.mkdir(d, parents=True, exist_ok=True)
         self._dirs_ready = True
 
     def _now(self) -> str:
@@ -296,7 +296,7 @@ class TaskManagerService:
         await self.get_task(task_id)
 
         # Ensure per-task comment directory
-        await self._fs.mkdir(self._comment_dir(task_id), parents=True, exist_ok=True)
+        self._fs.mkdir(self._comment_dir(task_id), parents=True, exist_ok=True)
 
         comment_id = uuid.uuid4().hex
         doc: dict[str, Any] = {
@@ -313,10 +313,10 @@ class TaskManagerService:
     async def get_comments(self, task_id: str) -> list[dict[str, Any]]:
         """Get all comments for a task, ordered by created_at."""
         comment_dir = self._comment_dir(task_id)
-        if not await self._fs.is_directory(comment_dir):
+        if not self._fs.is_directory(comment_dir):
             return []
 
-        paths = await self._fs.sys_readdir(comment_dir, recursive=False)
+        paths = self._fs.sys_readdir(comment_dir, recursive=False)
         comments = []
         for p in paths:
             if p.endswith(".json"):
@@ -409,10 +409,10 @@ class TaskManagerService:
     ) -> dict[str, Any]:
         """List missions with optional filters and pagination."""
         missions_dir = "/.tasks/missions"
-        if not await self._fs.is_directory(missions_dir):
+        if not self._fs.is_directory(missions_dir):
             return {"items": [], "total": 0, "page": page, "limit": limit}
 
-        paths = await self._fs.sys_readdir(missions_dir, recursive=False)
+        paths = self._fs.sys_readdir(missions_dir, recursive=False)
         missions = []
         for p in paths:
             if p.endswith(".json"):
@@ -481,7 +481,7 @@ class TaskManagerService:
         await self.get_task(task_id)
 
         # Ensure per-task audit directory
-        await self._fs.mkdir(self._audit_dir(task_id), parents=True, exist_ok=True)
+        self._fs.mkdir(self._audit_dir(task_id), parents=True, exist_ok=True)
 
         entry_id = uuid.uuid4().hex
         doc: dict[str, Any] = {
@@ -498,10 +498,10 @@ class TaskManagerService:
     async def get_audit_trail(self, task_id: str) -> list[dict[str, Any]]:
         """Get all audit entries for a task, ordered by created_at."""
         audit_dir = self._audit_dir(task_id)
-        if not await self._fs.is_directory(audit_dir):
+        if not self._fs.is_directory(audit_dir):
             return []
 
-        paths = await self._fs.sys_readdir(audit_dir, recursive=False)
+        paths = self._fs.sys_readdir(audit_dir, recursive=False)
         entries = []
         for p in paths:
             if p.endswith(".json"):
@@ -557,10 +557,10 @@ class TaskManagerService:
     async def _list_all_tasks(self) -> list[dict[str, Any]]:
         """Read all task JSON files from NexusFS."""
         tasks_dir = "/.tasks/tasks"
-        if not await self._fs.is_directory(tasks_dir):
+        if not self._fs.is_directory(tasks_dir):
             return []
 
-        paths = await self._fs.sys_readdir(tasks_dir, recursive=False)
+        paths = self._fs.sys_readdir(tasks_dir, recursive=False)
         tasks = []
         for p in paths:
             if p.endswith(".json"):

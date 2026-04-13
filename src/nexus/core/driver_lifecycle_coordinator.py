@@ -132,7 +132,7 @@ class DriverLifecycleCoordinator:
             io_profile=io_profile,
         )
         self._register_backend_hooks(mount_point, backend)
-        self._dispatch.notify_mount(mount_point, backend)
+        self._dispatch.dispatch_event("mount", mount_point)
 
     def unmount(self, mount_point: str, zone_id: str = "root") -> bool:
         """Unmount with full lifecycle: unhook + notify + remove.
@@ -143,16 +143,15 @@ class DriverLifecycleCoordinator:
         if entry is None:
             return False
 
-        backend = entry.backend
+        # Fire unmount event BEFORE unregistering hooks (observers must still be active)
+        try:
+            self._dispatch.dispatch_event("unmount", mount_point)
+        except Exception as exc:
+            logger.warning("[DRIVER] on_unmount notification failed for %s: %s", mount_point, exc)
 
         spec = self._mount_specs.pop(mount_point, None)
         if spec is not None:
             self._unregister_hooks_for_spec(spec)
-
-        try:
-            self._dispatch.notify_unmount(mount_point, backend)
-        except Exception as exc:
-            logger.warning("[DRIVER] on_unmount notification failed for %s: %s", mount_point, exc)
 
         _kernel = getattr(self._mount_table, "_kernel", None)
         if _kernel is not None:
@@ -195,12 +194,7 @@ class DriverLifecycleCoordinator:
             d.register_intercept_mkdir(h)
         for h in spec.rmdir_hooks:
             d.register_intercept_rmdir(h)
-        for h in spec.observers:
-            d.register_observe(h)
-        for h in spec.mount_hooks:
-            d.register_mount_hook(h)
-        for h in spec.unmount_hooks:
-            d.register_unmount_hook(h)
+        # spec.observers: no-op — observer dispatch is fully Rust-native.
 
     def _unregister_hooks_for_spec(self, spec: HookSpec) -> None:
         d = self._dispatch
@@ -222,9 +216,4 @@ class DriverLifecycleCoordinator:
             d.unregister_intercept_mkdir(h)
         for h in spec.rmdir_hooks:
             d.unregister_intercept_rmdir(h)
-        for h in spec.observers:
-            d.unregister_observe(h)
-        for h in spec.mount_hooks:
-            d.unregister_mount_hook(h)
-        for h in spec.unmount_hooks:
-            d.unregister_unmount_hook(h)
+        # spec.observers: no-op — observer dispatch is fully Rust-native.

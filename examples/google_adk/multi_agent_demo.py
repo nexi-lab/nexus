@@ -105,7 +105,7 @@ def create_multi_agent_system(nx):
     async def read_file(path: str, max_lines: int = 200) -> str:
         """Read file content."""
         try:
-            content = await nx.sys_read(path)
+            content = nx.sys_read(path)
             if isinstance(content, bytes):
                 content = content.decode("utf-8", errors="replace")
 
@@ -121,7 +121,7 @@ def create_multi_agent_system(nx):
     async def write_file(path: str, content: str) -> str:
         """Write content to file."""
         try:
-            await nx.sys_write(path, content.encode("utf-8"))
+            nx.sys_write(path, content.encode("utf-8"))
             return f"✓ Wrote {len(content)} chars to {path}"
         except Exception as e:
             return f"Error writing {path}: {e}"
@@ -325,7 +325,7 @@ Make it useful for new developers!""",
             print("\n" + "=" * 70)
             print("Generated Report Preview:")
             print("=" * 70)
-            content = await nx.sys_read("/reports/multi-agent-analysis.md").decode("utf-8")
+            content = nx.sys_read("/reports/multi-agent-analysis.md").decode("utf-8")
             preview_lines = content.split("\n")[:30]
             print("\n".join(preview_lines))
             if len(content.split("\n")) > 30:

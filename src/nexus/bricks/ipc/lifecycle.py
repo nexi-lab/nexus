@@ -51,7 +51,7 @@ async def dead_letter_message(
             filename = msg_path.rsplit("/", 1)[-1]
             dest = f"{dead_letter_path(agent_id)}/{filename}"
 
-        await vfs.sys_rename(msg_path, dest, context=ctx)
+        vfs.sys_rename(msg_path, dest, context=ctx)
 
         # Write structured .reason.json sidecar (best-effort)
         try:
@@ -66,7 +66,7 @@ async def dead_letter_message(
                 indent=2,
             ).encode("utf-8")
             reason_path = dest + ".reason.json"
-            await vfs.write(reason_path, reason_data, context=ctx)
+            vfs.write(reason_path, reason_data, context=ctx)
         except Exception:
             logger.debug(
                 "Failed to write .reason.json for dead-lettered message at %s",

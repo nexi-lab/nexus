@@ -7,7 +7,7 @@ build.
 
 State persists to a JSON file for local restarts, but this backend is still
 meant for single-process development and quickstarts. For the durable Rust
-metastore, build ``maturin develop -m rust/nexus_raft/Cargo.toml --features
+metastore, build ``maturin develop -m rust/raft/Cargo.toml --features
 python``.
 """
 

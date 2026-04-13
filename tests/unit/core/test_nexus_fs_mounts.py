@@ -608,7 +608,7 @@ class TestMountIntegration:
         )
 
         # Write to the mount
-        await nx.write("/mnt/write/test.txt", b"Hello from mount!")
+        nx.write("/mnt/write/test.txt", b"Hello from mount!")
 
         # Read back via route.backend to avoid pool collision
         # (all CASLocalBackend instances have name="local", so the pool
@@ -632,11 +632,11 @@ class TestMountIntegration:
         )
 
         # Write some files
-        await nx.write("/mnt/list/file1.txt", b"Content 1")
-        await nx.write("/mnt/list/file2.txt", b"Content 2")
+        nx.write("/mnt/list/file1.txt", b"Content 1")
+        nx.write("/mnt/list/file2.txt", b"Content 2")
 
         # List files
-        files = await nx.sys_readdir("/mnt/list", recursive=True)
+        files = nx.sys_readdir("/mnt/list", recursive=True)
 
         assert "/mnt/list/file1.txt" in files
         assert "/mnt/list/file2.txt" in files
@@ -666,8 +666,8 @@ class TestMountIntegration:
         assert nx.service("mount").has_mount_sync("/mnt/two")
 
         # Write to each
-        await nx.write("/mnt/one/file.txt", b"Mount 1")
-        await nx.write("/mnt/two/file.txt", b"Mount 2")
+        nx.write("/mnt/one/file.txt", b"Mount 1")
+        nx.write("/mnt/two/file.txt", b"Mount 2")
 
         # Read back via route.backend to avoid pool collision.
         # All CASLocalBackend instances share name="local", so the

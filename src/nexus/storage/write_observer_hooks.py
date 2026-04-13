@@ -3,7 +3,7 @@
 Sync VFS interceptor hook that serializes each mutation event to JSON
 and writes it into the audit DT_PIPE via ``nx.pipe_write_nowait()``
 (Tier 2 sync passthrough to the Rust kernel ring buffer, ~0.5μs).
-The pipe is consumed by ``PipedRecordStoreWriteObserver`` which flushes
+The pipe is consumed by ``RecordStoreWriteObserver`` which flushes
 events to RecordStore in batches.
 
 The interceptor uses the public NexusFS pipe API rather than reaching

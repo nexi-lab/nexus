@@ -51,10 +51,10 @@ async def fuse_mount(tmp_path):
     )
 
     # Pre-populate test data
-    await nx.write("/test.txt", b"hello world")
-    await nx.write("/dir/file1.txt", b"content 1")
-    await nx.write("/dir/file2.txt", b"content 2")
-    await nx.write("/large.bin", b"x" * 100_000)
+    nx.write("/test.txt", b"hello world")
+    nx.write("/dir/file1.txt", b"content 1")
+    nx.write("/dir/file2.txt", b"content 2")
+    nx.write("/large.bin", b"x" * 100_000)
 
     fuse = NexusFUSE(nx, mount_point, mode=MountMode.BINARY)
     fuse.mount(foreground=False)
@@ -156,7 +156,7 @@ class TestFUSECacheCoherence:
         assert v1 == b"content 1"
 
         # Write via backend API (bypasses FUSE cache)
-        await nx.write("/dir/file1.txt", b"backend updated")
+        nx.write("/dir/file1.txt", b"backend updated")
 
         # The FUSE cache may serve stale for up to TTL (60s).
         # This test documents current behavior — with lease integration

@@ -44,7 +44,7 @@ class TestCreatedAtStability:
         path = f"/test/{uuid.uuid4()}/file.txt"
 
         before_write = datetime.now(UTC)
-        await nexus_fs.write(path, b"initial content")
+        nexus_fs.write(path, b"initial content")
         after_write = datetime.now(UTC)
 
         meta = get_metadata(nexus_fs, path)
@@ -63,7 +63,7 @@ class TestCreatedAtStability:
         path = f"/test/{uuid.uuid4()}/file.txt"
 
         # Initial write
-        await nexus_fs.write(path, b"initial content")
+        nexus_fs.write(path, b"initial content")
         meta1 = get_metadata(nexus_fs, path)
         original_created_at = meta1.created_at
 
@@ -71,7 +71,7 @@ class TestCreatedAtStability:
         time.sleep(0.1)
 
         # Update the file
-        await nexus_fs.write(path, b"updated content")
+        nexus_fs.write(path, b"updated content")
         meta2 = get_metadata(nexus_fs, path)
 
         assert meta2.created_at == original_created_at
@@ -83,14 +83,14 @@ class TestCreatedAtStability:
         path = f"/test/{uuid.uuid4()}/file.txt"
 
         # Initial write
-        await nexus_fs.write(path, b"v1")
+        nexus_fs.write(path, b"v1")
         meta1 = get_metadata(nexus_fs, path)
         original_created_at = meta1.created_at
 
         # Multiple updates
         for i in range(5):
             time.sleep(0.05)
-            await nexus_fs.write(path, f"v{i + 2}".encode())
+            nexus_fs.write(path, f"v{i + 2}".encode())
 
         meta_final = get_metadata(nexus_fs, path)
 
@@ -107,14 +107,14 @@ class TestModifiedAtOnReads:
         path = f"/test/{uuid.uuid4()}/file.txt"
 
         # Create file
-        await nexus_fs.write(path, b"test content")
+        nexus_fs.write(path, b"test content")
         meta1 = get_metadata(nexus_fs, path)
         original_modified_at = meta1.modified_at
 
         time.sleep(0.1)
 
         # Read the file
-        content = await nexus_fs.sys_read(path)
+        content = nexus_fs.sys_read(path)
         assert content == b"test content"
 
         # Check modified_at unchanged
@@ -129,14 +129,14 @@ class TestModifiedAtOnReads:
         path = f"/test/{uuid.uuid4()}/file.txt"
 
         # Create file
-        await nexus_fs.write(path, b"test content for multiple reads")
+        nexus_fs.write(path, b"test content for multiple reads")
         meta1 = get_metadata(nexus_fs, path)
         original_modified_at = meta1.modified_at
 
         # Multiple reads
         for _ in range(10):
             time.sleep(0.02)
-            await nexus_fs.sys_read(path)
+            nexus_fs.sys_read(path)
 
         meta_final = get_metadata(nexus_fs, path)
 
@@ -149,7 +149,7 @@ class TestModifiedAtOnReads:
         path = f"/test/{uuid.uuid4()}/file.txt"
 
         # Create file
-        await nexus_fs.write(path, b"test content")
+        nexus_fs.write(path, b"test content")
         meta1 = get_metadata(nexus_fs, path)
         original_modified_at = meta1.modified_at
 
@@ -171,7 +171,7 @@ class TestModifiedAtOnReads:
         parent = "/".join(path.split("/")[:-1])
 
         # Create file
-        await nexus_fs.write(path, b"test content")
+        nexus_fs.write(path, b"test content")
         meta1 = get_metadata(nexus_fs, path)
         original_modified_at = meta1.modified_at
 
@@ -179,7 +179,7 @@ class TestModifiedAtOnReads:
 
         # List parent directory multiple times
         for _ in range(5):
-            list(await nexus_fs.sys_readdir(parent))
+            list(nexus_fs.sys_readdir(parent))
 
         meta_final = get_metadata(nexus_fs, path)
 
@@ -196,14 +196,14 @@ class TestModifiedAtOnWrites:
         path = f"/test/{uuid.uuid4()}/file.txt"
 
         # Create file
-        await nexus_fs.write(path, b"initial content")
+        nexus_fs.write(path, b"initial content")
         meta1 = get_metadata(nexus_fs, path)
         original_modified_at = meta1.modified_at
 
         time.sleep(0.1)
 
         # Update file
-        await nexus_fs.write(path, b"updated content")
+        nexus_fs.write(path, b"updated content")
         meta2 = get_metadata(nexus_fs, path)
 
         assert meta2.modified_at > original_modified_at
@@ -217,13 +217,13 @@ class TestModifiedAtOnWrites:
         timestamps = []
 
         # Create file
-        await nexus_fs.write(path, b"v1")
+        nexus_fs.write(path, b"v1")
         timestamps.append(get_metadata(nexus_fs, path).modified_at)
 
         # Multiple writes
         for i in range(3):
             time.sleep(0.1)
-            await nexus_fs.write(path, f"v{i + 2}".encode())
+            nexus_fs.write(path, f"v{i + 2}".encode())
             timestamps.append(get_metadata(nexus_fs, path).modified_at)
 
         # Each timestamp should be greater than the previous
@@ -242,13 +242,13 @@ class TestTimestampsCombined:
         path = f"/test/{uuid.uuid4()}/file.txt"
 
         # Create file
-        await nexus_fs.write(path, b"test content")
+        nexus_fs.write(path, b"test content")
         meta1 = get_metadata(nexus_fs, path)
 
         time.sleep(0.1)
 
         # Read file
-        await nexus_fs.sys_read(path)
+        nexus_fs.sys_read(path)
         meta2 = get_metadata(nexus_fs, path)
 
         assert meta2.created_at == meta1.created_at
@@ -261,13 +261,13 @@ class TestTimestampsCombined:
         path = f"/test/{uuid.uuid4()}/file.txt"
 
         # Create file
-        await nexus_fs.write(path, b"initial content")
+        nexus_fs.write(path, b"initial content")
         meta1 = get_metadata(nexus_fs, path)
 
         time.sleep(0.1)
 
         # Update file
-        await nexus_fs.write(path, b"updated content")
+        nexus_fs.write(path, b"updated content")
         meta2 = get_metadata(nexus_fs, path)
 
         assert meta2.created_at == meta1.created_at, "created_at should NOT change"
@@ -284,7 +284,7 @@ class TestCacheDoesNotAffectTimestamps:
         path = f"/test/{uuid.uuid4()}/file.txt"
 
         # Create file
-        await nexus_fs.write(path, b"test content")
+        nexus_fs.write(path, b"test content")
 
         # First get (might populate cache)
         meta1 = get_metadata(nexus_fs, path)
@@ -302,13 +302,13 @@ class TestCacheDoesNotAffectTimestamps:
         path = f"/test/{uuid.uuid4()}/file.txt"
 
         # Create file and cache metadata
-        await nexus_fs.write(path, b"v1")
+        nexus_fs.write(path, b"v1")
         meta1 = get_metadata(nexus_fs, path)
 
         time.sleep(0.1)
 
         # Update file (should invalidate cache)
-        await nexus_fs.write(path, b"v2")
+        nexus_fs.write(path, b"v2")
         meta2 = get_metadata(nexus_fs, path)
 
         # Verify cache was invalidated and new timestamps are correct
@@ -326,7 +326,7 @@ class TestDatabaseDirectAccess:
         path = f"/test/{uuid.uuid4()}/db_test.txt"
 
         # Create file
-        await nexus_fs.write(path, b"database test content")
+        nexus_fs.write(path, b"database test content")
 
         # Clear any cache
         if hasattr(nexus_fs.metadata, "_cache") and nexus_fs.metadata._cache:
@@ -341,7 +341,7 @@ class TestDatabaseDirectAccess:
 
         # Perform multiple reads
         for _ in range(5):
-            await nexus_fs.sys_read(path)
+            nexus_fs.sys_read(path)
 
         # Clear cache again
         if hasattr(nexus_fs.metadata, "_cache") and nexus_fs.metadata._cache:

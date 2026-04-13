@@ -38,13 +38,13 @@ FORBIDDEN_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     # Direct core imports (excluding protocols and storage-pillar ABCs)
     (
         re.compile(
-            r"^\s*from\s+nexus\.core(?!\.protocols\b|\.cache_store\b|\.object_store\b|\.path_utils\b)"
+            r"^\s*from\s+nexus\.core(?!\.protocols\b|\.cache_store\b|\.object_store\b|\.path_utils\b|\.nexus_fs\b)"
         ),
         "nexus.core",
     ),
     (
         re.compile(
-            r"^\s*import\s+nexus\.core(?!\.protocols\b|\.cache_store\b|\.object_store\b|\.path_utils\b)"
+            r"^\s*import\s+nexus\.core(?!\.protocols\b|\.cache_store\b|\.object_store\b|\.path_utils\b|\.nexus_fs\b)"
         ),
         "nexus.core",
     ),

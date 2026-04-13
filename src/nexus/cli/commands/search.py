@@ -167,7 +167,7 @@ def glob(
                     filtered = []
                     for match in matches:
                         is_dir = (
-                            await nx.is_directory(match)
+                            nx.is_directory(match)
                             if hasattr(nx, "is_directory")
                             else match.endswith("/")
                         )
@@ -182,9 +182,7 @@ def glob(
                     metadata_map: dict[str, dict[str, Any]] = {}
                     try:
                         parent_path = path if path != "/" else "/"
-                        all_details = await nx.sys_readdir(
-                            parent_path, recursive=True, details=True
-                        )
+                        all_details = nx.sys_readdir(parent_path, recursive=True, details=True)
                         details_list = cast(list[dict[str, Any]], all_details)
                         metadata_map = {d["path"]: d for d in details_list}
                     except Exception:

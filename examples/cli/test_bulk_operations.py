@@ -181,7 +181,7 @@ class LocalTestRunner(TestRunner):
     async def _run_tests(self, nx) -> None:
         # Setup
         print_header("Setup: Create Test Files")
-        await nx.mkdir(self.base, parents=True, exist_ok=True)
+        nx.mkdir(self.base, parents=True, exist_ok=True)
         print_success(f"Created directory: {self.base}")
 
         test_files = [
@@ -195,8 +195,8 @@ class LocalTestRunner(TestRunner):
         for f in test_files:
             parent = str(Path(f).parent)
             if parent != self.base:
-                await nx.mkdir(parent, parents=True, exist_ok=True)
-            await nx.sys_write(f, f"Content of {f}".encode())
+                nx.mkdir(parent, parents=True, exist_ok=True)
+            nx.sys_write(f, f"Content of {f}".encode())
             print_success(f"Created: {f}")
 
         # Test 1: rename_bulk
@@ -293,11 +293,11 @@ class LocalTestRunner(TestRunner):
         print_header("Test 5: delete_bulk with recursive directory deletion (explicit)")
         print_test("Deleting EXPLICIT directory with recursive=True")
 
-        await nx.mkdir(f"{self.base}/to_delete", exist_ok=True)
-        await nx.sys_write(f"{self.base}/to_delete/a.txt", b"file a")
-        await nx.sys_write(f"{self.base}/to_delete/b.txt", b"file b")
-        await nx.mkdir(f"{self.base}/to_delete/sub", exist_ok=True)
-        await nx.sys_write(f"{self.base}/to_delete/sub/c.txt", b"file c")
+        nx.mkdir(f"{self.base}/to_delete", exist_ok=True)
+        nx.sys_write(f"{self.base}/to_delete/a.txt", b"file a")
+        nx.sys_write(f"{self.base}/to_delete/b.txt", b"file b")
+        nx.mkdir(f"{self.base}/to_delete/sub", exist_ok=True)
+        nx.sys_write(f"{self.base}/to_delete/sub/c.txt", b"file c")
 
         result = nx.delete_bulk([f"{self.base}/to_delete"], recursive=True)
         print_info(f"Result: {result}")
@@ -312,9 +312,9 @@ class LocalTestRunner(TestRunner):
         print_test("Deleting IMPLICIT directory (no mkdir, just files under it)")
 
         # Create files directly without mkdir - this creates an implicit directory
-        await nx.sys_write(f"{self.base}/implicit_dir/file1.txt", b"file 1")
-        await nx.sys_write(f"{self.base}/implicit_dir/file2.txt", b"file 2")
-        await nx.sys_write(f"{self.base}/implicit_dir/nested/file3.txt", b"file 3")
+        nx.sys_write(f"{self.base}/implicit_dir/file1.txt", b"file 1")
+        nx.sys_write(f"{self.base}/implicit_dir/file2.txt", b"file 2")
+        nx.sys_write(f"{self.base}/implicit_dir/nested/file3.txt", b"file 3")
 
         # Verify the implicit directory exists
         implicit_exists = await nx.access(f"{self.base}/implicit_dir")
@@ -333,8 +333,8 @@ class LocalTestRunner(TestRunner):
         print_test("Renaming IMPLICIT directory (no mkdir, just files under it)")
 
         # Create another implicit directory
-        await nx.sys_write(f"{self.base}/implicit_rename/a.txt", b"file a")
-        await nx.sys_write(f"{self.base}/implicit_rename/b.txt", b"file b")
+        nx.sys_write(f"{self.base}/implicit_rename/a.txt", b"file a")
+        nx.sys_write(f"{self.base}/implicit_rename/b.txt", b"file b")
 
         # Verify it exists
         implicit_exists = await nx.access(f"{self.base}/implicit_rename")
@@ -402,7 +402,7 @@ class RemoteTestRunner(TestRunner):
     async def _run_tests(self, nx) -> None:
         # Setup
         print_header("Setup: Create Test Files")
-        await nx.mkdir(self.base, parents=True, exist_ok=True)
+        nx.mkdir(self.base, parents=True, exist_ok=True)
         print_success(f"Created directory: {self.base}")
 
         test_files = [
@@ -416,8 +416,8 @@ class RemoteTestRunner(TestRunner):
         for f in test_files:
             parent = str(Path(f).parent)
             if parent != self.base:
-                await nx.mkdir(parent, parents=True, exist_ok=True)
-            await nx.sys_write(f, f"Content of {f}".encode())
+                nx.mkdir(parent, parents=True, exist_ok=True)
+            nx.sys_write(f, f"Content of {f}".encode())
             print_success(f"Created: {f}")
 
         # Test 1: rename_bulk
@@ -510,11 +510,11 @@ class RemoteTestRunner(TestRunner):
         print_header("Test 5: delete_bulk with recursive directory deletion (explicit)")
         print_test("Deleting EXPLICIT directory with recursive=True")
 
-        await nx.mkdir(f"{self.base}/to_delete", exist_ok=True)
-        await nx.sys_write(f"{self.base}/to_delete/a.txt", b"file a")
-        await nx.sys_write(f"{self.base}/to_delete/b.txt", b"file b")
-        await nx.mkdir(f"{self.base}/to_delete/sub", exist_ok=True)
-        await nx.sys_write(f"{self.base}/to_delete/sub/c.txt", b"file c")
+        nx.mkdir(f"{self.base}/to_delete", exist_ok=True)
+        nx.sys_write(f"{self.base}/to_delete/a.txt", b"file a")
+        nx.sys_write(f"{self.base}/to_delete/b.txt", b"file b")
+        nx.mkdir(f"{self.base}/to_delete/sub", exist_ok=True)
+        nx.sys_write(f"{self.base}/to_delete/sub/c.txt", b"file c")
 
         result = await nx.delete_bulk([f"{self.base}/to_delete"], recursive=True)
         print_info(f"Result: {result}")
@@ -529,9 +529,9 @@ class RemoteTestRunner(TestRunner):
         print_test("Deleting IMPLICIT directory (no mkdir, just files under it)")
 
         # Create files directly without mkdir - this creates an implicit directory
-        await nx.sys_write(f"{self.base}/implicit_dir/file1.txt", b"file 1")
-        await nx.sys_write(f"{self.base}/implicit_dir/file2.txt", b"file 2")
-        await nx.sys_write(f"{self.base}/implicit_dir/nested/file3.txt", b"file 3")
+        nx.sys_write(f"{self.base}/implicit_dir/file1.txt", b"file 1")
+        nx.sys_write(f"{self.base}/implicit_dir/file2.txt", b"file 2")
+        nx.sys_write(f"{self.base}/implicit_dir/nested/file3.txt", b"file 3")
 
         # Verify the implicit directory exists
         implicit_exists = await nx.access(f"{self.base}/implicit_dir")
@@ -550,8 +550,8 @@ class RemoteTestRunner(TestRunner):
         print_test("Renaming IMPLICIT directory (no mkdir, just files under it)")
 
         # Create another implicit directory
-        await nx.sys_write(f"{self.base}/implicit_rename/a.txt", b"file a")
-        await nx.sys_write(f"{self.base}/implicit_rename/b.txt", b"file b")
+        nx.sys_write(f"{self.base}/implicit_rename/a.txt", b"file a")
+        nx.sys_write(f"{self.base}/implicit_rename/b.txt", b"file b")
 
         # Verify it exists
         implicit_exists = await nx.access(f"{self.base}/implicit_rename")

@@ -17,8 +17,8 @@ Quick Start (Local - Verified):
     >>> from nexus.sdk import connect
     >>>
     >>> nx = connect(config={"profile": "slim", "data_dir": "./nexus-data"})
-    >>> await nx.sys_write("/workspace/file.txt", b"Hello World")
-    >>> content = await nx.sys_read("/workspace/file.txt")
+    >>> nx.sys_write("/workspace/file.txt", b"Hello World")
+    >>> content = nx.sys_read("/workspace/file.txt")
 
 Quick Start (Remote):
     >>> from nexus.sdk import connect
@@ -32,12 +32,12 @@ Quick Start (Remote):
     >>> nx = connect(config={"profile": "remote", "url": "http://localhost:2026"})
     >>>
     >>> # File operations
-    >>> await nx.sys_write("/workspace/file.txt", b"Hello World")
-    >>> content = await nx.sys_read("/workspace/file.txt")
-    >>> await nx.sys_unlink("/workspace/file.txt")
+    >>> nx.sys_write("/workspace/file.txt", b"Hello World")
+    >>> content = nx.sys_read("/workspace/file.txt")
+    >>> nx.sys_unlink("/workspace/file.txt")
     >>>
     >>> # Discovery
-    >>> files = await nx.sys_readdir("/workspace", recursive=True)
+    >>> files = nx.sys_readdir("/workspace", recursive=True)
     >>> python_files = nx.glob("**/*.py")
     >>> todos = nx.grep("TODO", file_pattern="**/*.py")
 
@@ -120,12 +120,12 @@ from nexus.contracts.exceptions import (
 from nexus.contracts.exceptions import (
     NexusPermissionError as PermissionError,
 )
-from nexus.contracts.filesystem.filesystem_abc import NexusFilesystem as Filesystem
 
 # ReBAC types canonical in contracts — always available (#3230)
 from nexus.contracts.rebac_types import WILDCARD_SUBJECT, CheckResult, Entity, GraphLimitExceeded
 from nexus.contracts.types import OperationContext
 from nexus.core.nexus_fs import NexusFS
+from nexus.core.nexus_fs import NexusFS as Filesystem
 
 # =============================================================================
 # LAZY IMPORTS for optional bricks (#3230)
@@ -204,8 +204,8 @@ async def connect(
     Examples:
         >>> # Use local backend (default)
         >>> nx = connect()
-        >>> await nx.sys_write("/workspace/file.txt", b"Hello World")
-        >>> content = await nx.sys_read("/workspace/file.txt")
+        >>> nx.sys_write("/workspace/file.txt", b"Hello World")
+        >>> content = nx.sys_read("/workspace/file.txt")
 
         >>> # Use GCS backend
         >>> nx = connect(config={

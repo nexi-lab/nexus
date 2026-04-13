@@ -399,6 +399,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d52eff69cd5e647efe296129160853a42795992097e8af39800e1060caeea9b"
 
 [[package]]
+name = "contracts"
+version = "0.1.0"
+
+[[package]]
 name = "core-foundation-sys"
 version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1277,6 +1281,48 @@ dependencies = [
 ]
 
 [[package]]
+name = "kernel"
+version = "0.9.30"
+dependencies = [
+ "ahash",
+ "blake3",
+ "bloomfilter",
+ "chrono",
+ "crc32fast",
+ "criterion",
+ "dashmap",
+ "encoding_rs",
+ "globset",
+ "hmac",
+ "libc",
+ "library",
+ "lru",
+ "memchr",
+ "memmap2",
+ "mimalloc",
+ "parking_lot",
+ "prost",
+ "pyo3",
+ "rayon",
+ "redb",
+ "regex",
+ "reqwest",
+ "roaring",
+ "serde",
+ "serde_json",
+ "sha2",
+ "simdutf8",
+ "simsimd",
+ "string-interner",
+ "tempfile",
+ "tokio",
+ "tonic",
+ "tonic-build",
+ "transport",
+ "uuid",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1302,6 +1348,25 @@ checksum = "667f4fec20f29dfc6bc7357c582d91796c169ad7e2fce709468aefeb2c099870"
 dependencies = [
  "cc",
  "libc",
+]
+
+[[package]]
+name = "library"
+version = "0.1.0"
+dependencies = [
+ "ahash",
+ "blake3",
+ "crc32fast",
+ "getrandom 0.3.4",
+ "globset",
+ "memchr",
+ "proptest",
+ "regex",
+ "regex-syntax",
+ "roaring",
+ "serde",
+ "serde_json",
+ "string-interner",
 ]
 
 [[package]]
@@ -1461,128 +1526,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d87ecb2933e8aeadb3e3a02b828fed80a7528047e68b4f424523a0981a3a084"
 
 [[package]]
-name = "nexus_core"
-version = "0.1.0"
-dependencies = [
- "ahash",
- "blake3",
- "crc32fast",
- "getrandom 0.3.4",
- "globset",
- "memchr",
- "proptest",
- "regex",
- "regex-syntax",
- "roaring",
- "serde",
- "serde_json",
- "string-interner",
-]
-
-[[package]]
-name = "nexus_kernel"
-version = "0.9.29"
-dependencies = [
- "ahash",
- "blake3",
- "bloomfilter",
- "chrono",
- "crc32fast",
- "criterion",
- "dashmap",
- "encoding_rs",
- "globset",
- "hmac",
- "libc",
- "lru",
- "memchr",
- "memmap2",
- "mimalloc",
- "nexus_core",
- "nexus_transport",
- "parking_lot",
- "prost",
- "pyo3",
- "rayon",
- "redb",
- "regex",
- "reqwest",
- "roaring",
- "serde",
- "serde_json",
- "sha2",
- "simdutf8",
- "simsimd",
- "string-interner",
- "tempfile",
- "threadpool",
- "tokio",
- "tonic",
- "tonic-build",
- "uuid",
-]
-
-[[package]]
-name = "nexus_raft"
-version = "0.1.0"
-dependencies = [
- "base64",
- "bincode",
- "bytes",
- "dashmap",
- "gethostname",
- "mimalloc",
- "nexus_transport",
- "pem",
- "prost",
- "protobuf",
- "pyo3",
- "raft",
- "rcgen",
- "redb",
- "serde",
- "serde_json",
- "sha2",
- "slog",
- "tempfile",
- "thiserror 1.0.69",
- "time",
- "tokio",
- "tokio-test",
- "tonic",
- "tonic-build",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "nexus_tasks"
-version = "0.1.0"
-dependencies = [
- "bincode",
- "fjall",
- "mimalloc",
- "pyo3",
- "serde",
- "tempfile",
- "thiserror 2.0.18",
- "tracing",
-]
-
-[[package]]
-name = "nexus_transport"
-version = "0.1.0"
-dependencies = [
- "dashmap",
- "parking_lot",
- "sha2",
- "thiserror 2.0.18",
- "tokio",
- "tonic",
- "tracing",
-]
-
-[[package]]
 name = "nom"
 version = "7.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1633,16 +1576,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
 dependencies = [
  "autocfg",
-]
-
-[[package]]
-name = "num_cpus"
-version = "1.17.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "91df4bbde75afed763b708b7eee1e8e7651e02d97f6d5dd763e89367e957b23b"
-dependencies = [
- "hermit-abi",
- "libc",
 ]
 
 [[package]]
@@ -2103,6 +2036,39 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "raft"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "bincode",
+ "bytes",
+ "dashmap",
+ "gethostname",
+ "mimalloc",
+ "pem",
+ "prost",
+ "protobuf",
+ "pyo3",
+ "raft 0.7.0",
+ "rcgen",
+ "redb",
+ "serde",
+ "serde_json",
+ "sha2",
+ "slog",
+ "tempfile",
+ "thiserror 1.0.69",
+ "time",
+ "tokio",
+ "tokio-test",
+ "tonic",
+ "tonic-build",
+ "tracing",
+ "tracing-subscriber",
+ "transport",
+]
+
+[[package]]
+name = "raft"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f12688b23a649902762d4c11d854d73c49c9b93138f2de16403ef9f571ad5bae"
@@ -2526,6 +2492,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "services"
+version = "0.1.0"
+dependencies = [
+ "contracts",
+ "parking_lot",
+ "redb",
+]
+
+[[package]]
 name = "sfa"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2707,6 +2682,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "adb6935a6f5c20170eeceb1a3835a49e12e19d792f6dd344ccc76a985ca5a6ca"
 
 [[package]]
+name = "tasks"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "fjall",
+ "mimalloc",
+ "pyo3",
+ "serde",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
 name = "tempfile"
 version = "3.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2766,15 +2755,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f60246a4944f24f6e018aa17cdeffb7818b76356965d03b07d6a9886e8962185"
 dependencies = [
  "cfg-if",
-]
-
-[[package]]
-name = "threadpool"
-version = "1.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d050e60b33d41c19108b32cea32164033a9013fe3b46cbd4457559bfbf77afaa"
-dependencies = [
- "num_cpus",
 ]
 
 [[package]]
@@ -3067,6 +3047,19 @@ dependencies = [
  "tracing",
  "tracing-core",
  "tracing-log",
+]
+
+[[package]]
+name = "transport"
+version = "0.1.0"
+dependencies = [
+ "dashmap",
+ "parking_lot",
+ "sha2",
+ "thiserror 2.0.18",
+ "tokio",
+ "tonic",
+ "tracing",
 ]
 
 [[package]]

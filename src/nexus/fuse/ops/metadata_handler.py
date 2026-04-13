@@ -109,14 +109,14 @@ class MetadataHandler:
                     return self._build_file_attrs(rust_meta.size)
 
         # Check if it's a directory
-        if await ctx.nexus_fs.is_directory(original_path, context=ctx.context):
+        if ctx.nexus_fs.is_directory(original_path, context=ctx.context):
             metadata = await get_metadata(ctx, original_path)
             return build_dir_attrs(metadata)
 
         # Validate namespace visibility
         await check_namespace_visible(ctx, original_path)
 
-        if not await ctx.nexus_fs.access(original_path):
+        if not ctx.nexus_fs.access(original_path):
             import errno
 
             raise FuseOSError(errno.ENOENT)
@@ -277,7 +277,7 @@ class MetadataHandler:
 
         # Python path: list from filesystem
         list_start = time.time()
-        files_raw = await ctx.nexus_fs.sys_readdir(
+        files_raw = ctx.nexus_fs.sys_readdir(
             path, recursive=False, details=True, context=ctx.context
         )
         list_elapsed = time.time() - list_start
@@ -289,7 +289,7 @@ class MetadataHandler:
         for file_info in files:
             if isinstance(file_info, str):
                 file_path = file_info
-                is_dir = await ctx.nexus_fs.is_directory(file_path, context=ctx.context)
+                is_dir = ctx.nexus_fs.is_directory(file_path, context=ctx.context)
             else:
                 file_path = str(file_info.get("path", ""))
                 is_dir = file_info.get("is_directory", False)
@@ -318,11 +318,13 @@ class MetadataHandler:
         prefetch_max_file_size = ctx.cache_config.get("prefetch_max_file_size", 256_000)
 
         if prefetch_enabled and ctx.context is None and len(files) <= prefetch_max_files:
-            small_files = [
-                f.get("path") if isinstance(f, dict) else f
+            small_files: list[str] = [
+                p
                 for f in files
                 if not (isinstance(f, dict) and f.get("is_directory", False))
                 and (not isinstance(f, dict) or f.get("size", 0) < prefetch_max_file_size)
+                for p in [f.get("path") if isinstance(f, dict) else f]
+                if isinstance(p, str)
             ]
             logger.info(
                 f"[FUSE-PERF] readdir prefetch check: {len(small_files)} small files, "
@@ -334,7 +336,7 @@ class MetadataHandler:
                     prefetch_start = time.time()
                     bulk_content = ctx.nexus_fs.read_bulk(small_files[:500])
                     for fpath, content in bulk_content.items():
-                        if content is not None:
+                        if isinstance(content, bytes):
                             ctx.cache.cache_content(fpath, content)
                     prefetch_elapsed = time.time() - prefetch_start
                     logger.info(

@@ -14,7 +14,7 @@ Usage::
     async def ls(output_opts: OutputOptions, ...) -> None:
         timing = CommandTiming()
         with timing.phase("server"):
-            files = await nx.sys_readdir(path)
+            files = nx.sys_readdir(path)
 
         render_output(
             data=files,

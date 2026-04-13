@@ -60,9 +60,9 @@ async def setup_nexus_permissions(admin_nx, workspace: str):
     print("\n🔐 Setting up Nexus permissions...")
 
     # Create workspace structure
-    await admin_nx.mkdir(f"{workspace}/research", parents=True)
-    await admin_nx.mkdir(f"{workspace}/code", parents=True)
-    await admin_nx.mkdir(f"{workspace}/reviews", parents=True)
+    admin_nx.mkdir(f"{workspace}/research", parents=True)
+    admin_nx.mkdir(f"{workspace}/code", parents=True)
+    admin_nx.mkdir(f"{workspace}/reviews", parents=True)
 
     # Grant permissions for researcher agent
     # Researcher can write to /workspace/research/ directory
@@ -135,7 +135,7 @@ async def researcher_node(state: AgentState) -> AgentState:
 
     # Write requirements using Nexus (drop-in replacement!)
     research_file = "/workspace/research/requirements.txt"
-    await nx.sys_write(research_file, requirements)
+    nx.sys_write(research_file, requirements)
 
     print(f"✓ Requirements written to {research_file}")
     print("  (Researcher has write permission to /workspace/research/)")
@@ -159,7 +159,7 @@ async def coder_node(state: AgentState) -> AgentState:
     nx.agent_id = "coder"  # Set agent identity for permission checks
 
     # Read requirements using Nexus
-    requirements = await nx.sys_read(state["research_file"])
+    requirements = nx.sys_read(state["research_file"])
     print("  (Coder has read permission to /workspace/research/)")
 
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.3)
@@ -178,7 +178,7 @@ async def coder_node(state: AgentState) -> AgentState:
 
     # Write code using Nexus
     code_file = "/workspace/code/implementation.py"
-    await nx.sys_write(code_file, code)
+    nx.sys_write(code_file, code)
 
     print(f"✓ Code written to {code_file}")
     print("  (Coder has write permission to /workspace/code/)")
@@ -202,7 +202,7 @@ async def reviewer_node(state: AgentState) -> AgentState:
     nx.agent_id = "reviewer"  # Set agent identity for permission checks
 
     # Read code using Nexus
-    code = await nx.sys_read(state["code_file"])
+    code = nx.sys_read(state["code_file"])
     print("  (Reviewer has read permission to /workspace/code/)")
 
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.5)
@@ -219,7 +219,7 @@ async def reviewer_node(state: AgentState) -> AgentState:
 
     # Write review using Nexus
     review_file = "/workspace/reviews/review.txt"
-    await nx.sys_write(review_file, review)
+    nx.sys_write(review_file, review)
 
     print(f"✓ Review written to {review_file}")
     print("  (Reviewer has write permission to /workspace/reviews/)")

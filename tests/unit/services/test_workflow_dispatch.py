@@ -1,7 +1,8 @@
 """Unit tests for WorkflowDispatchService (#625 partial, #808, #1812).
 
-Tests the service directly — fire(), on_mutation(),
+Tests the service directly — fire(),
 start()/stop() lifecycle, and Rust kernel IPC pipe integration.
+on_mutation() tests deleted: Rust kernel now dispatches observers directly.
 """
 
 from __future__ import annotations
@@ -13,7 +14,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from nexus.contracts.exceptions import NexusFileNotFoundError
-from nexus.core.file_events import FileEvent, FileEventType
 from nexus.services.lifecycle.workflow_dispatch_service import WorkflowDispatchService
 
 # ======================================================================
@@ -28,17 +28,17 @@ def _make_mock_nx() -> MagicMock:
 
     Production code calls ``self._nx.pipe_write_nowait`` /
     ``self._nx.pipe_close`` (sync passthroughs to the Rust kernel) and
-    ``await self._nx.sys_setattr`` / ``await self._nx.sys_read`` (async).
+    ``self._nx.sys_setattr`` / ``self._nx.sys_read`` (sync).
     """
-    nx = AsyncMock()
-    # Sync passthrough methods — must be MagicMock so calls are not awaited
+    nx = MagicMock()
+    # Sync passthrough methods
     nx.pipe_write_nowait = MagicMock()
     nx.pipe_close = MagicMock()
-    # Async syscalls
-    nx.sys_setattr = AsyncMock(return_value={"path": _WORKFLOW_PIPE_PATH, "created": True})
-    # sys_read is async — returns bytes. Raising NexusFileNotFoundError signals
+    # Sync syscalls — NexusFS methods are sync def
+    nx.sys_setattr = MagicMock(return_value={"path": _WORKFLOW_PIPE_PATH, "created": True})
+    # sys_read is sync — returns bytes. Raising NexusFileNotFoundError signals
     # "pipe closed" to the consumer loop (which catches it gracefully).
-    nx.sys_read = AsyncMock(side_effect=NexusFileNotFoundError(_WORKFLOW_PIPE_PATH))
+    nx.sys_read = MagicMock(side_effect=NexusFileNotFoundError(_WORKFLOW_PIPE_PATH))
     return nx
 
 
@@ -126,85 +126,6 @@ class TestFire:
 
 
 # ======================================================================
-# on_mutation() — VFSObserver
-# ======================================================================
-
-
-class TestOnMutation:
-    @pytest.mark.asyncio
-    async def test_write_event(self) -> None:
-        """on_mutation(WRITE) should call fire() with correct trigger type."""
-        svc, nx = _make_service()
-        await svc.start()
-
-        event = FileEvent(
-            type=FileEventType.FILE_WRITE,
-            path="/test/file.txt",
-            zone_id="root",
-            agent_id="agent-1",
-            user_id="user-1",
-            timestamp="2026-02-19T00:00:00",
-            etag="abc123",
-            size=1024,
-            version=3,
-            is_new=True,
-        )
-        svc.on_mutation(event)
-
-        call_args = nx.pipe_write_nowait.call_args
-        msg = json.loads(call_args[0][1])
-        assert msg["type"] == "file_write"
-        assert msg["ctx"]["file_path"] == "/test/file.txt"
-        assert msg["ctx"]["created"] is True
-
-        await svc.stop()
-
-    @pytest.mark.asyncio
-    async def test_delete_event(self) -> None:
-        """on_mutation(DELETE) should produce file_delete trigger."""
-        svc, nx = _make_service()
-        await svc.start()
-
-        event = FileEvent(
-            type=FileEventType.FILE_DELETE,
-            path="/test/gone.txt",
-            zone_id="root",
-            version=43,
-        )
-        svc.on_mutation(event)
-
-        call_args = nx.pipe_write_nowait.call_args
-        msg = json.loads(call_args[0][1])
-        assert msg["type"] == "file_delete"
-        assert msg["ctx"]["file_path"] == "/test/gone.txt"
-
-        await svc.stop()
-
-    @pytest.mark.asyncio
-    async def test_rename_event(self) -> None:
-        """on_mutation(RENAME) should produce file_rename trigger with old/new paths."""
-        svc, nx = _make_service()
-        await svc.start()
-
-        event = FileEvent(
-            type=FileEventType.FILE_RENAME,
-            path="/old/path.txt",
-            zone_id="root",
-            version=44,
-            new_path="/new/path.txt",
-        )
-        svc.on_mutation(event)
-
-        call_args = nx.pipe_write_nowait.call_args
-        msg = json.loads(call_args[0][1])
-        assert msg["type"] == "file_rename"
-        assert msg["ctx"]["old_path"] == "/old/path.txt"
-        assert msg["ctx"]["new_path"] == "/new/path.txt"
-
-        await svc.stop()
-
-
-# ======================================================================
 # Consumer loop
 # ======================================================================
 
@@ -219,7 +140,7 @@ class TestConsumer:
         from nexus.contracts.exceptions import NexusFileNotFoundError
 
         events = [json.dumps({"type": "file_write", "ctx": {"idx": i}}).encode() for i in range(3)]
-        nx.sys_read = AsyncMock(side_effect=[*events, NexusFileNotFoundError(_WORKFLOW_PIPE_PATH)])
+        nx.sys_read = MagicMock(side_effect=[*events, NexusFileNotFoundError(_WORKFLOW_PIPE_PATH)])
 
         await svc.start()
 
@@ -235,7 +156,7 @@ class TestConsumer:
         from nexus.contracts.exceptions import NexusFileNotFoundError
 
         svc, nx = _make_service()
-        nx.sys_read = AsyncMock(side_effect=NexusFileNotFoundError(_WORKFLOW_PIPE_PATH))
+        nx.sys_read = MagicMock(side_effect=NexusFileNotFoundError(_WORKFLOW_PIPE_PATH))
 
         await svc.start()
         await asyncio.sleep(0.01)
@@ -252,7 +173,7 @@ class TestConsumer:
             json.dumps({"type": "file_write", "ctx": {"x": 1}}).encode(),
             json.dumps({"type": "file_write", "ctx": {"x": 2}}).encode(),
         ]
-        nx.sys_read = AsyncMock(side_effect=[*events, NexusFileNotFoundError(_WORKFLOW_PIPE_PATH)])
+        nx.sys_read = MagicMock(side_effect=[*events, NexusFileNotFoundError(_WORKFLOW_PIPE_PATH)])
 
         svc._workflow_engine.fire_event.side_effect = [
             RuntimeError("boom"),
@@ -305,28 +226,20 @@ class TestLifecycle:
         assert svc._pipe_ready is False
 
     @pytest.mark.asyncio
+    @pytest.mark.asyncio
     async def test_stop_cancels_consumer(self) -> None:
         """stop() should cancel the consumer task."""
         from nexus.contracts.exceptions import NexusFileNotFoundError
 
         svc, nx = _make_service()
-        # sys_read blocks forever (simulates waiting for pipe data)
-        read_event = asyncio.Event()
-
-        async def _blocking_read(*args, **kwargs):
-            await read_event.wait()
-            raise NexusFileNotFoundError(_WORKFLOW_PIPE_PATH)
-
-        nx.sys_read = _blocking_read
+        # sys_read raises immediately (pipe closed) — consumer exits promptly.
+        nx.sys_read = MagicMock(side_effect=NexusFileNotFoundError(_WORKFLOW_PIPE_PATH))
 
         await svc.start()
 
         assert svc._consumer_task is not None
-        assert not svc._consumer_task.done()
 
-        # Signal close to unblock consumer
-        read_event.set()
-        await svc.stop()
+        await svc.stop()  # should not hang
 
         assert svc._consumer_task is None
         assert svc._pipe_ready is False

@@ -9,7 +9,7 @@ class TestCreateMCPServer:
     """Test create_mcp_server function."""
 
     async def test_create_server_with_nx_instance(self):
-        """Test creating MCP server with NexusFilesystem instance."""
+        """Test creating MCP server with NexusFS instance."""
         nx = Mock()
         server = await create_mcp_server(nx=nx, name="test-server")
 

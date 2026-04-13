@@ -231,24 +231,11 @@ class CASLocalBackend(CASAddressingEngine, MultipartUpload):
         )
         return service
 
-    def hook_spec(self) -> Any:
-        """Declare VFS hooks — mount + unmount for tiering lifecycle."""
-        from nexus.contracts.protocols.service_hooks import HookSpec
-
-        return HookSpec(
-            mount_hooks=(self,),
-            unmount_hooks=(self,),
-        )
-
-    def on_mount(self, ctx: Any) -> None:
-        """VFSMountHook: start background services when the backend is mounted.
-
-        Called by KernelDispatch at mount time (async event loop is running).
-        Uses asyncio.ensure_future() to schedule background tasks.
-        """
+    def _on_mount(self, mount_point: str) -> None:
+        """Start background services when the backend is mounted."""
         import asyncio
 
-        super().on_mount(ctx)
+        logger.info("CAS engine mounted at %s (backend=%s)", mount_point, self._backend_name)
         if self._compactor is not None:
             asyncio.ensure_future(self._compactor.start())
             logger.info("Volume compactor scheduled to start on mount")
@@ -256,11 +243,8 @@ class CASLocalBackend(CASAddressingEngine, MultipartUpload):
             asyncio.ensure_future(self._tiering_service.start())
             logger.info("Cold tiering service scheduled to start on mount")
 
-    def on_unmount(self, ctx: Any) -> None:
-        """VFSUnmountHook: stop background services when the backend is unmounted.
-
-        Schedules graceful shutdown of background tasks.
-        """
+    def _on_unmount(self) -> None:
+        """Stop background services when the backend is unmounted."""
         import asyncio
 
         if self._compactor is not None:

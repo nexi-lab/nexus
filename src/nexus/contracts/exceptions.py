@@ -422,12 +422,12 @@ class ConflictError(NexusError):
 
     Examples:
         >>> try:
-        ...     await nx.write(path, content)
+        ...     nx.write(path, content)
         ... except ConflictError as e:
         ...     print(f"Conflict: expected {e.expected_etag}, got {e.current_etag}")
         ...     # Retry with fresh read
-        ...     result = await nx.read(path, return_metadata=True)
-        ...     await nx.write(path, result['content'])
+        ...     result = nx.read(path, return_metadata=True)
+        ...     nx.write(path, result['content'])
     """
 
     is_expected = True  # Normal condition in concurrent systems
@@ -459,7 +459,7 @@ class LockTimeout(NexusError):
 
     Examples:
         >>> try:
-        ...     async with nx.locked("/shared/config.json", timeout=5.0):
+        ...     with nx.locked("/shared/config.json", timeout=5.0):
         ...         # do work
         ... except LockTimeout:
         ...     print("Resource is busy, try again later")

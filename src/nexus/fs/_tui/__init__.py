@@ -46,13 +46,13 @@ class ContextualNexusFS:
         )
 
     async def read(self, path: str) -> bytes:
-        return cast(bytes, await self._kernel.sys_read(path, context=self._ctx))
+        return cast(bytes, self._kernel.sys_read(path, context=self._ctx))
 
-    async def read_range(self, path: str, start: int, end: int) -> bytes:
-        return cast(bytes, await self._kernel.read_range(path, start, end, context=self._ctx))
+    def read_range(self, path: str, start: int, end: int) -> bytes:
+        return cast(bytes, self._kernel.read_range(path, start, end, context=self._ctx))
 
-    async def write(self, path: str, content: bytes) -> dict[str, Any]:
-        return cast(dict[str, Any], await self._kernel.write(path, content, context=self._ctx))
+    def write(self, path: str, content: bytes) -> dict[str, Any]:
+        return cast(dict[str, Any], self._kernel.write(path, content, context=self._ctx))
 
     async def ls(
         self,
@@ -67,7 +67,7 @@ class ContextualNexusFS:
 
         result = cast(
             list[str] | list[dict[str, Any]],
-            await self._kernel.sys_readdir(
+            self._kernel.sys_readdir(
                 path,
                 recursive=recursive,
                 details=detail,
@@ -86,7 +86,7 @@ class ContextualNexusFS:
         from nexus.fs._facade import SlimNexusFS
 
         try:
-            result = await SlimNexusFS(self._kernel).stat(path)
+            result = SlimNexusFS(self._kernel).stat(path)
             if result is not None:
                 return result
         except Exception:
@@ -94,22 +94,22 @@ class ContextualNexusFS:
         return await self._stat_backend_path(path)
 
     async def mkdir(self, path: str, parents: bool = True) -> None:
-        await self._kernel.mkdir(path, parents=parents, exist_ok=True, context=self._ctx)
+        self._kernel.mkdir(path, parents=parents, exist_ok=True, context=self._ctx)
 
     async def rmdir(self, path: str, recursive: bool = False) -> None:
-        await self._kernel.rmdir(path, recursive=recursive, context=self._ctx)
+        self._kernel.rmdir(path, recursive=recursive, context=self._ctx)
 
     async def delete(self, path: str) -> None:
-        await self._kernel.sys_unlink(path, context=self._ctx)
+        self._kernel.sys_unlink(path, context=self._ctx)
 
     async def rename(self, old_path: str, new_path: str) -> None:
-        await self._kernel.sys_rename(old_path, new_path, context=self._ctx)
+        self._kernel.sys_rename(old_path, new_path, context=self._ctx)
 
-    async def exists(self, path: str) -> bool:
-        return cast(bool, await self._kernel.access(path, context=self._ctx))
+    def exists(self, path: str) -> bool:
+        return cast(bool, self._kernel.access(path, context=self._ctx))
 
-    async def copy(self, src: str, dst: str) -> dict[str, Any]:
-        result: dict[str, Any] = await self._kernel.sys_copy(src, dst, context=self._ctx)
+    def copy(self, src: str, dst: str) -> dict[str, Any]:
+        result: dict[str, Any] = self._kernel.sys_copy(src, dst, context=self._ctx)
         return result
 
     def list_mounts(self) -> list[str]:
@@ -805,7 +805,7 @@ class PlaygroundApp(App[None]):
         failed: list[str] = []
 
         async def _search_mount(mount: str) -> list[dict]:
-            entries = await self._fs.ls(mount, detail=True, recursive=True)
+            entries = self._fs.ls(mount, detail=True, recursive=True)
             return [e for e in entries if query.lower() in e.get("path", "").lower()]
 
         tasks = {mp: _search_mount(mp) for mp in self._mount_points}
@@ -885,7 +885,7 @@ class PlaygroundApp(App[None]):
         if mode == "new_file":
             path = f"{self._current_path.rstrip('/')}/{value}"
             try:
-                await self._fs.write(path, b"")
+                self._fs.write(path, b"")
                 self.notify(f"Created: {value}", timeout=2)
                 await browser.load_directory(self._current_path)
                 self._update_status_bar()
@@ -895,7 +895,7 @@ class PlaygroundApp(App[None]):
         elif mode == "new_dir":
             path = f"{self._current_path.rstrip('/')}/{value}"
             try:
-                await self._fs.mkdir(path)
+                self._fs.mkdir(path)
                 self.notify(f"Created directory: {value}", timeout=2)
                 await browser.load_directory(self._current_path)
                 self._update_status_bar()
@@ -908,7 +908,7 @@ class PlaygroundApp(App[None]):
             parent = old_path.rstrip("/").rsplit("/", 1)[0]
             new_path = f"{parent}/{new_name}"
             try:
-                await self._fs.rename(old_path, new_path)
+                self._fs.rename(old_path, new_path)
                 self.notify(f"Renamed → {new_name}", timeout=2)
                 await browser.load_directory(self._current_path)
                 self._update_status_bar()
@@ -1015,7 +1015,7 @@ class PlaygroundApp(App[None]):
             return
         path = self._resolve_command_path(name)
         try:
-            await self._fs.write(path, b"")
+            self._fs.write(path, b"")
             browser = self.query_one("#file-browser", FileBrowser)
             await browser.load_directory(self._current_path)
             self._update_status_bar()
@@ -1029,7 +1029,7 @@ class PlaygroundApp(App[None]):
             return
         path = self._resolve_command_path(name)
         try:
-            await self._fs.delete(path)
+            self._fs.delete(path)
             browser = self.query_one("#file-browser", FileBrowser)
             await browser.load_directory(self._current_path)
             self._update_status_bar()
@@ -1389,10 +1389,10 @@ class PlaygroundApp(App[None]):
             is_dir = entry.get("is_directory", False)
 
             if is_dir:
-                await self._fs.rmdir(path, recursive=True)
+                self._fs.rmdir(path, recursive=True)
                 self.notify(f"Deleted directory: {name}", timeout=2)
             else:
-                await self._fs.delete(path)
+                self._fs.delete(path)
                 self.notify(f"Deleted: {name}", timeout=2)
 
             await browser.load_directory(self._current_path)

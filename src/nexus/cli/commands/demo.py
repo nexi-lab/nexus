@@ -72,7 +72,7 @@ class _RestApiNexusClient:
         text = content.decode("utf-8", errors="replace")
         self._client.post("/api/v2/files/write", json_body={"path": path, "content": text})
 
-    async def mkdir(self, path: str, *, parents: bool = False, exist_ok: bool = False) -> None:  # noqa: ARG002
+    def mkdir(self, path: str, *, parents: bool = False, exist_ok: bool = False) -> None:  # noqa: ARG002
         try:
             self._client.post("/api/v2/files/mkdir", json_body={"path": path})
         except Exception:
@@ -91,7 +91,7 @@ class _RestApiNexusClient:
         content = result.get("content", "") if isinstance(result, dict) else str(result)
         return content.encode("utf-8")
 
-    async def sys_readdir(self, path: str) -> list[str]:
+    def sys_readdir(self, path: str) -> list[str]:
         try:
             result = self._client.get(f"/api/v2/files/list?path={path}")
             items = result.get("items", []) if isinstance(result, dict) else []
@@ -239,7 +239,7 @@ async def _get_nexus_client(config: dict[str, Any]) -> Any:
                 }
             )
             # Verify connectivity with a lightweight read-only call.
-            await nx.sys_readdir("/")
+            nx.sys_readdir("/")
             return nx
         except Exception as e:
             console.print(
@@ -291,7 +291,7 @@ async def _seed_files(
     for path, content, _description in all_files:
         if path in seeded:
             try:
-                if await nx.access(path):
+                if nx.access(path):
                     continue
             except Exception:
                 # Stale manifest entry; fall through and recreate the file.
@@ -300,8 +300,8 @@ async def _seed_files(
             # Ensure parent directory exists
             parent = "/".join(path.split("/")[:-1])
             if parent:
-                await nx.mkdir(parent, parents=True, exist_ok=True)
-            await nx.write(path, content.encode())
+                nx.mkdir(parent, parents=True, exist_ok=True)
+            nx.write(path, content.encode())
             seeded.append(path)
             created += 1
         except Exception as e:
@@ -317,13 +317,13 @@ async def _seed_versions(nx: Any, manifest: dict[str, Any]) -> int:
     plan_path = "/workspace/demo/plan.md"
     if manifest.get("versions_seeded"):
         try:
-            if await nx.access(plan_path):
+            if nx.access(plan_path):
                 return 0
         except Exception:
             pass
     for version_content in PLAN_VERSIONS:
         try:
-            await nx.write(plan_path, version_content.encode())
+            nx.write(plan_path, version_content.encode())
             created += 1
         except Exception:
             break
@@ -332,7 +332,7 @@ async def _seed_versions(nx: Any, manifest: dict[str, Any]) -> int:
     final = next((c for p, c, _ in DEMO_FILES if p == plan_path), None)
     if final:
         try:
-            await nx.write(plan_path, final.encode())
+            nx.write(plan_path, final.encode())
             created += 1
         except Exception:
             pass
@@ -346,7 +346,7 @@ async def _seed_directories(nx: Any) -> int:
     created = 0
     for d in DEMO_DIRS:
         try:
-            await nx.mkdir(d, parents=True, exist_ok=True)
+            nx.mkdir(d, parents=True, exist_ok=True)
             created += 1
         except Exception:
             pass
@@ -1016,7 +1016,7 @@ async def _delete_demo_files(nx: Any, manifest: dict[str, Any]) -> int:
     # Delete files in reverse order (deepest first)
     for path in reversed(files):
         try:
-            await nx.sys_unlink(path)
+            nx.sys_unlink(path)
             removed += 1
         except Exception:
             pass
@@ -1024,7 +1024,7 @@ async def _delete_demo_files(nx: Any, manifest: dict[str, Any]) -> int:
     # Delete directories in reverse order (deepest first)
     for d in reversed(DEMO_DIRS):
         with contextlib.suppress(Exception):
-            await nx.rmdir(d)
+            nx.rmdir(d)
 
     return removed
 
@@ -1420,7 +1420,7 @@ async def _seed_search_chunks_docker(nx: Any, config: dict[str, Any]) -> bool:
     all_files = list(DEMO_FILES) + list(HERB_CORPUS)
     for path, _content, _desc in all_files:
         try:
-            raw = await nx.sys_read(path)
+            raw = nx.sys_read(path)
             text = raw.decode("utf-8", errors="ignore") if isinstance(raw, bytes) else str(raw)
             if text.strip():
                 docs.append({"path": path, "content": text})
@@ -1594,7 +1594,7 @@ async def _async_demo_init(reset: bool, skip_semantic: bool) -> None:
 
     # Flush the async write observer so version records are committed to the
     # database before any subsequent query (e.g. `nexus versions history`).
-    # Without this, the PipedRecordStoreWriteObserver may not have flushed yet.
+    # Without this, the RecordStoreWriteObserver may not have flushed yet.
     try:
         if hasattr(nx, "flush_write_observer"):
             nx.flush_write_observer()

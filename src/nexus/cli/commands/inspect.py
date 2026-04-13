@@ -58,7 +58,7 @@ async def _async_info(
                 pass  # connection already established by async with
 
             # Check if file exists first
-            if not await nx.access(path):
+            if not nx.access(path):
                 render_output(
                     data=None,
                     output_opts=output_opts,
@@ -162,7 +162,7 @@ async def _async_size(
         with console.status(
             f"[nexus.warning]Calculating size of {path}...[/nexus.warning]", spinner="dots"
         ):
-            files_raw = await nx.sys_readdir(path, recursive=True, details=True)
+            files_raw = nx.sys_readdir(path, recursive=True, details=True)
 
         nx.close()
 

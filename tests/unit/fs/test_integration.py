@@ -139,106 +139,93 @@ def dual_fs(tmp_path: Path):
 
 
 class TestSingleBackendLifecycle:
-    @pytest.mark.asyncio
-    async def test_write_and_read(self, slim_fs: SlimNexusFS):
+    def test_write_and_read(self, slim_fs: SlimNexusFS):
         """Write content, read it back, verify match."""
         content = b"Hello, nexus-fs!"
-        await slim_fs.write("/local/test.txt", content)
-        result = await slim_fs.read("/local/test.txt")
+        slim_fs.write("/local/test.txt", content)
+        result = slim_fs.read("/local/test.txt")
         assert result == content
 
-    @pytest.mark.asyncio
-    async def test_stat(self, slim_fs: SlimNexusFS):
+    def test_stat(self, slim_fs: SlimNexusFS):
         """Write a file, stat it, verify metadata."""
-        await slim_fs.write("/local/meta.txt", b"metadata test")
-        stat = await slim_fs.stat("/local/meta.txt")
+        slim_fs.write("/local/meta.txt", b"metadata test")
+        stat = slim_fs.stat("/local/meta.txt")
         assert stat is not None
         assert stat["path"] == "/local/meta.txt"
         assert stat["size"] == 13
         assert stat["is_directory"] is False
 
-    @pytest.mark.asyncio
-    async def test_ls(self, slim_fs: SlimNexusFS):
+    def test_ls(self, slim_fs: SlimNexusFS):
         """Write files, list directory, verify they appear."""
-        await slim_fs.write("/local/a.txt", b"aaa")
-        await slim_fs.write("/local/b.txt", b"bbb")
-        entries = await slim_fs.ls("/local/", detail=False, recursive=True)
+        slim_fs.write("/local/a.txt", b"aaa")
+        slim_fs.write("/local/b.txt", b"bbb")
+        entries = slim_fs.ls("/local/", detail=False, recursive=True)
         paths = [e for e in entries if e.endswith(".txt")]
         assert "/local/a.txt" in paths
         assert "/local/b.txt" in paths
 
-    @pytest.mark.asyncio
-    async def test_exists(self, slim_fs: SlimNexusFS):
+    def test_exists(self, slim_fs: SlimNexusFS):
         """Check exists before and after write."""
-        assert not await slim_fs.exists("/local/nofile.txt")
-        await slim_fs.write("/local/nofile.txt", b"now I exist")
-        assert await slim_fs.exists("/local/nofile.txt")
+        assert not slim_fs.exists("/local/nofile.txt")
+        slim_fs.write("/local/nofile.txt", b"now I exist")
+        assert slim_fs.exists("/local/nofile.txt")
 
-    @pytest.mark.asyncio
-    async def test_rename(self, slim_fs: SlimNexusFS):
+    def test_rename(self, slim_fs: SlimNexusFS):
         """Write, rename, verify old path gone and new path exists."""
-        await slim_fs.write("/local/old.txt", b"rename me")
-        await slim_fs.rename("/local/old.txt", "/local/new.txt")
-        result = await slim_fs.read("/local/new.txt")
+        slim_fs.write("/local/old.txt", b"rename me")
+        slim_fs.rename("/local/old.txt", "/local/new.txt")
+        result = slim_fs.read("/local/new.txt")
         assert result == b"rename me"
 
-    @pytest.mark.asyncio
-    async def test_delete(self, slim_fs: SlimNexusFS):
+    def test_delete(self, slim_fs: SlimNexusFS):
         """Write, delete, verify gone."""
-        await slim_fs.write("/local/delete-me.txt", b"bye")
-        await slim_fs.delete("/local/delete-me.txt")
-        stat = await slim_fs.stat("/local/delete-me.txt")
+        slim_fs.write("/local/delete-me.txt", b"bye")
+        slim_fs.delete("/local/delete-me.txt")
+        stat = slim_fs.stat("/local/delete-me.txt")
         assert stat is None
 
-    @pytest.mark.asyncio
-    async def test_copy(self, slim_fs: SlimNexusFS):
+    def test_copy(self, slim_fs: SlimNexusFS):
         """Write, copy, verify both exist with same content."""
-        await slim_fs.write("/local/src.txt", b"copy me")
-        await slim_fs.copy("/local/src.txt", "/local/dst.txt")
-        src = await slim_fs.read("/local/src.txt")
-        dst = await slim_fs.read("/local/dst.txt")
+        slim_fs.write("/local/src.txt", b"copy me")
+        slim_fs.copy("/local/src.txt", "/local/dst.txt")
+        src = slim_fs.read("/local/src.txt")
+        dst = slim_fs.read("/local/dst.txt")
         assert src == dst == b"copy me"
 
-    @pytest.mark.asyncio
-    async def test_mkdir(self, slim_fs: SlimNexusFS):
+    def test_mkdir(self, slim_fs: SlimNexusFS):
         """Create directory, verify it's a directory."""
-        await slim_fs.mkdir("/local/subdir")
-        stat = await slim_fs.stat("/local/subdir")
+        slim_fs.mkdir("/local/subdir")
+        stat = slim_fs.stat("/local/subdir")
         assert stat is not None
         assert stat["is_directory"] is True
 
-    @pytest.mark.asyncio
-    async def test_stat_directory(self, slim_fs: SlimNexusFS):
+    def test_stat_directory(self, slim_fs: SlimNexusFS):
         """Stat on the mount root should return directory."""
-        stat = await slim_fs.stat("/local")
+        stat = slim_fs.stat("/local")
         assert stat is not None
         assert stat["is_directory"] is True
 
-    @pytest.mark.asyncio
-    async def test_overwrite(self, slim_fs: SlimNexusFS):
+    def test_overwrite(self, slim_fs: SlimNexusFS):
         """Writing to the same path should overwrite."""
-        await slim_fs.write("/local/ow.txt", b"version 1")
-        await slim_fs.write("/local/ow.txt", b"version 2")
-        result = await slim_fs.read("/local/ow.txt")
+        slim_fs.write("/local/ow.txt", b"version 1")
+        slim_fs.write("/local/ow.txt", b"version 2")
+        result = slim_fs.read("/local/ow.txt")
         assert result == b"version 2"
 
-    @pytest.mark.asyncio
-    async def test_binary_content(self, slim_fs: SlimNexusFS):
+    def test_binary_content(self, slim_fs: SlimNexusFS):
         """Write and read binary content."""
         content = bytes(range(256))
-        await slim_fs.write("/local/binary.bin", content)
-        result = await slim_fs.read("/local/binary.bin")
+        slim_fs.write("/local/binary.bin", content)
+        result = slim_fs.read("/local/binary.bin")
         assert result == content
 
-    @pytest.mark.asyncio
-    async def test_empty_file(self, slim_fs: SlimNexusFS):
+    def test_empty_file(self, slim_fs: SlimNexusFS):
         """Write and read empty file."""
-        await slim_fs.write("/local/empty.txt", b"")
-        result = await slim_fs.read("/local/empty.txt")
+        slim_fs.write("/local/empty.txt", b"")
+        result = slim_fs.read("/local/empty.txt")
         assert result == b""
 
-    @pytest.mark.asyncio
-    async def test_list_mounts(self, slim_fs: SlimNexusFS):
+    def test_list_mounts(self, slim_fs: SlimNexusFS):
         """Verify mount points are listed."""
         mounts = slim_fs.list_mounts()
         assert "/local" in mounts
@@ -252,52 +239,48 @@ class TestSingleBackendLifecycle:
 class TestEditOperations:
     """Test the edit() method on SlimNexusFS facade."""
 
-    @pytest.mark.asyncio
-    async def test_edit_simple_replacement(self, slim_fs: SlimNexusFS):
+    def test_edit_simple_replacement(self, slim_fs: SlimNexusFS):
         """Simple search/replace edit."""
-        await slim_fs.write("/local/code.py", b"def foo():\n    return 1\n")
+        slim_fs.write("/local/code.py", b"def foo():\n    return 1\n")
 
-        result = await slim_fs.edit("/local/code.py", [("def foo():", "def bar():")])
+        result = slim_fs.edit("/local/code.py", [("def foo():", "def bar():")])
 
         assert result["success"] is True
         assert result["applied_count"] == 1
-        content = await slim_fs.read("/local/code.py")
+        content = slim_fs.read("/local/code.py")
         assert b"def bar():" in content
         assert b"def foo():" not in content
 
-    @pytest.mark.asyncio
-    async def test_edit_multiple_replacements(self, slim_fs: SlimNexusFS):
+    def test_edit_multiple_replacements(self, slim_fs: SlimNexusFS):
         """Multiple edits applied in sequence."""
-        await slim_fs.write("/local/multi.py", b"x = 1\ny = 2\nz = 3\n")
+        slim_fs.write("/local/multi.py", b"x = 1\ny = 2\nz = 3\n")
 
-        result = await slim_fs.edit(
+        result = slim_fs.edit(
             "/local/multi.py",
             [("x = 1", "x = 10"), ("y = 2", "y = 20")],
         )
 
         assert result["success"] is True
         assert result["applied_count"] == 2
-        content = await slim_fs.read("/local/multi.py")
+        content = slim_fs.read("/local/multi.py")
         assert content == b"x = 10\ny = 20\nz = 3\n"
 
-    @pytest.mark.asyncio
-    async def test_edit_returns_diff(self, slim_fs: SlimNexusFS):
+    def test_edit_returns_diff(self, slim_fs: SlimNexusFS):
         """Edit result includes a unified diff."""
-        await slim_fs.write("/local/diff.txt", b"hello world\n")
+        slim_fs.write("/local/diff.txt", b"hello world\n")
 
-        result = await slim_fs.edit("/local/diff.txt", [("hello", "goodbye")])
+        result = slim_fs.edit("/local/diff.txt", [("hello", "goodbye")])
 
         assert result["success"] is True
         assert "-hello world" in result["diff"]
         assert "+goodbye world" in result["diff"]
 
-    @pytest.mark.asyncio
-    async def test_edit_preview_does_not_modify(self, slim_fs: SlimNexusFS):
+    def test_edit_preview_does_not_modify(self, slim_fs: SlimNexusFS):
         """Preview mode returns diff but doesn't write."""
         original = b"keep me unchanged\n"
-        await slim_fs.write("/local/preview.txt", original)
+        slim_fs.write("/local/preview.txt", original)
 
-        result = await slim_fs.edit(
+        result = slim_fs.edit(
             "/local/preview.txt",
             [("keep me unchanged", "I was changed")],
             preview=True,
@@ -306,15 +289,14 @@ class TestEditOperations:
         assert result["success"] is True
         assert "+I was changed" in result["diff"]
         # File should NOT have changed
-        content = await slim_fs.read("/local/preview.txt")
+        content = slim_fs.read("/local/preview.txt")
         assert content == original
 
-    @pytest.mark.asyncio
-    async def test_edit_no_match_fails(self, slim_fs: SlimNexusFS):
+    def test_edit_no_match_fails(self, slim_fs: SlimNexusFS):
         """Edit fails when search string not found."""
-        await slim_fs.write("/local/nomatch.txt", b"actual content\n")
+        slim_fs.write("/local/nomatch.txt", b"actual content\n")
 
-        result = await slim_fs.edit(
+        result = slim_fs.edit(
             "/local/nomatch.txt",
             [("nonexistent text", "replacement")],
             fuzzy_threshold=1.0,
@@ -323,29 +305,27 @@ class TestEditOperations:
         assert result["success"] is False
         assert len(result["errors"]) > 0
 
-    @pytest.mark.asyncio
-    async def test_edit_with_dict_format(self, slim_fs: SlimNexusFS):
+    def test_edit_with_dict_format(self, slim_fs: SlimNexusFS):
         """Edit accepts dict format with old_str/new_str keys."""
-        await slim_fs.write("/local/dict.txt", b"old value\n")
+        slim_fs.write("/local/dict.txt", b"old value\n")
 
-        result = await slim_fs.edit(
+        result = slim_fs.edit(
             "/local/dict.txt",
             [{"old_str": "old value", "new_str": "new value"}],
         )
 
         assert result["success"] is True
-        content = await slim_fs.read("/local/dict.txt")
+        content = slim_fs.read("/local/dict.txt")
         assert content == b"new value\n"
 
-    @pytest.mark.asyncio
-    async def test_edit_fuzzy_match(self, slim_fs: SlimNexusFS):
+    def test_edit_fuzzy_match(self, slim_fs: SlimNexusFS):
         """Fuzzy matching handles minor differences."""
-        await slim_fs.write(
+        slim_fs.write(
             "/local/fuzzy.py",
             b"def calculate_total(items):\n    return sum(items)\n",
         )
 
-        result = await slim_fs.edit(
+        result = slim_fs.edit(
             "/local/fuzzy.py",
             [("def calcuate_total(items):", "def compute_sum(items):")],
             fuzzy_threshold=0.8,
@@ -353,69 +333,65 @@ class TestEditOperations:
 
         assert result["success"] is True
         assert result["matches"][0]["match_type"] == "fuzzy"
-        content = await slim_fs.read("/local/fuzzy.py")
+        content = slim_fs.read("/local/fuzzy.py")
         assert b"def compute_sum(items):" in content
 
-    @pytest.mark.asyncio
-    async def test_edit_etag_concurrency(self, slim_fs: SlimNexusFS):
+    def test_edit_etag_concurrency(self, slim_fs: SlimNexusFS):
         """Optimistic concurrency: edit with correct etag succeeds."""
-        write_result = await slim_fs.write("/local/etag.txt", b"version 1\n")
+        write_result = slim_fs.write("/local/etag.txt", b"version 1\n")
         etag = write_result["etag"]
 
-        result = await slim_fs.edit(
+        result = slim_fs.edit(
             "/local/etag.txt",
             [("version 1", "version 2")],
             if_match=etag,
         )
 
         assert result["success"] is True
-        content = await slim_fs.read("/local/etag.txt")
+        content = slim_fs.read("/local/etag.txt")
         assert content == b"version 2\n"
 
-    @pytest.mark.asyncio
-    async def test_edit_stale_etag_fails(self, slim_fs: SlimNexusFS):
+    def test_edit_stale_etag_fails(self, slim_fs: SlimNexusFS):
         """Optimistic concurrency: stale etag is rejected."""
-        write_result = await slim_fs.write("/local/stale.txt", b"version 1\n")
+        write_result = slim_fs.write("/local/stale.txt", b"version 1\n")
         old_etag = write_result["etag"]
 
         # Overwrite to change the etag
-        await slim_fs.write("/local/stale.txt", b"version 2\n")
+        slim_fs.write("/local/stale.txt", b"version 2\n")
 
         from nexus.contracts.exceptions import ConflictError
 
         with pytest.raises(ConflictError):
-            await slim_fs.edit(
+            slim_fs.edit(
                 "/local/stale.txt",
                 [("version 2", "version 3")],
                 if_match=old_etag,
             )
 
-    @pytest.mark.asyncio
-    async def test_edit_delete_text(self, slim_fs: SlimNexusFS):
+    def test_edit_delete_text(self, slim_fs: SlimNexusFS):
         """Replace with empty string to delete text."""
-        await slim_fs.write("/local/del.txt", b"keep\nremove me\nkeep too\n")
+        slim_fs.write("/local/del.txt", b"keep\nremove me\nkeep too\n")
 
-        result = await slim_fs.edit("/local/del.txt", [("remove me\n", "")])
+        result = slim_fs.edit("/local/del.txt", [("remove me\n", "")])
 
         assert result["success"] is True
-        content = await slim_fs.read("/local/del.txt")
+        content = slim_fs.read("/local/del.txt")
         assert content == b"keep\nkeep too\n"
 
-    @pytest.mark.asyncio
-    async def test_edit_multiline_block(self, slim_fs: SlimNexusFS):
+    def test_edit_multiline_block(self, slim_fs: SlimNexusFS):
         """Edit a multiline block."""
-        await slim_fs.write(
+        slim_fs.write(
             "/local/block.py",
             b"def old():\n    pass\n\ndef other():\n    pass\n",
         )
 
-        result = await slim_fs.edit(
+        result = slim_fs.edit(
             "/local/block.py",
             [("def old():\n    pass", "def new():\n    return 42")],
         )
 
         assert result["success"] is True
-        content = await slim_fs.read("/local/block.py")
+        content = slim_fs.read("/local/block.py")
         assert b"def new():\n    return 42" in content
         assert b"def other():\n    pass" in content
 
@@ -426,25 +402,22 @@ class TestEditOperations:
 
 
 class TestMultiBackend:
-    @pytest.mark.asyncio
-    async def test_write_to_separate_backends(self, dual_fs: SlimNexusFS):
+    def test_write_to_separate_backends(self, dual_fs: SlimNexusFS):
         """Write to two different backends, verify isolation."""
-        await dual_fs.write("/a/file.txt", b"backend A")
-        await dual_fs.write("/b/file.txt", b"backend B")
+        dual_fs.write("/a/file.txt", b"backend A")
+        dual_fs.write("/b/file.txt", b"backend B")
 
-        assert await dual_fs.read("/a/file.txt") == b"backend A"
-        assert await dual_fs.read("/b/file.txt") == b"backend B"
+        assert dual_fs.read("/a/file.txt") == b"backend A"
+        assert dual_fs.read("/b/file.txt") == b"backend B"
 
-    @pytest.mark.asyncio
-    async def test_cross_backend_copy(self, dual_fs: SlimNexusFS):
+    def test_cross_backend_copy(self, dual_fs: SlimNexusFS):
         """Copy from one backend to another."""
-        await dual_fs.write("/a/src.txt", b"cross-copy")
-        await dual_fs.copy("/a/src.txt", "/b/dst.txt")
+        dual_fs.write("/a/src.txt", b"cross-copy")
+        dual_fs.copy("/a/src.txt", "/b/dst.txt")
 
-        assert await dual_fs.read("/b/dst.txt") == b"cross-copy"
+        assert dual_fs.read("/b/dst.txt") == b"cross-copy"
 
-    @pytest.mark.asyncio
-    async def test_list_multiple_mounts(self, dual_fs: SlimNexusFS):
+    def test_list_multiple_mounts(self, dual_fs: SlimNexusFS):
         """Both mounts should be visible."""
         mounts = dual_fs.list_mounts()
         assert "/a" in mounts

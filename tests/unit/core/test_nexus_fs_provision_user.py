@@ -41,7 +41,7 @@ async def nx_with_db(tmp_path):
     mock_key_creator = MagicMock()
     mock_key_creator.create_key.return_value = ("key-123", "nxk-test-api-key")
     # Enlist mock api_key_creator into ServiceRegistry (BrickServices deleted)
-    await nx._service_registry.enlist("api_key_creator", mock_key_creator)
+    nx._service_registry.enlist("api_key_creator", mock_key_creator)
 
     # Mock ReBAC so we don't need real ReBAC setup
     mock_rebac_manager = MagicMock()

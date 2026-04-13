@@ -3,8 +3,8 @@
 Dispatches workflow trigger events via Rust kernel DT_PIPE IPC
 and broadcasts to webhook subscriptions.
 
-Implements ``VFSObserver`` — registered in KernelDispatch's OBSERVE phase so
-the kernel fires a single ``FileEvent`` without knowing about workflows.
+Registered in KernelDispatch's OBSERVE phase so the Rust kernel fires
+a single ``FileEvent`` without knowing about workflows.
 
 DI dependencies (no god-object access):
     - nx: NexusFS for Rust-kernel pipe I/O
@@ -13,9 +13,7 @@ DI dependencies (no god-object access):
     - enable_workflows: Feature flag from DistributedConfig
 
 Issue #1812: event_mask filtering.
-Issue #3646: sync on_mutation — pipe_write_nowait is already sync; fallback
-and webhook broadcast fire-and-forget via create_task. Enables full Rust
-OBSERVE dispatch.
+Issue #3646: observer dispatch is now fully Rust-native.
 """
 
 import asyncio
@@ -26,7 +24,6 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.bricks.workflows.protocol import WorkflowProtocol
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.core.file_events import ALL_FILE_EVENTS, FileEvent
 
 if TYPE_CHECKING:
     from nexus.core.nexus_fs import NexusFS
@@ -41,10 +38,8 @@ _WORKFLOW_PIPE_CAPACITY = 65_536  # 64KB
 class WorkflowDispatchService:
     """Dispatches workflow trigger events via Rust kernel DT_PIPE and webhook subscriptions.
 
-    Implements ``WorkflowDispatchProtocol`` and ``VFSObserver``.
+    Implements ``WorkflowDispatchProtocol``.
     """
-
-    event_mask: int = ALL_FILE_EVENTS
 
     def __init__(
         self,
@@ -71,48 +66,7 @@ class WorkflowDispatchService:
         self._subscription_manager = manager
 
     # ------------------------------------------------------------------
-    # VFSObserver — called by KernelDispatch OBSERVE phase
-    # ------------------------------------------------------------------
-
-    def on_mutation(self, event: FileEvent) -> None:
-        """Translate kernel FileEvent into workflow fire + webhook broadcast.
-
-        Sync (Issue #3646) — pipe_write_nowait is ~0.5μs; fallback and
-        webhook broadcast fire-and-forget via create_task.
-        """
-        from nexus.core.file_events import FileEventType
-
-        trigger_type = (
-            event.type.value if isinstance(event.type, FileEventType) else str(event.type)
-        )
-
-        # Build event context from FileEvent fields
-        ctx: dict[str, Any] = {
-            "zone_id": event.zone_id,
-            "agent_id": event.agent_id,
-            "user_id": event.user_id,
-            "timestamp": event.timestamp,
-        }
-        if event.type is FileEventType.FILE_RENAME:
-            ctx["old_path"] = event.path
-            ctx["new_path"] = event.new_path
-        else:
-            ctx["file_path"] = event.path
-
-        if event.size is not None:
-            ctx["size"] = event.size
-        if event.etag is not None:
-            ctx["etag"] = event.etag
-        if event.version is not None:
-            ctx["version"] = event.version
-        if event.type is FileEventType.FILE_WRITE:
-            ctx["created"] = event.is_new
-
-        label = f"{trigger_type}:{event.path}"
-        self._fire_sync(trigger_type, ctx, label)
-
-    # ------------------------------------------------------------------
-    # _fire_sync() — sync fast path, called from on_mutation
+    # _fire_sync() — sync fast path
     # ------------------------------------------------------------------
 
     def _fire_sync(self, trigger_type: str, event_context: dict[str, Any], label: str) -> None:
@@ -194,7 +148,7 @@ class WorkflowDispatchService:
         from nexus.contracts.metadata import DT_PIPE
 
         try:
-            await self._nx.sys_setattr(
+            self._nx.sys_setattr(
                 _WORKFLOW_PIPE_PATH,
                 entry_type=DT_PIPE,
                 capacity=_WORKFLOW_PIPE_CAPACITY,
@@ -244,7 +198,7 @@ class WorkflowDispatchService:
         engine = self._workflow_engine
         while True:
             try:
-                data = await self._nx.sys_read(_WORKFLOW_PIPE_PATH)
+                data = self._nx.sys_read(_WORKFLOW_PIPE_PATH)
             except NexusFileNotFoundError:
                 logger.debug("Workflow pipe closed, consumer exiting")
                 break

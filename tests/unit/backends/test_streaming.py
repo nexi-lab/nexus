@@ -478,12 +478,12 @@ class TestReadRangeRPC:
         try:
             # Write a test file
             content = b"0123456789ABCDEF"
-            await nx.write("/test.txt", content)
+            nx.write("/test.txt", content)
 
             # Read ranges
-            assert await nx.read_range("/test.txt", 0, 5) == b"01234"
-            assert await nx.read_range("/test.txt", 5, 10) == b"56789"
-            assert await nx.read_range("/test.txt", 10, 16) == b"ABCDEF"
+            assert nx.read_range("/test.txt", 0, 5) == b"01234"
+            assert nx.read_range("/test.txt", 5, 10) == b"56789"
+            assert nx.read_range("/test.txt", 10, 16) == b"ABCDEF"
         finally:
             nx.close()
 
@@ -503,15 +503,15 @@ class TestReadRangeRPC:
         )
 
         try:
-            await nx.write("/test.txt", b"test content")
+            nx.write("/test.txt", b"test content")
 
             # Negative start should raise
             with pytest.raises(ValueError, match="non-negative"):
-                await nx.read_range("/test.txt", -1, 5)
+                nx.read_range("/test.txt", -1, 5)
 
             # end < start should raise
             with pytest.raises(ValueError, match="end.*must be >= start"):
-                await nx.read_range("/test.txt", 10, 5)
+                nx.read_range("/test.txt", 10, 5)
         finally:
             nx.close()
 
@@ -532,10 +532,10 @@ class TestReadRangeRPC:
 
         try:
             content = b"test content"
-            await nx.write("/test.txt", content)
+            nx.write("/test.txt", content)
 
             # Empty range should return empty bytes
-            assert await nx.read_range("/test.txt", 5, 5) == b""
+            assert nx.read_range("/test.txt", 5, 5) == b""
         finally:
             nx.close()
 
@@ -556,10 +556,10 @@ class TestReadRangeRPC:
 
         try:
             content = b"short"
-            await nx.write("/test.txt", content)
+            nx.write("/test.txt", content)
 
             # Range beyond file size should return available content
-            result = await nx.read_range("/test.txt", 0, len(content) + 100)
+            result = nx.read_range("/test.txt", 0, len(content) + 100)
             assert result == content
         finally:
             nx.close()
@@ -586,7 +586,7 @@ class TestStatRPC:
         try:
             # Write a test file
             content = b"Hello, World!"
-            await nx.write("/test.txt", content)
+            nx.write("/test.txt", content)
 
             # stat() should return metadata
             info = nx.stat("/test.txt")
@@ -637,7 +637,7 @@ class TestStatRPC:
 
         try:
             # Create a file in a subdirectory to make an implicit directory
-            await nx.write("/subdir/file.txt", b"content")
+            nx.write("/subdir/file.txt", b"content")
 
             # stat() on the directory should work
             info = nx.stat("/subdir")

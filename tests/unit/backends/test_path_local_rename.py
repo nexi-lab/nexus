@@ -30,16 +30,16 @@ async def test_directory_rename_path_local(tmp_path: Path):
     )
 
     # Create a directory and a file inside it (large content to ensure backend storage)
-    await nx.mkdir("/old_dir")
-    await nx.write("/old_dir/test.txt", _LARGE_CONTENT)
+    nx.mkdir("/old_dir")
+    nx.write("/old_dir/test.txt", _LARGE_CONTENT)
 
     # Rename the directory
-    await nx.sys_rename("/old_dir", "/new_dir")
+    nx.sys_rename("/old_dir", "/new_dir")
 
     # Check metadata — virtual paths should be updated
-    assert await nx.access("/new_dir")
-    assert await nx.access("/new_dir/test.txt")
-    assert not await nx.access("/old_dir")
+    assert nx.access("/new_dir")
+    assert nx.access("/new_dir/test.txt")
+    assert not nx.access("/old_dir")
 
 
 if __name__ == "__main__":

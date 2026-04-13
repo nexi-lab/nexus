@@ -74,7 +74,7 @@ class TestFullMessageRoundTrip:
         await sender.send(env)
 
         # Verify message is in Bob's inbox
-        inbox_files = await vfs.list_dir(inbox_path("agent:bob"), ZONE)
+        inbox_files = vfs.list_dir(inbox_path("agent:bob"), ZONE)
         assert len(inbox_files) == 1
 
         # Verify EventBus was notified
@@ -82,7 +82,7 @@ class TestFullMessageRoundTrip:
         assert publisher.published[0][0] == "ipc.inbox.agent:bob"
 
         # Verify outbox copy exists
-        outbox_files = await vfs.list_dir(outbox_path("agent:alice"), ZONE)
+        outbox_files = vfs.list_dir(outbox_path("agent:alice"), ZONE)
         assert len(outbox_files) == 1
 
         # Bob processes the message
@@ -104,9 +104,9 @@ class TestFullMessageRoundTrip:
         assert received[0].payload["action"] == "review_code"
 
         # Message moved from inbox to processed
-        inbox_files = await vfs.list_dir(inbox_path("agent:bob"), ZONE)
+        inbox_files = vfs.list_dir(inbox_path("agent:bob"), ZONE)
         assert len(inbox_files) == 0
-        processed_files = await vfs.list_dir(processed_path("agent:bob"), ZONE)
+        processed_files = vfs.list_dir(processed_path("agent:bob"), ZONE)
         assert len(processed_files) == 1
 
     @pytest.mark.asyncio
@@ -251,9 +251,9 @@ class TestDeadLetterAndTTLSweep:
         await processor.process_inbox()
 
         # Message should be in dead_letter, not inbox
-        inbox_files = await vfs.list_dir(inbox_path("agent:bob"), ZONE)
+        inbox_files = vfs.list_dir(inbox_path("agent:bob"), ZONE)
         assert len(inbox_files) == 0
-        dl_files = await vfs.list_dir(dead_letter_path("agent:bob"), ZONE)
+        dl_files = vfs.list_dir(dead_letter_path("agent:bob"), ZONE)
         dl_msg_files = [f for f in dl_files if not f.endswith(".reason.json")]
         assert len(dl_msg_files) == 1
 
@@ -277,7 +277,7 @@ class TestDeadLetterAndTTLSweep:
         from nexus.bricks.ipc.conventions import message_path_in_inbox
 
         msg_path = message_path_in_inbox("agent:bob", env.id, env.timestamp)
-        await vfs.write(msg_path, env.to_bytes(), ZONE)
+        vfs.write(msg_path, env.to_bytes(), ZONE)
 
         # Also send a valid (non-expired) message
         valid_env = MessageEnvelope(
@@ -295,9 +295,9 @@ class TestDeadLetterAndTTLSweep:
         expired_count = await sweeper.sweep_once()
 
         assert expired_count == 1
-        inbox_files = await vfs.list_dir(inbox_path("agent:bob"), ZONE)
+        inbox_files = vfs.list_dir(inbox_path("agent:bob"), ZONE)
         assert len(inbox_files) == 1  # Only the valid message remains
-        dl_files = await vfs.list_dir(dead_letter_path("agent:bob"), ZONE)
+        dl_files = vfs.list_dir(dead_letter_path("agent:bob"), ZONE)
         dl_msg_files = [f for f in dl_files if not f.endswith(".reason.json")]
         assert len(dl_msg_files) == 1  # Expired message moved here
 
@@ -403,7 +403,7 @@ class TestEventDrivenSweepIntegration:
             payload={},
         )
         msg_path = message_path_in_inbox("agent:bob", expired_env.id, expired_env.timestamp)
-        await vfs.sys_write(msg_path, expired_env.to_bytes(), ZONE)
+        vfs.sys_write(msg_path, expired_env.to_bytes(), ZONE)
 
         # Start event-driven sweeper
         sweeper = TTLSweeper(
@@ -427,9 +427,9 @@ class TestEventDrivenSweepIntegration:
         await cache_store.close()
 
         # Expired message should have been swept
-        inbox_files = await vfs.list_dir(inbox_path("agent:bob"), ZONE)
+        inbox_files = vfs.list_dir(inbox_path("agent:bob"), ZONE)
         assert len(inbox_files) == 0
-        dl_files = await vfs.list_dir(dead_letter_path("agent:bob"), ZONE)
+        dl_files = vfs.list_dir(dead_letter_path("agent:bob"), ZONE)
         dl_msgs = [f for f in dl_files if not f.endswith(".reason.json")]
         assert len(dl_msgs) == 1
 
@@ -469,7 +469,7 @@ class TestEventDrivenSweepIntegration:
         from nexus.bricks.ipc.conventions import message_path_in_inbox
 
         msg_path = message_path_in_inbox("agent:bob", env.id, env.timestamp)
-        await vfs.sys_write(msg_path, env.to_bytes(), ZONE)
+        vfs.sys_write(msg_path, env.to_bytes(), ZONE)
 
         # Publish TTL event (simulate what MessageSender._send_to_inbox does)
         import json
@@ -491,9 +491,9 @@ class TestEventDrivenSweepIntegration:
         await cache_store.close()
 
         # Expired message swept, with reason sidecar
-        inbox_files = await vfs.list_dir(inbox_path("agent:bob"), ZONE)
+        inbox_files = vfs.list_dir(inbox_path("agent:bob"), ZONE)
         assert len(inbox_files) == 0
-        dl_files = await vfs.list_dir(dead_letter_path("agent:bob"), ZONE)
+        dl_files = vfs.list_dir(dead_letter_path("agent:bob"), ZONE)
         reason_files = [f for f in dl_files if f.endswith(".reason.json")]
         assert len(reason_files) == 1  # .reason.json sidecar written by shared helper
 

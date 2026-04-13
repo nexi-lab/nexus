@@ -9,7 +9,7 @@ from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from nexus import NexusFilesystem
+    from nexus.core.nexus_fs import NexusFS
 
 
 class SyncStats:
@@ -69,7 +69,7 @@ def list_local_files(local_path: str, recursive: bool = True) -> list[str]:
 
 
 async def copy_file(
-    nx: "NexusFilesystem",
+    nx: "NexusFS",
     source: str,
     dest: str,
     is_source_local: bool,
@@ -93,9 +93,9 @@ async def copy_file(
             content = f.read()
 
         # Check if destination exists and has same content (if checksum enabled)
-        if checksum and await nx.access(dest):
+        if checksum and nx.access(dest):
             try:
-                raw_existing = await nx.sys_read(dest)
+                raw_existing = nx.sys_read(dest)
                 # Type narrowing: when return_metadata=False (default), result is bytes
                 assert isinstance(raw_existing, bytes), "Expected bytes from read()"
                 existing_content = raw_existing
@@ -108,14 +108,14 @@ async def copy_file(
         # Create parent directories in Nexus
         parent = str(PurePosixPath(dest).parent)
         if parent and parent != "/" and parent != ".":
-            await nx.mkdir(parent, parents=True, exist_ok=True)
+            nx.mkdir(parent, parents=True, exist_ok=True)
 
-        await nx.write(dest, content)
+        nx.write(dest, content)
         return len(content)
 
     elif not is_source_local and is_dest_local:
         # Nexus to local
-        raw_content = await nx.sys_read(source)
+        raw_content = nx.sys_read(source)
         # Type narrowing: when return_metadata=False (default), result is bytes
         assert isinstance(raw_content, bytes), "Expected bytes from read()"
         content = raw_content
@@ -135,15 +135,15 @@ async def copy_file(
 
     else:
         # Nexus to Nexus
-        raw_content = await nx.sys_read(source)
+        raw_content = nx.sys_read(source)
         # Type narrowing: when return_metadata=False (default), result is bytes
         assert isinstance(raw_content, bytes), "Expected bytes from read()"
         content = raw_content
 
         # Check if destination exists and has same content (if checksum enabled)
-        if checksum and await nx.access(dest):
+        if checksum and nx.access(dest):
             try:
-                raw_existing = await nx.sys_read(dest)
+                raw_existing = nx.sys_read(dest)
                 # Type narrowing: when return_metadata=False (default), result is bytes
                 assert isinstance(raw_existing, bytes), "Expected bytes from read()"
                 existing_content = raw_existing
@@ -156,14 +156,14 @@ async def copy_file(
         # Create parent directories in Nexus
         parent = str(PurePosixPath(dest).parent)
         if parent and parent != "/" and parent != ".":
-            await nx.mkdir(parent, parents=True, exist_ok=True)
+            nx.mkdir(parent, parents=True, exist_ok=True)
 
-        await nx.write(dest, content)
+        nx.write(dest, content)
         return len(content)
 
 
 async def sync_directories(
-    nx: "NexusFilesystem",
+    nx: "NexusFS",
     source: str,
     dest: str,
     delete: bool = False,
@@ -197,7 +197,7 @@ async def sync_directories(
         source_path = Path(source)
         source_files_rel = [Path(f).relative_to(source_path).as_posix() for f in source_files]
     else:
-        source_files_abs = await nx.sys_readdir(source, recursive=True)
+        source_files_abs = nx.sys_readdir(source, recursive=True)
         # Ensure we have a list of strings (paths)
         if (
             isinstance(source_files_abs, list)
@@ -219,7 +219,7 @@ async def sync_directories(
             # Convert to relative paths with forward slashes (POSIX-style)
             dest_files_rel = [Path(f).relative_to(dest_path).as_posix() for f in dest_files]
         else:
-            dest_files_abs = await nx.sys_readdir(dest, recursive=True)
+            dest_files_abs = nx.sys_readdir(dest, recursive=True)
             # Ensure we have a list of strings (paths)
             if (
                 isinstance(dest_files_abs, list)
@@ -299,13 +299,13 @@ async def sync_directories(
                         os.remove(dest_full)
                     else:
                         dest_full = str(PurePosixPath(dest) / rel_path)
-                        await nx.sys_unlink(dest_full)
+                        nx.sys_unlink(dest_full)
 
     return stats
 
 
 async def copy_recursive(
-    nx: "NexusFilesystem",
+    nx: "NexusFS",
     source: str,
     dest: str,
     checksum: bool = True,
@@ -321,7 +321,7 @@ async def copy_recursive(
 
 
 async def move_file(
-    nx: "NexusFilesystem",
+    nx: "NexusFS",
     source: str,
     dest: str,
     force: bool = False,
@@ -346,13 +346,13 @@ async def move_file(
             # Falls back to copy+delete if rename fails (e.g. gRPC transport
             # not available on REMOTE profile).  Issue #341.
             try:
-                await nx.sys_rename(source, dest, force=force)
+                nx.sys_rename(source, dest, force=force)
                 return True
             except Exception:
                 # Fallback: copy content then delete source
-                content = await nx.sys_read(source)
-                await nx.write(dest, content)
-                await nx.sys_unlink(source)
+                content = nx.sys_read(source)
+                nx.write(dest, content)
+                nx.sys_unlink(source)
                 return True
 
         else:
@@ -363,7 +363,7 @@ async def move_file(
             if is_source_local:
                 os.remove(source)
             else:
-                await nx.sys_unlink(source)
+                nx.sys_unlink(source)
             return True
 
     except (OSError, ValueError, TypeError):

@@ -10,8 +10,8 @@ The kernel passes kernel-native types only (FileMetadata).  Observers
 derive whatever they need (e.g. snapshot_hash = metadata.etag).
 
 Current implementations:
-- RecordStoreWriteObserver: synchronous audit trail + versioning (strict_mode)
-- PipedRecordStoreWriteObserver: async via DT_PIPE kernel IPC (Issue #809)
+- RecordStoreWriteObserver (record_store_write_observer): synchronous audit trail + versioning (strict_mode)
+- RecordStoreWriteObserver (piped_record_store_write_observer): OBSERVE-phase observer with debounced batch flush
 
 The kernel is a pure caller — it never catches observer exceptions.
 Each implementation decides its own failure handling strategy.

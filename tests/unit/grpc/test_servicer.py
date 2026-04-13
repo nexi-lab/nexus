@@ -29,12 +29,12 @@ from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
 @pytest.fixture
 def mock_nexus_fs() -> MagicMock:
     fs = MagicMock()
-    # Default async methods to AsyncMock so they can be awaited
-    fs.read = AsyncMock(return_value=b"")
-    fs.write = AsyncMock(return_value={})
-    fs.sys_stat = AsyncMock(return_value=None)
-    fs.sys_unlink = AsyncMock(return_value=None)
-    fs.rmdir = AsyncMock(return_value=None)
+    # NexusFS methods are now sync (Phase 7)
+    fs.read = MagicMock(return_value=b"")
+    fs.write = MagicMock(return_value={})
+    fs.sys_stat = MagicMock(return_value=None)
+    fs.sys_unlink = MagicMock(return_value=None)
+    fs.rmdir = MagicMock(return_value=None)
     return fs
 
 
@@ -286,7 +286,7 @@ class TestVFSServicerTypedRPCs:
     @pytest.mark.anyio
     async def test_read_success(self, servicer, mock_nexus_fs) -> None:
         """Read returns content via sys_read (full VFS path)."""
-        mock_nexus_fs.sys_read = AsyncMock(return_value=b"hello world")
+        mock_nexus_fs.sys_read = MagicMock(return_value=b"hello world")
         request = _make_typed_request(
             "ReadRequest", path="/test.txt", auth_token="", content_id="sha256-abc"
         )
@@ -301,7 +301,7 @@ class TestVFSServicerTypedRPCs:
     @pytest.mark.anyio
     async def test_read_not_found(self, servicer, mock_nexus_fs) -> None:
         """Read returns is_error=True with FILE_NOT_FOUND on missing file."""
-        mock_nexus_fs.sys_read = AsyncMock(side_effect=NexusFileNotFoundError("/missing.txt"))
+        mock_nexus_fs.sys_read = MagicMock(side_effect=NexusFileNotFoundError("/missing.txt"))
         request = _make_typed_request(
             "ReadRequest", path="/missing.txt", auth_token="", content_id="sha256-xyz"
         )
@@ -316,7 +316,7 @@ class TestVFSServicerTypedRPCs:
     @pytest.mark.anyio
     async def test_write_success(self, servicer, mock_nexus_fs) -> None:
         """Write returns etag and size from write() (Issue #2787)."""
-        mock_nexus_fs.write = AsyncMock(return_value={"etag": "sha256-xyz", "size": 4})
+        mock_nexus_fs.write = MagicMock(return_value={"etag": "sha256-xyz", "size": 4})
         request = _make_typed_request(
             "WriteRequest", path="/file.txt", content=b"data", auth_token="", etag=""
         )
@@ -334,8 +334,8 @@ class TestVFSServicerTypedRPCs:
 
         Issue #2787: sys_write() returns int (POSIX), so etag was always empty.
         """
-        mock_nexus_fs.write = AsyncMock(return_value={"etag": "sha256-xyz", "size": 4})
-        mock_nexus_fs.sys_write = AsyncMock(return_value=4)
+        mock_nexus_fs.write = MagicMock(return_value={"etag": "sha256-xyz", "size": 4})
+        mock_nexus_fs.sys_write = MagicMock(return_value=4)
         request = _make_typed_request(
             "WriteRequest", path="/file.txt", content=b"data", auth_token="", etag=""
         )
@@ -393,16 +393,16 @@ class TestVFSServicerTypedRPCs:
         )
         context = MagicMock()
 
-        # metadata.get is still called via asyncio.to_thread (it's sync)
+        # metadata.get is called via asyncio.to_thread (it's sync)
         file_meta = MagicMock(mime_type="application/octet-stream")
         mock_nexus_fs.metadata.get.return_value = file_meta
-        mock_nexus_fs.sys_unlink = AsyncMock(return_value=None)
+        mock_nexus_fs.sys_unlink = MagicMock(return_value=None)
 
         response = await servicer.Delete(request, context)
 
         assert response.is_error is False
         assert response.success is True
-        mock_nexus_fs.sys_unlink.assert_awaited_once()
+        mock_nexus_fs.sys_unlink.assert_called_once()
 
     @pytest.mark.anyio
     async def test_delete_recursive(self, servicer, mock_nexus_fs) -> None:
@@ -412,7 +412,7 @@ class TestVFSServicerTypedRPCs:
 
         dir_meta = MagicMock(mime_type="inode/directory")
         mock_nexus_fs.metadata.get.return_value = dir_meta
-        mock_nexus_fs.rmdir = AsyncMock(return_value=None)
+        mock_nexus_fs.rmdir = MagicMock(return_value=None)
 
         response = await servicer.Delete(request, context)
 

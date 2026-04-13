@@ -22,7 +22,7 @@ def get_nexus_tools(nx):
     Create OpenAI Agent SDK tools from a Nexus filesystem instance.
 
     Args:
-        nx: NexusFilesystem instance (local or remote)
+        nx: NexusFS instance (local or remote)
 
     Returns:
         List of function tool definitions decorated with @function_tool
@@ -140,7 +140,7 @@ def get_nexus_tools(nx):
         """
         try:
             # Read file content
-            content = await nx.sys_read(path)
+            content = nx.sys_read(path)
 
             # Handle bytes
             if isinstance(content, bytes):
@@ -194,7 +194,7 @@ def get_nexus_tools(nx):
             content_bytes = content.encode("utf-8") if isinstance(content, str) else content
 
             # Write file (Nexus creates parent directories automatically)
-            await nx.sys_write(path, content_bytes)
+            nx.sys_write(path, content_bytes)
 
             # Verify write was successful
             if await nx.access(path):

@@ -641,12 +641,12 @@ class TestPlaygroundApp:
         class _Kernel:
             router = _Router()
 
-            async def sys_readdir(self, path, recursive=False, details=False, context=None):
+            def sys_readdir(self, path, recursive=False, details=False, context=None):
                 assert path == "/gws/docs"
                 return []
 
         fs = ContextualNexusFS(_Kernel())
-        rows = await fs.ls("/gws/docs", detail=True, recursive=False)
+        rows = fs.ls("/gws/docs", detail=True, recursive=False)
         assert isinstance(rows, list)
         assert rows[0]["path"] == "/gws/docs/Doc Alpha"
         assert rows[0]["is_directory"] is False
@@ -682,12 +682,12 @@ class TestPlaygroundApp:
         class _Kernel:
             router = _Router()
 
-            async def sys_readdir(self, path, recursive=False, details=False, context=None):
+            def sys_readdir(self, path, recursive=False, details=False, context=None):
                 assert path == "/gws/docs"
                 return []
 
         fs = ContextualNexusFS(_Kernel())
-        rows = await fs.ls("/gws/docs", detail=True, recursive=False)
+        rows = fs.ls("/gws/docs", detail=True, recursive=False)
         assert rows[0]["path"] == "/gws/docs/Doc Alpha [docA]"
         assert rows[0]["size"] == 123
         assert rows[0]["modified_at"] == "2026-03-26T00:40:00Z"
@@ -721,7 +721,7 @@ class TestPlaygroundApp:
         class _Kernel:
             router = _Router()
 
-            async def sys_readdir(self, path, recursive=False, details=False, context=None):
+            def sys_readdir(self, path, recursive=False, details=False, context=None):
                 assert path == "/gws/docs"
                 return [
                     {
@@ -733,7 +733,7 @@ class TestPlaygroundApp:
                 ]
 
         fs = ContextualNexusFS(_Kernel())
-        rows = await fs.ls("/gws/docs", detail=True, recursive=False)
+        rows = fs.ls("/gws/docs", detail=True, recursive=False)
         assert rows == [
             {
                 "path": "/gws/docs/Fresh Doc [docA]",
@@ -778,14 +778,14 @@ class TestPlaygroundApp:
         class _Kernel:
             router = _Router()
 
-            async def sys_readdir(self, path, recursive=False, details=False, context=None):
+            def sys_readdir(self, path, recursive=False, details=False, context=None):
                 return []
 
-            async def sys_stat(self, path, context=None):
+            def sys_stat(self, path, context=None):
                 return None
 
         fs = ContextualNexusFS(_Kernel())
-        stat = await fs.stat("/gws/docs/Doc Alpha [docA]")
+        stat = fs.stat("/gws/docs/Doc Alpha [docA]")
         assert stat == {
             "path": "/gws/docs/Doc Alpha [docA]",
             "size": 123,

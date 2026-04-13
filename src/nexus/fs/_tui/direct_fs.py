@@ -335,16 +335,16 @@ class MultiDirectFS:
         # Fallback to first backend
         return self._backends[0] if self._backends else None
 
-    async def read(self, path: str) -> bytes:
-        result: bytes = await self._resolve(path).read(path)
+    def read(self, path: str) -> bytes:
+        result: bytes = self._resolve(path).read(path)
         return result
 
-    async def read_range(self, path: str, start: int, end: int) -> bytes:
-        result: bytes = await self._resolve(path).read_range(path, start, end)
+    def read_range(self, path: str, start: int, end: int) -> bytes:
+        result: bytes = self._resolve(path).read_range(path, start, end)
         return result
 
-    async def write(self, path: str, content: bytes) -> dict[str, Any]:
-        result: dict[str, Any] = await self._resolve(path).write(path, content)
+    def write(self, path: str, content: bytes) -> dict[str, Any]:
+        result: dict[str, Any] = self._resolve(path).write(path, content)
         return result
 
     async def ls(
@@ -363,10 +363,10 @@ class MultiDirectFS:
         return result
 
     async def mkdir(self, path: str, parents: bool = True) -> None:
-        await self._resolve(path).mkdir(path, parents=parents)
+        self._resolve(path).mkdir(path, parents=parents)
 
     async def rmdir(self, path: str, recursive: bool = False) -> None:
-        await self._resolve(path).rmdir(path, recursive=recursive)
+        self._resolve(path).rmdir(path, recursive=recursive)
 
     async def delete(self, path: str) -> None:
         await self._resolve(path).delete(path)

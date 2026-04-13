@@ -36,7 +36,7 @@ async def safe_operation(
 
     Examples:
         >>> def create_folder(path):
-        ...     await nx.mkdir(path)
+        ...     nx.mkdir(path)
         ...     return {"path": path}
         >>>
         >>> result = safe_operation(

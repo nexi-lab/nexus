@@ -25,10 +25,10 @@ class TestWriteBatchHappyPath:
 
     @pytest.mark.asyncio
     async def test_write_batch_single_file(self, nx):
-        results = await nx.write_batch([("/files/a.txt", b"hello")])
+        results = nx.write_batch([("/files/a.txt", b"hello")])
         assert len(results) == 1
         assert results[0]["size"] == 5
-        assert await nx.sys_read("/files/a.txt") == b"hello"
+        assert nx.sys_read("/files/a.txt") == b"hello"
 
     @pytest.mark.asyncio
     async def test_write_batch_multiple_files(self, nx):
@@ -37,27 +37,27 @@ class TestWriteBatchHappyPath:
             ("/files/b.txt", b"bbb"),
             ("/files/c.txt", b"ccc"),
         ]
-        results = await nx.write_batch(files)
+        results = nx.write_batch(files)
         assert len(results) == 3
         for i, (path, content) in enumerate(files):
-            assert await nx.sys_read(path) == content
+            assert nx.sys_read(path) == content
             assert results[i]["size"] == len(content)
 
     @pytest.mark.asyncio
     async def test_write_batch_returns_etag(self, nx):
-        results = await nx.write_batch([("/files/a.txt", b"content")])
+        results = nx.write_batch([("/files/a.txt", b"content")])
         assert "etag" in results[0]
         assert isinstance(results[0]["etag"], str)
         assert len(results[0]["etag"]) > 0
 
     @pytest.mark.asyncio
     async def test_write_batch_returns_version(self, nx):
-        results = await nx.write_batch([("/files/a.txt", b"v1")])
+        results = nx.write_batch([("/files/a.txt", b"v1")])
         assert results[0]["version"] == 1
 
     @pytest.mark.asyncio
     async def test_write_batch_returns_modified_at(self, nx):
-        results = await nx.write_batch([("/files/a.txt", b"data")])
+        results = nx.write_batch([("/files/a.txt", b"data")])
         assert "modified_at" in results[0]
         assert results[0]["modified_at"] is not None
 
@@ -65,7 +65,7 @@ class TestWriteBatchHappyPath:
     async def test_write_batch_deduplicates_content(self, nx):
         """Same content written to different paths should share the same hash."""
         content = b"identical content"
-        results = await nx.write_batch(
+        results = nx.write_batch(
             [
                 ("/files/a.txt", content),
                 ("/files/b.txt", content),
@@ -79,7 +79,7 @@ class TestWriteBatchEmptyInput:
 
     @pytest.mark.asyncio
     async def test_empty_batch_returns_empty_list(self, nx):
-        results = await nx.write_batch([])
+        results = nx.write_batch([])
         assert results == []
 
 
@@ -88,14 +88,14 @@ class TestWriteBatchVersioning:
 
     @pytest.mark.asyncio
     async def test_overwrite_increments_version(self, nx):
-        await nx.write("/files/a.txt", b"v1")
-        results = await nx.write_batch([("/files/a.txt", b"v2")])
+        nx.write("/files/a.txt", b"v1")
+        results = nx.write_batch([("/files/a.txt", b"v2")])
         assert results[0]["version"] == 2
 
     @pytest.mark.asyncio
     async def test_batch_overwrite_mixed_new_and_existing(self, nx):
-        await nx.write("/files/existing.txt", b"old")
-        results = await nx.write_batch(
+        nx.write("/files/existing.txt", b"old")
+        results = nx.write_batch(
             [
                 ("/files/existing.txt", b"updated"),
                 ("/files/new.txt", b"fresh"),
@@ -124,7 +124,7 @@ class TestWriteBatchWithFailingBackend:
         # First file write succeeds (call #1 = write_content)
         # Second file write fails (call #2+ = write_content, permanently)
         with pytest.raises(BackendError):
-            await nx.write_batch(
+            nx.write_batch(
                 [
                     ("/files/a.txt", b"ok"),
                     ("/files/b.txt", b"fail"),
@@ -137,26 +137,26 @@ class TestWriteBatchContentEdgeCases:
 
     @pytest.mark.asyncio
     async def test_empty_content(self, nx):
-        results = await nx.write_batch([("/files/empty.txt", b"")])
+        results = nx.write_batch([("/files/empty.txt", b"")])
         assert results[0]["size"] == 0
-        assert await nx.sys_read("/files/empty.txt") == b""
+        assert nx.sys_read("/files/empty.txt") == b""
 
     @pytest.mark.asyncio
     async def test_binary_content(self, nx):
         binary = bytes(range(256))
-        results = await nx.write_batch([("/files/binary.bin", binary)])
+        results = nx.write_batch([("/files/binary.bin", binary)])
         assert results[0]["size"] == 256
-        assert await nx.sys_read("/files/binary.bin") == binary
+        assert nx.sys_read("/files/binary.bin") == binary
 
     @pytest.mark.asyncio
     async def test_large_batch(self, nx):
         """Write 50 files in a single batch."""
         files = [(f"/files/file_{i:03d}.txt", f"content_{i}".encode()) for i in range(50)]
-        results = await nx.write_batch(files)
+        results = nx.write_batch(files)
         assert len(results) == 50
         # Spot-check a few
-        assert await nx.sys_read("/files/file_000.txt") == b"content_0"
-        assert await nx.sys_read("/files/file_049.txt") == b"content_49"
+        assert nx.sys_read("/files/file_000.txt") == b"content_0"
+        assert nx.sys_read("/files/file_049.txt") == b"content_49"
 
 
 class TestWriteBatchPathValidation:
@@ -168,7 +168,7 @@ class TestWriteBatchPathValidation:
         from nexus.contracts.exceptions import InvalidPathError
 
         with pytest.raises(InvalidPathError):
-            await nx.write_batch([("", b"content")])
+            nx.write_batch([("", b"content")])
 
     def test_readonly_path_in_batch(self, nx):
         """A read-only path should raise PermissionError."""

@@ -73,7 +73,7 @@ async def _startup_async_rebac(app: "FastAPI", svc: "LifespanServices") -> None:
         if app.state.async_rebac_manager is not None:
             coord = svc.service_coordinator
             if coord is not None:
-                await coord.enlist("async_rebac_manager", app.state.async_rebac_manager)
+                coord.enlist("async_rebac_manager", app.state.async_rebac_manager)
 
     except Exception as e:
         logger.warning("Failed to initialize async ReBAC manager: %s", e, exc_info=True)
@@ -386,7 +386,7 @@ async def _startup_tiger_cache(app: "FastAPI", svc: "LifespanServices") -> list[
                     # Q3 PersistentService — coordinator auto-calls start()
                     coord = svc.service_coordinator
                     if coord is not None:
-                        await coord.enlist("directory_grant_expander", expander)
+                        coord.enlist("directory_grant_expander", expander)
                     else:
                         await expander.start()
                     logger.info("DirectoryGrantExpander worker started for large folder grants")

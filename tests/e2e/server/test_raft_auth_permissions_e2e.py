@@ -725,7 +725,7 @@ class TestLockApiAuth:
         """Test write(lock=True) through the full RPC stack with auth (#1143).
 
         This exercises: HTTP → auth → RPC dispatch → WriteParams(lock=True)
-        → _handle_write → await nexus_fs.sys_write(lock=True).
+        → _handle_write → nexus_fs.sys_write(lock=True).
         If lock manager is unavailable, write should still succeed (lock=False fallback).
         """
         path = f"/workspace/lock_write_{uuid.uuid4().hex[:8]}.txt"

@@ -151,27 +151,27 @@ class MessageSender:
     async def _send_to_inbox(self, envelope: MessageEnvelope, data: bytes) -> str:
         """Write message to inbox, copy to outbox, and notify via DT_PIPE + EventBus."""
         recipient_inbox = inbox_path(envelope.recipient)
-        if not await self._vfs.access(recipient_inbox, context=self._ctx()):
+        if not self._vfs.access(recipient_inbox, context=self._ctx()):
             raise InboxNotFoundError(envelope.recipient)
 
         # Check backpressure
         inbox_count = len(
-            await self._vfs.sys_readdir(recipient_inbox, recursive=False, context=self._ctx())
+            self._vfs.sys_readdir(recipient_inbox, recursive=False, context=self._ctx())
         )
         if inbox_count >= self._max_inbox_size:
             raise InboxFullError(envelope.recipient, inbox_count, self._max_inbox_size)
 
         msg_path = message_path_in_inbox(envelope.recipient, envelope.id, envelope.timestamp)
-        await self._vfs.write(msg_path, data, context=self._ctx())
+        self._vfs.write(msg_path, data, context=self._ctx())
 
         # Outbox copy (best-effort)
         outbox_dir = outbox_path(envelope.sender)
         try:
-            if await self._vfs.access(outbox_dir, context=self._ctx()):
+            if self._vfs.access(outbox_dir, context=self._ctx()):
                 outbox_msg_path = message_path_in_outbox(
                     envelope.sender, envelope.id, envelope.timestamp
                 )
-                await self._vfs.write(outbox_msg_path, data, context=self._ctx())
+                self._vfs.write(outbox_msg_path, data, context=self._ctx())
         except Exception as exc:
             logger.warning(
                 "Failed to write outbox copy",
@@ -435,9 +435,7 @@ class MessageProcessor:
         """
         agent_inbox = inbox_path(self._agent_id)
         try:
-            filenames = await self._vfs.sys_readdir(
-                agent_inbox, recursive=False, context=self._ctx()
-            )
+            filenames = self._vfs.sys_readdir(agent_inbox, recursive=False, context=self._ctx())
         except Exception:
             logger.warning(
                 "Failed to list inbox for agent %s",
@@ -469,9 +467,9 @@ class MessageProcessor:
             if claim_dt >= stale_cutoff:
                 continue  # recently claimed — active handler, do not disturb
             orig_path = f"{agent_inbox}/{orig_fn}"
-            if not await self._vfs.access(orig_path, context=self._ctx()):
+            if not self._vfs.access(orig_path, context=self._ctx()):
                 try:
-                    await self._vfs.sys_rename(proc_path, orig_path, context=self._ctx())
+                    self._vfs.sys_rename(proc_path, orig_path, context=self._ctx())
                     logger.info("Recovered stale .proc claim: %s → %s", fn, orig_fn)
                 except Exception:
                     pass
@@ -495,7 +493,7 @@ class MessageProcessor:
         """
         # Read and parse envelope
         try:
-            data = await self._vfs.sys_read(msg_path, context=self._ctx())
+            data = self._vfs.sys_read(msg_path, context=self._ctx())
             envelope = MessageEnvelope.from_bytes(data)
         except FileNotFoundError:
             # File was already moved/processed by another processor (race condition).
@@ -527,7 +525,7 @@ class MessageProcessor:
                 dl_path = message_path_in_dead_letter(
                     self._agent_id, envelope.id, envelope.timestamp
                 )
-                await self._vfs.sys_rename(msg_path, dl_path, context=self._ctx())
+                self._vfs.sys_rename(msg_path, dl_path, context=self._ctx())
             except Exception as e:
                 logger.debug(
                     "Best-effort cleanup of duplicate message %s failed: %s", envelope.id, e
@@ -564,7 +562,7 @@ class MessageProcessor:
         proc_id = uuid.uuid4().hex[:4]
         proc_path = f"{msg_path}.proc_{claim_ts}_{proc_id}"
         try:
-            await self._vfs.sys_rename(msg_path, proc_path, context=self._ctx())
+            self._vfs.sys_rename(msg_path, proc_path, context=self._ctx())
             msg_path = proc_path  # use claimed path for all subsequent ops
         except FileNotFoundError:
             # Drain or concurrent processor already claimed/moved it — skip.
@@ -634,7 +632,7 @@ class MessageProcessor:
         # Success: move to processed
         try:
             dest = message_path_in_processed(self._agent_id, envelope.id, envelope.timestamp)
-            await self._vfs.sys_rename(msg_path, dest, context=self._ctx())
+            self._vfs.sys_rename(msg_path, dest, context=self._ctx())
         except Exception:
             logger.warning(
                 "Failed to move processed message %s (handler already succeeded)",

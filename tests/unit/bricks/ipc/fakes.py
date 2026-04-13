@@ -39,7 +39,7 @@ class InMemoryStorageDriver:
     def metadata(self) -> Any:
         return self._metadata_stub
 
-    async def sys_read(
+    def sys_read(
         self, path: str, zone_id_compat: str | None = None, *, context: Any = None
     ) -> bytes:
         zone_id = zone_id_compat if zone_id_compat is not None else self._zone_id(context)
@@ -51,7 +51,7 @@ class InMemoryStorageDriver:
     # Alias for backward compatibility
     read = sys_read
 
-    async def write(
+    def write(
         self, path: str, data: bytes, zone_id_compat: str | None = None, *, context: Any = None
     ) -> None:
         zone_id = zone_id_compat if zone_id_compat is not None else self._zone_id(context)
@@ -61,7 +61,7 @@ class InMemoryStorageDriver:
     # Alias for backward compatibility
     sys_write = write
 
-    async def sys_readdir(
+    def sys_readdir(
         self,
         path: str,
         zone_id_compat: str | None = None,
@@ -96,11 +96,11 @@ class InMemoryStorageDriver:
         return sorted(set(results))
 
     # Alias for backward compatibility
-    async def list_dir(self, path: str, zone_id: str) -> list[str]:
+    def list_dir(self, path: str, zone_id: str) -> list[str]:
         ctx = type("Ctx", (), {"zone_id": zone_id})()
-        return await self.sys_readdir(path, recursive=False, context=ctx)
+        return self.sys_readdir(path, recursive=False, context=ctx)
 
-    async def sys_rename(
+    def sys_rename(
         self, src: str, dst: str, zone_id_compat: str | None = None, *, context: Any = None
     ) -> None:
         zone_id = zone_id_compat if zone_id_compat is not None else self._zone_id(context)
@@ -116,11 +116,11 @@ class InMemoryStorageDriver:
         self._mtimes[(dst, zone_id)] = datetime.now(UTC)
 
     # Alias for backward compatibility
-    async def rename(self, src: str, dst: str, zone_id: str) -> None:
+    def rename(self, src: str, dst: str, zone_id: str) -> None:
         ctx = type("Ctx", (), {"zone_id": zone_id})()
-        await self.sys_rename(src, dst, context=ctx)
+        self.sys_rename(src, dst, context=ctx)
 
-    async def mkdir(
+    def mkdir(
         self,
         path: str,
         zone_id_compat: str | None = None,
@@ -138,16 +138,14 @@ class InMemoryStorageDriver:
                 parent = "/" + "/".join(parts[:i])
                 self._dirs.add((parent, zone_id))
 
-    async def access(
-        self, path: str, zone_id_compat: str | None = None, *, context: Any = None
-    ) -> bool:
+    def access(self, path: str, zone_id_compat: str | None = None, *, context: Any = None) -> bool:
         zone_id = zone_id_compat if zone_id_compat is not None else self._zone_id(context)
         return (path, zone_id) in self._files or (path, zone_id) in self._dirs
 
     # Alias for backward compatibility
     exists = access
 
-    async def sys_unlink(
+    def sys_unlink(
         self, path: str, zone_id_compat: str | None = None, *, context: Any = None
     ) -> None:
         zone_id = zone_id_compat if zone_id_compat is not None else self._zone_id(context)
@@ -157,7 +155,7 @@ class InMemoryStorageDriver:
         del self._files[key]
         self._mtimes.pop(key, None)
 
-    async def file_mtime(self, path: str, zone_id: str) -> datetime | None:
+    def file_mtime(self, path: str, zone_id: str) -> datetime | None:
         """Return the mtime of a file, or None if it doesn't exist."""
         return self._mtimes.get((path, zone_id))
 
@@ -177,7 +175,7 @@ class InMemoryEventPublisher:
         self.published: list[tuple[str, dict[str, Any]]] = []
         self._should_fail = should_fail
 
-    async def publish(self, channel: str, data: dict[str, Any]) -> None:
+    def publish(self, channel: str, data: dict[str, Any]) -> None:
         if self._should_fail:
             raise ConnectionError("EventBus unavailable")
         self.published.append((channel, data))

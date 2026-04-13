@@ -4,7 +4,7 @@ Tests delegation to NexusFS for file ops, metadata, ReBAC,
 hierarchy, routing, and session access.
 """
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -20,13 +20,13 @@ from nexus.services.gateway import NexusFSGateway
 def mock_fs():
     """Create a mock NexusFS instance."""
     fs = MagicMock()
-    fs.mkdir = AsyncMock()
-    fs.sys_write = AsyncMock(
+    fs.mkdir = MagicMock()
+    fs.sys_write = MagicMock(
         return_value={"path": "/test/file.txt", "bytes_written": 7, "created": True}
     )
-    fs.sys_read = AsyncMock(return_value=b"file content")
-    fs.sys_readdir = AsyncMock(return_value=["file1.txt", "file2.txt"])
-    fs.access = AsyncMock(return_value=True)
+    fs.sys_read = MagicMock(return_value=b"file content")
+    fs.sys_readdir = MagicMock(return_value=["file1.txt", "file2.txt"])
+    fs.access = MagicMock(return_value=True)
     fs.metadata = MagicMock()
     fs.metadata.get = MagicMock(return_value=MagicMock(path="/test"))
     fs.metadata.put = MagicMock()
@@ -65,7 +65,7 @@ def mock_fs():
     fs._rebac_manager.hierarchy_manager.remove_parent_tuples = MagicMock(return_value=1)
     fs.router = MagicMock()
     fs.SessionLocal = MagicMock()
-    fs.read = AsyncMock(return_value={"content": b"data", "path": "/test/file.txt"})
+    fs.read = MagicMock(return_value={"content": b"data", "path": "/test/file.txt"})
     fs.read_bulk = MagicMock(return_value={"/a": b"data"})
     fs._get_context_identity = MagicMock(return_value=("zone1", "agent1", False))
     fs._get_backend_directory_entries = MagicMock(return_value={"file.txt"})
@@ -113,60 +113,52 @@ class TestGatewayInit:
 class TestFileOperations:
     """Tests for file operation delegation."""
 
-    @pytest.mark.asyncio
-    async def test_mkdir_delegates(self, gateway, mock_fs, context):
+    def test_mkdir_delegates(self, gateway, mock_fs, context):
         """mkdir delegates to NexusFS.mkdir."""
-        await gateway.mkdir("/test/dir", parents=True, exist_ok=True, context=context)
+        gateway.mkdir("/test/dir", parents=True, exist_ok=True, context=context)
         mock_fs.mkdir.assert_called_once_with(
             "/test/dir", parents=True, exist_ok=True, context=context
         )
 
-    @pytest.mark.asyncio
-    async def test_write_delegates_bytes(self, gateway, mock_fs, context):
+    def test_write_delegates_bytes(self, gateway, mock_fs, context):
         """sys_write delegates bytes to NexusFS.sys_write and returns dict."""
-        result = await gateway.sys_write("/test/file.txt", b"content", context=context)
+        result = gateway.sys_write("/test/file.txt", b"content", context=context)
         mock_fs.sys_write.assert_called_once_with("/test/file.txt", b"content", context=context)
         assert result["bytes_written"] == 7
 
-    @pytest.mark.asyncio
-    async def test_write_delegates_str(self, gateway, mock_fs, context):
+    def test_write_delegates_str(self, gateway, mock_fs, context):
         """sys_write passes str through to NexusFS (kernel handles encoding)."""
-        await gateway.sys_write("/test/file.txt", "text content", context=context)
+        gateway.sys_write("/test/file.txt", "text content", context=context)
         mock_fs.sys_write.assert_called_once_with("/test/file.txt", "text content", context=context)
 
-    @pytest.mark.asyncio
-    async def test_read_delegates(self, gateway, mock_fs, context):
+    def test_read_delegates(self, gateway, mock_fs, context):
         """sys_read delegates to NexusFS.sys_read."""
-        result = await gateway.sys_read("/test/file.txt", context=context)
+        result = gateway.sys_read("/test/file.txt", context=context)
         assert result == b"file content"
         mock_fs.sys_read.assert_called_once()
 
-    @pytest.mark.asyncio
-    async def test_read_returns_bytes(self, gateway, mock_fs, context):
+    def test_read_returns_bytes(self, gateway, mock_fs, context):
         """sys_read always returns bytes (POSIX pread semantics)."""
         mock_fs.sys_read.return_value = b"raw bytes"
-        result = await gateway.sys_read("/test/file.txt", context=context)
+        result = gateway.sys_read("/test/file.txt", context=context)
         assert result == b"raw bytes"
 
-    @pytest.mark.asyncio
-    async def test_list_delegates(self, gateway, mock_fs, context):
+    def test_list_delegates(self, gateway, mock_fs, context):
         """sys_readdir delegates to NexusFS.sys_readdir."""
-        result = await gateway.sys_readdir("/test", context=context)
+        result = gateway.sys_readdir("/test", context=context)
         assert result == ["file1.txt", "file2.txt"]
 
-    @pytest.mark.asyncio
-    async def test_list_handles_paginated_result(self, gateway, mock_fs, context):
+    def test_list_handles_paginated_result(self, gateway, mock_fs, context):
         """sys_readdir handles PaginatedResult objects."""
         paginated = MagicMock()
         paginated.items = ["a.txt", "b.txt"]
         mock_fs.sys_readdir.return_value = paginated
-        result = await gateway.sys_readdir("/test", context=context)
+        result = gateway.sys_readdir("/test", context=context)
         assert result == ["a.txt", "b.txt"]
 
-    @pytest.mark.asyncio
-    async def test_exists_delegates(self, gateway, mock_fs, context):
+    def test_exists_delegates(self, gateway, mock_fs, context):
         """access delegates to NexusFS.access."""
-        assert await gateway.access("/test/file.txt", context=context) is True
+        assert gateway.access("/test/file.txt", context=context) is True
         mock_fs.access.assert_called_once()
 
 
@@ -365,10 +357,9 @@ class TestProperties:
 class TestSearchOperations:
     """Tests for search-related delegation."""
 
-    @pytest.mark.asyncio
-    async def test_read_file(self, gateway, mock_fs, context):
+    def test_read_file(self, gateway, mock_fs, context):
         """read_file delegates to NexusFS read() (Tier 2 convenience)."""
-        await gateway.read_file("/test/file.txt", context=context, return_metadata=True)
+        gateway.read_file("/test/file.txt", context=context, return_metadata=True)
         mock_fs.read.assert_called_once_with(
             "/test/file.txt", context=context, return_metadata=True
         )

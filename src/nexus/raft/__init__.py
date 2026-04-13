@@ -55,7 +55,7 @@ try:
 except ImportError:
     logger.debug(
         "Metastore not available. Install with: "
-        "maturin develop -m rust/nexus_raft/Cargo.toml --features python"
+        "maturin develop -m rust/raft/Cargo.toml --features python"
     )
 
 # =========================================================================
@@ -84,7 +84,7 @@ def require_metastore() -> None:
     if not _HAS_METASTORE:
         raise RuntimeError(
             "Metastore is not available. Build with:\n"
-            "  maturin develop -m rust/nexus_raft/Cargo.toml --features python\n"
+            "  maturin develop -m rust/raft/Cargo.toml --features python\n"
             "Or install the pre-built wheel:\n"
             "  pip install nexus-ai-fs"
         )

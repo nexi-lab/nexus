@@ -20,7 +20,7 @@ class _FakeNexusOps:
     async def rename(self, old_path: str, new_path: str) -> None:
         pass
 
-    async def mkdir(self, path: str, *, parents: bool = False) -> None:
+    def mkdir(self, path: str, *, parents: bool = False) -> None:
         pass
 
     async def read(self, path: str) -> bytes:

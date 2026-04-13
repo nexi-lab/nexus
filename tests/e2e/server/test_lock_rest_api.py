@@ -260,77 +260,75 @@ class TestLockManagerIntegration:
     @pytest.mark.asyncio
     async def test_full_lock_lifecycle(self, lock_manager):
         """Test complete lock lifecycle: acquire -> status -> extend -> release."""
-        lock_id = await lock_manager.acquire("root", "/test/file.txt", timeout=5, ttl=30)
+        lock_id = lock_manager.acquire("root", "/test/file.txt", timeout=5, ttl=30)
         assert lock_id is not None
 
         # Check status
-        info = await lock_manager.get_lock_info("root", "/test/file.txt")
+        info = lock_manager.get_lock_info("root", "/test/file.txt")
         assert info is not None
         assert info.mode == "mutex"
         assert len(info.holders) == 1
         assert info.holders[0].lock_id == lock_id
 
         # Extend
-        result = await lock_manager.extend(lock_id, "root", "/test/file.txt", ttl=60)
+        result = lock_manager.extend(lock_id, "root", "/test/file.txt", ttl=60)
         assert result.success is True
         assert result.lock_info is not None
 
         # Release
-        released = await lock_manager.release(lock_id, "root", "/test/file.txt")
+        released = lock_manager.release(lock_id, "root", "/test/file.txt")
         assert released is True
 
         # Verify unlocked
-        info = await lock_manager.get_lock_info("root", "/test/file.txt")
+        info = lock_manager.get_lock_info("root", "/test/file.txt")
         assert info is None
 
     @pytest.mark.asyncio
     async def test_lock_contention(self, lock_manager):
         """Test lock behavior under contention."""
-        lock_id = await lock_manager.acquire("root", "/contested.txt", timeout=1, ttl=30)
+        lock_id = lock_manager.acquire("root", "/contested.txt", timeout=1, ttl=30)
         assert lock_id is not None
 
         # Second acquire should fail (timeout)
-        lock_id2 = await lock_manager.acquire("root", "/contested.txt", timeout=0.1, ttl=30)
+        lock_id2 = lock_manager.acquire("root", "/contested.txt", timeout=0.1, ttl=30)
         assert lock_id2 is None
 
         # Release first lock
-        await lock_manager.release(lock_id, "root", "/contested.txt")
+        lock_manager.release(lock_id, "root", "/contested.txt")
 
         # Now should succeed
-        lock_id3 = await lock_manager.acquire("root", "/contested.txt", timeout=1, ttl=30)
+        lock_id3 = lock_manager.acquire("root", "/contested.txt", timeout=1, ttl=30)
         assert lock_id3 is not None
-        await lock_manager.release(lock_id3, "root", "/contested.txt")
+        lock_manager.release(lock_id3, "root", "/contested.txt")
 
     @pytest.mark.asyncio
     async def test_semaphore_multiple_holders(self, lock_manager):
         """Test semaphore with multiple concurrent holders."""
         lock_ids = []
         for _ in range(3):
-            lid = await lock_manager.acquire(
-                "root", "/shared.txt", timeout=1, ttl=30, max_holders=3
-            )
+            lid = lock_manager.acquire("root", "/shared.txt", timeout=1, ttl=30, max_holders=3)
             assert lid is not None
             lock_ids.append(lid)
 
         # Fourth should fail
-        lid4 = await lock_manager.acquire("root", "/shared.txt", timeout=0.1, ttl=30, max_holders=3)
+        lid4 = lock_manager.acquire("root", "/shared.txt", timeout=0.1, ttl=30, max_holders=3)
         assert lid4 is None
 
         # Release all
         for lid in lock_ids:
-            await lock_manager.release(lid, "root", "/shared.txt")
+            lock_manager.release(lid, "root", "/shared.txt")
 
     @pytest.mark.asyncio
     async def test_force_release(self, lock_manager):
         """Test admin force release."""
-        lock_id = await lock_manager.acquire("root", "/force-test.txt", timeout=1, ttl=30)
+        lock_id = lock_manager.acquire("root", "/force-test.txt", timeout=1, ttl=30)
         assert lock_id is not None
 
-        released = await lock_manager.force_release("root", "/force-test.txt")
+        released = lock_manager.force_release("root", "/force-test.txt")
         assert released is True
 
         # Should be unlocked now
-        info = await lock_manager.get_lock_info("root", "/force-test.txt")
+        info = lock_manager.get_lock_info("root", "/force-test.txt")
         assert info is None
 
     @pytest.mark.asyncio
@@ -338,13 +336,13 @@ class TestLockManagerIntegration:
         """Test listing active locks."""
         ids = []
         for i in range(3):
-            lid = await lock_manager.acquire("root", f"/list-test-{i}.txt", timeout=1, ttl=30)
+            lid = lock_manager.acquire("root", f"/list-test-{i}.txt", timeout=1, ttl=30)
             assert lid is not None
             ids.append((f"/list-test-{i}.txt", lid))
 
-        locks = await lock_manager.list_locks("root", limit=100)
+        locks = lock_manager.list_locks("root", limit=100)
         assert len(locks) >= 3
 
         # Cleanup
         for path, lid in ids:
-            await lock_manager.release(lid, "root", path)
+            lock_manager.release(lid, "root", path)

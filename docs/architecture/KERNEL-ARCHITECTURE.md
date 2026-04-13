@@ -265,6 +265,24 @@ Hook protocols and context dataclasses are defined in `contracts/vfs_hooks.py`
 **Registration API:** Each phase has a symmetric `register_*()` /
 `unregister_*()` pair — runtime-callable by any authorized caller.
 
+#### 2.4.1 The 4 Dispatch Contracts
+
+Each dispatch phase is a formal contract between the kernel and its callers.
+These contracts define ordering, error semantics, and performance guarantees.
+
+| # | Contract | Phase | Trait / Protocol | Dispatch semantics | Error handling |
+|---|----------|-------|-----------------|-------------------|----------------|
+| 1 | **RESOLVE** (PRE-DISPATCH) | Before pipeline | `VFSPathResolver` (Rust `PathResolver` trait) | PathTrie O(depth) lookup, then fallback linear scan. First resolver whose `try_*(path)` returns non-None handles the entire operation — normal VFS pipeline is skipped. | Resolver exceptions propagate to caller (resolver owns error semantics). |
+| 2 | **INTERCEPT PRE** | Before HAL I/O | `InterceptHook.on_pre_*` (Rust trait) | Serial, ordered. All registered pre-hooks run in registration order. | Any hook may abort by returning `Err` / raising — exception propagates to caller, operation is cancelled. |
+| 3 | **INTERCEPT POST** | After HAL I/O | `InterceptHook.on_post_*` (Rust trait) | Serial, fire-and-forget via Rust `dispatch_post_hooks()`. | Failures are logged and swallowed — never affect the caller or the operation result. |
+| 4 | **OBSERVE** | After lock release | `VFSObserver.on_mutation` (Python protocol) | Inline observers: synchronous on caller thread. Deferred observers: submitted to kernel observer ThreadPoolExecutor (4 threads, `observe` prefix). Event mask bitmask filtering at registration time. | Failures are caught and logged — never abort the syscall. Observers needing causal ordering belong in INTERCEPT POST, not OBSERVE. |
+
+**Ordering guarantee:** RESOLVE > INTERCEPT PRE > HAL I/O > INTERCEPT POST > OBSERVE.
+OBSERVE always fires after VFS lock release (like Linux inotify after `i_rwsem`).
+
+**Zero-overhead invariant:** Empty callback list = no-op dispatch = zero overhead
+when no services are registered.
+
 ### 2.5 Mediation Principle
 
 Users access HAL only through syscalls. For mutating syscalls the pipeline is:
@@ -375,7 +393,7 @@ with them indirectly through syscalls. See §2.2 for per-syscall usage.
 | **VFSRouter** | `core.router` | VFS `lookup_slow()` | `route(path, zone_id)` → `RouteResult`. Zone-canonical LPM (~30ns Rust / ~300ns Python). In-memory mount table keyed by `/{zone_id}/{mount_point}` |
 | **VFSLockManager** | `core.lock_fast` | per-inode `i_rwsem` | Per-path RW lock with hierarchy-aware conflict detection. Details in §4.1 |
 | **LockManager (advisory)** | `lib.distributed_lock` | `flock(2)` | Advisory locks via `sys_lock`/`sys_unlock` (acquire+extend / release+force). Zone-agnostic (receives canonical paths from router). Local: VFSSemaphore. Federation: RaftLockManager. Details in §4.4 |
-| **Dispatch (Rust Kernel + DispatchMixin)** | `core.nexus_fs_dispatch` + `rust/nexus_kernel/src/dispatch.rs` | `security_hook_heads` + `fsnotify` | Three-phase VFS dispatch (§2.4) + driver lifecycle hooks (MOUNT/UNMOUNT). Rust Kernel owns PathTrie + HookRegistry + ObserverRegistry. DispatchMixin provides Python-side registration API. Empty = zero overhead |
+| **Dispatch (Rust Kernel + DispatchMixin)** | `core.nexus_fs_dispatch` + `rust/kernel/src/dispatch.rs` | `security_hook_heads` + `fsnotify` | Three-phase VFS dispatch (§2.4) + driver lifecycle hooks (MOUNT/UNMOUNT). Rust Kernel owns PathTrie + HookRegistry + ObserverRegistry (pure Rust, zero Py\<PyAny\>). DispatchMixin provides Python-side registration API. Empty = zero overhead |
 | **PipeManager + StreamManager** | `core.pipe_manager` + `core.stream_manager` | `pipe(2)` + append-only log | VFS named IPC. DT_PIPE: destructive FIFO (MemoryPipeBackend). DT_STREAM: non-destructive offset reads (pluggable StreamBackend). Details in §4.2 |
 | **FileWatcher + FileEvent** | `core.file_watcher` + `core.file_events` | `inotify(7)` + `fsnotify_event` | File change notification + immutable mutation records. Local OBSERVE waiters + optional RemoteWatchProtocol. Details in §4.3 |
 | **ServiceRegistry** | `core.service_registry` | `init/main.c` + `module.c` | Kernel-owned symbol table + lifecycle orchestration (enlist/swap/shutdown). PersistentService + duck-typed hook_spec() |

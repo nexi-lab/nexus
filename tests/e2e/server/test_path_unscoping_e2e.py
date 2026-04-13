@@ -117,7 +117,7 @@ class TestZoneScopedPathUnscopingE2E:
         /zone/{zone_id}/user:{user_id}/{resource_path}
         """
         internal_path = f"/zone/{zone_id}/user:{user_id}/{resource_path}"
-        await nexus_fs.write(internal_path, content)
+        nexus_fs.write(internal_path, content)
 
     def test_list_strips_zone_prefix_from_provisioned_paths(
         self, rpc_client: TestClient, nexus_fs_local: NexusFS
@@ -241,7 +241,7 @@ class TestTenantPrefixUnscopingE2E:
     ) -> None:
         """Legacy /tenant:default/... paths get stripped by list()."""
         # Write using legacy tenant-prefixed path
-        await nexus_fs_local.write(
+        nexus_fs_local.write(
             "/tenant:default/connector/gcs_demo/auto-test.txt",
             b"test data",
         )

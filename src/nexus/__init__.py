@@ -1,5 +1,5 @@
 """
-Nexus — filesystem/context plane.
+Nexus — filesystem/context plane (Rust kernel).
 
 Nexus combines a VFS-style filesystem interface with deployment-aware context,
 storage, and service composition for agent systems.
@@ -19,8 +19,8 @@ For programmatic access (building tools, libraries, integrations), use the SDK:
     from nexus.sdk import connect
 
     nx = connect(config={"profile": "slim", "data_dir": "./nexus-data"})
-    await nx.sys_write("/workspace/data.txt", b"Hello World")
-    content = await nx.sys_read("/workspace/data.txt")
+    nx.sys_write("/workspace/data.txt", b"Hello World")
+    content = nx.sys_read("/workspace/data.txt")
 
 For command-line usage, use the nexus CLI:
 
@@ -74,7 +74,6 @@ if TYPE_CHECKING:
         NexusFileNotFoundError,
         NexusPermissionError,
     )
-    from nexus.contracts.filesystem.filesystem_abc import NexusFilesystem as NexusFilesystem
     from nexus.core.metastore import MetastoreABC
     from nexus.core.nexus_fs import NexusFS
 
@@ -108,7 +107,6 @@ _LAZY_IMPORTS = {
     "NexusConfig": ("nexus.config", "NexusConfig"),
     "load_config": ("nexus.config", "load_config"),
     # Core - heavy
-    "NexusFilesystem": ("nexus.contracts.filesystem.filesystem_abc", "NexusFilesystem"),
     "NexusFS": ("nexus.core.nexus_fs", "NexusFS"),
     # Slim package top-level API (nexus.mount / nexus.mount_sync)
     "mount": ("nexus.fs", "mount"),
@@ -168,7 +166,7 @@ def _open_local_metastore(metadata_path: str, kernel: object = None) -> "Metasto
                     f"RustMetastoreProxy failed for existing {_redb_path}: {e}. "
                     "Refusing to fall back to a different metadata format — that "
                     "would hide existing Redb data. "
-                    "Rebuild: cd rust/nexus_kernel && maturin develop --release"
+                    "Rebuild: cd rust/kernel && maturin develop --release"
                 ) from e
             logger.warning("RustMetastoreProxy failed, falling back: %s", e)
 
@@ -180,7 +178,7 @@ def _open_local_metastore(metadata_path: str, kernel: object = None) -> "Metasto
         raise RuntimeError(
             f"Rust metastore {_redb_path} exists but nexus_kernel is stale or "
             "unavailable — refusing to fall back to a different metadata format. "
-            "Rebuild the extension: cd rust/nexus_kernel && maturin develop --release"
+            "Rebuild the extension: cd rust/kernel && maturin develop --release"
         )
 
     try:
@@ -193,7 +191,7 @@ def _open_local_metastore(metadata_path: str, kernel: object = None) -> "Metasto
         dict_metastore_path = Path(metadata_path).with_suffix(".json")
         logger.info(
             "Rust metastore not available; using JSON-backed DictMetastore fallback at %s. "
-            "Build rust/nexus_raft with maturin develop -m rust/nexus_raft/Cargo.toml "
+            "Build rust/raft with maturin develop -m rust/raft/Cargo.toml "
             "--features python for the durable metastore.",
             dict_metastore_path,
         )
@@ -202,7 +200,7 @@ def _open_local_metastore(metadata_path: str, kernel: object = None) -> "Metasto
 
 async def connect(
     config: "str | Path | dict | NexusConfig | None" = None,
-) -> "NexusFilesystem":
+) -> "NexusFS":
     """
     Connect to Nexus filesystem.
 
@@ -221,7 +219,7 @@ async def connect(
             - NexusConfig: Already loaded config
 
     Returns:
-        NexusFilesystem instance. All profiles implement the NexusFilesystem
+        NexusFS instance. All profiles implement the NexusFS
         interface, ensuring consistent API.
 
     Raises:
@@ -237,7 +235,7 @@ async def connect(
 
         Default (development/testing):
             >>> nx = nexus.connect()
-            >>> await nx.sys_write("/workspace/file.txt", b"Hello World")
+            >>> nx.sys_write("/workspace/file.txt", b"Hello World")
 
         Federation (auto-detected when Rust extensions available):
             >>> # Requires NEXUS_PEERS, NEXUS_BIND_ADDR env vars
@@ -675,8 +673,6 @@ __all__ = [
     # Configuration
     "NexusConfig",
     "load_config",
-    # Core interfaces
-    "NexusFilesystem",  # Protocol for all filesystem modes
     # Filesystem implementation
     "NexusFS",
     # Backends

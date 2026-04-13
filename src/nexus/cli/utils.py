@@ -7,7 +7,7 @@ import sys
 from collections.abc import AsyncGenerator, Generator
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 import click
 
@@ -15,9 +15,7 @@ import nexus
 from nexus.cli.exit_codes import ExitCode
 from nexus.cli.theme import console, print_error
 from nexus.contracts.exceptions import NexusError, NexusFileNotFoundError, ValidationError
-
-if TYPE_CHECKING:
-    from nexus.core.nexus_fs import NexusFS
+from nexus.core.nexus_fs import NexusFS
 
 _LOCAL_WORKSPACE_ENV_KEYS = (
     "NEXUS_URL",

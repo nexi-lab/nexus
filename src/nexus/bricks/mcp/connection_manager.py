@@ -23,7 +23,10 @@ import os
 import webbrowser
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from nexus.core.nexus_fs import NexusFS
 
 from nexus.bricks.mcp.klavis_client import KlavisClient, KlavisError
 from nexus.bricks.mcp.models import MCPMount
@@ -105,7 +108,7 @@ class MCPConnectionManager:
 
     def __init__(
         self,
-        filesystem: Any | None = None,
+        filesystem: "NexusFS | None" = None,
         registry: MCPProviderRegistry | None = None,
         klavis_api_key: str | None = None,
     ):

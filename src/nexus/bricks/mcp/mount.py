@@ -16,6 +16,7 @@ from nexus.bricks.mcp.models import MCPMount, MCPToolConfig, MCPToolDefinition
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
+    from nexus.core.nexus_fs import NexusFS
 
 
 logger = logging.getLogger(__name__)
@@ -119,7 +120,7 @@ class MCPMountManager:
     # Mount configuration filename (per-folder)
     MOUNT_CONFIG_FILENAME = "mount.json"
 
-    def __init__(self, filesystem: Any | None = None):
+    def __init__(self, filesystem: "NexusFS | None" = None):
         """Initialize MCP mount manager.
 
         Args:

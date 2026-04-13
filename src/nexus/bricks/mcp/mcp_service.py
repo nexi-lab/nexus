@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
+    from nexus.core.nexus_fs import NexusFS
 
 
 class MCPService:
@@ -71,7 +72,7 @@ class MCPService:
 
     def __init__(
         self,
-        filesystem: Any | None = None,
+        filesystem: NexusFS | None = None,
         *,
         credential_service: Any = None,
         mount_lister: Callable[[], list[tuple[str, str]]] | None = None,

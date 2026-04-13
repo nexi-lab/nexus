@@ -1,4 +1,3 @@
-# mypy: disable-error-code="no-any-return"
 """Scoped filesystem wrapper for multi-zone path isolation.
 
 This module provides a ScopedFilesystem wrapper that rebases all paths
@@ -20,8 +19,13 @@ Example:
     registry = SkillRegistry(filesystem=scoped_fs)
 """
 
+from __future__ import annotations
+
 import builtins
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from nexus.core.nexus_fs import NexusFS
 
 from nexus.bricks.filesystem._scoped_base import ScopedPathMixin
 from nexus.contracts.types import OperationContext
@@ -45,7 +49,7 @@ class ScopedFilesystem(ScopedPathMixin):
         _root: The root path prefix to prepend to all paths
     """
 
-    def __init__(self, fs: Any, root: str) -> None:
+    def __init__(self, fs: NexusFS, root: str) -> None:
         """Initialize ScopedFilesystem.
 
         Args:
@@ -57,7 +61,7 @@ class ScopedFilesystem(ScopedPathMixin):
         self._fs = fs
 
     @property
-    def wrapped_fs(self) -> Any:
+    def wrapped_fs(self) -> NexusFS:
         """The underlying wrapped filesystem."""
         return self._fs
 

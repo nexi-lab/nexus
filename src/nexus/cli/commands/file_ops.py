@@ -166,8 +166,8 @@ def cat(
                             console.print(
                                 f"[nexus.muted]Streaming large file ({file_size:,} bytes)...[/nexus.muted]"
                             )
-                            for chunk in nx.stream(  # type: ignore[attr-defined]
-                                path, chunk_size=65536, context=operation_context
+                            for chunk in nx.stream(
+                                path, chunk_size=65536, context=cast(Any, operation_context)
                             ):
                                 sys.stdout.buffer.write(chunk)
                             sys.stdout.buffer.flush()

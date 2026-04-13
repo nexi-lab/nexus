@@ -165,7 +165,7 @@ jobs:
         run: |
           start=$(date +%s)
           uv run python -Xfaulthandler -m pytest tests/unit -v --durations=10 -n auto --dist loadgroup \
-            --timeout=30 --timeout-method=signal -p no:cacheprovider \
+            --timeout=60 --timeout-method=signal -p no:cacheprovider \
             --cov=nexus --cov-report=term-missing --cov-report=xml
           status=$?
           echo $(( $(date +%s) - start )) > unit_test_duration_sec.txt

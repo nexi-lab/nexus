@@ -284,16 +284,17 @@ async def connect(
         # Single shared RPCTransport (gRPC channel) for all remote proxies.
         from nexus.remote.rpc_transport import RPCTransport
 
-        # TLS: only use TLS when explicitly requested via:
-        #   1. NEXUS_DATA_DIR env var (2-phase bootstrap)
-        #   2. nexus.yaml tls: true (written by `nexus up` when server uses mTLS)
-        # Do NOT auto-discover from data_dir/tls/ alone — the server may
-        # generate certs but run gRPC insecure (new default on develop).
+        # TLS: NEXUS_GRPC_TLS env var overrides all other TLS signals.
+        #   true  → force TLS
+        #   false → force insecure
+        #   unset → fall back to nexus.yaml tls / NEXUS_DATA_DIR auto-detect
         _tls_config = None
-        _tls_enabled = False
+        _grpc_tls_env = os.getenv("NEXUS_GRPC_TLS", "").lower()
+        _tls_enabled = _grpc_tls_env in ("true", "1", "yes")
+        _tls_disabled = _grpc_tls_env in ("false", "0", "no")
         _data_dir = os.getenv("NEXUS_DATA_DIR")
-        if _data_dir:
-            _tls_enabled = True  # Explicit env var = TLS intended
+        if _data_dir and not _tls_disabled:
+            _tls_enabled = True  # Auto-detect from NEXUS_DATA_DIR (backward compat)
         if not _data_dir:
             _project_yaml = Path("nexus.yaml")
             if _project_yaml.exists():
@@ -303,7 +304,9 @@ async def connect(
                     with open(_project_yaml) as _f:
                         _project_cfg = _yaml.safe_load(_f) or {}
                     _data_dir = _project_cfg.get("data_dir")
-                    _tls_enabled = bool(_project_cfg.get("tls"))
+                    # nexus.yaml tls: only used when env var is unset
+                    if not _grpc_tls_env:
+                        _tls_enabled = bool(_project_cfg.get("tls"))
                 except Exception:
                     pass
         if not _data_dir:
@@ -313,6 +316,14 @@ async def connect(
             from nexus.security.tls.config import ZoneTlsConfig
 
             _tls_config = ZoneTlsConfig.from_data_dir(_data_dir)
+
+        # Fail closed: NEXUS_GRPC_TLS=true but no certs resolved
+        _tls_explicit = _grpc_tls_env in ("true", "1", "yes")
+        if _tls_explicit and _tls_config is None:
+            raise RuntimeError(
+                "NEXUS_GRPC_TLS=true but no TLS certificates found. "
+                "Provide certs in {data_dir}/tls/ or set data_dir in nexus.yaml."
+            )
 
         transport = RPCTransport(
             server_address=grpc_address,

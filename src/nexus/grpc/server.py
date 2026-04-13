@@ -25,28 +25,45 @@ def _resolve_tls_config(app: "FastAPI") -> "ZoneTlsConfig | None":
     """Resolve TLS config from ZoneManager or auto-detection.
 
     Priority:
-    0. NEXUS_GRPC_TLS=false → disable TLS (for standalone Docker / dev)
-    1. ZoneManager.tls_config (provisioned by 2-phase TLS bootstrap)
-    2. Auto-detect from {NEXUS_DATA_DIR}/tls/
-    3. None → insecure (no certs available)
+    1. NEXUS_GRPC_TLS=false → disable TLS unconditionally
+    2. ZoneManager.tls_config (Raft / federation)
+    3. Auto-detect from {NEXUS_DATA_DIR}/tls/
+    4. NEXUS_GRPC_TLS=true but no certs → raise (fail closed)
+    5. None → insecure (no certs, no explicit request)
+
+    NEXUS_GRPC_TLS=false is an unconditional override (step 1).
+    NEXUS_GRPC_TLS=true ensures TLS is required — if no certs are
+    found after steps 2-3, startup fails rather than falling back
+    to insecure.  When unset, existing behavior is preserved.
     """
-    # 0. Explicit disable via env var (standalone / dev mode)
-    if os.environ.get("NEXUS_GRPC_TLS", "").lower() in ("false", "0", "no"):
+    grpc_tls = os.environ.get("NEXUS_GRPC_TLS", "").lower()
+
+    # 1. Explicit disable — takes precedence over everything
+    if grpc_tls in ("false", "0", "no"):
         return None
 
     from nexus.security.tls.config import ZoneTlsConfig
 
-    # 1. ZoneManager (if running federation / Raft)
+    # 2. ZoneManager (federation / Raft)
     zone_mgr = getattr(app.state, "zone_manager", None)
     if zone_mgr is not None:
         tls_cfg: ZoneTlsConfig | None = getattr(zone_mgr, "tls_config", None)
         if tls_cfg is not None:
             return tls_cfg
 
-    # 2. Auto-detect from NEXUS_DATA_DIR
+    # 3. Load from NEXUS_DATA_DIR/tls/
     data_dir = os.environ.get("NEXUS_DATA_DIR")
     if data_dir:
-        return ZoneTlsConfig.from_data_dir(data_dir)
+        cfg = ZoneTlsConfig.from_data_dir(data_dir)
+        if cfg is not None:
+            return cfg
+
+    # 4. Explicit enable requested but no certs found — fail closed
+    if grpc_tls in ("true", "1", "yes"):
+        raise RuntimeError(
+            "NEXUS_GRPC_TLS=true but no TLS certificates found. "
+            "Provide certs in {NEXUS_DATA_DIR}/tls/ or configure ZoneManager."
+        )
 
     return None
 

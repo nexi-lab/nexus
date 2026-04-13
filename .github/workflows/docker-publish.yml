@@ -118,6 +118,7 @@ jobs:
             -e NEXUS_HOST=0.0.0.0 \
             -e NEXUS_PORT=2026 \
             -e NEXUS_GRPC_PORT=2029 \
+            -e NEXUS_GRPC_TLS=false \
             -e NEXUS_PROFILE=full \
             -e LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libgomp.so.1 \
             -v /tmp/nexus-data:/app/data \

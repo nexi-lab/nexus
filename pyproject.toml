@@ -89,7 +89,6 @@ dependencies = [
     "tiktoken>=0.12", # Token counting for chunking
     "markdown-it-py>=3.0.0", # CommonMark-compliant markdown AST parser (Issue #3718)
     "mdit-py-plugins>=0.4.0", # markdown-it-py plugins: front_matter (Issue #3718)
-    "markdown-it-pyrs>=0.3.0", # Rust-backed parser — 10x faster (Issue #3718)
     "dotenv>=0.9.9",
     # MCP Server (v0.7.0)
     "fastmcp>=2.0.0", # Model Context Protocol server
@@ -142,6 +141,9 @@ performance = [
     # BLAKE3 hashing fallback when Rust extension unavailable (Issue #582)
     # Local embeddings without API (fast ONNX inference)
     "fastembed>=0.4.0",
+    # Rust-backed markdown parser — 10x faster structure indexing (Issue #3718)
+    # Optional: falls back to markdown-it-py (pure Python) when unavailable.
+    "markdown-it-pyrs>=0.3.0",
 ]
 
 pay = [

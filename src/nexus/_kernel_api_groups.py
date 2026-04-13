@@ -125,6 +125,7 @@ KERNEL_REQUIRED_METHODS: frozenset[str] = frozenset(
         "set_vfs_lock_timeout",
         "stream_collect_all",
         "stream_read_at",
+        "stream_read_at_blocking",
         "stream_read_batch",
         "stream_write_nowait",
         "sys_mkdir",

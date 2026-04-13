@@ -228,6 +228,8 @@ async def _run_chat(
         def _stream_read_adapter(path: str, offset: int) -> tuple[bytes, int]:
             if _nx_stream_read is None:
                 raise NotImplementedError("Streaming not available in REMOTE mode")
+            # Sync-blocking (GIL released by Rust via py.detach).
+            # ManagedAgentLoop wraps this in asyncio.to_thread() internally.
             data = _nx_stream_read(path, offset=offset)
             return data, offset + len(data)
 
@@ -288,10 +290,10 @@ async def _run_acp_mode(
 
     # Async wrappers for sync NexusFS syscalls (PR #3717: NexusFS is fully sync)
     async def _async_sys_read(path: str) -> bytes:
-        return nx.sys_read(path)
+        return bytes(nx.sys_read(path))
 
     async def _async_write(path: str, buf: bytes) -> dict:
-        return nx.write(path, buf)
+        return dict(nx.write(path, buf))
 
     _nx_stream_read = getattr(nx, "_stream_read", None)
 

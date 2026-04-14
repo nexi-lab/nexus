@@ -537,7 +537,7 @@ class NexusFS(  # type: ignore[misc]
         Drive).  This helper blocks every mutating entry point at the
         kernel layer so the virtual tree cannot be mutated.
 
-        Called from: ``sys_write``, ``write``,
+        Called from: ``_write_content``, ``sys_write``, ``write``,
         ``mkdir``, ``rmdir``, ``sys_unlink``, ``sys_rename``,
         ``write_batch``, ``delete_batch``, ``rename_batch``.
         """
@@ -608,6 +608,43 @@ class NexusFS(  # type: ignore[misc]
             return dispatch_virtual_readme_read(backend, mount_point, backend_path, context=context)
         except Exception:
             return None
+
+    # Issue #1790: _check_zone_writable() deleted — now handled by
+    def _build_write_metadata(
+        self,
+        *,
+        path: str,
+        backend_name: str,
+        content_hash: str,
+        size: int,
+        existing_meta: "FileMetadata | None",
+        now: datetime,
+        zone_id: str | None,
+        context: "OperationContext | None",
+    ) -> "FileMetadata":
+        """Build FileMetadata for a sys_write result.
+
+        Shared by both the external-route and VFS-locked write paths
+        to avoid duplicating version calculation, owner resolution,
+        and field mapping.
+        """
+        new_version = (existing_meta.version + 1) if existing_meta else 1
+        ctx = self._resolve_cred(context)
+        owner_id = existing_meta.owner_id if existing_meta else (ctx.subject_id or ctx.user_id)
+        _ttl = getattr(context, "ttl_seconds", None) or 0.0
+        return FileMetadata(
+            path=path,
+            backend_name=backend_name,
+            physical_path=content_hash,
+            size=size,
+            etag=content_hash,
+            created_at=existing_meta.created_at if existing_meta else now,
+            modified_at=now,
+            version=new_version,
+            zone_id=zone_id or "root",
+            owner_id=owner_id,
+            ttl_seconds=_ttl,
+        )
 
     # ZoneWriteGuardHook (pre-intercept on all write-like operations).
 
@@ -2224,6 +2261,12 @@ class NexusFS(  # type: ignore[misc]
                 ),
                 buf,
             )
+        else:
+            # Fallback: DT_PIPE/DT_STREAM, route fail, or no-backend mount.
+            # Normal CAS/PAS backends always hit=true (PR 12a fixed ObjectStore trait).
+            self._write_internal(
+                path=path, content=buf, offset=offset, context=context, _meta=_meta
+            )
 
         return {"path": path, "bytes_written": len(buf)}
 
@@ -2375,10 +2418,8 @@ class NexusFS(  # type: ignore[misc]
     ) -> dict[str, Any]:
         """Write with metadata return (Tier 2 convenience).
 
-        Thin wrapper over ``Kernel::sys_write`` (F2 C4). The kernel owns
-        routing, the VFS write lock, backend content write, metadata build,
-        per-mount metastore.put, and the OBSERVE dispatch. Python dispatches
-        INTERCEPT POST hooks and returns a metadata dict.
+        Overrides ABC default. Returns dict with metadata
+        (etag, version, modified_at, size).
 
         OCC (if_match, if_none_match) is NOT here — use ``lib.occ.occ_write()``
         to compose OCC + write at the caller level (RPC handler, CLI, SDK).
@@ -2391,30 +2432,27 @@ class NexusFS(  # type: ignore[misc]
             path: Virtual file path.
             buf: File content as bytes or str.
             count: Max bytes to write (None = len(buf)).
-            offset: Byte offset for partial write (POSIX pwrite semantics).
-                Currently ignored by the kernel hot path; a follow-up will
-                thread offset into ``Kernel::sys_write``.
+            offset: Byte offset for partial write (POSIX pwrite semantics, 0=whole-file).
             context: Operation context.
-            consistency: Metadata consistency mode. Currently ignored — the
-                kernel routes through per-mount metastores which encode
-                their own consistency.
-            ttl: TTL in seconds for ephemeral content (Issue #3405). Threaded
-                onto the context's ``ttl_seconds`` field; kernel hot path
-                picks it up if the mount supports TTL bucketing.
+            consistency: Metadata consistency mode — ``"sc"`` (strong, Raft
+                consensus) or ``"ec"`` (eventual, fire-and-forget).
+                Defaults to ``"sc"``.  Use ``"ec"`` for low-latency writes
+                where immediate durability is not required.
+            ttl: TTL in seconds for ephemeral content (Issue #3405).
+                Routes to TTL-bucketed volume; None = permanent.
 
         Returns:
             Dict with metadata (etag, version, modified_at, size).
         """
-        del consistency  # threaded via context.metadata_consistency; kernel owns it now.
-
         if isinstance(buf, str):
             buf = buf.encode("utf-8")
         if count is not None:
             buf = buf[:count]
 
         path = self._validate_path(path)
+        _consistency = consistency or "sc"
 
-        # PRE-DISPATCH: virtual path resolvers (e.g. /__sys__ writers).
+        # PRE-DISPATCH: virtual path resolvers
         _handled, _result = self.resolve_write(path, buf)
         if _handled:
             return _result
@@ -2423,51 +2461,201 @@ class NexusFS(  # type: ignore[misc]
         if ttl is not None and ttl > 0:
             context = self._ensure_context_ttl(context, ttl)
 
-        context = self._parse_context(context)
-        self._reject_if_virtual_readme(path, context, op="write")
-
-        zone_id, agent_id, is_admin = self._get_context_identity(context)
-
-        _meta = self.metadata.get(path)
-
-        _rust_ctx = self._build_rust_ctx(context, is_admin)
-        result = self._kernel.sys_write(path, _rust_ctx, buf)
-
-        now = datetime.now(UTC)
-        content_hash = result.content_id or ""
-        size = result.size if result.hit else len(buf)
-        new_version = result.version
-        post_metadata = FileMetadata(
-            path=path,
-            backend_name=_meta.backend_name if _meta else "",
-            physical_path=content_hash,
-            size=size,
-            etag=content_hash or None,
-            created_at=(_meta.created_at if _meta else now),
-            modified_at=now,
-            version=new_version,
-            zone_id=zone_id or ROOT_ZONE_ID,
-            owner_id=(_meta.owner_id if _meta else (context.subject_id or context.user_id)),
-            ttl_seconds=getattr(context, "ttl_seconds", 0.0) or 0.0,
+        return self._write_internal(
+            path=path, content=buf, offset=offset, context=context, consistency=_consistency
         )
 
-        return self._dispatch_write_events(
+    def _write_internal(
+        self,
+        path: str,
+        content: bytes,
+        context: OperationContext | None,
+        if_match: str | None = None,
+        if_none_match: bool = False,
+        force: bool = False,
+        consistency: str = "sc",
+        offset: int = 0,
+        _meta: Any = None,
+    ) -> dict[str, Any]:
+        """Kernel write implementation — OCC-free.
+
+        Thin composition of _write_content (locked I/O) + _dispatch_write_events
+        (sync event dispatch).
+
+        OCC checks (if_match, if_none_match) are done by callers
+        (write() convenience method or RPC handlers) BEFORE calling this.
+
+        Used by both sys_write (returns int) and write() (returns dict).
+
+        Issue #1323: OCC params removed from kernel write path.
+        Issue #1829: Split into _write_content + _dispatch_write_events (SRP).
+        """
+        wr = self._write_content(
+            path, content, context, offset=offset, consistency=consistency, _meta=_meta
+        )
+        return self._dispatch_write_events(path, wr, content)
+
+    def _write_content(
+        self,
+        path: str,
+        content: bytes,
+        context: OperationContext | None,
+        offset: int = 0,
+        consistency: str = "sc",
+        _meta: Any = None,
+    ) -> _WriteContentResult:
+        """Content write + metadata commit (locked, synchronous).
+
+        Handles routing, pre-write hooks, backend write, metadata build+put.
+        Both ExternalRouteResult and standard VFS paths.
+
+        The VFS lock wraps both content write AND metadata put for atomicity.
+
+        Returns:
+            _WriteContentResult for async event dispatch by _dispatch_write_events.
+        """
+        # Normalize context dict to OperationContext dataclass (CLI passes dicts)
+        context = self._parse_context(context)
+
+        # Route to backend with write access check FIRST (to check zone/agent isolation)
+        # This must happen before permission check so AccessDeniedError is raised before PermissionError
+        zone_id, agent_id, is_admin = self._get_context_identity(context)
+
+        route = self.router.route(
             path,
-            _WriteContentResult(
-                content_hash=content_hash,
-                size=size,
-                metadata=post_metadata,
-                new_version=new_version,
-                is_new=(_meta is None),
-                old_etag=_meta.etag if _meta else None,
-                old_metadata=_meta,
+            is_admin=is_admin,
+            check_write=True,
+            zone_id=self._zone_id,
+        )
+
+        # Check if path is read-only
+        if route.readonly:
+            raise PermissionError(f"Path is read-only: {path}")
+
+        # Virtual .readme/ paths are read-only (Issue #3728).
+        self._reject_if_virtual_readme(path, context, op="write")
+
+        # Get existing metadata for permission check and update detection (single query)
+        now = datetime.now(UTC)
+        meta = _meta if _meta is not None else route.metastore.get(path)
+
+        # PRE-INTERCEPT: pre-write hooks (Issue #899)
+        # Hook handles existing-file (owner fast-path) vs new-file (parent check)
+        from nexus.contracts.vfs_hooks import WriteHookContext as _WHC
+
+        self._kernel.dispatch_pre_hooks(
+            "write",
+            _WHC(
+                path=path,
+                content=content,
                 context=context,
-                zone_id=zone_id,
-                agent_id=agent_id,
-                is_remote=False,
-                is_external=False,
+                old_metadata=meta,
             ),
-            buf,
+        )
+
+        # Add backend_path to context for path-based connectors
+        from dataclasses import replace
+
+        if context:
+            context = replace(
+                context,
+                backend_path=route.backend_path,
+                virtual_path=path,
+                mount_path=route.mount_point,
+            )
+        else:
+            from nexus.contracts.types import OperationContext
+
+            context = OperationContext(
+                user_id="anonymous",
+                groups=[],
+                backend_path=route.backend_path,
+                virtual_path=path,
+                mount_path=route.mount_point,
+            )
+
+        # DT_EXTERNAL_STORAGE: backend manages own content storage.
+        # Remote backends (RPC-based) also persist metadata on the remote server,
+        # so we skip local metadata.put() to avoid overwriting.
+        # Local external backends (e.g. LocalConnector) write content
+        # to disk but do NOT manage metadata — we must persist metadata locally.
+        from nexus.core.router import ExternalRouteResult
+
+        _is_remote = hasattr(route.backend, "_rpc_client") or "remote" in route.backend.name
+        _is_external = isinstance(route, ExternalRouteResult)
+        # VFS I/O Lock: exclusive write lock around backend write + metadata put.
+        # Like Linux i_rwsem: held for I/O duration only, released before observers.
+        # Applies to ALL backends (external and CAS) to prevent concurrent write interleave.
+        with self._vfs_locked(path, "write"):
+            if _is_external:
+                wr = route.backend.write_content(
+                    content,
+                    content_id=meta.physical_path if (offset > 0 and meta) else "",
+                    offset=offset,
+                    context=context,
+                )
+                content_hash = wr.content_id
+                metadata = self._build_write_metadata(
+                    path=path,
+                    backend_name=self._driver_coordinator.backend_key(
+                        route.backend, route.mount_point
+                    ),
+                    content_hash=content_hash,
+                    size=wr.size if offset > 0 else len(content),
+                    existing_meta=meta,
+                    now=now,
+                    zone_id=zone_id,
+                    context=context,
+                )
+                new_version = metadata.version
+                # Local external backends need metadata persisted locally
+                if not _is_remote:
+                    route.metastore.put(metadata, consistency=consistency)
+            else:
+                _wr = route.backend.write_content(
+                    content,
+                    content_id=meta.physical_path if (offset > 0 and meta) else "",
+                    offset=offset,
+                    context=context,
+                )
+                content_hash = _wr.content_id
+
+                # NOTE: sys_write does NOT release old content on overwrite.
+                # HDFS/GFS pattern: content cleanup is async via background GC.
+                # See: docs/architecture/federation-memo.md §7f Caveat 4.
+
+                # Kernel-managed metadata (POSIX generic_write_end pattern):
+                # kernel updates mtime, size, version, etag in VFS lock
+                # after backend.write_content(). Drivers only manage content.
+                metadata = self._build_write_metadata(
+                    path=path,
+                    backend_name=self._driver_coordinator.backend_key(
+                        route.backend, route.mount_point
+                    ),
+                    content_hash=content_hash,
+                    # _wr.size is the total file size after splice (not bytes written)
+                    size=_wr.size if offset > 0 else len(content),
+                    existing_meta=meta,
+                    now=now,
+                    zone_id=zone_id,
+                    context=context,
+                )
+                new_version = metadata.version
+                route.metastore.put(metadata, consistency=consistency)
+
+        return _WriteContentResult(
+            content_hash=content_hash,
+            size=metadata.size,
+            metadata=metadata,
+            new_version=new_version,
+            is_new=(meta is None),
+            old_etag=meta.etag if meta else None,
+            old_metadata=meta,
+            context=context,
+            zone_id=zone_id,
+            agent_id=agent_id,
+            is_remote=_is_remote,
+            is_external=_is_external,
         )
 
     def _dispatch_write_events(
@@ -2478,13 +2666,19 @@ class NexusFS(  # type: ignore[misc]
     ) -> dict[str, Any]:
         """Post-write event dispatch (sync, outside lock).
 
-        Fires INTERCEPT POST hooks. OBSERVE dispatch happens inside the
-        kernel's ``sys_write`` via the ThreadPool (§11 Phase 5) — Python
-        only owns the POST-hook path because hook contexts need the GIL.
+        Fires FileEvent notify (OBSERVE) + dispatch_post_hooks (INTERCEPT).
+        Uses the augmented context from _write_content (stored in result).
 
         Returns:
             Dict with metadata {etag, version, modified_at, size}.
         """
+        # --- Lock released — event dispatch + side effects (like Linux inotify after i_rwsem) ---
+
+        # OBSERVE dispatch is handled by the caller:
+        #   - sys_write hit=true → Rust kernel fires OBSERVE via ThreadPool (§11 Phase 5)
+        #   - _write_internal (hit=false fallback) → Python fires notify() before calling this
+
+        # INTERCEPT POST hooks
         from nexus.contracts.vfs_hooks import WriteHookContext
 
         _write_ctx = WriteHookContext(

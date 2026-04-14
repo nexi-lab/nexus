@@ -59,6 +59,7 @@ def setup_uvloop() -> bool:
 # LAZY IMPORTS for performance optimization
 # =============================================================================
 if TYPE_CHECKING:
+    from nexus.contracts.filesystem.filesystem_abc import NexusFilesystem
     from nexus.core.nexus_fs import NexusFS
     from nexus.lib.registry import BaseRegistry, BrickInfo, BrickRegistry
 
@@ -70,6 +71,7 @@ _LAZY_IMPORTS = {
     "BaseRegistry": ("nexus.lib.registry", "BaseRegistry"),
     "BrickInfo": ("nexus.lib.registry", "BrickInfo"),
     "BrickRegistry": ("nexus.lib.registry", "BrickRegistry"),
+    "NexusFilesystem": ("nexus.contracts.filesystem.filesystem_abc", "NexusFilesystem"),
     "NexusFS": ("nexus.core.nexus_fs", "NexusFS"),
 }
 
@@ -101,5 +103,6 @@ __all__ = [
     "BrickInfo",
     "BrickRegistry",
     # Filesystem classes (lazy)
+    "NexusFilesystem",
     "NexusFS",
 ]

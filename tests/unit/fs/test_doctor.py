@@ -7,7 +7,7 @@ concurrent execution, timeout handling, rendering, and tip generation.
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -214,7 +214,7 @@ class TestConcurrentExecution:
     async def test_run_all_checks_with_mock_fs(self):
         mock_fs = MagicMock()
         mock_fs.list_mounts.return_value = ["/local/data"]
-        mock_fs.ls = MagicMock(return_value=[])
+        mock_fs.ls = AsyncMock(return_value=[])
 
         results = await run_all_checks(fs=mock_fs)
         mount_results = results["Mounts"]
@@ -225,7 +225,7 @@ class TestConcurrentExecution:
     async def test_mount_connectivity_failure(self):
         mock_fs = MagicMock()
         mock_fs.list_mounts.return_value = ["/s3/bucket"]
-        mock_fs.ls = MagicMock(side_effect=ConnectionError("network unreachable"))
+        mock_fs.ls = AsyncMock(side_effect=ConnectionError("network unreachable"))
 
         results = await run_all_checks(fs=mock_fs)
         mount_results = results["Mounts"]

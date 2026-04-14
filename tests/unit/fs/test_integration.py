@@ -21,10 +21,10 @@ from pathlib import Path
 import pytest
 
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.contracts.metadata import DT_MOUNT  # noqa: E402
 from nexus.contracts.types import OperationContext
 from nexus.core.config import PermissionConfig
 from nexus.core.nexus_fs import NexusFS
+from nexus.core.router import PathRouter
 from nexus.fs import _make_mount_entry
 from nexus.fs._facade import SlimNexusFS
 from nexus.fs._sqlite_meta import SQLiteMetastore
@@ -44,10 +44,17 @@ def slim_fs(tmp_path: Path):
     data_dir.mkdir()
     backend = CASLocalBackend(root_path=data_dir)
 
-    # Kernel (constructs its own DriverLifecycleCoordinator + PathRouter)
+    # Router (empty — mounts added via coordinator)
+    from nexus.core.mount_table import MountTable
+
+    mount_table = MountTable(metastore)
+    router = PathRouter(mount_table)
+
+    # Kernel
     kernel = NexusFS(
         metadata_store=metastore,
         permissions=PermissionConfig(enforce=False),
+        router=router,
     )
     kernel._init_cred = OperationContext(
         user_id="test",
@@ -57,7 +64,7 @@ def slim_fs(tmp_path: Path):
     )
 
     # Mount via coordinator (registers in backend pool + routing table + hooks)
-    kernel.sys_setattr("/local", entry_type=DT_MOUNT, backend=backend)
+    kernel._driver_coordinator.mount("/local", backend)
 
     # Create DT_MOUNT entry so stat("/local") works
     metastore.put(_make_mount_entry("/local", backend.name))
@@ -98,9 +105,15 @@ def dual_fs(tmp_path: Path):
     backend_a.__class__ = _BackendA
     backend_b.__class__ = _BackendB
 
+    from nexus.core.mount_table import MountTable
+
+    mount_table = MountTable(metastore)
+    router = PathRouter(mount_table)
+
     kernel = NexusFS(
         metadata_store=metastore,
         permissions=PermissionConfig(enforce=False),
+        router=router,
     )
     kernel._init_cred = OperationContext(
         user_id="test",
@@ -110,8 +123,8 @@ def dual_fs(tmp_path: Path):
     )
 
     # Mount via coordinator (registers in backend pool + routing table + hooks)
-    kernel.sys_setattr("/a", entry_type=DT_MOUNT, backend=backend_a)
-    kernel.sys_setattr("/b", entry_type=DT_MOUNT, backend=backend_b)
+    kernel._driver_coordinator.mount("/a", backend_a)
+    kernel._driver_coordinator.mount("/b", backend_b)
 
     # Create DT_MOUNT entries
     for mp, be in [("/a", backend_a), ("/b", backend_b)]:
@@ -126,93 +139,106 @@ def dual_fs(tmp_path: Path):
 
 
 class TestSingleBackendLifecycle:
-    def test_write_and_read(self, slim_fs: SlimNexusFS):
+    @pytest.mark.asyncio
+    async def test_write_and_read(self, slim_fs: SlimNexusFS):
         """Write content, read it back, verify match."""
         content = b"Hello, nexus-fs!"
         slim_fs.write("/local/test.txt", content)
         result = slim_fs.read("/local/test.txt")
         assert result == content
 
-    def test_stat(self, slim_fs: SlimNexusFS):
+    @pytest.mark.asyncio
+    async def test_stat(self, slim_fs: SlimNexusFS):
         """Write a file, stat it, verify metadata."""
         slim_fs.write("/local/meta.txt", b"metadata test")
-        stat = slim_fs.stat("/local/meta.txt")
+        stat = await slim_fs.stat("/local/meta.txt")
         assert stat is not None
         assert stat["path"] == "/local/meta.txt"
         assert stat["size"] == 13
         assert stat["is_directory"] is False
 
-    def test_ls(self, slim_fs: SlimNexusFS):
+    @pytest.mark.asyncio
+    async def test_ls(self, slim_fs: SlimNexusFS):
         """Write files, list directory, verify they appear."""
         slim_fs.write("/local/a.txt", b"aaa")
         slim_fs.write("/local/b.txt", b"bbb")
-        entries = slim_fs.ls("/local/", detail=False, recursive=True)
+        entries = await slim_fs.ls("/local/", detail=False, recursive=True)
         paths = [e for e in entries if e.endswith(".txt")]
         assert "/local/a.txt" in paths
         assert "/local/b.txt" in paths
 
-    def test_exists(self, slim_fs: SlimNexusFS):
+    @pytest.mark.asyncio
+    async def test_exists(self, slim_fs: SlimNexusFS):
         """Check exists before and after write."""
-        assert not slim_fs.exists("/local/nofile.txt")
+        assert not await slim_fs.exists("/local/nofile.txt")
         slim_fs.write("/local/nofile.txt", b"now I exist")
-        assert slim_fs.exists("/local/nofile.txt")
+        assert await slim_fs.exists("/local/nofile.txt")
 
-    def test_rename(self, slim_fs: SlimNexusFS):
+    @pytest.mark.asyncio
+    async def test_rename(self, slim_fs: SlimNexusFS):
         """Write, rename, verify old path gone and new path exists."""
         slim_fs.write("/local/old.txt", b"rename me")
-        slim_fs.rename("/local/old.txt", "/local/new.txt")
+        await slim_fs.rename("/local/old.txt", "/local/new.txt")
         result = slim_fs.read("/local/new.txt")
         assert result == b"rename me"
 
-    def test_delete(self, slim_fs: SlimNexusFS):
+    @pytest.mark.asyncio
+    async def test_delete(self, slim_fs: SlimNexusFS):
         """Write, delete, verify gone."""
         slim_fs.write("/local/delete-me.txt", b"bye")
-        slim_fs.delete("/local/delete-me.txt")
-        stat = slim_fs.stat("/local/delete-me.txt")
+        await slim_fs.delete("/local/delete-me.txt")
+        stat = await slim_fs.stat("/local/delete-me.txt")
         assert stat is None
 
-    def test_copy(self, slim_fs: SlimNexusFS):
+    @pytest.mark.asyncio
+    async def test_copy(self, slim_fs: SlimNexusFS):
         """Write, copy, verify both exist with same content."""
         slim_fs.write("/local/src.txt", b"copy me")
-        slim_fs.copy("/local/src.txt", "/local/dst.txt")
+        await slim_fs.copy("/local/src.txt", "/local/dst.txt")
         src = slim_fs.read("/local/src.txt")
         dst = slim_fs.read("/local/dst.txt")
         assert src == dst == b"copy me"
 
-    def test_mkdir(self, slim_fs: SlimNexusFS):
+    @pytest.mark.asyncio
+    async def test_mkdir(self, slim_fs: SlimNexusFS):
         """Create directory, verify it's a directory."""
         slim_fs.mkdir("/local/subdir")
-        stat = slim_fs.stat("/local/subdir")
+        stat = await slim_fs.stat("/local/subdir")
         assert stat is not None
         assert stat["is_directory"] is True
 
-    def test_stat_directory(self, slim_fs: SlimNexusFS):
+    @pytest.mark.asyncio
+    async def test_stat_directory(self, slim_fs: SlimNexusFS):
         """Stat on the mount root should return directory."""
-        stat = slim_fs.stat("/local")
+        stat = await slim_fs.stat("/local")
         assert stat is not None
         assert stat["is_directory"] is True
 
-    def test_overwrite(self, slim_fs: SlimNexusFS):
+    @pytest.mark.asyncio
+    async def test_overwrite(self, slim_fs: SlimNexusFS):
         """Writing to the same path should overwrite."""
         slim_fs.write("/local/ow.txt", b"version 1")
         slim_fs.write("/local/ow.txt", b"version 2")
         result = slim_fs.read("/local/ow.txt")
         assert result == b"version 2"
 
-    def test_binary_content(self, slim_fs: SlimNexusFS):
+    @pytest.mark.asyncio
+    async def test_binary_content(self, slim_fs: SlimNexusFS):
         """Write and read binary content."""
         content = bytes(range(256))
         slim_fs.write("/local/binary.bin", content)
         result = slim_fs.read("/local/binary.bin")
         assert result == content
 
-    def test_empty_file(self, slim_fs: SlimNexusFS):
+    @pytest.mark.asyncio
+    async def test_empty_file(self, slim_fs: SlimNexusFS):
         """Write and read empty file."""
         slim_fs.write("/local/empty.txt", b"")
         result = slim_fs.read("/local/empty.txt")
         assert result == b""
 
-    def test_list_mounts(self, slim_fs: SlimNexusFS):
+    @pytest.mark.asyncio
+    async def test_list_mounts(self, slim_fs: SlimNexusFS):
         """Verify mount points are listed."""
         mounts = slim_fs.list_mounts()
         assert "/local" in mounts
@@ -226,7 +252,8 @@ class TestSingleBackendLifecycle:
 class TestEditOperations:
     """Test the edit() method on SlimNexusFS facade."""
 
-    def test_edit_simple_replacement(self, slim_fs: SlimNexusFS):
+    @pytest.mark.asyncio
+    async def test_edit_simple_replacement(self, slim_fs: SlimNexusFS):
         """Simple search/replace edit."""
         slim_fs.write("/local/code.py", b"def foo():\n    return 1\n")
 
@@ -238,7 +265,8 @@ class TestEditOperations:
         assert b"def bar():" in content
         assert b"def foo():" not in content
 
-    def test_edit_multiple_replacements(self, slim_fs: SlimNexusFS):
+    @pytest.mark.asyncio
+    async def test_edit_multiple_replacements(self, slim_fs: SlimNexusFS):
         """Multiple edits applied in sequence."""
         slim_fs.write("/local/multi.py", b"x = 1\ny = 2\nz = 3\n")
 
@@ -252,7 +280,8 @@ class TestEditOperations:
         content = slim_fs.read("/local/multi.py")
         assert content == b"x = 10\ny = 20\nz = 3\n"
 
-    def test_edit_returns_diff(self, slim_fs: SlimNexusFS):
+    @pytest.mark.asyncio
+    async def test_edit_returns_diff(self, slim_fs: SlimNexusFS):
         """Edit result includes a unified diff."""
         slim_fs.write("/local/diff.txt", b"hello world\n")
 
@@ -262,7 +291,8 @@ class TestEditOperations:
         assert "-hello world" in result["diff"]
         assert "+goodbye world" in result["diff"]
 
-    def test_edit_preview_does_not_modify(self, slim_fs: SlimNexusFS):
+    @pytest.mark.asyncio
+    async def test_edit_preview_does_not_modify(self, slim_fs: SlimNexusFS):
         """Preview mode returns diff but doesn't write."""
         original = b"keep me unchanged\n"
         slim_fs.write("/local/preview.txt", original)
@@ -279,7 +309,8 @@ class TestEditOperations:
         content = slim_fs.read("/local/preview.txt")
         assert content == original
 
-    def test_edit_no_match_fails(self, slim_fs: SlimNexusFS):
+    @pytest.mark.asyncio
+    async def test_edit_no_match_fails(self, slim_fs: SlimNexusFS):
         """Edit fails when search string not found."""
         slim_fs.write("/local/nomatch.txt", b"actual content\n")
 
@@ -292,7 +323,8 @@ class TestEditOperations:
         assert result["success"] is False
         assert len(result["errors"]) > 0
 
-    def test_edit_with_dict_format(self, slim_fs: SlimNexusFS):
+    @pytest.mark.asyncio
+    async def test_edit_with_dict_format(self, slim_fs: SlimNexusFS):
         """Edit accepts dict format with old_str/new_str keys."""
         slim_fs.write("/local/dict.txt", b"old value\n")
 
@@ -305,7 +337,8 @@ class TestEditOperations:
         content = slim_fs.read("/local/dict.txt")
         assert content == b"new value\n"
 
-    def test_edit_fuzzy_match(self, slim_fs: SlimNexusFS):
+    @pytest.mark.asyncio
+    async def test_edit_fuzzy_match(self, slim_fs: SlimNexusFS):
         """Fuzzy matching handles minor differences."""
         slim_fs.write(
             "/local/fuzzy.py",
@@ -323,7 +356,8 @@ class TestEditOperations:
         content = slim_fs.read("/local/fuzzy.py")
         assert b"def compute_sum(items):" in content
 
-    def test_edit_etag_concurrency(self, slim_fs: SlimNexusFS):
+    @pytest.mark.asyncio
+    async def test_edit_etag_concurrency(self, slim_fs: SlimNexusFS):
         """Optimistic concurrency: edit with correct etag succeeds."""
         write_result = slim_fs.write("/local/etag.txt", b"version 1\n")
         etag = write_result["etag"]
@@ -338,7 +372,8 @@ class TestEditOperations:
         content = slim_fs.read("/local/etag.txt")
         assert content == b"version 2\n"
 
-    def test_edit_stale_etag_fails(self, slim_fs: SlimNexusFS):
+    @pytest.mark.asyncio
+    async def test_edit_stale_etag_fails(self, slim_fs: SlimNexusFS):
         """Optimistic concurrency: stale etag is rejected."""
         write_result = slim_fs.write("/local/stale.txt", b"version 1\n")
         old_etag = write_result["etag"]
@@ -355,7 +390,8 @@ class TestEditOperations:
                 if_match=old_etag,
             )
 
-    def test_edit_delete_text(self, slim_fs: SlimNexusFS):
+    @pytest.mark.asyncio
+    async def test_edit_delete_text(self, slim_fs: SlimNexusFS):
         """Replace with empty string to delete text."""
         slim_fs.write("/local/del.txt", b"keep\nremove me\nkeep too\n")
 
@@ -365,7 +401,8 @@ class TestEditOperations:
         content = slim_fs.read("/local/del.txt")
         assert content == b"keep\nkeep too\n"
 
-    def test_edit_multiline_block(self, slim_fs: SlimNexusFS):
+    @pytest.mark.asyncio
+    async def test_edit_multiline_block(self, slim_fs: SlimNexusFS):
         """Edit a multiline block."""
         slim_fs.write(
             "/local/block.py",
@@ -389,7 +426,8 @@ class TestEditOperations:
 
 
 class TestMultiBackend:
-    def test_write_to_separate_backends(self, dual_fs: SlimNexusFS):
+    @pytest.mark.asyncio
+    async def test_write_to_separate_backends(self, dual_fs: SlimNexusFS):
         """Write to two different backends, verify isolation."""
         dual_fs.write("/a/file.txt", b"backend A")
         dual_fs.write("/b/file.txt", b"backend B")
@@ -397,14 +435,16 @@ class TestMultiBackend:
         assert dual_fs.read("/a/file.txt") == b"backend A"
         assert dual_fs.read("/b/file.txt") == b"backend B"
 
-    def test_cross_backend_copy(self, dual_fs: SlimNexusFS):
+    @pytest.mark.asyncio
+    async def test_cross_backend_copy(self, dual_fs: SlimNexusFS):
         """Copy from one backend to another."""
         dual_fs.write("/a/src.txt", b"cross-copy")
-        dual_fs.copy("/a/src.txt", "/b/dst.txt")
+        await dual_fs.copy("/a/src.txt", "/b/dst.txt")
 
         assert dual_fs.read("/b/dst.txt") == b"cross-copy"
 
-    def test_list_multiple_mounts(self, dual_fs: SlimNexusFS):
+    @pytest.mark.asyncio
+    async def test_list_multiple_mounts(self, dual_fs: SlimNexusFS):
         """Both mounts should be visible."""
         mounts = dual_fs.list_mounts()
         assert "/a" in mounts
@@ -417,11 +457,16 @@ class TestMultiBackend:
 
 
 class TestSQLiteMetastore:
-    # F3 C4: the stdlib-SQLite backend was replaced with a kernel-backed
-    # RustMetastoreProxy factory under the same import name. The previous
-    # ``test_wal_mode_enabled`` check (``PRAGMA journal_mode == 'wal'``)
-    # was specific to the sqlite3 implementation and is removed with the
-    # backing store.
+    def test_wal_mode_enabled(self, tmp_path: Path):
+        """Verify WAL mode is enabled on the SQLite database."""
+        db_path = str(tmp_path / "test.db")
+        SQLiteMetastore(db_path)  # creates DB with WAL mode
+        import sqlite3
+
+        conn = sqlite3.connect(db_path)
+        result = conn.execute("PRAGMA journal_mode").fetchone()
+        assert result[0] == "wal"
+        conn.close()
 
     def test_put_and_get(self, tmp_path: Path):
         """Basic put/get on the SQLite metastore."""

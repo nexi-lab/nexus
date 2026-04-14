@@ -42,7 +42,7 @@ async def nx(temp_dir: Path) -> AsyncGenerator[NexusFS, None]:
             enforce=True, allow_admin_bypass=True
         ),  # Enable admin bypass for zone boundary tests
     )
-    # Grant system user access to /nexus/pipes (required by RecordStoreWriteObserver
+    # Grant system user access to /nexus/pipes (required by PipedRecordStoreWriteObserver
     # when permissions are enforced)
     system_context = {"user_id": "system", "groups": [], "is_admin": False, "is_system": True}
     nx.service("rebac").rebac_create_sync(

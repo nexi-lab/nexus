@@ -89,16 +89,16 @@ def mock_nexus_fs():
 def mock_gateway():
     """Create a NexusFSGateway with mock NexusFS for gateway benchmarks.
 
-    Gateway sys_* methods are sync and call the underlying NexusFS methods
-    directly, so the mock NexusFS methods use MagicMock.
+    Gateway sys_* methods are async and await the underlying NexusFS methods,
+    so the mock NexusFS methods must be AsyncMock.
     """
     mock_fs = MagicMock()
-    mock_fs.sys_read = MagicMock(return_value=b"data")
-    mock_fs.sys_write = MagicMock()
-    mock_fs.write = MagicMock()
-    mock_fs.mkdir = MagicMock()
+    mock_fs.sys_read = AsyncMock(return_value=b"data")
+    mock_fs.sys_write = AsyncMock()
+    mock_fs.write = AsyncMock()
+    mock_fs.mkdir = AsyncMock()
     mock_fs.sys_readdir = MagicMock(return_value=["a.txt", "b.txt"])
-    mock_fs.access = MagicMock(return_value=True)
+    mock_fs.access = AsyncMock(return_value=True)
     mock_fs.metadata = MagicMock()
     mock_fs.metadata.get = MagicMock(return_value=MagicMock())
     mock_fs.metadata.list = MagicMock(return_value=[])
@@ -283,7 +283,9 @@ class TestGatewayDelegationOverhead:
         """Benchmark gateway.sys_read() delegation."""
 
         def run():
-            mock_gateway.sys_read("/test/file.txt", context=context)
+            delegation_loop.run_until_complete(
+                mock_gateway.sys_read("/test/file.txt", context=context)
+            )
 
         benchmark(run)
 
@@ -291,7 +293,9 @@ class TestGatewayDelegationOverhead:
         """Benchmark gateway.write() delegation with bytes."""
 
         def run():
-            mock_gateway.write("/test/file.txt", b"content", context=context)
+            delegation_loop.run_until_complete(
+                mock_gateway.write("/test/file.txt", b"content", context=context)
+            )
 
         benchmark(run)
 
@@ -299,7 +303,9 @@ class TestGatewayDelegationOverhead:
         """Benchmark gateway.write() with str->bytes conversion."""
 
         def run():
-            mock_gateway.write("/test/file.txt", "text content", context=context)
+            delegation_loop.run_until_complete(
+                mock_gateway.write("/test/file.txt", "text content", context=context)
+            )
 
         benchmark(run)
 
@@ -307,7 +313,9 @@ class TestGatewayDelegationOverhead:
         """Benchmark gateway.access() delegation."""
 
         def run():
-            mock_gateway.access("/test/file.txt", context=context)
+            delegation_loop.run_until_complete(
+                mock_gateway.access("/test/file.txt", context=context)
+            )
 
         benchmark(run)
 

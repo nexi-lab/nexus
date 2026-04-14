@@ -93,10 +93,6 @@ class OperationContext:
         admin_capabilities: Set of granted admin capabilities.
         request_id: Unique ID for audit trail correlation.
         backend_path: Backend-relative path for connector backends (optional).
-        mount_path: Mount point for the backend, e.g. "/gws/gmail" (Issue #3728).
-            Populated by the router when a request is dispatched to a mounted backend.
-            Used by the virtual ``.readme/`` overlay to render absolute paths in
-            auto-generated skill docs without per-connector instance state.
 
     Examples:
         >>> ctx = OperationContext(
@@ -123,7 +119,6 @@ class OperationContext:
     # Backend path for path-based connectors (GCS, S3, etc.)
     backend_path: str | None = None
     virtual_path: str | None = None  # Full virtual path with mount prefix (for cache keys)
-    mount_path: str | None = None  # Mount point for the backend (Issue #3728)
 
     # Read Set Tracking for Query Dependencies (Issue #1166)
     read_set: "ReadSet | None" = None
@@ -286,7 +281,6 @@ def parse_operation_context(context: OperationContext | dict | None = None) -> O
         admin_capabilities=set(context.get("admin_capabilities", ())),
         backend_path=context.get("backend_path"),
         virtual_path=context.get("virtual_path"),
-        mount_path=context.get("mount_path"),
     )
 
 
@@ -353,10 +347,12 @@ class AuditConfig:
     trails. ``strict_mode=True`` (default) ensures writes fail if audit
     logging fails, preventing silent audit gaps.
 
-    Note on observers: ``strict_mode`` is enforced by the synchronous
-    ``RecordStoreWriteObserver``.  The OBSERVE-phase observer receives
-    events from the Rust kernel; error handling (retry + drop) is
-    managed by the debounced flush, not by ``strict_mode``.
+    Note on async observers: ``strict_mode`` is enforced by the
+    synchronous ``RecordStoreWriteObserver``. The async
+    ``PipedRecordStoreWriteObserver`` enqueues events into a DT_PIPE
+    where the enqueue path cannot fail; actual error handling
+    (retry + drop) is managed by the background consumer, not by
+    ``strict_mode``.
     """
 
     strict_mode: bool = True

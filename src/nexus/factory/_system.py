@@ -145,10 +145,10 @@ def _boot_pre_kernel_services(
 
             if use_buffer:
                 from nexus.storage.piped_record_store_write_observer import (
-                    RecordStoreWriteObserver as ObserverWriteObserver,
+                    PipedRecordStoreWriteObserver,
                 )
 
-                write_observer = ObserverWriteObserver(
+                write_observer = PipedRecordStoreWriteObserver(
                     ctx.record_store,
                     strict_mode=ctx.audit.strict_mode,
                     event_signal=ctx.event_signal,

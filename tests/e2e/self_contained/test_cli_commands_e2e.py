@@ -7,7 +7,7 @@ Each CLI command is invoked via subprocess and validates:
 - Graceful error handling for missing services / auth
 
 NOTE: Requires Rust PyO3 extensions for the daemon to start.
-Build with: maturin develop -m rust/raft/Cargo.toml --features full
+Build with: maturin develop -m rust/nexus_raft/Cargo.toml --features full
 Tests are auto-skipped if the daemon fails to start (e.g. no Rust build).
 """
 

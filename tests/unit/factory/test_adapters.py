@@ -1,6 +1,6 @@
 """Tests for factory adapters — Issue #2180."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -13,14 +13,14 @@ class TestNexusFSFileReader:
     @pytest.mark.asyncio
     async def test_read_text_bytes_decoded(self) -> None:
         nx = MagicMock()
-        nx.sys_read = MagicMock(return_value=b"hello world")
+        nx.sys_read = AsyncMock(return_value=b"hello world")
         reader = _NexusFSFileReader(nx)
         assert await reader.read_text("/test.txt") == "hello world"
 
     @pytest.mark.asyncio
     async def test_read_text_string_passthrough(self) -> None:
         nx = MagicMock()
-        nx.sys_read = MagicMock(return_value="hello world")
+        nx.sys_read = AsyncMock(return_value="hello world")
         reader = _NexusFSFileReader(nx)
         assert await reader.read_text("/test.txt") == "hello world"
 
@@ -66,14 +66,14 @@ class TestNexusFSFileReader:
         nx = MagicMock()
         mock_result = MagicMock()
         mock_result.items = ["/a.txt", "/b.txt"]
-        nx.sys_readdir = MagicMock(return_value=mock_result)
+        nx.sys_readdir = AsyncMock(return_value=mock_result)
         reader = _NexusFSFileReader(nx)
         assert await reader.list_files("/") == ["/a.txt", "/b.txt"]
 
     @pytest.mark.asyncio
     async def test_list_files_list_fallback(self) -> None:
         nx = MagicMock()
-        nx.sys_readdir = MagicMock(return_value=["/a.txt", "/b.txt"])
+        nx.sys_readdir = AsyncMock(return_value=["/a.txt", "/b.txt"])
         reader = _NexusFSFileReader(nx)
         result = await reader.list_files("/")
         assert len(result) >= 2

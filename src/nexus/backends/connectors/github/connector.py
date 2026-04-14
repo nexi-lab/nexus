@@ -35,8 +35,16 @@ from nexus.backends.connectors.github.schemas import (
 logger = logging.getLogger(__name__)
 
 
+<<<<<<< HEAD
 @register_connector("github_connector")
 @register_connector("gws_github")
+=======
+@register_connector(
+    "gws_github",
+    description="GitHub via gh CLI",
+    category="cli",
+)
+>>>>>>> c25f7f03d (feat: reapply 36 lost commits — async→sync, dead code cleanup, Rust dispatch simplification)
 class GitHubConnector(PathCLIBackend):
     """GitHub CLI connector via ``gh``."""
 

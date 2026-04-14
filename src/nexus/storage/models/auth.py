@@ -312,17 +312,6 @@ class ZoneModel(Base):
 
     settings: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    # Per-directory semantic index scoping (Issue #3698).
-    # 'all'    — embed every file under the zone (legacy, default)
-    # 'scoped' — only embed files under directories registered in
-    #            indexed_directories for this zone
-    indexing_mode: Mapped[str] = mapped_column(
-        String(16),
-        nullable=False,
-        server_default=text("'all'"),
-        default="all",
-    )
-
     phase: Mapped[str] = mapped_column(String(12), default="Active", nullable=False)
     finalizers: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)

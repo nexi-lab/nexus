@@ -268,8 +268,8 @@ class TestBootBrickServices:
             "governance_collusion_service",
             "governance_graph_service",
             "governance_response_service",
-            # OBSERVE-phase Zoekt observer (Issue #810)
-            "zoekt_write_observer",
+            # DT_PIPE Zoekt consumer (Issue #810)
+            "zoekt_pipe_consumer",
             # Task Manager DT_PIPE consumer
             "task_dispatch_consumer",
         }

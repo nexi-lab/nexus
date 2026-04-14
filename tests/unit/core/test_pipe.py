@@ -2,7 +2,7 @@
 
 Tests Rust Kernel IPC pipe operations (create, read, write, close, destroy)
 and DT_PIPE metadata integration.
-See: rust/kernel/src/pipe.rs, rust/kernel/src/kernel.rs,
+See: rust/nexus_kernel/src/pipe.rs, rust/nexus_kernel/src/kernel.rs,
      KERNEL-ARCHITECTURE.md §6.
 """
 

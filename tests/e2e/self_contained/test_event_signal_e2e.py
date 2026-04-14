@@ -1,7 +1,7 @@
 """End-to-end tests for signal-driven event delivery pipeline (Issue #3193).
 
 Tests the full pipeline:
-  write -> RecordStoreWriteObserver -> signal -> EventDeliveryWorker -> delivered
+  write -> PipedRecordStoreWriteObserver -> signal -> EventDeliveryWorker -> delivered
   write -> observer -> signal -> EventReplayService.stream() -> received
 
 Covers:
@@ -463,7 +463,7 @@ class TestObserverSignalIntegration:
         signal = asyncio.Event()
         assert not signal.is_set()
 
-        # Simulate what RecordStoreWriteObserver._flush_batch does:
+        # Simulate what PipedRecordStoreWriteObserver._flush_batch does:
         # After successful commit, it calls self._event_signal.set()
         signal.set()
         assert signal.is_set()
@@ -494,7 +494,7 @@ class TestObserverSignalIntegration:
         try:
             # Simulate what observer does: insert operation_log row + signal
             op_id = _insert_undelivered(record_store.session_factory, path="/observer-chain.txt")
-            signal.set()  # Mimics RecordStoreWriteObserver._flush_batch
+            signal.set()  # Mimics PipedRecordStoreWriteObserver._flush_batch
 
             # Wait for delivery
             delivered = False

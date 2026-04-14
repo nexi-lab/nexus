@@ -1,7 +1,7 @@
 """File reader protocol for search brick dependency inversion (Issue #1520, #2036).
 
 Defines ``FileReaderProtocol`` — the narrow interface that search components
-use to read files without coupling to the full NexusFS kernel object.
+use to read files without coupling to the full NexusFilesystem kernel object.
 
 Moved from ``nexus.bricks.search.protocols`` to ``nexus.contracts.protocols``
 during brick extraction (Issue #2036) so that the search brick imports only
@@ -23,7 +23,7 @@ from typing import Any, Protocol, runtime_checkable
 class FileReaderProtocol(Protocol):
     """Narrow interface for file reading needed by search components.
 
-    Replaces the broad NexusFS dependency with a minimal contract.
+    Replaces the broad NexusFilesystem dependency with a minimal contract.
     Only 6 methods (vs NexusFS's 30+) — keeps coupling surface small.
     """
 

@@ -423,26 +423,33 @@ async def _register_vfs_hooks(
             nx._permission_lease_table = _lease_table
 
     # ── Audit write interceptor (Issue #900, #1772) ──
-    # Observer dispatch is now Rust-native (MutationObserver trait).
+    # Piped observer → async AuditWriteInterceptor serializes mutations → DT_PIPE.
     # Sync observer  → sync SyncAuditWriteInterceptor calls on_write() directly.
     write_observer = _ss.get("write_observer")
     if write_observer is not None:
-        from nexus.storage.piped_record_store_write_observer import (
-            RecordStoreWriteObserver as _ObsWO,
-        )
+        from nexus.storage.piped_record_store_write_observer import PipedRecordStoreWriteObserver
 
         strict = getattr(write_observer, "_strict_mode", True)
-        if isinstance(write_observer, _ObsWO):
-            # Registered as service. Rust kernel dispatches observers directly;
-            # no Python on_mutation or hook_spec needed.
-            await _enlist("audit", write_observer)
+        if isinstance(write_observer, PipedRecordStoreWriteObserver):
+            from nexus.storage.piped_record_store_write_observer import _AUDIT_PIPE_PATH
+            from nexus.storage.write_observer_hooks import AuditWriteInterceptor
+
+            # Issue #3399: bind + start the piped observer so the DT_PIPE
+            # is created before AuditWriteInterceptor emits.  The server
+            # lifespan does this in services.py, but create_nexus_fs() callers
+            # (benchmarks, tests, SDK) bypass that path.
+            if hasattr(write_observer, "bind_fs"):
+                write_observer.bind_fs(nx)
+                await write_observer.start()
+
+            audit: AuditWriteInterceptor | SyncAuditWriteInterceptor = AuditWriteInterceptor(
+                nx, _AUDIT_PIPE_PATH, strict_mode=strict
+            )
         else:
             from nexus.storage.write_observer_hooks import SyncAuditWriteInterceptor
 
-            audit: SyncAuditWriteInterceptor = SyncAuditWriteInterceptor(
-                write_observer, strict_mode=strict
-            )
-            await _enlist("audit", audit)
+            audit = SyncAuditWriteInterceptor(write_observer, strict_mode=strict)
+        await _enlist("audit", audit)
 
     # DynamicViewerReadHook (post-read: column-level CSV filtering)
     has_viewer = (
@@ -603,17 +610,23 @@ async def _register_vfs_hooks(
         await _enlist("zone_writability", ZoneWritabilityHook(_zl2))
 
     # ── OBSERVE observers (Issue #900, #922) ──────────────────────────
-    # FileWatcher is now Rust kernel-internal (sys_watch + dispatch_observers).
-    # No Python FileWatcher registration needed.
+    # FileWatcher: kernel inotify primitive — local OBSERVE waiters.
+    # Registers itself as VFSObserver via hook_spec() at enlist() time.
+    # Remote watcher (EventBus) wired later by federation or other services.
+    await _enlist("file_watcher", nx._file_watcher)
 
     # Remote watcher: default StreamRemoteWatcher (DT_STREAM, no external deps).
+    # If EventBus (NATS/Dragonfly) is configured, use EventBusRemoteWatcher instead.
     from nexus.core.remote_watcher import StreamEventObserver, StreamRemoteWatcher
 
     _stream_watcher = StreamRemoteWatcher(nx)
     _stream_observer = StreamEventObserver(_stream_watcher)
+    nx._file_watcher.set_remote_watcher(_stream_watcher)
     await _enlist("stream_event_observer", _stream_observer)
 
     # EventBus (optional): NATS/Dragonfly for distributed pub/sub.
+    # When configured, replaces StreamRemoteWatcher with EventBusRemoteWatcher
+    # and EventBusObserver for network-based event delivery.
     _event_bus = None
     _dist_cfg = getattr(nx, "_distributed_config", None)
     if _dist_cfg and getattr(_dist_cfg, "enable_events", False):
@@ -622,6 +635,10 @@ async def _register_vfs_hooks(
 
             _event_bus = create_event_bus()
             nx._event_bus = _event_bus
+
+            from nexus.services.event_bus.remote_watcher import EventBusRemoteWatcher
+
+            nx._file_watcher.set_remote_watcher(EventBusRemoteWatcher(_event_bus))
         except Exception as exc:
             logger.warning("EventBus creation skipped: %s", exc)
 

@@ -1,13 +1,11 @@
 """Readme documentation generator — extracted from ReadmeDocMixin.
 
 Converts connector metadata (Pydantic schemas, operation traits, error
-registries) into README.md markdown and a virtual ``.readme/`` tree used
-by the read-path overlay (Issue #3728).
+registries) into README.md markdown and writes readme directories.
 """
 
 import logging
 import posixpath
-from dataclasses import dataclass, field
 from typing import Any
 
 from pydantic import BaseModel
@@ -15,529 +13,6 @@ from pydantic import BaseModel
 from nexus.backends.connectors.base import ConfirmLevel, ErrorDef, OpTraits
 
 logger = logging.getLogger(__name__)
-
-
-# =============================================================================
-# Virtual .readme/ tree model (Issue #3728)
-# =============================================================================
-
-
-@dataclass
-class VirtualEntry:
-    """A node in the virtual ``.readme/`` filesystem tree.
-
-    Files carry ``content`` (bytes) and have no children.  Directories
-    carry ``children`` (name → VirtualEntry) and have no content.
-
-    This is the single source of truth for the overlay that intercepts
-    ``.readme/**`` reads on every backend inheriting ``ReadmeDocMixin``
-    — the same tree drives ``read_content``, ``list_dir``,
-    ``content_exists``, and ``get_content_size``.
-
-    Issue #3728 decisions #5A (one declarative tree), #8A (sentinel
-    returns for find/miss), #14A (single-walk generation).
-    """
-
-    name: str
-    is_dir: bool
-    content: bytes | None = None
-    children: dict[str, "VirtualEntry"] = field(default_factory=dict)
-
-    @property
-    def is_file(self) -> bool:
-        return not self.is_dir
-
-    def size(self) -> int:
-        """Return content size in bytes (0 for directories)."""
-        return len(self.content) if self.content is not None else 0
-
-    def find(self, parts: list[str]) -> "VirtualEntry | None":
-        """Walk the tree to the entry at ``parts`` or return ``None``.
-
-        Traversal stops and returns ``None`` as soon as a part doesn't
-        exist or a non-directory is encountered mid-path. Does NOT
-        normalize the input — callers must hand over clean parts
-        (no ``..``, no empty strings, no leading/trailing slashes).
-        """
-        node: VirtualEntry | None = self
-        for part in parts:
-            if node is None or not node.is_dir:
-                return None
-            node = node.children.get(part)
-        return node
-
-    def list_children_names(self) -> list[str]:
-        """Sorted child names with ``/`` suffix for sub-directories."""
-        if not self.is_dir:
-            return []
-        return sorted(f"{name}/" if entry.is_dir else name for name, entry in self.children.items())
-
-
-# Module-level cache keyed by (connector_class, mount_path).  Class objects
-# are hashable and live for the process lifetime, so the cache is naturally
-# scoped correctly: a hot-reloaded module produces a new class object and a
-# new cache entry.  Decision #13A — one generation per (class, mount_path)
-# per process.
-_VIRTUAL_TREE_CACHE: dict[tuple[type, str], VirtualEntry] = {}
-
-
-def _invalidate_virtual_tree_cache() -> None:
-    """Test/dev helper: clear all cached virtual readme trees."""
-    _VIRTUAL_TREE_CACHE.clear()
-
-
-def _parse_readme_path_parts(
-    backend_path: str | None,
-    readme_dir: str = ".readme",
-) -> list[str] | None:
-    """Parse a backend-relative path into parts under ``.readme/``.
-
-    Returns:
-        - ``None`` if the path is NOT under ``.readme/`` (the caller should
-          fall through to the normal read path — non-virtual).
-        - ``[]`` if the path refers to the ``.readme/`` directory itself.
-        - ``[part, ...]`` for nested entries.
-
-    Raises ``ValueError`` on path traversal attempts (``..``, null bytes,
-    backslashes).  Decision #4A — strict rejection so security issues are
-    visible rather than silently falling through to the real backend.
-    """
-    if backend_path is None:
-        return None
-
-    # Reject null bytes and other control bytes that shouldn't be in paths
-    if "\x00" in backend_path:
-        raise ValueError("null byte in path")
-
-    # Reject backslashes — Windows-style separators are not valid here
-    if "\\" in backend_path:
-        raise ValueError(f"backslash in path: {backend_path!r}")
-
-    cleaned = backend_path.strip("/")
-    if not cleaned:
-        return None
-
-    # posixpath.normpath collapses ``//``, ``.``, and ``..`` components.
-    normalized = posixpath.normpath(cleaned)
-
-    # After normalization, any path starting with ``..`` is a traversal attempt
-    if normalized == ".." or normalized.startswith("../"):
-        raise ValueError(f"path traversal detected: {backend_path!r}")
-
-    readme_prefix = (readme_dir or ".readme").strip("/")
-    if normalized == readme_prefix:
-        return []
-
-    prefix = readme_prefix + "/"
-    if not normalized.startswith(prefix):
-        return None
-
-    # Split and drop any empty parts (defensive — normpath shouldn't produce them)
-    parts = [p for p in normalized[len(prefix) :].split("/") if p]
-    return parts
-
-
-def _has_skill_name(backend: Any) -> bool:
-    """Return True if the backend class declares a non-empty ``SKILL_NAME``."""
-    return bool(getattr(type(backend), "SKILL_NAME", "") or "")
-
-
-def _readme_dir_for(backend: Any) -> str:
-    """Return the backend's configured ``.readme/`` directory name."""
-    return getattr(type(backend), "README_DIR", ".readme") or ".readme"
-
-
-def _defers_to_backend(backend: Any) -> bool:
-    """Return True if the backend's real content should shadow the overlay.
-
-    Issue #3728 finding #9: on writable path-addressed connectors (native
-    gdrive), users can legitimately create real ``.readme/`` files — the
-    overlay must not silently hide them.  Those connectors opt in by
-    setting ``VIRTUAL_README_DEFERS_TO_BACKEND = True``.
-    """
-    return bool(getattr(type(backend), "VIRTUAL_README_DEFERS_TO_BACKEND", False))
-
-
-def _real_content_exists(
-    backend: Any,
-    backend_path: str,
-    context: Any | None = None,
-) -> bool:
-    """Best-effort probe: does the real backend have content at this path?
-
-    Reuses the caller's context via ``_build_probe_context`` so
-    user-scoped connectors (native Google Drive, etc.) can actually
-    resolve an auth token and answer the question.
-
-    Returns ``True`` only when the backend explicitly confirms existence.
-    Any exception or missing probe method is treated as "does not exist"
-    so the overlay still works on backends without a cheap exists check.
-    """
-    try:
-        probe_ctx = _build_probe_context(context, backend_path)
-        exists_fn = getattr(backend, "content_exists", None)
-        if callable(exists_fn):
-            return bool(exists_fn(backend_path, context=probe_ctx))
-    except Exception:
-        return False
-    return False
-
-
-def overlay_owns_path(
-    backend: Any,
-    mount_path: str,  # noqa: ARG001 — kept for API symmetry with dispatchers
-    backend_path: str | None,
-    context: Any | None = None,
-) -> bool:
-    """Return True if the virtual ``.readme/`` overlay authoritatively
-    owns ``backend_path`` on this ``backend``.
-
-    Single decision point used by every read/list/stat/exists/write
-    code path (Issue #3728 round 5 refactor) — ensures reads, writes,
-    and stats agree on who owns a given path.
-
-    Returns False when:
-    - Backend has no ``SKILL_NAME`` (overlay inactive)
-    - ``backend_path`` is not under the configured readme directory
-    - Backend opts to defer to real data (``VIRTUAL_README_DEFERS_TO_BACKEND``)
-      AND the real ``.readme/`` directory exists on the backend
-      (subtree-level ownership — Issue #3728 round 6 finding #16).
-      The whole subtree is handed over to the backend atomically so
-      listings, reads, writes, and stats cannot disagree about a
-      "partly real, partly virtual" state.
-
-    Propagates ``ValueError`` for malformed paths (traversal, null byte,
-    backslash) so callers can raise a loud error rather than silently
-    falling through to the real backend (Decision #4A).
-    """
-    if not _has_skill_name(backend):
-        return False
-    parts = _parse_readme_path_parts(backend_path, readme_dir=_readme_dir_for(backend))
-    if parts is None:
-        return False
-    return not (_defers_to_backend(backend) and _real_readme_root_exists(backend, context=context))
-
-
-def _build_probe_context(context: Any | None, backend_path: str) -> Any:
-    """Build an OperationContext for backend probes (auth-preserving).
-
-    When a caller context is supplied, reuse its ``user_id`` /
-    ``zone_id`` / ``groups`` so user-scoped connectors can resolve an
-    auth token.  Otherwise fall back to a synthetic system context.
-    """
-    from dataclasses import replace as _replace
-
-    from nexus.contracts.types import OperationContext
-
-    if context is None:
-        return OperationContext(
-            user_id="system",
-            groups=[],
-            is_system=True,
-            backend_path=backend_path,
-        )
-    try:
-        return _replace(context, backend_path=backend_path)
-    except Exception:
-        return OperationContext(
-            user_id=getattr(context, "user_id", "system") or "system",
-            groups=list(getattr(context, "groups", []) or []),
-            zone_id=getattr(context, "zone_id", None),
-            is_system=getattr(context, "is_system", False),
-            backend_path=backend_path,
-        )
-
-
-def _real_readme_root_exists(backend: Any, context: Any | None = None) -> bool:
-    """Probe the backend for a real ``.readme/`` directory (subtree root).
-
-    **Error semantics (trade-off, round 8 finding #20):**
-    Codex raised a concern that treating probe errors as "no real
-    data" lets the overlay shadow a real ``.readme/`` during
-    transient auth/network failures.  The inverse (fail-closed:
-    treat errors as "real data exists, defer") breaks the much more
-    common unauthed-mount case where users legitimately want to see
-    the virtual docs before setting up OAuth — they have no real
-    data to protect, and transient probes and "no OAuth configured"
-    look the same from Python.
-
-    We keep the original semantics — probe errors return ``False``
-    so the overlay stays visible — and accept that on a fully
-    authed deferring backend, a transient probe failure can briefly
-    shadow real content until the probe recovers.  This trade is
-    documented here so future reviewers can pick a different policy
-    if the calculus changes.
-
-    Probe order (first definite "yes" wins):
-    1. ``backend.is_directory(readme_dir, context)`` — handles empty
-       real directories that ``list_dir`` can't distinguish from
-       "missing".
-    2. ``backend.content_exists(readme_dir, context)``.
-    3. Non-empty ``backend.list_dir(readme_dir, context)``.
-    """
-    readme_dir = _readme_dir_for(backend)
-    probe_ctx = _build_probe_context(context, readme_dir)
-
-    # 1) is_directory probe — handles the empty-directory case.
-    is_dir_fn = getattr(backend, "is_directory", None)
-    if callable(is_dir_fn):
-        try:
-            if is_dir_fn(readme_dir, context=probe_ctx):
-                return True
-        except Exception:
-            pass
-
-    # 2) content_exists probe.
-    try:
-        if _real_content_exists(backend, readme_dir, context=context):
-            return True
-    except Exception:
-        pass
-
-    # 3) list_dir probe (detects *non-empty* directories).
-    list_fn = getattr(backend, "list_dir", None)
-    if callable(list_fn):
-        try:
-            entries = list_fn(readme_dir, context=probe_ctx)
-            if entries:
-                return True
-        except Exception:
-            pass
-    return False
-
-
-def dispatch_virtual_readme_read(
-    backend: Any,
-    mount_path: str,
-    backend_path: str | None,
-    context: Any | None = None,
-) -> bytes | None:
-    """Serve a read from the virtual ``.readme/`` overlay if it matches.
-
-    Returns:
-        - ``bytes`` — the virtual file's content (hit).
-        - ``None`` — path is NOT under ``.readme/`` (caller falls through
-          to the real backend, decision #8A sentinel protocol).
-
-    Raises:
-        ``NexusFileNotFoundError`` — path IS under ``.readme/`` but no
-          matching virtual entry exists (distinguishes "not virtual" from
-          "virtual but missing", decision #8A).
-        ``ValueError`` — path traversal or invalid input (decision #4A).
-        ``IsADirectoryError`` — path matches a virtual directory, not a file.
-        ``RuntimeError`` — backend has no ``SKILL_NAME``.  Safe default —
-          non-skill backends return ``None`` from the ``_has_skill_name``
-          check above, so this only fires for misconfigured skill backends.
-    """
-    if not overlay_owns_path(backend, mount_path, backend_path, context=context):
-        return None
-
-    parts = _parse_readme_path_parts(backend_path, readme_dir=_readme_dir_for(backend))
-    # overlay_owns_path guarantees parts is not None here
-    assert parts is not None
-
-    from nexus.contracts.exceptions import NexusFileNotFoundError
-
-    tree = get_virtual_readme_tree_for_backend(backend, mount_path)
-    entry = tree.find(parts)
-    if entry is None:
-        raise NexusFileNotFoundError(f"virtual .readme/ path not found: {backend_path}")
-    if entry.is_dir:
-        raise IsADirectoryError(f"Is a directory: {backend_path}")
-    return entry.content or b""
-
-
-def dispatch_virtual_readme_list(
-    backend: Any,
-    mount_path: str,
-    backend_path: str | None,
-    context: Any | None = None,
-) -> list[str] | None:
-    """List a directory from the virtual ``.readme/`` overlay if it matches.
-
-    Returns:
-        - ``list[str]`` — the virtual directory's entries (hit).
-        - ``None`` — path is NOT under ``.readme/``.
-
-    Raises:
-        ``NexusFileNotFoundError`` — path IS under ``.readme/`` but the
-          directory doesn't exist.
-        ``NotADirectoryError`` — path matches a virtual file, not a directory.
-        ``ValueError`` — path traversal.
-    """
-    if not overlay_owns_path(backend, mount_path, backend_path, context=context):
-        return None
-
-    parts = _parse_readme_path_parts(backend_path, readme_dir=_readme_dir_for(backend))
-    assert parts is not None
-
-    from nexus.contracts.exceptions import NexusFileNotFoundError
-
-    tree = get_virtual_readme_tree_for_backend(backend, mount_path)
-    entry = tree.find(parts)
-    if entry is None:
-        raise NexusFileNotFoundError(f"virtual .readme/ path not found: {backend_path}")
-    if not entry.is_dir:
-        raise NotADirectoryError(f"Not a directory: {backend_path}")
-    return entry.list_children_names()
-
-
-def dispatch_virtual_readme_exists(
-    backend: Any,
-    mount_path: str,
-    backend_path: str | None,
-    context: Any | None = None,
-) -> bool | None:
-    """Answer ``content_exists`` from the virtual ``.readme/`` overlay.
-
-    Returns:
-        - ``True`` or ``False`` — definitive answer (path is under ``.readme/``).
-        - ``None`` — path is NOT under ``.readme/``.
-    """
-    if not _has_skill_name(backend):
-        return None
-
-    try:
-        parts = _parse_readme_path_parts(backend_path, readme_dir=_readme_dir_for(backend))
-    except ValueError:
-        # Malformed path under .readme/ — exists() is a predicate, not
-        # an access attempt.  Return False so callers get a definitive
-        # answer without a surprise exception.
-        return False
-
-    if parts is None:
-        return None
-
-    # Shared ownership check: fall through to real backend when the
-    # overlay isn't authoritative here (e.g. native gdrive with a real
-    # ``.readme/`` folder).
-    try:
-        _owns = overlay_owns_path(backend, mount_path, backend_path, context=context)
-    except ValueError:
-        return False
-    if not _owns:
-        return None
-
-    try:
-        tree = get_virtual_readme_tree_for_backend(backend, mount_path)
-    except Exception:
-        return False
-
-    return tree.find(parts) is not None
-
-
-def dispatch_virtual_readme_size(
-    backend: Any,
-    mount_path: str,
-    backend_path: str | None,
-    context: Any | None = None,
-) -> int | None:
-    """Return the virtual file size under ``.readme/``.
-
-    Returns:
-        - ``int`` — the file's size in bytes.
-        - ``None`` — path is NOT under ``.readme/``.
-
-    Raises ``NexusFileNotFoundError`` for virtual directories and for
-    paths under ``.readme/`` that don't exist.
-    """
-    if not overlay_owns_path(backend, mount_path, backend_path, context=context):
-        return None
-
-    parts = _parse_readme_path_parts(backend_path, readme_dir=_readme_dir_for(backend))
-    assert parts is not None
-
-    from nexus.contracts.exceptions import NexusFileNotFoundError
-
-    tree = get_virtual_readme_tree_for_backend(backend, mount_path)
-    entry = tree.find(parts)
-    if entry is None:
-        raise NexusFileNotFoundError(f"virtual .readme/ path not found: {backend_path}")
-    return entry.size()
-
-
-def get_virtual_readme_tree_for_backend(backend: Any, mount_path: str) -> VirtualEntry:
-    """Return the cached virtual ``.readme/`` tree for a backend instance.
-
-    The tree is built once per ``(connector_class, mount_path)`` pair and
-    reused across reads.  Backend must inherit from ``ReadmeDocMixin``
-    (i.e., expose ``SKILL_NAME``, ``SCHEMAS``, ``OPERATION_TRAITS``,
-    ``ERROR_REGISTRY``, ``EXAMPLES`` as class attributes).
-
-    Raises ``RuntimeError`` if the backend doesn't declare a ``SKILL_NAME``
-    (there's nothing to generate docs from).
-
-    Issue #3728 decisions #13A (module cache), #14A (single walk per mount).
-    """
-    connector_class = type(backend)
-    key: tuple[type, str] = (connector_class, mount_path)
-    cached = _VIRTUAL_TREE_CACHE.get(key)
-    if cached is not None:
-        return cached
-
-    skill_name = getattr(connector_class, "SKILL_NAME", "") or ""
-    if not skill_name:
-        raise RuntimeError(
-            f"{connector_class.__name__} has no SKILL_NAME — cannot build virtual .readme/ tree"
-        )
-
-    # Pull class-level metadata.  We use the CLASS attributes (not instance
-    # getattr) so the cache key — the class — fully determines the tree.
-    schemas = dict(getattr(connector_class, "SCHEMAS", {}) or {})
-    operation_traits = dict(getattr(connector_class, "OPERATION_TRAITS", {}) or {})
-    error_registry = dict(getattr(connector_class, "ERROR_REGISTRY", {}) or {})
-    examples = dict(getattr(connector_class, "EXAMPLES", {}) or {})
-    nested_examples_raw = getattr(connector_class, "NESTED_EXAMPLES", None)
-    field_examples_raw = getattr(connector_class, "FIELD_EXAMPLES", None)
-    readme_dir = getattr(connector_class, "README_DIR", ".readme") or ".readme"
-
-    # Extract write paths from CLIConnectorConfig if available (parallels the
-    # existing logic in ``ReadmeDocMixin.get_doc_generator``).
-    write_paths: dict[str, str] = {}
-    _config = getattr(backend, "_config", None)
-    if _config is not None and hasattr(_config, "write"):
-        for wp in _config.write:
-            write_paths[wp.operation] = wp.path
-
-    generator = ReadmeDocGenerator(
-        skill_name=skill_name,
-        schemas=schemas,
-        operation_traits=operation_traits,
-        error_registry=error_registry,
-        examples=examples,
-        readme_dir=readme_dir,
-        nested_examples=dict(nested_examples_raw) if nested_examples_raw else None,
-        field_examples=dict(field_examples_raw) if field_examples_raw else None,
-        write_paths=write_paths or None,
-    )
-    dir_structure = getattr(connector_class, "DIRECTORY_STRUCTURE", None)
-    if dir_structure:
-        generator._directory_structure = dir_structure
-
-    tree = generator.generate_tree(mount_path)
-
-    # IMPORTANT (Issue #3728): connectors can override ``generate_readme``
-    # to substitute a curated static markdown file (see
-    # ``PathGmailBackend.generate_readme`` which loads
-    # ``connectors/gmail/README.md`` with the authoritative ``SENT/_reply.yaml``
-    # / ``SENT/_forward.yaml`` write paths).  The generator-built README in
-    # ``tree`` only uses class-level metadata and can't see those overrides,
-    # so we ask the backend itself for the README.md body and overwrite the
-    # generator's version.  ``schemas/`` and ``examples/`` still come from
-    # the generator — those don't have connector-level overrides today.
-    try:
-        backend_readme = backend.generate_readme(mount_path)
-    except Exception:
-        backend_readme = None
-    if isinstance(backend_readme, str) and backend_readme:
-        tree.children["README.md"] = VirtualEntry(
-            name="README.md",
-            is_dir=False,
-            content=backend_readme.encode("utf-8"),
-        )
-
-    _VIRTUAL_TREE_CACHE[key] = tree
-    return tree
 
 
 class ReadmeDocGenerator:
@@ -628,69 +103,74 @@ class ReadmeDocGenerator:
         """Get the full path to the .readme directory."""
         return posixpath.join(mount_path.rstrip("/"), self._readme_dir)
 
-    def generate_tree(self, mount_path: str) -> VirtualEntry:
-        """Build the full virtual ``.readme/`` tree in one metadata walk.
+    async def write_readme(self, mount_path: str, filesystem: Any = None) -> dict[str, Any]:
+        """Generate and write .readme/ directory to the filesystem.
 
-        Issue #3728 decision #14A — one pass over ``SCHEMAS`` and
-        ``EXAMPLES`` produces every file in the virtual tree, eliminating
-        the N+1 pattern of reading schemas one at a time.
+        Creates:
+            <mount_path>/.readme/
+                README.md           # Main documentation
+                schemas/           # Individual schema YAML files (Issue #3148)
+                    <operation>.yaml
+                examples/          # Example YAML files
+                    <example>.yaml
 
-        Returns a ``VirtualEntry`` rooted at the ``.readme/`` directory
-        containing:
-        - ``README.md`` — full generated markdown from ``generate_readme``
-        - ``schemas/<op>.yaml`` — one annotated schema per operation
-        - ``examples/<filename>`` — one entry per example (bytes-preserving)
+        Args:
+            mount_path: The mount path for this connector.
+            filesystem: NexusFS instance to write to (optional).
 
-        Errors from the generator are propagated — decision #8A, the
-        caller decides how to surface them.
+        Returns:
+            Dict of written paths: {"readme_md": path, "schemas": [...], "examples": [...]}.
         """
-        root = VirtualEntry(name=self._readme_dir, is_dir=True)
+        result: dict[str, Any] = {"readme_md": None, "schemas": [], "examples": []}
 
-        # README.md (reuses the existing markdown pipeline).
-        readme_text = self.generate_readme(mount_path)
-        root.children["README.md"] = VirtualEntry(
-            name="README.md",
-            is_dir=False,
-            content=readme_text.encode("utf-8"),
-        )
+        if not self._skill_name:
+            logger.warning("Cannot write readme docs: skill_name not configured")
+            return result
 
-        # schemas/<op>.yaml — one annotated schema per operation.
-        if self._schemas:
-            schemas_dir = VirtualEntry(name="schemas", is_dir=True)
-            for op_name, schema in self._schemas.items():
-                yaml_text = self.generate_schema_yaml(op_name, schema)
-                file_name = f"{op_name}.yaml"
-                schemas_dir.children[file_name] = VirtualEntry(
-                    name=file_name,
-                    is_dir=False,
-                    content=yaml_text.encode("utf-8"),
-                )
-            root.children["schemas"] = schemas_dir
+        readme_dir = self.get_readme_path(mount_path)
 
-        # examples/<filename> — bytes-preserving (#7A binary examples).
-        if self._examples:
-            examples_dir = VirtualEntry(name="examples", is_dir=True)
-            for filename, raw in self._examples.items():
-                if isinstance(raw, bytes):
-                    content_bytes = raw
-                elif isinstance(raw, str):
-                    content_bytes = raw.encode("utf-8")
-                else:
-                    content_bytes = str(raw).encode("utf-8")
-                examples_dir.children[filename] = VirtualEntry(
-                    name=filename,
-                    is_dir=False,
-                    content=content_bytes,
-                )
-            root.children["examples"] = examples_dir
+        if filesystem is None:
+            logger.debug("No filesystem provided for %s", self._skill_name)
+            return result
 
-        return root
+        try:
+            filesystem.mkdir(readme_dir, parents=True, exist_ok=True)
 
-    # NOTE (Issue #3728): ``write_readme`` was removed. Skill docs are now
-    # served on-demand by the virtual ``.readme/`` overlay via
-    # ``generate_tree`` + ``dispatch_virtual_readme_*``. Materializing files
-    # into the storage layer would drift from class metadata and double
-    # the code paths that produce docs (decision #2A: virtual-only).
+            # Write README.md
+            readme_md_path = posixpath.join(readme_dir, "README.md")
+            content = self.generate_readme(mount_path)
+            filesystem.write(readme_md_path, content.encode("utf-8"))
+            result["readme_md"] = readme_md_path
+            logger.info("Generated README.md at %s", readme_md_path)
+
+            # Write example files
+            if self._examples:
+                examples_dir = posixpath.join(readme_dir, "examples")
+                filesystem.mkdir(examples_dir, parents=True, exist_ok=True)
+
+                for filename, file_content in self._examples.items():
+                    example_path = posixpath.join(examples_dir, filename)
+                    filesystem.write(example_path, file_content.encode("utf-8"))
+                    result["examples"].append(example_path)
+                    logger.debug("Generated example at %s", example_path)
+
+            # Write individual schema files (Issue #3148, Decision #7B)
+            if self._schemas:
+                schemas_dir = posixpath.join(readme_dir, "schemas")
+                filesystem.mkdir(schemas_dir, parents=True, exist_ok=True)
+
+                for op_name, schema in self._schemas.items():
+                    schema_content = self.generate_schema_yaml(op_name, schema)
+                    schema_path = posixpath.join(schemas_dir, f"{op_name}.yaml")
+                    filesystem.write(schema_path, schema_content.encode("utf-8"))
+                    result["schemas"].append(schema_path)
+                    logger.debug("Generated schema at %s", schema_path)
+
+            return result
+
+        except Exception as e:
+            logger.warning("Failed to write readme docs to %s: %s", readme_dir, e)
+            return result
 
     def _generate_read_patterns_section(self, mount_path: str) -> list[str]:
         """Generate Read Patterns section showing how to list, cat, grep content.

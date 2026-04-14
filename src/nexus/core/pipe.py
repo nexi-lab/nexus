@@ -13,7 +13,7 @@ The actual data plane lives in the Rust kernel IPC registry
 owned by the Rust kernel — there is no Python ``PipeManager`` anymore.
 
     pipe.py = Python-side protocol + exceptions
-    rust/kernel/src/ipc/pipe.rs = Rust kernel pipe registry (data plane)
+    rust/nexus_kernel/src/ipc/pipe.rs = Rust kernel pipe registry (data plane)
 
 Storage model (KERNEL-ARCHITECTURE.md line 228):
     - Pipe **inode** (FileMetadata, entry_type=DT_PIPE) → MetastoreABC

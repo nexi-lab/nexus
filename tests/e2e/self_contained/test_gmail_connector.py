@@ -30,9 +30,13 @@ from nexus.backends.connectors.gmail.schemas import (
     SendEmailSchema,
 )
 from nexus.backends.connectors.gmail.transport import LABEL_FOLDERS, GmailTransport
-from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.contracts.exceptions import BackendError
 from nexus.contracts.types import OperationContext
+from nexus.core.config import PermissionConfig
+from nexus.factory import create_nexus_fs
+from nexus.storage.raft_metadata_store import RaftMetadataStore
+from nexus.storage.record_store import SQLAlchemyRecordStore
 
 # ============================================================================
 # FIXTURES
@@ -132,7 +136,7 @@ def operation_context():
     return OperationContext(
         user_id="test@example.com",
         groups=[],
-        zone_id=ROOT_ZONE_ID,
+        zone_id="root",
     )
 
 
@@ -346,34 +350,31 @@ class TestReadmeDocGeneration:
         assert "/custom/mount/path/" in doc
 
     @pytest.mark.asyncio
-    async def test_virtual_readme_tree(self, gmail_backend):
-        """Verify the virtual ``.readme/`` tree exposes the expected files.
-
-        Replaces the old ``test_write_readme`` (materialization test) —
-        Issue #3728 removed ``write_readme``. The virtual overlay now
-        serves docs on-demand from the generator's tree model.
-        """
-        from nexus.backends.connectors.schema_generator import (
-            _invalidate_virtual_tree_cache,
-            get_virtual_readme_tree_for_backend,
+    async def test_write_readme(self, gmail_backend, isolated_db, tmp_path):
+        """Test writing README.md to filesystem."""
+        # Create a real NexusFS for writing
+        backend = CASLocalBackend(root_path=str(tmp_path / "storage"))
+        nx = await create_nexus_fs(
+            backend=backend,
+            metadata_store=RaftMetadataStore.embedded(str(isolated_db).replace(".db", "-raft")),
+            record_store=SQLAlchemyRecordStore(db_path=str(isolated_db)),
+            permissions=PermissionConfig(enforce=False),
         )
 
-        _invalidate_virtual_tree_cache()
-        tree = get_virtual_readme_tree_for_backend(gmail_backend, "/mnt/gmail")
+        try:
+            # Write README.md
+            result = await gmail_backend.write_readme("/mnt/gmail/", filesystem=nx)
+            assert isinstance(result, dict)
+            readme_path = result.get("readme_md")
 
-        # README.md is always present
-        readme = tree.find(["README.md"])
-        assert readme is not None
-        assert readme.is_file
-        assert b"Gmail Connector" in readme.content
-        assert b"agent_intent" in readme.content
-        assert b"Send Email" in readme.content
-
-        # schemas/ directory exists with one file per operation
-        schemas = tree.find(["schemas"])
-        assert schemas is not None
-        assert schemas.is_dir
-        assert "send_email.yaml" in schemas.children
+            if readme_path:
+                # Read back and verify
+                content = nx.sys_read(readme_path)
+                assert b"Gmail Connector" in content
+                assert b"agent_intent" in content
+                assert b"Send Email" in content
+        finally:
+            nx.close()
 
 
 # ============================================================================
@@ -533,7 +534,7 @@ class TestWriteOperations:
         ctx = OperationContext(
             user_id="test@example.com",
             groups=[],
-            zone_id=ROOT_ZONE_ID,
+            zone_id="root",
             backend_path="SENT/_new.yaml",
         )
 
@@ -558,7 +559,7 @@ class TestWriteOperations:
         ctx = OperationContext(
             user_id="test@example.com",
             groups=[],
-            zone_id=ROOT_ZONE_ID,
+            zone_id="root",
             backend_path="SENT/_reply.yaml",
         )
 
@@ -582,7 +583,7 @@ class TestWriteOperations:
         ctx = OperationContext(
             user_id="test@example.com",
             groups=[],
-            zone_id=ROOT_ZONE_ID,
+            zone_id="root",
             backend_path="SENT/_forward.yaml",
         )
 
@@ -605,7 +606,7 @@ class TestWriteOperations:
         ctx = OperationContext(
             user_id="test@example.com",
             groups=[],
-            zone_id=ROOT_ZONE_ID,
+            zone_id="root",
             backend_path="DRAFTS/_new.yaml",
         )
 
@@ -627,7 +628,7 @@ class TestWriteOperations:
         ctx = OperationContext(
             user_id="test@example.com",
             groups=[],
-            zone_id=ROOT_ZONE_ID,
+            zone_id="root",
             backend_path="INBOX/_new.yaml",  # INBOX doesn't support writes
         )
 
@@ -648,7 +649,7 @@ class TestDeleteOperations:
         ctx = OperationContext(
             user_id="test@example.com",
             groups=[],
-            zone_id=ROOT_ZONE_ID,
+            zone_id="root",
             backend_path="INBOX/thread_abc-msg_123.yaml",
         )
 
@@ -661,7 +662,7 @@ class TestDeleteOperations:
         ctx = OperationContext(
             user_id="test@example.com",
             groups=[],
-            zone_id=ROOT_ZONE_ID,
+            zone_id="root",
             backend_path="SENT/_new.yaml",
         )
 

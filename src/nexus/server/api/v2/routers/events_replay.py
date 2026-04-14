@@ -375,9 +375,7 @@ async def watch_for_changes(
     context = get_operation_context(auth_result)
 
     try:
-        change = await asyncio.to_thread(
-            nexus_fs.sys_watch, path, timeout, recursive=False, context=context
-        )
+        change = await nexus_fs.sys_watch(path, timeout=timeout, context=context)
         if change is None:
             return {"changes": [], "timeout": True}
         return {"changes": [change], "timeout": False}

@@ -9,7 +9,7 @@ from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from nexus.core.nexus_fs import NexusFS
+    from nexus import NexusFilesystem
 
 
 class SyncStats:
@@ -69,7 +69,7 @@ def list_local_files(local_path: str, recursive: bool = True) -> list[str]:
 
 
 async def copy_file(
-    nx: "NexusFS",
+    nx: "NexusFilesystem",
     source: str,
     dest: str,
     is_source_local: bool,
@@ -163,7 +163,7 @@ async def copy_file(
 
 
 async def sync_directories(
-    nx: "NexusFS",
+    nx: "NexusFilesystem",
     source: str,
     dest: str,
     delete: bool = False,
@@ -305,7 +305,7 @@ async def sync_directories(
 
 
 async def copy_recursive(
-    nx: "NexusFS",
+    nx: "NexusFilesystem",
     source: str,
     dest: str,
     checksum: bool = True,
@@ -321,7 +321,7 @@ async def copy_recursive(
 
 
 async def move_file(
-    nx: "NexusFS",
+    nx: "NexusFilesystem",
     source: str,
     dest: str,
     force: bool = False,

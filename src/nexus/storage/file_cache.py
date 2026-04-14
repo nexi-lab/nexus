@@ -103,20 +103,9 @@ class FileContentCache:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
     def _init_bloom_filter(self) -> None:
-        """Initialize Bloom filter for fast cache miss detection.
-
-        Degrades gracefully to `_bloom=None` when nexus_kernel is absent or stale.
-        """
-        # RUST_FALLBACK: BloomFilter (optional — stale/absent binary disables bloom)
-        from nexus._rust_compat import BloomFilter
-
-        if BloomFilter is None:
-            logger.debug(
-                "BloomFilter unavailable (stale or absent nexus_kernel) — "
-                "cache miss detection will use disk checks"
-            )
-            self._bloom = None
-            return
+        """Initialize Bloom filter for fast cache miss detection."""
+        # RUST_FALLBACK: BloomFilter
+        from nexus_kernel import BloomFilter
 
         self._bloom = BloomFilter(self._bloom_capacity, self._bloom_fp_rate)
         self._populate_bloom_from_disk()
@@ -413,15 +402,11 @@ class FileContentCache:
 
         cache_path = self._get_cache_path(zone_id, virtual_path)
 
-        # RUST_FALLBACK: read_file (optional — fall back to Python I/O if unavailable)
-        from nexus._rust_compat import read_file
+        # RUST_FALLBACK: read_file
+        from nexus_kernel import read_file
 
         try:
-            if read_file is not None:
-                result: bytes | None = read_file(str(cache_path))
-            else:
-                # Degraded path: Python read (stale/absent nexus_kernel)
-                result = cache_path.read_bytes() if cache_path.exists() else None
+            result: bytes | None = read_file(str(cache_path))
             return result
         except Exception as e:
             logger.warning(f"Failed to read cache file {cache_path}: {e}")
@@ -496,26 +481,11 @@ class FileContentCache:
             cache_to_virtual[cache_path] = vpath
             cache_paths.append(cache_path)
 
-        # RUST_FALLBACK: read_files_bulk (optional — fall back to sequential reads if unavailable)
-        from nexus._rust_compat import read_file, read_files_bulk
+        # RUST_FALLBACK: read_files_bulk
+        from nexus_kernel import read_files_bulk
 
-        if read_files_bulk is not None:
-            # Fast path: parallel mmap read
-            cache_contents = read_files_bulk(cache_paths)
-        else:
-            # Degraded path: sequential Python reads (stale/absent nexus_kernel)
-            cache_contents = {}
-            for cp in cache_paths:
-                if read_file is not None:
-                    data = read_file(cp)
-                else:
-                    try:
-                        with open(cp, "rb") as fh:
-                            data = fh.read()
-                    except OSError:
-                        data = None
-                if data is not None:
-                    cache_contents[cp] = data
+        # Parallel mmap read
+        cache_contents = read_files_bulk(cache_paths)
 
         # Map back to virtual paths
         result: dict[str, bytes] = {}

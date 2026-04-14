@@ -94,7 +94,7 @@ class TestMessageSender:
 
         await sender.send(env)
 
-        outbox_files = vfs.list_dir(outbox_path("agent:alice"), ZONE)
+        outbox_files = await vfs.list_dir(outbox_path("agent:alice"), ZONE)
         assert len(outbox_files) == 1
 
     @pytest.mark.asyncio
@@ -280,9 +280,9 @@ class TestMessageProcessor:
         assert len(received) == 1
         assert received[0].id == env.id
         # Message should be in processed/, not inbox/
-        inbox_files = vfs.list_dir(inbox_path("agent:bob"), ZONE)
+        inbox_files = await vfs.list_dir(inbox_path("agent:bob"), ZONE)
         assert len(inbox_files) == 0
-        processed_files = vfs.list_dir(processed_path("agent:bob"), ZONE)
+        processed_files = await vfs.list_dir(processed_path("agent:bob"), ZONE)
         assert len(processed_files) == 1
 
     @pytest.mark.asyncio
@@ -299,9 +299,9 @@ class TestMessageProcessor:
         count = await processor.process_inbox()
 
         assert count == 1
-        inbox_files = vfs.list_dir(inbox_path("agent:bob"), ZONE)
+        inbox_files = await vfs.list_dir(inbox_path("agent:bob"), ZONE)
         assert len(inbox_files) == 0
-        dl_files = vfs.list_dir(dead_letter_path("agent:bob"), ZONE)
+        dl_files = await vfs.list_dir(dead_letter_path("agent:bob"), ZONE)
         dl_msgs = [f for f in dl_files if not f.endswith(".reason.json")]
         assert len(dl_msgs) == 1
 
@@ -323,7 +323,7 @@ class TestMessageProcessor:
         await processor.process_inbox()
 
         assert not handler_called  # Expired message should NOT invoke handler
-        dl_files = vfs.list_dir(dead_letter_path("agent:bob"), ZONE)
+        dl_files = await vfs.list_dir(dead_letter_path("agent:bob"), ZONE)
         dl_msgs = [f for f in dl_files if not f.endswith(".reason.json")]
         assert len(dl_msgs) == 1
 
@@ -372,9 +372,9 @@ class TestMessageProcessor:
 
         assert count == 1
         # Malformed message should go to dead letter
-        inbox_files = vfs.list_dir(inbox_path("agent:bob"), ZONE)
+        inbox_files = await vfs.list_dir(inbox_path("agent:bob"), ZONE)
         assert len(inbox_files) == 0
-        dl_files = vfs.list_dir(dead_letter_path("agent:bob"), ZONE)
+        dl_files = await vfs.list_dir(dead_letter_path("agent:bob"), ZONE)
         dl_msgs = [f for f in dl_files if not f.endswith(".reason.json")]
         assert len(dl_msgs) == 1
 
@@ -448,9 +448,9 @@ class TestSendProcessRoundtrip:
         assert received[0].payload == {"test": True}
 
         # Inbox empty, processed has the message
-        inbox_files = vfs.list_dir(inbox_path("agent:bob"), ZONE)
+        inbox_files = await vfs.list_dir(inbox_path("agent:bob"), ZONE)
         assert len(inbox_files) == 0
-        processed_files = vfs.list_dir(processed_path("agent:bob"), ZONE)
+        processed_files = await vfs.list_dir(processed_path("agent:bob"), ZONE)
         assert len(processed_files) == 1
 
 
@@ -728,7 +728,7 @@ class TestSignedDelivery:
         await processor.process_inbox()
 
         assert not handler_called
-        dl_files = vfs.list_dir(dead_letter_path("agent:bob"), ZONE)
+        dl_files = await vfs.list_dir(dead_letter_path("agent:bob"), ZONE)
         dl_msgs = [f for f in dl_files if not f.endswith(".reason.json")]
         assert len(dl_msgs) == 1
 
@@ -761,7 +761,7 @@ class TestSignedDelivery:
         await processor.process_inbox()
 
         assert not handler_called
-        dl_files = vfs.list_dir(dead_letter_path("agent:bob"), ZONE)
+        dl_files = await vfs.list_dir(dead_letter_path("agent:bob"), ZONE)
         dl_msgs = [f for f in dl_files if not f.endswith(".reason.json")]
         assert len(dl_msgs) == 1
 

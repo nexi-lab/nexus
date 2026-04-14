@@ -10,8 +10,6 @@ import logging
 import os
 from typing import TYPE_CHECKING
 
-from nexus.contracts.constants import ROOT_ZONE_ID
-
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
@@ -67,32 +65,16 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
         from nexus.bricks.search.daemon import DaemonConfig, SearchDaemon
 
         txtai_model, txtai_vectors = _resolve_txtai_runtime_config()
-        _path_ctx_max_zones_env = os.environ.get("NEXUS_PATH_CONTEXT_MAX_ZONES")
-        _path_ctx_max_zones = 2048
-        if _path_ctx_max_zones_env:
-            try:
-                _path_ctx_max_zones = max(1, int(_path_ctx_max_zones_env))
-            except ValueError:
-                logger.warning(
-                    "Invalid NEXUS_PATH_CONTEXT_MAX_ZONES=%r — falling back to 2048",
-                    _path_ctx_max_zones_env,
-                )
         config = DaemonConfig(
             database_url=svc.database_url,
             query_timeout_seconds=float(os.environ.get("NEXUS_QUERY_TIMEOUT", "10.0")),
-            path_context_max_zones=_path_ctx_max_zones,
             # txtai backend config (Issue #2663)
             txtai_model=txtai_model,
             txtai_vectors=txtai_vectors,
             txtai_reranker=os.environ.get("NEXUS_TXTAI_RERANKER") or None,
             txtai_sparse=os.environ.get("NEXUS_TXTAI_SPARSE", "").lower() in ("true", "1", "yes"),
-            # Semantic graph is off by default — txtai's graph upsert path
-            # trips a pre-existing NotNullViolation in grand's edges table
-            # that drops every co-batched document write. Operators who
-            # want the rarely-used ``graph_mode`` query parameter can set
-            # NEXUS_TXTAI_GRAPH=true to re-enable (at their own risk).
-            txtai_graph=os.environ.get("NEXUS_TXTAI_GRAPH", "false").lower()
-            in ("true", "1", "yes"),
+            txtai_graph=os.environ.get("NEXUS_TXTAI_GRAPH", "true").lower()
+            not in ("false", "0", "no"),
         )
 
         # Inject async_session_factory from RecordStoreABC when available
@@ -125,46 +107,12 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
         # CacheBrick is available from startup_permissions
         _cache_brick = getattr(app.state, "cache_brick", None)
 
-        # Issue #3773: path context store + cache
-        path_context_store = None
-        path_context_cache = None
-        if _async_sf is not None:
-            try:
-                from nexus.bricks.search.path_context import (
-                    PathContextCache,
-                    PathContextStore,
-                )
-
-                _db_type = (
-                    "postgresql"
-                    if (svc.database_url or "").startswith(("postgres", "postgresql"))
-                    else "sqlite"
-                )
-                path_context_store = PathContextStore(
-                    async_session_factory=_async_sf,
-                    db_type=_db_type,
-                )
-                path_context_cache = PathContextCache(
-                    store=path_context_store,
-                    max_zones=config.path_context_max_zones,
-                )
-            except Exception:  # pragma: no cover — non-fatal wiring failure
-                logger.exception("Failed to initialize path context store/cache")
-        app.state.path_context_store = path_context_store
-        app.state.path_context_cache = path_context_cache
-        # Expose the database URL for loop-local resolvers that need to rebuild
-        # engines on the request loop (Issue #3773 review feedback): the env
-        # var may not be set when the app is constructed via
-        # ``create_app(database_url=...)``.
-        app.state.database_url = svc.database_url
-
         app.state.search_daemon = SearchDaemon(
             config,
             async_session_factory=_async_sf,
             zoekt_client=_zoekt_client,
             cache_brick=_cache_brick,
             settings_store=_settings_store,
-            path_context_cache=path_context_cache,  # Issue #3773
         )
 
         # Embeddings are now handled by txtai backend (Issue #2663).
@@ -184,14 +132,7 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
         with contextlib.suppress(ImportError, AttributeError):
             from nexus.factory import _NexusFSFileReader
 
-            # Thread parse_fn through so parseable binaries (.pdf, …) are
-            # decoded into markdown text before the index refresh loop reads
-            # them — otherwise the daemon indexes utf-8 garbage.
-            from nexus.factory._semantic_search import _resolve_parse_fn
-
-            _nxfs = svc.nexus_fs
-            _pf = _resolve_parse_fn(_nxfs)
-            app.state.search_daemon._file_reader = _NexusFSFileReader(_nxfs, parse_fn=_pf)
+            app.state.search_daemon._file_reader = _NexusFSFileReader(svc.nexus_fs)
             if getattr(app.state.search_daemon, "_mutation_resolver", None) is not None:
                 app.state.search_daemon._mutation_resolver.set_file_reader(  # noqa: SLF001
                     app.state.search_daemon._file_reader
@@ -278,12 +219,6 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
             stats["startup_time_ms"],
         )
 
-        # Issue #3725: Wire SkeletonIndexer for live path+title index updates.
-        # Creates the indexer (FileReaderProtocol + SkeletonBM25Protocol) and
-        # registers VFS post-hooks so every write/delete/rename automatically
-        # keeps the in-memory skeleton index fresh without a full re-bootstrap.
-        await _wire_skeleton_indexer(app, svc)
-
         # Issue #3147: Initialize ZoneSearchRegistry for federated search.
         # Phase 1: All zones use the single global daemon.
         # Phase 2: Per-zone daemons can be registered if ZoneManager is available.
@@ -316,14 +251,21 @@ def _init_zone_registry(app: "FastAPI", svc: "LifespanServices") -> None:
     if zone_manager is not None:
         try:
             zone_ids = zone_manager.list_zones()
-            # R20.12: capabilities persist to `{base_path}/{zone_id}/search_caps.json`.
-            # Rust GetSearchCapabilities gRPC handler reads this file per RPC.
-            base_path = getattr(zone_manager, "_base_path", None)
             for zone_id in zone_ids:
                 caps = ZoneSearchCapabilities.from_daemon_stats(zone_id, daemon)
                 registry.register(zone_id, daemon, capabilities=caps)
-                if base_path is not None:
-                    _write_search_caps_file(base_path, zone_id, caps)
+                # Phase 2: Push real capabilities to the Rust gRPC server so
+                # remote nodes get accurate data from GetSearchCapabilities RPC.
+                _py_mgr = getattr(zone_manager, "_py_mgr", None)
+                if _py_mgr is not None and hasattr(_py_mgr, "set_search_capabilities"):
+                    _py_mgr.set_search_capabilities(
+                        zone_id,
+                        caps.device_tier,
+                        list(caps.search_modes),
+                        caps.has_graph,
+                        caps.embedding_model or "",
+                        caps.embedding_dimensions,
+                    )
             logger.info(
                 "[ZONE-REGISTRY] Registered %d zones from ZoneManager",
                 len(zone_ids),
@@ -332,139 +274,3 @@ def _init_zone_registry(app: "FastAPI", svc: "LifespanServices") -> None:
             logger.warning("[ZONE-REGISTRY] Failed to register zones: %s", e)
 
     app.state.zone_search_registry = registry
-
-
-def _write_search_caps_file(base_path: str, zone_id: str, caps: object) -> None:
-    """Write per-zone search capabilities JSON (R20.12).
-
-    Atomic: writes to `search_caps.json.tmp` then renames. Non-fatal on error
-    — federation GetSearchCapabilities falls back to keyword-only defaults.
-    """
-    import json
-    import os
-    from pathlib import Path
-
-    try:
-        zone_dir = Path(base_path) / zone_id
-        zone_dir.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "device_tier": getattr(caps, "device_tier", "server"),
-            "search_modes": list(getattr(caps, "search_modes", ["keyword"])),
-            "embedding_model": getattr(caps, "embedding_model", None) or "",
-            "embedding_dimensions": int(getattr(caps, "embedding_dimensions", 0) or 0),
-            "has_graph": bool(getattr(caps, "has_graph", False)),
-        }
-        final_path = zone_dir / "search_caps.json"
-        tmp_path = zone_dir / "search_caps.json.tmp"
-        tmp_path.write_text(json.dumps(payload, indent=2))
-        os.replace(tmp_path, final_path)
-    except Exception as e:
-        logger.warning("[ZONE-REGISTRY] Failed to write search_caps for %s: %s", zone_id, e)
-
-
-async def _wire_skeleton_indexer(app: "FastAPI", svc: "LifespanServices") -> None:
-    """Create SkeletonIndexer + SkeletonPipeConsumer, register VFS hooks.
-
-    Called after SearchDaemon.startup() so the daemon's in-memory index is
-    ready to receive upsert/delete calls via _DaemonSkeletonBM25.
-
-    VFS hooks call SkeletonPipeConsumer.notify_* (sync, deque-buffered) rather
-    than scheduling coroutines directly — the consumer's flush task drains the
-    deque via the DT_PIPE so events are debounced and micro-batched (15A).
-
-    Issue #3725 review decisions honoured:
-        - 4A  Async pipe consumer (write/delete/rename routed via DT_PIPE).
-        - 7A  2KB head cap enforced inside SkeletonIndexer.
-        - 14A Hash-based skip guard in index_file().
-        - 15A Micro-batched concurrent reads via asyncio.gather in consumer.
-    """
-    _nx = svc.nexus_fs
-    _daemon = getattr(app.state, "search_daemon", None)
-    if _nx is None or _daemon is None:
-        return
-
-    try:
-        from nexus.bricks.catalog.extractors import SKELETON_EXTRACTOR_REGISTRY
-        from nexus.bricks.search.skeleton_indexer import SkeletonIndexer
-        from nexus.bricks.search.skeleton_pipe_consumer import SkeletonPipeConsumer
-        from nexus.factory.adapters import _DaemonSkeletonBM25, _NexusFSFileReader
-
-        _reader = _NexusFSFileReader(_nx)
-        _bm25 = _DaemonSkeletonBM25(_daemon)
-
-        _session_factory = None
-        _rs = svc.record_store
-        if _rs is not None:
-            with contextlib.suppress(AttributeError):
-                _session_factory = _rs.async_session_factory
-
-        _indexer = SkeletonIndexer(
-            file_reader=_reader,
-            bm25=_bm25,
-            extractor_registry=SKELETON_EXTRACTOR_REGISTRY,
-            async_session_factory=_session_factory,
-        )
-        app.state.skeleton_indexer = _indexer
-
-        # Capture running loop now (startup_search runs in the event loop).
-        # Passed to the consumer so _buffer() can use call_soon_threadsafe when
-        # VFS hooks fire from asyncio.to_thread (sync context).
-        _loop = asyncio.get_running_loop()
-
-        # Consumer is created here but NOT started — startup_services calls
-        # _startup_pipe_consumers after startup_search completes, and the Nexus
-        # kernel pipe registry isn't ready until that phase.  The consumer is
-        # stored on app.state so _startup_pipe_consumers can bind_fs + start it.
-        _consumer = SkeletonPipeConsumer(indexer=_indexer, fallback_loop=_loop)
-        app.state.skeleton_pipe_consumer = _consumer
-        logger.debug("[SKELETON] SkeletonIndexer + SkeletonPipeConsumer created (pending start)")
-
-        if not hasattr(_nx, "register_intercept_write"):
-            return  # NexusFS doesn't support VFS hooks in this mode
-
-        _zone_id = svc.zone_id or ROOT_ZONE_ID
-
-        class _SkeletonWriteHook:
-            @property
-            def name(self) -> str:
-                return "skeleton_auto_index"
-
-            def on_post_write(self, ctx: object) -> None:
-                _consumer.notify_write(
-                    getattr(ctx, "path", ""),
-                    getattr(ctx, "path_id", None),
-                    getattr(ctx, "zone_id", None) or _zone_id,
-                )
-
-        class _SkeletonDeleteHook:
-            @property
-            def name(self) -> str:
-                return "skeleton_auto_delete"
-
-            def on_post_delete(self, ctx: object) -> None:
-                _consumer.notify_delete(
-                    getattr(ctx, "path", ""),
-                    getattr(ctx, "path_id", None),
-                    getattr(ctx, "zone_id", None) or _zone_id,
-                )
-
-        class _SkeletonRenameHook:
-            @property
-            def name(self) -> str:
-                return "skeleton_auto_rename"
-
-            def on_post_rename(self, ctx: object) -> None:
-                _consumer.notify_rename(
-                    getattr(ctx, "old_path", ""),
-                    getattr(ctx, "new_path", ""),
-                    getattr(ctx, "path_id", None),
-                    getattr(ctx, "zone_id", None) or _zone_id,
-                )
-
-        _nx.register_intercept_write(_SkeletonWriteHook())
-        _nx.register_intercept_delete(_SkeletonDeleteHook())
-        _nx.register_intercept_rename(_SkeletonRenameHook())
-        logger.info("[SKELETON] VFS auto-index hooks registered (write/delete/rename)")
-
-    except Exception as e:
-        logger.warning("[SKELETON] Skeleton indexer wiring failed (non-fatal): %s", e)

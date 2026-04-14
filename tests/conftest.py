@@ -18,19 +18,6 @@ import os
 import pytest
 
 # ---------------------------------------------------------------------------
-# Issue #3712: auto-rebuild stale nexus_kernel binary before test runs.
-# Activated only when NEXUS_RUST_EDITABLE=1 (opt-in for local dev).
-# CI pre-builds the binary from source, so the hook is not needed there.
-# ---------------------------------------------------------------------------
-if os.environ.get("NEXUS_RUST_EDITABLE") == "1":
-    try:
-        import maturin_import_hook
-
-        maturin_import_hook.install()
-    except ImportError:
-        pass  # maturin-import-hook not installed — skip (warn below)
-
-# ---------------------------------------------------------------------------
 # Issue #3399: default to sync write observer in tests.
 # The piped observer spawns a background consumer task per NexusFS instance;
 # with 10K+ tests this adds significant startup/shutdown overhead and can

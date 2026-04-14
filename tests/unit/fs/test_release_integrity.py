@@ -15,7 +15,7 @@ import sqlite3
 import threading
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -310,8 +310,8 @@ class TestFsspecErrorPaths:
 
     @pytest.fixture
     def mock_nexus_fs(self):
-        fs = MagicMock()
-        fs.stat = MagicMock(return_value={"path": "/test", "size": 11, "is_directory": False})
+        fs = AsyncMock()
+        fs.stat = AsyncMock(return_value={"path": "/test", "size": 11, "is_directory": False})
         return fs
 
     def test_unsupported_mode_raises(self, mock_nexus_fs):
@@ -557,12 +557,12 @@ class TestSlimNexusFSLifecycle:
         metastore.put(_make_mount_entry("/local", backend.name))
 
         fs = SlimNexusFS(kernel)
-        fs.close()
-        fs.close()  # should not raise
+        await fs.close()
+        await fs.close()  # should not raise
 
     @pytest.mark.asyncio
     async def test_context_manager(self, tmp_path):
-        """with SlimNexusFS should call close() on exit."""
+        """async with SlimNexusFS should call close() on exit."""
         from nexus.backends.storage.cas_local import CASLocalBackend
         from nexus.contracts.types import OperationContext
         from nexus.core.config import PermissionConfig
@@ -592,7 +592,7 @@ class TestSlimNexusFSLifecycle:
         kernel.sys_setattr("/local", entry_type=DT_MOUNT, backend=backend)
         metastore.put(_make_mount_entry("/local", backend.name))
 
-        with SlimNexusFS(kernel) as fs:
+        async with SlimNexusFS(kernel) as fs:
             fs.write("/local/ctx.txt", b"context manager")
             content = fs.read("/local/ctx.txt")
             assert content == b"context manager"

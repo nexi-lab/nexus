@@ -84,26 +84,15 @@ def _resolve_tls_config(app: "FastAPI") -> "ZoneTlsConfig | None":
     return None
 
 
-def _mark_grpc_done(app: "FastAPI") -> None:
-    """Mark the GRPC startup phase complete on the startup tracker."""
-    from nexus.server.health.startup_tracker import StartupPhase
-
-    tracker = getattr(app.state, "startup_tracker", None)
-    if tracker is not None:
-        tracker.complete(StartupPhase.GRPC)
-
-
 async def startup_grpc(app: "FastAPI", _svc: "LifespanServices") -> list[asyncio.Task]:
     """Start the gRPC server if configured."""
     port = int(os.environ.get("NEXUS_GRPC_PORT", "2028"))
     if not port:
-        _mark_grpc_done(app)  # intentionally disabled
         return []
 
     nexus_fs = getattr(app.state, "nexus_fs", None)
     if nexus_fs is None:
         logger.warning("gRPC disabled: no nexus_fs on app.state")
-        _mark_grpc_done(app)  # not applicable for this deployment
         return []
 
     exposed_methods = getattr(app.state, "exposed_methods", {})
@@ -163,7 +152,6 @@ async def startup_grpc(app: "FastAPI", _svc: "LifespanServices") -> list[asyncio
     await server.start()
 
     app.state.grpc_server = server
-    _mark_grpc_done(app)  # gRPC listener is up
 
     # Enlist gRPC server (Q1 — infrastructure, manual start/stop)
     nx = getattr(_svc, "nexus_fs", _svc)

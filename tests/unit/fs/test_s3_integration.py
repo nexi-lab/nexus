@@ -17,10 +17,10 @@ import boto3
 from moto import mock_aws
 
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.contracts.metadata import DT_MOUNT  # noqa: E402
 from nexus.contracts.types import OperationContext
 from nexus.core.config import PermissionConfig
 from nexus.core.nexus_fs import NexusFS
+from nexus.core.router import PathRouter
 from nexus.fs import _make_mount_entry
 from nexus.fs._facade import SlimNexusFS
 from nexus.fs._sqlite_meta import SQLiteMetastore
@@ -45,12 +45,22 @@ def s3_fs(tmp_path: Path):
         db_path = str(tmp_path / "metadata.db")
         metastore = SQLiteMetastore(db_path)
 
-        mount_point = f"/s3/{BUCKET_NAME}"
+        # Router with mount
+        from nexus.core.mount_table import MountTable
 
-        # Kernel (constructs DLC + router internally)
+        mount_table = MountTable(metastore)
+        router = PathRouter(mount_table)
+        mount_point = f"/s3/{BUCKET_NAME}"
+        mount_table.add(mount_point, backend)
+
+        # Create DT_MOUNT entry
+        metastore.put(_make_mount_entry(mount_point, backend.name))
+
+        # Kernel
         kernel = NexusFS(
             metadata_store=metastore,
             permissions=PermissionConfig(enforce=False),
+            router=router,
         )
         kernel._init_cred = OperationContext(
             user_id="test",
@@ -58,8 +68,6 @@ def s3_fs(tmp_path: Path):
             zone_id=ROOT_ZONE_ID,
             is_admin=True,
         )
-        kernel.sys_setattr(mount_point, entry_type=DT_MOUNT, backend=backend)
-        metastore.put(_make_mount_entry(mount_point, backend.name))
 
         yield SlimNexusFS(kernel), mount_point
 
@@ -78,7 +86,7 @@ class TestS3BackendLifecycle:
     async def test_stat(self, s3_fs):
         fs, mp = s3_fs
         fs.write(f"{mp}/meta.txt", b"metadata test")
-        stat = fs.stat(f"{mp}/meta.txt")
+        stat = await fs.stat(f"{mp}/meta.txt")
         assert stat is not None
         assert stat["size"] == 13
         assert stat["is_directory"] is False
@@ -88,7 +96,7 @@ class TestS3BackendLifecycle:
         fs, mp = s3_fs
         fs.write(f"{mp}/a.txt", b"aaa")
         fs.write(f"{mp}/b.txt", b"bbb")
-        entries = fs.ls(f"{mp}/", detail=False, recursive=True)
+        entries = await fs.ls(f"{mp}/", detail=False, recursive=True)
         paths = [e for e in entries if e.endswith(".txt")]
         assert f"{mp}/a.txt" in paths
         assert f"{mp}/b.txt" in paths
@@ -96,23 +104,23 @@ class TestS3BackendLifecycle:
     @pytest.mark.asyncio
     async def test_exists(self, s3_fs):
         fs, mp = s3_fs
-        assert not fs.exists(f"{mp}/nofile.txt")
+        assert not await fs.exists(f"{mp}/nofile.txt")
         fs.write(f"{mp}/nofile.txt", b"now I exist")
-        assert fs.exists(f"{mp}/nofile.txt")
+        assert await fs.exists(f"{mp}/nofile.txt")
 
     @pytest.mark.asyncio
     async def test_delete(self, s3_fs):
         fs, mp = s3_fs
         fs.write(f"{mp}/delete-me.txt", b"bye")
-        fs.delete(f"{mp}/delete-me.txt")
-        stat = fs.stat(f"{mp}/delete-me.txt")
+        await fs.delete(f"{mp}/delete-me.txt")
+        stat = await fs.stat(f"{mp}/delete-me.txt")
         assert stat is None
 
     @pytest.mark.asyncio
     async def test_copy(self, s3_fs):
         fs, mp = s3_fs
         fs.write(f"{mp}/src.txt", b"copy me")
-        fs.copy(f"{mp}/src.txt", f"{mp}/dst.txt")
+        await fs.copy(f"{mp}/src.txt", f"{mp}/dst.txt")
         src = fs.read(f"{mp}/src.txt")
         dst = fs.read(f"{mp}/dst.txt")
         assert src == dst == b"copy me"
@@ -126,7 +134,7 @@ class TestS3BackendLifecycle:
     async def test_rename(self, s3_fs):
         fs, mp = s3_fs
         fs.write(f"{mp}/old.txt", b"rename me")
-        fs.rename(f"{mp}/old.txt", f"{mp}/new.txt")
+        await fs.rename(f"{mp}/old.txt", f"{mp}/new.txt")
         result = fs.read(f"{mp}/new.txt")
         assert result == b"rename me"
 
@@ -134,7 +142,7 @@ class TestS3BackendLifecycle:
     async def test_mkdir(self, s3_fs):
         fs, mp = s3_fs
         fs.mkdir(f"{mp}/subdir")
-        stat = fs.stat(f"{mp}/subdir")
+        stat = await fs.stat(f"{mp}/subdir")
         assert stat is not None
         assert stat["is_directory"] is True
 

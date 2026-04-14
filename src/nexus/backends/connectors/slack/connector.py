@@ -122,7 +122,6 @@ class PathSlackBackend(
         max_messages_per_channel: int = 100,
         metadata_store: Any = None,
         encryption_key: str | None = None,
-        pool: Any = None,  # CredentialPool | None — see Issue #3723 for migration guide
     ):
         """Initialize Slack connector backend.
 
@@ -133,10 +132,8 @@ class PathSlackBackend(
             record_store: Optional RecordStoreABC for content caching
             max_messages_per_channel: Maximum messages to fetch per channel
             metadata_store: MetastoreABC instance for file_paths table
-            pool: Optional CredentialPool for multi-account failover (Issue #3723).
         """
         # 1. Initialize OAuth (sets self.token_manager, self.provider, etc.)
-        self._pool = pool  # stored for future migrate_to_pool() call (Issue #3723)
         self._init_oauth(
             token_manager_db,
             user_email=user_email,

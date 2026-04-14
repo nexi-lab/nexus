@@ -50,13 +50,6 @@ class OutputOptions:
     verbosity: int  # 0=default, 1=-v, 2=-vv, 3=-vvv
     fields: str | None
     request_id: str
-    # Distinguishes ``--json`` passed explicitly from the auto-JSON
-    # fallback that kicks in when stdout is piped. Commands that have
-    # their own pipe-friendly plain output format (``nexus grep -l``,
-    # ``nexus glob --plain``) check this flag so they can bypass the
-    # auto-JSON fallback without clobbering users who really wanted
-    # JSON (#3701).
-    json_output_explicit: bool = False
 
 
 def _auto_json() -> bool:
@@ -95,11 +88,6 @@ def add_output_options(func: Callable[..., Any]) -> Callable[..., Any]:
         fields: str | None,
         **kwargs: Any,
     ) -> Any:
-        # Remember whether the user passed --json explicitly BEFORE the
-        # auto-JSON fallback kicks in. Commands that have a pipe-friendly
-        # plain output format use this to bypass auto-JSON without
-        # clobbering users who explicitly asked for JSON (#3701).
-        json_output_explicit = json_output
         # Auto-JSON when piped
         if not json_output and _auto_json():
             json_output = True
@@ -112,7 +100,6 @@ def add_output_options(func: Callable[..., Any]) -> Callable[..., Any]:
             verbosity=verbosity,
             fields=fields,
             request_id=request_id,
-            json_output_explicit=json_output_explicit,
         )
         return func(output_opts=output_opts, **kwargs)
 

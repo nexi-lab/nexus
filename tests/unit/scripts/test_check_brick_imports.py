@@ -49,7 +49,7 @@ class TestCheckFile:
 
     def test_detects_from_nexus_core_import(self, brick_file):
         path = brick_file("""\
-            from nexus.core.nexus_fs_dispatch import DispatchMixin
+            from nexus.core.nexus_fs import NexusFS
         """)
         violations = check_file(path)
         assert len(violations) == 1
@@ -58,7 +58,7 @@ class TestCheckFile:
 
     def test_detects_import_nexus_core(self, brick_file):
         path = brick_file("""\
-            import nexus.core.nexus_fs_dispatch
+            import nexus.core.nexus_fs
         """)
         violations = check_file(path)
         assert len(violations) == 1
@@ -111,14 +111,14 @@ class TestCheckFile:
 
     def test_skips_comments(self, brick_file):
         path = brick_file("""\
-            # from nexus.core.nexus_fs_dispatch import DispatchMixin
+            # from nexus.core.nexus_fs import NexusFS
             # import nexus.services.search.search_service
         """)
         assert check_file(path) == []
 
     def test_skips_string_literals(self, brick_file):
         path = brick_file("""\
-            "from nexus.core.nexus_fs_dispatch import DispatchMixin"
+            "from nexus.core.nexus_fs import NexusFS"
             'import nexus.services.search.search_service'
         """)
         assert check_file(path) == []
@@ -131,7 +131,7 @@ class TestCheckFile:
 
     def test_multiple_violations(self, brick_file):
         path = brick_file("""\
-            from nexus.core.nexus_fs_dispatch import DispatchMixin
+            from nexus.core.nexus_fs import NexusFS
             from nexus.core.protocols.vfs_router import VFSRouterProtocol
             from nexus.services.search.search_service import SearchService
             import os
@@ -145,7 +145,7 @@ class TestCheckFile:
         path = brick_file("""\
             import os
             import sys
-            from nexus.core.nexus_fs_dispatch import DispatchMixin
+            from nexus.core.nexus_fs import NexusFS
         """)
         violations = check_file(path)
         assert len(violations) == 1
@@ -221,7 +221,7 @@ class TestMain:
     def test_returns_one_when_violations_found(self, monkeypatch, tmp_path: Path):
         bricks = tmp_path / "src" / "nexus" / "bricks"
         bricks.mkdir(parents=True)
-        (bricks / "bad.py").write_text("from nexus.core.nexus_fs_dispatch import DispatchMixin\n")
+        (bricks / "bad.py").write_text("from nexus.core.nexus_fs import NexusFS\n")
         monkeypatch.setattr("sys.argv", ["check_brick_imports.py"])
         monkeypatch.chdir(tmp_path)
         assert main() == 1
@@ -231,7 +231,7 @@ class TestMain:
         bricks = tmp_path / "src" / "nexus" / "bricks"
         bricks.mkdir(parents=True)
         bad_file = bricks / "bad.py"
-        bad_file.write_text("from nexus.core.nexus_fs_dispatch import DispatchMixin\n")
+        bad_file.write_text("from nexus.core.nexus_fs import NexusFS\n")
         # Pass a non-brick file — should be filtered out
         monkeypatch.setattr(
             "sys.argv",
@@ -360,7 +360,7 @@ class TestCrossBrickImports:
     def test_cross_brick_combined_with_core_violation(self, memory_brick_file):
         """Both core and cross-brick violations are reported."""
         path = memory_brick_file("""\
-            from nexus.core.nexus_fs_dispatch import DispatchMixin
+            from nexus.core.nexus_fs import NexusFS
             from nexus.bricks.pay.credits import foo
         """)
         violations = check_file(path, brick_name="memory")

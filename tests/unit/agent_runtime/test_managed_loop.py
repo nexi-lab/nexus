@@ -127,7 +127,7 @@ def _make_vfs_loop(
     token_iter = iter(tokens)
     offset_counter = [0]
 
-    def mock_stream_read(path: str, offset: int) -> tuple[bytes, int]:
+    async def mock_stream_read(path: str, offset: int) -> tuple[bytes, int]:
         try:
             data = next(token_iter)
             new_offset = offset_counter[0] + len(data)
@@ -145,7 +145,7 @@ def _make_vfs_loop(
 
     sys_read_mock = AsyncMock(side_effect=mock_sys_read)
     sys_write_mock = AsyncMock(side_effect=mock_sys_write)
-    stream_read_mock = MagicMock(side_effect=mock_stream_read)
+    stream_read_mock = AsyncMock(side_effect=mock_stream_read)
 
     loop = ManagedAgentLoop(
         sys_read=sys_read_mock,
@@ -177,7 +177,7 @@ class TestManagedAgentLoop:
     async def test_initialize_reads_system_prompt_from_vfs(self) -> None:
         """System prompt loaded via sys_read from VFS (includes env block)."""
         loop, mocks = _make_vfs_loop(system_prompt="You are helpful.")
-        await loop.initialize()
+        loop.initialize()
 
         assert len(loop.messages) == 1
         assert loop.messages[0]["role"] == "system"
@@ -188,7 +188,7 @@ class TestManagedAgentLoop:
     async def test_initialize_no_system_prompt(self) -> None:
         """No SYSTEM.md → system message still has env block."""
         loop, _ = _make_vfs_loop(system_prompt="")
-        await loop.initialize()
+        loop.initialize()
         # assemble_system_prompt always includes env block
         assert len(loop.messages) == 1
         assert "# Environment" in loop.messages[0]["content"]
@@ -197,7 +197,7 @@ class TestManagedAgentLoop:
     async def test_run_calls_llm_via_streaming_service(self) -> None:
         """LLM call goes through the Rust llm_start_streaming entry point."""
         loop, mocks = _make_vfs_loop()
-        await loop.initialize()
+        loop.initialize()
 
         await loop.run("Hi")
 
@@ -212,7 +212,7 @@ class TestManagedAgentLoop:
     async def test_run_reads_tokens_from_dt_stream(self) -> None:
         """Tokens read via stream_read (kernel DT_STREAM IPC)."""
         loop, mocks = _make_vfs_loop()
-        await loop.initialize()
+        loop.initialize()
 
         result = await loop.run("Hi")
 
@@ -224,7 +224,7 @@ class TestManagedAgentLoop:
     async def test_conversation_persisted_via_sys_write(self) -> None:
         """Conversation persisted to VFS after each mutation."""
         loop, mocks = _make_vfs_loop()
-        await loop.initialize()
+        loop.initialize()
 
         await loop.run("Hello")
 
@@ -243,7 +243,7 @@ class TestManagedAgentLoop:
     async def test_result_persisted_to_proc_fs(self) -> None:
         """Turn result persisted to /{zone}/proc/{pid}/result via sys_write."""
         loop, mocks = _make_vfs_loop()
-        await loop.initialize()
+        loop.initialize()
 
         await loop.run("Hello")
 
@@ -259,7 +259,7 @@ class TestManagedAgentLoop:
     async def test_observer_shared(self) -> None:
         """Observer accumulates during VFS-native loop execution."""
         loop, _ = _make_vfs_loop()
-        await loop.initialize()
+        loop.initialize()
 
         result = await loop.run("Test")
         assert result.text == "Hello there!"
@@ -269,7 +269,7 @@ class TestManagedAgentLoop:
     async def test_tool_execution_via_sys_read(self) -> None:
         """Tool call executes via sys_read (VFS syscall)."""
         loop, mocks = _make_vfs_loop()
-        await loop.initialize()
+        loop.initialize()
 
         # Simulate a tool call
         tool_call = {
@@ -287,7 +287,7 @@ class TestManagedAgentLoop:
     async def test_tool_execution_via_sys_write(self) -> None:
         """Tool call executes via sys_write (VFS syscall)."""
         loop, mocks = _make_vfs_loop()
-        await loop.initialize()
+        loop.initialize()
 
         tool_call = {
             "id": "tc2",
@@ -315,7 +315,7 @@ class TestManagedAgentLoop:
             saved_conv
         ).encode()
 
-        await loop.load_conversation()
+        loop.load_conversation()
         assert len(loop.messages) == 3
         assert loop.messages[1]["content"] == "Previous message"
 
@@ -323,7 +323,7 @@ class TestManagedAgentLoop:
     async def test_reset_reinitializes_from_vfs(self) -> None:
         """Reset reloads config from VFS."""
         loop, _ = _make_vfs_loop(system_prompt="System prompt")
-        await loop.initialize()
+        loop.initialize()
         assert len(loop.messages) == 1
 
         # Add some messages
@@ -331,6 +331,6 @@ class TestManagedAgentLoop:
         assert len(loop.messages) == 2
 
         # Reset → re-reads SYSTEM.md from VFS
-        await loop.reset()
+        loop.reset()
         assert len(loop.messages) == 1
         assert loop.messages[0]["role"] == "system"

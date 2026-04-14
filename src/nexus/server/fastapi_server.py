@@ -333,20 +333,9 @@ def create_app(
 
     # Expose services on app.state so routers never reach into
     # NexusFS private attributes (Issue #701).
-    # Prefer the ServiceRegistry lookup (``nexus_fs.service(...)``) because
-    # the private ``_rebac_manager`` attribute is None in deployments where
-    # the brick is registered on-demand; the registry returns the live
-    # instance in that case.
-    def _resolve_service(name: str, private_attr: str) -> Any:
-        if hasattr(nexus_fs, "service"):
-            svc = nexus_fs.service(name)
-            if svc is not None:
-                return svc
-        return getattr(nexus_fs, private_attr, None)
-
-    app.state.rebac_manager = _resolve_service("rebac_manager", "_rebac_manager")
-    app.state.entity_registry = _resolve_service("entity_registry", "_entity_registry")
-    app.state.namespace_manager = _resolve_service("namespace_manager", "_namespace_manager")
+    app.state.rebac_manager = getattr(nexus_fs, "_rebac_manager", None)
+    app.state.entity_registry = getattr(nexus_fs, "_entity_registry", None)
+    app.state.namespace_manager = getattr(nexus_fs, "_namespace_manager", None)
 
     # Thread pool and timeout settings (Issue #932, #2071)
     _tuning_pool_size = str(app.state.profile_tuning.concurrency.thread_pool_size)

@@ -338,18 +338,13 @@ class VFSObserver(Protocol):
     Observers needing sync blocking on the syscall return path belong in
     INTERCEPT POST, not OBSERVE.
 
-    Note: ``on_mutation`` was removed — all observer dispatch is now
-    handled by the Rust kernel's MutationObserver trait.  Python
-    observers that need to receive events use explicit publish()
-    calls wired at factory time, not Protocol dispatch.
-
     Optional class attributes:
 
     ``event_mask`` (default: ``ALL_FILE_EVENTS``)
         Rust-side event-type bitmask filtering to skip irrelevant observers.
     """
 
-    ...
+    def on_mutation(self, event: Any) -> None: ...
 
 
 # ---------------------------------------------------------------------------

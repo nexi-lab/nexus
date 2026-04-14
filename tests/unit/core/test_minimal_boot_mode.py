@@ -398,10 +398,10 @@ class TestSlimIntegrationViaConnect:
             enabled_bricks=resolve_enabled_bricks(DeploymentProfile.SLIM),
         )
 
-        # register_observe is now a no-op (Python observers deleted).
-        # All observers (FileWatcher, StreamEventObservers) are Rust kernel-internal.
-        # Service-registered observer count is always 0.
-        assert nx.observer_count == 0
+        # FileWatcher + StreamEventObserver + EventBusObserver are unconditionally
+        # registered. RevisionTrackingObserver deleted (§10 A2) — zone revision
+        # is now a kernel primitive (AtomicU64).
+        assert nx.observer_count == 3
 
     @pytest.mark.asyncio
     async def test_slim_profile_no_workflow_engine(self, tmp_path: "Path") -> None:

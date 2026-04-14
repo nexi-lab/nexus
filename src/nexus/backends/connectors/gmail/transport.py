@@ -122,25 +122,10 @@ class GmailTransport:
     # Context binding (not part of Transport protocol; Gmail-specific)
     # ------------------------------------------------------------------
 
-    def with_context(
-        self,
-        context: OperationContext | None,
-        *,
-        user_email_override: str | None = None,
-    ) -> GmailTransport:
-        """Return a shallow copy bound to *context* (for OAuth token resolution).
-
-        Args:
-            context: Per-request OperationContext (used to resolve user_email
-                when user_email_override is not set).
-            user_email_override: If provided, this email is used directly for
-                token lookup — bypasses context.user_id resolution. Used by the
-                credential pool to select a specific account for each request.
-        """
+    def with_context(self, context: OperationContext | None) -> GmailTransport:
+        """Return a shallow copy bound to *context* (for OAuth token resolution)."""
         clone = copy(self)
         clone._context = context
-        if user_email_override is not None:
-            clone._user_email = user_email_override
         return clone
 
     # ------------------------------------------------------------------
@@ -584,7 +569,7 @@ class GmailTransport:
             allow_unicode=True,
             sort_keys=False,
         )
-        return yaml_output.encode("utf-8")
+        return str(yaml_output).encode("utf-8")
 
     def _fetch_email(self, service: Resource, message_id: str) -> dict[str, Any]:
         try:
@@ -593,16 +578,6 @@ class GmailTransport:
             )
             return self._parse_gmail_message(message)
         except Exception as e:
-            # Translate HTTP 404 to NexusFileNotFoundError so callers (e.g. the
-            # credential pool) can distinguish "message deleted" from "credential
-            # failure" and avoid incorrectly penalising healthy credentials.
-            try:
-                from googleapiclient.errors import HttpError
-
-                if isinstance(e, HttpError) and e.resp and e.resp.status == 404:
-                    raise NexusFileNotFoundError(message_id) from e
-            except ImportError:
-                pass
             raise BackendError(
                 f"Failed to fetch email {message_id}: {e}",
                 backend="gmail",

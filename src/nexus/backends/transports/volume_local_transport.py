@@ -122,20 +122,10 @@ class VolumeLocalTransport:
         self._volume_available = False
         self._VolumeEngine: Any = None  # Class reference for lazy creation
 
-        # VolumeLocalTransport's entire purpose is volume packing — it has no valid
-        # degraded mode.  Fail closed immediately if VolumeEngine is unavailable so
-        # callers get a clear error (with rebuild instructions) rather than silently
-        # writing blobs to flat-file layout that VolumeEngine will never find (Issue #3712).
-        from nexus._rust_compat import VolumeEngine as _VolumeEngine
+        # RUST_FALLBACK: VolumeEngine
+        from nexus_kernel import VolumeEngine
 
-        if _VolumeEngine is None:
-            raise RuntimeError(
-                "VolumeEngine is unavailable (stale or absent nexus_kernel). "
-                "VolumeLocalTransport requires a working nexus_kernel binary — "
-                "there is no safe degraded mode. "
-                "Rebuild the extension: cd rust/kernel && maturin develop --release"
-            )
-        self._VolumeEngine = _VolumeEngine
+        self._VolumeEngine = VolumeEngine
         self._volume_available = True
 
         # Permanent engine for non-TTL CAS blobs

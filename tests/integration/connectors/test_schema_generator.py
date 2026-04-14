@@ -171,11 +171,104 @@ class TestGenerateReadme:
 
 
 # ===========================================================================
-# write_readme tests removed (Issue #3728): the method was deleted — skill
-# docs are now served on-demand from the virtual .readme/ overlay.  See the
-# TestGenerateTree and TestDispatchHelpers classes below for the tests that
-# replace the materialization coverage.
+# write_readme
 # ===========================================================================
+
+
+class TestWriteReadme:
+    @pytest.mark.asyncio
+    async def test_writes_readme_md(
+        self, generator: ReadmeDocGenerator, mock_filesystem: MagicMock
+    ) -> None:
+        result = await generator.write_readme("/mnt/calendar", filesystem=mock_filesystem)
+
+        assert result["readme_md"] == "/mnt/calendar/.readme/README.md"
+        mock_filesystem.mkdir.assert_any_call("/mnt/calendar/.readme", parents=True, exist_ok=True)
+        # README.md is written as bytes
+        write_calls = mock_filesystem.write.call_args_list
+        readme_md_call = write_calls[0]
+        assert readme_md_call[0][0] == "/mnt/calendar/.readme/README.md"
+        assert isinstance(readme_md_call[0][1], bytes)
+
+    @pytest.mark.asyncio
+    async def test_writes_examples(
+        self, generator: ReadmeDocGenerator, mock_filesystem: MagicMock
+    ) -> None:
+        result = await generator.write_readme("/mnt/calendar", filesystem=mock_filesystem)
+
+        assert "/mnt/calendar/.readme/examples/create_meeting.yaml" in result["examples"]
+        mock_filesystem.mkdir.assert_any_call(
+            "/mnt/calendar/.readme/examples", parents=True, exist_ok=True
+        )
+        # Verify example content written
+        example_call = mock_filesystem.write.call_args_list[1]
+        assert example_call[0][0] == "/mnt/calendar/.readme/examples/create_meeting.yaml"
+        assert example_call[0][1] == b"summary: Team Standup\n"
+
+    @pytest.mark.asyncio
+    async def test_no_filesystem_returns_empty_result(self, generator: ReadmeDocGenerator) -> None:
+        result = await generator.write_readme("/mnt/calendar", filesystem=None)
+        assert result["readme_md"] is None
+        assert result["examples"] == []
+
+    @pytest.mark.asyncio
+    async def test_empty_skill_name_returns_empty_result(self, mock_filesystem: MagicMock) -> None:
+        gen = ReadmeDocGenerator(
+            skill_name="",
+            schemas={},
+            operation_traits={},
+            error_registry={},
+            examples={},
+        )
+        result = await gen.write_readme("/mnt/x", filesystem=mock_filesystem)
+        assert result["readme_md"] is None
+        assert result["examples"] == []
+        mock_filesystem.write.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_no_examples_skips_examples_dir(self, mock_filesystem: MagicMock) -> None:
+        gen = ReadmeDocGenerator(
+            skill_name="test",
+            schemas=_DEFAULT_SCHEMAS,
+            operation_traits=_DEFAULT_TRAITS,
+            error_registry=_DEFAULT_ERRORS,
+            examples={},
+        )
+        result = await gen.write_readme("/mnt/x", filesystem=mock_filesystem)
+        assert result["readme_md"] is not None
+        assert result["examples"] == []
+        # Only the .readme dir mkdir, not examples/
+        mkdir_paths = [c[0][0] for c in mock_filesystem.mkdir.call_args_list]
+        assert "/mnt/x/.readme/examples" not in mkdir_paths
+
+    @pytest.mark.asyncio
+    async def test_filesystem_error_returns_partial_result(
+        self, mock_filesystem: MagicMock
+    ) -> None:
+        mock_filesystem.mkdir.side_effect = OSError("permission denied")
+        gen = ReadmeDocGenerator(
+            skill_name="test",
+            schemas={},
+            operation_traits={},
+            error_registry={},
+            examples={},
+        )
+        result = await gen.write_readme("/mnt/x", filesystem=mock_filesystem)
+        assert result["readme_md"] is None
+        assert result["examples"] == []
+
+    @pytest.mark.asyncio
+    async def test_custom_readme_dir(self, mock_filesystem: MagicMock) -> None:
+        gen = ReadmeDocGenerator(
+            skill_name="test",
+            schemas={},
+            operation_traits={},
+            error_registry={},
+            examples={},
+            readme_dir=".docs",
+        )
+        await gen.write_readme("/mnt/x", filesystem=mock_filesystem)
+        mock_filesystem.mkdir.assert_any_call("/mnt/x/.docs", parents=True, exist_ok=True)
 
 
 # ===========================================================================
@@ -476,649 +569,3 @@ class TestGetSkillPath:
     def test_root_mount(self, generator: ReadmeDocGenerator) -> None:
         # posixpath.join("", ".readme") = ".readme" after rstrip("/") on "/"
         assert generator.get_readme_path("/") == ".readme"
-
-
-# ===========================================================================
-# VirtualEntry tree model (Issue #3728)
-# ===========================================================================
-
-
-from nexus.backends.connectors.schema_generator import (  # noqa: E402
-    _VIRTUAL_TREE_CACHE,
-    VirtualEntry,
-    _invalidate_virtual_tree_cache,
-    _parse_readme_path_parts,
-    dispatch_virtual_readme_exists,
-    dispatch_virtual_readme_list,
-    dispatch_virtual_readme_read,
-    dispatch_virtual_readme_size,
-    get_virtual_readme_tree_for_backend,
-)
-
-
-class TestVirtualEntry:
-    def test_file_entry_has_content_and_no_children(self) -> None:
-        entry = VirtualEntry(name="README.md", is_dir=False, content=b"hello")
-        assert entry.is_file is True
-        assert entry.is_dir is False
-        assert entry.content == b"hello"
-        assert entry.children == {}
-        assert entry.size() == 5
-
-    def test_dir_entry_has_no_content(self) -> None:
-        entry = VirtualEntry(name="schemas", is_dir=True)
-        assert entry.is_dir is True
-        assert entry.is_file is False
-        assert entry.content is None
-        assert entry.size() == 0  # directories report size 0
-
-    def test_find_empty_parts_returns_self(self) -> None:
-        root = VirtualEntry(name=".readme", is_dir=True)
-        assert root.find([]) is root
-
-    def test_find_single_file(self) -> None:
-        root = VirtualEntry(name=".readme", is_dir=True)
-        root.children["README.md"] = VirtualEntry(name="README.md", is_dir=False, content=b"hi")
-        found = root.find(["README.md"])
-        assert found is not None
-        assert found.content == b"hi"
-
-    def test_find_nested_file(self) -> None:
-        root = VirtualEntry(name=".readme", is_dir=True)
-        schemas = VirtualEntry(name="schemas", is_dir=True)
-        schemas.children["send.yaml"] = VirtualEntry(
-            name="send.yaml", is_dir=False, content=b"yaml"
-        )
-        root.children["schemas"] = schemas
-        found = root.find(["schemas", "send.yaml"])
-        assert found is not None
-        assert found.content == b"yaml"
-
-    def test_find_missing_returns_none(self) -> None:
-        root = VirtualEntry(name=".readme", is_dir=True)
-        assert root.find(["nonexistent.md"]) is None
-
-    def test_find_through_non_dir_returns_none(self) -> None:
-        # README.md is a file, so treating it as a dir fails cleanly.
-        root = VirtualEntry(name=".readme", is_dir=True)
-        root.children["README.md"] = VirtualEntry(name="README.md", is_dir=False, content=b"hi")
-        assert root.find(["README.md", "child"]) is None
-
-    def test_list_children_names_sorts_and_marks_dirs(self) -> None:
-        root = VirtualEntry(name=".readme", is_dir=True)
-        root.children["README.md"] = VirtualEntry(name="README.md", is_dir=False, content=b"")
-        root.children["schemas"] = VirtualEntry(name="schemas", is_dir=True)
-        root.children["examples"] = VirtualEntry(name="examples", is_dir=True)
-        names = root.list_children_names()
-        assert names == ["README.md", "examples/", "schemas/"]
-
-    def test_list_children_names_on_file_is_empty(self) -> None:
-        file_entry = VirtualEntry(name="README.md", is_dir=False, content=b"x")
-        assert file_entry.list_children_names() == []
-
-    def test_list_children_empty_dir(self) -> None:
-        empty_dir = VirtualEntry(name=".readme", is_dir=True)
-        assert empty_dir.list_children_names() == []
-
-
-# ===========================================================================
-# generate_tree — single-walk construction (#14A)
-# ===========================================================================
-
-
-class TestGenerateTree:
-    def test_tree_root_is_dir(self, generator: ReadmeDocGenerator) -> None:
-        tree = generator.generate_tree("/mnt/cal")
-        assert tree.is_dir is True
-        assert tree.name == ".readme"
-
-    def test_tree_contains_readme(self, generator: ReadmeDocGenerator) -> None:
-        tree = generator.generate_tree("/mnt/cal")
-        readme = tree.find(["README.md"])
-        assert readme is not None
-        assert readme.is_file
-        assert b"# Test Skill Connector" in readme.content
-        assert b"/mnt/cal" in readme.content
-
-    def test_tree_readme_matches_generate_readme(self, generator: ReadmeDocGenerator) -> None:
-        tree = generator.generate_tree("/mnt/cal")
-        readme = tree.find(["README.md"])
-        assert readme is not None
-        expected = generator.generate_readme("/mnt/cal").encode("utf-8")
-        assert readme.content == expected
-
-    def test_tree_contains_schemas_dir(self, generator: ReadmeDocGenerator) -> None:
-        tree = generator.generate_tree("/mnt/cal")
-        schemas = tree.find(["schemas"])
-        assert schemas is not None
-        assert schemas.is_dir
-        # Two schemas in _DEFAULT_SCHEMAS: create_event, update_event
-        assert set(schemas.children.keys()) == {"create_event.yaml", "update_event.yaml"}
-
-    def test_tree_schema_file_has_yaml_content(self, generator: ReadmeDocGenerator) -> None:
-        tree = generator.generate_tree("/mnt/cal")
-        schema_file = tree.find(["schemas", "create_event.yaml"])
-        assert schema_file is not None
-        assert schema_file.is_file
-        assert b"# Schema: create_event" in schema_file.content
-
-    def test_tree_contains_examples_dir(self, generator: ReadmeDocGenerator) -> None:
-        tree = generator.generate_tree("/mnt/cal")
-        examples = tree.find(["examples"])
-        assert examples is not None
-        assert examples.is_dir
-        assert "create_meeting.yaml" in examples.children
-
-    def test_tree_example_content_preserved(self, generator: ReadmeDocGenerator) -> None:
-        tree = generator.generate_tree("/mnt/cal")
-        example = tree.find(["examples", "create_meeting.yaml"])
-        assert example is not None
-        assert example.content == b"summary: Team Standup\n"
-
-    def test_tree_with_empty_schemas(self, empty_generator: ReadmeDocGenerator) -> None:
-        tree = empty_generator.generate_tree("/mnt/empty")
-        # README.md is always present (decision #7A — empty SCHEMAS still renders)
-        assert tree.find(["README.md"]) is not None
-        # schemas/ and examples/ are absent when their source is empty
-        assert tree.find(["schemas"]) is None
-        assert tree.find(["examples"]) is None
-        assert tree.list_children_names() == ["README.md"]
-
-    def test_tree_with_binary_example(self) -> None:
-        # Decision #7A — bytes values in EXAMPLES must not crash
-        gen = ReadmeDocGenerator(
-            skill_name="binary_skill",
-            schemas={},
-            operation_traits={},
-            error_registry={},
-            examples={"blob.bin": b"\x00\x01\x02\xff"},
-        )
-        tree = gen.generate_tree("/mnt/bin")
-        example = tree.find(["examples", "blob.bin"])
-        assert example is not None
-        assert example.content == b"\x00\x01\x02\xff"
-
-    def test_tree_with_non_ascii_skill_name(self) -> None:
-        # Decision #7A — non-ASCII skill names render without crashing
-        gen = ReadmeDocGenerator(
-            skill_name="café_connector",
-            schemas=_DEFAULT_SCHEMAS,
-            operation_traits=_DEFAULT_TRAITS,
-            error_registry=_DEFAULT_ERRORS,
-            examples={},
-        )
-        tree = gen.generate_tree("/mnt/café")
-        readme = tree.find(["README.md"])
-        assert readme is not None
-        # UTF-8 encoded, round-trip clean
-        assert "café" in readme.content.decode("utf-8").lower()
-
-    def test_tree_list_children_at_root(self, generator: ReadmeDocGenerator) -> None:
-        tree = generator.generate_tree("/mnt/cal")
-        names = tree.list_children_names()
-        assert "README.md" in names
-        assert "schemas/" in names
-        assert "examples/" in names
-        # sorted
-        assert names == sorted(names)
-
-    def test_tree_list_children_at_schemas(self, generator: ReadmeDocGenerator) -> None:
-        tree = generator.generate_tree("/mnt/cal")
-        schemas = tree.find(["schemas"])
-        assert schemas is not None
-        names = schemas.list_children_names()
-        assert names == ["create_event.yaml", "update_event.yaml"]
-
-    def test_tree_propagates_generator_exceptions(self) -> None:
-        """Decision #8A — broken metadata raises instead of silent None.
-
-        Uses a real Pydantic model plus ``patch.object`` to force
-        ``generate_schema_yaml`` to raise — tests the propagation path
-        without faking the schema type (avoids mypy dict-item errors).
-        """
-        from unittest.mock import patch
-
-        gen = ReadmeDocGenerator(
-            skill_name="broken",
-            schemas={"op": SimpleSchema},
-            operation_traits={},
-            error_registry={},
-            examples={},
-        )
-        with (
-            patch.object(gen, "generate_schema_yaml", side_effect=RuntimeError("boom")),
-            pytest.raises(RuntimeError, match="boom"),
-        ):
-            gen.generate_tree("/mnt/broken")
-
-
-# ===========================================================================
-# get_virtual_readme_tree_for_backend — module-level cache (#13A)
-# ===========================================================================
-
-
-class _FakeBackend:
-    """Minimal backend-like object with class-level metadata."""
-
-    SKILL_NAME = "fake"
-    SCHEMAS = _DEFAULT_SCHEMAS
-    OPERATION_TRAITS = _DEFAULT_TRAITS
-    ERROR_REGISTRY = _DEFAULT_ERRORS
-    EXAMPLES = _DEFAULT_EXAMPLES
-    README_DIR = ".readme"
-
-
-class _EmptySkillBackend:
-    SKILL_NAME = ""
-    SCHEMAS: dict = {}
-    OPERATION_TRAITS: dict = {}
-    ERROR_REGISTRY: dict = {}
-    EXAMPLES: dict = {}
-
-
-class TestVirtualTreeCache:
-    def setup_method(self) -> None:
-        _invalidate_virtual_tree_cache()
-
-    def teardown_method(self) -> None:
-        _invalidate_virtual_tree_cache()
-
-    def test_first_call_populates_cache(self) -> None:
-        assert len(_VIRTUAL_TREE_CACHE) == 0
-        tree = get_virtual_readme_tree_for_backend(_FakeBackend(), "/mnt/fake")
-        assert tree is not None
-        assert tree.find(["README.md"]) is not None
-        assert len(_VIRTUAL_TREE_CACHE) == 1
-
-    def test_second_call_returns_same_tree_object(self) -> None:
-        backend = _FakeBackend()
-        tree1 = get_virtual_readme_tree_for_backend(backend, "/mnt/fake")
-        tree2 = get_virtual_readme_tree_for_backend(backend, "/mnt/fake")
-        assert tree1 is tree2  # identity, not just equality
-
-    def test_cache_key_includes_mount_path(self) -> None:
-        backend = _FakeBackend()
-        tree_a = get_virtual_readme_tree_for_backend(backend, "/mnt/a")
-        tree_b = get_virtual_readme_tree_for_backend(backend, "/mnt/b")
-        assert tree_a is not tree_b  # different mount → different tree
-        # But same content structure
-        assert tree_a.list_children_names() == tree_b.list_children_names()
-        # And the mount path is reflected in README.md content
-        readme_a = tree_a.find(["README.md"])
-        readme_b = tree_b.find(["README.md"])
-        assert readme_a is not None and readme_b is not None
-        assert b"/mnt/a" in readme_a.content
-        assert b"/mnt/b" in readme_b.content
-
-    def test_cache_key_includes_class(self) -> None:
-        # Two different classes with the same mount path produce different entries
-        class OtherBackend(_FakeBackend):
-            SKILL_NAME = "other"
-
-        tree_fake = get_virtual_readme_tree_for_backend(_FakeBackend(), "/mnt/x")
-        tree_other = get_virtual_readme_tree_for_backend(OtherBackend(), "/mnt/x")
-        assert tree_fake is not tree_other
-        assert len(_VIRTUAL_TREE_CACHE) == 2
-
-    def test_missing_skill_name_raises(self) -> None:
-        with pytest.raises(RuntimeError, match="SKILL_NAME"):
-            get_virtual_readme_tree_for_backend(_EmptySkillBackend(), "/mnt/x")
-
-    def test_invalidate_clears_all(self) -> None:
-        get_virtual_readme_tree_for_backend(_FakeBackend(), "/mnt/x")
-        assert len(_VIRTUAL_TREE_CACHE) > 0
-        _invalidate_virtual_tree_cache()
-        assert len(_VIRTUAL_TREE_CACHE) == 0
-
-
-# ===========================================================================
-# _parse_readme_path_parts — normalization + traversal guards (#4A)
-# ===========================================================================
-
-
-class TestParseReadmePath:
-    def test_none_input_returns_none(self) -> None:
-        assert _parse_readme_path_parts(None) is None
-
-    def test_empty_string_returns_none(self) -> None:
-        assert _parse_readme_path_parts("") is None
-
-    def test_non_readme_path_returns_none(self) -> None:
-        assert _parse_readme_path_parts("INBOX/msg.yaml") is None
-        assert _parse_readme_path_parts("/INBOX/msg.yaml") is None
-
-    def test_readme_root_returns_empty_list(self) -> None:
-        assert _parse_readme_path_parts(".readme") == []
-        assert _parse_readme_path_parts(".readme/") == []
-        assert _parse_readme_path_parts("/.readme/") == []
-
-    def test_readme_file_returns_single_part(self) -> None:
-        assert _parse_readme_path_parts(".readme/README.md") == ["README.md"]
-        assert _parse_readme_path_parts("/.readme/README.md") == ["README.md"]
-
-    def test_readme_nested_returns_multiple_parts(self) -> None:
-        assert _parse_readme_path_parts(".readme/schemas/send_email.yaml") == [
-            "schemas",
-            "send_email.yaml",
-        ]
-
-    def test_custom_readme_dir(self) -> None:
-        assert _parse_readme_path_parts(".docs/FAQ.md", readme_dir=".docs") == ["FAQ.md"]
-
-    def test_double_slash_normalized(self) -> None:
-        assert _parse_readme_path_parts(".readme//README.md") == ["README.md"]
-
-    def test_trailing_slash_stripped(self) -> None:
-        # .readme/schemas/ (directory listing) — parts are ["schemas"]
-        assert _parse_readme_path_parts(".readme/schemas/") == ["schemas"]
-
-    def test_dot_components_normalized(self) -> None:
-        assert _parse_readme_path_parts(".readme/./README.md") == ["README.md"]
-
-    def test_traversal_rejected(self) -> None:
-        with pytest.raises(ValueError, match="traversal"):
-            _parse_readme_path_parts(".readme/../../../etc/passwd")
-
-    def test_traversal_to_self_rejected(self) -> None:
-        with pytest.raises(ValueError, match="traversal"):
-            _parse_readme_path_parts("..")
-
-    def test_null_byte_rejected(self) -> None:
-        with pytest.raises(ValueError, match="null byte"):
-            _parse_readme_path_parts(".readme/README\x00.md")
-
-    def test_backslash_rejected(self) -> None:
-        with pytest.raises(ValueError, match="backslash"):
-            _parse_readme_path_parts(".readme\\README.md")
-
-    def test_x_readme_is_not_readme(self) -> None:
-        # Prefix confusion — "x.readme/foo" is NOT under ".readme/"
-        assert _parse_readme_path_parts("x.readme/foo") is None
-
-    def test_readme_prefix_of_other_dir_is_not_readme(self) -> None:
-        # ".readmex/foo" starts with ".readme" but is a different directory
-        assert _parse_readme_path_parts(".readmex/foo") is None
-
-
-# ===========================================================================
-# Dispatch helpers (#1 kernel dispatch, #4A traversal, #8A sentinel protocol)
-# ===========================================================================
-
-
-class TestDispatchHelpers:
-    def setup_method(self) -> None:
-        _invalidate_virtual_tree_cache()
-
-    def teardown_method(self) -> None:
-        _invalidate_virtual_tree_cache()
-
-    # -- read --
-
-    def test_read_returns_bytes_for_virtual_file(self) -> None:
-        content = dispatch_virtual_readme_read(_FakeBackend(), "/mnt/x", ".readme/README.md")
-        assert content is not None
-        assert b"# Fake Connector" in content or b"# Test Skill Connector" in content
-
-    def test_read_returns_none_for_non_virtual_path(self) -> None:
-        assert dispatch_virtual_readme_read(_FakeBackend(), "/mnt/x", "INBOX/msg.yaml") is None
-
-    def test_read_raises_not_found_for_missing_virtual(self) -> None:
-        from nexus.contracts.exceptions import NexusFileNotFoundError
-
-        with pytest.raises(NexusFileNotFoundError):
-            dispatch_virtual_readme_read(_FakeBackend(), "/mnt/x", ".readme/nonexistent.md")
-
-    def test_read_raises_is_a_directory_for_virtual_dir(self) -> None:
-        with pytest.raises(IsADirectoryError):
-            dispatch_virtual_readme_read(_FakeBackend(), "/mnt/x", ".readme/schemas")
-
-    def test_read_returns_none_for_backend_without_skill(self) -> None:
-        assert (
-            dispatch_virtual_readme_read(_EmptySkillBackend(), "/mnt/x", ".readme/README.md")
-            is None
-        )
-
-    def test_read_raises_on_traversal(self) -> None:
-        with pytest.raises(ValueError, match="traversal"):
-            dispatch_virtual_readme_read(_FakeBackend(), "/mnt/x", ".readme/../../../etc/passwd")
-
-    # -- list --
-
-    def test_list_returns_entries_for_virtual_dir(self) -> None:
-        entries = dispatch_virtual_readme_list(_FakeBackend(), "/mnt/x", ".readme")
-        assert entries is not None
-        assert "README.md" in entries
-        assert "schemas/" in entries
-        assert "examples/" in entries
-
-    def test_list_returns_entries_for_nested_virtual_dir(self) -> None:
-        entries = dispatch_virtual_readme_list(_FakeBackend(), "/mnt/x", ".readme/schemas")
-        assert entries is not None
-        assert "create_event.yaml" in entries
-        assert "update_event.yaml" in entries
-
-    def test_list_returns_none_for_non_virtual_path(self) -> None:
-        assert dispatch_virtual_readme_list(_FakeBackend(), "/mnt/x", "INBOX") is None
-
-    def test_list_raises_not_a_dir_for_virtual_file(self) -> None:
-        with pytest.raises(NotADirectoryError):
-            dispatch_virtual_readme_list(_FakeBackend(), "/mnt/x", ".readme/README.md")
-
-    def test_list_raises_not_found_for_missing_virtual_dir(self) -> None:
-        from nexus.contracts.exceptions import NexusFileNotFoundError
-
-        with pytest.raises(NexusFileNotFoundError):
-            dispatch_virtual_readme_list(_FakeBackend(), "/mnt/x", ".readme/nonexistent")
-
-    def test_list_returns_none_for_backend_without_skill(self) -> None:
-        assert dispatch_virtual_readme_list(_EmptySkillBackend(), "/mnt/x", ".readme") is None
-
-    # -- exists --
-
-    def test_exists_true_for_virtual_file(self) -> None:
-        assert dispatch_virtual_readme_exists(_FakeBackend(), "/mnt/x", ".readme/README.md") is True
-
-    def test_exists_true_for_virtual_dir(self) -> None:
-        assert dispatch_virtual_readme_exists(_FakeBackend(), "/mnt/x", ".readme/schemas") is True
-
-    def test_exists_false_for_missing_virtual(self) -> None:
-        assert (
-            dispatch_virtual_readme_exists(_FakeBackend(), "/mnt/x", ".readme/nonexistent") is False
-        )
-
-    def test_exists_none_for_non_virtual(self) -> None:
-        assert dispatch_virtual_readme_exists(_FakeBackend(), "/mnt/x", "INBOX/msg") is None
-
-    def test_exists_false_on_malformed_path(self) -> None:
-        # Malformed paths under .readme/ (null byte, backslash) return False
-        # rather than raising — exists() is a predicate, not an access
-        # attempt, and the caller needs a definitive answer.
-        assert (
-            dispatch_virtual_readme_exists(_FakeBackend(), "/mnt/x", ".readme/README\x00.md")
-            is False
-        )
-
-    def test_exists_none_when_traversal_escapes_readme(self) -> None:
-        # posixpath.normpath collapses ".readme/../etc" to "etc", which isn't
-        # under .readme/ at all — the helper returns None (not virtual),
-        # letting the real backend handle the resulting path.
-        assert (
-            dispatch_virtual_readme_exists(_FakeBackend(), "/mnt/x", ".readme/../etc/passwd")
-            is None
-        )
-
-    def test_exists_none_for_backend_without_skill(self) -> None:
-        assert (
-            dispatch_virtual_readme_exists(_EmptySkillBackend(), "/mnt/x", ".readme/README.md")
-            is None
-        )
-
-    # -- size --
-
-    def test_size_returns_file_bytes(self) -> None:
-        size = dispatch_virtual_readme_size(_FakeBackend(), "/mnt/x", ".readme/README.md")
-        assert size is not None
-        assert size > 0
-
-    def test_size_returns_zero_for_virtual_dir(self) -> None:
-        # Directories report size 0 — consistent with Unix directory sizes
-        size = dispatch_virtual_readme_size(_FakeBackend(), "/mnt/x", ".readme/schemas")
-        assert size == 0
-
-    def test_size_returns_none_for_non_virtual(self) -> None:
-        assert dispatch_virtual_readme_size(_FakeBackend(), "/mnt/x", "INBOX/msg.yaml") is None
-
-    def test_size_raises_for_missing_virtual(self) -> None:
-        from nexus.contracts.exceptions import NexusFileNotFoundError
-
-        with pytest.raises(NexusFileNotFoundError):
-            dispatch_virtual_readme_size(_FakeBackend(), "/mnt/x", ".readme/nonexistent.md")
-
-
-# ===========================================================================
-# Hypothesis property test for path parsing (#11A)
-# ===========================================================================
-
-
-from hypothesis import given, settings  # noqa: E402
-from hypothesis import strategies as st  # noqa: E402
-
-
-class TestParseReadmePathFuzz:
-    """Property-based tests for _parse_readme_path_parts.
-
-    Invariants:
-        1. For any input string, the function either (a) returns None,
-           (b) returns a list of parts containing no ``..``, ``/``, or
-           null bytes, and no empty strings, or (c) raises ValueError.
-        2. Returned parts never escape the ``.readme/`` subtree.
-        3. The function never crashes with any other exception type.
-    """
-
-    @given(st.text(max_size=200))
-    @settings(max_examples=500, deadline=None)
-    def test_no_crashes_and_safe_parts(self, path: str) -> None:
-        try:
-            parts = _parse_readme_path_parts(path)
-        except ValueError:
-            return  # explicit rejection is fine
-        except Exception as exc:
-            raise AssertionError(f"unexpected exception type for input {path!r}: {exc!r}") from exc
-
-        if parts is None:
-            return  # not a readme path, fine
-
-        # Safety invariants on returned parts
-        for part in parts:
-            assert part, f"empty part in {parts!r} from {path!r}"
-            assert "/" not in part, f"slash in part {part!r} from {path!r}"
-            assert "\x00" not in part, f"null byte in part {part!r} from {path!r}"
-            assert part != "..", f".. in parts {parts!r} from {path!r}"
-            assert part != ".", f". in parts {parts!r} from {path!r}"
-
-    @given(st.text(max_size=200))
-    @settings(max_examples=500, deadline=None)
-    def test_traversal_always_rejected(self, suffix: str) -> None:
-        # Any path starting with ../ after .readme/ should raise
-        attack = ".readme/../" + suffix
-        try:
-            _parse_readme_path_parts(attack)
-        except (ValueError, UnicodeError):
-            return
-        # If it didn't raise, the result must NOT escape .readme/
-        # (i.e., parts must be empty or resolvable-safe).
-        # This branch is reached when the suffix normalizes to something
-        # within .readme/ after collapsing — which is fine.
-
-    def test_explicit_attack_vectors(self) -> None:
-        # Each of these must raise ValueError
-        attacks = [
-            ".readme/../../etc/passwd",
-            ".readme/../..",
-            "../.readme/README.md",
-            ".readme/foo/../../../root",
-            ".readme/\x00injected",
-            ".readme\\README.md",
-        ]
-        for attack in attacks:
-            with pytest.raises(ValueError):
-                _parse_readme_path_parts(attack)
-
-
-# ===========================================================================
-# Kernel wiring integration (Issue #3728 kernel dispatch)
-# ===========================================================================
-#
-# These tests verify that NexusFS._try_virtual_readme_stat + the dispatch
-# wiring in sys_read/sys_readdir fires correctly for backends with skill
-# docs.  We use monkeypatch to install a fake router route instead of
-# constructing a full Backend subclass, which would require a proper
-# Transport implementation we don't need for this test.
-
-
-class _FakeRoute:
-    """Minimal fake of RouteResult for dispatch wiring."""
-
-    def __init__(self, backend, mount_point, backend_path):
-        self.backend = backend
-        self.mount_point = mount_point
-        self.backend_path = backend_path
-        self.metastore = None  # stat path checks meta; we override it anyway
-
-
-class TestKernelWiringDispatch:
-    """Verify the dispatch helpers are callable through the public API."""
-
-    def setup_method(self) -> None:
-        _invalidate_virtual_tree_cache()
-
-    def teardown_method(self) -> None:
-        _invalidate_virtual_tree_cache()
-
-    def test_read_dispatch_returns_readme_bytes(self) -> None:
-        """dispatch_virtual_readme_read serves README.md content."""
-        backend = _FakeBackend()
-        data = dispatch_virtual_readme_read(backend, "/mnt/fake", ".readme/README.md")
-        assert data is not None
-        assert data.startswith(b"# Fake") or data.startswith(b"#")
-
-    def test_list_dispatch_returns_entries(self) -> None:
-        """dispatch_virtual_readme_list serves directory entries."""
-        backend = _FakeBackend()
-        entries = dispatch_virtual_readme_list(backend, "/mnt/fake", ".readme")
-        assert entries is not None
-        assert "README.md" in entries
-
-    def test_exists_dispatch_returns_true(self) -> None:
-        """dispatch_virtual_readme_exists returns True for known entries."""
-        backend = _FakeBackend()
-        assert dispatch_virtual_readme_exists(backend, "/mnt/fake", ".readme/README.md") is True
-
-    def test_size_dispatch_returns_nonzero_for_readme(self) -> None:
-        """dispatch_virtual_readme_size returns positive size for README.md."""
-        backend = _FakeBackend()
-        size = dispatch_virtual_readme_size(backend, "/mnt/fake", ".readme/README.md")
-        assert size is not None
-        assert size > 0
-
-    def test_size_dispatch_returns_zero_for_dir(self) -> None:
-        """dispatch_virtual_readme_size returns 0 for virtual directories."""
-        backend = _FakeBackend()
-        size = dispatch_virtual_readme_size(backend, "/mnt/fake", ".readme/schemas")
-        assert size == 0
-
-    def test_fall_through_on_non_readme_path(self) -> None:
-        """Non-.readme/ paths return None from all four dispatch helpers."""
-        backend = _FakeBackend()
-        assert dispatch_virtual_readme_read(backend, "/mnt/fake", "INBOX/msg.yaml") is None
-        assert dispatch_virtual_readme_list(backend, "/mnt/fake", "INBOX") is None
-        assert dispatch_virtual_readme_exists(backend, "/mnt/fake", "INBOX/msg") is None
-        assert dispatch_virtual_readme_size(backend, "/mnt/fake", "INBOX/msg.yaml") is None
-
-    def test_non_skill_backend_always_returns_none(self) -> None:
-        """Backends without SKILL_NAME get None from all helpers."""
-        backend = _EmptySkillBackend()
-        assert dispatch_virtual_readme_read(backend, "/mnt/x", ".readme/README.md") is None
-        assert dispatch_virtual_readme_list(backend, "/mnt/x", ".readme") is None
-        assert dispatch_virtual_readme_exists(backend, "/mnt/x", ".readme/README.md") is None
-        assert dispatch_virtual_readme_size(backend, "/mnt/x", ".readme/README.md") is None

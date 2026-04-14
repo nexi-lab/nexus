@@ -105,14 +105,8 @@ def create_negative_cache(
     Returns:
         A BloomNegativeCache instance.
     """
-    # RUST_FALLBACK: BloomFilter (optional — returns None if stale/absent binary)
-    from nexus._rust_compat import BloomFilter
-
-    if BloomFilter is None:
-        logger.debug(
-            "BloomFilter unavailable (stale or absent nexus_kernel) — using no-op negative cache"
-        )
-        return NullNegativeCache()
+    # RUST_FALLBACK: BloomFilter
+    from nexus_kernel import BloomFilter
 
     bloom = BloomFilter(capacity, fp_rate)
     cache = BloomNegativeCache(bloom)

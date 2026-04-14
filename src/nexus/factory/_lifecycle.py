@@ -159,16 +159,17 @@ async def _wire_services(
 
         nx._close_callbacks.append(_close_write_observer)
 
-    # Cancel RecordStoreWriteObserver's debounce timer + flush on sync close.
-    if _wo is not None and hasattr(_wo, "cancel"):
+    # Cancel PipedRecordStoreWriteObserver's consumer task on sync close.
+    # Without this, the pipe consumer blocks event loop cleanup in tests.
+    if _wo is not None and hasattr(_wo, "_consumer_task"):
 
-        def _close_write_observer_cancel() -> None:
-            try:
-                _wo.cancel()
-            except Exception as exc:
-                logger.debug("close: write_observer cancel failed (best-effort): %s", exc)
+        def _close_write_observer_task() -> None:
+            task = getattr(_wo, "_consumer_task", None)
+            if task is not None and not task.done():
+                task.cancel()
+                _wo._consumer_task = None
 
-        nx._close_callbacks.append(_close_write_observer_cancel)
+        nx._close_callbacks.append(_close_write_observer_task)
 
     # Issue #3193: Cancel the delivery worker asyncio.Task on sync close.
     # The coordinator's stop_background_services() is async and only runs

@@ -9,6 +9,8 @@ This uses a mock filesystem to test the orchestration without requiring
 real CLI tools or OAuth tokens.
 """
 
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 from pydantic import BaseModel, Field
 
@@ -103,31 +105,29 @@ class TestConnectorLifecycleE2E:
         assert "# Github Connector" in readme_doc or "# GitHub Connector" in readme_doc.title()
         assert "create_issue" in readme_doc.lower() or "Create Issue" in readme_doc
 
-    def test_step2_virtual_readme_tree_exposes_docs(self) -> None:
-        """Step 2: Virtual ``.readme/`` tree exposes README.md + schemas/ (Issue #3728).
-
-        The previous materialization test (``write_readme``) was removed;
-        the overlay now serves docs on-demand from class metadata.
-        """
-        from nexus.backends.connectors.schema_generator import (
-            _invalidate_virtual_tree_cache,
-            get_virtual_readme_tree_for_backend,
-        )
-
-        _invalidate_virtual_tree_cache()
+    @pytest.mark.asyncio
+    async def test_step2_readme_doc_writes_to_filesystem(self) -> None:
+        """Step 2: Readme docs written to .readme/ directory with schema files."""
         connector = FakeGHConnector()
-        tree = get_virtual_readme_tree_for_backend(connector, "/mnt/github")
+        fs = MagicMock()
+        fs.mkdir = AsyncMock()
+        fs.write = AsyncMock()
 
-        # README.md present in the virtual tree
-        readme = tree.find(["README.md"])
-        assert readme is not None
-        assert readme.is_file
+        result = await connector.write_readme("/mnt/github", fs)
 
-        # schemas/ directory contains a file per declared schema
-        schemas = tree.find(["schemas"])
-        assert schemas is not None
-        assert schemas.is_dir
-        assert any("create_issue" in name for name in schemas.children)
+        # README.md should be written
+        assert result["readme_md"] == "/mnt/github/.readme/README.md"
+
+        # Schema files should be written (Issue #3148)
+        assert len(result.get("schemas", [])) > 0
+        assert any("create_issue" in s for s in result.get("schemas", []))
+
+        # Example files should be written
+        assert len(result["examples"]) > 0
+
+        # Verify filesystem calls
+        fs.mkdir.assert_called()
+        fs.write.assert_called()
 
     def test_step3_schema_validation_success(self) -> None:
         """Step 3: Valid YAML passes schema validation."""

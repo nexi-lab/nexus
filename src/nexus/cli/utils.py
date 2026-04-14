@@ -7,15 +7,18 @@ import sys
 from collections.abc import AsyncGenerator, Generator
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import click
 
 import nexus
+from nexus import NexusFilesystem
 from nexus.cli.exit_codes import ExitCode
 from nexus.cli.theme import console, print_error
 from nexus.contracts.exceptions import NexusError, NexusFileNotFoundError, ValidationError
-from nexus.core.nexus_fs import NexusFS
+
+if TYPE_CHECKING:
+    pass
 
 _LOCAL_WORKSPACE_ENV_KEYS = (
     "NEXUS_URL",
@@ -179,7 +182,7 @@ def _isolated_local_workspace_env(data_dir: str) -> Generator[None, None, None]:
 class _LocalWorkspaceFilesystemProxy:
     """Reapply local-workspace env isolation around filesystem operations."""
 
-    def __init__(self, data_dir: str, filesystem: NexusFS) -> None:
+    def __init__(self, data_dir: str, filesystem: NexusFilesystem) -> None:
         self._data_dir = data_dir
         self._filesystem = filesystem
 
@@ -195,7 +198,7 @@ class _LocalWorkspaceFilesystemProxy:
         return _wrapped
 
 
-async def connect_local_workspace(data_dir: str) -> NexusFS:
+async def connect_local_workspace(data_dir: str) -> NexusFilesystem:
     """Connect to a self-contained local workspace without ambient env bleed."""
     with _isolated_local_workspace_env(data_dir):
         filesystem = await nexus.connect(
@@ -210,7 +213,7 @@ async def connect_local_workspace(data_dir: str) -> NexusFS:
                 "api_key": None,
             }
         )
-    return cast(NexusFS, _LocalWorkspaceFilesystemProxy(data_dir, filesystem))
+    return cast(NexusFilesystem, _LocalWorkspaceFilesystemProxy(data_dir, filesystem))
 
 
 async def get_filesystem(
@@ -218,8 +221,8 @@ async def get_filesystem(
     remote_api_key: str | None = None,
     *,
     allow_local_default: bool = False,
-) -> NexusFS:
-    """Get a NexusFS instance.
+) -> NexusFilesystem:
+    """Get a NexusFilesystem instance.
 
     Uses resolve_connection() to determine the effective connection target
     when no explicit ``--remote-url`` is provided.
@@ -231,7 +234,7 @@ async def get_filesystem(
             profile using ``NEXUS_DATA_DIR`` or ``~/.nexus/data``.
 
     Returns:
-        NexusFS instance.
+        NexusFilesystem instance.
     """
     try:
         from click.core import ParameterSource
@@ -297,14 +300,14 @@ async def get_filesystem(
         sys.exit(ExitCode.UNAVAILABLE)
 
 
-async def get_default_filesystem() -> NexusFS:
-    """Get a remote NexusFS using environment variables.
+async def get_default_filesystem() -> NexusFilesystem:
+    """Get a remote NexusFilesystem using environment variables.
 
     Used by commands that don't accept backend options (e.g., memory commands).
     Resolves connection via: NEXUS_URL env > active profile. No local fallback.
 
     Returns:
-        NexusFS instance connected to the remote server.
+        NexusFilesystem instance connected to the remote server.
     """
     try:
         from nexus.cli.config import resolve_connection
@@ -581,8 +584,8 @@ async def open_filesystem(
     remote_url: str | None = None,
     remote_api_key: str | None = None,
     **kwargs: Any,
-) -> AsyncGenerator[NexusFS, None]:
-    """Async context manager that opens and auto-closes a NexusFS.
+) -> AsyncGenerator[NexusFilesystem, None]:
+    """Async context manager that opens and auto-closes a NexusFilesystem.
 
     Usage::
 

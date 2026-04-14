@@ -476,7 +476,7 @@ class TestSemanticSearchIntegration:
             pytest.skip("Semantic search tool not registered")
 
         search_tool = await get_tool(mcp_server, "nexus_semantic_search")
-        result = await search_tool.fn(query="test files", limit=5)
+        result = search_tool.fn(query="test files", limit=5)
 
         # Should return JSON results or indicate not available
         assert "not available" in result or result.startswith("[") or result.startswith("{")
@@ -672,16 +672,9 @@ class TestComprehensiveMCPToolsWorkflow:
         # Step 8: Test nexus_semantic_search (optional)
         if await tool_exists(mcp_server, "nexus_semantic_search"):
             search_tool = await get_tool(mcp_server, "nexus_semantic_search")
-            search_result = await search_tool.fn(query="test files", limit=5)
-            # Should return result (paginated dict or list) or indicate not available.
-            # Issue #3778: the handler now returns a paginated envelope dict when
-            # SearchService is reachable — even when no items match — so the
-            # response legitimately starts with "{" instead of "[".
-            assert (
-                "not available" in search_result
-                or search_result.startswith("[")
-                or search_result.startswith("{")
-            )
+            search_result = search_tool.fn(query="test files", limit=5)
+            # Should return result or indicate not available
+            assert "not available" in search_result or search_result.startswith("[")
 
         # Step 9: Test nexus_store_memory (optional)
         if await tool_exists(mcp_server, "nexus_store_memory"):

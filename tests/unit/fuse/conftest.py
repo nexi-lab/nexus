@@ -2,7 +2,7 @@
 
 from enum import Enum
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -15,21 +15,21 @@ class _MockMountMode(Enum):
 
 @pytest.fixture()
 def mock_nexus_fs() -> MagicMock:
-    """Mock NexusFS with standard methods."""
+    """Mock NexusFilesystem with standard methods."""
     fs = MagicMock()
-    # NexusFS syscalls are sync def — use MagicMock
-    fs.access = MagicMock(return_value=True)
-    fs.is_directory = MagicMock(return_value=False)
-    fs.sys_read = MagicMock(return_value=b"hello world")
-    fs.sys_write = MagicMock(return_value=None)
-    fs.write = MagicMock(return_value=None)
-    fs.sys_readdir = MagicMock(return_value=[])
-    fs.sys_stat = MagicMock(return_value=None)
-    fs.sys_setattr = MagicMock(return_value=None)
-    fs.sys_unlink = MagicMock(return_value=None)
-    fs.sys_rename = MagicMock(return_value=None)
-    fs.mkdir = MagicMock(return_value=None)
-    fs.rmdir = MagicMock(return_value=None)
+    # Syscalls are now async — use AsyncMock so await works in FUSE handlers
+    fs.access = AsyncMock(return_value=True)
+    fs.is_directory = AsyncMock(return_value=False)
+    fs.sys_read = AsyncMock(return_value=b"hello world")
+    fs.sys_write = AsyncMock(return_value=None)
+    fs.write = AsyncMock(return_value=None)
+    fs.sys_readdir = AsyncMock(return_value=[])
+    fs.sys_stat = AsyncMock(return_value=None)
+    fs.sys_setattr = AsyncMock(return_value=None)
+    fs.sys_unlink = AsyncMock(return_value=None)
+    fs.sys_rename = AsyncMock(return_value=None)
+    fs.mkdir = AsyncMock(return_value=None)
+    fs.rmdir = AsyncMock(return_value=None)
     fs.zone_id = "test-zone"
     return fs
 

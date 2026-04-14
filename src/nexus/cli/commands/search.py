@@ -19,13 +19,6 @@ from nexus.cli.utils import (
 )
 
 
-def register_commands(cli: click.Group) -> None:
-    """Register all search and discovery commands."""
-    cli.add_command(glob)
-    cli.add_command(grep)
-    cli.add_command(semantic_search_group)
-
-
 def _resolve_files_arg(
     files: tuple[str, ...],
     files_from: str | None,
@@ -33,12 +26,12 @@ def _resolve_files_arg(
     """Merge ``--files`` and ``--files-from`` into a single list (#3701).
 
     Semantics:
-    * Neither flag set → returns ``None`` so the server-side default
+    * Neither flag set -> returns ``None`` so the server-side default
       (walk the tree) applies.
-    * ``--files a --files b`` → returns ``["a", "b"]``.
-    * ``--files-from path.txt`` → reads newline-separated paths.
-    * ``--files-from -`` → reads from stdin (pipe pattern).
-    * Both flags set → explicit values come first, then file contents,
+    * ``--files a --files b`` -> returns ``["a", "b"]``.
+    * ``--files-from path.txt`` -> reads newline-separated paths.
+    * ``--files-from -`` -> reads from stdin (pipe pattern).
+    * Both flags set -> explicit values come first, then file contents,
       in order. De-duplication happens server-side in
       ``_validate_and_normalize_files``.
 
@@ -63,39 +56,19 @@ def _resolve_files_arg(
     return merged
 
 
+def register_commands(cli: click.Group) -> None:
+    """Register all search and discovery commands."""
+    cli.add_command(glob)
+    cli.add_command(grep)
+    cli.add_command(semantic_search_group)
+
+
 @click.command()
 @click.argument("pattern", type=str)
 @click.argument("path", type=str, default="/", required=False)
 @click.option("-l", "--long", is_flag=True, help="Show detailed listing with size and date")
 @click.option(
     "-t", "--type", type=click.Choice(["f", "d"]), help="Filter by type: f=files, d=directories"
-)
-@click.option(
-    "--plain",
-    is_flag=True,
-    help=(
-        "Pipe-friendly output: one path per line, no decoration or markup. "
-        "Use to pipe into ``nexus grep --files-from=-`` without jq."
-    ),
-)
-@click.option(
-    "--files",
-    "files",
-    multiple=True,
-    help=(
-        "Stateless narrowing (#3701): restrict the glob to this working set "
-        "of paths instead of walking the tree. Repeatable."
-    ),
-)
-@click.option(
-    "--files-from",
-    type=str,
-    default=None,
-    help=(
-        "Read the narrowing working set from a file (one path per line). "
-        "Use ``-`` for stdin so you can pipe: "
-        "``nexus grep -l X | nexus glob '**/*.py' --files-from=-``."
-    ),
 )
 @add_output_options
 @add_backend_options
@@ -104,9 +77,6 @@ def glob(
     path: str,
     long: bool,
     type: str | None,
-    plain: bool,
-    files: tuple[str, ...],
-    files_from: str | None,
     output_opts: OutputOptions,
     remote_url: str | None,
     remote_api_key: str | None,
@@ -125,13 +95,10 @@ def glob(
         nexus glob -l "**/*.py"
         nexus glob "**/*.py" --json
         nexus glob -t f "**/*"
-        nexus glob "*.py" --files /src/a.py --files /src/b.py
-        nexus grep "TODO" -l | nexus glob "**/*.py" --files-from=-
     """
 
     async def _impl() -> None:
         timing = CommandTiming()
-        files_list = _resolve_files_arg(files, files_from)
 
         try:
             async with open_filesystem(remote_url, remote_api_key) as nx:
@@ -139,10 +106,7 @@ def glob(
                     pass  # connection already established by async with
 
                 with timing.phase("server"):
-                    glob_kwargs: dict[str, Any] = {}
-                    if files_list is not None:
-                        glob_kwargs["files"] = files_list
-                    result = nx.service("search").glob(pattern, path, **glob_kwargs)
+                    result = nx.service("search").glob(pattern, path)
                     matches = (
                         result["matches"]
                         if isinstance(result, dict) and "matches" in result
@@ -150,10 +114,6 @@ def glob(
                     )
 
                 if not matches:
-                    if plain and not output_opts.json_output_explicit:
-                        # --plain with no matches: emit empty output for
-                        # safe piping into ``--files-from=-``.
-                        return
                     render_output(
                         data=[],
                         output_opts=output_opts,
@@ -201,23 +161,7 @@ def glob(
                 else:
                     match_data = [{"path": m} for m in matches]
 
-            # #3701: --plain mode is a pipe-first output format. Bypass
-            # render_output (and its auto-JSON-when-piped fallback) so
-            # the stdout is unadorned one-path-per-line, ready for
-            # ``nexus grep --files-from=-`` consumption.
-            if plain and not output_opts.json_output_explicit:
-                for entry in match_data:
-                    print(entry["path"])  # noqa: T201
-                return
-
             def _print_human(entries: list[dict[str, Any]]) -> None:
-                if plain:
-                    # Pipe-friendly: one path per line, no decoration,
-                    # via plain print() so stdout is unadorned (#3701).
-                    for entry in entries:
-                        print(entry["path"])  # noqa: T201
-                    return
-
                 console.print(
                     f"[nexus.success]Found {len(entries)} files matching[/nexus.success] [nexus.value]{pattern}[/nexus.value]:"
                 )
@@ -260,27 +204,27 @@ def glob(
 @click.option("-n", "--line-number", is_flag=True, help="Show line numbers (like grep -n)")
 @click.option("-l", "--files-with-matches", is_flag=True, help="Show only filenames with matches")
 @click.option("-c", "--count", is_flag=True, help="Show count of matches per file")
-@click.option("--invert-match", is_flag=True, help="Invert match (return non-matching lines)")
+@click.option("--invert-match", is_flag=True, help="Invert match (not yet wired to core grep)")
 @click.option(
     "-A",
     "--after-context",
     type=int,
     default=0,
-    help="Show N lines after each match",
+    help="Show N lines after match (not yet wired to core grep)",
 )
 @click.option(
     "-B",
     "--before-context",
     type=int,
     default=0,
-    help="Show N lines before each match",
+    help="Show N lines before match (not yet wired to core grep)",
 )
 @click.option(
     "-C",
     "--context",
     type=int,
     default=0,
-    help="Show N lines before and after each match (sets both -A and -B)",
+    help="Show N lines before and after match (not yet wired to core grep)",
 )
 @click.option("-m", "--max-results", default=100, help="Maximum results to show")
 @click.option(
@@ -330,10 +274,10 @@ def grep(
     line_number: bool,
     files_with_matches: bool,
     count: bool,
-    invert_match: bool,
-    after_context: int,
-    before_context: int,
-    context: int,
+    invert_match: bool,  # noqa: ARG001 - not yet wired to core grep
+    after_context: int,  # noqa: ARG001 - not yet wired to core grep
+    before_context: int,  # noqa: ARG001 - not yet wired to core grep
+    context: int,  # noqa: ARG001 - not yet wired to core grep
     max_results: int,
     search_mode: str,
     files: tuple[str, ...],
@@ -351,10 +295,6 @@ def grep(
         nexus grep "TODO" --json
         nexus grep -l "TODO" .
         nexus grep -i "error" --json --fields file,line
-        nexus grep "pool" -B 2 -A 2   # with 2 lines of surrounding context
-        nexus grep "TODO" --invert-match   # show non-matching lines
-        nexus grep "JWT" --files /src/auth.py --files /src/user.py
-        nexus grep "auth" -l | nexus grep "JWT" --files-from=-
 
     \b
         nexus grep "revenue" -f "**/*.pdf" --search-mode=parsed
@@ -409,11 +349,6 @@ def grep(
                 matches = result
 
             if not matches:
-                if files_with_matches and not output_opts.json_output_explicit:
-                    # -l with no matches: produce an empty pipe output so
-                    # downstream ``--files-from=-`` sees an empty list, not
-                    # a JSON envelope that fails to parse.
-                    return
                 render_output(
                     data=[],
                     output_opts=output_opts,
@@ -426,17 +361,6 @@ def grep(
             matches_by_file: dict[str, list[dict[str, Any]]] = defaultdict(list)
             for match in matches:
                 matches_by_file[match["file"]].append(match)
-
-            # #3701: ``-l`` mode is a pipe-first output format. Bypass
-            # render_output entirely — including the auto-JSON-when-piped
-            # fallback in add_output_options — and write plain filenames
-            # to stdout so downstream ``--files-from=-`` can consume them.
-            # Users who want JSON for -l mode can still pass --json
-            # explicitly; we only bypass the auto-detection.
-            if files_with_matches and not output_opts.json_output_explicit:
-                for filename in sorted(matches_by_file.keys()):
-                    print(filename)  # noqa: T201
-                return
 
             # Structure data for JSON output
             data = {
@@ -453,12 +377,8 @@ def grep(
                     by_file[m["file"]].append(m)
 
                 if files_with_matches:
-                    # -l mode: print one filename per line, unadorned, via
-                    # plain print() so the output is pipeable to
-                    # ``--files-from=-`` without ANSI escape codes or
-                    # Rich markup interpretation (#3701).
                     for filename in sorted(by_file.keys()):
-                        print(filename)  # noqa: T201
+                        console.print(filename)
                     return
 
                 if count:
@@ -473,27 +393,11 @@ def grep(
                     console.print(f"[nexus.muted]Search mode: {search_mode}[/nexus.muted]")
                 console.print()
 
-                has_context = bool(effective_before or effective_after)
-
                 for filename in sorted(by_file.keys()):
                     console.print(f"[bold nexus.value]{filename}[/bold nexus.value]")
                     for m in by_file[filename]:
                         ln = f"{m['line']}:" if line_number else ""
-                        # Render before-context lines (#3701): dim, with a
-                        # ``-`` line-separator marking so the output matches
-                        # classic ``grep -B N`` formatting.
-                        if has_context:
-                            for b in m.get("before_context") or []:
-                                b_ln = f"{b['line']}-" if line_number else ""
-                                console.print(f"  [nexus.muted]{b_ln} {b['content']}[/nexus.muted]")
                         console.print(f"  [nexus.warning]{ln}[/nexus.warning] {m['content']}")
-                        if has_context:
-                            for a in m.get("after_context") or []:
-                                a_ln = f"{a['line']}-" if line_number else ""
-                                console.print(f"  [nexus.muted]{a_ln} {a['content']}[/nexus.muted]")
-                            # Separator between context blocks, like grep.
-                            if by_file[filename][-1] is not m:
-                                console.print("  --")
                     console.print()
 
             render_output(

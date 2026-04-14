@@ -10,7 +10,7 @@ stream reads. No NATS or Dragonfly URL required — works out-of-the-box.
 For EventBus-backed remote watching (NATS/Dragonfly), see
 ``nexus.services.event_bus.remote_watcher.EventBusRemoteWatcher``.
 
-See: KERNEL-ARCHITECTURE.md §4.3
+See: file_watcher.py for RemoteWatchProtocol, KERNEL-ARCHITECTURE.md §4.3
 """
 
 from __future__ import annotations
@@ -20,7 +20,10 @@ import contextlib
 import logging
 from typing import TYPE_CHECKING
 
+from nexus.core.file_events import ALL_FILE_EVENTS
+
 if TYPE_CHECKING:
+    from nexus.contracts.protocols.service_hooks import HookSpec
     from nexus.core.file_events import FileEvent
     from nexus.core.nexus_fs import NexusFS
 
@@ -135,16 +138,22 @@ class StreamRemoteWatcher:
 
 
 class StreamEventObserver:
-    """Publishes FileEvents to StreamRemoteWatcher.
+    """VFSObserver that publishes FileEvents to StreamRemoteWatcher.
 
-    Retained for explicit publish() calls from factory wiring.
-    Observer dispatch is handled by the Rust kernel's MutationObserver
-    trait. stream_write_nowait is ~0.5us (no network I/O).
+    Analogous to EventBusObserver but writes to DT_STREAM instead of
+    NATS/Dragonfly. stream_write_nowait is ~0.5μs (no network I/O).
     """
+
+    event_mask: int = ALL_FILE_EVENTS
 
     def __init__(self, watcher: StreamRemoteWatcher) -> None:
         self._watcher = watcher
 
-    def publish(self, event: "FileEvent") -> None:
-        """Publish event to stream — stream_write_nowait is ~0.5μs."""
+    def hook_spec(self) -> "HookSpec":
+        from nexus.contracts.protocols.service_hooks import HookSpec
+
+        return HookSpec(observers=(self,))
+
+    def on_mutation(self, event: "FileEvent") -> None:
+        """Sync publish — stream_write_nowait is ~0.5μs."""
         self._watcher.publish(event)

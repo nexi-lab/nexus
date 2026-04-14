@@ -22,32 +22,32 @@ from nexus.core.nexus_fs import NexusFS
 # These are the extraction-critical methods that MUST exist after refactoring.
 
 CORE_READ_METHODS = {
-    "sys_read": {"params": ["path", "count", "offset", "context"], "async": False},
-    "read_range": {"params": ["path", "start", "end", "context"], "async": False},
+    "sys_read": {"params": ["path", "count", "offset", "context"], "async": True},
+    "read_range": {"params": ["path", "start", "end", "context"], "async": True},
     "stream": {"params": ["path", "chunk_size", "context"], "async": False},
 }
 
 CORE_WRITE_METHODS = {
     "sys_write": {
         "params": ["path", "buf", "count", "offset", "context"],
-        "async": False,
+        "async": True,
     },
-    "write_stream": {"params": ["path", "chunks", "context"], "async": False},
-    "append": {"params": ["path", "content", "context", "if_match", "force"], "async": False},
+    "write_stream": {"params": ["path", "chunks", "context"], "async": True},
+    "append": {"params": ["path", "content", "context", "if_match", "force"], "async": True},
     "edit": {
         "params": ["path", "edits", "context", "if_match", "fuzzy_threshold", "preview"],
-        "async": False,
+        "async": True,
     },
 }
 
 CORE_DELETE_METHODS = {
-    "sys_unlink": {"params": ["path", "context"], "async": False},
-    "sys_rename": {"params": ["old_path", "new_path", "context"], "async": False},
+    "sys_unlink": {"params": ["path", "context"], "async": True},
+    "sys_rename": {"params": ["old_path", "new_path", "context"], "async": True},
 }
 
 CORE_METADATA_METHODS = {
     "stat": {"params": ["path", "context"], "async": False},
-    "access": {"params": ["path", "context"], "async": False},
+    "access": {"params": ["path", "context"], "async": True},
 }
 
 ALL_CORE_METHODS = {
@@ -60,12 +60,12 @@ ALL_CORE_METHODS = {
 # Bulk methods on NexusFS (service-layer convenience, future extraction target).
 BULK_METHODS = {
     "read_bulk": {"params": ["paths", "context", "return_metadata", "skip_errors"], "async": False},
-    "write_batch": {"params": ["files", "context"], "async": False},
-    "delete_batch": {"params": ["paths", "recursive", "context"], "async": False},
-    "rename_batch": {"params": ["renames", "context"], "async": False},
+    "write_batch": {"params": ["files", "context"], "async": True},
+    "delete_batch": {"params": ["paths", "recursive", "context"], "async": True},
+    "rename_batch": {"params": ["renames", "context"], "async": True},
     "stat_bulk": {"params": ["paths", "context", "skip_errors"], "async": False},
-    "exists_batch": {"params": ["paths", "context"], "async": False},
-    "metadata_batch": {"params": ["paths", "context"], "async": False},
+    "exists_batch": {"params": ["paths", "context"], "async": True},
+    "metadata_batch": {"params": ["paths", "context"], "async": True},
 }
 
 

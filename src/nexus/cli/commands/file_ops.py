@@ -186,8 +186,8 @@ def cat(
                             console.print(
                                 f"[nexus.muted]Streaming large file ({file_size:,} bytes)...[/nexus.muted]"
                             )
-                            for chunk in nx.stream(
-                                path, chunk_size=65536, context=cast(Any, operation_context)
+                            for chunk in cast(Any, nx).stream(
+                                path, chunk_size=65536, context=operation_context
                             ):
                                 sys.stdout.buffer.write(chunk)
                             sys.stdout.buffer.flush()
@@ -527,7 +527,7 @@ def append(
             ) as nx:
                 # Append with OCC parameters and context.
                 # CAS params (if_match, force) are NexusFS-specific (transitional, see #1323).
-                result = cast(Any, nx).append(
+                result = await cast(Any, nx).append(
                     path,
                     file_content,
                     context=operation_context,

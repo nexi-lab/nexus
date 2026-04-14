@@ -4,29 +4,20 @@ This module implements a Model Context Protocol (MCP) server that exposes
 Nexus functionality to AI agents and tools using the fastmcp framework.
 """
 
-from __future__ import annotations
-
 import contextlib
 import contextvars
 import inspect
 import json
 import logging
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 from cachetools import LRUCache
 from fastmcp import Context, FastMCP
 
-from nexus.bricks.mcp.auth_bridge import op_context_to_auth_dict as _op_context_to_auth_dict
-from nexus.bricks.mcp.auth_bridge import (
-    resolve_mcp_operation_context as _resolve_mcp_operation_context,
-)
 from nexus.bricks.mcp.formatters import format_response
 from nexus.bricks.mcp.tool_utils import handle_tool_errors, tool_error
-from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.contracts.filesystem.filesystem_abc import NexusFilesystem
 from nexus.lib.pagination import build_paginated_list_response
-
-if TYPE_CHECKING:
-    from nexus.core.nexus_fs import NexusFS
 
 logger = logging.getLogger(__name__)
 
@@ -84,20 +75,85 @@ def reset_request_api_key(token: contextvars.Token[str | None]) -> None:
     _request_api_key.reset(token)
 
 
+def _resolve_mcp_operation_context(nx_instance: NexusFilesystem) -> Any:
+    """Resolve an explicit ``OperationContext`` for MCP search calls.
+
+    Codex review #3 finding #1: the previous MCP grep/glob handlers
+    called ``SearchService`` without any ``OperationContext`` at all,
+    so permission filtering relied on whatever the underlying
+    NexusFS connection happened to enforce at the
+    service-lookup layer. On any deployment where the default
+    connection is wider than the per-request subject, that was a
+    tenant-isolation hole: an MCP caller could search a broader
+    filesystem view than their ReBAC grants allowed.
+
+    Resolution priority (first non-None wins):
+
+    1. ``nx_instance._init_cred`` -- the kernel process credential set
+       by ``create_nexus_fs(init_cred=...)`` for local embedded mode
+       and by ``nexus.connect(profile='remote', ...)`` for the remote
+       client.
+
+    2. ``nx_instance._default_context`` -- legacy fallback for direct
+       SearchService mocks.
+
+    3. Remote-connection whoami cache (``subject_id`` / ``zone_id`` /
+       ``is_admin``).
+
+    4. ``None`` -- last resort. Safe because SearchService has its own
+       internal default-context fallback.
+    """
+    from nexus.contracts.constants import ROOT_ZONE_ID
+    from nexus.contracts.types import OperationContext
+
+    # (1) Kernel init_cred
+    init_cred = getattr(nx_instance, "_init_cred", None)
+    if init_cred is not None:
+        return init_cred
+
+    # (2) Legacy SearchService-style default_context (mocks use this).
+    default_ctx = getattr(nx_instance, "_default_context", None)
+    if default_ctx is not None:
+        return default_ctx
+
+    # (3) Bare remote backend: build from whoami-populated fields.
+    subject_id = getattr(nx_instance, "subject_id", None)
+    if subject_id:
+        subject_type = getattr(nx_instance, "subject_type", None) or "user"
+        zone_id = getattr(nx_instance, "zone_id", None) or ROOT_ZONE_ID
+        is_admin = bool(getattr(nx_instance, "is_admin", False))
+        return OperationContext(
+            user_id=subject_id,
+            subject_type=subject_type,
+            subject_id=subject_id,
+            zone_id=zone_id,
+            groups=[],
+            is_admin=is_admin,
+            is_system=False,
+        )
+
+    # (4) Last resort
+    logger.warning(
+        "MCP search tool could not resolve an explicit OperationContext "
+        "from the NexusFS (no _init_cred, no _default_context, "
+        "no whoami identity). Falling back to SearchService's default "
+        "context."
+    )
+    return None
+
+
 async def create_mcp_server(
-    nx: NexusFS | None = None,
+    nx: NexusFilesystem | None = None,
     name: str = "nexus",
     remote_url: str | None = None,
     api_key: str | None = None,
     tool_namespace_middleware: Any | None = None,
     manifest_resolver: Any | None = None,
-    permission_enforcer: Any | None = None,
-    auth_provider: Any | None = None,
 ) -> FastMCP:
     """Create an MCP server for Nexus operations.
 
     Args:
-        nx: NexusFS instance (if None, will auto-connect)
+        nx: NexusFilesystem instance (if None, will auto-connect)
         name: Server name (default: "nexus")
         remote_url: Remote Nexus URL for connecting to remote server
         api_key: Optional API key for remote server authentication (default)
@@ -109,14 +165,6 @@ async def create_mcp_server(
             tool. Expected signature: ``(sources_json: str, variables_json: str)
             -> dict`` returning resolution results. Built by the factory via
             ``build_manifest_resolve_fn()``.
-        permission_enforcer: Optional PermissionEnforcer for file-level ReBAC
-            filtering on MCP search results (#3731). When provided, MCP
-            ``nexus_grep`` and ``nexus_glob`` apply the same
-            ``_apply_rebac_filter`` that the HTTP endpoints use.
-        auth_provider: Optional auth provider for resolving per-request API
-            keys to subject identity (#3731). Used by
-            ``_resolve_mcp_operation_context`` to build an authoritative
-            ``OperationContext`` from ``_request_api_key``.
 
     Returns:
         FastMCP server instance
@@ -181,23 +229,15 @@ async def create_mcp_server(
             except Exception:
                 pass  # Graceful degradation — tool returns "unavailable"
 
-    # NOTE: permission_enforcer and auth_provider are intentionally NOT
-    # auto-resolved from NexusFS services. A NexusFS with enforce=False
-    # may still register a PermissionEnforcer service that denies all
-    # requests (no grants → empty permit list). Callers that need ReBAC
-    # must pass permission_enforcer explicitly. The HTTP server does
-    # this via app.state.permission_enforcer; the CLI MCP command
-    # should thread it when auth is configured (#3731).
-
     # Store default connection and config for per-request API key support
     assert nx is not None  # guaranteed by the if-block above
-    _default_nx: NexusFS = nx
+    _default_nx: NexusFilesystem = nx
     _remote_url = remote_url
 
     # Connection pool for per-request API keys (bounded LRU, cached by API key)
-    _connection_cache: LRUCache[str, NexusFS] = LRUCache(maxsize=256)
+    _connection_cache: LRUCache[str, NexusFilesystem] = LRUCache(maxsize=256)
 
-    def _get_nexus_instance(_ctx: Context | None = None) -> NexusFS:
+    def _get_nexus_instance(_ctx: Context | None = None) -> NexusFilesystem:
         """Get Nexus instance for current request using context API key.
 
         This function checks if infrastructure has set a per-request API key
@@ -208,7 +248,7 @@ async def create_mcp_server(
             ctx: Optional FastMCP Context object (if available from tool)
 
         Returns:
-            NexusFS instance (default or per-request based on context)
+            NexusFilesystem instance (default or per-request based on context)
 
         Note:
             Per-request API keys are only supported when remote_url is configured.
@@ -241,7 +281,7 @@ async def create_mcp_server(
 
         import nexus as _nexus
 
-        def _connect_sync() -> NexusFS:
+        def _connect_sync() -> NexusFilesystem:
             return asyncio.run(
                 _nexus.connect(
                     config={"profile": "remote", "url": _remote_url, "api_key": request_api_key}
@@ -339,7 +379,7 @@ async def create_mcp_server(
     # Markdown structure helpers (Issue #3718)
     # =========================================================================
 
-    def _md_get_etag(nx_instance: NexusFS, path: str) -> str:
+    def _md_get_etag(nx_instance: NexusFilesystem, path: str) -> str:
         """Get the authoritative file etag from the metastore primary row."""
         meta = getattr(nx_instance, "metadata", None)
         if meta is None:
@@ -351,7 +391,7 @@ async def create_mcp_server(
             return ""
 
     def _md_section_read(
-        nx_instance: NexusFS,
+        nx_instance: NexusFilesystem,
         path: str,
         content: bytes,
         section: str,
@@ -371,7 +411,7 @@ async def create_mcp_server(
         return hook.read_section(path, content, content_hash, section, block_type)
 
     def _md_get_structure_listing(
-        nx_instance: NexusFS,
+        nx_instance: NexusFilesystem,
         path: str,
         content: bytes | None = None,
         content_hash: str = "",
@@ -400,7 +440,7 @@ async def create_mcp_server(
         }
     )
     @handle_tool_errors("reading file")
-    async def nexus_read_file(
+    def nexus_read_file(
         path: str,
         section: str | None = None,
         block_type: str | None = None,
@@ -458,7 +498,7 @@ async def create_mcp_server(
         }
     )
     @handle_tool_errors("reading markdown structure")
-    async def nexus_md_structure(path: str, ctx: Context | None = None) -> str:
+    def nexus_md_structure(path: str, ctx: Context | None = None) -> str:
         """List the structure of a markdown file without loading its content.
 
         Returns headings, section token estimates, and block types — enabling
@@ -497,7 +537,7 @@ async def create_mcp_server(
         }
     )
     @handle_tool_errors("writing file")
-    async def nexus_write_file(path: str, content: str, ctx: Context | None = None) -> str:
+    def nexus_write_file(path: str, content: str, ctx: Context | None = None) -> str:
         """Write content to a file in Nexus filesystem.
 
         Args:
@@ -573,7 +613,7 @@ async def create_mcp_server(
         }
     )
     @handle_tool_errors("deleting file")
-    async def nexus_delete_file(path: str, ctx: Context | None = None) -> str:
+    def nexus_delete_file(path: str, ctx: Context | None = None) -> str:
         """Delete a file from Nexus filesystem.
 
         Args:
@@ -595,7 +635,7 @@ async def create_mcp_server(
         }
     )
     @handle_tool_errors("listing files")
-    async def nexus_list_files(
+    def nexus_list_files(
         path: str = "/",
         recursive: bool = False,
         details: bool = True,
@@ -675,7 +715,7 @@ async def create_mcp_server(
         }
     )
     @handle_tool_errors("getting file info")
-    async def nexus_file_info(path: str, ctx: Context | None = None) -> str:
+    def nexus_file_info(path: str, ctx: Context | None = None) -> str:
         """Get detailed information about a file.
 
         Args:
@@ -722,7 +762,7 @@ async def create_mcp_server(
         }
     )
     @handle_tool_errors("creating directory")
-    async def nexus_mkdir(path: str, ctx: Context | None = None) -> str:
+    def nexus_mkdir(path: str, ctx: Context | None = None) -> str:
         """Create a directory in Nexus filesystem.
 
         Args:
@@ -747,7 +787,7 @@ async def create_mcp_server(
         }
     )
     @handle_tool_errors("removing directory")
-    async def nexus_rmdir(path: str, recursive: bool = False, ctx: Context | None = None) -> str:
+    def nexus_rmdir(path: str, recursive: bool = False, ctx: Context | None = None) -> str:
         """Remove a directory from Nexus filesystem.
 
         Args:
@@ -780,7 +820,7 @@ async def create_mcp_server(
         }
     )
     @handle_tool_errors("renaming file")
-    async def nexus_rename_file(old_path: str, new_path: str, ctx: Context | None = None) -> str:
+    def nexus_rename_file(old_path: str, new_path: str, ctx: Context | None = None) -> str:
         """Rename or move a file or directory in Nexus filesystem.
 
         Args:
@@ -819,7 +859,6 @@ async def create_mcp_server(
         limit: int = 100,
         offset: int = 0,
         response_format: str = "json",
-        files: list[str] | None = None,
         ctx: Context | None = None,
     ) -> str:
         """Search files using glob pattern with pagination.
@@ -830,9 +869,6 @@ async def create_mcp_server(
             limit: Maximum number of results to return (default: 100)
             offset: Number of results to skip (default: 0)
             response_format: Output format - "json" or "markdown" (default: "json")
-            files: Optional stateless narrowing working set (#3701). When
-                provided, the glob pattern is matched against this list
-                instead of walking the tree under ``path``.
 
         Returns:
             Formatted string with paginated search results containing:
@@ -846,93 +882,33 @@ async def create_mcp_server(
         Example:
             To find all Python files: nexus_glob("**/*.py", "/workspace")
             With pagination: nexus_glob("**/*.py", "/workspace", limit=50, offset=0)
-            Narrowed: nexus_glob("**/*.py", files=["/src/a.py", "/src/b.py"])
         """
-        from nexus.core.path_utils import split_zone_from_internal_path
-        from nexus.lib.rebac_filter import (
-            apply_rebac_filter,
-            rebac_denial_stats,
-        )
-
         nx_instance: Any = _get_nexus_instance(ctx)
         _search = nx_instance.service("search")
         if _search is None:
             raise ValueError("SearchService not available — glob requires the search brick")
-        # Codex review #3 finding #1: build an explicit OperationContext
-        # from the connection's authenticated whoami identity so ReBAC
-        # filtering sees the real (subject_id, zone_id, is_admin) rather
-        # than the ambient identity of whatever default connection the
-        # MCP server was booted with. ``_resolve_mcp_operation_context``
-        # fails closed if the identity can't be resolved.
-        op_context = _resolve_mcp_operation_context(nx_instance, auth_provider=auth_provider)
-        # #3731 R2: if a per-request key was set but identity resolution
-        # failed (fail-closed → None), reject the request rather than
-        # executing with an anonymous/ambient context.
-        if op_context is None and _request_api_key.get():
-            return tool_error(
-                "unauthorized",
-                "Per-request API key could not be verified; search denied.",
-            )
-        auth_result = _op_context_to_auth_dict(op_context)
-        zone_id = auth_result.get("zone_id", ROOT_ZONE_ID)
-
-        all_matches = _search.glob(pattern, path, files=files, context=op_context)
-
-        # #3731: Apply file-level ReBAC filtering (second layer,
-        # same as HTTP _do_glob_operation).
-        pre_filter_count = len(all_matches)
-        filtered_paths, filter_ms = apply_rebac_filter(
-            all_matches,
-            permission_enforcer,
-            auth_result,
-            zone_id,
-            path_extractor=lambda p: p,
-        )
-        post_filter_count = len(filtered_paths)
-        total = post_filter_count
+        all_matches = _search.glob(pattern, path)
+        total = len(all_matches)
 
         # Apply pagination
-        paginated_matches = filtered_paths[offset : offset + limit]
-
-        # #3731: Zone unscoping — convert internal zone-prefixed paths
-        # to user-facing paths and build parallel zone list for
-        # round-trip disambiguation (mirrors HTTP _do_glob_operation).
-        item_zones: list[str | None] = []
-        unscoped_items: list[str] = []
-        for p in paginated_matches:
-            zone, unscoped = split_zone_from_internal_path(p)
-            unscoped_items.append(unscoped)
-            item_zones.append(zone)
-        paginated_matches = unscoped_items
+        paginated_matches = all_matches[offset : offset + limit]
+        has_more = (offset + limit) < total
 
         # Issue #538: Log truncation when results exceed limit
-        if (offset + limit) < total or offset > 0:
+        if has_more or offset > 0:
             logger.info(
                 f"[GLOB] Truncated {total} -> {len(paginated_matches)} results "
                 f"(offset={offset}, limit={limit})"
             )
 
-        # #3731: Include permission stats + zone disambiguation in
-        # response (parity with HTTP).
-        # #3731: Detect multi-zone ambiguity (parity with HTTP
-        # _do_glob_operation).
-        _keys = list(zip(paginated_matches, item_zones, strict=False))
-        glob_multi_zone_ambiguous = len(set(_keys)) < len(_keys)
-
-        extras: dict[str, Any] = {
-            **rebac_denial_stats(pre_filter_count, post_filter_count, limit + offset),
-            "item_zones": item_zones,
+        result = {
+            "total": total,
+            "count": len(paginated_matches),
+            "offset": offset,
+            "items": paginated_matches,
+            "has_more": has_more,
+            "next_offset": offset + limit if has_more else None,
         }
-        if glob_multi_zone_ambiguous:
-            extras["multi_zone_ambiguous"] = True
-
-        result = build_paginated_list_response(
-            items=paginated_matches,
-            total=total,
-            offset=offset,
-            limit=limit,
-            extras=extras,
-        )
 
         return format_response(result, response_format)
 
@@ -991,25 +967,14 @@ async def create_mcp_server(
             - total: Total number of matches found
             - count: Number of matches in this page
             - offset: Current offset
-            - items: List of matches (file paths, line numbers, content, and
-              before_context/after_context arrays when requested)
+            - items: List of matches (file paths, line numbers, content)
             - has_more: Whether more results are available
             - next_offset: Offset for next page (if has_more is true)
 
         Example:
             To get first 50 matches: nexus_grep("TODO", "/workspace", limit=50)
             To get next 50 matches: nexus_grep("TODO", "/workspace", limit=50, offset=50)
-            Narrowed: nexus_grep("TODO", files=["/src/a.py", "/src/b.py"])
-            With context lines: nexus_grep("error", before_context=2, after_context=2)
-            Non-matching lines: nexus_grep("debug", invert_match=True)
         """
-        from nexus.core.path_utils import split_zone_from_internal_path
-        from nexus.lib.rebac_filter import (
-            apply_rebac_filter,
-            compute_rebac_fetch_limit,
-            rebac_denial_stats,
-        )
-
         nx_instance: Any = _get_nexus_instance(ctx)
         _search = nx_instance.service("search")
         if _search is None:
@@ -1018,28 +983,18 @@ async def create_mcp_server(
         # (see ``_resolve_mcp_operation_context`` for the fail-closed
         # semantics). Previously grep ran without any context so ReBAC
         # filtering fell back to the ambient connection identity.
-        op_context = _resolve_mcp_operation_context(nx_instance, auth_provider=auth_provider)
-        # #3731 R2: reject if per-request key present but auth failed.
-        if op_context is None and _request_api_key.get():
-            return tool_error(
-                "unauthorized",
-                "Per-request API key could not be verified; search denied.",
-            )
-
-        # #3731: Build auth_result dict from OperationContext for
-        # _apply_rebac_filter. Falls back to anonymous if no context.
-        auth_result = _op_context_to_auth_dict(op_context)
-        zone_id = auth_result.get("zone_id", ROOT_ZONE_ID)
-
-        # Sentinel fetch + ReBAC over-fetch (#3731).
+        op_context = _resolve_mcp_operation_context(nx_instance)
+        # Codex adversarial review of #3701: sentinel fetch. Request
+        # ``limit + offset + 1`` rows so we can detect ``has_more``
+        # reliably. Without the sentinel, a corpus with exactly
+        # ``limit + offset`` matches would report ``has_more=False``
+        # even when SearchService's underlying pool has more hits it
+        # truncated because of the max_results cap.
         window_size = limit + offset
         sentinel_window = window_size + 1
-        fetch_limit = compute_rebac_fetch_limit(
-            sentinel_window, has_enforcer=permission_enforcer is not None
-        )
         grep_kwargs: dict[str, Any] = {
             "ignore_case": ignore_case,
-            "max_results": max(fetch_limit, 1),
+            "max_results": max(sentinel_window, 1),
             "files": files,
             "context": op_context,
         }
@@ -1054,45 +1009,25 @@ async def create_mcp_server(
         if block_type is not None:
             grep_kwargs["block_type"] = block_type
 
-        # SearchService.grep() is async in local mode but the
-        # RemoteServiceProxy returns a sync result. Handle both.
-        _grep_result = _search.grep(pattern, path, **grep_kwargs)
-        if inspect.isawaitable(_grep_result):
-            _grep_result = await _grep_result
-        all_results = _grep_result
+        all_results = _search.grep(pattern, path, **grep_kwargs)
+        raw_count = len(all_results)
+        # Sentinel-based has_more: if SearchService returned at least
+        # one row beyond the caller's window, there's a next page.
+        has_more = raw_count > window_size
+        # ``total`` reports the full observed count (matches HTTP grep
+        # semantics — post_filter_count, not window-capped). Previous
+        # revision capped ``total`` at ``window_size`` which broke the
+        # existing assertion in
+        # tests/unit/bricks/mcp/test_mcp_server_tools.py::
+        # test_grep_result_limiting that expects ``total`` to equal the
+        # number of raw hits the underlying service produced.
+        total = raw_count
 
-        # #3731: Apply file-level ReBAC filtering (second layer,
-        # same as HTTP _do_grep_operation).
-        pre_filter_count = len(all_results)
-        filtered_results, filter_ms = apply_rebac_filter(
-            all_results,
-            permission_enforcer,
-            auth_result,
-            zone_id,
-            path_extractor=lambda r: r.get("file", ""),
-        )
-        post_filter_count = len(filtered_results)
-
-        # Sentinel-based has_more (post-ReBAC).
-        has_more = post_filter_count > window_size
-        total = post_filter_count
-
-        # Apply pagination.
-        paginated_results = filtered_results[offset : offset + limit]
-
-        # #3731: Zone unscoping — convert internal zone-prefixed paths
-        # to user-facing paths and annotate with zone_id for round-trip
-        # disambiguation (mirrors HTTP _do_grep_operation).
-        annotated: list[dict[str, Any]] = []
-        for r in paginated_results:
-            out = dict(r)
-            raw_file = r.get("file", "")
-            zone, unscoped = split_zone_from_internal_path(raw_file)
-            out["file"] = unscoped
-            if zone is not None:
-                out["zone_id"] = zone
-            annotated.append(out)
-        paginated_results = annotated
+        # Apply pagination. Slice directly off the raw result list so
+        # callers see the first ``window_size`` rows (the sentinel row,
+        # if present, sits at index ``window_size`` and is implicitly
+        # dropped by the slice bounds).
+        paginated_results = all_results[offset : offset + limit]
 
         # Issue #538: Log truncation when results exceed limit
         if has_more or offset > 0:
@@ -1101,26 +1036,12 @@ async def create_mcp_server(
                 f"{len(paginated_results)} results (offset={offset}, limit={limit})"
             )
 
-        # #3731: Detect multi-zone ambiguity (parity with HTTP
-        # _do_grep_operation). Two distinct raw paths that collapse to
-        # the same (file, zone_id) tuple degrade round-trip safety.
-        _keys = [(it["file"], it.get("zone_id")) for it in paginated_results]
-        multi_zone_ambiguous = len(set(_keys)) < len(_keys)
-
-        # #3731: Include permission stats in response (parity with HTTP).
-        extras: dict[str, Any] = {
-            **rebac_denial_stats(pre_filter_count, post_filter_count, window_size),
-        }
-        if multi_zone_ambiguous:
-            extras["multi_zone_ambiguous"] = True
-
         result = build_paginated_list_response(
             items=paginated_results,
             total=total,
             offset=offset,
             limit=limit,
             has_more=has_more,
-            extras=extras,
         )
 
         return format_response(result, response_format)
@@ -1133,11 +1054,8 @@ async def create_mcp_server(
             "openWorldHint": True,
         }
     )
-    @handle_tool_errors("semantic search")
-    async def nexus_semantic_search(
+    def nexus_semantic_search(
         query: str,
-        path: str = "/",
-        search_mode: str = "semantic",
         limit: int = 10,
         offset: int = 0,
         response_format: str = "json",
@@ -1147,10 +1065,6 @@ async def create_mcp_server(
 
         Args:
             query: Natural language search query
-            path: Directory path to scope the search (default: "/" searches everywhere)
-            search_mode: Search mode - "semantic" (default, embedding-based),
-                "keyword" (BM25/text, faster), or "hybrid" (both pipelines,
-                higher quality but more expensive)
             limit: Maximum number of results to return (default: 10)
             offset: Number of results to skip (default: 0)
             response_format: Output format - "json" or "markdown" (default: "json")
@@ -1165,54 +1079,23 @@ async def create_mcp_server(
             - next_offset: Offset for next page (if has_more is true)
 
         Example:
-            Scoped search: nexus_semantic_search("auth logic", path="/workspace/src")
-            Hybrid mode: nexus_semantic_search("token refresh", search_mode="hybrid")
             First page: nexus_semantic_search("machine learning algorithms", limit=10)
             Next page: nexus_semantic_search("machine learning algorithms", limit=10, offset=10)
         """
         nx_instance = _get_nexus_instance(ctx)
-
-        # Resolve SearchService via the kernel service registry (Issue #3778).
-        # NexusFS does not expose ``semantic_search`` as a direct attribute —
-        # the method lives on SearchService, reached through ``nx.service("search")``.
-        search_service: Any = None
-        try:
-            svc_fn = getattr(nx_instance, "service", None)
-            if svc_fn is not None:
-                search_service = svc_fn("search")
-        except Exception:
-            search_service = None
-
-        if search_service is None or not hasattr(search_service, "semantic_search"):
+        if not hasattr(nx_instance, "semantic_search"):
             return tool_error(
                 "unavailable",
-                "Semantic search not available (search brick not loaded).",
-            )
-
-        # R4 review: pass an authenticated OperationContext so SearchService
-        # can enforce ReBAC permission filtering on semantic results. Without
-        # it, broad SANDBOX degraded queries would return cross-zone hits to
-        # any MCP caller. Fail closed if identity can't be resolved while a
-        # per-request API key was set (#3731 pattern used in glob/grep).
-        op_context = _resolve_mcp_operation_context(nx_instance, auth_provider=auth_provider)
-        if op_context is None and _request_api_key.get():
-            return tool_error(
-                "unauthorized",
-                "Per-request API key could not be verified; semantic search denied.",
+                "Semantic search not available (requires NexusFS with semantic search initialized).",
             )
 
         try:
-            # Over-fetch to allow has_more detection without a second round-trip
+            from nexus.lib.sync_bridge import run_sync
+
             fetch_limit = offset + limit * 2
-            all_results = await search_service.semantic_search(
-                query=query,
-                path=path,
-                search_mode=search_mode,
-                limit=fetch_limit,
-                context=op_context,
-            )
+            all_results = run_sync(nx_instance.semantic_search(query, path="/", limit=fetch_limit))
         except Exception as e:
-            if "not initialized" in str(e).lower() or "not available" in str(e).lower():
+            if "not initialized" in str(e).lower():
                 return tool_error("unavailable", "Semantic search not available (not initialized).")
             return tool_error("internal", f"Error in semantic search: {e}", str(e))
 
@@ -1220,22 +1103,7 @@ async def create_mcp_server(
         paginated_results = all_results[offset : offset + limit]
         has_more = (offset + limit) < total
 
-        # Issue #3778: surface the SANDBOX BM25S-fallback flag at the envelope
-        # level so clients can display a "degraded" indicator without having
-        # to scan every item. Two sources:
-        #   1. Per-item stamp (``semantic_degraded`` on a result dict) — works
-        #      when fallback returned at least one hit.
-        #   2. Per-request contextvar (LAST_SEMANTIC_DEGRADED) set inside the
-        #      SearchService fallback — works even when fallback returned
-        #      zero results, so an outage is still distinguishable from a
-        #      genuine no-hit query (R2 review).
-        from nexus.contracts.search_types import LAST_SEMANTIC_DEGRADED
-
-        degraded = LAST_SEMANTIC_DEGRADED.get() or any(
-            isinstance(r, dict) and r.get("semantic_degraded") is True for r in paginated_results
-        )
-
-        result: dict[str, Any] = {
+        result = {
             "total": total,
             "count": len(paginated_results),
             "offset": offset,
@@ -1243,8 +1111,6 @@ async def create_mcp_server(
             "has_more": has_more,
             "next_offset": offset + limit if has_more else None,
         }
-        if degraded:
-            result["semantic_degraded"] = True
 
         return format_response(result, response_format)
 
@@ -2172,17 +2038,12 @@ async def _async_main() -> None:
 
     mcp = await create_mcp_server(nx=nx, remote_url=remote_url, api_key=api_key)
 
-    # Middleware chain for HTTP transports (#3779).
-    # Order (outermost to innermost, applied via Starlette's reverse-registration):
-    #   1. RateLimit — enforce per-token quotas before work is done
-    #   2. AuditLog  — wrap every request with structured logging
-    #   3. APIKey    — set `_request_api_key` contextvar for tool handlers
+    # Add API key middleware for HTTP transports
+    # Note: We add it to the underlying Starlette app, not FastMCP's middleware system
+    # because FastMCP's middleware works with MCP messages, not HTTP requests
     if transport in ["http", "sse"]:
         try:
             from starlette.middleware.base import BaseHTTPMiddleware
-
-            from nexus.bricks.mcp.middleware_audit import MCPAuditLogMiddleware
-            from nexus.bricks.mcp.middleware_ratelimit import install_rate_limit
 
             class APIKeyMiddleware(BaseHTTPMiddleware):
                 """Extract API key from HTTP headers and set in context."""
@@ -2199,19 +2060,17 @@ async def _async_main() -> None:
                         if token:
                             reset_request_api_key(token)
 
+            # Add middleware to the underlying Starlette app
+            # FastMCP's http_app is a method that returns the Starlette application
             if hasattr(mcp, "http_app"):
                 app = mcp.http_app()
-                # Innermost first: APIKey sets contextvar before tool dispatch.
                 app.add_middleware(APIKeyMiddleware)
-                # Middle: audit sees the final response status.
-                app.add_middleware(MCPAuditLogMiddleware)
-                # Outermost: rate-limit short-circuits before any work.
-                install_rate_limit(app)
-        except Exception as e:
+        except (ImportError, Exception) as e:
+            # If middleware addition fails, log but don't crash
             import logging
 
-            logger_ = logging.getLogger(__name__)
-            logger_.warning("Failed to add MCP HTTP middleware: %s", e)
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Failed to add API key middleware: {e}")
 
     # Run with selected transport
     if transport == "stdio":

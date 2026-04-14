@@ -144,7 +144,6 @@ class PathXBackend(
         memory_cache_maxsize: int = 1024,
         user_id_cache_maxsize: int = 256,
         encryption_key: str | None = None,
-        pool: Any = None,  # CredentialPool | None — see Issue #3723 for migration guide
     ):
         """Initialize X connector backend.
 
@@ -156,9 +155,7 @@ class PathXBackend(
             provider: OAuth provider name (default: "twitter")
             memory_cache_maxsize: Max entries in the in-memory content LRU cache
             user_id_cache_maxsize: Max entries in the user ID LRU cache
-            pool: Optional CredentialPool for multi-account failover (Issue #3723).
         """
-        self._pool = pool  # stored for future migrate_to_pool() call (Issue #3723)
         # 1. Initialize OAuth
         self._init_oauth(
             token_manager_db,

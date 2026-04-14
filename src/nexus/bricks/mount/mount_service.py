@@ -118,15 +118,8 @@ class MountService:
         fail the mount operation (Decision #12).
 
         Runs:
-        - Mount path propagation for ReadmeDocMixin backends (so error
-          messages can reference the correct ``.readme/README.md`` path)
+        - Readme doc generation for ReadmeDocMixin backends
         - Search indexing via search_service (Issue #3148 Gap 1)
-
-        NOTE (Issue #3728): README materialization was removed.  The
-        virtual ``.readme/`` overlay in ``nexus_fs`` + ``schema_generator``
-        serves docs on-demand from class metadata, so there's nothing to
-        write here.  The BackendFeature.README_DOC flag is still honored
-        downstream for error-message mount_path propagation.
         """
         try:
             # Get backend from router to check capabilities
@@ -135,14 +128,11 @@ class MountService:
             if backend is None:
                 return
 
-            # Propagate mount_path to the backend for error messages.  The
-            # virtual overlay itself takes mount_path from OperationContext,
-            # but error formatting in ValidatedMixin/TraitBasedMixin still
-            # reads the instance attribute as a fallback.
-            from nexus.backends.connectors.base import ReadmeDocMixin
+            # Readme doc generation (via mount_hooks if available)
+            from nexus.contracts.backend_features import BackendFeature
 
-            if isinstance(backend, ReadmeDocMixin) and backend.SKILL_NAME:
-                backend.set_mount_path(mount_point)
+            if hasattr(backend, "has_feature") and backend.has_feature(BackendFeature.README_DOC):
+                await self._generate_readmes(mount_point, backend)
 
             # Search indexing — index the mount point so content is discoverable.
             # Uses search_service DI (Issue #3148 Phase 1).
@@ -169,6 +159,37 @@ class MountService:
             logger.warning(
                 "Post-mount hooks failed for %s (mount still active)", mount_point, exc_info=True
             )
+
+    async def _generate_readmes(self, mount_point: str, backend: Any) -> None:
+        """Generate .readme/ directory for a connector backend (async).
+
+        Called from post-mount hooks and sync completion.
+        """
+        from nexus.backends.connectors.base import ReadmeDocMixin
+
+        if not isinstance(backend, ReadmeDocMixin):
+            return
+        if not backend.SKILL_NAME:
+            return
+
+        backend.set_mount_path(mount_point)
+
+        # Determine filesystem to write to
+        fs = None
+        if self._gw is not None and hasattr(self._gw, "nexus_fs"):
+            fs = self._gw.nexus_fs
+        elif self.nexus_fs is not None:
+            fs = self.nexus_fs
+
+        if fs is not None:
+            try:
+                result = await backend.write_readme(mount_point, fs)
+                if result.get("readme_md"):
+                    logger.info(
+                        "Generated readme docs for %s at %s", mount_point, result["readme_md"]
+                    )
+            except Exception:
+                logger.warning("Failed to generate readme docs for %s", mount_point, exc_info=True)
 
     async def _index_mount_content(self, mount_point: str, *, zone_id: str | None = None) -> None:
         """Index mounted connector content for semantic search.

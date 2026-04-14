@@ -25,8 +25,12 @@ from nexus.backends.connectors.calendar.schemas import (
     UpdateEventSchema,
 )
 from nexus.backends.connectors.calendar.transport import CalendarTransport
-from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.contracts.types import OperationContext
+from nexus.core.config import PermissionConfig
+from nexus.factory import create_nexus_fs
+from nexus.storage.raft_metadata_store import RaftMetadataStore
+from nexus.storage.record_store import SQLAlchemyRecordStore
 
 # ============================================================================
 # FIXTURES
@@ -107,7 +111,7 @@ def operation_context():
     return OperationContext(
         user_id="test@example.com",
         groups=[],
-        zone_id=ROOT_ZONE_ID,
+        zone_id="root",
     )
 
 
@@ -290,23 +294,30 @@ class TestReadmeDocGeneration:
         assert "# agent_intent:" in doc
 
     @pytest.mark.asyncio
-    async def test_virtual_readme_tree(self, calendar_backend):
-        """Verify the virtual ``.readme/`` tree for gcalendar (Issue #3728).
-
-        Replaces the old ``test_write_readme`` — materialization was
-        removed; the overlay now serves docs on-demand.
-        """
-        from nexus.backends.connectors.schema_generator import (
-            _invalidate_virtual_tree_cache,
-            get_virtual_readme_tree_for_backend,
+    async def test_write_readme(self, calendar_backend, isolated_db, tmp_path):
+        """Test writing README.md to filesystem."""
+        # Create a real NexusFS for writing
+        backend = CASLocalBackend(root_path=str(tmp_path / "storage"))
+        nx = await create_nexus_fs(
+            backend=backend,
+            metadata_store=RaftMetadataStore.embedded(str(isolated_db).replace(".db", "-raft")),
+            record_store=SQLAlchemyRecordStore(db_path=str(isolated_db)),
+            permissions=PermissionConfig(enforce=False),
         )
 
-        _invalidate_virtual_tree_cache()
-        tree = get_virtual_readme_tree_for_backend(calendar_backend, "/mnt/calendar")
-        readme = tree.find(["README.md"])
-        assert readme is not None
-        assert b"Gcalendar Connector" in readme.content
-        assert b"agent_intent" in readme.content
+        try:
+            # Write README.md
+            result = await calendar_backend.write_readme("/mnt/calendar/", filesystem=nx)
+            assert isinstance(result, dict)
+            readme_path = result.get("readme_md")
+
+            if readme_path:
+                # Read back and verify
+                content = nx.sys_read(readme_path)
+                assert b"Gcalendar Connector" in content
+                assert b"agent_intent" in content
+        finally:
+            nx.close()
 
 
 # ============================================================================

@@ -380,19 +380,11 @@ class LocalTransport:
         if not keys:
             return {}
 
-        # RUST_FALLBACK: read_files_bulk (parallel mmap) → sequential Path.read_bytes()
-        from nexus._rust_compat import read_files_bulk as _read_files_bulk
+        # RUST_FALLBACK: read_files_bulk
+        from nexus_kernel import read_files_bulk
 
         paths = [str(self._resolve(k)) for k in keys]
-        if _read_files_bulk is not None:
-            disk_contents: dict[str, bytes | None] = _read_files_bulk(paths)
-        else:
-            disk_contents = {}
-            for p in paths:
-                try:
-                    disk_contents[p] = Path(p).read_bytes()
-                except FileNotFoundError:
-                    disk_contents[p] = None
+        disk_contents = read_files_bulk(paths)
         result: dict[str, bytes | None] = {}
         for key, path in zip(keys, paths, strict=True):
             result[key] = disk_contents.get(path)

@@ -18,7 +18,7 @@ Lock layers:
     L1 = VFS I/O locks      (Rust kernel LockManager, blocking_acquire/do_release)
     L2 = Advisory/Raft locks (Rust kernel LockManager, sys_lock/sys_unlock)
     L3 = asyncio primitives  (pipes, streams)
-    L4 = threading locks     (semaphore._mu)
+    L4 = threading locks     (file_watcher._waiters_lock, semaphore._mu)
 
 Rules enforced:
     1. A task holding L2 must not acquire L1.

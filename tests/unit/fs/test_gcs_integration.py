@@ -26,10 +26,10 @@ gcs_storage = pytest.importorskip(
 )
 
 from nexus.contracts.constants import ROOT_ZONE_ID  # noqa: E402
-from nexus.contracts.metadata import DT_MOUNT  # noqa: E402
 from nexus.contracts.types import OperationContext  # noqa: E402
 from nexus.core.config import PermissionConfig  # noqa: E402
 from nexus.core.nexus_fs import NexusFS  # noqa: E402
+from nexus.core.router import PathRouter  # noqa: E402
 from nexus.fs import _make_mount_entry  # noqa: E402
 from nexus.fs._facade import SlimNexusFS  # noqa: E402
 from nexus.fs._sqlite_meta import SQLiteMetastore  # noqa: E402
@@ -127,12 +127,18 @@ def _build_gcs_fs(tmp_path: Path) -> tuple[SlimNexusFS, str]:
     db_path = str(tmp_path / "metadata.db")
     metastore = SQLiteMetastore(db_path)
 
-    mount_point = "/gcs/test-project/test-gcs-bucket"
+    # Router (empty — mounts added via coordinator)
+    from nexus.core.mount_table import MountTable
 
-    # Kernel (constructs DLC + router internally)
+    mount_point = "/gcs/test-project/test-gcs-bucket"
+    mount_table = MountTable(metastore)
+    router = PathRouter(mount_table)
+
+    # Kernel
     kernel = NexusFS(
         metadata_store=metastore,
         permissions=PermissionConfig(enforce=False),
+        router=router,
     )
     kernel._init_cred = OperationContext(
         user_id="test",
@@ -142,7 +148,7 @@ def _build_gcs_fs(tmp_path: Path) -> tuple[SlimNexusFS, str]:
     )
 
     # Mount via coordinator (registers in backend pool + routing table + hooks)
-    kernel.sys_setattr(mount_point, entry_type=DT_MOUNT, backend=backend)
+    kernel._driver_coordinator.mount(mount_point, backend)
 
     # Create DT_MOUNT entry
     metastore.put(_make_mount_entry(mount_point, backend.name))
@@ -170,7 +176,7 @@ class TestGCSBackendLifecycle:
     async def test_stat(self, gcs_fs):
         fs, mp = gcs_fs
         fs.write(f"{mp}/meta.txt", b"metadata test")
-        stat = fs.stat(f"{mp}/meta.txt")
+        stat = await fs.stat(f"{mp}/meta.txt")
         assert stat is not None
         assert stat["size"] == 13
         assert stat["is_directory"] is False
@@ -180,7 +186,7 @@ class TestGCSBackendLifecycle:
         fs, mp = gcs_fs
         fs.write(f"{mp}/a.txt", b"aaa")
         fs.write(f"{mp}/b.txt", b"bbb")
-        entries = fs.ls(f"{mp}/", detail=False, recursive=True)
+        entries = await fs.ls(f"{mp}/", detail=False, recursive=True)
         paths = [e for e in entries if e.endswith(".txt")]
         assert f"{mp}/a.txt" in paths
         assert f"{mp}/b.txt" in paths
@@ -188,23 +194,23 @@ class TestGCSBackendLifecycle:
     @pytest.mark.asyncio
     async def test_exists(self, gcs_fs):
         fs, mp = gcs_fs
-        assert not fs.exists(f"{mp}/nofile.txt")
+        assert not await fs.exists(f"{mp}/nofile.txt")
         fs.write(f"{mp}/nofile.txt", b"now I exist")
-        assert fs.exists(f"{mp}/nofile.txt")
+        assert await fs.exists(f"{mp}/nofile.txt")
 
     @pytest.mark.asyncio
     async def test_delete(self, gcs_fs):
         fs, mp = gcs_fs
         fs.write(f"{mp}/delete-me.txt", b"bye")
-        fs.delete(f"{mp}/delete-me.txt")
-        stat = fs.stat(f"{mp}/delete-me.txt")
+        await fs.delete(f"{mp}/delete-me.txt")
+        stat = await fs.stat(f"{mp}/delete-me.txt")
         assert stat is None
 
     @pytest.mark.asyncio
     async def test_copy(self, gcs_fs):
         fs, mp = gcs_fs
         fs.write(f"{mp}/src.txt", b"copy me")
-        fs.copy(f"{mp}/src.txt", f"{mp}/dst.txt")
+        await fs.copy(f"{mp}/src.txt", f"{mp}/dst.txt")
         src = fs.read(f"{mp}/src.txt")
         dst = fs.read(f"{mp}/dst.txt")
         assert src == dst == b"copy me"
@@ -213,7 +219,7 @@ class TestGCSBackendLifecycle:
     async def test_mkdir(self, gcs_fs):
         fs, mp = gcs_fs
         fs.mkdir(f"{mp}/subdir")
-        stat = fs.stat(f"{mp}/subdir")
+        stat = await fs.stat(f"{mp}/subdir")
         assert stat is not None
         assert stat["is_directory"] is True
 

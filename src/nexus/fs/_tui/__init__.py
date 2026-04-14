@@ -87,7 +87,7 @@ class ContextualNexusFS:
         from nexus.fs._facade import SlimNexusFS
 
         try:
-            result = SlimNexusFS(self._kernel).stat(path)
+            result = await SlimNexusFS(self._kernel).stat(path)
             if result is not None:
                 return result
         except Exception:
@@ -806,7 +806,7 @@ class PlaygroundApp(App[None]):
         failed: list[str] = []
 
         async def _search_mount(mount: str) -> list[dict]:
-            entries = self._fs.ls(mount, detail=True, recursive=True)
+            entries = await self._fs.ls(mount, detail=True, recursive=True)
             return [e for e in entries if query.lower() in e.get("path", "").lower()]
 
         tasks = {mp: _search_mount(mp) for mp in self._mount_points}
@@ -909,7 +909,7 @@ class PlaygroundApp(App[None]):
             parent = old_path.rstrip("/").rsplit("/", 1)[0]
             new_path = f"{parent}/{new_name}"
             try:
-                self._fs.rename(old_path, new_path)
+                await self._fs.rename(old_path, new_path)
                 self.notify(f"Renamed → {new_name}", timeout=2)
                 await browser.load_directory(self._current_path)
                 self._update_status_bar()
@@ -1030,7 +1030,7 @@ class PlaygroundApp(App[None]):
             return
         path = self._resolve_command_path(name)
         try:
-            self._fs.delete(path)
+            await self._fs.delete(path)
             browser = self.query_one("#file-browser", FileBrowser)
             await browser.load_directory(self._current_path)
             self._update_status_bar()
@@ -1239,20 +1239,15 @@ class PlaygroundApp(App[None]):
             return "x://timeline"
         if connector_name == "hn_connector":
             return "hn://top"
-        # ``github_connector`` is the canonical GitHub registry name
-        # (#3728).  ``gws_github`` is a deprecated alias kept for
-        # backward compatibility of persisted mounts — both must
-        # advertise the same ``github://`` URI example so the TUI and
-        # playground don't show the broken ``gws://github`` path.
-        if connector_name in {"github_connector", "gws_github"}:
-            return "github://me"
+        if connector_name == "gws_github":
+            return None
         if connector_name.startswith("gws_"):
             return f"gws://{connector_name.removeprefix('gws_')}"
         return None
 
     def _connector_auth_service(self, connector_name: str, service_name: str | None) -> str | None:
         """Map connector targets to the auth flow users should follow."""
-        if connector_name in {"github_connector", "gws_github"}:
+        if connector_name == "gws_github":
             return "github"
         if connector_name.startswith("gws_"):
             return "gws"
@@ -1267,15 +1262,7 @@ class PlaygroundApp(App[None]):
             return explicit
 
         if not uri.startswith(
-            (
-                "gws://",
-                "gdrive://",
-                "gmail://",
-                "calendar://",
-                "slack://",
-                "x://",
-                "github://",
-            )
+            ("gws://", "gdrive://", "gmail://", "calendar://", "slack://", "x://")
         ):
             return "local"
 
@@ -1283,8 +1270,6 @@ class PlaygroundApp(App[None]):
             providers = {"google"}
         elif uri.startswith("slack://"):
             providers = {"slack"}
-        elif uri.startswith("github://"):
-            providers = {"github"}
         else:
             providers = {"x", "twitter"}
 
@@ -1309,7 +1294,7 @@ class PlaygroundApp(App[None]):
         try:
             from types import SimpleNamespace
 
-            from nexus.fs._backend_factory import _infer_connector_user_email
+            from nexus.fs import _infer_connector_user_email
         except Exception:
             return "local"
 
@@ -1327,8 +1312,6 @@ class PlaygroundApp(App[None]):
             service_name = "slack"
         elif scheme == "x":
             service_name = "x"
-        elif scheme == "github":
-            service_name = "github"
 
         inferred = _infer_connector_user_email(
             scheme=scheme,
@@ -1393,7 +1376,7 @@ class PlaygroundApp(App[None]):
                 self._fs.rmdir(path, recursive=True)
                 self.notify(f"Deleted directory: {name}", timeout=2)
             else:
-                self._fs.delete(path)
+                await self._fs.delete(path)
                 self.notify(f"Deleted: {name}", timeout=2)
 
             await browser.load_directory(self._current_path)

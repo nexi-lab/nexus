@@ -10,7 +10,7 @@ Deployment profiles control which bricks are enabled:
 - lite: Core services
 - full: All bricks (default)
 - cloud: All bricks + federation
-- remote: Thin gRPC client (Rust RemoteBackend/Metastore + RemoteServiceProxy)
+- remote: Thin gRPC client (RemoteBackend + RemoteServiceProxy)
 
 SDK vs CLI:
 -----------
@@ -195,7 +195,7 @@ def _open_local_metastore(metadata_path: str, kernel: object = None) -> "Metasto
         raise
 
 
-async def connect(
+def connect(
     config: "str | Path | dict | NexusConfig | None" = None,
 ) -> "NexusFS":
     """
@@ -204,7 +204,7 @@ async def connect(
     This is the main entry point for using Nexus. It dispatches based on the
     deployment profile in configuration:
 
-    - **profile="remote"**: Thin gRPC client (Rust RemoteBackend/Metastore + RemoteServiceProxy).
+    - **profile="remote"**: Thin gRPC client (RemoteBackend + RemoteServiceProxy).
     - **All other profiles**: Local NexusFS. Federation (Raft + ZoneManager) is
       auto-detected based on whether the Rust extensions are importable.
 
@@ -350,51 +350,41 @@ async def connect(
             tls_config=_tls_config,
         )
 
-        # Rust kernel owns the remote backend + metastore (Phase 4).
-        # Python RPCTransport is kept only for service proxies (Issue #1171).
-        from nexus_kernel import Kernel as _RemoteKernel
+        # RemoteBackend + RemoteMetastore — stateless proxies, server is SSOT.
+        from nexus.backends.storage.remote import RemoteBackend
+        from nexus.storage.remote_metastore import RemoteMetastore
 
+        remote_backend = RemoteBackend(transport)
+        remote_metastore = RemoteMetastore(transport)
+
+        # Build a lightweight NexusFS directly — no factory, no bricks.
+        # Server is SSOT; client just proxies calls via gRPC.
+        # No parser registries — remote delegates all parsing to the server.
         from nexus.contracts.types import OperationContext as _RemoteOC
         from nexus.core.config import PermissionConfig as _PermissionConfig
-        from nexus.core.metastore import RustMetastoreProxy
         from nexus.core.nexus_fs import NexusFS as _RemoteNexusFS
 
-        _remote_kernel = _RemoteKernel()
-        _remote_metastore = RustMetastoreProxy(_remote_kernel)
-
         nfs = _RemoteNexusFS(
-            metadata_store=_remote_metastore,
+            metadata_store=remote_metastore,
             permissions=_PermissionConfig(enforce=False),
             init_cred=_RemoteOC(user_id="remote", groups=[], is_admin=False),
         )
 
-        # Mount root backend via Rust kernel — creates Rust RemoteBackend
-        # + RemoteMetastore internally, no Python shim needed.
+        # Mount root backend — Rust kernel is SSOT for routing (F2).
         from nexus.contracts.metadata import DT_MOUNT
 
-        _remote_ca_pem = _tls_config.ca_pem if _tls_config else None
-        _remote_cert_pem = _tls_config.node_cert_pem if _tls_config else None
-        _remote_key_pem = _tls_config.node_key_pem if _tls_config else None
-
-        nfs.sys_setattr(
-            "/",
-            entry_type=DT_MOUNT,
-            backend_type="remote",
-            backend_name="remote",
-            server_address=grpc_address,
-            remote_auth_token=api_key,
-            remote_ca_pem=_remote_ca_pem,
-            remote_cert_pem=_remote_cert_pem,
-            remote_key_pem=_remote_key_pem,
-            remote_timeout=float(timeout),
-        )
+        nfs.sys_setattr("/", entry_type=DT_MOUNT, backend=remote_backend)
 
         # Wire service proxies for REMOTE profile (Issue #1171).
         # Fills all 25+ service slots with RemoteServiceProxy — forwards
         # method calls to the server via gRPC.
-        from nexus.factory._remote import _boot_remote_services
+        from nexus.factory._remote import (
+            _boot_remote_services,
+            install_remote_kernel_rpc_overrides,
+        )
 
-        await _boot_remote_services(nfs, call_rpc=transport.call_rpc)
+        _boot_remote_services(nfs, call_rpc=transport.call_rpc)
+        install_remote_kernel_rpc_overrides(nfs, transport)
         nfs._register_runtime_closeable(transport)
 
         return nfs
@@ -600,7 +590,7 @@ async def connect(
     # Create NexusFS via factory
     from nexus.factory import create_nexus_fs
 
-    nx_fs = await create_nexus_fs(
+    nx_fs = create_nexus_fs(
         backend=backend,
         metadata_store=metadata_store,
         record_store=record_store,
@@ -630,15 +620,15 @@ async def connect(
     # Registered LAST so Pipe/Memory/VirtualView resolvers get priority.
     # Federation is already enlisted in ServiceRegistry by _wire_services().
     if federation is not None:
-        await _register_federation_resolver(nx_fs, federation, backend)
+        _register_federation_resolver(nx_fs, federation, backend)
 
     # Restore saved mounts (application-layer startup I/O)
-    await _restore_mounts(nx_fs)
+    _restore_mounts(nx_fs)
 
     return nx_fs
 
 
-async def _register_federation_resolver(nx_fs: "NexusFS", federation: Any, backend: Any) -> None:
+def _register_federation_resolver(nx_fs: "NexusFS", federation: Any, backend: Any) -> None:
     """Wire federation transport — set TLS config on RPCTransportPool.
 
     Content locality (remote reads) and IPC (remote pipe/stream) are now
@@ -664,7 +654,7 @@ async def _register_federation_resolver(nx_fs: "NexusFS", federation: Any, backe
     logger.info("Federation transport configured (TLS=%s)", _zone_mgr.tls_config is not None)
 
 
-async def _restore_mounts(nx_fs: "NexusFS") -> None:
+def _restore_mounts(nx_fs: "NexusFS") -> None:
     """Restore saved mounts from database at application startup.
 
     This is application-layer I/O that runs after NexusFS construction.
@@ -672,7 +662,7 @@ async def _restore_mounts(nx_fs: "NexusFS") -> None:
     restore mounts.
     """
     try:
-        mount_result = await nx_fs.service("mount_persist").load_all_mounts()
+        mount_result = nx_fs.service("mount_persist").load_all_mounts()
         if mount_result["loaded"] > 0 or mount_result["failed"] > 0:
             logger.info(
                 "Mount restoration: %d loaded, %d failed",

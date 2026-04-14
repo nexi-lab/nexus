@@ -28,7 +28,7 @@ from typing import Any, Protocol, runtime_checkable
 logger = logging.getLogger(__name__)
 
 # Type aliases for injected kernel callables
-SysWriteFn = Callable[[str, bytes], Awaitable[Any]]
+SysWriteFn = Callable[[str, bytes], Any]
 LLMCallFn = Callable[[list[dict[str, Any]]], Awaitable[str]]
 
 # Defaults
@@ -179,7 +179,7 @@ class DefaultCompactionStrategy:
         content = "\n".join(lines).encode("utf-8")
 
         try:
-            await self._sys_write(path, content)
+            self._sys_write(path, content)
             logger.debug("Transcript saved: %s (%d messages)", path, len(messages))
         except Exception as exc:
             logger.warning("Failed to save transcript: %s", exc)

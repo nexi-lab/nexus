@@ -21,19 +21,7 @@ from nexus.bricks.mcp.server import create_mcp_server
 
 
 def get_tool(server, tool_name: str):
-    """Helper to get a tool callable from the MCP server.
-
-    FastMCP 2.x used per-type managers (``_tool_manager._tools``) but
-    3.x replaced them with a single ``_local_provider._components``
-    registry keyed by ``"tool:<name>@..."``. Try both so the tests
-    survive the upgrade.
-    """
-    if hasattr(server, "_local_provider"):
-        lp = server._local_provider
-        for key, component in lp._components.items():
-            if key.startswith("tool:") and component.name == tool_name:
-                return component
-        raise KeyError(f"tool {tool_name!r} not registered on {server}")
+    """Helper to get a tool callable from the MCP server."""
     return server._tool_manager._tools[tool_name]
 
 

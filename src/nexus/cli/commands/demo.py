@@ -1595,7 +1595,7 @@ async def _async_demo_init(reset: bool, skip_semantic: bool) -> None:
 
     # Flush the async write observer so version records are committed to the
     # database before any subsequent query (e.g. `nexus versions history`).
-    # Without this, the RecordStoreWriteObserver may not have flushed yet.
+    # Without this, the PipedRecordStoreWriteObserver may not have flushed yet.
     try:
         if hasattr(nx, "flush_write_observer"):
             nx.flush_write_observer()

@@ -140,7 +140,7 @@ def _build_tool_registry(nx: Any, cwd: str) -> Any:
     # SearchService with NexusFS for glob/grep (list → sys_readdir, read → sys_read)
     from nexus.bricks.search.search_service import SearchService
 
-    search = SearchService(metadata_store=nx._metadata, nx=nx)
+    search = SearchService(metadata_store=nx.metadata, nx=nx)
 
     registry = ToolRegistry()
     registry.register(ReadFileTool(nx.sys_read))

@@ -1255,6 +1255,13 @@ class MetadataMixin:
 
             if self.metadata.exists(path):
                 return True
+            # Fallback: check Rust dcache/metastore (sys_write only updates Rust side)
+            try:
+                _stat = self.sys_stat(path, context=context)
+                if _stat is not None:
+                    return True
+            except Exception:
+                pass
             if is_implicit_dir:
                 return True
             # Virtual .readme/ overlay check (Issue #3728) — before reporting

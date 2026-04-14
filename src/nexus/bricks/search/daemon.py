@@ -1136,8 +1136,10 @@ class SearchDaemon:
         self.last_search_timing = {}
 
         try:
-            # For keyword search: Zoekt first (code search), then txtai BM25
-            if search_type == "keyword" and self.stats.zoekt_available:
+            # For keyword search: Zoekt first (code search), then txtai BM25.
+            # Zoekt has no zone metadata — only safe for root zone / unscoped.
+            is_zone_safe = effective_zone_id == ROOT_ZONE_ID
+            if search_type == "keyword" and self.stats.zoekt_available and is_zone_safe:
                 zoekt_results = await self._search_zoekt(query, limit, path_filter)
                 if zoekt_results:
                     latency_ms = (time.perf_counter() - start) * 1000

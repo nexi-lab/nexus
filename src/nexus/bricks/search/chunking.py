@@ -45,6 +45,7 @@ class ChunkStrategy(StrEnum):
     FIXED = "fixed"  # Fixed-size chunks
     SEMANTIC = "semantic"  # Semantic chunks (paragraphs/sections)
     OVERLAPPING = "overlapping"  # Overlapping fixed-size chunks
+    MARKDOWN_AWARE = "markdown_aware"  # Structure-aware markdown chunks (Issue #3719)
 
 
 @dataclass
@@ -58,6 +59,7 @@ class DocumentChunk:
     end_offset: int  # End character offset
     line_start: int | None = None  # Line number where chunk starts (1-indexed)
     line_end: int | None = None  # Line number where chunk ends (1-indexed)
+    heading_prefix: str | None = None  # Heading hierarchy for embedding (Issue #3719)
 
 
 def _offset_to_line(content: str, offset: int) -> int:
@@ -143,6 +145,271 @@ def _compute_line_numbers_fast(
     line_start = _offset_to_line_fast(start_offset, line_offsets)
     line_end = _offset_to_line_fast(end_offset, line_offsets)
     return line_start, line_end
+
+
+# ---------------------------------------------------------------------------
+# Markdown-aware chunking helpers (Issue #3719)
+# ---------------------------------------------------------------------------
+
+# Minimum tokens for a standalone chunk; smaller sections merge with siblings.
+_MIN_CHUNK_TOKENS = 80
+# Maximum characters for a heading prefix to prevent oversized embedding inputs.
+_MAX_HEADING_PREFIX_CHARS = 200
+
+# Regex for ATX headings (# through ######), allowing up to 3 leading spaces (CommonMark)
+_HEADING_RE = re.compile(r"^ {0,3}(#{1,6})\s+(.*?)$", re.MULTILINE)
+# Regex for setext headings: text line followed by === or --- underline
+_SETEXT_RE = re.compile(r"^([^\n]+)\n {0,3}(=+|-+)\s*$", re.MULTILINE)
+# Regex for code fence openers/closers (``` or ~~~, 3+ chars, up to 3 leading spaces)
+_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})", re.MULTILINE)
+
+
+@dataclass(slots=True)
+class _HeadingInfo:
+    """A heading found in markdown content (search-brick local)."""
+
+    heading: str
+    depth: int
+    char_offset: int  # character offset of the heading line
+
+
+def _parse_headings_fence_aware(content: str) -> list[_HeadingInfo]:
+    """Find ATX headings while ignoring those inside code fences.
+
+    Builds a set of fenced character ranges, then filters headings
+    that fall within them. Handles nested/mismatched fences gracefully.
+
+    Returns:
+        List of headings in document order.
+    """
+    # Build set of fenced ranges using a flat state machine.
+    # CommonMark: a code fence is closed only by a fence line with the
+    # same character and >= the opener length.  Shorter fence-like lines
+    # inside an open fence are just literal content (no nesting).
+    fenced: list[tuple[int, int]] = []
+    active_fence: tuple[str, int, int] | None = None  # (char, length, start_offset)
+    for m in _FENCE_RE.finditer(content):
+        marker = m.group(1)
+        fence_char = marker[0]
+        fence_len = len(marker)
+        if active_fence is not None:
+            # Inside a fence — only close if same char and >= length
+            if fence_char == active_fence[0] and fence_len >= active_fence[1]:
+                fenced.append((active_fence[2], m.end()))
+                active_fence = None
+            # Otherwise: literal content inside the fence, ignore
+        else:
+            # Not inside a fence — this is an opener
+            active_fence = (fence_char, fence_len, m.start())
+    # Unclosed fence: treat opener to EOF as fenced
+    if active_fence is not None:
+        fenced.append((active_fence[2], len(content)))
+
+    def _is_fenced(offset: int) -> bool:
+        return any(s <= offset < e for s, e in fenced)
+
+    headings: list[_HeadingInfo] = []
+
+    # ATX headings (# through ######)
+    for m in _HEADING_RE.finditer(content):
+        if _is_fenced(m.start()):
+            continue
+        depth = len(m.group(1))
+        text = m.group(2).strip()
+        headings.append(_HeadingInfo(heading=text, depth=depth, char_offset=m.start()))
+
+    # Detect YAML frontmatter range to exclude from setext detection.
+    # Frontmatter `---` / `key: value` / `---` looks like setext H2.
+    # Require at least one YAML key: value line to avoid thematic breaks.
+    fm_end = 0
+    stripped = content.lstrip()
+    leading_ws = len(content) - len(stripped)
+    if stripped.startswith("---"):
+        close = stripped.find("\n---", 3)
+        if close != -1:
+            fm_body = stripped[4:close]
+            has_yaml = any(":" in line for line in fm_body.split("\n") if line.strip())
+            if has_yaml:
+                fm_end = leading_ws + close + 4
+            if fm_end < len(content) and content[fm_end] == "\n":
+                fm_end += 1
+
+    # Setext headings (underline with === or ---)
+    for m in _SETEXT_RE.finditer(content):
+        if _is_fenced(m.start()):
+            continue
+        # Skip matches inside frontmatter
+        if m.start() < fm_end:
+            continue
+        text = m.group(1).strip()
+        # Skip if the text line looks like a YAML frontmatter delimiter
+        if text == "---" or not text:
+            continue
+        depth = 1 if m.group(2)[0] == "=" else 2
+        headings.append(_HeadingInfo(heading=text, depth=depth, char_offset=m.start()))
+
+    # Sort by position (ATX and setext may interleave)
+    headings.sort(key=lambda h: h.char_offset)
+
+    return headings
+
+
+@dataclass
+class _MdSegment:
+    """Internal segment for markdown-aware chunking."""
+
+    text: str
+    char_start: int
+    char_end: int
+    heading_prefix: str
+    tokens: int
+
+
+def _safe_line_char_offset(line_offsets: list[int], line_num: int, content_len: int) -> int:
+    """Get the character offset for a 0-indexed line number, clamped safely."""
+    if line_num >= len(line_offsets):
+        return content_len
+    return line_offsets[line_num]
+
+
+def _extract_file_name(file_path: str) -> str:
+    """Extract just the filename from a path."""
+    if "/" in file_path:
+        return file_path.rsplit("/", 1)[-1]
+    return file_path
+
+
+def build_heading_hierarchy(
+    sections: list[Any],
+    section_index: int,
+    file_name: str = "",
+) -> str:
+    """Build heading hierarchy prefix for embedding context.
+
+    Walks backward through sections to find parent headings,
+    building a path like ``[file.md > Auth > JWT Tokens]``.
+
+    Args:
+        sections: List of SectionInfo objects (from md_structure).
+        section_index: Index of the current section.
+        file_name: Filename to include at the start of the path.
+
+    Returns:
+        Bracket-notation heading path string.
+    """
+    if section_index < 0 or section_index >= len(sections):
+        return f"[{file_name}]" if file_name else ""
+
+    target = sections[section_index]
+    parents: list[str] = []
+    current_depth = target.depth
+
+    for i in range(section_index - 1, -1, -1):
+        if sections[i].depth < current_depth:
+            parents.append(sections[i].heading)
+            current_depth = sections[i].depth
+            if current_depth <= 1:
+                break
+
+    parents.reverse()
+    parts = parents + [target.heading]
+    path = " > ".join(parts)
+    result = f"[{file_name} > {path}]" if file_name else f"[{path}]"
+
+    # Truncate to prevent oversized embedding inputs.  Keep the
+    # file name and the deepest heading levels (most specific context).
+    if len(result) > _MAX_HEADING_PREFIX_CHARS:
+        tail = " > ".join(parts[-2:]) if len(parts) >= 2 else parts[-1]
+        result = f"[{file_name} > ... > {tail}]" if file_name else f"[... > {tail}]"
+
+    return result
+
+
+def _merge_small_segments(
+    segments: list[_MdSegment],
+    min_tokens: int = _MIN_CHUNK_TOKENS,
+    max_tokens: int = 1024,
+) -> list[_MdSegment]:
+    """Merge consecutive tiny segments using single-pass greedy algorithm.
+
+    Segments with fewer than *min_tokens* are accumulated and merged with
+    the next segment(s) until the accumulator exceeds *min_tokens* or
+    adding more would exceed *max_tokens*.
+
+    Args:
+        segments: Ordered list of segments.
+        min_tokens: Minimum token threshold for a standalone segment.
+        max_tokens: Maximum token budget for a merged segment.
+
+    Returns:
+        New list of segments with tiny segments merged.
+    """
+    if not segments:
+        return []
+
+    merged: list[_MdSegment] = []
+    acc_texts: list[str] = []
+    acc_start: int = 0
+    acc_end: int = 0
+    acc_prefix: str = ""
+    acc_tokens: int = 0
+
+    def _emit_accumulator() -> None:
+        if acc_texts:
+            merged.append(
+                _MdSegment(
+                    text="\n\n".join(acc_texts),
+                    char_start=acc_start,
+                    char_end=acc_end,
+                    heading_prefix=acc_prefix,
+                    tokens=acc_tokens,
+                )
+            )
+
+    for seg in segments:
+        if not acc_texts:
+            # Start new accumulator
+            acc_texts = [seg.text]
+            acc_start = seg.char_start
+            acc_end = seg.char_end
+            acc_prefix = seg.heading_prefix
+            acc_tokens = seg.tokens
+
+            # If segment is big enough on its own, emit immediately
+            if seg.tokens >= min_tokens:
+                _emit_accumulator()
+                acc_texts = []
+                acc_tokens = 0
+        else:
+            # Try to add to accumulator
+            combined = acc_tokens + seg.tokens
+            if combined <= max_tokens:
+                acc_texts.append(seg.text)
+                acc_end = seg.char_end
+                acc_tokens = combined
+
+                # If big enough now, emit
+                if acc_tokens >= min_tokens:
+                    _emit_accumulator()
+                    acc_texts = []
+                    acc_tokens = 0
+            else:
+                # Would exceed budget — emit accumulator, start fresh
+                _emit_accumulator()
+                acc_texts = [seg.text]
+                acc_start = seg.char_start
+                acc_end = seg.char_end
+                acc_prefix = seg.heading_prefix
+                acc_tokens = seg.tokens
+
+                if seg.tokens >= min_tokens:
+                    _emit_accumulator()
+                    acc_texts = []
+                    acc_tokens = 0
+
+    # Emit any remaining
+    _emit_accumulator()
+    return merged
 
 
 class DocumentChunker:
@@ -267,6 +534,8 @@ class DocumentChunker:
             chunks = self._chunk_semantic(content, file_path)
         elif self.strategy == ChunkStrategy.OVERLAPPING:
             chunks = self._chunk_overlapping(content)
+        elif self.strategy == ChunkStrategy.MARKDOWN_AWARE:
+            chunks = self._chunk_markdown_aware(content, file_path)
         else:
             raise ValueError(f"Unknown chunking strategy: {self.strategy}")
 
@@ -654,6 +923,265 @@ class DocumentChunker:
             current_offset += len(" ".join(words[i - step_size : i])) + 1
 
         return chunks
+
+    def _chunk_markdown_aware(self, content: str, file_path: str) -> list[DocumentChunk]:
+        """Chunk markdown using structural index with heading context prepend.
+
+        Issue #3719: Uses the md_structure parser for heading boundaries,
+        keeps code blocks and tables atomic, merges tiny sections, and
+        attaches heading hierarchy prefix for embedding enrichment.
+
+        Falls back to ``_chunk_semantic()`` for non-markdown files and to
+        ``_chunk_fixed()`` when the parser produces no sections.
+
+        Args:
+            content: Document content (string).
+            file_path: Path to the file.
+
+        Returns:
+            List of chunks with ``heading_prefix`` set.
+        """
+        # Non-markdown files: delegate to semantic strategy
+        if not file_path.endswith((".md", ".markdown")):
+            return self._chunk_semantic(content, file_path)
+
+        # Parse headings with code-fence awareness (no cross-brick import)
+        headings = _parse_headings_fence_aware(content)
+
+        # Fallback if no headings found
+        if not headings:
+            return self._chunk_fixed(content)
+
+        file_name = _extract_file_name(file_path)
+
+        # ── Build raw segments from heading positions ────────────────
+        segments: list[_MdSegment] = []
+
+        # Detect YAML frontmatter (--- ... ---).
+        # Validates that the block contains YAML-like content (at least
+        # one "key:" line) to avoid false positives on thematic breaks.
+        fm_end_offset = 0
+        stripped = content.lstrip()
+        leading_ws = len(content) - len(stripped)
+        if stripped.startswith("---"):
+            close = stripped.find("\n---", 3)
+            if close != -1:
+                fm_body = stripped[4:close]  # content between --- markers
+                # Require at least one YAML key: value line
+                has_yaml = any(":" in line for line in fm_body.split("\n") if line.strip())
+                if has_yaml:
+                    fm_end_offset = leading_ws + close + 4  # past closing ---
+                    # Skip trailing newline after closing ---
+                    if fm_end_offset < len(content) and content[fm_end_offset] == "\n":
+                        fm_end_offset += 1
+                    fm_text = content[:fm_end_offset].strip()
+                    if fm_text:
+                        segments.append(
+                            _MdSegment(
+                                text=fm_text,
+                                char_start=0,
+                                char_end=fm_end_offset,
+                                heading_prefix=f"[{file_name} > frontmatter]",
+                                tokens=self._count_tokens(fm_text),
+                            )
+                        )
+
+        # Preamble (content between frontmatter end and first heading)
+        first_heading_offset = headings[0].char_offset
+        preamble_text = content[fm_end_offset:first_heading_offset].strip()
+        if preamble_text:
+            segments.append(
+                _MdSegment(
+                    text=preamble_text,
+                    char_start=fm_end_offset,
+                    char_end=first_heading_offset,
+                    heading_prefix=f"[{file_name}]",
+                    tokens=self._count_tokens(preamble_text),
+                )
+            )
+
+        # Each heading → a segment (heading to next heading = non-overlapping)
+        for i, h in enumerate(headings):
+            sec_start = h.char_offset
+            sec_end = headings[i + 1].char_offset if i + 1 < len(headings) else len(content)
+            sec_text = content[sec_start:sec_end]
+            if not sec_text.strip():
+                continue
+
+            heading_prefix = build_heading_hierarchy(headings, i, file_name)
+            segments.append(
+                _MdSegment(
+                    text=sec_text,
+                    char_start=sec_start,
+                    char_end=sec_end,
+                    heading_prefix=heading_prefix,
+                    tokens=self._count_tokens(sec_text),
+                )
+            )
+
+        if not segments:
+            return self._chunk_fixed(content)
+
+        # ── Separate frontmatter/preamble from heading segments ─────
+        # Frontmatter and preamble are emitted as standalone chunks —
+        # they must not be merged with heading segments, otherwise the
+        # merged chunk inherits the wrong heading_prefix.
+        standalone: list[_MdSegment] = []
+        heading_segments: list[_MdSegment] = []
+        for seg in segments:
+            if (
+                seg.heading_prefix.endswith("frontmatter]")
+                or seg.heading_prefix == f"[{file_name}]"
+            ):
+                standalone.append(seg)
+            else:
+                heading_segments.append(seg)
+
+        # ── Merge tiny heading segments (single-pass greedy, O(n)) ──
+        merged = standalone + _merge_small_segments(
+            heading_segments,
+            min_tokens=_MIN_CHUNK_TOKENS,
+            max_tokens=self.chunk_size,
+        )
+
+        # ── Build final chunks, splitting oversized segments ────────
+        chunks: list[DocumentChunk] = []
+        for seg in merged:
+            prefix_tokens = (
+                self._count_tokens(seg.heading_prefix + " ") if seg.heading_prefix else 0
+            )
+            effective_budget = max(self.chunk_size - prefix_tokens, self.chunk_size // 2)
+
+            if seg.tokens <= effective_budget:
+                chunks.append(
+                    DocumentChunk(
+                        text=seg.text,
+                        chunk_index=len(chunks),
+                        tokens=seg.tokens,
+                        start_offset=seg.char_start,
+                        end_offset=seg.char_end,
+                        heading_prefix=seg.heading_prefix,
+                    )
+                )
+            else:
+                # Oversized section: split around code fences to keep
+                # fenced blocks intact.  Splits text into alternating
+                # prose / fenced-block fragments, then sub-splits only
+                # the prose parts with the generic fixed splitter.
+                sub_chunks = self._split_preserving_fences(
+                    seg.text,
+                    seg.char_start,
+                    effective_budget,
+                )
+                for sc in sub_chunks:
+                    sc.heading_prefix = seg.heading_prefix
+                    chunks.append(sc)
+
+        # Renumber chunk indices
+        for i, chunk in enumerate(chunks):
+            chunk.chunk_index = i
+
+        logger.info(
+            "[MARKDOWN-AWARE] path=%s headings=%d chunks=%d",
+            file_path,
+            len(headings),
+            len(chunks),
+        )
+
+        return chunks
+
+    def _split_preserving_fences(
+        self,
+        text: str,
+        base_offset: int,
+        budget: int,
+    ) -> list[DocumentChunk]:
+        """Split oversized section while keeping fenced code blocks intact.
+
+        Splits *text* into alternating prose / fenced-block fragments.
+        Prose fragments are sub-split with the fixed splitter at *budget*.
+        Fenced blocks up to 1.5× budget are emitted whole; larger blocks
+        are sub-split as a last resort.
+        """
+        # Find fenced ranges within this text (flat state machine,
+        # same logic as _parse_headings_fence_aware).
+        fenced_ranges: list[tuple[int, int]] = []
+        active: tuple[str, int, int] | None = None  # (char, length, start)
+        for m in _FENCE_RE.finditer(text):
+            marker = m.group(1)
+            fence_char = marker[0]
+            fence_len = len(marker)
+            if active is not None:
+                if fence_char == active[0] and fence_len >= active[1]:
+                    fenced_ranges.append((active[2], m.end()))
+                    active = None
+            else:
+                active = (fence_char, fence_len, m.start())
+        if active is not None:
+            fenced_ranges.append((active[2], len(text)))
+
+        if not fenced_ranges:
+            # No fences — safe to use generic splitter
+            return self._sub_split_prose(text, base_offset, budget)
+
+        # Build alternating fragments: prose, fence, prose, fence, ...
+        chunks: list[DocumentChunk] = []
+        pos = 0
+        allowance = int(budget * 1.5)
+
+        for fence_start, fence_end in fenced_ranges:
+            # Prose before this fence
+            if pos < fence_start:
+                prose = text[pos:fence_start]
+                if prose.strip():
+                    chunks.extend(self._sub_split_prose(prose, base_offset + pos, budget))
+
+            # The fenced block itself
+            block_text = text[fence_start:fence_end]
+            block_tokens = self._count_tokens(block_text)
+            if block_tokens <= allowance:
+                # Keep intact
+                chunks.append(
+                    DocumentChunk(
+                        text=block_text,
+                        chunk_index=0,
+                        tokens=block_tokens,
+                        start_offset=base_offset + fence_start,
+                        end_offset=base_offset + fence_end,
+                    )
+                )
+            else:
+                # Truly enormous block — last resort split
+                chunks.extend(self._sub_split_prose(block_text, base_offset + fence_start, budget))
+            pos = fence_end
+
+        # Trailing prose after last fence
+        if pos < len(text):
+            trailing = text[pos:]
+            if trailing.strip():
+                chunks.extend(self._sub_split_prose(trailing, base_offset + pos, budget))
+
+        return chunks
+
+    def _sub_split_prose(
+        self,
+        text: str,
+        base_offset: int,
+        budget: int,
+    ) -> list[DocumentChunk]:
+        """Sub-split a prose fragment using a fixed-budget chunker."""
+        sub_chunker = DocumentChunker(
+            chunk_size=budget,
+            overlap_size=self.overlap_size,
+            strategy=ChunkStrategy.FIXED,
+            encoding_name=self.encoding_name,
+        )
+        sub_chunker.encoding = self.encoding
+        sub_chunks = sub_chunker._chunk_fixed(text)
+        for sc in sub_chunks:
+            sc.start_offset += base_offset
+            sc.end_offset += base_offset
+        return sub_chunks
 
 
 @dataclass

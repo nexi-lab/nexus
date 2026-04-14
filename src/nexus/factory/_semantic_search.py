@@ -60,7 +60,7 @@ async def create_semantic_search_components(
         embedding_model: Model name for embeddings.
         api_key: API key for embedding provider.
         chunk_size: Chunk size in tokens.
-        chunk_strategy: "fixed", "semantic", or "overlapping".
+        chunk_strategy: "fixed", "semantic", "overlapping", or "markdown_aware".
         cache_url: Redis/Dragonfly URL for embedding cache.
         embedding_cache_ttl: Cache TTL in seconds (default: 3 days).
         nx: NexusFS instance (NexusFS-path only).
@@ -86,6 +86,7 @@ async def create_semantic_search_components(
         "fixed": ChunkStrategy.FIXED,
         "semantic": ChunkStrategy.SEMANTIC,
         "overlapping": ChunkStrategy.OVERLAPPING,
+        "markdown_aware": ChunkStrategy.MARKDOWN_AWARE,
     }
     chunk_strat = strategy_map.get(chunk_strategy, ChunkStrategy.SEMANTIC)
 

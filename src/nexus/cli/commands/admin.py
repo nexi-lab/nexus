@@ -95,14 +95,25 @@ def get_admin_rpc(url: str | None, api_key: str | None) -> AdminRPC:
     grpc_address = f"{parsed.hostname}:{grpc_port}"
 
     tls_config = None
-    if tls.get("cert") or os.environ.get("NEXUS_TLS_CERT"):
+    _grpc_tls_env = os.environ.get("NEXUS_GRPC_TLS", "").lower()
+    _grpc_tls_off = _grpc_tls_env in ("false", "0", "no")
+    _grpc_tls_on = _grpc_tls_env in ("true", "1", "yes")
+
+    # NEXUS_GRPC_TLS takes precedence over stale env vars / state
+    if _grpc_tls_off:
+        pass  # force insecure — ignore NEXUS_TLS_* and state.json certs
+    elif tls.get("cert") or os.environ.get("NEXUS_TLS_CERT"):
         tls_config = ZoneTlsConfig.from_env()
     elif data_dir:
-        # Auto-detect TLS from data dir (Docker containers where NEXUS_DATA_DIR
-        # is set but no nexus.yaml/.state.json exists — e.g. inside the server
-        # container itself where TLS certs live in {data_dir}/tls/).
         with contextlib.suppress(Exception):
             tls_config = ZoneTlsConfig.from_data_dir(data_dir)
+
+    # Fail closed: explicit true but no certs resolved
+    if _grpc_tls_on and tls_config is None:
+        raise click.ClickException(
+            "NEXUS_GRPC_TLS=true but no TLS certificates found. "
+            "Provide certs in {data_dir}/tls/ or configure TLS in state.json."
+        )
     transport = RPCTransport(server_address=grpc_address, auth_token=api_key, tls_config=tls_config)
     return transport.call_rpc
 

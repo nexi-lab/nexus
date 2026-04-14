@@ -162,10 +162,19 @@ class AcpProtocolHandler:
         # Run the agent loop — updates stream via observer callback
         result = await self._loop.run(prompt)
 
+        # Map stop_reason to ACP-expected values.
+        # Sudowork checks `stopReason === 'end_turn'` to trigger onEndTurn()
+        # which clears the "processing" spinner. The Anthropic SDK returns
+        # "end_turn" but our _map_finish_reason converts it to "stop".
+        # Return "end_turn" for ACP compatibility.
+        acp_stop = result.stop_reason
+        if acp_stop == "stop":
+            acp_stop = "end_turn"
+
         return {
             "sessionId": self._session_id,
             "text": result.text,
-            "stopReason": result.stop_reason,
+            "stopReason": acp_stop,
         }
 
     def _handle_set_model(self, params: dict[str, Any]) -> dict[str, Any]:

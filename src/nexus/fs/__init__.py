@@ -222,13 +222,9 @@ async def mount(
                     exc,
                 )
 
-        # Create DT_MOUNT or DT_EXTERNAL_STORAGE metadata entries for each mount point.
-        # Non-storage connectors (oauth/api backends like gdrive) must be registered as
-        # DT_EXTERNAL_STORAGE so the router returns ExternalRouteResult and reads go
-        # directly to backend.read_content() instead of through the kernel.
-        # Mirrors the logic in nexus.bricks.mount.mount_service (mount_service.py:608).
-        for mp, backend, spec in backends:
-            metastore.put(_make_mount_entry(mp, backend.name, entry_type=_resolve_entry_type(spec)))
+        # DT_MOUNT metadata entries are created by kernel_mount() automatically
+        # (called via DLC.mount → MountTable.add → kernel.kernel_mount).
+        # No separate metastore.put() needed here.
     except Exception:
         for _, be, _ in backends:
             _close_backend(be)
@@ -279,45 +275,11 @@ def _close_backend(backend: Any) -> None:
             close()
 
 
-def _resolve_entry_type(spec: Any) -> int:
-    """Return DT_EXTERNAL_STORAGE for non-storage connectors, DT_MOUNT otherwise.
-
-    Built-in storage schemes (s3, gcs, local) are always DT_MOUNT.
-    Connector schemes look up the ConnectorRegistry category — oauth/api/cli
-    connectors (e.g. gdrive) get DT_EXTERNAL_STORAGE so the router bypasses
-    the kernel and dispatches reads directly to backend.read_content().
-    """
-    from nexus.contracts.metadata import DT_EXTERNAL_STORAGE, DT_MOUNT
-
-    if spec.scheme in ("s3", "gcs", "local"):
-        return DT_MOUNT
-
-    try:
-        from nexus.backends.base.registry import ConnectorRegistry
-
-        for candidate in [
-            f"{spec.scheme}_{spec.authority}" if spec.authority else None,
-            f"{spec.scheme}_connector",
-        ]:
-            if candidate is None:
-                continue
-            try:
-                info = ConnectorRegistry.get_info(candidate)
-                return DT_EXTERNAL_STORAGE if info.category != "storage" else DT_MOUNT
-            except KeyError:
-                continue
-    except Exception:
-        pass
-
-    return DT_MOUNT
-
-
 def _make_mount_entry(path: str, backend_name: str, *, entry_type: int | None = None) -> Any:
     """Create a FileMetadata entry for a mount point.
 
     Shared by mount() and tests to avoid repeating the 13-field construction.
-    entry_type defaults to DT_MOUNT; pass DT_EXTERNAL_STORAGE for non-storage
-    connectors (e.g. gdrive) so the router uses the ExternalRouteResult path.
+    entry_type defaults to DT_MOUNT.
     """
     from datetime import UTC, datetime
 

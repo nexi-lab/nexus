@@ -933,7 +933,7 @@ class SlimNexusFS:
 
         normalized = validate_path(path)
         meta = self._kernel.metadata.get(normalized)
-        if meta is not None and (meta.is_mount or meta.is_external_storage):
+        if meta is not None and meta.is_mount:
             raise ValueError(
                 f"Cannot delete mount root '{normalized}' — use unmount() to remove a mount."
             )
@@ -1079,12 +1079,7 @@ class SlimNexusFS:
         meta: FileMetadata | None = None
 
         if meta is not None:
-            is_dir = (
-                meta.is_dir
-                or meta.is_mount
-                or meta.is_external_storage
-                or meta.mime_type == "inode/directory"
-            )
+            is_dir = meta.is_dir or meta.is_mount or meta.mime_type == "inode/directory"
             return _make_stat_dict(
                 path=meta.path,
                 size=meta.size or (4096 if is_dir else 0),
@@ -1419,7 +1414,7 @@ class SlimNexusFS:
 
         normalized = validate_path(mount_point, allow_root=False)
         meta = self._kernel.metadata.get(normalized)
-        if meta is None or not (meta.is_mount or meta.is_external_storage):
+        if meta is None or not meta.is_mount:
             raise ValueError(f"'{normalized}' is not a mount point")
 
         # 1. Remove from runtime mount table

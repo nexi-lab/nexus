@@ -318,7 +318,7 @@ class MountService:
         so the TUI file explorer can navigate to the mount point.
 
         The mount point itself gets the specified ``entry_type``
-        (DT_MOUNT or DT_EXTERNAL_STORAGE); parent dirs get DT_DIR.
+        (DT_MOUNT); parent dirs get DT_DIR.
 
         Args:
             mount_point: Virtual path
@@ -561,13 +561,10 @@ class MountService:
         # Create backend instance
         backend = self._create_backend(backend_type, config)
 
-        # Determine mount entry_type from ConnectorRegistry category.
-        # Non-storage backends (oauth/api/cli) get DT_EXTERNAL_STORAGE.
-        from nexus.backends.base.registry import ConnectorRegistry
-        from nexus.contracts.metadata import DT_EXTERNAL_STORAGE, DT_MOUNT
+        # All mounts use DT_MOUNT; external nature determined by backend trait.
+        from nexus.contracts.metadata import DT_MOUNT
 
-        _info = ConnectorRegistry.get_info(backend_type)
-        _entry_type = DT_EXTERNAL_STORAGE if (_info and _info.category != "storage") else DT_MOUNT
+        _entry_type = DT_MOUNT
 
         # Mount via sys_setattr (Rust DLC handles routing + metastore + dcache,
         # Python DLC stores _PyMountInfo + dispatches event), then setup --

@@ -107,6 +107,7 @@ KERNEL_REQUIRED_METHODS: frozenset[str] = frozenset(
         "has_stream",
         "hook_count",
         "increment_zone_revision",
+        "kernel_mount",
         "kernel_observer_count",
         "kernel_unmount",
         "list_pipes",

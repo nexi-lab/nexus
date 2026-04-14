@@ -44,8 +44,8 @@ class RemoteBackend(ObjectStoreABC):
         transport: Shared ``RPCTransport`` instance (gRPC channel).
     """
 
-    # RemoteBackend dispatch is handled via DT_EXTERNAL_STORAGE entry_type
-    # in metastore, not via capabilities. The server knows the actual
+    # RemoteBackend dispatch is handled via DT_MOUNT entry_type + backend
+    # is_external trait, not via capabilities. The server knows the actual
     # backend type and handles reads correctly.
     capabilities: frozenset[str] = frozenset()
 

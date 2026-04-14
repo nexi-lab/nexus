@@ -499,6 +499,45 @@ pub(crate) async fn forward_propose(
     }
 }
 
+/// Decode a proto `RaftResponse` back into an internal `CommandResult`.
+///
+/// Only the variants that the server actually emits (Success / LockResult)
+/// are handled; other commands carry no typed result and collapse to
+/// `Success`, matching the old single-node path.
+#[cfg(all(feature = "grpc", has_protos))]
+fn proto_result_to_command_result(
+    result: Option<proto::nexus::raft::RaftResponse>,
+) -> crate::raft::CommandResult {
+    use crate::raft::{CommandResult, HolderInfo, LockState};
+    use proto::nexus::raft::raft_response::Result as ProtoVariant;
+
+    let Some(resp) = result else {
+        return CommandResult::Success;
+    };
+
+    match resp.result {
+        Some(ProtoVariant::LockResult(lr)) => {
+            let holders = if lr.acquired {
+                vec![HolderInfo {
+                    lock_id: String::new(),
+                    holder_info: lr.current_holder.clone().unwrap_or_default(),
+                    acquired_at: 0,
+                    expires_at: (lr.expires_at_ms / 1000) as u64,
+                }]
+            } else {
+                Vec::new()
+            };
+            CommandResult::LockResult(LockState {
+                acquired: lr.acquired,
+                current_holders: holders.len() as u32,
+                max_holders: 0,
+                holders,
+            })
+        }
+        Some(ProtoVariant::MetadataResult(_)) | None => CommandResult::Success,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Re-export shared transport types from transport.
 // These were previously defined locally but are now canonical in transport.

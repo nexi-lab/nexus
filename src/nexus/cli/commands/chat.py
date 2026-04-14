@@ -228,6 +228,13 @@ async def _run_chat(
 
         nx.sys_setattr("/llm", entry_type=DT_MOUNT, backend=llm_backend)
 
+        # ── Mount cwd via LocalConnector (agent reads/writes host OS files) ──
+        cwd = os.getcwd()
+        from nexus.backends.storage.local_connector import LocalConnectorBackend
+
+        cwd_backend = LocalConnectorBackend(cwd)
+        nx.sys_setattr("/workspace", entry_type=DT_MOUNT, backend=cwd_backend)
+
         # ── Mount external tool directories (Tier B, §1.5) ──
         if tools:
             from nexus.backends.storage.path_local import PathLocalBackend
@@ -248,7 +255,6 @@ async def _run_chat(
         from nexus.services.agent_runtime.compaction import DefaultCompactionStrategy
         from nexus.services.agent_runtime.managed_loop import ManagedAgentLoop
 
-        cwd = os.getcwd()
         agent_path = "/root/agents/default"
 
         loop = ManagedAgentLoop(

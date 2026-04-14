@@ -1,21 +1,36 @@
 """BashTool — execute shell commands via subprocess.
 
 Output is truncated to 50K chars (matching CC's limit).
-Future: full DT_PIPE integration via SubprocessRunner for kernel observability.
+Uses sys_stat to resolve VFS paths (e.g. /workspace/foo.txt) to
+host OS physical paths before executing commands.
 """
 
 from __future__ import annotations
 
 import json
+import re
 import subprocess
+from collections.abc import Callable
 from typing import Any
 
 _OUTPUT_LIMIT = 50_000
 _DEFAULT_TIMEOUT = 120
 
+# Match absolute paths starting with / that look like VFS mount paths.
+# Excludes common host OS paths (/usr, /bin, /etc, /tmp, /var, /dev, /proc, /sys, /home).
+_VFS_PATH_RE = re.compile(
+    r"(?<!\w)(/(?!usr/|bin/|etc/|tmp/|var/|dev/|proc/|sys/|home/|Users/|Library/|opt/)\w[\w./-]*)"
+)
+
 
 class BashTool:
-    """Execute a shell command and return its output."""
+    """Execute a shell command and return its output.
+
+    When sys_stat is injected, resolves VFS paths in the command to
+    host OS physical paths before execution. This allows commands like
+    `cat /workspace/foo.txt` to work correctly when /workspace is a
+    LocalConnector mount.
+    """
 
     name = "bash"
     description = (
@@ -34,10 +49,35 @@ class BashTool:
         "required": ["command"],
     }
 
-    def __init__(self, *, cwd: str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        cwd: str | None = None,
+        sys_stat: Callable[..., dict[str, Any] | None] | None = None,
+    ) -> None:
         self._cwd = cwd
+        self._sys_stat = sys_stat
+
+    def _resolve_vfs_paths(self, command: str) -> str:
+        """Replace VFS paths with host OS physical paths via sys_stat."""
+        sys_stat = self._sys_stat
+        if sys_stat is None:
+            return command
+
+        def _replace(match: re.Match[str]) -> str:
+            vfs_path: str = match.group(1)
+            try:
+                stat = sys_stat(vfs_path)
+                if stat and stat.get("physical_path"):
+                    return str(stat["physical_path"])
+            except Exception:
+                pass
+            return str(vfs_path)
+
+        return _VFS_PATH_RE.sub(_replace, command)
 
     def call(self, *, command: str, timeout: int = _DEFAULT_TIMEOUT, **_: Any) -> str:
+        command = self._resolve_vfs_paths(command)
         try:
             result = subprocess.run(
                 command,

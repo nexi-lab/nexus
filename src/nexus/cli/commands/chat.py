@@ -154,7 +154,7 @@ def _build_tool_registry(nx: Any, cwd: str) -> Any:
     registry.register(ReadFileTool(nx.sys_read))
     registry.register(WriteFileTool(nx.write))
     registry.register(EditFileTool(_edit_fn))
-    registry.register(BashTool(cwd=cwd))
+    registry.register(BashTool(cwd=cwd, sys_stat=nx.sys_stat))
     registry.register(GlobTool(search))
     registry.register(GrepTool(search))
     return registry

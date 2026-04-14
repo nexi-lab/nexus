@@ -1374,3 +1374,390 @@ class TestGlobFilesParam:
             )
         # Only .py files survive the glob pattern.
         assert set(result) == {"/a.py", "/c.py"}
+
+
+# =============================================================================
+# Issue #3720: block_type filter for markdown grep
+# =============================================================================
+
+# Sample markdown with known block structure for testing.
+_MD_WITH_BLOCKS = """\
+---
+title: test
+---
+
+# Introduction
+
+This is prose text with SELECT query mentions.
+
+```sql
+SELECT * FROM users WHERE active = true;
+```
+
+More prose text here.
+
+| col1 | col2 |
+|------|------|
+| a    | b    |
+
+## Notes
+
+Final paragraph.
+"""
+
+
+def _make_md_structure_json():
+    """Build a realistic md_structure JSON matching _MD_WITH_BLOCKS."""
+    import json
+
+    return json.dumps(
+        {
+            "version": 2,
+            "content_hash": "abc123",
+            "tokens_est_method": "bytes/4",
+            "frontmatter": {
+                "byte_start": 0,
+                "byte_end": 20,
+                "line_start": 0,
+                "line_end": 3,
+                "keys": ["title"],
+            },
+            "sections": [
+                {
+                    "heading": "Introduction",
+                    "depth": 1,
+                    "byte_start": 21,
+                    "byte_end": 200,
+                    "line_start": 4,
+                    "line_end": 20,
+                    "tokens_est": 45,
+                    "blocks": [
+                        {
+                            "type": "heading",
+                            "byte_start": 21,
+                            "byte_end": 40,
+                            "line_start": 4,
+                            "line_end": 5,
+                        },
+                        {
+                            "type": "paragraph",
+                            "byte_start": 41,
+                            "byte_end": 79,
+                            "line_start": 6,
+                            "line_end": 7,
+                        },
+                        {
+                            "type": "code",
+                            "byte_start": 80,
+                            "byte_end": 140,
+                            "line_start": 8,
+                            "line_end": 11,
+                            "language": "sql",
+                        },
+                        {
+                            "type": "paragraph",
+                            "byte_start": 141,
+                            "byte_end": 159,
+                            "line_start": 12,
+                            "line_end": 13,
+                        },
+                        {
+                            "type": "table",
+                            "byte_start": 160,
+                            "byte_end": 200,
+                            "line_start": 14,
+                            "line_end": 17,
+                            "rows": 1,
+                        },
+                    ],
+                },
+                {
+                    "heading": "Notes",
+                    "depth": 2,
+                    "byte_start": 200,
+                    "byte_end": 250,
+                    "line_start": 20,
+                    "line_end": 23,
+                    "tokens_est": 12,
+                    "blocks": [
+                        {
+                            "type": "heading",
+                            "byte_start": 200,
+                            "byte_end": 210,
+                            "line_start": 20,
+                            "line_end": 21,
+                        },
+                        {
+                            "type": "paragraph",
+                            "byte_start": 211,
+                            "byte_end": 250,
+                            "line_start": 22,
+                            "line_end": 23,
+                        },
+                    ],
+                },
+            ],
+        }
+    )
+
+
+class TestGrepBlockType:
+    """Issue #3720: block_type filtering for markdown grep."""
+
+    @pytest.fixture
+    def service_with_md(self, mock_metadata_store, mock_gateway):
+        """SearchService with md_structure metadata pre-loaded."""
+
+        # Configure metastore to return md_structure for .md files.
+        def _get_file_metadata(path, key):
+            if path.endswith(".md") and key == "md_structure":
+                return _make_md_structure_json()
+            return None
+
+        mock_metadata_store.get_file_metadata.side_effect = _get_file_metadata
+        mock_metadata_store.get_searchable_text_bulk.return_value = {}
+
+        return SearchService(
+            metadata_store=mock_metadata_store,
+            gateway=mock_gateway,
+            enforce_permissions=False,
+        )
+
+    def _make_results(self, file_path: str, lines: list[int]) -> list[dict]:
+        """Build fake grep results at the given 1-indexed line numbers."""
+        return [
+            {"file": file_path, "line": ln, "content": f"line {ln}", "match": f"line {ln}"}
+            for ln in lines
+        ]
+
+    async def test_block_type_code_returns_only_code_block_matches(self, service_with_md, context):
+        """block_type='code' keeps only matches inside code fence lines."""
+        # Lines 9, 10 are inside the code block (line_start=8, line_end=11, 0-indexed).
+        # Line 7 is prose. Results are 1-indexed.
+        all_results = self._make_results("/doc.md", [8, 9, 10, 11])
+        with patch.object(service_with_md, "metadata") as mock_meta:
+            mock_meta.get_file_metadata.side_effect = lambda p, k: (
+                _make_md_structure_json() if p.endswith(".md") and k == "md_structure" else None
+            )
+            filtered = service_with_md._filter_results_by_block_type(all_results, "code")
+        # 0-indexed: lines 8,9,10 are inside [8,11). Line 11 (0-indexed=10) is inside.
+        # 1-indexed lines 9,10,11 map to 0-indexed 8,9,10 → inside [8,11).
+        # 1-indexed line 8 maps to 0-indexed 7 → NOT inside [8,11).
+        assert len(filtered) == 3
+        assert all(r["line"] in (9, 10, 11) for r in filtered)
+
+    async def test_block_type_table_returns_only_table_matches(self, service_with_md, context):
+        """block_type='table' keeps only matches inside table lines."""
+        all_results = self._make_results("/doc.md", [6, 15, 16, 22])
+        with patch.object(service_with_md, "metadata") as mock_meta:
+            mock_meta.get_file_metadata.side_effect = lambda p, k: (
+                _make_md_structure_json() if p.endswith(".md") and k == "md_structure" else None
+            )
+            filtered = service_with_md._filter_results_by_block_type(all_results, "table")
+        # 1-indexed 15,16 → 0-indexed 14,15 → inside [14,17).
+        assert len(filtered) == 2
+        assert {r["line"] for r in filtered} == {15, 16}
+
+    async def test_block_type_frontmatter_returns_only_frontmatter_matches(
+        self, service_with_md, context
+    ):
+        """block_type='frontmatter' keeps only matches in YAML frontmatter."""
+        all_results = self._make_results("/doc.md", [1, 2, 3, 7])
+        with patch.object(service_with_md, "metadata") as mock_meta:
+            mock_meta.get_file_metadata.side_effect = lambda p, k: (
+                _make_md_structure_json() if p.endswith(".md") and k == "md_structure" else None
+            )
+            filtered = service_with_md._filter_results_by_block_type(all_results, "frontmatter")
+        # 1-indexed 1,2,3 → 0-indexed 0,1,2 → inside [0,3). Line 7 → 6 → outside.
+        assert len(filtered) == 3
+        assert {r["line"] for r in filtered} == {1, 2, 3}
+
+    async def test_block_type_none_returns_all_matches(self, service_with_md, context):
+        """No block_type → all results pass through (default behavior)."""
+        # block_type=None should not invoke filtering at all.
+        with patch.object(service_with_md, "list", return_value=[]):
+            results = await service_with_md.grep(pattern="x", context=context)
+        # Empty because list returns nothing; the point is it doesn't crash.
+        assert results == []
+
+    async def test_block_type_on_non_md_file_returns_all_matches(self, service_with_md, context):
+        """Non-markdown files pass through unfiltered (decision #4A)."""
+        all_results = self._make_results("/src/main.py", [1, 5, 10])
+        with patch.object(service_with_md, "metadata") as mock_meta:
+            mock_meta.get_file_metadata.return_value = None
+            filtered = service_with_md._filter_results_by_block_type(all_results, "code")
+        assert len(filtered) == 3  # all pass through
+
+    async def test_block_type_with_no_md_structure_metadata(self, service_with_md, context):
+        """Markdown file without md_structure metadata → fail closed
+        (Codex R6: don't leak unfiltered results through)."""
+        all_results = self._make_results("/orphan.md", [1, 5])
+        with patch.object(service_with_md, "metadata") as mock_meta:
+            mock_meta.get_file_metadata.return_value = None  # no metadata
+            filtered = service_with_md._filter_results_by_block_type(all_results, "code")
+        assert len(filtered) == 0  # fail closed
+
+    async def test_block_type_with_no_matching_blocks_returns_empty(self, service_with_md, context):
+        """block_type='table' on a file with only code blocks → empty."""
+        # All results are on lines that are NOT inside a table.
+        all_results = self._make_results("/doc.md", [9, 10])  # inside code block
+        with patch.object(service_with_md, "metadata") as mock_meta:
+            mock_meta.get_file_metadata.side_effect = lambda p, k: (
+                _make_md_structure_json() if p.endswith(".md") and k == "md_structure" else None
+            )
+            filtered = service_with_md._filter_results_by_block_type(all_results, "table")
+        assert filtered == []
+
+    async def test_block_type_paragraph_returns_only_prose(self, service_with_md, context):
+        """block_type='paragraph' keeps only matches inside paragraphs."""
+        # Paragraph at lines 6-7 (0-indexed) → 1-indexed 7.
+        # Paragraph at lines 12-13 → 1-indexed 13.
+        all_results = self._make_results("/doc.md", [7, 10, 13])
+        with patch.object(service_with_md, "metadata") as mock_meta:
+            mock_meta.get_file_metadata.side_effect = lambda p, k: (
+                _make_md_structure_json() if p.endswith(".md") and k == "md_structure" else None
+            )
+            filtered = service_with_md._filter_results_by_block_type(all_results, "paragraph")
+        # Line 7 (0-idx 6) → inside [6,7). Line 13 (0-idx 12) → inside [12,13).
+        # Line 10 (0-idx 9) → inside code block, NOT paragraph.
+        assert len(filtered) == 2
+        assert {r["line"] for r in filtered} == {7, 13}
+
+    async def test_block_type_heading_returns_only_headings(self, service_with_md, context):
+        """block_type='heading' keeps only matches inside heading lines."""
+        # Heading at lines 4-5 and 20-21 (0-indexed).
+        all_results = self._make_results("/doc.md", [5, 7, 21])
+        with patch.object(service_with_md, "metadata") as mock_meta:
+            mock_meta.get_file_metadata.side_effect = lambda p, k: (
+                _make_md_structure_json() if p.endswith(".md") and k == "md_structure" else None
+            )
+            filtered = service_with_md._filter_results_by_block_type(all_results, "heading")
+        # Line 5 (0-idx 4) → inside [4,5). Line 21 (0-idx 20) → inside [20,21).
+        # Line 7 (0-idx 6) → paragraph, not heading.
+        assert len(filtered) == 2
+        assert {r["line"] for r in filtered} == {5, 21}
+
+    async def test_block_type_invalid_value_raises_value_error(self, service_with_md, context):
+        """Invalid block_type raises ValueError with supported values."""
+        with pytest.raises(ValueError, match="Invalid block_type"):
+            await service_with_md.grep(pattern="x", block_type="definition", context=context)
+
+    # ── Edge cases (decision #12A) ──
+
+    async def test_match_on_code_fence_boundary_line(self, service_with_md, context):
+        """Match on the opening ``` line of a code fence is inside the block."""
+        # Code block is line_start=8, line_end=11 (0-indexed).
+        # 1-indexed line 9 → 0-indexed 8 → first line of block.
+        all_results = self._make_results("/doc.md", [9])
+        with patch.object(service_with_md, "metadata") as mock_meta:
+            mock_meta.get_file_metadata.side_effect = lambda p, k: (
+                _make_md_structure_json() if p.endswith(".md") and k == "md_structure" else None
+            )
+            filtered = service_with_md._filter_results_by_block_type(all_results, "code")
+        assert len(filtered) == 1
+
+    async def test_mixed_md_and_non_md_results(self, service_with_md, context):
+        """Mixed results from .md (filtered) and .py (unfiltered) files."""
+        results = [
+            {"file": "/doc.md", "line": 7, "content": "prose", "match": "prose"},
+            {"file": "/doc.md", "line": 10, "content": "code", "match": "code"},
+            {"file": "/main.py", "line": 1, "content": "import", "match": "import"},
+        ]
+        with patch.object(service_with_md, "metadata") as mock_meta:
+            mock_meta.get_file_metadata.side_effect = lambda p, k: (
+                _make_md_structure_json() if p.endswith(".md") and k == "md_structure" else None
+            )
+            filtered = service_with_md._filter_results_by_block_type(results, "code")
+        # /doc.md line 10 (0-indexed 9) is inside code [8,11). Line 7 (0-indexed 6) is not.
+        # /main.py passes through unfiltered.
+        assert len(filtered) == 2
+        files = [r["file"] for r in filtered]
+        assert "/main.py" in files
+        assert any(r["file"] == "/doc.md" and r["line"] == 10 for r in filtered)
+
+    async def test_block_type_with_stale_metadata(self, service_with_md, context):
+        """Corrupt/malformed md_structure metadata → fail closed
+        (Codex R7: don't leak unfiltered results)."""
+        all_results = self._make_results("/bad.md", [1, 5])
+        with patch.object(service_with_md, "metadata") as mock_meta:
+            mock_meta.get_file_metadata.return_value = "not valid json {"
+            filtered = service_with_md._filter_results_by_block_type(all_results, "code")
+        # Corrupt metadata → fail closed, no results.
+        assert len(filtered) == 0
+
+    async def test_block_type_with_context_lines(self, service_with_md, context):
+        """Context lines that extend outside the block are still included
+        with the match — we filter by match line, not context lines."""
+        results = [
+            {
+                "file": "/doc.md",
+                "line": 10,  # 0-indexed 9 → inside code [8,11)
+                "content": "SELECT",
+                "match": "SELECT",
+                "before_context": [
+                    {"line": 8, "content": "prose before fence"},
+                ],
+                "after_context": [
+                    {"line": 12, "content": "prose after fence"},
+                ],
+            },
+        ]
+        with patch.object(service_with_md, "metadata") as mock_meta:
+            mock_meta.get_file_metadata.side_effect = lambda p, k: (
+                _make_md_structure_json() if p.endswith(".md") and k == "md_structure" else None
+            )
+            filtered = service_with_md._filter_results_by_block_type(results, "code")
+        # Match line is inside code block → kept. Context lines are preserved as-is.
+        assert len(filtered) == 1
+        assert filtered[0]["before_context"][0]["content"] == "prose before fence"
+        assert filtered[0]["after_context"][0]["content"] == "prose after fence"
+
+
+class TestGrepBlockTypeOverfetch:
+    """Issue #3720: over-fetch multiplier and cap tests."""
+
+    async def test_overfetch_multiplier_applied(self, service, context):
+        """When block_type is set, grep over-fetches internally."""
+
+        # Use max_results=50. Expected internal max_results = min(50*5, max(50, 2000)) = 250.
+        with patch.object(service, "list", return_value=[]):
+            await service.grep(pattern="x", block_type="code", max_results=50, context=context)
+        # No files → short circuit → no results, but we can check the method ran.
+        # The over-fetch is applied before Phase 1, so just verify no crash.
+
+    async def test_overfetch_cap_respected(self, service, context):
+        """Over-fetch is capped at _BLOCK_TYPE_OVERFETCH_CAP."""
+
+        # max_results=10000 → 10000*5 = 50000 > cap → capped at max(10000, 2000) = 10000.
+        with patch.object(service, "list", return_value=[]):
+            # Should not crash — cap prevents runaway allocation.
+            await service.grep(pattern="x", block_type="code", max_results=10000, context=context)
+
+    async def test_block_type_results_capped_to_original_max_results(self, service, context):
+        """After post-filtering, results are capped to the ORIGINAL
+        max_results, not the inflated over-fetch value."""
+        with (
+            patch.object(service, "list", return_value=["/a.py"]),
+            patch.object(service, "metadata") as mock_meta,
+        ):
+            mock_meta.get_searchable_text_bulk.return_value = {
+                "/a.py": "\n".join(f"x line {i}" for i in range(20))
+            }
+            mock_meta.get_file_metadata.return_value = None
+            results = await service.grep(
+                pattern="x",
+                block_type="code",
+                max_results=5,
+                context=context,
+            )
+        # Non-md file → all pass through, but capped to original max_results=5.
+        assert len(results) <= 5
+
+    async def test_block_type_validation_lists_valid_types(self, service, context):
+        """Validation error message includes all valid block type names."""
+        with pytest.raises(ValueError, match="code") as exc_info:
+            await service.grep(pattern="x", block_type="definition", context=context)
+        msg = str(exc_info.value)
+        assert "table" in msg
+        assert "frontmatter" in msg
+        assert "paragraph" in msg

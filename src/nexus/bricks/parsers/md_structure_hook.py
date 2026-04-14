@@ -35,6 +35,8 @@ logger = logging.getLogger(__name__)
 
 # Metadata key used to store the structural index.
 MD_STRUCTURE_KEY = "md_structure"
+# Issue #3720 (Codex R5): shared markdown extension set.
+_MARKDOWN_EXTENSIONS: tuple[str, ...] = (".md", ".markdown", ".mdown", ".mkd")
 
 
 class MarkdownStructureWriteHook:
@@ -62,7 +64,7 @@ class MarkdownStructureWriteHook:
         """Parse markdown structure and store index after .md writes."""
         if self._metadata is None:
             return
-        if not ctx.path.endswith(".md"):
+        if not ctx.path.lower().endswith(_MARKDOWN_EXTENSIONS):
             return
         # Skip streamed/empty writes — they pass content=b'' with no hash.
         # Persisting an empty index would poison the cache.
@@ -209,6 +211,11 @@ class MarkdownStructureWriteHook:
             )
 
         for sec in index.sections:
+            # Issue #3720 (Codex R2): skip synthetic root sections
+            # (depth=0, empty heading) from structure listings so the
+            # grep-only preamble fix doesn't pollute outline APIs.
+            if sec.depth == 0 and sec.heading == "":
+                continue
             block_types = list({b.type for b in sec.blocks})
             entry: dict[str, Any] = {
                 "type": "section",

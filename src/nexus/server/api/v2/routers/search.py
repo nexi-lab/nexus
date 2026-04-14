@@ -690,6 +690,7 @@ async def _do_grep_operation(
     after_context: int,
     invert_match: bool,
     files: list[str] | None,
+    block_type: str | None = None,
 ) -> dict[str, Any]:
     """Execute a grep request and assemble the paginated response.
 
@@ -729,17 +730,21 @@ async def _do_grep_operation(
     )
 
     try:
-        raw_results = await search_service.grep(
-            pattern=pattern,
-            path=path,
-            ignore_case=ignore_case,
-            max_results=fetch_limit,
-            context=op_context,
-            before_context=before_context,
-            after_context=after_context,
-            invert_match=invert_match,
-            files=files,
-        )
+        grep_kwargs: dict[str, Any] = {
+            "pattern": pattern,
+            "path": path,
+            "ignore_case": ignore_case,
+            "max_results": fetch_limit,
+            "context": op_context,
+            "before_context": before_context,
+            "after_context": after_context,
+            "invert_match": invert_match,
+            "files": files,
+        }
+        # Issue #3720: only forward block_type when set (backward compat).
+        if block_type is not None:
+            grep_kwargs["block_type"] = block_type
+        raw_results = await search_service.grep(**grep_kwargs)
     except (ValueError, InvalidPathError) as exc:
         # Client errors from SearchService:
         #  * ValueError — invalid regex, size cap exceeded, cross-zone entry
@@ -998,6 +1003,15 @@ async def search_grep(
             "set of file paths instead of walking the tree (#3701)."
         ),
     ),
+    block_type: str | None = Query(
+        None,
+        description=(
+            "Restrict matches to a specific markdown block type (#3720). "
+            "Valid values: code, table, frontmatter, paragraph, "
+            "blockquote, list, heading. Non-markdown files pass through "
+            "unfiltered."
+        ),
+    ),
     auth_result: dict[str, Any] = Depends(require_auth),
 ) -> dict[str, Any]:
     """Search file contents via regex (#3701 Issue 1A).
@@ -1029,6 +1043,7 @@ async def search_grep(
         after_context=after_context,
         invert_match=invert_match,
         files=files,
+        block_type=block_type,
     )
 
 
@@ -1096,6 +1111,11 @@ async def search_grep_post(
 
     files = _body_get_files(body)
 
+    # Issue #3720: block_type (optional string, no type coercion needed).
+    block_type = body.get("block_type")
+    if block_type is not None and not isinstance(block_type, str):
+        raise HTTPException(status_code=400, detail="Field 'block_type' must be a string")
+
     return await _do_grep_operation(
         request,
         auth_result,
@@ -1108,6 +1128,7 @@ async def search_grep_post(
         after_context=after_context,
         invert_match=invert_match,
         files=files,
+        block_type=block_type,
     )
 
 

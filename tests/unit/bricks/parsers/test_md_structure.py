@@ -184,7 +184,11 @@ More content.
 
     def test_no_headings(self) -> None:
         idx = parse_markdown_structure(b"Just plain text.\nNo headings.\n")
-        assert len(idx.sections) == 0
+        # Issue #3720 (Codex R1): headingless files with blocks now get
+        # a synthetic root section (depth=0) so block_type filtering works.
+        assert len(idx.sections) == 1
+        assert idx.sections[0].depth == 0
+        assert idx.sections[0].heading == ""
 
     def test_frontmatter_only(self) -> None:
         doc = b"---\ntitle: Test\n---\n"
@@ -445,3 +449,103 @@ class TestFailureModes:
         assert len(idx.sections) == 1
         assert idx.sections[0].tokens_est == 0
         assert idx.frontmatter is None
+
+
+# ---------------------------------------------------------------------------
+# Issue #3720: new block types (paragraph, blockquote, list, heading)
+# ---------------------------------------------------------------------------
+
+_BLOCK_TYPES_DOC = b"""\
+# Title
+
+A paragraph of text.
+
+> A blockquote
+> spanning two lines.
+
+- bullet one
+- bullet two
+
+1. ordered one
+2. ordered two
+
+```python
+code here
+```
+
+| col1 | col2 |
+|------|------|
+| a    | b    |
+"""
+
+
+class TestNewBlockTypes:
+    """Issue #3720: paragraph, blockquote, list, heading block extraction."""
+
+    @pytest.fixture
+    def index(self) -> MarkdownStructureIndex:
+        return parse_markdown_structure(_BLOCK_TYPES_DOC, "test")
+
+    def test_heading_block_tracked(self, index: MarkdownStructureIndex) -> None:
+        """Heading lines are recorded as BlockInfo(type='heading')."""
+        sec = index.sections[0]
+        headings = filter_blocks(sec, "heading")
+        assert len(headings) >= 1
+        assert headings[0].type == "heading"
+
+    def test_paragraph_block_tracked(self, index: MarkdownStructureIndex) -> None:
+        """Paragraphs are recorded as BlockInfo(type='paragraph')."""
+        sec = index.sections[0]
+        paragraphs = filter_blocks(sec, "paragraph")
+        assert len(paragraphs) >= 1
+        # Verify the first paragraph contains "A paragraph of text"
+        for p in paragraphs:
+            text = slice_content(_BLOCK_TYPES_DOC, p.byte_start, p.byte_end)
+            if "paragraph of text" in text:
+                break
+        else:
+            pytest.fail("Expected paragraph containing 'paragraph of text'")
+
+    def test_blockquote_block_tracked(self, index: MarkdownStructureIndex) -> None:
+        """Blockquotes are recorded as BlockInfo(type='blockquote')."""
+        sec = index.sections[0]
+        quotes = filter_blocks(sec, "blockquote")
+        assert len(quotes) >= 1
+        text = slice_content(_BLOCK_TYPES_DOC, quotes[0].byte_start, quotes[0].byte_end)
+        assert "blockquote" in text
+
+    def test_list_block_tracked_bullet(self, index: MarkdownStructureIndex) -> None:
+        """Bullet lists are recorded as BlockInfo(type='list')."""
+        sec = index.sections[0]
+        lists = filter_blocks(sec, "list")
+        assert len(lists) >= 1
+        # At least one list contains bullet items
+        found_bullet = False
+        for lst in lists:
+            text = slice_content(_BLOCK_TYPES_DOC, lst.byte_start, lst.byte_end)
+            if "bullet" in text:
+                found_bullet = True
+                break
+        assert found_bullet, "Expected a list block containing 'bullet'"
+
+    def test_list_block_tracked_ordered(self, index: MarkdownStructureIndex) -> None:
+        """Ordered lists are also recorded as BlockInfo(type='list')."""
+        sec = index.sections[0]
+        lists = filter_blocks(sec, "list")
+        found_ordered = False
+        for lst in lists:
+            text = slice_content(_BLOCK_TYPES_DOC, lst.byte_start, lst.byte_end)
+            if "ordered" in text:
+                found_ordered = True
+                break
+        assert found_ordered, "Expected a list block containing 'ordered'"
+
+    def test_code_and_table_still_tracked(self, index: MarkdownStructureIndex) -> None:
+        """Existing code and table blocks still work."""
+        sec = index.sections[0]
+        assert len(filter_blocks(sec, "code")) >= 1
+        assert len(filter_blocks(sec, "table")) >= 1
+
+    def test_schema_version_is_2(self, index: MarkdownStructureIndex) -> None:
+        """Schema version bumped to 2 for new block types."""
+        assert index.version == 2

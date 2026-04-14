@@ -466,7 +466,7 @@ class TestDeferredPermissionBufferFlush:
         )
 
         try:
-            buf.start()
+            buf._start_sync()
 
             # Enqueue some grants
             for i in range(10):
@@ -489,7 +489,7 @@ class TestDeferredPermissionBufferFlush:
                 f"Grants still pending after background flush: {stats['pending_grants']}"
             )
         finally:
-            buf.stop(timeout=2.0)
+            buf._stop_sync(timeout=2.0)
 
 
 # ============================================================================

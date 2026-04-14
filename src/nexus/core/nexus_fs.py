@@ -5248,11 +5248,19 @@ class NexusFS(  # type: ignore[misc]
                 result.items = [e.path for e in result.items]
             return result
 
-        entries = self.metadata.list(prefix=prefix, recursive=recursive)
-        entries = [e for e in entries if not self._is_internal_path(e.path)]
+        # Issue #3706: Use list_iter() instead of list() to avoid creating a
+        # second filtered copy in Python and to bypass RustMetastoreProxy's
+        # _dcache (prevents unbounded cache growth).  Note: the underlying
+        # Rust/Raft engines still materialise the full result set internally;
+        # true streaming requires a Rust-level paginated API (future work).
+        entries_iter = (
+            e
+            for e in self.metadata.list_iter(prefix=prefix, recursive=recursive)
+            if not self._is_internal_path(e.path)
+        )
         if details:
-            return [self._entry_to_detail_dict(e, recursive) for e in entries]
-        return [e.path for e in entries]
+            return [self._entry_to_detail_dict(e, recursive) for e in entries_iter]
+        return [e.path for e in entries_iter]
 
     # _run_async: replaced by direct run_sync() calls (Issue #1381)
 

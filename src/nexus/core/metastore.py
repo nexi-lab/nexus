@@ -171,10 +171,19 @@ class MetastoreABC(ABC):
         """Iterate over file metadata matching prefix (populates dcache).
 
         Memory-efficient alternative to list(). Yields results one at a time.
-        Subclasses may override ``_list_raw`` for true streaming.
+        Subclasses that define ``_list_iter_raw`` get true streaming;
+        otherwise falls back to iterating over ``_list_raw``.
         """
+        # Issue #3706: dispatch to _list_iter_raw for true streaming when
+        # subclass provides it (e.g. RaftMetadataStore, SQLiteMetastore).
+        raw_iter = getattr(self, "_list_iter_raw", None)
+        source = (
+            raw_iter(prefix, recursive, **kwargs)
+            if raw_iter is not None
+            else self._list_raw(prefix, recursive, **kwargs)
+        )
         kernel = self._kernel
-        for meta in self._list_raw(prefix, recursive, **kwargs):
+        for meta in source:
             self._dcache[meta.path] = meta
             _sync_to_rust(kernel, meta)
             yield meta
@@ -372,6 +381,20 @@ class RustMetastoreProxy(MetastoreABC):
         """List metadata from Rust metastore."""
         result: builtins.list[FileMetadata] = self._rust_kernel.metastore_list(prefix)
         return result
+
+    def list_iter(
+        self,
+        prefix: str = "",
+        recursive: bool = True,  # noqa: ARG002
+        **kwargs: Any,  # noqa: ARG002
+    ) -> Iterator[FileMetadata]:
+        """Iterate metadata from Rust metastore (bypasses Python dcache).
+
+        Issue #3706: like list(), delegates directly to Rust without populating
+        the Python-side _dcache, avoiding unbounded cache growth on repeated
+        large directory listings.
+        """
+        yield from self._rust_kernel.metastore_list(prefix)
 
     def dcache_evict_prefix(self, prefix: str) -> int:
         """Evict all dcache entries under prefix (Rust DCache only)."""

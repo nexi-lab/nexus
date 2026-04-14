@@ -130,6 +130,7 @@ KERNEL_REQUIRED_METHODS: frozenset[str] = frozenset(
         "stream_write_nowait",
         "sys_mkdir",
         "sys_read",
+        "sys_readdir",
         "sys_rename",
         "sys_rmdir",
         "sys_stat",

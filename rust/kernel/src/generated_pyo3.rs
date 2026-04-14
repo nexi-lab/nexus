@@ -1750,6 +1750,21 @@ impl PyKernel {
         }
     }
 
+    // ── sys_readdir ───────────────────────────────────────────────────
+
+    #[pyo3(signature = (path, zone_id, is_admin, recursive=true))]
+    fn sys_readdir(
+        &self,
+        path: &str,
+        zone_id: &str,
+        is_admin: bool,
+        recursive: bool,
+    ) -> PyResult<Vec<String>> {
+        self.inner
+            .sys_readdir(path, zone_id, is_admin, recursive)
+            .map_err(Into::into)
+    }
+
     // ── sys_unlink ────────────────────────────────────────────────────
 
     #[pyo3(signature = (path, ctx))]

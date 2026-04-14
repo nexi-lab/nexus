@@ -805,6 +805,53 @@ impl Kernel {
         self.router.remove_mount(mount_point, zone_id)
     }
 
+    /// List directory entries under a path via per-mount metastore.
+    ///
+    /// Route path → mount_point → with_metastore → metastore.list(path).
+    /// For PAS mounts (LocalConnectorMetastore), this passthrough to host OS read_dir.
+    /// For CAS mounts (RedbMetastore), this queries stored metadata.
+    pub fn sys_readdir(
+        &self,
+        path: &str,
+        zone_id: &str,
+        is_admin: bool,
+        recursive: bool,
+    ) -> Result<Vec<String>, KernelError> {
+        // 1. Route to find mount point
+        let route = self
+            .router
+            .route_impl(path, zone_id, is_admin, false)
+            .map_err(KernelError::from)?;
+
+        // 2. Query per-mount metastore (LocalConnectorMetastore for PAS, Redb for CAS)
+        let entries = self
+            .with_metastore(&route.mount_point, |ms| ms.list(path))
+            .unwrap_or_else(|| Ok(vec![]))
+            .map_err(|e| KernelError::IOError(format!("sys_readdir({path}): {e:?}")))?;
+
+        // 3. Return paths (flat list if non-recursive, already recursive from metastore)
+        let paths: Vec<String> = if recursive {
+            entries.into_iter().map(|m| m.path).collect()
+        } else {
+            // Filter to direct children only
+            let prefix = if path.ends_with('/') {
+                path.to_string()
+            } else {
+                format!("{path}/")
+            };
+            entries
+                .into_iter()
+                .filter(|m| {
+                    let rel = m.path.strip_prefix(&prefix).unwrap_or(&m.path);
+                    !rel.contains('/')
+                })
+                .map(|m| m.path)
+                .collect()
+        };
+
+        Ok(paths)
+    }
+
     /// Zone-canonical LPM routing.
     pub fn route(
         &self,

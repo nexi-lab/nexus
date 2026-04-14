@@ -5083,6 +5083,20 @@ class NexusFS(  # type: ignore[misc]
                 return [self._format_lock_info(lk) for lk in locks]
             return [lk.path for lk in locks]
 
+        # ── Rust fast path: route → per-mount metastore (PAS passthrough) ──
+        if not details and self._kernel is not None and path and path != "/":
+            _is_admin = (
+                getattr(context, "is_admin", False)
+                if context is not None and not isinstance(context, dict)
+                else (context.get("is_admin", False) if isinstance(context, dict) else False)
+            )
+            try:
+                result = self._kernel.sys_readdir(path, self._zone_id, _is_admin, recursive)
+                if result:
+                    return result
+            except Exception:
+                pass  # Fallback to Python path
+
         # ── External connector mount listing (S3, GCS, etc.) ──
         # Only intercept ExternalRouteResult — these are mounts with
         # is_external_storage metadata set. Plain RouteResult backends

@@ -728,13 +728,63 @@ impl Kernel {
         backend: Option<Box<dyn crate::backend::ObjectStore>>,
         metastore_path: Option<&str>,
     ) -> Result<(), KernelError> {
-        // Open per-mount metastore if path provided (federation mode)
-        if let Some(ms_path) = metastore_path {
+        let canonical = canonicalize(mount_point, zone_id);
+
+        // Per-mount metastore: PAS backends get LocalConnectorMetastore
+        // (passthrough to host OS), CAS backends get RedbMetastore.
+        // PAS detected by "type:/physical/path" format in backend_name.
+        if let Some(phys_root) = backend_name.split_once(':').map(|(_, r)| r) {
+            if !phys_root.is_empty() && phys_root.starts_with('/') {
+                let ms = crate::metastore::LocalConnectorMetastore::new(
+                    std::path::Path::new(phys_root),
+                    mount_point,
+                );
+                self.mount_metastores
+                    .insert(canonical.clone(), Box::new(ms));
+            }
+        } else if let Some(ms_path) = metastore_path {
+            // Federation mode: per-mount redb metastore
             let ms = RedbMetastore::open(std::path::Path::new(ms_path))
                 .map_err(|e| KernelError::IOError(format!("RedbMetastore: {e:?}")))?;
-            let canonical = canonicalize(mount_point, zone_id);
-            self.mount_metastores.insert(canonical, Box::new(ms));
+            self.mount_metastores
+                .insert(canonical.clone(), Box::new(ms));
         }
+
+        // DT_MOUNT metadata entry (for sys_stat on mount point)
+        let physical = backend_name
+            .split_once(':')
+            .map(|(_, r)| r.to_string())
+            .unwrap_or_default();
+        self.with_metastore(&canonical, |ms| {
+            let meta = crate::metastore::FileMetadata {
+                path: mount_point.to_string(),
+                backend_name: backend_name.to_string(),
+                physical_path: physical.clone(),
+                size: 0,
+                etag: None,
+                version: 1,
+                entry_type: 2, // DT_MOUNT
+                zone_id: Some(zone_id.to_string()),
+                mime_type: None,
+            };
+            let _ = ms.put(mount_point, meta);
+        });
+
+        // DCache entry (fast-path for sys_stat)
+        self.dcache.put(
+            mount_point,
+            CachedEntry {
+                backend_name: backend_name.to_string(),
+                physical_path: physical,
+                size: 0,
+                etag: None,
+                version: 1,
+                entry_type: 2, // DT_MOUNT
+                zone_id: Some(zone_id.to_string()),
+                mime_type: None,
+            },
+        );
+
         self.router
             .add_mount(
                 mount_point,
@@ -778,68 +828,7 @@ impl Kernel {
         self.router.get_mount_points()
     }
 
-    /// High-level mount: add_mount + create DT_MOUNT metastore entry.
-    ///
-    /// Encapsulates routing table update + metadata persistence in one call.
-    /// DLC calls this, then does Python-side hook registration.
-    #[allow(clippy::too_many_arguments, dead_code)]
-    pub fn kernel_mount(
-        &self,
-        mount_point: &str,
-        zone_id: &str,
-        readonly: bool,
-        admin_only: bool,
-        io_profile: &str,
-        backend_name: &str,
-        backend: Option<Box<dyn crate::backend::ObjectStore>>,
-        metastore_path: Option<&str>,
-    ) -> Result<(), KernelError> {
-        // 1. Router + per-mount metastore
-        self.add_mount(
-            mount_point,
-            zone_id,
-            readonly,
-            admin_only,
-            io_profile,
-            backend_name,
-            backend,
-            metastore_path,
-        )?;
-
-        // 2. Create DT_MOUNT metadata entry (best-effort)
-        let canonical = canonicalize(mount_point, zone_id);
-        self.with_metastore(&canonical, |ms| {
-            let meta = crate::metastore::FileMetadata {
-                path: mount_point.to_string(),
-                backend_name: backend_name.to_string(),
-                physical_path: String::new(),
-                size: 0,
-                etag: None,
-                version: 1,
-                entry_type: 2, // DT_MOUNT
-                zone_id: Some(zone_id.to_string()),
-                mime_type: None,
-            };
-            let _ = ms.put(mount_point, meta);
-        });
-
-        // 3. DCache entry for mount point
-        self.dcache.put(
-            mount_point,
-            CachedEntry {
-                backend_name: backend_name.to_string(),
-                physical_path: String::new(),
-                size: 0,
-                etag: None,
-                version: 1,
-                entry_type: 2, // DT_MOUNT
-                zone_id: Some(zone_id.to_string()),
-                mime_type: None,
-            },
-        );
-
-        Ok(())
-    }
+    // kernel_mount removed — add_mount now handles metastore + dcache.
 
     /// High-level unmount: remove_mount + cleanup metastore entry.
     pub fn kernel_unmount(&self, mount_point: &str, zone_id: &str) -> Result<bool, KernelError> {

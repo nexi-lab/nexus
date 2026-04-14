@@ -177,14 +177,23 @@ def resolve_connection_env(
         env_vars["NEXUS_TLS_CA"] = tls.get("ca", "")
         env_vars["NEXUS_GRPC_TLS"] = "true"
     elif config.get("tls_cert"):
-        env_vars["NEXUS_TLS_CERT"] = config["tls_cert"]
-        env_vars["NEXUS_TLS_KEY"] = config.get("tls_key", "")
-        env_vars["NEXUS_TLS_CA"] = config.get("tls_ca", "")
-        # Emit NEXUS_GRPC_TLS=true only if cert files actually exist on disk
         import pathlib
 
-        if pathlib.Path(config["tls_cert"]).exists():
+        _cert = pathlib.Path(config["tls_cert"])
+        _key = pathlib.Path(config.get("tls_key", ""))
+        _ca = pathlib.Path(config.get("tls_ca", ""))
+        # All-or-nothing: only export TLS when all 3 files exist
+        if _cert.exists() and _key.exists() and _ca.exists():
+            env_vars["NEXUS_TLS_CERT"] = config["tls_cert"]
+            env_vars["NEXUS_TLS_KEY"] = config.get("tls_key", "")
+            env_vars["NEXUS_TLS_CA"] = config.get("tls_ca", "")
             env_vars["NEXUS_GRPC_TLS"] = "true"
+        else:
+            # Config declares TLS but files missing — treat as non-TLS
+            env_vars["NEXUS_GRPC_TLS"] = "false"
+            env_vars["NEXUS_TLS_CERT"] = ""
+            env_vars["NEXUS_TLS_KEY"] = ""
+            env_vars["NEXUS_TLS_CA"] = ""
     else:
         # Non-TLS stack: clear any stale TLS override from a previous session
         env_vars["NEXUS_GRPC_TLS"] = "false"

@@ -33,6 +33,7 @@ References:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -223,8 +224,9 @@ class ManagedAgentLoop:
                 self._messages = await self._compactor.auto_compact(self._messages)
                 self._persist_conversation()
 
-            # Call LLM with retry — direct generator iteration
-            response_text, tool_calls, meta = self._call_llm_with_retry()
+            # Call LLM with retry — run in thread to not block event loop
+            # (generate_streaming() does blocking HTTP I/O)
+            response_text, tool_calls, meta = await asyncio.to_thread(self._call_llm_with_retry)
 
             # Emit model name from metadata
             if meta:

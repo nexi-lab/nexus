@@ -32,11 +32,11 @@ def _build_kernel_metastore(db_path) -> tuple[object, RustMetastoreProxy]:
 
 @pytest.fixture
 def benchmark_loop():
-    """Create a dedicated event loop for benchmark async calls.
+    """Create a dedicated event loop for factory async calls.
 
-    pytest-benchmark does not support async tests, so we use a dedicated
-    event loop with loop.run_until_complete() to drive async coroutines
-    from sync benchmark functions.
+    create_nexus_fs() is still async (factory lifecycle), so we keep a
+    dedicated event loop for run_until_complete() in fixture setup.
+    All NexusFS methods are now sync — only the factory needs this.
     """
     loop = asyncio.new_event_loop()
     yield loop
@@ -129,48 +129,45 @@ def sample_files():
 
 
 @pytest.fixture
-def populated_nexus(benchmark_nexus, sample_files, benchmark_loop):
+def populated_nexus(benchmark_nexus, sample_files):
     """Create a NexusFS with pre-populated files for read benchmarks."""
     nx = benchmark_nexus
 
-    async def _populate():
-        # Create directory structure
-        for i in range(10):
-            nx.mkdir(f"/dir_{i}", parents=True)
-            for j in range(10):
-                nx.mkdir(f"/dir_{i}/subdir_{j}", parents=True)
+    # All NexusFS methods are now sync — no event loop needed.
+    # Create directory structure
+    for i in range(10):
+        nx.mkdir(f"/dir_{i}", parents=True)
+        for j in range(10):
+            nx.mkdir(f"/dir_{i}/subdir_{j}", parents=True)
 
-        # Create files of various sizes
-        for size_name, content in sample_files.items():
-            if size_name != "xlarge":  # Skip xlarge for setup speed
-                nx.write(f"/test_{size_name}.bin", content)
-                # Create copies in subdirectories
-                for i in range(5):
-                    nx.write(f"/dir_{i}/test_{size_name}.bin", content)
+    # Create files of various sizes
+    for size_name, content in sample_files.items():
+        if size_name != "xlarge":  # Skip xlarge for setup speed
+            nx.write(f"/test_{size_name}.bin", content)
+            # Create copies in subdirectories
+            for i in range(5):
+                nx.write(f"/dir_{i}/test_{size_name}.bin", content)
 
-        # Create many small files for glob/list benchmarks
-        for i in range(100):
-            nx.write(f"/many_files/file_{i:04d}.txt", f"Content {i}".encode())
-            nx.write(f"/many_files/file_{i:04d}.py", f"# Python {i}".encode())
-            nx.write(f"/many_files/file_{i:04d}.json", f'{{"id": {i}}}'.encode())
+    # Create many small files for glob/list benchmarks
+    for i in range(100):
+        nx.write(f"/many_files/file_{i:04d}.txt", f"Content {i}".encode())
+        nx.write(f"/many_files/file_{i:04d}.py", f"# Python {i}".encode())
+        nx.write(f"/many_files/file_{i:04d}.json", f'{{"id": {i}}}'.encode())
 
-    benchmark_loop.run_until_complete(_populate())
     yield nx
 
 
 @pytest.fixture
-def deep_directory_nexus(benchmark_nexus, benchmark_loop):
+def deep_directory_nexus(benchmark_nexus):
     """Create a NexusFS with deep directory structure for path resolution benchmarks."""
     nx = benchmark_nexus
 
-    async def _populate():
-        current_path = ""
-        for i in range(20):
-            current_path += f"/level_{i}"
-            nx.mkdir(current_path, parents=True)
-            nx.write(f"{current_path}/file.txt", f"Content at depth {i}".encode())
+    current_path = ""
+    for i in range(20):
+        current_path += f"/level_{i}"
+        nx.mkdir(current_path, parents=True)
+        nx.write(f"{current_path}/file.txt", f"Content at depth {i}".encode())
 
-    benchmark_loop.run_until_complete(_populate())
     yield nx
 
 

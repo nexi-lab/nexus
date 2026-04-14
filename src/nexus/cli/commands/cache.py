@@ -1,7 +1,7 @@
 """Cache management commands - warmup, stats, clear (Issue #1076)."""
 
 import asyncio
-from typing import Any
+from typing import Any, cast
 
 import click
 
@@ -104,7 +104,7 @@ def warmup(
 
             # Create warmer
             warmer = CacheWarmer(
-                nexus_fs=nx,
+                nexus_fs=cast(Any, nx),
                 config=config,
                 file_tracker=file_tracker,
             )

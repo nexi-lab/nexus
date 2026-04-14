@@ -23,7 +23,6 @@ and dispatches execution by name.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from typing import Any, Protocol, runtime_checkable
@@ -57,16 +56,13 @@ class Tool(Protocol):
     without changes. Only override what you need.
     """
 
-    @property
-    def name(self) -> str: ...
+    name: str
 
-    @property
-    def description(self) -> str: ...
+    description: str
 
-    @property
-    def input_schema(self) -> dict[str, Any]: ...
+    input_schema: dict[str, Any]
 
-    async def call(self, **kwargs: Any) -> str: ...
+    def call(self, **kwargs: Any) -> str: ...
 
     def is_read_only(self) -> bool: ...
 
@@ -308,20 +304,23 @@ class ExclusiveLockPolicy:
             tool_calls
         )
 
-        # Run concurrent-safe tools in parallel
+        # Run concurrent-safe tools in parallel via ThreadPoolExecutor
         if concurrent:
-            coros = [self._execute_one(tc, registry) for _, tc in concurrent]
-            concurrent_results = await asyncio.gather(*coros)
-            for (i, _), result in zip(concurrent, concurrent_results, strict=True):
-                results[i] = result
+            from concurrent.futures import ThreadPoolExecutor
+
+            with ThreadPoolExecutor(max_workers=min(len(concurrent), 8)) as pool:
+                futures = {pool.submit(self._execute_one, tc, registry): i for i, tc in concurrent}
+                for future in futures:
+                    idx = futures[future]
+                    results[idx] = future.result()
 
         # Run serial tools sequentially (exclusive lock)
         for i, tc in serial:
-            results[i] = await self._execute_one(tc, registry)
+            results[i] = self._execute_one(tc, registry)
 
         return results
 
-    async def _execute_one(self, tool_call: dict[str, Any], registry: "ToolRegistry") -> ToolResult:
+    def _execute_one(self, tool_call: dict[str, Any], registry: "ToolRegistry") -> ToolResult:
         """Execute a single tool call with per-tool truncation."""
         func = tool_call.get("function", {})
         name = func.get("name", "")
@@ -371,7 +370,7 @@ class ExclusiveLockPolicy:
                 )
 
         try:
-            raw_result = await tool.call(**kwargs)
+            raw_result = tool.call(**kwargs)
         except Exception as exc:
             logger.error("Tool %s failed: %s", name, exc)
             return ToolResult(
@@ -413,8 +412,8 @@ class ToolRegistry:
     def __init__(self) -> None:
         self._tools: dict[str, Tool] = {}
 
-    def register(self, tool: Tool) -> None:
-        """Register a tool by name."""
+    def register(self, tool: Any) -> None:
+        """Register a tool by name. Accepts any object with Tool-compatible interface."""
         self._tools[tool.name] = tool
 
     def get(self, name: str) -> Tool | None:
@@ -443,7 +442,7 @@ class ToolRegistry:
         """Return names of deferred tools (for system prompt ToolSearch hint)."""
         return [tool.name for tool in self._tools.values() if getattr(tool, "should_defer", False)]
 
-    async def execute_one(self, tool_call: dict[str, Any]) -> str:
+    def execute_one(self, tool_call: dict[str, Any]) -> str:
         """Execute a single tool call, return result string."""
         func = tool_call.get("function", {})
         name = func.get("name", "")
@@ -457,7 +456,7 @@ class ToolRegistry:
             return json.dumps({"error": f"Invalid arguments for tool {name}"})
 
         try:
-            result = await tool.call(**kwargs)
+            result = tool.call(**kwargs)
         except Exception as exc:
             logger.error("Tool %s failed: %s", name, exc)
             return json.dumps({"error": str(exc)})
@@ -491,15 +490,17 @@ class ToolRegistry:
 
         results: list[str] = [""] * len(tool_calls)
 
-        # Run concurrent tools in parallel
+        # Run concurrent tools in parallel via ThreadPoolExecutor
         if concurrent:
-            coros = [self.execute_one(tc) for _, tc in concurrent]
-            concurrent_results = await asyncio.gather(*coros)
-            for (i, _), result in zip(concurrent, concurrent_results, strict=True):
-                results[i] = result
+            from concurrent.futures import ThreadPoolExecutor
+
+            with ThreadPoolExecutor(max_workers=min(len(concurrent), 8)) as pool:
+                futures = {pool.submit(self.execute_one, tc): i for i, tc in concurrent}
+                for future in futures:
+                    results[futures[future]] = future.result()
 
         # Run serial tools sequentially
         for i, tc in serial:
-            results[i] = await self.execute_one(tc)
+            results[i] = self.execute_one(tc)
 
         return results

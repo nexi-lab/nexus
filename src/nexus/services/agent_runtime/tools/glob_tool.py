@@ -41,7 +41,7 @@ class GlobTool:
     def __init__(self, search_service: Any) -> None:
         self._search = search_service
 
-    async def call(self, *, pattern: str, path: str = "/", **_: Any) -> str:
+    def call(self, *, pattern: str, path: str = "/", **_: Any) -> str:
         results = self._search.glob(pattern, path=path)
         output = json.dumps(results, indent=2)
         return output[:_RESULT_LIMIT]

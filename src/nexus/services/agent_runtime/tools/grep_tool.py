@@ -11,7 +11,7 @@ _RESULT_LIMIT = 50_000
 class _SearchService(Protocol):
     """Minimal protocol for SearchService grep."""
 
-    async def grep(
+    def grep(
         self,
         pattern: str,
         path: str = "/",
@@ -69,7 +69,7 @@ class GrepTool:
     def __init__(self, search_service: Any) -> None:
         self._search = search_service
 
-    async def call(
+    def call(
         self,
         *,
         pattern: str,
@@ -79,7 +79,7 @@ class GrepTool:
         max_results: int = 100,
         **_: Any,
     ) -> str:
-        results = await self._search.grep(
+        results = self._search.grep(
             pattern,
             path=path,
             file_pattern=file_pattern,

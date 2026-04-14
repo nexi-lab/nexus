@@ -446,7 +446,7 @@ class ManagedAgentLoop:
         (backward compatibility with existing callers).
         """
         if self._tool_registry:
-            return await self._tool_registry.execute_one(tool_call)
+            return self._tool_registry.execute_one(tool_call)
 
         # Legacy fallback: hardcoded read_file / write_file
         func = tool_call.get("function", {})

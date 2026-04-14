@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from typing import Any
 
 
@@ -44,12 +44,12 @@ class EditFileTool:
         "required": ["path", "edits"],
     }
 
-    def __init__(self, edit_fn: Callable[..., Awaitable[dict[str, Any]]]) -> None:
+    def __init__(self, edit_fn: Callable[..., dict[str, Any]]) -> None:
         self._edit_fn = edit_fn
 
-    async def call(self, *, path: str, edits: list[dict[str, str]], **_: Any) -> str:
+    def call(self, *, path: str, edits: list[dict[str, str]], **_: Any) -> str:
         edit_pairs = [(e["old_str"], e["new_str"]) for e in edits]
-        result = await self._edit_fn(path, edit_pairs)
+        result = self._edit_fn(path, edit_pairs)
         return json.dumps(result, indent=2)
 
     def is_read_only(self) -> bool:

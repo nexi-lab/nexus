@@ -6,8 +6,8 @@ Future: full DT_PIPE integration via SubprocessRunner for kernel observability.
 
 from __future__ import annotations
 
-import asyncio
 import json
+import subprocess
 from typing import Any
 
 _OUTPUT_LIMIT = 50_000
@@ -37,26 +37,25 @@ class BashTool:
     def __init__(self, *, cwd: str | None = None) -> None:
         self._cwd = cwd
 
-    async def call(self, *, command: str, timeout: int = _DEFAULT_TIMEOUT, **_: Any) -> str:
+    def call(self, *, command: str, timeout: int = _DEFAULT_TIMEOUT, **_: Any) -> str:
         try:
-            proc = await asyncio.create_subprocess_shell(
+            result = subprocess.run(
                 command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+                shell=True,
+                capture_output=True,
                 cwd=self._cwd,
+                timeout=timeout,
             )
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        except TimeoutError:
-            proc.kill()
+        except subprocess.TimeoutExpired:
             return json.dumps({"error": f"Command timed out after {timeout}s", "command": command})
         except Exception as exc:
             return json.dumps({"error": str(exc), "command": command})
 
-        output = (stdout + stderr).decode("utf-8", errors="replace").strip()
+        output = (result.stdout + result.stderr).decode("utf-8", errors="replace").strip()
         if not output:
             output = "(no output)"
 
-        exit_code = proc.returncode or 0
+        exit_code = result.returncode or 0
         if len(output) > _OUTPUT_LIMIT:
             output = output[:_OUTPUT_LIMIT] + f"\n... (truncated, {len(output)} total chars)"
 

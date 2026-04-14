@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from typing import Any
 
 _RESULT_LIMIT = 50_000
@@ -28,11 +28,11 @@ class ReadFileTool:
         "required": ["path"],
     }
 
-    def __init__(self, sys_read: Callable[[str], Awaitable[bytes]]) -> None:
+    def __init__(self, sys_read: Callable[[str], bytes]) -> None:
         self._sys_read = sys_read
 
-    async def call(self, *, path: str, limit: int | None = None, **_: Any) -> str:
-        data = await self._sys_read(path)
+    def call(self, *, path: str, limit: int | None = None, **_: Any) -> str:
+        data = self._sys_read(path)
         text = data.decode("utf-8", errors="replace")
         if limit is not None:
             lines = text.splitlines(keepends=True)

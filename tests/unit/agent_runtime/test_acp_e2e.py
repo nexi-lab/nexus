@@ -35,11 +35,15 @@ pytestmark = [
 
 
 def _spawn_acp() -> subprocess.Popen[str]:
-    """Spawn `nexus chat --acp` with dummy LLM config."""
+    """Spawn `nexus chat --acp` with dummy LLM config and isolated data dir."""
+    import tempfile
+
     env = os.environ.copy()
     env["NEXUS_LLM_BASE_URL"] = "http://127.0.0.1:19999/v1"  # unused port
     env["NEXUS_LLM_API_KEY"] = "test-key"
     env["RUST_LOG"] = "error"  # quiet Rust
+    # Use isolated temp data dir to avoid redb lock conflicts with other nexus instances
+    env["NEXUS_DATA_DIR"] = tempfile.mkdtemp(prefix="nexus-e2e-")
     return subprocess.Popen(
         ["uv", "run", "nexus", "chat", "--acp"],
         stdin=subprocess.PIPE,

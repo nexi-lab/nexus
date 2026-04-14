@@ -112,6 +112,37 @@ def chat(
     )
 
 
+def _build_tool_registry(nx: Any, cwd: str) -> Any:
+    """Build ToolRegistry with built-in tools (Tier A).
+
+    Tools call sync NexusFS syscalls directly — no async wrappers needed.
+    """
+    from nexus.services.agent_runtime.tool_registry import ToolRegistry
+    from nexus.services.agent_runtime.tools import (
+        BashTool,
+        EditFileTool,
+        ReadFileTool,
+        WriteFileTool,
+    )
+
+    def _edit_fn(path: str, edit_pairs: list[tuple[str, str]]) -> dict:
+        """Edit = read + patch + write (sync)."""
+        content = nx.sys_read(path).decode("utf-8", errors="replace")
+        for old, new in edit_pairs:
+            if old not in content:
+                return {"error": f"old_string not found in {path}"}
+            content = content.replace(old, new, 1)
+        nx.write(path, content.encode("utf-8"))
+        return {"status": "ok", "path": path}
+
+    registry = ToolRegistry()
+    registry.register(ReadFileTool(nx.sys_read))
+    registry.register(WriteFileTool(nx.write))
+    registry.register(EditFileTool(_edit_fn))
+    registry.register(BashTool(cwd=cwd))
+    return registry
+
+
 async def _run_chat(
     *,
     prompt: str | None,
@@ -220,6 +251,7 @@ async def _run_chat(
             conv_path=f"{agent_path}/conversation",
             proc_path="/root/proc/chat-0",
             model=model,
+            tool_registry=_build_tool_registry(nx, cwd),
             compactor=DefaultCompactionStrategy(
                 sys_write=nx.write,
                 agent_path=agent_path,
@@ -263,6 +295,7 @@ async def _run_acp_mode(
 
     async def _loop_factory(session_id: str, cwd: str, observer: AgentObserver) -> ManagedAgentLoop:
         agent_path = "/root/agents/default"
+        _cwd = cwd or os.getcwd()
         loop = ManagedAgentLoop(
             sys_read=nx.sys_read,
             sys_write=nx.write,
@@ -272,11 +305,12 @@ async def _run_acp_mode(
             conv_path=f"{agent_path}/conversation",
             proc_path=f"/root/proc/{session_id[:8]}",
             model=model,
+            tool_registry=_build_tool_registry(nx, _cwd),
             compactor=DefaultCompactionStrategy(
                 sys_write=nx.write,
                 agent_path=agent_path,
             ),
-            cwd=cwd or os.getcwd(),
+            cwd=_cwd,
         )
         loop._observer = observer
         await loop.initialize()

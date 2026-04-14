@@ -31,7 +31,7 @@ use crate::hook_registry::InterceptHook;
 use crate::kernel::{Kernel, KernelError, OperationContext};
 use crate::lock::VFSLockManager;
 use crate::metastore::{FileMetadata, MetastoreError};
-use crate::router::{RouteError, RustRouteResult};
+use crate::mount_table::{RouteError, RustRouteResult};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Error conversion: KernelError -> PyErr (cached exception classes)

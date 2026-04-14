@@ -1857,7 +1857,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "use crate::kernel::{Kernel, KernelError, OperationContext};",
             "use crate::lock::VFSLockManager;",
             "use crate::metastore::{FileMetadata, MetastoreError};",
-            "use crate::router::{RouteError, RustRouteResult};",
+            "use crate::mount_table::{RouteError, RustRouteResult};",
         ]
     )
 

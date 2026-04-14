@@ -18,7 +18,9 @@ use crate::dispatch::{FileEvent, FileEventType, MutationObserver, Trie};
 use crate::file_watch::FileWatcher;
 use crate::lock::{LockMode, VFSLockManagerInner};
 use crate::metastore::RedbMetastore;
-use crate::router::{canonicalize, PathRouter, RouteError, RustRouteResult};
+use crate::mount_table::{
+    canonicalize_mount_path as canonicalize, MountTable, RouteError, RustRouteResult,
+};
 use dashmap::DashMap;
 use parking_lot::{Condvar, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -390,8 +392,10 @@ impl ZoneRevisionEntry {
 pub struct Kernel {
     // DCache (owned)
     dcache: DCache,
-    // Router (owned)
-    router: PathRouter,
+    // Mount table — owns backend + per-mount metastore + access flags.
+    // Replaces the old `router: PathRouter` + `mount_metastores: DashMap`
+    // split; both lookups now go through `MountTable` (F2 C2).
+    mount_table: MountTable,
     // PathTrie (owned)
     trie: Trie,
     // VFS Lock (Arc-shared with VFSLockManager for blocking acquire)
@@ -445,15 +449,11 @@ pub struct Kernel {
     file_watches: Arc<FileWatcher>,
     // Agent registry — DashMap backing store (§10 B1)
     pub(crate) agent_registry: crate::agent_registry::AgentRegistry,
-    // Per-mount metastores — federation zones have independent state machines.
-    // Keyed by zone-canonical mount point (e.g. "/zone-beta/shared").
-    // Syscalls check here first, then fall back to self.metastore (global).
-    //
-    // `Arc<dyn Metastore>` (not `Box<dyn Metastore>`) so ownership can be
-    // shared with a Python-side `PyKernelMetastore` wrapper — lets crates
-    // like `rust/raft` hand a bridged `Metastore` impl to the kernel via
-    // `add_mount(py_metastore=…)` without moving the trait object.
-    mount_metastores: DashMap<String, Arc<dyn crate::metastore::Metastore>>,
+    // Per-mount metastores now live inside `MountTable::entries` as
+    // `MountEntry::metastore: Option<Arc<dyn Metastore>>`. Federation
+    // installs them via `MountTable::install_metastore` after the mount
+    // is registered; standalone mode sets them during `add_mount` when
+    // `metastore_path` is provided.
     // IPC registry — PipeManager owns DashMap<String, Arc<dyn PipeBackend>>
     pub(crate) pipe_manager: crate::pipe_manager::PipeManager,
     // IPC registry — StreamManager owns DashMap<String, Arc<dyn StreamBackend>>
@@ -470,7 +470,7 @@ impl Kernel {
     pub fn new() -> Self {
         Self {
             dcache: DCache::new(),
-            router: PathRouter::new(),
+            mount_table: MountTable::new(),
             trie: Trie::new(),
             vfs_lock: None,
             metastore: None,
@@ -488,8 +488,7 @@ impl Kernel {
             observers: Mutex::new(KernelObserverRegistry::new()),
             zone_revisions: DashMap::new(),
             file_watches: Arc::new(FileWatcher::new()),
-            agent_registry: Arc::new(crate::agent_registry::AgentRegistry::new()),
-            mount_metastores: DashMap::new(),
+            agent_registry: crate::agent_registry::AgentRegistry::new(),
             pipe_manager: crate::pipe_manager::PipeManager::new(),
             stream_manager: Arc::new(crate::stream_manager::StreamManager::new()),
             native_hooks: Mutex::new(NativeHookRegistry::new()),
@@ -524,15 +523,22 @@ impl Kernel {
 
     /// Resolve metastore for a syscall: per-mount first, then global fallback.
     ///
-    /// In federation mode each mount has its own redb instance (Raft-backed zone store).
-    /// Standalone mode uses a single global metastore.
-    /// `mount_point` must be the zone-canonical key from route_impl().
+    /// In federation mode each mount has its own state machine (Raft-backed
+    /// zone store). Standalone mode uses a single global metastore.
+    /// `mount_point` must be the zone-canonical key from `mount_table.route()`.
     fn with_metastore<F, R>(&self, mount_point: &str, f: F) -> Option<R>
     where
         F: FnOnce(&dyn crate::metastore::Metastore) -> R,
     {
-        if let Some(ms) = self.mount_metastores.get(mount_point) {
-            return Some(f(ms.as_ref()));
+        // Hold the DashMap read guard only long enough to snapshot the
+        // `Arc<dyn Metastore>`, then release it before running the closure
+        // — avoids pinning the shard for the duration of a Raft propose.
+        if let Some(entry) = self.mount_table.get_canonical(mount_point) {
+            if let Some(ms) = entry.metastore.as_ref() {
+                let ms_arc = Arc::clone(ms);
+                drop(entry);
+                return Some(f(ms_arc.as_ref()));
+            }
         }
         self.metastore.as_ref().map(|ms| f(ms.as_ref()))
     }
@@ -741,32 +747,30 @@ impl Kernel {
         metastore_path: Option<&str>,
         is_external: bool,
     ) -> Result<(), KernelError> {
-        // Open per-mount metastore if path provided (standalone mode)
+        self.mount_table.add_mount(
+            mount_point,
+            zone_id,
+            readonly,
+            admin_only,
+            io_profile,
+            backend_name,
+            backend,
+        );
+        // Open per-mount metastore if path provided (standalone mode).
+        // Must come AFTER the entry is inserted so `install_metastore`
+        // finds it.
         if let Some(ms_path) = metastore_path {
             let ms = RedbMetastore::open(std::path::Path::new(ms_path))
                 .map_err(|e| KernelError::IOError(format!("RedbMetastore: {e:?}")))?;
             let canonical = canonicalize(mount_point, zone_id);
-            self.mount_metastores.insert(canonical, Arc::new(ms));
+            self.mount_table.install_metastore(&canonical, Arc::new(ms));
         }
-        self.router
-            .add_mount(
-                mount_point,
-                zone_id,
-                readonly,
-                admin_only,
-                io_profile,
-                backend_name,
-                backend,
-                is_external,
-            )
-            .map_err(KernelError::from)
+        Ok(())
     }
 
     /// Remove a mount point (and its per-mount metastore if any).
     pub fn remove_mount(&self, mount_point: &str, zone_id: &str) -> bool {
-        let canonical = canonicalize(mount_point, zone_id);
-        self.mount_metastores.remove(&canonical);
-        self.router.remove_mount(mount_point, zone_id)
+        self.mount_table.remove(mount_point, zone_id)
     }
 
     /// Wire a per-mount `Metastore` impl into the kernel's mount table.
@@ -787,7 +791,7 @@ impl Kernel {
         canonical_key: String,
         ms: Arc<dyn crate::metastore::Metastore>,
     ) {
-        self.mount_metastores.insert(canonical_key, ms);
+        self.mount_table.install_metastore(&canonical_key, ms);
     }
 
     /// Compute the zone-canonical key for a (mount_point, zone_id) pair.
@@ -807,19 +811,19 @@ impl Kernel {
         is_admin: bool,
         check_write: bool,
     ) -> Result<RustRouteResult, KernelError> {
-        self.router
-            .route_impl(path, zone_id, is_admin, check_write)
+        self.mount_table
+            .route(path, zone_id, is_admin, check_write)
             .map_err(KernelError::from)
     }
 
     /// Check if a mount exists.
     pub fn has_mount(&self, mount_point: &str, zone_id: &str) -> bool {
-        self.router.has_mount(mount_point, zone_id)
+        self.mount_table.has(mount_point, zone_id)
     }
 
-    /// List all mount points.
+    /// List all mount points (zone-canonical keys, sorted).
     pub fn get_mount_points(&self) -> Vec<String> {
-        self.router.get_mount_points()
+        self.mount_table.canonical_keys()
     }
 
     /// High-level mount: add_mount + create DT_MOUNT metastore entry.
@@ -1199,8 +1203,8 @@ impl Kernel {
 
         // Persist DT_PIPE inode (best-effort — metastore may not be wired in tests).
         let mount_point = self
-            .router
-            .route_impl(path, "root", true, false)
+            .mount_table
+            .route(path, "root", true, false)
             .map(|r| r.mount_point)
             .unwrap_or_default();
         self.with_metastore(&mount_point, |ms| {
@@ -1241,8 +1245,8 @@ impl Kernel {
 
         // Remove DT_PIPE inode (best-effort)
         let mount_point = self
-            .router
-            .route_impl(path, "root", true, false)
+            .mount_table
+            .route(path, "root", true, false)
             .map(|r| r.mount_point)
             .unwrap_or_default();
         self.with_metastore(&mount_point, |ms| {
@@ -1303,8 +1307,8 @@ impl Kernel {
             .map_err(stream_mgr_err)?;
 
         let mount_point = self
-            .router
-            .route_impl(path, "root", true, false)
+            .mount_table
+            .route(path, "root", true, false)
             .map(|r| r.mount_point)
             .unwrap_or_default();
         self.with_metastore(&mount_point, |ms| {
@@ -1344,8 +1348,8 @@ impl Kernel {
         self.stream_manager.destroy(path).map_err(stream_mgr_err)?;
 
         let mount_point = self
-            .router
-            .route_impl(path, "root", true, false)
+            .mount_table
+            .route(path, "root", true, false)
             .map(|r| r.mount_point)
             .unwrap_or_default();
         self.with_metastore(&mount_point, |ms| {
@@ -1483,8 +1487,8 @@ impl Kernel {
 
         // 2. Route (pure Rust LPM)
         let route = match self
-            .router
-            .route_impl(path, &ctx.zone_id, ctx.is_admin, false)
+            .mount_table
+            .route(path, &ctx.zone_id, ctx.is_admin, false)
         {
             Ok(r) => r,
             Err(_) => return miss(),
@@ -1618,7 +1622,7 @@ impl Kernel {
 
         // 5. Backend read (CasLocal or PyObjectStoreAdapter)
         let content =
-            self.router
+            self.mount_table
                 .read_content(&route.mount_point, content_id, &route.backend_path, ctx);
 
         // 6. Release VFS lock (always, even on miss)
@@ -1691,8 +1695,8 @@ impl Kernel {
 
         // 2. Route (check write access)
         let route = match self
-            .router
-            .route_impl(path, &ctx.zone_id, ctx.is_admin, true)
+            .mount_table
+            .route(path, &ctx.zone_id, ctx.is_admin, true)
         {
             Ok(r) => r,
             Err(_) => return miss(),
@@ -1763,7 +1767,7 @@ impl Kernel {
         // 5. Backend write (CasLocal or PyObjectStoreAdapter)
         //    Pass backend_path as content_id (CAS ignores it, PAS uses it as blob path).
         let write_result =
-            self.router
+            self.mount_table
                 .write_content(&route.mount_point, content, &route.backend_path, ctx);
 
         // 6. After write -> build metadata + metastore.put + dcache update
@@ -1862,8 +1866,8 @@ impl Kernel {
 
         // 3. Route
         if self
-            .router
-            .route_impl(path, zone_id, is_admin, false)
+            .mount_table
+            .route(path, zone_id, is_admin, false)
             .is_err()
         {
             return None;
@@ -1946,8 +1950,8 @@ impl Kernel {
 
         // 2. Route (check write access)
         let route = match self
-            .router
-            .route_impl(path, &ctx.zone_id, ctx.is_admin, true)
+            .mount_table
+            .route(path, &ctx.zone_id, ctx.is_admin, true)
         {
             Ok(r) => r,
             Err(_) => return miss(0),
@@ -2002,7 +2006,7 @@ impl Kernel {
 
         // 7. Backend delete (best-effort, PAS only)
         let _ = self
-            .router
+            .mount_table
             .delete_file(&route.mount_point, &route.backend_path);
 
         // 8. DCache evict
@@ -2076,15 +2080,15 @@ impl Kernel {
 
         // 2. Route both (check write access)
         let old_route = match self
-            .router
-            .route_impl(old_path, &ctx.zone_id, ctx.is_admin, true)
+            .mount_table
+            .route(old_path, &ctx.zone_id, ctx.is_admin, true)
         {
             Ok(r) => r,
             Err(_) => return miss(),
         };
         let new_route = match self
-            .router
-            .route_impl(new_path, &ctx.zone_id, ctx.is_admin, true)
+            .mount_table
+            .route(new_path, &ctx.zone_id, ctx.is_admin, true)
         {
             Ok(r) => r,
             Err(_) => return miss(),
@@ -2219,7 +2223,7 @@ impl Kernel {
         }
 
         // 8. Backend rename (best-effort, PAS only)
-        let _ = self.router.rename_file(
+        let _ = self.mount_table.rename_file(
             &old_route.mount_point,
             &old_route.backend_path,
             &new_route.backend_path,
@@ -2273,8 +2277,8 @@ impl Kernel {
 
         // 2. Route (check write access)
         let route = self
-            .router
-            .route_impl(path, &ctx.zone_id, ctx.is_admin, true)?;
+            .mount_table
+            .route(path, &ctx.zone_id, ctx.is_admin, true)?;
 
         // 3. Existence check via metastore (per-mount or global)
         let exists = self
@@ -2298,7 +2302,7 @@ impl Kernel {
 
         // 4. Backend mkdir (best-effort, PAS backends create physical dirs)
         let _ = self
-            .router
+            .mount_table
             .mkdir(&route.mount_point, &route.backend_path, parents, true);
 
         // 5. Ensure parent directories
@@ -2440,8 +2444,8 @@ impl Kernel {
 
         // 2. Route (check write access)
         let route = self
-            .router
-            .route_impl(path, &ctx.zone_id, ctx.is_admin, true)?;
+            .mount_table
+            .route(path, &ctx.zone_id, ctx.is_admin, true)?;
 
         // 3. Get metadata (per-mount or global)
         let entry_type = self
@@ -2482,7 +2486,7 @@ impl Kernel {
 
         // 6. Backend rmdir (best-effort)
         let _ = self
-            .router
+            .mount_table
             .rmdir(&route.mount_point, &route.backend_path, recursive);
 
         // 7. Delete directory metadata (per-mount or global)
@@ -2521,8 +2525,8 @@ impl Kernel {
             return false;
         }
         if self
-            .router
-            .route_impl(path, zone_id, is_admin, false)
+            .mount_table
+            .route(path, zone_id, is_admin, false)
             .is_err()
         {
             return false;
@@ -2554,8 +2558,8 @@ impl Kernel {
         let mut routes = Vec::with_capacity(items.len());
         for (path, _) in items {
             let route = self
-                .router
-                .route_impl(path, &ctx.zone_id, ctx.is_admin, true)
+                .mount_table
+                .route(path, &ctx.zone_id, ctx.is_admin, true)
                 .ok();
             routes.push(route);
         }
@@ -2612,9 +2616,12 @@ impl Kernel {
             }
 
             // Backend write
-            let write_result =
-                self.router
-                    .write_content(&route.mount_point, content, &route.backend_path, ctx);
+            let write_result = self.mount_table.write_content(
+                &route.mount_point,
+                content,
+                &route.backend_path,
+                ctx,
+            );
 
             match write_result {
                 Some(wr) => {
@@ -2676,7 +2683,12 @@ impl Kernel {
         if !batch_meta.is_empty() {
             let mut global_items: Vec<(String, crate::metastore::FileMetadata)> = Vec::new();
             for (mp, path, meta) in batch_meta {
-                if self.mount_metastores.get(&mp).is_some() {
+                if self
+                    .mount_table
+                    .get_canonical(&mp)
+                    .map(|e| e.metastore.is_some())
+                    .unwrap_or(false)
+                {
                     self.with_metastore(&mp, |ms| {
                         let _ = ms.put(&path, meta);
                     });
@@ -2769,8 +2781,8 @@ impl Kernel {
             return Vec::new();
         }
         if self
-            .router
-            .route_impl(parent_path, zone_id, is_admin, false)
+            .mount_table
+            .route(parent_path, zone_id, is_admin, false)
             .is_err()
         {
             return Vec::new();

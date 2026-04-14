@@ -25,7 +25,8 @@
 use dashmap::DashMap;
 use std::sync::Arc;
 
-use crate::backend::ObjectStore;
+use crate::backend::{ObjectStore, WriteResult};
+use crate::kernel::OperationContext;
 use crate::metastore::Metastore;
 
 // ---------------------------------------------------------------------------
@@ -112,20 +113,24 @@ pub enum RouteError {
 
 /// Result of a successful LPM route lookup.
 ///
-/// The caller can use `canonical_key` to fetch the full `MountEntry`
-/// (backend + metastore) via `MountTable::get_canonical`. Most callers only
-/// need the routing-decision fields below.
+/// `mount_point` carries the **zone-canonical key** (`/{zone_id}{user_path}`),
+/// which is the same form `MountTable` is keyed by. Pass it straight into
+/// `MountTable::{read_content, write_content, get_canonical, …}` without
+/// re-canonicalizing. Historical name inherited from the pre-migration
+/// `router::RustRouteResult`.
 #[derive(Debug, Clone)]
 pub struct RouteResult {
-    /// Zone-canonical key (`/{zone_id}{mount_point}`) — for direct lookup.
-    pub canonical_key: String,
-    /// User-facing mount point with the zone prefix stripped.
+    /// Zone-canonical key (`/{zone_id}{user_mount_point}`).
     pub mount_point: String,
     /// Path relative to the mount root (no leading slash).
     pub backend_path: String,
     pub readonly: bool,
     pub io_profile: String,
 }
+
+/// Legacy alias so kernel/generated code using the pre-migration type name
+/// compiles unchanged. Drop once C8 lands and all callers use `RouteResult`.
+pub type RustRouteResult = RouteResult;
 
 // ---------------------------------------------------------------------------
 // MountTable — kernel-owned mount registry
@@ -154,6 +159,27 @@ impl MountTable {
     pub fn add(&self, mount_point: &str, zone_id: &str, entry: MountEntry) {
         let canonical = canonicalize_mount_path(mount_point, zone_id);
         self.entries.insert(canonical, entry);
+    }
+
+    /// Convenience: build a `MountEntry` from flat args and insert it.
+    /// Used by `Kernel::add_mount` so callers don't have to import
+    /// `MountEntry` just to register a mount.
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_mount(
+        &self,
+        mount_point: &str,
+        zone_id: &str,
+        readonly: bool,
+        admin_only: bool,
+        io_profile: &str,
+        backend_name: &str,
+        backend: Option<Box<dyn ObjectStore>>,
+    ) {
+        self.add(
+            mount_point,
+            zone_id,
+            MountEntry::new(backend, readonly, admin_only, io_profile, backend_name),
+        );
     }
 
     /// Remove a mount. Returns `true` if it existed.
@@ -264,15 +290,13 @@ impl MountTable {
                     )));
                 }
 
-                let canonical_key = current.to_string();
-                let mount_point = extract_zone_from_canonical(current).1;
+                let mount_point = current.to_string();
                 let backend_path = strip_mount_prefix(&canonical, current);
                 let readonly = entry.readonly;
                 let io_profile = entry.io_profile.clone();
                 drop(entry);
 
                 return Ok(RouteResult {
-                    canonical_key,
                     mount_point,
                     backend_path,
                     readonly,
@@ -294,6 +318,90 @@ impl MountTable {
             "No mount found for path: {}",
             path
         )))
+    }
+
+    // ── Backend-operation delegation ───────────────────────────────────
+    //
+    // Thin wrappers that look up a mount by canonical key and call the
+    // matching `ObjectStore` method. Kept on `MountTable` (not `Kernel`)
+    // so the lookup + call live in one place and the `dashmap::Ref` is
+    // held for the shortest possible window. A mount without a backend
+    // returns `None` — callers treat this as "no Rust-side backend, fall
+    // back to Python connector or cold-path dcache lookup".
+
+    /// Read content from the mount's backend.
+    pub fn read_content(
+        &self,
+        canonical_key: &str,
+        content_id: &str,
+        backend_path: &str,
+        ctx: &OperationContext,
+    ) -> Option<Vec<u8>> {
+        let entry = self.entries.get(canonical_key)?;
+        entry
+            .backend
+            .as_ref()?
+            .read_content(content_id, backend_path, ctx)
+            .ok()
+    }
+
+    /// Write content to the mount's backend.
+    pub fn write_content(
+        &self,
+        canonical_key: &str,
+        content: &[u8],
+        content_id: &str,
+        ctx: &OperationContext,
+    ) -> Option<WriteResult> {
+        let entry = self.entries.get(canonical_key)?;
+        entry
+            .backend
+            .as_ref()?
+            .write_content(content, content_id, ctx)
+            .ok()
+    }
+
+    /// Delete a file via the mount's backend.
+    pub fn delete_file(&self, canonical_key: &str, backend_path: &str) -> Option<()> {
+        let entry = self.entries.get(canonical_key)?;
+        entry.backend.as_ref()?.delete_file(backend_path).ok()
+    }
+
+    /// Rename a file via the mount's backend.
+    pub fn rename_file(
+        &self,
+        canonical_key: &str,
+        old_backend_path: &str,
+        new_backend_path: &str,
+    ) -> Option<()> {
+        let entry = self.entries.get(canonical_key)?;
+        entry
+            .backend
+            .as_ref()?
+            .rename(old_backend_path, new_backend_path)
+            .ok()
+    }
+
+    /// Create a directory via the mount's backend.
+    pub fn mkdir(
+        &self,
+        canonical_key: &str,
+        backend_path: &str,
+        parents: bool,
+        exist_ok: bool,
+    ) -> Option<()> {
+        let entry = self.entries.get(canonical_key)?;
+        entry
+            .backend
+            .as_ref()?
+            .mkdir(backend_path, parents, exist_ok)
+            .ok()
+    }
+
+    /// Remove a directory via the mount's backend.
+    pub fn rmdir(&self, canonical_key: &str, backend_path: &str, recursive: bool) -> Option<()> {
+        let entry = self.entries.get(canonical_key)?;
+        entry.backend.as_ref()?.rmdir(backend_path, recursive).ok()
     }
 }
 
@@ -401,8 +509,7 @@ mod tests {
         let r = table
             .route("/workspace/file.txt", "root", false, false)
             .unwrap();
-        assert_eq!(r.canonical_key, "/root/workspace");
-        assert_eq!(r.mount_point, "/workspace");
+        assert_eq!(r.mount_point, "/root/workspace");
         assert_eq!(r.backend_path, "file.txt");
         assert_eq!(r.io_profile, "fast");
     }
@@ -413,7 +520,7 @@ mod tests {
         table.add("/", "root", entry(false, false, "balanced"));
 
         let r = table.route("/unknown/path", "root", false, false).unwrap();
-        assert_eq!(r.mount_point, "/");
+        assert_eq!(r.mount_point, "/root");
         assert_eq!(r.backend_path, "unknown/path");
     }
 
@@ -439,7 +546,7 @@ mod tests {
         assert!(matches!(err, RouteError::AccessDenied(_)));
 
         let r = table.route("/admin/secrets", "root", true, false).unwrap();
-        assert_eq!(r.canonical_key, "/root/admin");
+        assert_eq!(r.mount_point, "/root/admin");
     }
 
     #[test]
@@ -452,13 +559,13 @@ mod tests {
         let r = table
             .route("/workspace/file.txt", "root", false, false)
             .unwrap();
-        assert_eq!(r.canonical_key, "/root");
+        assert_eq!(r.mount_point, "/root");
 
         // zone-beta sees its own mount
         let r = table
             .route("/shared/doc.txt", "zone-beta", false, false)
             .unwrap();
-        assert_eq!(r.canonical_key, "/zone-beta/shared");
+        assert_eq!(r.mount_point, "/zone-beta/shared");
     }
 
     #[test]

@@ -48,7 +48,6 @@ mod pipe_manager;
 mod prefix;
 mod rebac;
 mod replication;
-mod router;
 #[cfg(feature = "connectors")]
 mod s3_backend;
 mod search;

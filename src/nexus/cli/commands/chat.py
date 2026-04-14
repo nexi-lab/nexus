@@ -112,6 +112,14 @@ def chat(
     )
 
 
+def _mount_workspace(nx: Any, cwd: str) -> None:
+    """Mount host OS cwd at /workspace via LocalConnector."""
+    from nexus.backends.storage.local_connector import LocalConnectorBackend
+    from nexus.contracts.metadata import DT_MOUNT
+
+    nx.sys_setattr("/workspace", entry_type=DT_MOUNT, backend=LocalConnectorBackend(cwd))
+
+
 def _build_tool_registry(nx: Any, cwd: str) -> Any:
     """Build ToolRegistry with all 6 built-in tools (Tier A).
 
@@ -228,13 +236,6 @@ async def _run_chat(
 
         nx.sys_setattr("/llm", entry_type=DT_MOUNT, backend=llm_backend)
 
-        # ── Mount cwd via LocalConnector (agent reads/writes host OS files) ──
-        cwd = os.getcwd()
-        from nexus.backends.storage.local_connector import LocalConnectorBackend
-
-        cwd_backend = LocalConnectorBackend(cwd)
-        nx.sys_setattr("/workspace", entry_type=DT_MOUNT, backend=cwd_backend)
-
         # ── Mount external tool directories (Tier B, §1.5) ──
         if tools:
             from nexus.backends.storage.path_local import PathLocalBackend
@@ -254,6 +255,10 @@ async def _run_chat(
         # ── Create agent loop ──
         from nexus.services.agent_runtime.compaction import DefaultCompactionStrategy
         from nexus.services.agent_runtime.managed_loop import ManagedAgentLoop
+
+        # Mount cwd via LocalConnector (REPL mode)
+        cwd = os.getcwd()
+        _mount_workspace(nx, cwd)
 
         agent_path = "/root/agents/default"
 
@@ -311,6 +316,8 @@ async def _run_acp_mode(
     async def _loop_factory(session_id: str, cwd: str, observer: AgentObserver) -> ManagedAgentLoop:
         agent_path = "/root/agents/default"
         _cwd = cwd or os.getcwd()
+        # Mount cwd via LocalConnector (ACP mode — cwd from session/new)
+        _mount_workspace(nx, _cwd)
         loop = ManagedAgentLoop(
             sys_read=nx.sys_read,
             sys_write=nx.write,

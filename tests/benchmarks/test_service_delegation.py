@@ -41,6 +41,8 @@ def mock_nexus_fs():
     """
     fs = object.__new__(NexusFS)
     fs._service_registry = ServiceRegistry()
+    fs._kernel = MagicMock()
+    fs._kernel.sys_readdir = MagicMock(return_value=[])
     fs.metadata = MagicMock()
     fs.metadata.list = MagicMock(return_value=[])
     fs.version_service = MagicMock()

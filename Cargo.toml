@@ -17,13 +17,11 @@ contracts = { path = "rust/contracts" }
 library = { path = "rust/library" }
 transport = { path = "rust/transport" }
 services = { path = "rust/services" }
-# `default-features = false` at workspace level so crates that pull kernel
-# as an rlib dependency (e.g. raft's `python` feature → zone_metastore)
-# don't drag in kernel's mimalloc `#[global_allocator]`, which would
-# conflict with the downstream cdylib's own allocator. Re-enable the other
-# kernel defaults (`connectors`, `py-hook-adapters`) explicitly — only
-# `mimalloc` is dropped.
-kernel = { path = "rust/kernel", default-features = false, features = ["connectors", "py-hook-adapters"] }
+# kernel is NOT a workspace dependency: F2 C1 tried this so raft could
+# impl `kernel::Metastore` directly, but linking kernel rlib into
+# `_nexus_raft.so` caused a post-start SIGSEGV (two cdylib copies of
+# kernel's thread_local! state and vtables collide in one process).
+# Reverted in C7; kernel is only consumed via its own cdylib wheel.
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 ahash = "0.8"

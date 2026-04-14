@@ -85,13 +85,6 @@ mod pyo3_bindings;
 #[cfg(feature = "python")]
 pub use pyo3_bindings::*;
 
-// ZoneMetastore: bridges ZoneConsensus state machine into the kernel's
-// per-mount `Metastore` trait. Requires the kernel crate (pulled in via
-// the `python` feature) plus grpc+has_protos for the ProtoFileMetadata
-// decode path.
-#[cfg(all(feature = "python", feature = "grpc", has_protos))]
-pub mod zone_metastore;
-
 // Stub module when grpc feature is disabled
 #[cfg(not(feature = "grpc"))]
 pub mod transport {

@@ -2044,7 +2044,6 @@ dependencies = [
  "bytes",
  "dashmap",
  "gethostname",
- "kernel",
  "mimalloc",
  "pem",
  "prost",

@@ -65,12 +65,13 @@ gethostname = { version = "0.5", optional = true }  # Hostname-based node ID der
 pyo3 = { version = "0.27.2", features = ["extension-module"], optional = true }
 mimalloc = { workspace = true, optional = true }
 
-# Kernel crate — ZoneMetastore impl (raft state machine → kernel::Metastore).
-# Pulled in only via `python` feature; witness binary uses `grpc` only and
-# stays kernel-free. `default-features = false` is declared at the workspace
-# level to avoid pulling kernel's mimalloc `#[global_allocator]` (would
-# conflict with raft's own allocator).
-kernel = { workspace = true, optional = true }
+# NOTE: F2 C1 (d16cfc9a7) tried to pull the kernel rlib into _nexus_raft.so
+# so raft could impl `kernel::Metastore` directly. That turned out to cause
+# a post-start SIGSEGV in tokio worker threads: both nexus_kernel.so and
+# _nexus_raft.so end up with their own copy of kernel's thread_local! state
+# and vtables, and the two cdylibs can't reliably share a single process
+# namespace. Reverted in C7 — federation bridging now happens via the
+# existing `kernel.add_mount(metastore_path=…)` path (Python side).
 
 [build-dependencies]
 tonic-build = { version = "0.13", optional = true }
@@ -88,9 +89,7 @@ async = ["tokio"]
 # Enable Python bindings (PyO3 FFI) — production path.
 # Provides LocalRaft for ~5μs metadata/lock operations.
 # Includes mimalloc allocator for cdylib builds (safe in terminal crate context).
-# Pulls `kernel` crate for ZoneMetastore (raft state machine → kernel::Metastore
-# bridge, used by PyZoneHandle::kernel_metastore()).
-python = ["pyo3", "mimalloc", "dep:kernel"]
+python = ["pyo3", "mimalloc"]
 
 # Enable Raft consensus (tikv/raft-rs) — EXPERIMENTAL, default OFF.
 # Not used in production. Preserved for future multi-node support.

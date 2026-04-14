@@ -1928,6 +1928,10 @@ class SearchDaemon:
                 self._mutation_wakeup.clear()
 
                 async with self._refresh_lock:
+                    # _coalesce_subtrees may return directory sentinels,
+                    # but _refresh_indexes only handles concrete file paths.
+                    # Keep file-granular paths until _refresh_indexes is
+                    # directory-aware (Issue #3708, #3148).
                     refresh_paths = sorted(self._pending_refresh_paths)
                     delete_paths = sorted(self._pending_delete_paths)
                     if not refresh_paths and not delete_paths:
@@ -2032,32 +2036,36 @@ class SearchDaemon:
 
         return result
 
+    @staticmethod
+    def _build_naive_chunks(content: str, chunk_size: int = 1000) -> list[ChunkRecord]:
+        """Build naive fixed-size chunk records for FTS fallback."""
+        raw = [content[i : i + chunk_size] for i in range(0, len(content), chunk_size)]
+        records: list[ChunkRecord] = []
+        for idx, chunk_text in enumerate(raw):
+            if not chunk_text.strip():
+                continue
+            preceding = content[: idx * chunk_size]
+            line_start = preceding.count("\n") + 1
+            line_end = line_start + chunk_text.count("\n")
+            records.append(
+                ChunkRecord(
+                    chunk_text=chunk_text,
+                    chunk_tokens=max(1, len(chunk_text) // 4),
+                    start_offset=idx * chunk_size,
+                    end_offset=idx * chunk_size + len(chunk_text),
+                    line_start=line_start,
+                    line_end=line_end,
+                )
+            )
+        return records
+
     async def _index_to_document_chunks(self, path_id: str, path: str, content: str) -> None:
         """Insert content as document_chunks for FTS search."""
         if self._chunk_store is None:
             return
 
         try:
-            # Split into chunks (~1000 chars each for search granularity)
-            chunk_size = 1000
-            chunks = [content[i : i + chunk_size] for i in range(0, len(content), chunk_size)]
-            records: list[ChunkRecord] = []
-            for idx, chunk_text in enumerate(chunks):
-                if not chunk_text.strip():
-                    continue
-                preceding = content[: idx * chunk_size]
-                line_start = preceding.count("\n") + 1
-                line_end = line_start + chunk_text.count("\n")
-                records.append(
-                    ChunkRecord(
-                        chunk_text=chunk_text,
-                        chunk_tokens=max(1, len(chunk_text) // 4),
-                        start_offset=idx * chunk_size,
-                        end_offset=idx * chunk_size + len(chunk_text),
-                        line_start=line_start,
-                        line_end=line_end,
-                    )
-                )
+            records = self._build_naive_chunks(content)
             await self._chunk_store.replace_document_chunks(path_id, records)
         except Exception as e:
             logger.debug("Failed to index %s to document_chunks: %s", path, e)
@@ -2355,12 +2363,31 @@ class SearchDaemon:
     async def _consume_fts_mutations(self, events: list[SearchMutationEvent]) -> None:
         if self._chunk_store is None:
             return
+        embedding_active = (
+            self._indexing_pipeline is not None and self._embedding_provider is not None
+        )
         resolved = self._collapse_resolved_mutations(await self._resolve_mutations(events))
         for mutation in resolved:
             if mutation.event.op == SearchMutationOp.DELETE:
-                await self._chunk_store.delete_document_chunks(mutation.path_id)
+                # When embedding consumer is active, it owns deletes for
+                # document_chunks (Issue #3708). FTS only handles deletes
+                # when it is the sole writer.
+                if not embedding_active:
+                    await self._chunk_store.delete_document_chunks(mutation.path_id)
                 continue
             if mutation.content:
+                # When embedding is active, skip in-scope paths — the
+                # embedding consumer writes strictly better chunks for
+                # those. Keep FTS as the writer for out-of-scope paths
+                # so they remain searchable via FTS (Issue #3708).
+                #
+                # NOTE: there is a narrow race window if scope changes
+                # between this check and the embedding consumer's check
+                # (both could skip). Scope changes are infrequent admin
+                # ops, and the next mutation batch self-corrects. A
+                # scope-generation token would close this gap if needed.
+                if embedding_active and self._is_path_in_scope(mutation.event.path):
+                    continue
                 await self._index_to_document_chunks(
                     mutation.path_id,
                     mutation.event.path,
@@ -2372,18 +2399,47 @@ class SearchDaemon:
             return
         resolved = self._collapse_resolved_mutations(await self._resolve_mutations(events))
         for mutation in resolved:
-            if mutation.event.op != SearchMutationOp.UPSERT or not mutation.content:
+            # Handle deletes — the embedding consumer is now the sole
+            # document_chunks writer when active (Issue #3708), so it must
+            # propagate DELETE ops that the FTS consumer used to handle.
+            if mutation.event.op == SearchMutationOp.DELETE:
+                if self._chunk_store is not None:
+                    await self._chunk_store.delete_document_chunks(mutation.path_id)
+                continue
+            if not mutation.content:
                 continue
             # Early-skip for out-of-scope paths (Issue #3698). The central
             # gate in IndexingPipeline.index_documents would also catch
             # this, but filtering here avoids the pipeline overhead.
             if not self._is_path_in_scope(mutation.event.path):
                 continue
-            await self._indexing_pipeline.index_document(
+            # The pipeline can fail via IndexResult.error OR by raising
+            # (e.g. provider/network failures). In both cases, fall back to
+            # naive FTS chunks so the document stays searchable. If the
+            # fallback also fails, re-raise so the batch is NOT checkpointed
+            # and will be retried (Issue #3708).
+            try:
+                result = await self._indexing_pipeline.index_document(
+                    mutation.event.path,
+                    mutation.content,
+                    mutation.path_id,
+                )
+                if not result.error:
+                    continue
+                error_detail = result.error
+            except Exception as exc:
+                error_detail = str(exc)
+
+            logger.warning(
+                "Embedding pipeline failed for %s: %s — falling back to FTS chunks",
                 mutation.event.path,
-                mutation.content,
-                mutation.path_id,
+                error_detail,
             )
+            if self._chunk_store is not None:
+                await self._chunk_store.replace_document_chunks(
+                    mutation.path_id,
+                    self._build_naive_chunks(mutation.content),
+                )
 
     async def _consume_txtai_mutations(self, events: list[SearchMutationEvent]) -> None:
         if self._backend is None:
@@ -2507,18 +2563,37 @@ class SearchDaemon:
                 if self._bm25s_index:
                     await self._bm25s_index.index_document(path_id, path, content)
 
-                # Index to database document_chunks for FTS
-                if self._async_session:
+                # Single-writer policy for document_chunks (Issue #3708):
+                # when embedding pipeline is active AND the path is in
+                # scope, let the pipeline be the sole writer (semantic
+                # chunks + embeddings). Only fall back to naive FTS chunks
+                # when the pipeline is absent or the path is out of scope.
+                path_in_scope = self._is_path_in_scope(path)
+                embedding_active = (
+                    self._indexing_pipeline is not None
+                    and self._embedding_provider is not None
+                    and path_in_scope
+                )
+
+                if embedding_active and self._indexing_pipeline is not None:
+                    try:
+                        result = await self._indexing_pipeline.index_document(
+                            path, content, path_id
+                        )
+                        if result.error:
+                            logger.warning(
+                                "Embedding pipeline failed for %s: %s — falling back to FTS",
+                                path,
+                                result.error,
+                            )
+                            await self._index_to_document_chunks(path_id, path, content)
+                    except Exception as ie:
+                        logger.warning("Indexing pipeline error for %s: %s", path, ie)
+                        await self._index_to_document_chunks(path_id, path, content)
+                elif self._async_session:
                     await self._index_to_document_chunks(path_id, path, content)
 
                 indexed_count += 1
-
-                # Embedding-related work is gated by the per-directory
-                # semantic index scope (Issue #3698). BM25/FTS above run
-                # unconditionally — keyword search coverage stays full
-                # per the feature spec. Only the expensive (txtai, API
-                # embedding) paths respect the scope.
-                path_in_scope = self._is_path_in_scope(path)
 
                 # Collect for batched txtai upsert (Issue #2663)
                 if self._backend is not None and path_in_scope:
@@ -2534,15 +2609,6 @@ class SearchDaemon:
                             "zone_id": _zone,
                         }
                     )
-
-                # Also run indexing pipeline for chunk + embedding storage.
-                # The pipeline's own central gate would catch out-of-scope
-                # paths too, but checking here avoids the pipeline overhead.
-                if self._indexing_pipeline and self._embedding_provider and path_in_scope:
-                    try:
-                        await self._indexing_pipeline.index_document(path, content, path_id)
-                    except Exception as ie:
-                        logger.debug("Indexing pipeline error for %s: %s", path, ie)
 
             except Exception as e:
                 logger.warning("Failed to refresh index for %s: %s", path, e)

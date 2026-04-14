@@ -524,8 +524,7 @@ class TestPathsPermissions:
 class TestSlimNexusFSLifecycle:
     """Tests for the context manager and close() on SlimNexusFS."""
 
-    @pytest.mark.asyncio
-    async def test_close_is_idempotent(self, tmp_path):
+    def test_close_is_idempotent(self, tmp_path):
         """Calling close() twice should not raise."""
         from nexus.backends.storage.cas_local import CASLocalBackend
         from nexus.contracts.types import OperationContext
@@ -557,12 +556,11 @@ class TestSlimNexusFSLifecycle:
         metastore.put(_make_mount_entry("/local", backend.name))
 
         fs = SlimNexusFS(kernel)
-        await fs.close()
-        await fs.close()  # should not raise
+        fs.close()
+        fs.close()  # should not raise
 
-    @pytest.mark.asyncio
-    async def test_context_manager(self, tmp_path):
-        """async with SlimNexusFS should call close() on exit."""
+    def test_context_manager(self, tmp_path):
+        """with SlimNexusFS should call close() on exit."""
         from nexus.backends.storage.cas_local import CASLocalBackend
         from nexus.contracts.types import OperationContext
         from nexus.core.config import PermissionConfig
@@ -592,7 +590,7 @@ class TestSlimNexusFSLifecycle:
         kernel.sys_setattr("/local", entry_type=DT_MOUNT, backend=backend)
         metastore.put(_make_mount_entry("/local", backend.name))
 
-        async with SlimNexusFS(kernel) as fs:
+        with SlimNexusFS(kernel) as fs:
             fs.write("/local/ctx.txt", b"context manager")
             content = fs.read("/local/ctx.txt")
             assert content == b"context manager"

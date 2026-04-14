@@ -1,17 +1,12 @@
-"""Synchronous wrapper for async nexus-fs operations.
+"""Synchronous wrapper for nexus-fs operations.
 
-Uses anyio's BlockingPortalProvider to safely bridge sync -> async,
-replacing the broken nest_asyncio approach (fails on Python 3.14+).
-
-Three supported scenarios:
-1. No event loop (normal Python script) -- creates one internally
-2. Existing event loop (Jupyter) -- uses BlockingPortal worker thread
-3. Multiple threads -- each gets its own portal, thread-safe
+Now that SlimNexusFS is fully sync, SyncNexusFS is a thin pass-through
+that delegates directly — no event loop bridging needed.
 
 Usage:
     from nexus.fs._sync import SyncNexusFS
 
-    with SyncNexusFS(async_facade) as fs:
+    with SyncNexusFS(facade) as fs:
         content = fs.read("/s3/bucket/file.txt")
 """
 
@@ -28,7 +23,7 @@ def run_sync(coro: Any) -> Any:
     """Run an async coroutine synchronously.
 
     Uses anyio's BlockingPortalProvider for safe sync->async bridging.
-    Creates a new event loop per call — use PortalRunner for repeated calls.
+    Still needed by _cli.py and _fsspec.py for async connect() etc.
     """
     _provider = BlockingPortalProvider()
     with _provider as portal:
@@ -39,21 +34,7 @@ class PortalRunner:
     """Persistent sync-to-async bridge.
 
     Starts a background event loop on first call and keeps it alive
-    until close() is called.  Avoids the overhead of starting/stopping
-    an event loop on every call.
-
-    Thread-safe — multiple threads can call concurrently via the
-    underlying BlockingPortal.
-
-    Usage::
-
-        runner = PortalRunner()
-        result = runner(some_coroutine())
-        runner.close()
-
-        # or as context manager:
-        with PortalRunner() as runner:
-            result = runner(some_coroutine())
+    until close() is called.  Still needed by _fsspec.py.
     """
 
     def __init__(self) -> None:
@@ -78,7 +59,6 @@ class PortalRunner:
         self.close()
 
     def __del__(self) -> None:
-        # Best-effort cleanup.  Prefer explicit close() or context manager.
         import contextlib
 
         with contextlib.suppress(Exception):
@@ -86,20 +66,19 @@ class PortalRunner:
 
 
 class SyncNexusFS:
-    """Synchronous wrapper around the async NexusFS facade.
+    """Synchronous wrapper around the NexusFS facade.
 
-    Keeps a persistent event loop alive across calls via PortalRunner.
+    Since SlimNexusFS is now fully sync, this wrapper delegates
+    directly without any async bridging.  Kept for API compatibility.
+
     Use as a context manager or call close() when done::
 
-        with SyncNexusFS(async_facade) as fs:
+        with SyncNexusFS(facade) as fs:
             content = fs.read("/path")
-
-    Thread-safe — multiple threads can use the same SyncNexusFS instance.
     """
 
     def __init__(self, async_fs: Any) -> None:
         self._async = async_fs
-        self._runner = PortalRunner()
 
     # -- Context manager -------------------------------------------------------
 
@@ -112,37 +91,34 @@ class SyncNexusFS:
     # -- Expose the public facade methods as sync versions ---------------------
 
     def read(self, path: str) -> bytes:
-        return cast(bytes, self._runner(self._async.read(path)))
+        return cast(bytes, self._async.read(path))
 
     def write(self, path: str, content: bytes) -> dict[str, Any]:
-        return cast(dict[str, Any], self._runner(self._async.write(path, content)))
+        return cast(dict[str, Any], self._async.write(path, content))
 
     def ls(self, path: str = "/", detail: bool = False) -> list[Any]:
-        return cast(
-            list[Any],
-            self._runner(self._async.ls(path, detail=detail)),
-        )
+        return cast(list[Any], self._async.ls(path, detail=detail))
 
     def stat(self, path: str) -> dict[str, Any] | None:
-        return cast(dict[str, Any] | None, self._runner(self._async.stat(path)))
+        return cast(dict[str, Any] | None, self._async.stat(path))
 
     def delete(self, path: str) -> None:
-        self._runner(self._async.delete(path))
+        self._async.delete(path)
 
     def mkdir(self, path: str, parents: bool = True) -> None:
-        self._runner(self._async.mkdir(path, parents=parents))
+        self._async.mkdir(path, parents=parents)
 
     def rmdir(self, path: str, recursive: bool = False) -> None:
-        self._runner(self._async.rmdir(path, recursive=recursive))
+        self._async.rmdir(path, recursive=recursive)
 
     def rename(self, old_path: str, new_path: str) -> None:
-        self._runner(self._async.rename(old_path, new_path))
+        self._async.rename(old_path, new_path)
 
     def exists(self, path: str) -> bool:
-        return cast(bool, self._runner(self._async.exists(path)))
+        return cast(bool, self._async.exists(path))
 
     def copy(self, src: str, dst: str) -> dict[str, Any]:
-        return cast(dict[str, Any], self._runner(self._async.copy(src, dst)))
+        return cast(dict[str, Any], self._async.copy(src, dst))
 
     def edit(
         self,
@@ -155,19 +131,17 @@ class SyncNexusFS:
     ) -> dict[str, Any]:
         return cast(
             dict[str, Any],
-            self._runner(
-                self._async.edit(
-                    path,
-                    edits,
-                    if_match=if_match,
-                    fuzzy_threshold=fuzzy_threshold,
-                    preview=preview,
-                )
+            self._async.edit(
+                path,
+                edits,
+                if_match=if_match,
+                fuzzy_threshold=fuzzy_threshold,
+                preview=preview,
             ),
         )
 
     def read_range(self, path: str, start: int, end: int) -> bytes:
-        return cast(bytes, self._runner(self._async.read_range(path, start, end)))
+        return cast(bytes, self._async.read_range(path, start, end))
 
     def grep(
         self,
@@ -179,32 +153,27 @@ class SyncNexusFS:
     ) -> list[dict[str, Any]]:
         return cast(
             list[dict[str, Any]],
-            self._runner(
-                self._async.grep(
-                    pattern,
-                    path,
-                    ignore_case=ignore_case,
-                    max_results=max_results,
-                )
+            self._async.grep(
+                pattern,
+                path,
+                ignore_case=ignore_case,
+                max_results=max_results,
             ),
         )
 
     def glob(self, pattern: str, path: str = "/") -> list[str]:
-        return cast(list[str], self._runner(self._async.glob(pattern, path)))
+        return cast(list[str], self._async.glob(pattern, path))
 
     def list_mounts(self) -> list[str]:
-        """List all mount points (synchronous -- no portal needed)."""
+        """List all mount points."""
         return cast(list[str], self._async.list_mounts())
 
     def unmount(self, mount_point: str) -> None:
-        """Remove a mount and clean up all associated state (synchronous wrapper)."""
-        self._runner(self._async.unmount(mount_point))
+        """Remove a mount and clean up all associated state."""
+        self._async.unmount(mount_point)
 
     def write_batch(self, files: list[tuple[str, bytes]]) -> list[dict[str, Any]]:
-        return cast(
-            list[dict[str, Any]],
-            self._runner(self._async.write_batch(files)),
-        )
+        return cast(list[dict[str, Any]], self._async.write_batch(files))
 
     def read_batch(
         self,
@@ -212,16 +181,12 @@ class SyncNexusFS:
         *,
         partial: bool = False,
     ) -> list[dict[str, Any]]:
-        return cast(
-            list[dict[str, Any]],
-            self._runner(self._async.read_batch(paths, partial=partial)),
-        )
+        return cast(list[dict[str, Any]], self._async.read_batch(paths, partial=partial))
 
     def close(self) -> None:
-        """Clean up resources held by the underlying async facade and portal."""
+        """Clean up resources held by the underlying facade."""
         if hasattr(self._async, "close"):
             import contextlib
 
             with contextlib.suppress(Exception):
-                self._runner(self._async.close())
-        self._runner.close()
+                self._async.close()

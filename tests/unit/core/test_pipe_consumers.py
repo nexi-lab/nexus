@@ -62,7 +62,7 @@ class MockNexusFS:
         self._pipes[path].put_nowait(data)
         self.write_count += 1
 
-    async def sys_setattr(self, path: str, **kwargs: object) -> None:  # noqa: ARG002
+    def sys_setattr(self, path: str, **kwargs: object) -> None:  # noqa: ARG002
         """Create a pipe (asyncio.Queue)."""
         if path not in self._pipes:
             self._pipes[path] = asyncio.Queue()
@@ -77,12 +77,12 @@ class MockNexusFS:
         self._pipes[path].put_nowait(data)
 
     def sys_read(self, path: str, **kwargs: object) -> bytes:  # noqa: ARG002
-        """Read data from the pipe queue.
+        """Read data from the pipe queue (non-blocking).
 
-        Blocks briefly (50ms) when empty — simulates the real DT_PIPE
-        fast-path where read_nowait() fails and the blocking wait is
-        bounded.  This lets the consumer's drain loop break quickly
-        when no more events are queued.
+        Uses get_nowait() — simulates the real DT_PIPE fast-path where
+        the consumer drains until the queue is empty.  Raises
+        NexusFileNotFoundError when the pipe is closed, missing, or empty
+        so the consumer's drain loop breaks quickly.
         """
         if path in self._closed:
             from nexus.contracts.exceptions import NexusFileNotFoundError
@@ -93,8 +93,8 @@ class MockNexusFS:
 
             raise NexusFileNotFoundError(path=path)
         try:
-            return await asyncio.wait_for(self._pipes[path].get(), timeout=0.05)
-        except TimeoutError:
+            return self._pipes[path].get_nowait()
+        except asyncio.QueueEmpty:
             from nexus.contracts.exceptions import NexusFileNotFoundError
 
             raise NexusFileNotFoundError(path=path) from None

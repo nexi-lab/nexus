@@ -69,70 +69,60 @@ def async_fs(tmp_path: Path) -> SlimNexusFS:
 
 
 class TestAsyncOperations:
-    """Full lifecycle via the async SlimNexusFS API."""
+    """Full lifecycle via the SlimNexusFS API (now sync)."""
 
-    @pytest.mark.asyncio
-    async def test_write_read_parity(self, async_fs: SlimNexusFS):
+    def test_write_read_parity(self, async_fs: SlimNexusFS):
         content = b"parity test content"
         async_fs.write("/local/parity.txt", content)
         result = async_fs.read("/local/parity.txt")
         assert result == content
 
-    @pytest.mark.asyncio
-    async def test_stat_parity(self, async_fs: SlimNexusFS):
+    def test_stat_parity(self, async_fs: SlimNexusFS):
         async_fs.write("/local/stat.txt", b"stat content")
-        stat = await async_fs.stat("/local/stat.txt")
+        stat = async_fs.stat("/local/stat.txt")
         assert stat is not None
         assert stat["size"] == 12
         assert stat["is_directory"] is False
         assert stat["path"] == "/local/stat.txt"
 
-    @pytest.mark.asyncio
-    async def test_ls_parity(self, async_fs: SlimNexusFS):
+    def test_ls_parity(self, async_fs: SlimNexusFS):
         async_fs.write("/local/ls_a.txt", b"a")
         async_fs.write("/local/ls_b.txt", b"b")
-        entries = await async_fs.ls("/local/", detail=False, recursive=True)
+        entries = async_fs.ls("/local/", detail=False, recursive=True)
         paths = sorted(e for e in entries if e.endswith(".txt"))
         assert "/local/ls_a.txt" in paths
         assert "/local/ls_b.txt" in paths
 
-    @pytest.mark.asyncio
-    async def test_exists_parity(self, async_fs: SlimNexusFS):
-        assert not await async_fs.exists("/local/nope.txt")
+    def test_exists_parity(self, async_fs: SlimNexusFS):
+        assert not async_fs.exists("/local/nope.txt")
         async_fs.write("/local/nope.txt", b"now")
-        assert await async_fs.exists("/local/nope.txt")
+        assert async_fs.exists("/local/nope.txt")
 
-    @pytest.mark.asyncio
-    async def test_delete_parity(self, async_fs: SlimNexusFS):
+    def test_delete_parity(self, async_fs: SlimNexusFS):
         async_fs.write("/local/del.txt", b"bye")
-        await async_fs.delete("/local/del.txt")
-        assert await async_fs.stat("/local/del.txt") is None
+        async_fs.delete("/local/del.txt")
+        assert async_fs.stat("/local/del.txt") is None
 
-    @pytest.mark.asyncio
-    async def test_rename_parity(self, async_fs: SlimNexusFS):
+    def test_rename_parity(self, async_fs: SlimNexusFS):
         async_fs.write("/local/old_p.txt", b"rename")
-        await async_fs.rename("/local/old_p.txt", "/local/new_p.txt")
+        async_fs.rename("/local/old_p.txt", "/local/new_p.txt")
         assert async_fs.read("/local/new_p.txt") == b"rename"
 
-    @pytest.mark.asyncio
-    async def test_copy_parity(self, async_fs: SlimNexusFS):
+    def test_copy_parity(self, async_fs: SlimNexusFS):
         async_fs.write("/local/cp_src.txt", b"copy")
-        await async_fs.copy("/local/cp_src.txt", "/local/cp_dst.txt")
+        async_fs.copy("/local/cp_src.txt", "/local/cp_dst.txt")
         assert async_fs.read("/local/cp_dst.txt") == b"copy"
 
-    @pytest.mark.asyncio
-    async def test_mkdir_parity(self, async_fs: SlimNexusFS):
+    def test_mkdir_parity(self, async_fs: SlimNexusFS):
         async_fs.mkdir("/local/parity_dir")
-        stat = await async_fs.stat("/local/parity_dir")
+        stat = async_fs.stat("/local/parity_dir")
         assert stat is not None
         assert stat["is_directory"] is True
 
-    @pytest.mark.asyncio
-    async def test_list_mounts_parity(self, async_fs: SlimNexusFS):
+    def test_list_mounts_parity(self, async_fs: SlimNexusFS):
         assert "/local" in async_fs.list_mounts()
 
-    @pytest.mark.asyncio
-    async def test_read_range_parity(self, async_fs: SlimNexusFS):
+    def test_read_range_parity(self, async_fs: SlimNexusFS):
         async_fs.write("/local/range.txt", b"0123456789")
         result = async_fs.read_range("/local/range.txt", 2, 7)
         assert result == b"23456"

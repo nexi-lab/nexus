@@ -1450,10 +1450,12 @@ class NexusFS(  # type: ignore[misc]
         # PAS (passthrough) mount read — LocalConnector files aren't in CAS
         # metastore, so Rust kernel sys_read won't find them. Read directly
         # from the backend via read_content (ObjectStoreABC contract).
+        from nexus.backends.storage.local_connector import LocalConnectorBackend as _LCB
+
         if (
             _route_backend is not None
             and not isinstance(_route, ExternalRouteResult)
-            and hasattr(_route_backend, "read_content")
+            and isinstance(_route_backend, _LCB)
         ):
             _ctx = (
                 _dc_replace(

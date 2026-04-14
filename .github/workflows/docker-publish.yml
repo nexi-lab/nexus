@@ -173,7 +173,10 @@ jobs:
 
       - name: Seed demo workspace
         run: |
+          # nexus demo init needs a nexus.yaml — create a minimal one
+          docker exec nexus-e2e sh -c "printf 'preset: demo\nserver_url: http://localhost:2026\ndata_dir: /app/data\nports:\n  http: 2026\n  grpc: 2029\n' > /app/nexus.yaml"
           docker exec \
+            -w /app \
             -e NEXUS_URL=http://localhost:2026 \
             -e NEXUS_API_KEY="${NEXUS_API_KEY}" \
             -e NEXUS_PROFILE=remote \

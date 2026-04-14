@@ -5284,13 +5284,20 @@ class NexusFS(  # type: ignore[misc]
             # calling is_implicit_directory() per entry (each call does a full
             # metastore_list).  A path P is an implicit directory if any other
             # entry in the result set has a path starting with P + "/".
+            # We use bisect to find the first path >= P+"/" — if that path
+            # starts with P+"/", P has descendants.  This handles cases where
+            # sibling paths like "/foo.txt" sort between "/foo" and "/foo/bar".
+            import bisect
+
             entries = list(entries_iter)
             all_paths = sorted(e.path for e in entries)
             implicit_dirs: set[str] = set()
-            for i in range(len(all_paths) - 1):
-                p = all_paths[i] + "/"
-                if all_paths[i + 1].startswith(p):
-                    implicit_dirs.add(all_paths[i])
+            for e in entries:
+                if e.entry_type == 0:
+                    child_prefix = e.path + "/"
+                    idx = bisect.bisect_left(all_paths, child_prefix)
+                    if idx < len(all_paths) and all_paths[idx].startswith(child_prefix):
+                        implicit_dirs.add(e.path)
             return [self._entry_to_detail_dict_fast(e, implicit_dirs) for e in entries]
         if details:
             return [self._entry_to_detail_dict(e, recursive) for e in entries_iter]

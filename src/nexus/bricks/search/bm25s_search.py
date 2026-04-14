@@ -424,6 +424,22 @@ class BM25SIndex:
         self._retriever.save(str(index_path))
 
         # Save document metadata
+        self._save_metadata()
+
+        logger.debug(f"Saved BM25S index: {len(self._corpus)} documents")
+
+    def _save_empty_index(self) -> None:
+        """Persist an empty index state, removing stale retriever files."""
+        import shutil
+
+        index_path = self.index_dir / "index"
+        if index_path.exists():
+            shutil.rmtree(index_path)
+        self._save_metadata()
+        logger.debug("Saved empty BM25S index (last document deleted)")
+
+    def _save_metadata(self) -> None:
+        """Write corpus/path metadata to metadata.json."""
         metadata_path = self.index_dir / "metadata.json"
         with open(metadata_path, "w") as f:
             json.dump(
@@ -434,8 +450,6 @@ class BM25SIndex:
                 },
                 f,
             )
-
-        logger.debug(f"Saved BM25S index: {len(self._corpus)} documents")
 
     async def index_document(
         self,
@@ -477,11 +491,12 @@ class BM25SIndex:
         """Synchronous document indexing."""
         with self._lock:
             try:
-                # Check if document already exists
+                # Check if document already exists in main index
                 if path_id in self._path_to_idx:
-                    # Remove from main index by marking for rebuild
-                    # (BM25S doesn't support in-place updates)
                     self._remove_document_sync(path_id)
+
+                # Remove from pending delta if already queued (idempotent upsert)
+                self._remove_from_delta(path_id)
 
                 # Add to delta index
                 self._delta_corpus.append(content)
@@ -498,14 +513,23 @@ class BM25SIndex:
                 logger.error(f"Failed to index document {path}: {e}")
                 return False
 
+    def _remove_from_delta(self, path_id: str) -> None:
+        """Remove a document from the pending delta lists if present."""
+        try:
+            idx = self._delta_path_ids.index(path_id)
+        except ValueError:
+            return
+        del self._delta_corpus[idx]
+        del self._delta_path_ids[idx]
+        del self._delta_paths[idx]
+
     def _remove_document_sync(self, path_id: str) -> None:
-        """Remove document from index (marks for rebuild)."""
+        """Remove document from main index."""
         if path_id not in self._path_to_idx:
             return
 
         idx = self._path_to_idx[path_id]
 
-        # Remove from lists (this is expensive, but rare)
         del self._corpus[idx]
         del self._path_ids[idx]
         del self._paths[idx]
@@ -513,7 +537,6 @@ class BM25SIndex:
         # Rebuild path_to_idx mapping
         self._path_to_idx = {pid: i for i, pid in enumerate(self._path_ids)}
 
-        # Mark index as needing rebuild
         self._needs_rebuild = True
 
     def _merge_delta(self) -> None:
@@ -651,8 +674,9 @@ class BM25SIndex:
                 if not query_tokens:
                     return []
 
-                # Search - retrieve more than needed for filtering
-                k = min(limit * 3, len(self._corpus))
+                # When path_filter is active, retrieve full corpus to avoid
+                # missing in-scope hits buried below higher-scoring out-of-scope docs.
+                k = len(self._corpus) if path_filter else min(limit * 3, len(self._corpus))
                 results, scores = self._retriever.retrieve(
                     bm25s_module.tokenize([" ".join(query_tokens)]),
                     k=k,
@@ -717,13 +741,22 @@ class BM25SIndex:
         """Synchronous document deletion."""
         with self._lock:
             try:
+                # Remove from both main index and pending delta
                 self._remove_document_sync(path_id)
+                self._remove_from_delta(path_id)
+
                 # Rebuild index after deletion
                 if self._corpus:
                     all_tokens = self.tokenizer.tokenize_batch(self._corpus)
                     self._retriever = bm25s_module.BM25(method=self.method, k1=self.k1, b=self.b)
                     self._retriever.index(all_tokens)
                     self._save_index()
+                else:
+                    # Last document deleted — persist empty state so restart
+                    # doesn't resurrect stale index from disk.
+                    self._retriever = bm25s_module.BM25(method=self.method, k1=self.k1, b=self.b)
+                    self._path_to_idx = {}
+                    self._save_empty_index()
                 return True
             except Exception as e:
                 logger.error(f"Failed to delete document {path_id}: {e}")

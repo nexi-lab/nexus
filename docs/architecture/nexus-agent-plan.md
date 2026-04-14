@@ -22,7 +22,7 @@ See `services/agent_runtime/managed_loop.py`.
 
 ### 1.2 LLM API Call — DONE
 
-Multi-provider strategy: OpenAI-compatible SDK via nova-gateway (translates all LLMs to OpenAI format) + planned `CASAnthropicBackend` for native Claude support. `CASOpenAIBackend.generate_streaming()` yields (token, metadata) through DT_STREAM.
+Multi-provider strategy: `CASAnthropicBackend` (native Claude SDK, SudoRouter) + `CASOpenAIBackend` (OpenAI-compatible). Both backends expose `generate_streaming(request) → Iterator[dict]` yielding CC-format content block frames (text, thinking, tool_use, usage, stop). ManagedAgentLoop iterates the generator directly — no DT_STREAM, no background thread.
 
 ### 1.3 Retry & Error Handling — DONE
 
@@ -30,7 +30,7 @@ Exponential backoff for 429/5xx/network errors, immediate fail on auth errors, t
 
 ### 1.4 Tool Call Parsing — DONE
 
-Incremental accumulation of OpenAI-compatible streaming tool calls: per-index argument concatenation across chunks, emitted as complete tool_calls in the "done" control message.
+Transport layer completes argument accumulation internally. Anthropic: tool_use content blocks arrive complete at `content_block_stop`. OpenAI: incremental fragments accumulated per-index, yielded as complete CC `tool_use` frames after stream ends. ManagedAgentLoop converts CC tool_use frames to OpenAI format for internal message storage.
 
 ### 1.5 Tool Registry & Execution — DONE
 
@@ -43,18 +43,9 @@ Incremental accumulation of OpenAI-compatible streaming tool calls: per-index ar
   `nexus chat --tools /path/to/toolset` → DT_MOUNT to `/root/tools/{name}`.
   LLM discovers on-demand via `ls /tools/` + `--help`. Filesystem IS the registry.
 
-### 1.6 Dual Persistence — retained (design rationale)
+### 1.6 Conversation Persistence — DONE
 
-**Not redundant** — different granularity and timing:
-
-| | CASOpenAIBackend.persist_session() | ManagedAgentLoop._persist_conversation() |
-|---|---|---|
-| Granularity | Single LLM call (request + response) | Entire conversation (all turns incl. tool results) |
-| Purpose | LLM KV cache optimization, audit trail | Session resume (--continue) |
-| Timing | After streaming done (in `_run_stream()`) | After tool execution, before next LLM call |
-
-Both retained. CAS dedup ensures no wasted space. `persist_session()` now
-lives in `CASOpenAIBackend` directly (LLMStreamingService eliminated in PR #3657).
+`ManagedAgentLoop._persist_conversation()` writes the full message array to VFS (CAS-addressed) after each mutation. Used for session resume (`--continue`). CAS per-session persist (`persist_session()`) is retained on backends but no longer called from the streaming path (DT_STREAM + `_run_stream()` removed). Future: JSONL transcript format (CC-compatible `TranscriptMessage`).
 
 ### 1.7 Session Resume — DONE
 
@@ -525,6 +516,12 @@ Steps 1-2 are the MVP. After Step 2, `nexus chat --acp` works in sudowork.
 Step 7 is the final gate: E2E test via sudowork's ai-dev-browser to verify
 the full flow (spawn → initialize → prompt → streaming response → tool calls).
 
+**Status**: Steps 1-5 DONE. E2E verified with SudoRouter Anthropic endpoint.
+Streaming refactored: `generate_streaming()` yields CC-format frames directly
+to `ManagedAgentLoop._call_llm()` (DT_STREAM removed). Observer push-mode
+emits `agent_message_chunk`, `thinking`, `tool_call`, `usage_update` via ACP
+`session/update` notifications.
+
 ---
 
 ## 5. Agent Lifecycle [P0/P1]
@@ -636,8 +633,7 @@ interacts with the human. Copilot can spawn **Workers** via ACP for specialist
 tasks (CC, cursor, custom tools). Workers are subprocess agents with restricted
 tool sets.
 
-**Streaming**: Default is streaming (打字机效果) via `CASOpenAIBackend.start_streaming()`
-→ DT_STREAM → REPL reads tokens in real-time. Matches CC default behavior.
+**Streaming**: Default is streaming (typewriter effect) via `generate_streaming()` → CC-format frames → ManagedAgentLoop iterates directly. Observer callbacks fire in real-time as tokens arrive.
 
 #### CLI Entry Point
 
@@ -677,13 +673,11 @@ nexus chat [--profile X] [-p "prompt"]
   │   NO  → Boot embedded NexusFS (invocation-based, exclusive to this process):
   │         1. Resolve deployment profile: --deployment-profile > NEXUS_PROFILE env > "cluster"
   │         2. create_nexus_fs(profile=resolved, backend=CASLocalBackend(~/.nexus/data))
-  │         3. Mount LLM backend: sys_setattr("/llm", DT_MOUNT, CASOpenAIBackend(...))
-  │         4. Inject StreamManager into backend
+  │         3. Mount LLM backend: sys_setattr("/llm", DT_MOUNT, CASAnthropicBackend/CASOpenAIBackend(...))
   │         NexusFS lifecycle = process lifetime. No nexusd required.
   │
   ├─ Create ManagedAgentLoop(
-  │     sys_read=nx.sys_read, sys_write=nx.sys_write,
-  │     stream_read=nx._stream_manager.stream_read,
+  │     sys_read=nx.sys_read, sys_write=nx.write,
   │     llm_backend=backend, agent_path="/root/agents/default",
   │     cwd=os.getcwd(), model=model,
   │     tool_registry=ToolRegistry(default_tools()),
@@ -728,12 +722,9 @@ async def repl_loop(loop: ManagedAgentLoop) -> None:
         print_turn_summary(result)
 ```
 
-Streaming display: a background task reads from DT_STREAM and prints tokens
-as they arrive (`sys.stdout.write(token); sys.stdout.flush()`). The REPL
-doesn't block on full response — tokens appear in real-time.
+Streaming display: `ManagedAgentLoop._call_llm()` iterates `generate_streaming()` directly. Observer callbacks fire per-token, so ACP/UI consumers see real-time updates.
 
-Ctrl+C during LLM call: cancels `CASOpenAIBackend.cancel_stream()`, returns
-to prompt. Does NOT exit REPL.
+Ctrl+C during LLM call: interrupts the generator iteration, returns to prompt. Does NOT exit REPL.
 
 #### Slash Commands (V1)
 
@@ -810,7 +801,7 @@ Precedence: `CLI args > env vars > config file` (matching CC).
 
 | Pattern | CC Usage | Nexus Equivalent |
 |---------|----------|-----------------|
-| AsyncGenerator streaming | Full-chain streaming | DT_STREAM |
+| AsyncGenerator streaming | Full-chain streaming | `generate_streaming()` → CC frames |
 | Builder + Factory | Tool safe defaults | ToolRegistry |
 | Observer + State Machine | Tool lifecycle | OBSERVE phase |
 | Snapshot State | File undo/redo | CAS versioning |
@@ -851,7 +842,8 @@ Precedence: `CLI args > env vars > config file` (matching CC).
 
 ### To implement next (designed, ready for implementation):
 
-15. **Sudowork ACP integration** (§4A) — ACP JSON-RPC transport + protocol handler + push observer + tool lifecycle + --acp flag
+15. ~~**Sudowork ACP integration** (§4A)~~ — DONE (ACP JSON-RPC transport + protocol handler + push observer + tool lifecycle + --acp flag)
+16. ~~**LLM Streaming Refactor**~~ — DONE (DT_STREAM removed, `generate_streaming()` yields CC-format frames, direct generator iteration in `ManagedAgentLoop._call_llm()`, thinking/signature support)
 
 ### Deferred Items (not in current scope):
 - Multi-agent teams (§5.2, P1)

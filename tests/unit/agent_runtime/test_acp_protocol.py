@@ -279,3 +279,52 @@ class TestAcpObserverPush:
         chunk = notifications[0]["params"]["update"]
         assert chunk["sessionUpdate"] == "agent_message_chunk"
         assert chunk["content"]["text"] == "streaming token"
+
+    @pytest.mark.asyncio
+    async def test_thinking_emits_notification(self) -> None:
+        """Thinking updates emit session/update notifications."""
+        transport = FakeTransport()
+
+        async def _factory(session_id: str, cwd: str, observer: AgentObserver) -> Any:
+            loop = _make_mock_loop()
+            loop._observer = observer
+
+            async def mock_run_with_thinking(prompt: str) -> AgentTurnResult:
+                observer.reset_turn()
+                observer.observe_update("thinking", {"content": "analyzing..."})
+                observer.observe_update(
+                    "agent_message_chunk",
+                    {"content": {"type": "text", "text": "answer"}},
+                )
+                return AgentTurnResult(text="answer", stop_reason="stop", thinking="analyzing...")
+
+            loop.run = mock_run_with_thinking
+            return loop
+
+        handler = AcpProtocolHandler(transport=transport, loop_factory=_factory)
+
+        transport.inject({"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {}})
+        transport.inject(
+            {"jsonrpc": "2.0", "id": 1, "method": "session/new", "params": {"cwd": "/tmp"}}
+        )
+        transport.inject(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "session/prompt",
+                "params": {"prompt": [{"type": "text", "text": "think hard"}]},
+            }
+        )
+        transport.inject_eof()
+
+        await handler.run()
+
+        # Find thinking notifications
+        notifications = [
+            m for m in transport.get_responses() if m.get("method") == "session/update"
+        ]
+        thinking_notifs = [
+            n for n in notifications if n["params"]["update"].get("sessionUpdate") == "thinking"
+        ]
+        assert len(thinking_notifs) == 1
+        assert thinking_notifs[0]["params"]["update"]["content"] == "analyzing..."

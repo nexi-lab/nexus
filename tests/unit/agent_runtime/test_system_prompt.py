@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-import pytest
-
 from nexus.services.agent_runtime.system_prompt import (
     _generate_env_block,
     assemble_system_prompt,
@@ -24,14 +22,13 @@ def _make_sys_read(files: dict[str, str]) -> MagicMock:
 
 
 class TestAssembleSystemPrompt:
-    @pytest.mark.asyncio
-    async def test_system_md_only(self) -> None:
+    def test_system_md_only(self) -> None:
         sys_read = _make_sys_read(
             {
                 "/root/agents/test/SYSTEM.md": "You are helpful.",
             }
         )
-        result = await assemble_system_prompt(
+        result = assemble_system_prompt(
             sys_read=sys_read,
             zone_id="root",
             agent_id="test",
@@ -39,10 +36,9 @@ class TestAssembleSystemPrompt:
         assert "You are helpful." in result
         assert "# Environment" in result  # env block always present
 
-    @pytest.mark.asyncio
-    async def test_no_system_md(self) -> None:
+    def test_no_system_md(self) -> None:
         sys_read = _make_sys_read({})
-        result = await assemble_system_prompt(
+        result = assemble_system_prompt(
             sys_read=sys_read,
             zone_id="root",
             agent_id="test",
@@ -51,8 +47,7 @@ class TestAssembleSystemPrompt:
         assert "# Environment" in result
         assert "You are helpful" not in result
 
-    @pytest.mark.asyncio
-    async def test_includes_prompt_fragments(self) -> None:
+    def test_includes_prompt_fragments(self) -> None:
         sys_read = _make_sys_read(
             {
                 "/root/agents/test/SYSTEM.md": "Identity.",
@@ -60,7 +55,7 @@ class TestAssembleSystemPrompt:
                 "/root/agents/test/prompts/tool_batching.md": "Batch tools.",
             }
         )
-        result = await assemble_system_prompt(
+        result = assemble_system_prompt(
             sys_read=sys_read,
             zone_id="root",
             agent_id="test",
@@ -69,15 +64,14 @@ class TestAssembleSystemPrompt:
         assert "Be concise." in result
         assert "Batch tools." in result
 
-    @pytest.mark.asyncio
-    async def test_includes_project_context(self) -> None:
+    def test_includes_project_context(self) -> None:
         sys_read = _make_sys_read(
             {
                 "/root/agents/test/SYSTEM.md": "Identity.",
                 "/workspace/.nexus/agent.md": "Project: Nexus. Always use Python.",
             }
         )
-        result = await assemble_system_prompt(
+        result = assemble_system_prompt(
             sys_read=sys_read,
             zone_id="root",
             agent_id="test",
@@ -85,10 +79,9 @@ class TestAssembleSystemPrompt:
         )
         assert "Project: Nexus" in result
 
-    @pytest.mark.asyncio
-    async def test_model_in_env_block(self) -> None:
+    def test_model_in_env_block(self) -> None:
         sys_read = _make_sys_read({})
-        result = await assemble_system_prompt(
+        result = assemble_system_prompt(
             sys_read=sys_read,
             zone_id="root",
             agent_id="test",
@@ -96,15 +89,14 @@ class TestAssembleSystemPrompt:
         )
         assert "claude-opus-4" in result
 
-    @pytest.mark.asyncio
-    async def test_missing_fragments_silently_skipped(self) -> None:
+    def test_missing_fragments_silently_skipped(self) -> None:
         sys_read = _make_sys_read(
             {
                 "/root/agents/test/SYSTEM.md": "Identity.",
                 # No prompt fragments exist
             }
         )
-        result = await assemble_system_prompt(
+        result = assemble_system_prompt(
             sys_read=sys_read,
             zone_id="root",
             agent_id="test",

@@ -2,16 +2,16 @@
 
 1st-party agent where ALL I/O routes through kernel VFS syscalls:
 
-    LLM call:       sys_write(llm_path, request) → DT_STREAM tokens
-    Token read:     sys_read(stream_path, offset) → real-time token delivery
+    LLM call:       llm_backend.generate_streaming(request) → CC-format frames
     Conversation:   sys_write(conv_path, messages) → CAS persistence
     System prompt:  sys_read(agent_path/SYSTEM.md) → VFS-backed config
     Tools config:   sys_read(agent_path/tools.json) → VFS-backed tool defs
     Tool execution: sys_read / sys_write → VFS syscalls
     Session result: sys_write(proc/{pid}/result) → VFS persistence
 
-No backend called directly. No in-memory-only state. Every I/O
-operation is observable via kernel dispatch (PRE → INTERCEPT → OBSERVE).
+Transport yields CC-format content block frames (text, thinking, tool_use,
+usage, stop). ManagedAgentLoop iterates the generator directly — no DT_STREAM,
+no queue, no background thread.
 
 Reuses AgentObserver for notification accumulation (shared with
 3rd-party AcpConnection).
@@ -19,7 +19,7 @@ Reuses AgentObserver for notification accumulation (shared with
 DI dependencies (kernel syscall callables):
     - sys_read:  NexusFS.sys_read wrapper
     - sys_write: NexusFS.sys_write wrapper
-    - llm_backend: CASOpenAIBackend for LLM streaming + CAS
+    - llm_backend: CAS backend with generate_streaming()
     - agent_path: VFS path for agent config (SYSTEM.md, tools.json)
     - llm_path: VFS mount path for LLM backend
     - conv_path: VFS path for conversation persistence (CAS)
@@ -33,9 +33,9 @@ References:
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
+import time
 import uuid
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
@@ -71,9 +71,6 @@ _DEFAULT_BASE_DELAY = 1.0  # seconds
 # Kernel syscall callables (injected from NexusFS — all sync after PR #3717).
 SysReadFn = Callable[[str], bytes]
 SysWriteFn = Callable[[str, bytes], Any]
-# StreamReadFn: (path, offset) → (data, next_offset)
-# Now sync (blocking) — callers in async context wrap via asyncio.to_thread.
-StreamReadFn = Callable[[str, int], tuple[bytes, int]]
 
 # Maximum reasoning turns before forced stop (prevent infinite loops).
 _MAX_TURNS = 50
@@ -84,8 +81,7 @@ class ManagedAgentLoop:
 
     Every I/O operation goes through kernel VFS syscalls:
 
-    - LLM calls via ``CASOpenAIBackend`` (DT_STREAM delivery)
-    - Token reads via ``sys_read`` on DT_STREAM (kernel IPC)
+    - LLM calls via ``generate_streaming()`` (direct generator iteration)
     - Conversation via ``sys_write`` to CAS-addressed VFS path
     - Config (system prompt, tools) via ``sys_read`` from VFS
     - Tool execution via ``sys_read`` / ``sys_write`` (VFS)
@@ -100,7 +96,6 @@ class ManagedAgentLoop:
         *,
         sys_read: SysReadFn,
         sys_write: SysWriteFn,
-        stream_read: StreamReadFn,
         llm_backend: "CASOpenAIBackend",
         agent_path: str,
         llm_path: str,
@@ -119,7 +114,6 @@ class ManagedAgentLoop:
     ) -> None:
         self._sys_read = sys_read
         self._sys_write = sys_write
-        self._stream_read = stream_read
         self._llm_backend = llm_backend
         self._agent_path = agent_path  # /{zone}/agents/{id}
         self._llm_path = llm_path  # /{zone}/llm/openai
@@ -182,7 +176,7 @@ class ManagedAgentLoop:
         zone_id = parts[0] if len(parts) >= 3 else "root"
         agent_id = parts[2] if len(parts) >= 3 else ""
 
-        system_prompt = await assemble_system_prompt(
+        system_prompt = assemble_system_prompt(
             sys_read=self._sys_read,
             zone_id=zone_id,
             agent_id=agent_id,
@@ -210,15 +204,13 @@ class ManagedAgentLoop:
     async def run(self, prompt: str) -> AgentTurnResult:
         """Run the reasoning loop for a single user prompt.
 
-        All I/O through VFS:
-            1. Append user message → persist conversation (sys_write)
-            2. Start LLM stream (CASOpenAIBackend → DT_STREAM)
-            3. Read tokens from DT_STREAM (sys_read / stream_read)
-            4. Parse response: tool_calls? → execute via VFS → loop
-                               text? → persist result → return
+        1. Append user message → persist conversation (sys_write)
+        2. Call LLM via generate_streaming() → iterate CC-format frames
+        3. Parse response: tool_calls? → execute via VFS → loop
+                           text? → persist result → return
         """
         self._messages.append({"role": "user", "content": prompt})
-        await self._persist_conversation()
+        self._persist_conversation()
         self._observer.reset_turn()
 
         turns = 0
@@ -229,19 +221,13 @@ class ManagedAgentLoop:
             self._compactor.micro_compact(self._messages)
             if self._compactor.should_auto_compact(self._messages):
                 self._messages = await self._compactor.auto_compact(self._messages)
-                await self._persist_conversation()
+                self._persist_conversation()
 
-            # Call LLM via kernel (DT_STREAM) with retry
-            response_text, tool_calls, meta = await self._call_llm_with_retry()
+            # Call LLM with retry — direct generator iteration
+            response_text, tool_calls, meta = self._call_llm_with_retry()
 
-            # Emit observations (same format as AcpConnection)
-            if response_text:
-                self._observer.observe_update(
-                    "agent_message_chunk",
-                    {"content": {"type": "text", "text": response_text}},
-                )
+            # Emit model name from metadata
             if meta:
-                self._observer.observe_update("usage_update", {"usage": meta.get("usage", {})})
                 self._observer.model_name = meta.get("model")
 
             # Append assistant message → persist conversation (sys_write)
@@ -252,12 +238,14 @@ class ManagedAgentLoop:
             if tool_calls:
                 assistant_msg["tool_calls"] = tool_calls
             self._messages.append(assistant_msg)
-            await self._persist_conversation()
+            self._persist_conversation()
 
             # No tool calls → done
             if not tool_calls:
-                result = self._observer.finish_turn(stop_reason="stop")
-                await self._persist_result(result)
+                result = self._observer.finish_turn(
+                    stop_reason=meta.get("stop_reason", "stop") if meta else "stop"
+                )
+                self._persist_result(result)
                 return result
 
             # Execute tool calls via ConcurrencyPolicy (§2.3)
@@ -303,19 +291,19 @@ class ManagedAgentLoop:
                             "content": tool_result,
                         }
                     )
-            await self._persist_conversation()
+            self._persist_conversation()
 
         # Max turns reached
         logger.warning("ManagedAgentLoop: max turns (%d) reached", self._max_turns)
         result = self._observer.finish_turn(stop_reason="max_turns")
-        await self._persist_result(result)
+        self._persist_result(result)
         return result
 
     # ------------------------------------------------------------------
     # LLM call with retry (exponential backoff)
     # ------------------------------------------------------------------
 
-    async def _call_llm_with_retry(
+    def _call_llm_with_retry(
         self,
     ) -> tuple[str, list[dict[str, Any]], dict[str, Any] | None]:
         """Call LLM with exponential backoff retry on transient failures.
@@ -329,7 +317,7 @@ class ManagedAgentLoop:
         last_exc: Exception | None = None
         for attempt in range(self._max_retries):
             try:
-                return await self._call_llm_via_kernel()
+                return self._call_llm()
             except BackendError as exc:
                 err_msg = str(exc).lower()
                 # Auth errors: fail immediately
@@ -345,7 +333,7 @@ class ManagedAgentLoop:
                     delay,
                     exc,
                 )
-                await asyncio.sleep(delay)
+                time.sleep(delay)
             except (TimeoutError, OSError) as exc:
                 # Network / timeout errors: retry
                 last_exc = exc
@@ -357,7 +345,7 @@ class ManagedAgentLoop:
                     delay,
                     exc,
                 )
-                await asyncio.sleep(delay)
+                time.sleep(delay)
 
         raise BackendError(
             f"LLM call failed after {self._max_retries} retries: {last_exc}",
@@ -365,18 +353,19 @@ class ManagedAgentLoop:
         )
 
     # ------------------------------------------------------------------
-    # LLM call via kernel (DT_STREAM)
+    # LLM call — direct generator iteration (no DT_STREAM)
     # ------------------------------------------------------------------
 
-    async def _call_llm_via_kernel(
+    def _call_llm(
         self,
     ) -> tuple[str, list[dict[str, Any]], dict[str, Any] | None]:
-        """Call LLM through kernel VFS path.
+        """Call LLM and iterate CC-format frames. Fully sync.
 
-        1. Build request from conversation state
-        2. CASOpenAIBackend.start_streaming() → creates DT_STREAM
-        3. Read tokens from DT_STREAM via stream_read (kernel IPC)
-        4. Parse final "done" message for session hash + metadata
+        Iterates generate_streaming() directly — no DT_STREAM, no queue.
+        Observer callbacks fire in real-time as tokens arrive.
+
+        Returns:
+            (response_text, tool_calls_in_openai_format, metadata_dict)
         """
         request: dict[str, Any] = {"messages": self._messages}
         if self._model:
@@ -384,49 +373,62 @@ class ManagedAgentLoop:
         if self._tools:
             request["tools"] = self._tools
 
-        request_bytes = json.dumps(request, separators=(",", ":")).encode("utf-8")
-        stream_path = f"{self._llm_path}/.streams/{self._session_id}-{uuid.uuid4().hex[:8]}"
-
-        # Start LLM streaming via kernel service
-        await self._llm_backend.start_streaming(request_bytes, stream_path)
-
-        # Read tokens from DT_STREAM (kernel IPC, non-destructive)
         tokens: list[str] = []
-        meta: dict[str, Any] | None = None
-        offset = 0
+        thinking_parts: list[str] = []
+        tool_calls: list[dict[str, Any]] = []
+        usage: dict[str, Any] = {}
+        stop_reason = "stop"
+        model: str | None = None
 
-        while True:
-            try:
-                data, offset = await asyncio.to_thread(self._stream_read, stream_path, offset)
-            except Exception:
-                # StreamClosedError or similar — stream ended
-                break
+        for frame in self._llm_backend.generate_streaming(request):
+            t = frame["type"]
 
-            # Check for control messages (JSON with "type" field)
-            text = data.decode("utf-8", errors="replace")
-            if text.startswith("{"):
-                try:
-                    msg = json.loads(text)
-                    if msg.get("type") == "done":
-                        meta = msg
-                        break
-                    if msg.get("type") == "error":
-                        logger.error("LLM stream error: %s", msg.get("message"))
-                        break
-                except json.JSONDecodeError:
-                    tokens.append(text)
-            else:
-                tokens.append(text)
+            if t == "text":
+                tokens.append(frame["text"])
+                self._observer.observe_update(
+                    "agent_message_chunk",
+                    {"content": {"type": "text", "text": frame["text"]}},
+                )
+            elif t == "thinking":
+                thinking_parts.append(frame["thinking"])
+                self._observer.observe_update(
+                    "thinking",
+                    {"content": frame["thinking"]},
+                )
+            elif t == "tool_use":
+                # Convert CC tool_use frame to OpenAI tool_call format
+                # for internal message storage and tool execution.
+                tool_calls.append(
+                    {
+                        "id": frame["id"],
+                        "type": "function",
+                        "function": {
+                            "name": frame["name"],
+                            "arguments": json.dumps(frame["input"]),
+                        },
+                    }
+                )
+            elif t == "usage":
+                usage = frame["usage"]
+                self._observer.observe_update("usage_update", {"usage": usage})
+            elif t == "stop":
+                stop_reason = frame["stop_reason"]
+            elif t == "error":
+                raise BackendError(frame.get("message", "LLM error"), backend="llm")
 
         response_text = "".join(tokens)
+        thinking = "".join(thinking_parts) if thinking_parts else None
 
-        # Extract tool_calls from the "done" control message metadata.
-        # CASOpenAIBackend.generate_streaming() accumulates incremental
-        # tool_call fragments and includes the complete list in the final
-        # metadata, which _run_stream() forwards in the "done" message.
-        tool_calls: list[dict[str, Any]] = (meta or {}).get("tool_calls", [])
-
-        return response_text, tool_calls, meta
+        return (
+            response_text,
+            tool_calls,
+            {
+                "usage": usage,
+                "stop_reason": stop_reason,
+                "thinking": thinking,
+                "model": model,
+            },
+        )
 
     # ------------------------------------------------------------------
     # Tool execution via ToolRegistry (VFS syscalls under the hood)
@@ -475,18 +477,14 @@ class ManagedAgentLoop:
     # Conversation persistence via VFS (CAS-addressed)
     # ------------------------------------------------------------------
 
-    async def _persist_conversation(self) -> None:
-        """Persist current conversation to VFS (CAS-addressed).
-
-        Each mutation creates a new CAS hash. With MessageBoundaryStrategy
-        CDC, shared message prefixes are deduplicated across sessions.
-        """
+    def _persist_conversation(self) -> None:
+        """Persist current conversation to VFS (CAS-addressed)."""
         conv_bytes = json.dumps(self._messages, separators=(",", ":"), ensure_ascii=False).encode(
             "utf-8"
         )
         self._sys_write(self._conv_path, conv_bytes)
 
-    async def _persist_result(self, result: AgentTurnResult) -> None:
+    def _persist_result(self, result: AgentTurnResult) -> None:
         """Persist turn result to proc filesystem via VFS."""
         result_data = {
             "text": result.text,

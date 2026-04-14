@@ -1,9 +1,9 @@
-"""LLM commands — start streaming LLM calls via kernel DT_STREAM.
+"""LLM commands — start streaming LLM calls via generate_streaming().
 
 Usage::
 
     nexus llm "What is 2+2?" --model gpt-4o
-    nexus llm "Summarize this file" --model gpt-4o --stream-path /root/llm/.streams/my-session
+    nexus llm "Summarize this file" --model gpt-4o
 """
 
 from __future__ import annotations
@@ -38,22 +38,15 @@ def register_commands(cli: click.Group) -> None:
     help="Model name (e.g. gpt-4o, gpt-4o-mini). Uses backend default if not set.",
 )
 @click.option(
-    "--stream-path",
-    type=str,
-    default=None,
-    help="VFS path for the DT_STREAM. Auto-generated if not set.",
-)
-@click.option(
     "--no-stream",
     is_flag=True,
-    help="Don't read streaming tokens; just print the stream path and exit.",
+    help="Collect full response before printing (no streaming output).",
 )
 @add_output_options
 @add_backend_options
 def llm(
     prompt: str,
     model: str | None,
-    stream_path: str | None,
     no_stream: bool,
     output_opts: "OutputOptions",
     remote_url: str | None,
@@ -61,8 +54,7 @@ def llm(
 ) -> None:
     """Start a streaming LLM call.
 
-    Sends a prompt to the mounted LLM backend and streams tokens back
-    via a kernel DT_STREAM.
+    Sends a prompt to the mounted LLM backend and streams tokens back.
 
     \b
     Examples:
@@ -78,20 +70,14 @@ def llm(
             handle_error(e)
             return
 
-        import uuid
-
         # Build request
         messages = [{"role": "user", "content": prompt}]
         request: dict = {"messages": messages}
         if model:
             request["model"] = model
 
-        # Generate stream path if not provided
-        _stream_path = stream_path or f"/root/llm/.streams/{uuid.uuid4().hex[:12]}"
-
         try:
-            from nexus.backends.compute.openai_compatible import CASOpenAIBackend
-
+            # Find LLM backend via router
             _router = getattr(nx, "router", None)
             if _router is None:
                 click.echo(
@@ -99,70 +85,59 @@ def llm(
                     err=True,
                 )
                 return
-            route = _router.route(_stream_path)
-            if not isinstance(route.backend, CASOpenAIBackend):
+            route = _router.route("/root/llm")
+            backend = route.backend
+
+            if not hasattr(backend, "generate_streaming"):
                 click.echo(
-                    f"Error: No LLM backend at {_stream_path} (got {type(route.backend).__name__})",
+                    f"Error: Backend {type(backend).__name__} does not support generate_streaming",
                     err=True,
                 )
                 return
-            request_bytes = json.dumps(request, separators=(",", ":")).encode("utf-8")
-            result = await route.backend.start_streaming(
-                request_bytes=request_bytes,
-                stream_path=_stream_path,
-            )
-        except Exception as e:
-            handle_error(e)
-            return
 
-        if no_stream or getattr(output_opts, "json_output", False):
-            # Just print the result and exit
-            if getattr(output_opts, "json_output", False):
-                click.echo(json.dumps(result, indent=2))
-            else:
-                console.print("[nexus.success]Stream started[/nexus.success]")
-                console.print(f"  Stream path: {result.get('stream_path', _stream_path)}")
-                console.print(f"  Status:      {result.get('status', 'unknown')}")
-                console.print(
-                    f"\n  Read tokens:  nexus cat {result.get('stream_path', _stream_path)}"
-                )
-            return
+            # Iterate CC-format frames directly
+            collected_text: list[str] = []
+            result_usage: dict = {}
 
-        # Stream tokens in real-time
-        actual_path = result.get("stream_path", _stream_path)
-        while True:
-            try:
-                data = nx.sys_read(actual_path, context=None)
-                if not data:
-                    break
-                text = (
-                    data.decode("utf-8", errors="replace") if isinstance(data, bytes) else str(data)
-                )
-
-                # Check for control messages
-                if text.startswith("{"):
-                    try:
-                        msg = json.loads(text)
-                        if msg.get("type") == "done":
-                            sys.stdout.write("\n")
-                            sys.stdout.flush()
-                            _model = msg.get("model", "unknown")
-                            _latency = msg.get("latency_ms", 0)
-                            console.print(f"\n[dim]model={_model} latency={_latency}ms[/dim]")
-                            break
-                        if msg.get("type") == "error":
-                            console.print(
-                                f"\n[nexus.error]Error:[/nexus.error] {msg.get('message')}"
-                            )
-                            break
-                    except json.JSONDecodeError:
+            for frame in backend.generate_streaming(request):
+                ft = frame.get("type", "")
+                if ft == "text":
+                    text = frame["text"]
+                    collected_text.append(text)
+                    if not no_stream:
                         sys.stdout.write(text)
                         sys.stdout.flush()
-                else:
-                    sys.stdout.write(text)
-                    sys.stdout.flush()
-            except Exception:
-                # Stream closed or read error — done
-                break
+                elif ft == "usage":
+                    result_usage = frame.get("usage", {})
+                elif ft == "stop":
+                    pass
+                elif ft == "error":
+                    console.print(f"\n[nexus.error]Error:[/nexus.error] {frame.get('message')}")
+                    return
+
+            if no_stream:
+                sys.stdout.write("".join(collected_text))
+                sys.stdout.flush()
+
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+
+            if getattr(output_opts, "json_output", False):
+                click.echo(
+                    json.dumps(
+                        {
+                            "text": "".join(collected_text),
+                            "usage": result_usage,
+                        },
+                        indent=2,
+                    )
+                )
+            else:
+                _tokens = result_usage.get("total_tokens", 0)
+                if _tokens:
+                    console.print(f"\n[dim]tokens={_tokens}[/dim]")
+
+        except Exception as e:
+            handle_error(e)
 
     asyncio.run(_impl())

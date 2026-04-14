@@ -1,4 +1,4 @@
-"""Anthropic-native LLM backend — CAS addressing + Claude API + streaming.
+"""Anthropic-native LLM backend — CAS addressing + Claude API.
 
 Native Anthropic SDK backend that avoids the OpenAI translation layer.
 Benefits over CASOpenAIBackend + SudoRouter translation:
@@ -14,7 +14,6 @@ Benefits over CASOpenAIBackend + SudoRouter translation:
 Uses the same CAS persistence pattern as CASOpenAIBackend:
 - write_content() inherited from CASAddressingEngine (pure CAS)
 - persist_session() stores request + response + envelope
-- start_streaming() orchestrates DT_STREAM lifecycle
 
 References:
     - Task #1589: LLM backend driver design
@@ -23,14 +22,10 @@ References:
 
 from __future__ import annotations
 
-import asyncio
-import contextlib
 import json
 import logging
-import queue
-import time
 from collections.abc import Iterator
-from typing import TYPE_CHECKING, Any, ClassVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from nexus.backends.base.cas_addressing_engine import CASAddressingEngine
 from nexus.backends.base.registry import ArgType, ConnectionArg, register_connector
@@ -41,7 +36,6 @@ from nexus.core.object_store import WriteResult
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
-    from nexus.core.nexus_fs import NexusFS
 
 logger = logging.getLogger(__name__)
 
@@ -69,15 +63,16 @@ def _build_anthropic_client(api_key: str, base_url: str | None, timeout: float) 
     requires=["anthropic"],
 )
 class CASAnthropicBackend(CASAddressingEngine):
-    """CAS addressing + native Anthropic Claude SDK + streaming orchestration.
+    """CAS addressing + native Anthropic Claude SDK.
 
     Uses the Anthropic Python SDK directly for:
     - Native tool_use content blocks (complete JSON, no incremental concatenation)
     - Native content_block_start/delta/stop streaming events
-    - Native extended_thinking support (future)
+    - Native extended_thinking support
+    - Native prompt caching (cache_control)
 
-    StreamManager is injected at mount time via ``set_stream_manager()``
-    by the factory/DLC layer.
+    generate_streaming() yields CC-format content block frames directly.
+    ManagedAgentLoop iterates the generator synchronously.
     """
 
     CONNECTION_ARGS: dict[str, ConnectionArg] = {
@@ -125,9 +120,6 @@ class CASAnthropicBackend(CASAddressingEngine):
         transport = LLMTransport()
         super().__init__(transport, backend_name="anthropic_native")
 
-        self._nx: NexusFS | None = None
-        self._active_tasks: dict[str, asyncio.Task[None]] = {}
-
         from nexus.backends.compute.message_chunking import MessageBoundaryStrategy
         from nexus.backends.engines.cdc import ChunkingStrategy
 
@@ -139,173 +131,28 @@ class CASAnthropicBackend(CASAddressingEngine):
         return "anthropic_native"
 
     def set_stream_manager(self, nx_or_sm: Any) -> None:
-        """Inject NexusFS for DT_STREAM orchestration (Rust kernel).
-
-        Called by factory/DLC at mount time. Accepts NexusFS (preferred).
-        """
-        self._nx = nx_or_sm
+        """No-op — DT_STREAM orchestration removed. Kept for factory compatibility."""
 
     # ------------------------------------------------------------------
-    # Streaming orchestration (owns full lifecycle)
+    # Streaming — CC-format content block frames
     # ------------------------------------------------------------------
 
-    _DEFAULT_STREAM_CAPACITY = 8 * 1024 * 1024
+    def generate_streaming(self, request: dict[str, Any]) -> Iterator[dict]:
+        """Yield CC-format content block frames from Anthropic streaming API.
 
-    async def start_streaming(
-        self,
-        request_bytes: bytes,
-        stream_path: str,
-        *,
-        capacity: int = _DEFAULT_STREAM_CAPACITY,
-        owner_id: str | None = None,
-    ) -> dict[str, Any]:
-        """Start a streaming LLM call via Anthropic API."""
-        if self._nx is None:
-            raise BackendError(
-                "LLM streaming unavailable: NexusFS not injected. "
-                "Ensure backend is mounted via DLC.",
-                backend="anthropic_native",
-            )
-
-        try:
-            self._nx.stream_create(stream_path, capacity)
-        except Exception as exc:
-            raise BackendError(f"LLM streaming unavailable: {exc}") from exc
-
-        task = asyncio.create_task(
-            self._run_stream(request_bytes, stream_path),
-            name=f"anthropic-stream-{stream_path}",
-        )
-        self._active_tasks[stream_path] = task
-        return {"status": "streaming", "stream_path": stream_path}
-
-    async def cancel_stream(self, stream_path: str) -> bool:
-        """Cancel an active streaming task."""
-        task = self._active_tasks.pop(stream_path, None)
-        if task is None:
-            return False
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
-        if self._nx is not None:
-            with contextlib.suppress(Exception):
-                self._nx.stream_destroy(stream_path)
-        return True
-
-    async def _run_stream(self, request_bytes: bytes, stream_path: str) -> None:
-        """Background task: pump tokens from Anthropic API to DT_STREAM, then CAS persist."""
-        assert self._nx is not None  # guaranteed by start_streaming() guard
-        nx = self._nx
-
-        _SENTINEL: object = object()
-        token_q: queue.Queue[tuple[str, dict[str, Any] | None] | object | Exception] = queue.Queue(
-            maxsize=4096
-        )
-
-        def _producer() -> None:
-            try:
-                request = json.loads(request_bytes)
-                for item in self.generate_streaming(request):
-                    token_q.put(item)
-                token_q.put(_SENTINEL)
-            except Exception as exc:
-                token_q.put(exc)
-
-        loop = asyncio.get_running_loop()
-        producer_fut = loop.run_in_executor(None, _producer)
-
-        meta: dict[str, Any] = {}
-        try:
-            while True:
-                item = await loop.run_in_executor(None, token_q.get)
-                if item is _SENTINEL:
-                    break
-                if isinstance(item, Exception):
-                    raise item
-
-                token_item = cast(tuple[str, dict[str, Any] | None], item)
-                token: str = token_item[0]
-                token_meta: dict[str, Any] | None = token_item[1]
-                if token:
-                    nx.stream_write_nowait(stream_path, token.encode("utf-8"))
-                if token_meta is not None:
-                    meta = token_meta
-
-            # Collect all stream payloads in single Rust call (no per-frame PyO3 roundtrip)
-            full_response = nx.stream_collect_all(stream_path)
-            result = self.persist_session(
-                request_bytes=request_bytes,
-                response_content=full_response.decode("utf-8"),
-                model=meta.get("model", ""),
-                finish_reason=meta.get("finish_reason", "end_turn"),
-                usage=meta.get("usage", {}),
-                latency_ms=meta.get("latency_ms", 0),
-            )
-
-            done_payload: dict[str, Any] = {
-                "type": "done",
-                "session_hash": result.content_id,
-                "model": meta.get("model", ""),
-                "latency_ms": meta.get("latency_ms", 0),
-                "finish_reason": meta.get("finish_reason", "end_turn"),
-                "usage": meta.get("usage", {}),
-            }
-            tool_calls = meta.get("tool_calls", [])
-            if tool_calls:
-                done_payload["tool_calls"] = tool_calls
-
-            done_msg = json.dumps(done_payload, separators=(",", ":"))
-            nx.stream_write_nowait(stream_path, done_msg.encode("utf-8"))
-            nx.stream_close(stream_path)
-
-            logger.info(
-                "Anthropic stream completed: %s model=%s session=%s",
-                stream_path,
-                meta.get("model", ""),
-                result.content_id[:16],
-            )
-
-        except asyncio.CancelledError:
-            logger.info("Anthropic stream cancelled: %s", stream_path)
-            with contextlib.suppress(Exception):
-                nx.stream_close(stream_path)
-            raise
-
-        except Exception as exc:
-            logger.error("Anthropic stream failed: %s error=%s", stream_path, exc)
-            error_msg = json.dumps(
-                {"type": "error", "message": str(exc)},
-                separators=(",", ":"),
-            )
-            with contextlib.suppress(Exception):
-                nx.stream_write_nowait(stream_path, error_msg.encode("utf-8"))
-                nx.stream_close(stream_path)
-
-        finally:
-            with contextlib.suppress(Exception):
-                await producer_fut
-            self._active_tasks.pop(stream_path, None)
-
-    # ------------------------------------------------------------------
-    # Streaming — pure compute (Anthropic native)
-    # ------------------------------------------------------------------
-
-    def generate_streaming(
-        self, request: dict[str, Any]
-    ) -> Iterator[tuple[str, dict[str, Any] | None]]:
-        """Yield ``(token, None)`` per chunk, ``("", metadata)`` at end.
-
-        Uses Anthropic Messages API with native streaming.
-        Tool calls arrive as complete content blocks (no incremental
-        argument concatenation needed — unlike OpenAI streaming).
+        Each yielded dict is a CC content block or metadata frame:
+            {"type": "text", "text": "..."}
+            {"type": "thinking", "thinking": "..."}
+            {"type": "signature", "signature": "..."}
+            {"type": "tool_use", "id": "...", "name": "...", "input": {...}}
+            {"type": "server_tool_use", "id": "...", "name": "...", "input": {...}}
+            {"type": "usage", "usage": {...}}
+            {"type": "stop", "stop_reason": "..."}
+            {"type": "error", "message": "..."}
 
         Args:
             request: Dict with ``messages`` and optional ``model``, ``system``,
                 ``max_tokens``, ``tools``, ``temperature``, etc.
-
-        Yields:
-            ``(token_str, None)`` for each text delta.
-            ``("", metadata_dict)`` as the final item with model/usage/tool_calls.
         """
         if "messages" not in request:
             raise BackendError(
@@ -317,8 +164,6 @@ class CASAnthropicBackend(CASAddressingEngine):
         messages = request["messages"]
         max_tokens = request.get("max_tokens", 8192)
 
-        # Build Anthropic-specific kwargs
-        # Note: do NOT pass stream=True — client.messages.stream() handles that.
         api_kwargs: dict[str, Any] = {
             "model": model,
             "messages": self._convert_messages(messages),
@@ -328,7 +173,6 @@ class CASAnthropicBackend(CASAddressingEngine):
         # System prompt (Anthropic uses top-level 'system', not a message)
         system = request.get("system")
         if not system:
-            # Extract system from messages if present
             for msg in messages:
                 if msg.get("role") == "system":
                     system = msg.get("content", "")
@@ -346,13 +190,8 @@ class CASAnthropicBackend(CASAddressingEngine):
             if key in request:
                 api_kwargs[key] = request[key]
 
-        start_time = time.perf_counter()
-        collected_model = model
         usage: dict[str, int] = {}
-        finish_reason: str | None = None
-        tool_calls: list[dict[str, Any]] = []
-
-        # Track current tool_use block being built
+        stop_reason: str | None = None
         current_tool: dict[str, Any] | None = None
 
         try:
@@ -362,69 +201,70 @@ class CASAnthropicBackend(CASAddressingEngine):
 
                     if event_type == "message_start":
                         msg = event.message
-                        collected_model = msg.model
                         if msg.usage:
                             usage["input_tokens"] = msg.usage.input_tokens
+                            usage["cache_creation_input_tokens"] = getattr(
+                                msg.usage, "cache_creation_input_tokens", 0
+                            )
+                            usage["cache_read_input_tokens"] = getattr(
+                                msg.usage, "cache_read_input_tokens", 0
+                            )
 
                     elif event_type == "content_block_start":
                         block = event.content_block
                         if block.type == "tool_use":
                             current_tool = {
+                                "type": "tool_use",
                                 "id": block.id,
-                                "type": "function",
-                                "function": {
-                                    "name": block.name,
-                                    "arguments": "",
-                                },
+                                "name": block.name,
+                                "input": "",
+                            }
+                        elif block.type == "server_tool_use":
+                            current_tool = {
+                                "type": "server_tool_use",
+                                "id": getattr(block, "id", ""),
+                                "name": getattr(block, "name", ""),
+                                "input": "",
                             }
 
                     elif event_type == "content_block_delta":
                         delta = event.delta
                         if delta.type == "text_delta":
-                            yield (delta.text, None)
+                            yield {"type": "text", "text": delta.text}
+                        elif delta.type == "thinking_delta":
+                            yield {"type": "thinking", "thinking": delta.thinking}
                         elif delta.type == "input_json_delta" and current_tool is not None:
-                            current_tool["function"]["arguments"] += delta.partial_json
+                            current_tool["input"] += delta.partial_json
+                        elif delta.type == "signature_delta":
+                            yield {"type": "signature", "signature": delta.signature}
 
                     elif event_type == "content_block_stop":
                         if current_tool is not None:
-                            tool_calls.append(current_tool)
+                            if isinstance(current_tool["input"], str):
+                                try:
+                                    current_tool["input"] = json.loads(current_tool["input"])
+                                except (json.JSONDecodeError, TypeError):
+                                    current_tool["input"] = {}
+                            yield current_tool
                             current_tool = None
 
                     elif event_type == "message_delta":
                         if event.delta.stop_reason:
-                            finish_reason = event.delta.stop_reason
+                            stop_reason = event.delta.stop_reason
                         if event.usage:
                             usage["output_tokens"] = event.usage.output_tokens
 
-                    elif event_type == "message_stop":
-                        pass  # Stream complete
-
         except Exception as e:
-            raise BackendError(
-                f"Anthropic streaming failed: {e}",
-                backend="anthropic_native",
-            ) from e
+            yield {"type": "error", "message": f"Anthropic streaming failed: {e}"}
+            return
 
-        elapsed_ms = (time.perf_counter() - start_time) * 1000
-
-        # Compute total tokens
+        # Compute totals
         usage["prompt_tokens"] = usage.get("input_tokens", 0)
         usage["completion_tokens"] = usage.get("output_tokens", 0)
         usage["total_tokens"] = usage["prompt_tokens"] + usage["completion_tokens"]
 
-        # Map Anthropic finish reasons to OpenAI-compatible ones
-        mapped_finish = self._map_finish_reason(finish_reason)
-
-        yield (
-            "",
-            {
-                "model": collected_model,
-                "usage": usage,
-                "latency_ms": round(elapsed_ms, 1),
-                "finish_reason": mapped_finish,
-                "tool_calls": tool_calls,
-            },
-        )
+        yield {"type": "usage", "usage": usage}
+        yield {"type": "stop", "stop_reason": self._map_finish_reason(stop_reason)}
 
     # ------------------------------------------------------------------
     # CAS persistence (shared pattern with CASOpenAIBackend)
@@ -462,15 +302,6 @@ class CASAnthropicBackend(CASAddressingEngine):
         }
         session_json = json.dumps(session, separators=(",", ":")).encode("utf-8")
         return self.write_content(session_json, context=context)
-
-    @property
-    def active_streams(self) -> list[str]:
-        return list(self._active_tasks.keys())
-
-    async def shutdown_streams(self) -> None:
-        paths = list(self._active_tasks.keys())
-        for path in paths:
-            await self.cancel_stream(path)
 
     # ------------------------------------------------------------------
     # Format conversion helpers

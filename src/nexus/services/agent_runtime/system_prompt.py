@@ -33,7 +33,7 @@ _PROMPT_FRAGMENTS = (
 )
 
 
-async def assemble_system_prompt(
+def assemble_system_prompt(
     *,
     sys_read: SysReadFn,
     zone_id: str = "root",
@@ -60,7 +60,7 @@ async def assemble_system_prompt(
     parts: list[str] = []
 
     # Sections 1-4: Static identity from SYSTEM.md
-    system_md = await _read_vfs_text(sys_read, agent_paths.system_prompt(zone_id, agent_id))
+    system_md = _read_vfs_text(sys_read, agent_paths.system_prompt(zone_id, agent_id))
     if system_md:
         parts.append(system_md)
 
@@ -69,15 +69,13 @@ async def assemble_system_prompt(
 
     # Sections 10, 14, 15: Optional prompt fragments
     for name in _PROMPT_FRAGMENTS:
-        fragment = await _read_vfs_text(
-            sys_read, agent_paths.prompt_fragment(zone_id, agent_id, name)
-        )
+        fragment = _read_vfs_text(sys_read, agent_paths.prompt_fragment(zone_id, agent_id, name))
         if fragment:
             parts.append(fragment)
 
     # Section 12: Project context (.nexus/agent.md — equiv to CLAUDE.md)
     if cwd:
-        project_ctx = await _read_vfs_text(sys_read, f"{cwd}/.nexus/agent.md")
+        project_ctx = _read_vfs_text(sys_read, f"{cwd}/.nexus/agent.md")
         if project_ctx:
             parts.append(project_ctx)
 
@@ -137,7 +135,7 @@ def _get_git_status(cwd: str) -> str:
         return ""
 
 
-async def _read_vfs_text(sys_read: SysReadFn, path: str) -> str:
+def _read_vfs_text(sys_read: SysReadFn, path: str) -> str:
     """Read a VFS file as UTF-8 text, return empty string on failure."""
     try:
         data = sys_read(path)

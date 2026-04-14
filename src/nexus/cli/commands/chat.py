@@ -129,10 +129,6 @@ async def _run_chat(
     import nexus
 
     # ── ACP mode: isolate stdout for JSON-RPC ──
-    # Rust tracing and Python logging write to stdout by default.
-    # In ACP mode, stdout is exclusively for JSON-RPC messages.
-    # Save the real stdout, redirect sys.stdout → stderr, and pass
-    # the saved stream to AcpTransport.
     acp_output = None
     if acp:
         acp_output = _isolate_stdout_for_acp()
@@ -188,9 +184,6 @@ async def _run_chat(
                 base_url=oai_base or "", api_key=oai_key, default_model=model
             )
 
-        # Inject NexusFS for DT_STREAM orchestration (Rust kernel)
-        llm_backend.set_stream_manager(nx)
-
         from nexus.contracts.metadata import DT_MOUNT
 
         nx.sys_setattr("/llm", entry_type=DT_MOUNT, backend=llm_backend)
@@ -218,30 +211,9 @@ async def _run_chat(
         cwd = os.getcwd()
         agent_path = "/root/agents/default"
 
-        # Async wrappers for sync NexusFS syscalls (PR #3717: NexusFS is fully sync)
-        async def _async_sys_read(path: str) -> bytes:
-            return nx.sys_read(path)
-
-        # DT_STREAM blocking read — call Rust kernel directly.
-        # NexusFS._stream_read returns bytes only (drops next_offset),
-        # but DT_STREAM frames have length prefixes so next_offset ≠ offset+len(data).
-        # Kernel.stream_read_at_blocking returns (bytes, next_offset) correctly.
-        _kernel = getattr(nx, "_kernel", None)
-
-        def _stream_read_adapter(path: str, offset: int) -> tuple[bytes, int]:
-            if _kernel is None:
-                raise NotImplementedError("Streaming not available in REMOTE mode")
-            data, next_offset = _kernel.stream_read_at_blocking(path, offset, 30000)
-            return bytes(data), next_offset
-
-        # Use nx.write (create-on-write) not nx.sys_write (requires existing file).
-        async def _async_write(path: str, buf: bytes) -> dict:
-            return nx.write(path, buf)
-
         loop = ManagedAgentLoop(
             sys_read=nx.sys_read,
             sys_write=nx.write,
-            stream_read=_stream_read_adapter,
             llm_backend=llm_backend,
             agent_path=agent_path,
             llm_path="/llm",
@@ -289,22 +261,11 @@ async def _run_acp_mode(
     from nexus.services.agent_runtime.managed_loop import ManagedAgentLoop
     from nexus.services.agent_runtime.observer import AgentObserver
 
-    # NexusFS syscalls are sync (PR #3717). Pass directly to ManagedAgentLoop.
-
-    _nx_stream_read = getattr(nx, "_stream_read", None)
-
-    def _stream_read_adapter(path: str, offset: int) -> tuple[bytes, int]:
-        if _nx_stream_read is None:
-            raise NotImplementedError("Streaming not available")
-        data = _nx_stream_read(path, offset=offset)
-        return data, offset + len(data)
-
     async def _loop_factory(session_id: str, cwd: str, observer: AgentObserver) -> ManagedAgentLoop:
         agent_path = "/root/agents/default"
         loop = ManagedAgentLoop(
             sys_read=nx.sys_read,
             sys_write=nx.write,
-            stream_read=_stream_read_adapter,
             llm_backend=llm_backend,
             agent_path=agent_path,
             llm_path="/llm",

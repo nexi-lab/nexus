@@ -32,6 +32,7 @@ class AgentTurnResult:
     usage: dict[str, Any] = field(default_factory=dict)
     num_turns: int = 0
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    thinking: str | None = None
 
 
 class AgentObserver:
@@ -51,6 +52,7 @@ class AgentObserver:
 
     def __init__(self, on_update: Any | None = None) -> None:
         self._accumulated_text: list[str] = []
+        self._accumulated_thinking: list[str] = []
         self._accumulated_usage: dict[str, Any] = {}
         self._num_turns: int = 0
         self._model_name: str | None = None
@@ -61,6 +63,7 @@ class AgentObserver:
     def reset_turn(self) -> None:
         """Reset per-turn accumulators. Call before each prompt."""
         self._accumulated_text.clear()
+        self._accumulated_thinking.clear()
         self._tool_calls.clear()
         self._prompt_active = True
 
@@ -68,6 +71,7 @@ class AgentObserver:
         """Finalize the current turn and return accumulated result."""
         self._prompt_active = False
         text = "".join(self._accumulated_text)
+        thinking = "".join(self._accumulated_thinking) if self._accumulated_thinking else None
         model = self._accumulated_usage.pop("model", None) or self._model_name
         return AgentTurnResult(
             text=text,
@@ -76,6 +80,7 @@ class AgentObserver:
             usage=dict(self._accumulated_usage),
             num_turns=self._num_turns,
             tool_calls=list(self._tool_calls),
+            thinking=thinking,
         )
 
     def observe_update(self, update_type: str, update: dict[str, Any]) -> None:
@@ -103,6 +108,11 @@ class AgentObserver:
                     self._accumulated_usage[key] = self._accumulated_usage.get(key, 0) + val
                 else:
                     self._accumulated_usage[key] = val
+
+        elif update_type == "thinking":
+            if self._prompt_active:
+                content = update.get("content", "")
+                self._accumulated_thinking.append(content)
 
         elif update_type == "tool_call":
             self._num_turns += 1

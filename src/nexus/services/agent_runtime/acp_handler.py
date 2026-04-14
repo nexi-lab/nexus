@@ -189,6 +189,14 @@ class AcpProtocolHandler:
                 if content.get("type") == "text":
                     transport.emit_agent_message_chunk(session_id, content.get("text", ""))
 
+            elif update_type == "thinking":
+                # Thinking tokens — emit as session/update for UI folding
+                content = update.get("content", "")
+                transport.emit_session_update(
+                    session_id,
+                    {"sessionUpdate": "thinking", "content": content},
+                )
+
             elif update_type == "tool_call":
                 # §4A.4: emit tool_call with status
                 tc = update

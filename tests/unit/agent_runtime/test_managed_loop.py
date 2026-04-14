@@ -1,7 +1,7 @@
 """Tests for AgentObserver + ManagedAgentLoop (everything-is-a-file).
 
 Tests cover:
-- AgentObserver: shared notification accumulation (text, usage, tool_calls)
+- AgentObserver: shared notification accumulation (text, usage, tool_calls, thinking)
 - ManagedAgentLoop: VFS-native reasoning loop with mock kernel syscalls
 """
 
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -86,6 +86,23 @@ class TestAgentObserver:
         result = obs.finish_turn()
         assert result.model == "claude-3-opus"
 
+    def test_thinking_accumulation(self) -> None:
+        obs = AgentObserver()
+        obs.reset_turn()
+
+        obs.observe_update("thinking", {"content": "Let me "})
+        obs.observe_update("thinking", {"content": "analyze..."})
+
+        result = obs.finish_turn()
+        assert result.thinking == "Let me analyze..."
+
+    def test_thinking_none_when_empty(self) -> None:
+        obs = AgentObserver()
+        obs.reset_turn()
+        obs.observe_update("agent_message_chunk", {"content": {"type": "text", "text": "hi"}})
+        result = obs.finish_turn()
+        assert result.thinking is None
+
 
 # =============================================================================
 # ManagedAgentLoop tests — everything-is-a-file
@@ -93,11 +110,11 @@ class TestAgentObserver:
 
 
 def _make_vfs_loop(
-    stream_tokens: list[bytes] | None = None,
+    frames: list[dict] | None = None,
     system_prompt: str = "",
     tools_json: str = "[]",
 ) -> tuple[Any, dict[str, Any]]:
-    """Create ManagedAgentLoop with mocked VFS syscalls."""
+    """Create ManagedAgentLoop with mocked VFS syscalls + LLM backend."""
     from nexus.services.agent_runtime.managed_loop import ManagedAgentLoop
 
     # Mock sys_read: return different content based on path
@@ -116,42 +133,27 @@ def _make_vfs_loop(
     def mock_sys_write(path: str, data: bytes) -> None:
         write_store[path] = data
 
-    # Mock stream_read: deliver tokens then "done" message
-    tokens = stream_tokens or [
-        b"Hello",
-        b" there!",
-        json.dumps(
-            {"type": "done", "model": "gpt-4o", "usage": {"total_tokens": 10}, "latency_ms": 50}
-        ).encode(),
+    # Default CC-format frames from LLM
+    default_frames = frames or [
+        {"type": "text", "text": "Hello"},
+        {"type": "text", "text": " there!"},
+        {
+            "type": "usage",
+            "usage": {"total_tokens": 10, "prompt_tokens": 5, "completion_tokens": 5},
+        },
+        {"type": "stop", "stop_reason": "stop"},
     ]
-    token_iter = iter(tokens)
-    offset_counter = [0]
 
-    def mock_stream_read(path: str, offset: int) -> tuple[bytes, int]:
-        try:
-            data = next(token_iter)
-            new_offset = offset_counter[0] + len(data)
-            offset_counter[0] = new_offset
-            return data, new_offset
-        except StopIteration:
-            from nexus.core.stream import StreamClosedError
-
-            raise StreamClosedError("stream closed") from None
-
-    # Mock CASOpenAIBackend
+    # Mock LLM backend with generate_streaming returning CC-format frames
     llm_backend = MagicMock()
-    llm_backend.start_streaming = AsyncMock(
-        return_value={"stream_path": "/zone/llm/.streams/test", "status": "streaming"}
-    )
+    llm_backend.generate_streaming = MagicMock(return_value=iter(default_frames))
 
     sys_read_mock = MagicMock(side_effect=mock_sys_read)
     sys_write_mock = MagicMock(side_effect=mock_sys_write)
-    stream_read_mock = MagicMock(side_effect=mock_stream_read)
 
     loop = ManagedAgentLoop(
         sys_read=sys_read_mock,
         sys_write=sys_write_mock,
-        stream_read=stream_read_mock,
         llm_backend=llm_backend,
         agent_path="/zone/agents/test-agent",
         llm_path="/zone/llm/openai",
@@ -163,7 +165,6 @@ def _make_vfs_loop(
     mocks: dict[str, Any] = {
         "sys_read": sys_read_mock,
         "sys_write": sys_write_mock,
-        "stream_read": stream_read_mock,
         "llm_backend": llm_backend,
         "write_store": write_store,
         "read_store": read_store,
@@ -195,31 +196,28 @@ class TestManagedAgentLoop:
         assert "# Environment" in loop.messages[0]["content"]
 
     @pytest.mark.asyncio()
-    async def test_run_calls_llm_via_streaming_service(self) -> None:
-        """LLM call goes through CASOpenAIBackend.start_streaming()."""
+    async def test_run_calls_llm_generate_streaming(self) -> None:
+        """LLM call goes through generate_streaming() directly."""
         loop, mocks = _make_vfs_loop()
         await loop.initialize()
 
         await loop.run("Hi")
 
-        # CASOpenAIBackend.start_streaming was called
-        mocks["llm_backend"].start_streaming.assert_called_once()
-        call_args = mocks["llm_backend"].start_streaming.call_args
-        request_bytes = call_args[0][0]
-        request = json.loads(request_bytes)
+        # generate_streaming was called with request containing messages
+        mocks["llm_backend"].generate_streaming.assert_called_once()
+        call_args = mocks["llm_backend"].generate_streaming.call_args
+        request = call_args[0][0]
         assert "messages" in request
 
     @pytest.mark.asyncio()
-    async def test_run_reads_tokens_from_dt_stream(self) -> None:
-        """Tokens read via stream_read (kernel DT_STREAM IPC)."""
+    async def test_run_iterates_cc_frames(self) -> None:
+        """Tokens assembled from CC-format text frames."""
         loop, mocks = _make_vfs_loop()
         await loop.initialize()
 
         result = await loop.run("Hi")
 
         assert result.text == "Hello there!"
-        # stream_read was called multiple times
-        assert mocks["stream_read"].call_count >= 2
 
     @pytest.mark.asyncio()
     async def test_conversation_persisted_via_sys_write(self) -> None:
@@ -335,3 +333,35 @@ class TestManagedAgentLoop:
         await loop.reset()
         assert len(loop.messages) == 1
         assert loop.messages[0]["role"] == "system"
+
+    @pytest.mark.asyncio()
+    async def test_thinking_frames_accumulated(self) -> None:
+        """Thinking frames from LLM are accumulated in observer."""
+        frames = [
+            {"type": "thinking", "thinking": "Let me think..."},
+            {"type": "text", "text": "The answer is 42."},
+            {"type": "usage", "usage": {"total_tokens": 20}},
+            {"type": "stop", "stop_reason": "stop"},
+        ]
+        loop, mocks = _make_vfs_loop(frames=frames)
+        await loop.initialize()
+
+        result = await loop.run("What is the meaning of life?")
+        assert result.text == "The answer is 42."
+        assert result.thinking == "Let me think..."
+
+    @pytest.mark.asyncio()
+    async def test_error_frame_raises(self) -> None:
+        """Error frames from LLM raise BackendError after retries exhausted."""
+        from nexus.contracts.exceptions import BackendError
+
+        frames = [
+            {"type": "text", "text": "partial"},
+            {"type": "error", "message": "unauthorized: invalid api key"},
+        ]
+        loop, mocks = _make_vfs_loop(frames=frames)
+        await loop.initialize()
+
+        # "unauthorized" triggers immediate failure (no retry)
+        with pytest.raises(BackendError, match="invalid api key"):
+            await loop.run("test")

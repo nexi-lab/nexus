@@ -5248,9 +5248,11 @@ class NexusFS(  # type: ignore[misc]
                 result.items = [e.path for e in result.items]
             return result
 
-        # Issue #3706: Stream via list_iter() to avoid materialising the entire
-        # metastore result set before filtering.  The final result is still a
-        # list (API contract), but we no longer hold two full-size lists at once.
+        # Issue #3706: Use list_iter() instead of list() to avoid creating a
+        # second filtered copy in Python and to bypass RustMetastoreProxy's
+        # _dcache (prevents unbounded cache growth).  Note: the underlying
+        # Rust/Raft engines still materialise the full result set internally;
+        # true streaming requires a Rust-level paginated API (future work).
         entries_iter = (
             e
             for e in self.metadata.list_iter(prefix=prefix, recursive=recursive)

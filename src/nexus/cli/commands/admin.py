@@ -108,7 +108,7 @@ def get_admin_rpc(url: str | None, api_key: str | None) -> AdminRPC:
         tls_config = ZoneTlsConfig.from_env()
     elif data_dir:
         with contextlib.suppress(Exception):
-            tls_config = ZoneTlsConfig.from_data_dir(data_dir)
+            tls_config = ZoneTlsConfig.from_data_dir_any(data_dir)
 
     # Fail closed: explicit true but no certs resolved
     if _grpc_tls_on and tls_config is None:

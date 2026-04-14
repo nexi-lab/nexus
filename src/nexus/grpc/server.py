@@ -52,10 +52,10 @@ def _resolve_tls_config(app: "FastAPI") -> "ZoneTlsConfig | None":
         if tls_cfg is not None:
             return tls_cfg
 
-    # 3. Load from NEXUS_DATA_DIR/tls/ (Raft-style ca.pem/node.pem layout)
+    # 3. Load from NEXUS_DATA_DIR/tls/ (Raft or OpenSSL layout)
     data_dir = os.environ.get("NEXUS_DATA_DIR")
     if data_dir:
-        cfg = ZoneTlsConfig.from_data_dir(data_dir)
+        cfg = ZoneTlsConfig.from_data_dir_any(data_dir)
         if cfg is not None:
             return cfg
 

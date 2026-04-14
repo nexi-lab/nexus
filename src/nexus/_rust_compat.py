@@ -192,7 +192,6 @@ SysWriteResult = _get("SysWriteResult")
 
 # Legacy aliases — None on 0.9.19+ (removed in favor of Kernel)
 RustDCache = _get("RustDCache")
-RustPathRouter = _get("RustPathRouter")
 HookRegistry = _get("HookRegistry")
 ObserverRegistry = _get("ObserverRegistry")
 PathTrie = _get("PathTrie")

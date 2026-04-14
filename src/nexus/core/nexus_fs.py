@@ -90,18 +90,15 @@ class NexusFS(  # type: ignore[misc]
         distributed: DistributedConfig | None = None,
         memory: MemoryConfig | None = None,
         parsing: ParseConfig | None = None,
-        router: Any = None,
         init_cred: OperationContext | None = None,
     ):
         """Initialize NexusFS kernel.
 
-        Kernel boots with MetastoreABC (inode layer) and an optional router.
-        Backends are mounted externally via ``DriverLifecycleCoordinator.mount()``
-        (which writes to MountTable) — like Linux VFS, no global backend.
+        Kernel boots with MetastoreABC (inode layer). Backends are mounted
+        via ``DriverLifecycleCoordinator.mount()`` (which writes to the
+        Rust kernel's MountTable) — like Linux VFS, no global backend.
 
         Args:
-            router: PathRouter instance for VFS routing. When None, a default
-                router is created from metadata_store.
             init_cred: Kernel process credential — like Linux ``init_task.cred``.
                 Used as fallback identity for internal operations (audit pipe
                 writes, service bootstrap mkdir). Immutable after construction.
@@ -152,17 +149,6 @@ class NexusFS(  # type: ignore[misc]
             cache_store if cache_store is not None else NullCacheStore()
         )
 
-        # Mount table (kernel mount_hashtable) + path router (read-only query)
-        from nexus.core.mount_table import MountTable
-
-        if router is not None:
-            self.router = router
-            # Extract mount_table from the router (already constructed by factory)
-            self._mount_table: MountTable = router._mount_table
-        else:
-            self._mount_table = MountTable(metadata_store)
-            self.router = PathRouter(self._mount_table)
-
         # Issue #1801: kernel process credential — like Linux init_task.cred.
         # Immutable after construction. Used as fallback identity for internal
         # operations. External callers should pass explicit context= to syscalls.
@@ -196,13 +182,56 @@ class NexusFS(  # type: ignore[misc]
 
             self._transport_pool = _RPCTransportPool()
 
+        # ── Kernel (Issue #1817 — single-FFI sys_read/sys_write) ──
+        # Constructed BEFORE DriverLifecycleCoordinator and PathRouter so
+        # that both see the kernel from birth (F2 MountTable migration:
+        # kernel is the single source of truth for routing).
+        from nexus._rust_compat import RUST_AVAILABLE
+
+        self._kernel = None
+        if RUST_AVAILABLE:
+            try:
+                from nexus.core.metastore import RustMetastoreProxy
+
+                if isinstance(metadata_store, RustMetastoreProxy):
+                    self._kernel = metadata_store._rust_kernel
+                    metadata_store._kernel = self._kernel
+                    _vfs_rust = getattr(self._vfs_lock_manager, "_rust", None)
+                    if _vfs_rust is not None:
+                        self._kernel.set_vfs_lock(_vfs_rust)
+                else:
+                    from nexus_kernel import Kernel as _Kernel
+
+                    self._kernel = _Kernel()
+                    metadata_store._kernel = self._kernel
+                    _redb_path = getattr(metadata_store, "_redb_path", None)
+                    if _redb_path is not None:
+                        self._kernel.set_metastore_path(str(_redb_path))
+                    _vfs_rust = getattr(self._vfs_lock_manager, "_rust", None)
+                    if _vfs_rust is not None:
+                        self._kernel.set_vfs_lock(_vfs_rust)
+            except Exception as exc:
+                import logging as _logging
+
+                _logging.getLogger(__name__).warning(
+                    "Kernel init failed — falling back to Python path: %s", exc
+                )
+                self._kernel = None
+
         from nexus.core.driver_lifecycle_coordinator import DriverLifecycleCoordinator
 
         self._driver_coordinator: DriverLifecycleCoordinator = DriverLifecycleCoordinator(
-            self._mount_table,
             self,
+            kernel=self._kernel,
             self_address=_ipc_self_addr,
             transport_pool=self._transport_pool,
+        )
+
+        # PathRouter reads from DLC + delegates LPM to the kernel.
+        self.router = PathRouter(
+            self._driver_coordinator,
+            metadata_store,
+            self._kernel,
         )
 
         # Custom backends for SHM/remote pipes/streams (non-standard, keep in Python)
@@ -217,52 +246,6 @@ class NexusFS(  # type: ignore[misc]
         from nexus.core.service_registry import ServiceRegistry
 
         self._service_registry: ServiceRegistry = ServiceRegistry(dispatch=self)
-
-        # ── Kernel (Issue #1817 — single-FFI sys_read/sys_write) ──
-        # Optional: requires nexus_kernel Rust extension. Falls back to pure
-        # Python path (slower but functional) when unavailable.
-        from nexus._rust_compat import RUST_AVAILABLE
-
-        self._kernel = None
-        if RUST_AVAILABLE:
-            try:
-                from nexus.core.metastore import RustMetastoreProxy
-
-                # Reuse kernel from RustMetastoreProxy (already has metastore wired)
-                if isinstance(metadata_store, RustMetastoreProxy):
-                    self._kernel = metadata_store._rust_kernel
-                    metadata_store._kernel = self._kernel
-                    self._mount_table.bind_kernel(self._kernel)
-                    _vfs_rust = getattr(self._vfs_lock_manager, "_rust", None)
-                    if _vfs_rust is not None:
-                        self._kernel.set_vfs_lock(_vfs_rust)
-                    # No set_metastore needed — RustMetastoreProxy already wired via set_metastore_path
-                else:
-                    from nexus_kernel import Kernel as _Kernel
-
-                    self._kernel = _Kernel()
-                    metadata_store._kernel = self._kernel
-                    # PyMetastoreAdapter removed (Phase 9) — wire redb if available
-                    # Note: set_metastore_path MUST happen BEFORE bind_kernel so that
-                    # backfilled mounts inherit the metastore.
-                    _redb_path = getattr(metadata_store, "_redb_path", None)
-                    # Guard against MagicMock: its auto-generated ``__fspath__``
-                    # satisfies ``isinstance(os.PathLike)`` so accept only plain
-                    # str. Real metastores never set ``_redb_path`` as an attr —
-                    # this guard keeps test MagicMocks from reaching Rust.
-                    if isinstance(_redb_path, str):
-                        self._kernel.set_metastore_path(_redb_path)
-                    self._mount_table.bind_kernel(self._kernel)
-                    _vfs_rust = getattr(self._vfs_lock_manager, "_rust", None)
-                    if _vfs_rust is not None:
-                        self._kernel.set_vfs_lock(_vfs_rust)
-            except Exception as exc:
-                import logging as _logging
-
-                _logging.getLogger(__name__).warning(
-                    "Kernel init failed — falling back to Python path: %s", exc
-                )
-                self._kernel = None
 
         # ── Kernel-knows (sentinel None, injected by factory) ───────────
         # See KERNEL-ARCHITECTURE.md §1 DI patterns table.
@@ -4101,15 +4084,15 @@ class NexusFS(  # type: ignore[misc]
             # wins overwrite semantics — the same behavior every
             # other caller of ``write()`` already tolerates.
             _check_dst_exists()
-            write_result = self.write(dst_path, _virtual_src_bytes, context=context)
+            virtual_write_result = self.write(dst_path, _virtual_src_bytes, context=context)
             self._kernel.dispatch_post_hooks("copy", _virtual_copy_ctx)
             return {
                 "src_path": src_path,
                 "dst_path": dst_path,
                 "size": len(_virtual_src_bytes),
-                "etag": write_result.get("etag"),
-                "version": write_result.get("version"),
-                "modified_at": write_result.get("modified_at"),
+                "etag": virtual_write_result.get("etag"),
+                "version": virtual_write_result.get("version"),
+                "modified_at": virtual_write_result.get("modified_at"),
             }
 
         # Fast-fail (unlocked — re-checked under lock)

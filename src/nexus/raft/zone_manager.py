@@ -524,14 +524,14 @@ class ZoneManager:
         if increment_links:
             self._increment_links(target_store)
 
-        # Register in local MountTable via DLC (runtime routing)
+        # Register in local mount map via DLC (runtime routing)
         if self._coordinator:
             dlc_path = global_path or mount_path
-            root_entry = self._coordinator._mount_table.get("/")
-            if root_entry is not None:
+            root_backend = self._coordinator.get_root_backend()
+            if root_backend is not None:
                 self._coordinator.mount(
                     dlc_path,
-                    root_entry.backend,
+                    root_backend,
                     metastore=target_store,
                 )
 
@@ -1015,14 +1015,14 @@ class ZoneManager:
                     )
                     parent_store.put(mount_entry)
 
-                    # Register in local MountTable via DLC (runtime routing)
+                    # Register in local mount map via DLC (runtime routing)
                     if self._coordinator:
                         _target_store = self.get_store(target_zone_id)
-                        root_entry = self._coordinator._mount_table.get("/")
-                        if root_entry is not None and _target_store is not None:
+                        root_backend = self._coordinator.get_root_backend()
+                        if root_backend is not None and _target_store is not None:
                             self._coordinator.mount(
                                 global_path,
-                                root_entry.backend,
+                                root_backend,
                                 metastore=_target_store,
                             )
 

@@ -346,13 +346,115 @@ async def connect(
             if _data_dir and _tls_enabled:
                 from nexus.security.tls.config import ZoneTlsConfig
 
-                # TLS explicitly requested (env var or config) → check both layouts
-                # NEXUS_DATA_DIR auto-detect only → Raft-only (backward compat)
-                _tls_intentional = _grpc_tls_env in ("true", "1", "yes") or _tls_from_config
-                _tls_config = (
-                    ZoneTlsConfig.from_data_dir_any(_data_dir)
-                    if _tls_intentional
-                    else ZoneTlsConfig.from_data_dir(_data_dir)
+            with contextlib.suppress(Exception):
+                _tls_config = ZoneTlsConfig.from_env()
+        if _tls_explicit and _tls_config is None:
+            raise RuntimeError(
+                "NEXUS_GRPC_TLS=true but no TLS certificates found. "
+                "Provide certs via NEXUS_TLS_CERT/KEY/CA, "
+                "in {data_dir}/tls/, or set data_dir in nexus.yaml."
+            )
+
+        transport = RPCTransport(
+            server_address=grpc_address,
+            auth_token=api_key,
+            timeout=float(timeout),
+            connect_timeout=float(connect_timeout),
+            tls_config=_tls_config,
+        )
+
+        # RemoteBackend + RemoteMetastore — stateless proxies, server is SSOT.
+        from nexus.backends.storage.remote import RemoteBackend
+        from nexus.storage.remote_metastore import RemoteMetastore
+
+        remote_backend = RemoteBackend(transport)
+        remote_metastore = RemoteMetastore(transport)
+
+        # Build a lightweight NexusFS directly — no factory, no bricks.
+        # Server is SSOT; client just proxies calls via gRPC.
+        # No parser registries — remote delegates all parsing to the server.
+        from nexus.contracts.types import OperationContext as _RemoteOC
+        from nexus.core.config import PermissionConfig as _PermissionConfig
+        from nexus.core.nexus_fs import NexusFS as _RemoteNexusFS
+
+        nfs = _RemoteNexusFS(
+            metadata_store=remote_metastore,
+            permissions=_PermissionConfig(enforce=False),
+            init_cred=_RemoteOC(user_id="remote", groups=[], is_admin=False),
+        )
+
+        # Mount root backend via DLC — kernel is SSOT for routing (F2).
+        nfs._driver_coordinator.mount("/", remote_backend)
+
+        # Wire service proxies for REMOTE profile (Issue #1171).
+        # Fills all 25+ service slots with RemoteServiceProxy — forwards
+        # method calls to the server via gRPC.
+        from nexus.factory._remote import (
+            _boot_remote_services,
+            install_remote_kernel_rpc_overrides,
+        )
+
+        await _boot_remote_services(nfs, call_rpc=transport.call_rpc)
+        install_remote_kernel_rpc_overrides(nfs, transport)
+        nfs._register_runtime_closeable(transport)
+
+        return nfs
+
+    # ── Local node (single-node or federated, auto-detected) ────────
+    # Heavy imports for local profiles
+    from nexus.backends.base.backend import Backend
+    from nexus.backends.storage.cas_local import CASLocalBackend
+    from nexus.core.nexus_fs import NexusFS
+
+    # Create backend based on configuration
+    backend: Backend
+    if cfg.backend == "gcs":
+        from nexus.backends.storage.cas_gcs import CASGCSBackend
+
+        if not cfg.gcs_bucket_name:
+            raise ValueError(
+                "gcs_bucket_name is required when backend='gcs'. "
+                "Set gcs_bucket_name in your config or NEXUS_GCS_BUCKET_NAME environment variable."
+            )
+        backend = CASGCSBackend(
+            bucket_name=cfg.gcs_bucket_name,
+            project_id=cfg.gcs_project_id,
+            credentials_path=cfg.gcs_credentials_path,
+        )
+        nexus_root = NEXUS_STATE_DIR
+        data_dir = str(Path(nexus_root) / "data")
+    else:
+        data_dir = cfg.data_dir if cfg.data_dir is not None else str(Path(NEXUS_STATE_DIR) / "data")
+        # nexus_root hosts sibling state directories (metastore, record_store).
+        # When data_dir is explicitly provided (e.g. --data-dir /some/path), USE
+        # data_dir itself as nexus_root so metastore goes inside it — this avoids
+        # polluting the parent directory (which could be /tmp or /) and ensures
+        # each data_dir is fully self-contained.  When data_dir is the default
+        # (~/.nexus/data), the parent (~/.nexus) is still used as nexus_root
+        # for backward compatibility.
+        nexus_root = data_dir if cfg.data_dir is not None else str(Path(data_dir).parent)
+        if cfg.backend == "path_local":
+            from nexus.backends.storage.path_local import PathLocalBackend
+
+            backend = PathLocalBackend(root_path=Path(data_dir).resolve())
+        else:
+            # Parse tiering config from YAML if present (Issue #3406)
+            tiering_cfg = None
+            if cfg.tiering and cfg.tiering.get("enabled"):
+                from nexus.core.config import TieringConfig
+
+                t = cfg.tiering
+                tiering_cfg = TieringConfig(
+                    enabled=True,
+                    quiet_period_seconds=float(t.get("quiet_period", 3600)),
+                    min_volume_size_bytes=int(t.get("min_volume_size", 100 * 1024 * 1024)),
+                    cloud_backend=str(t.get("cloud_backend", "gcs")),
+                    cloud_bucket=str(t.get("cloud_bucket", "")),
+                    upload_rate_limit_bytes=int(t.get("upload_rate_limit", 25 * 1024 * 1024)),
+                    sweep_interval_seconds=float(t.get("sweep_interval", 60)),
+                    local_cache_size_bytes=int(t.get("local_cache_size", 10 * 1024 * 1024 * 1024)),
+                    burst_read_threshold=int(t.get("burst_read_threshold", 5)),
+                    burst_read_window_seconds=float(t.get("burst_read_window", 60)),
                 )
 
             # Fail closed: NEXUS_GRPC_TLS=true but no certs resolved.

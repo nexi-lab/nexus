@@ -17,6 +17,8 @@ import re
 # ---------------------------------------------------------------------------
 # Rust acceleration (optional — falls back to Python below)
 # ---------------------------------------------------------------------------
+from nexus._rust_compat import canonicalize_path as _rust_canonicalize_path
+from nexus._rust_compat import extract_zone_id as _rust_extract_zone_id
 from nexus._rust_compat import get_ancestors as _rust_get_ancestors
 from nexus._rust_compat import get_parent as _rust_get_parent
 from nexus._rust_compat import get_parent_chain as _rust_get_parent_chain
@@ -26,6 +28,7 @@ from nexus._rust_compat import path_matches_pattern as _rust_path_matches_patter
 from nexus._rust_compat import split_path as _rust_split_path
 from nexus._rust_compat import unscope_internal_path as _rust_unscope_internal_path
 from nexus._rust_compat import validate_path as _rust_validate_path
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import InvalidPathError
 
 _RUST_AVAILABLE = _rust_normalize_path is not None
@@ -220,6 +223,50 @@ def validate_path(path: str, *, allow_root: bool = False) -> str:
         raise InvalidPathError(path, "Path contains '..' segments")
 
     return path
+
+
+_RUST_ZONE_AVAILABLE = _rust_canonicalize_path is not None
+
+
+def canonicalize_path(path: str, zone_id: str = ROOT_ZONE_ID) -> str:
+    """Canonicalize a virtual path with zone prefix for routing.
+
+    ``canonicalize_path("/workspace/file.txt", "root")``
+    → ``"/root/workspace/file.txt"``
+    """
+    if _RUST_ZONE_AVAILABLE:
+        return str(_rust_canonicalize_path(path, zone_id))
+    stripped = path.lstrip("/")
+    return f"/{zone_id}/{stripped}" if stripped else f"/{zone_id}"
+
+
+def extract_zone_id(canonical_path: str) -> tuple[str, str]:
+    """Extract ``(zone_id, relative_path)`` from a canonical path.
+
+    ``extract_zone_id("/root/workspace/file.txt")``
+    → ``("root", "/workspace/file.txt")``
+    """
+    if _RUST_ZONE_AVAILABLE:
+        result = _rust_extract_zone_id(canonical_path)
+        return (str(result[0]), str(result[1]))
+    parts = canonical_path.lstrip("/").split("/", 1)
+    zone_id = parts[0]
+    relative = "/" + parts[1] if len(parts) > 1 else "/"
+    return zone_id, relative
+
+
+def strip_zone_prefix(canonical_path: str, zone_id: str) -> str:
+    """Strip zone prefix from canonical path to get metastore-relative path.
+
+    ``strip_zone_prefix("/root/workspace/file.txt", "root")``
+    → ``"/workspace/file.txt"``
+    """
+    prefix = f"/{zone_id}"
+    if canonical_path == prefix:
+        return "/"
+    if canonical_path.startswith(prefix + "/"):
+        return canonical_path[len(prefix) :]
+    return canonical_path
 
 
 def normalize_path(path: str) -> str:

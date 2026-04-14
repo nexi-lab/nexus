@@ -654,3 +654,16 @@ class TestMarkdownAwareStrategy:
         result = build_heading_hierarchy(sections, 2, "file.md")
         assert len(result) <= 250  # reasonable cap
         assert "..." in result, f"Expected truncation ellipsis: {result}"
+
+    # ── Adversarial review regressions (Codex round 4) ──
+
+    def test_thematic_break_not_frontmatter(self) -> None:
+        """Document starting with --- thematic break must not be treated as frontmatter."""
+        md = "---\n\n# Title\n\nContent after thematic break.\n"
+        chunker = self._make_chunker()
+        chunks = chunker.chunk(md, file_path="hr.md")
+        # No chunk should have a frontmatter prefix
+        for c in chunks:
+            assert "frontmatter" not in (c.heading_prefix or ""), (
+                f"Thematic break wrongly treated as frontmatter: {c.heading_prefix}"
+            )

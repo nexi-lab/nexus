@@ -220,13 +220,17 @@ def _parse_headings_fence_aware(content: str) -> list[_HeadingInfo]:
 
     # Detect YAML frontmatter range to exclude from setext detection.
     # Frontmatter `---` / `key: value` / `---` looks like setext H2.
+    # Require at least one YAML key: value line to avoid thematic breaks.
     fm_end = 0
     stripped = content.lstrip()
     leading_ws = len(content) - len(stripped)
     if stripped.startswith("---"):
         close = stripped.find("\n---", 3)
         if close != -1:
-            fm_end = leading_ws + close + 4
+            fm_body = stripped[4:close]
+            has_yaml = any(":" in line for line in fm_body.split("\n") if line.strip())
+            if has_yaml:
+                fm_end = leading_ws + close + 4
             if fm_end < len(content) and content[fm_end] == "\n":
                 fm_end += 1
 
@@ -953,28 +957,34 @@ class DocumentChunker:
         # ── Build raw segments from heading positions ────────────────
         segments: list[_MdSegment] = []
 
-        # Detect YAML frontmatter (--- ... ---)
+        # Detect YAML frontmatter (--- ... ---).
+        # Validates that the block contains YAML-like content (at least
+        # one "key:" line) to avoid false positives on thematic breaks.
         fm_end_offset = 0
         stripped = content.lstrip()
         leading_ws = len(content) - len(stripped)
         if stripped.startswith("---"):
             close = stripped.find("\n---", 3)
             if close != -1:
-                fm_end_offset = leading_ws + close + 4  # past closing ---
-                # Skip trailing newline after closing ---
-                if fm_end_offset < len(content) and content[fm_end_offset] == "\n":
-                    fm_end_offset += 1
-                fm_text = content[:fm_end_offset].strip()
-                if fm_text:
-                    segments.append(
-                        _MdSegment(
-                            text=fm_text,
-                            char_start=0,
-                            char_end=fm_end_offset,
-                            heading_prefix=f"[{file_name} > frontmatter]",
-                            tokens=self._count_tokens(fm_text),
+                fm_body = stripped[4:close]  # content between --- markers
+                # Require at least one YAML key: value line
+                has_yaml = any(":" in line for line in fm_body.split("\n") if line.strip())
+                if has_yaml:
+                    fm_end_offset = leading_ws + close + 4  # past closing ---
+                    # Skip trailing newline after closing ---
+                    if fm_end_offset < len(content) and content[fm_end_offset] == "\n":
+                        fm_end_offset += 1
+                    fm_text = content[:fm_end_offset].strip()
+                    if fm_text:
+                        segments.append(
+                            _MdSegment(
+                                text=fm_text,
+                                char_start=0,
+                                char_end=fm_end_offset,
+                                heading_prefix=f"[{file_name} > frontmatter]",
+                                tokens=self._count_tokens(fm_text),
+                            )
                         )
-                    )
 
         # Preamble (content between frontmatter end and first heading)
         first_heading_offset = headings[0].char_offset

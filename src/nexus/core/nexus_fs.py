@@ -228,18 +228,17 @@ class NexusFS(  # type: ignore[misc]
 
                     self._kernel = _Kernel()
                     metadata_store._kernel = self._kernel
-                    # Wire redb metastore for Rust kernel — always required since
-                    # sys_write/sys_read/readdir/access all go through Rust redb.
-                    # If Python metastore has a redb path, reuse it; otherwise
-                    # create a temporary redb so Rust kernel has a working metastore.
+                    # Wire redb metastore — ALL reads and writes go through Rust redb.
+                    # RustMetastoreProxy wraps the kernel's redb so all 35+ Python
+                    # self.metadata.* call sites automatically go through Rust.
                     _redb_path = getattr(metadata_store, "_redb_path", None)
-                    if _redb_path is not None:
-                        self._kernel.set_metastore_path(str(_redb_path))
-                    else:
+                    if _redb_path is None:
                         import tempfile
 
-                        _tmp_redb = tempfile.mktemp(suffix=".redb")
-                        self._kernel.set_metastore_path(_tmp_redb)
+                        _redb_path = tempfile.mktemp(suffix=".redb")
+                    from nexus.core.metastore import RustMetastoreProxy
+
+                    self.metadata = RustMetastoreProxy(self._kernel, str(_redb_path))
                     self._mount_table.bind_kernel(self._kernel)
                     _vfs_rust = getattr(self._vfs_lock_manager, "_rust", None)
                     if _vfs_rust is not None:

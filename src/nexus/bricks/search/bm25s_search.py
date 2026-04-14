@@ -394,22 +394,47 @@ class BM25SIndex:
     def _load_index(self) -> None:
         """Load existing index from disk."""
         index_path = self.index_dir / "index"
-
-        # Load retriever with memory mapping for efficiency
-        self._retriever = bm25s_module.BM25.load(
-            str(index_path),
-            mmap=True,  # Memory-mapped for large indices
-        )
-
-        # Load document metadata
         metadata_path = self.index_dir / "metadata.json"
+
+        # Load metadata first to check for empty index (last-doc-deleted case)
         if metadata_path.exists():
             with open(metadata_path) as f:
                 metadata = json.load(f)
-                self._corpus = metadata.get("corpus", [])
-                self._path_ids = metadata.get("path_ids", [])
-                self._paths = metadata.get("paths", [])
-                self._path_to_idx = {pid: i for i, pid in enumerate(self._path_ids)}
+            corpus = metadata.get("corpus", [])
+            path_ids = metadata.get("path_ids", [])
+            paths = metadata.get("paths", [])
+
+            # Validate consistency: all three lists must be the same length
+            if not (len(corpus) == len(path_ids) == len(paths)):
+                logger.warning(
+                    "BM25S metadata inconsistent (corpus=%d, path_ids=%d, paths=%d), "
+                    "starting fresh",
+                    len(corpus),
+                    len(path_ids),
+                    len(paths),
+                )
+                self._retriever = bm25s_module.BM25(method=self.method, k1=self.k1, b=self.b)
+                return
+
+            # Empty corpus (last document was deleted) — don't load stale retriever
+            if not corpus:
+                self._retriever = bm25s_module.BM25(method=self.method, k1=self.k1, b=self.b)
+                logger.info("Loaded BM25S index: 0 documents (empty)")
+                return
+
+            self._corpus = corpus
+            self._path_ids = path_ids
+            self._paths = paths
+            self._path_to_idx = {pid: i for i, pid in enumerate(self._path_ids)}
+
+        # Load retriever with memory mapping for efficiency
+        if index_path.exists():
+            self._retriever = bm25s_module.BM25.load(
+                str(index_path),
+                mmap=True,
+            )
+        else:
+            self._retriever = bm25s_module.BM25(method=self.method, k1=self.k1, b=self.b)
 
         logger.info(f"Loaded BM25S index: {len(self._corpus)} documents")
 

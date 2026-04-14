@@ -1531,8 +1531,10 @@ class SearchDaemon:
             if zoekt_results:
                 return zoekt_results
 
-        # Fall back to BM25S (in-memory, very fast)
-        if self._bm25s_index:
+        # Fall back to BM25S (in-memory, very fast).
+        # BM25S has no zone metadata, so skip it when zone_id is set
+        # to avoid leaking cross-zone results (Issue #3707).
+        if self._bm25s_index and not zone_id:
             bm25s_results = await self._search_bm25s(query, limit, path_filter)
             if bm25s_results:
                 return bm25s_results

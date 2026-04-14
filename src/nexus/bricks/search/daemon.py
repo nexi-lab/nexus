@@ -1136,8 +1136,10 @@ class SearchDaemon:
         self.last_search_timing = {}
 
         try:
-            # For keyword search: Zoekt first (code search), then txtai BM25
-            if search_type == "keyword" and self.stats.zoekt_available:
+            # For keyword search: Zoekt first (code search), then txtai BM25.
+            # Zoekt has no zone metadata — only safe for root zone / unscoped.
+            is_zone_safe = effective_zone_id == ROOT_ZONE_ID
+            if search_type == "keyword" and self.stats.zoekt_available and is_zone_safe:
                 zoekt_results = await self._search_zoekt(query, limit, path_filter)
                 if zoekt_results:
                     latency_ms = (time.perf_counter() - start) * 1000
@@ -1523,21 +1525,28 @@ class SearchDaemon:
         zone_id: str | None = None,
     ) -> list[SearchResult]:
         """Fast keyword search using BM25S or Zoekt."""
+        from nexus.contracts.constants import ROOT_ZONE_ID
+
         results: list[SearchResult] = []
 
+        # Zoekt and BM25S have no per-zone metadata, so they are only safe
+        # for the root zone (single-tenant) or when zone_id is unset.
+        # Non-root zone searches skip both to avoid cross-zone leakage.
+        is_zone_safe = zone_id is None or zone_id == ROOT_ZONE_ID
+
         # Try Zoekt first (fastest, trigram-based)
-        if self.stats.zoekt_available:
+        if self.stats.zoekt_available and is_zone_safe:
             zoekt_results = await self._search_zoekt(query, limit, path_filter)
             if zoekt_results:
                 return zoekt_results
 
-        # Fall back to BM25S (in-memory, very fast)
-        if self._bm25s_index:
+        # Fall back to BM25S (in-memory, very fast).
+        if self._bm25s_index and is_zone_safe:
             bm25s_results = await self._search_bm25s(query, limit, path_filter)
             if bm25s_results:
                 return bm25s_results
 
-        # Final fallback: database FTS
+        # Final fallback: database FTS (zone-aware)
         if self._async_engine:
             return await self._search_fts(query, limit, path_filter, zone_id=zone_id)
 

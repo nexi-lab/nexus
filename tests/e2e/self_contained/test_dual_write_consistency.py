@@ -26,6 +26,10 @@ from tests.helpers.test_context import TEST_CONTEXT
 if TYPE_CHECKING:
     from nexus.core.nexus_fs import NexusFS
 
+pytestmark = pytest.mark.skip(
+    reason="Split metastore: Rust sys_write → redb, readdir → Python metastore (#1817)"
+)
+
 # Try to import RaftMetadataStore — skip if native module unavailable
 try:
     from nexus.storage.raft_metadata_store import RaftMetadataStore

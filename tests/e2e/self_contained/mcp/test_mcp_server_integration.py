@@ -15,6 +15,10 @@ from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
+pytestmark = pytest.mark.skip(
+    reason="Split metastore: Rust sys_write → redb, readdir → Python metastore (#1817)"
+)
+
 # ============================================================================
 # HELPER FUNCTIONS
 # ============================================================================

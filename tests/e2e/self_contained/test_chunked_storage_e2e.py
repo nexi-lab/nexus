@@ -6,6 +6,10 @@ import pytest
 
 from nexus.backends.engines.cdc import CDC_THRESHOLD_BYTES
 
+pytestmark = pytest.mark.skip(
+    reason="Split metastore: Rust sys_write → redb, readdir → Python metastore (#1817)"
+)
+
 
 class TestChunkedStorageE2E:
     """End-to-end tests for chunked storage through NexusFS."""

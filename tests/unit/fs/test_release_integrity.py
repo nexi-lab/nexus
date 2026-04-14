@@ -329,39 +329,29 @@ class TestFsspecErrorPaths:
     def test_write_buffer_exceeds_limit(self, mock_nexus_fs):
         pytest.importorskip("fsspec")
         from nexus.fs._fsspec import NexusWriteFile
-        from nexus.fs._sync import PortalRunner
 
-        runner = PortalRunner()
-        try:
-            wf = NexusWriteFile(
-                fs=MagicMock(),
-                path="/big.bin",
-                nexus_fs=mock_nexus_fs,
-            )
-            chunk = b"x" * (1024 * 1024)  # 1 MB
-            with pytest.raises(ValueError, match="Write buffer exceeded"):
-                for _ in range(1025):
-                    wf.write(chunk)
-        finally:
-            runner.close()
+        wf = NexusWriteFile(
+            fs=MagicMock(),
+            path="/big.bin",
+            nexus_fs=mock_nexus_fs,
+        )
+        chunk = b"x" * (1024 * 1024)  # 1 MB
+        with pytest.raises(ValueError, match="Write buffer exceeded"):
+            for _ in range(1025):
+                wf.write(chunk)
 
     def test_write_on_closed_file_raises(self, mock_nexus_fs):
         pytest.importorskip("fsspec")
         from nexus.fs._fsspec import NexusWriteFile
-        from nexus.fs._sync import PortalRunner
 
-        runner = PortalRunner()
-        try:
-            wf = NexusWriteFile(
-                fs=MagicMock(),
-                path="/closed.txt",
-                nexus_fs=mock_nexus_fs,
-            )
-            wf.close()
-            with pytest.raises(ValueError, match="closed file"):
-                wf.write(b"data")
-        finally:
-            runner.close()
+        wf = NexusWriteFile(
+            fs=MagicMock(),
+            path="/closed.txt",
+            nexus_fs=mock_nexus_fs,
+        )
+        wf.close()
+        with pytest.raises(ValueError, match="closed file"):
+            wf.write(b"data")
 
 
 class TestBackendFactoryErrorPaths:
@@ -530,6 +520,7 @@ class TestSlimNexusFSLifecycle:
         from nexus.contracts.types import OperationContext
         from nexus.core.config import PermissionConfig
         from nexus.core.nexus_fs import NexusFS
+        from nexus.core.router import PathRouter
         from nexus.fs import _make_mount_entry
 
         db_path = str(tmp_path / "metadata.db")
@@ -538,9 +529,15 @@ class TestSlimNexusFSLifecycle:
         data_dir.mkdir()
         backend = CASLocalBackend(root_path=data_dir)
 
+        from nexus.core.mount_table import MountTable
+
+        mount_table = MountTable(metastore)
+        router = PathRouter(mount_table)
+
         kernel = NexusFS(
             metadata_store=metastore,
             permissions=PermissionConfig(enforce=False),
+            router=router,
         )
         kernel._init_cred = OperationContext(
             user_id="test",
@@ -549,10 +546,8 @@ class TestSlimNexusFSLifecycle:
             is_admin=True,
         )
 
-        # Mount via kernel sys_setattr(DT_MOUNT) (F4 Rust-ification).
-        from nexus.contracts.metadata import DT_MOUNT
-
-        kernel.sys_setattr("/local", entry_type=DT_MOUNT, backend=backend)
+        # Add mount AFTER NexusFS init so it registers in the Rust Kernel.
+        mount_table.add("/local", backend)
         metastore.put(_make_mount_entry("/local", backend.name))
 
         fs = SlimNexusFS(kernel)
@@ -565,6 +560,7 @@ class TestSlimNexusFSLifecycle:
         from nexus.contracts.types import OperationContext
         from nexus.core.config import PermissionConfig
         from nexus.core.nexus_fs import NexusFS
+        from nexus.core.router import PathRouter
         from nexus.fs import _make_mount_entry
 
         db_path = str(tmp_path / "metadata.db")
@@ -573,9 +569,15 @@ class TestSlimNexusFSLifecycle:
         data_dir.mkdir()
         backend = CASLocalBackend(root_path=data_dir)
 
+        from nexus.core.mount_table import MountTable
+
+        mount_table = MountTable(metastore)
+        router = PathRouter(mount_table)
+
         kernel = NexusFS(
             metadata_store=metastore,
             permissions=PermissionConfig(enforce=False),
+            router=router,
         )
         kernel._init_cred = OperationContext(
             user_id="test",
@@ -584,10 +586,8 @@ class TestSlimNexusFSLifecycle:
             is_admin=True,
         )
 
-        # Mount via kernel sys_setattr(DT_MOUNT) (F4 Rust-ification).
-        from nexus.contracts.metadata import DT_MOUNT
-
-        kernel.sys_setattr("/local", entry_type=DT_MOUNT, backend=backend)
+        # Add mount AFTER NexusFS init so it registers in the Rust Kernel.
+        mount_table.add("/local", backend)
         metastore.put(_make_mount_entry("/local", backend.name))
 
         with SlimNexusFS(kernel) as fs:

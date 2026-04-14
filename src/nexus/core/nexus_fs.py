@@ -1447,6 +1447,40 @@ class NexusFS(  # type: ignore[misc]
                 if isinstance(_route, ExternalRouteResult):
                     raise  # External mounts should not fall through
 
+        # PAS (passthrough) mount read — LocalConnector files aren't in CAS
+        # metastore, so Rust kernel sys_read won't find them. Read directly
+        # from the backend via read_content (ObjectStoreABC contract).
+        if (
+            _route_backend is not None
+            and not isinstance(_route, ExternalRouteResult)
+            and hasattr(_route_backend, "read_content")
+        ):
+            _ctx = (
+                _dc_replace(
+                    context,
+                    backend_path=_route_backend_path,
+                    virtual_path=path,
+                    mount_path=_route_mount_point,
+                )
+                if context
+                else OperationContext(
+                    user_id="anonymous",
+                    groups=[],
+                    backend_path=_route_backend_path,
+                    virtual_path=path,
+                    mount_path=_route_mount_point,
+                )
+            )
+            try:
+                data = _route_backend.read_content(_route_backend_path, context=_ctx)
+                if offset or count is not None:
+                    data = data[offset : offset + count] if count is not None else data[offset:]
+                return data
+            except (FileNotFoundError, NexusFileNotFoundError):
+                raise NexusFileNotFoundError(path) from None
+            except Exception:
+                pass  # Fall through to Rust kernel
+
         # PRE-INTERCEPT hooks dispatched by Rust sys_read (dispatch_pre_hooks)
 
         # ── KERNEL (Rust — pre-hooks + route + backend read) ──

@@ -2118,7 +2118,10 @@ class SearchService:
         needs_python_path = before_context > 0 or after_context > 0 or invert_match
 
         # Phase 2: Bulk fetch searchable text
-        searchable_texts = self.metadata.get_searchable_text_bulk(candidate_files)
+        # PAS mounts (LocalConnector) use RustMetastoreProxy which lacks
+        # get_searchable_text_bulk — fall through to raw content read.
+        _get_bulk = getattr(self.metadata, "get_searchable_text_bulk", None)
+        searchable_texts = _get_bulk(candidate_files) if _get_bulk else {}
         cached_text_ratio = len(searchable_texts) / len(candidate_files) if candidate_files else 0.0
         files_needing_raw = [f for f in candidate_files if f not in searchable_texts]
 

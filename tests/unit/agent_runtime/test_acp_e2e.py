@@ -44,6 +44,8 @@ def _spawn_acp() -> subprocess.Popen[str]:
     env["RUST_LOG"] = "error"  # quiet Rust
     # Use isolated temp data dir to avoid redb lock conflicts with other nexus instances
     env["NEXUS_DATA_DIR"] = tempfile.mkdtemp(prefix="nexus-e2e-")
+    # Use slim profile to avoid Raft dependency (Raft extension not built in CI/local)
+    env["NEXUS_PROFILE"] = "slim"
     return subprocess.Popen(
         ["uv", "run", "nexus", "chat", "--acp"],
         stdin=subprocess.PIPE,

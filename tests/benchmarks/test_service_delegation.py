@@ -18,7 +18,6 @@ import pytest
 from nexus.contracts.types import OperationContext
 from nexus.core.nexus_fs import NexusFS
 from nexus.core.service_registry import ServiceRegistry
-from nexus.services.gateway import NexusFSGateway
 
 # =============================================================================
 # Fixtures
@@ -79,38 +78,6 @@ def mock_nexus_fs():
     mock_mount_svc.list_mounts = AsyncMock(return_value=[])
     fs._service_registry.register_service("mount", mock_mount_svc)
     return fs
-
-
-@pytest.fixture
-def mock_gateway():
-    """Create a NexusFSGateway with mock NexusFS for gateway benchmarks.
-
-    Gateway sys_* methods are sync and call the underlying NexusFS methods
-    directly, so the mock NexusFS methods use MagicMock.
-    """
-    mock_fs = MagicMock()
-    mock_fs.sys_read = MagicMock(return_value=b"data")
-    mock_fs.sys_write = MagicMock()
-    mock_fs.write = MagicMock()
-    mock_fs.mkdir = MagicMock()
-    mock_fs.sys_readdir = MagicMock(return_value=["a.txt", "b.txt"])
-    mock_fs.access = MagicMock(return_value=True)
-    mock_fs.metadata = MagicMock()
-    mock_fs.metadata.get = MagicMock(return_value=MagicMock())
-    mock_fs.metadata.list = MagicMock(return_value=[])
-    mock_fs.rebac_check = MagicMock(return_value=True)
-    mock_fs.rebac_create = MagicMock(return_value={"tuple_id": "t1"})
-    mock_fs.rebac_list_tuples = MagicMock(return_value=[])
-    mock_fs._rebac_manager = MagicMock()
-    mock_fs._hierarchy_manager = MagicMock()
-    mock_fs._hierarchy_manager.enable_inheritance = True
-    mock_fs.router = MagicMock()
-    mock_fs.backend = MagicMock()
-    mock_fs._get_context_identity = MagicMock(return_value=("z1", "a1", False))
-    mock_fs._has_descendant_access = MagicMock(return_value=True)
-    mock_fs._get_backend_directory_entries = MagicMock(return_value=set())
-    mock_fs.read_bulk = MagicMock(return_value={})
-    return NexusFSGateway(mock_fs)
 
 
 @pytest.fixture
@@ -263,86 +230,12 @@ class TestSyncDelegationOverhead:
 
 
 # =============================================================================
-# Gateway Delegation Overhead
-# =============================================================================
-
-
-@pytest.mark.benchmark_ci
-class TestGatewayDelegationOverhead:
-    """Benchmark NexusFSGateway method delegation to NexusFS.
-
-    Gateway sys_* methods are async, so we use a dedicated event loop
-    with run_until_complete() to drive them from sync benchmark functions.
-    """
-
-    def test_gateway_read(self, benchmark, mock_gateway, context, delegation_loop):
-        """Benchmark gateway.sys_read() delegation."""
-
-        def run():
-            mock_gateway.sys_read("/test/file.txt", context=context)
-
-        benchmark(run)
-
-    def test_gateway_write_bytes(self, benchmark, mock_gateway, context, delegation_loop):
-        """Benchmark gateway.write() delegation with bytes."""
-
-        def run():
-            mock_gateway.write("/test/file.txt", b"content", context=context)
-
-        benchmark(run)
-
-    def test_gateway_write_str_conversion(self, benchmark, mock_gateway, context, delegation_loop):
-        """Benchmark gateway.write() with str->bytes conversion."""
-
-        def run():
-            mock_gateway.write("/test/file.txt", "text content", context=context)
-
-        benchmark(run)
-
-    def test_gateway_exists(self, benchmark, mock_gateway, context, delegation_loop):
-        """Benchmark gateway.access() delegation."""
-
-        def run():
-            mock_gateway.access("/test/file.txt", context=context)
-
-        benchmark(run)
-
-    def test_gateway_list(self, benchmark, mock_gateway, context, delegation_loop):
-        """Benchmark gateway.sys_readdir() delegation."""
-
-        def run():
-            mock_gateway.sys_readdir("/test", context=context)
-
-        benchmark(run)
-
-    def test_gateway_metadata_get(self, benchmark, mock_gateway):
-        """Benchmark gateway.metadata_get() delegation."""
-        benchmark(mock_gateway.metadata_get, "/test/file.txt")
-
-    def test_gateway_rebac_check(self, benchmark, mock_gateway):
-        """Benchmark gateway.rebac_check() delegation."""
-        benchmark(
-            mock_gateway.rebac_check,
-            subject=("user", "alice"),
-            permission="read",
-            object=("file", "/test"),
-            zone_id="z1",
-        )
-
-
-# =============================================================================
 # Service Instantiation
 # =============================================================================
 
 
 class TestServiceInstantiation:
     """Benchmark service construction time."""
-
-    def test_gateway_construction(self, benchmark):
-        """Benchmark NexusFSGateway construction."""
-        mock_fs = MagicMock()
-
-        benchmark(NexusFSGateway, mock_fs)
 
     def test_share_link_service_construction(self, benchmark):
         """Benchmark ShareLinkService construction."""

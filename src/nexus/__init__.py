@@ -292,6 +292,7 @@ async def connect(
         _grpc_tls_env = os.getenv("NEXUS_GRPC_TLS", "").lower()
         _tls_enabled = _grpc_tls_env in ("true", "1", "yes")
         _tls_disabled = _grpc_tls_env in ("false", "0", "no")
+        _tls_from_config = False  # set when nexus.yaml explicitly enables TLS
         _data_dir = os.getenv("NEXUS_DATA_DIR")
         if _data_dir and not _tls_disabled:
             _tls_enabled = True  # Auto-detect from NEXUS_DATA_DIR (backward compat)
@@ -306,7 +307,8 @@ async def connect(
                     _data_dir = _project_cfg.get("data_dir")
                     # nexus.yaml tls: only used when env var is unset
                     if not _grpc_tls_env:
-                        _tls_enabled = bool(_project_cfg.get("tls"))
+                        _tls_from_config = bool(_project_cfg.get("tls"))
+                        _tls_enabled = _tls_from_config
                 except Exception:
                     pass
         if not _data_dir:
@@ -315,12 +317,12 @@ async def connect(
         if _data_dir and _tls_enabled:
             from nexus.security.tls.config import ZoneTlsConfig
 
-            # Explicit true: check both Raft + OpenSSL layouts
-            # Auto-detect (unset): Raft-only (backward compat)
-            _tls_explicit = _grpc_tls_env in ("true", "1", "yes")
+            # TLS explicitly requested (env var or config) → check both layouts
+            # NEXUS_DATA_DIR auto-detect only → Raft-only (backward compat)
+            _tls_intentional = _grpc_tls_env in ("true", "1", "yes") or _tls_from_config
             _tls_config = (
                 ZoneTlsConfig.from_data_dir_any(_data_dir)
-                if _tls_explicit
+                if _tls_intentional
                 else ZoneTlsConfig.from_data_dir(_data_dir)
             )
 

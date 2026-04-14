@@ -107,8 +107,14 @@ def get_admin_rpc(url: str | None, api_key: str | None) -> AdminRPC:
     elif tls.get("cert") or os.environ.get("NEXUS_TLS_CERT"):
         tls_config = ZoneTlsConfig.from_env()
     elif data_dir:
+        # Only check OpenSSL layout when TLS is explicitly requested —
+        # stale certs on disk shouldn't flip plaintext stacks to mTLS
         with contextlib.suppress(Exception):
-            tls_config = ZoneTlsConfig.from_data_dir_any(data_dir)
+            tls_config = (
+                ZoneTlsConfig.from_data_dir_any(data_dir)
+                if _grpc_tls_on
+                else ZoneTlsConfig.from_data_dir(data_dir)
+            )
 
     # Fail closed: explicit true but no certs resolved
     if _grpc_tls_on and tls_config is None:

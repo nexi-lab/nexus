@@ -15,10 +15,6 @@ from nexus.core.pagination import PaginatedResult
 from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 
-pytestmark = pytest.mark.skip(
-    reason="Split metastore: Rust sys_write → redb, readdir → Python metastore (#1817)"
-)
-
 
 @pytest.fixture
 async def nexus_fs(tmp_path, isolated_db):

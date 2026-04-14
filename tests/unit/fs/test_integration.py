@@ -92,18 +92,20 @@ def dual_fs(tmp_path: Path):
     # CASLocalBackend.name hardcodes "local"; when two instances share
     # the same pool key, resolve_backend() returns whichever was last
     # registered. Creating thin subclasses gives distinct pool keys.
-    class _BackendA(CASLocalBackend):
+    # Class names MUST start with "CAS" so _detect_backend_params in
+    # mount_table.py recognises them as CAS backends (avoids gRPC bridge).
+    class CASLocalA(CASLocalBackend):
         @property
         def name(self) -> str:
             return "local_a"
 
-    class _BackendB(CASLocalBackend):
+    class CASLocalB(CASLocalBackend):
         @property
         def name(self) -> str:
             return "local_b"
 
-    backend_a.__class__ = _BackendA
-    backend_b.__class__ = _BackendB
+    backend_a.__class__ = CASLocalA
+    backend_b.__class__ = CASLocalB
 
     from nexus.core.mount_table import MountTable
 

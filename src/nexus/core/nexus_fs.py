@@ -5161,6 +5161,32 @@ class NexusFS(  # type: ignore[misc]
             except Exception as exc:
                 logger.debug("sys_readdir connector route failed for %s: %s", path, exc)
 
+        # Non-recursive, non-detailed, unbounded listings go through the
+        # Rust kernel so they see per-mount metastore entries (F2 C5).
+        # Python's ``self.metadata.list_iter`` only hits the default global
+        # metastore, which is empty for federation zones.
+        if (
+            self._kernel is not None
+            and not recursive
+            and not details
+            and limit is None
+            and not self._is_internal_path(path)
+        ):
+            _is_admin = (
+                getattr(context, "is_admin", False)
+                if context is not None and not isinstance(context, dict)
+                else (context.get("is_admin", False) if isinstance(context, dict) else False)
+            )
+            try:
+                _kernel_entries = self._kernel.readdir(path, self._zone_id, _is_admin)
+            except Exception as exc:
+                logger.debug("kernel.readdir failed for %s: %s", path, exc)
+                _kernel_entries = None
+            if _kernel_entries:
+                return [
+                    child for child, _etype in _kernel_entries if not self._is_internal_path(child)
+                ]
+
         prefix = path if path != "/" else ""
         if prefix and not prefix.endswith("/"):
             prefix = prefix + "/"

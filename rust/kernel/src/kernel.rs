@@ -1865,16 +1865,34 @@ impl Kernel {
         }
 
         // 3. Route
-        if self
+        let route = self
             .mount_table
             .route(path, zone_id, is_admin, false)
-            .is_err()
-        {
-            return None;
-        }
+            .ok()?;
 
-        // 4. DCache lookup (miss -> wrapper handles via metastore)
-        let entry = self.dcache.get_entry(path)?;
+        // 4. DCache lookup. On miss, fall back to the per-mount metastore
+        //    so federation zones see inodes that haven't been cached yet
+        //    (F2 C5 — matches sys_read's cold path).
+        let entry = match self.dcache.get_entry(path) {
+            Some(e) => e,
+            None => {
+                let meta = self
+                    .with_metastore(&route.mount_point, |ms| ms.get(path).ok().flatten())
+                    .flatten()?;
+                let cached = CachedEntry {
+                    backend_name: meta.backend_name.clone(),
+                    physical_path: meta.physical_path.clone(),
+                    size: meta.size,
+                    etag: meta.etag.clone(),
+                    version: meta.version,
+                    entry_type: meta.entry_type,
+                    zone_id: meta.zone_id.clone(),
+                    mime_type: meta.mime_type.clone(),
+                };
+                self.dcache.put(path, cached.clone());
+                cached
+            }
+        };
 
         let is_dir = entry.entry_type == DT_DIR;
         let mime = entry
@@ -2780,13 +2798,13 @@ impl Kernel {
         if validate_path_fast(parent_path).is_err() {
             return Vec::new();
         }
-        if self
+        let route = match self
             .mount_table
             .route(parent_path, zone_id, is_admin, false)
-            .is_err()
         {
-            return Vec::new();
-        }
+            Ok(r) => r,
+            Err(_) => return Vec::new(),
+        };
 
         let prefix = if parent_path == "/" {
             "/".to_string()
@@ -2794,7 +2812,30 @@ impl Kernel {
             format!("{}/", parent_path)
         };
 
-        self.dcache.list_children(&prefix)
+        // Merge dcache children with per-mount metastore list so federation
+        // zones see entries that haven't been warmed into the dcache (F2 C5).
+        let mut seen: std::collections::BTreeMap<String, u8> = std::collections::BTreeMap::new();
+        for (child, etype) in self.dcache.list_children(&prefix) {
+            seen.insert(child, etype);
+        }
+
+        if let Some(ms_children) =
+            self.with_metastore(&route.mount_point, |ms| ms.list(&prefix).ok())
+        {
+            let parent_depth = prefix.matches('/').count();
+            for meta in ms_children.into_iter().flatten() {
+                // Direct children only: same depth as prefix + 1 segment.
+                if meta.path.matches('/').count() != parent_depth {
+                    continue;
+                }
+                if !meta.path.starts_with(&prefix) {
+                    continue;
+                }
+                seen.entry(meta.path).or_insert(meta.entry_type);
+            }
+        }
+
+        seen.into_iter().collect()
     }
 }
 

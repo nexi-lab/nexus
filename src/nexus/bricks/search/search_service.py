@@ -64,6 +64,25 @@ FILES_FILTER_TRIGRAM_THRESHOLD = 200
 # the ReBAC over-fetch factor — adjust if benchmarks show a better value.
 _REBAC_OVERFETCH_FACTOR_FOR_FILES = 3
 
+# Issue #3720: block_type filter for markdown grep.  When set, grep
+# over-fetches internally (most matches may be in prose) then post-filters
+# to lines inside the requested block type's line ranges.
+VALID_BLOCK_TYPES: frozenset[str] = frozenset(
+    {
+        "code",
+        "table",
+        "frontmatter",
+        "paragraph",
+        "blockquote",
+        "list",
+        "heading",
+    }
+)
+# Issue #3720 (Codex R4): markdown file extensions for block_type filtering.
+_MARKDOWN_EXTENSIONS: tuple[str, ...] = (".md", ".markdown", ".mdown", ".mkd")
+_BLOCK_TYPE_OVERFETCH_FACTOR = 5
+_BLOCK_TYPE_OVERFETCH_CAP = 2000
+
 # Zone-aware path prefixes for cross-zone filtering (Issue #899)
 ZONE_AWARE_PREFIXES: tuple[str, ...] = ("/zones/", "/shared/", "/archives/")
 
@@ -1978,6 +1997,7 @@ class SearchService:
         after_context: int = 0,
         invert_match: bool = False,
         files: builtins.list[str] | None = None,
+        block_type: str | None = None,
     ) -> builtins.list[dict[str, Any]]:
         r"""Search file contents using regex patterns.
 
@@ -2002,15 +2022,38 @@ class SearchService:
                 ``files ∩ glob(file_pattern)`` when both are present.
                 See ``_validate_and_normalize_files`` for the full
                 edge-case spec.
+            block_type: #3720: optional markdown block type filter.
+                When set, only return matches from lines inside blocks
+                of the given type.  Valid values: ``"code"``,
+                ``"table"``, ``"frontmatter"``.  Non-markdown files
+                (or markdown files without ``md_structure`` metadata)
+                pass through unfiltered.
         """
         if path and path != "/":
             path = self._validate_path(path)
+
+        # Issue #3720: validate block_type early.
+        if block_type is not None and block_type not in VALID_BLOCK_TYPES:
+            raise ValueError(
+                f"Invalid block_type {block_type!r}. "
+                f"Valid values: {', '.join(sorted(VALID_BLOCK_TYPES))}"
+            )
 
         flags = re.IGNORECASE if ignore_case else 0
         try:
             regex = re.compile(pattern, flags)
         except re.error as e:
             raise ValueError(f"Invalid regex pattern: {e}") from e
+
+        # Issue #3720: over-fetch when block_type filtering will discard
+        # some matches.  The original max_results is restored after
+        # post-filtering so callers see the expected result count.
+        original_max_results = max_results
+        if block_type is not None:
+            max_results = min(
+                max_results * _BLOCK_TYPE_OVERFETCH_FACTOR,
+                max(max_results, _BLOCK_TYPE_OVERFETCH_CAP),
+            )
 
         # Phase 1: Get files to search.
         #
@@ -2070,7 +2113,13 @@ class SearchService:
         # threshold lives in ``FILES_FILTER_TRIGRAM_THRESHOLD`` and is
         # benchmark-backed.
         zone_id, _, _ = self._get_routing_params(context)
-        if needs_python_path:
+        if block_type is not None:
+            # Issue #3720 (Codex R2+R5): block_type MUST use SEQUENTIAL
+            # to ensure ALL files (cached + uncached) are searched.
+            # CACHED_TEXT skips files_needing_raw; TRIGRAM/ZOEKT return
+            # a fixed page that may miss qualifying block matches.
+            strategy = SearchStrategy.SEQUENTIAL
+        elif needs_python_path:
             # Force a Python-loop strategy so context/invert flags take
             # effect. CACHED_TEXT is preferred when the metastore has
             # text cached for most candidates; otherwise SEQUENTIAL
@@ -2134,6 +2183,12 @@ class SearchService:
                     trigram_results = [
                         r for r in trigram_results if r.get("file") in _files_filter_set
                     ][:max_results]
+                # Issue #3720: apply block_type post-filter before returning.
+                if block_type is not None:
+                    trigram_results = self._filter_results_by_block_type(
+                        trigram_results, block_type
+                    )
+                    return trigram_results[:original_max_results]
                 return trigram_results
             strategy = SearchStrategy.RUST_BULK  # Fallback
 
@@ -2148,6 +2203,10 @@ class SearchService:
                 context=context,
             )
             if zoekt_results is not None:
+                # Issue #3720: apply block_type post-filter before returning.
+                if block_type is not None:
+                    zoekt_results = self._filter_results_by_block_type(zoekt_results, block_type)
+                    return zoekt_results[:original_max_results]
                 return zoekt_results
             strategy = SearchStrategy.RUST_BULK
 
@@ -2168,43 +2227,50 @@ class SearchService:
                         max_results=max_results - len(results),
                     )
                 )
-            if strategy == SearchStrategy.CACHED_TEXT and len(results) >= max_results:
+            if (
+                strategy == SearchStrategy.CACHED_TEXT
+                and block_type is None
+                and len(results) >= max_results
+            ):
                 return results[:max_results]
 
-        if len(results) >= max_results:
+        if block_type is None and len(results) >= max_results:
             return results[:max_results]
 
         # Process remaining files needing raw content
-        if not files_needing_raw:
-            return results
+        if files_needing_raw:
+            remaining_results = max_results - len(results)
 
-        remaining_results = max_results - len(results)
+            if strategy == SearchStrategy.PARALLEL_POOL:
+                results.extend(
+                    await self._grep_parallel(
+                        regex=regex,
+                        files=files_needing_raw,
+                        max_results=remaining_results,
+                        context=context,
+                    )
+                )
+            elif strategy in (SearchStrategy.RUST_BULK, SearchStrategy.SEQUENTIAL):
+                results.extend(
+                    await self._grep_raw_content(
+                        regex=regex,
+                        pattern=pattern,
+                        files_needing_raw=files_needing_raw,
+                        strategy=strategy,
+                        ignore_case=ignore_case,
+                        remaining_results=remaining_results,
+                        context=context,
+                        before_context=before_context,
+                        after_context=after_context,
+                        invert_match=invert_match,
+                        force_python_path=needs_python_path,
+                    )
+                )
 
-        if strategy == SearchStrategy.PARALLEL_POOL:
-            results.extend(
-                await self._grep_parallel(
-                    regex=regex,
-                    files=files_needing_raw,
-                    max_results=remaining_results,
-                    context=context,
-                )
-            )
-        elif strategy in (SearchStrategy.RUST_BULK, SearchStrategy.SEQUENTIAL):
-            results.extend(
-                await self._grep_raw_content(
-                    regex=regex,
-                    pattern=pattern,
-                    files_needing_raw=files_needing_raw,
-                    strategy=strategy,
-                    ignore_case=ignore_case,
-                    remaining_results=remaining_results,
-                    context=context,
-                    before_context=before_context,
-                    after_context=after_context,
-                    invert_match=invert_match,
-                    force_python_path=needs_python_path,
-                )
-            )
+        # Issue #3720: post-filter by block_type when requested.
+        if block_type is not None:
+            results = self._filter_results_by_block_type(results, block_type)
+            max_results = original_max_results
 
         return results[:max_results]
 
@@ -2294,6 +2360,107 @@ class SearchService:
                 results.append(entry)
 
         return results
+
+    def _filter_results_by_block_type(
+        self,
+        results: builtins.list[dict[str, Any]],
+        block_type: str,
+    ) -> builtins.list[dict[str, Any]]:
+        """Post-filter grep results to lines inside *block_type* regions.
+
+        Issue #3720.  For each ``.md`` file in *results*, fetches the
+        ``md_structure`` index from the metastore and keeps only matches
+        whose 0-indexed line falls within a block of the requested type.
+        Non-markdown files (or markdown files without stored metadata)
+        pass through unfiltered.
+
+        Works directly with the raw JSON dict to avoid cross-brick
+        imports (``nexus.bricks.parsers`` is a separate brick).
+        """
+        import json as _json
+
+        MD_STRUCTURE_KEY = "md_structure"  # noqa: N806
+        _V2_BLOCK_TYPES = frozenset({"paragraph", "blockquote", "list", "heading"})
+
+        # Group results by file so we fetch metadata once per file.
+        by_file: dict[str, builtins.list[dict[str, Any]]] = {}
+        for r in results:
+            by_file.setdefault(r.get("file", ""), []).append(r)
+
+        filtered: builtins.list[dict[str, Any]] = []
+        start = time.monotonic()
+
+        for file_path, file_results in by_file.items():
+            if not file_path.lower().endswith(_MARKDOWN_EXTENSIONS):
+                # Non-markdown — include all results (decision #4A).
+                filtered.extend(file_results)
+                continue
+
+            # Fetch md_structure metadata for this file.
+            raw = self.metadata.get_file_metadata(file_path, MD_STRUCTURE_KEY)
+            if raw is None:
+                # Issue #3720 (Codex R6): recognized markdown without
+                # metadata → fail closed.
+                logger.debug(
+                    "No md_structure for %s — excluding results (fail closed)",
+                    file_path,
+                )
+                continue
+
+            try:
+                data: dict[str, Any] = raw if isinstance(raw, dict) else _json.loads(raw)
+            except Exception:
+                # Issue #3720 (Codex R7): fail closed on corrupt metadata.
+                logger.debug("Corrupt md_structure for %s — excluding results", file_path)
+                continue
+
+            # Issue #3720 (Codex R1+R2): v1 indices don't contain the
+            # new block types. Fail closed.
+            version = data.get("version", 1)
+            if version < 2 and block_type in _V2_BLOCK_TYPES:
+                logger.warning(
+                    "md_structure v%d for %s lacks %s blocks — "
+                    "excluding results until file is reindexed "
+                    "(rewrite the file or run a reindex to upgrade)",
+                    version,
+                    file_path,
+                    block_type,
+                )
+                continue
+
+            # Build a flat list of (line_start, line_end) for the requested
+            # block type. Normalize frontmatter into the same shape.
+            block_ranges: builtins.list[tuple[int, int]] = []
+            if block_type == "frontmatter":
+                fm = data.get("frontmatter")
+                if fm is not None:
+                    block_ranges.append((fm["line_start"], fm["line_end"]))
+            else:
+                for section in data.get("sections", []):
+                    for blk in section.get("blocks", []):
+                        if blk.get("type") == block_type:
+                            block_ranges.append((blk["line_start"], blk["line_end"]))
+
+            # Filter: keep results whose 0-indexed line falls in a range.
+            for r in file_results:
+                line_0 = r.get("line", 0) - 1  # grep results are 1-indexed
+                for rng_start, rng_end in block_ranges:
+                    if rng_start <= line_0 < rng_end:
+                        filtered.append(r)
+                        break
+
+        elapsed_ms = (time.monotonic() - start) * 1000
+        if elapsed_ms > 5:
+            logger.debug(
+                "[GREP] Issue #3720: block_type=%s filter took %.1f ms (%d→%d results, %d files)",
+                block_type,
+                elapsed_ms,
+                len(results),
+                len(filtered),
+                len(by_file),
+            )
+
+        return filtered
 
     async def _grep_raw_content(
         self,

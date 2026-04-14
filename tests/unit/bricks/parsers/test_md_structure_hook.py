@@ -97,7 +97,7 @@ class TestWriteHook:
         raw = meta.get_file_metadata("/docs/arch.md", MD_STRUCTURE_KEY)
         assert raw is not None
         data = json.loads(raw)
-        assert data["version"] == 1
+        assert data["version"] == 2
         assert len(data["sections"]) >= 3
         assert data["content_hash"] == "hash1"
 

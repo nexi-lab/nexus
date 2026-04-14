@@ -883,6 +883,29 @@ class TestSearchTools:
         assert "after_context" not in kwargs
         assert "invert_match" not in kwargs
 
+    async def test_grep_block_type_forwarded(self, mock_nx_basic):
+        """#3720: block_type flows through MCP to SearchService."""
+        mock_nx_basic._mock_search.grep.return_value = []
+        server = await create_mcp_server(nx=mock_nx_basic)
+
+        grep_tool = get_tool(server, "nexus_grep")
+        await grep_tool.fn(pattern="SELECT", block_type="code")
+
+        kwargs = mock_nx_basic._mock_search.grep.call_args.kwargs
+        assert kwargs["block_type"] == "code"
+
+    async def test_grep_block_type_none_omitted_from_kwargs(self, mock_nx_basic):
+        """#3720: default block_type=None must NOT appear in kwargs
+        forwarded to SearchService — backward compat with older servers."""
+        mock_nx_basic._mock_search.grep.return_value = []
+        server = await create_mcp_server(nx=mock_nx_basic)
+
+        grep_tool = get_tool(server, "nexus_grep")
+        await grep_tool.fn(pattern="SELECT")
+
+        kwargs = mock_nx_basic._mock_search.grep.call_args.kwargs
+        assert "block_type" not in kwargs
+
     async def test_grep_error(self, mock_nx_basic):
         """Test grep error handling."""
         mock_nx_basic._mock_search.grep.side_effect = ValueError("Invalid regex")

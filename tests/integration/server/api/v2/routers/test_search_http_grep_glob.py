@@ -235,6 +235,71 @@ class TestGrepHappyPath:
         assert data["next_offset"] is None
 
 
+class TestGrepBlockType:
+    """#3720: block_type filtering via HTTP grep endpoints."""
+
+    def test_get_block_type_forwarded(self) -> None:
+        """GET ?block_type=code forwards to SearchService."""
+        svc = _make_search_service(grep_return=[])
+        client = TestClient(_build_app(search_service=svc))
+        client.get("/api/v2/search/grep?pattern=SELECT&block_type=code")
+        kwargs = svc.grep.await_args.kwargs
+        assert kwargs["block_type"] == "code"
+
+    def test_post_block_type_forwarded(self) -> None:
+        """POST block_type in JSON body forwards to SearchService."""
+        svc = _make_search_service(grep_return=[])
+        client = TestClient(_build_app(search_service=svc))
+        client.post(
+            "/api/v2/search/grep",
+            json={"pattern": "SELECT", "block_type": "table"},
+        )
+        kwargs = svc.grep.await_args.kwargs
+        assert kwargs["block_type"] == "table"
+
+    def test_block_type_none_omitted(self) -> None:
+        """Default (no block_type) must NOT forward block_type to SearchService."""
+        svc = _make_search_service(grep_return=[])
+        client = TestClient(_build_app(search_service=svc))
+        client.get("/api/v2/search/grep?pattern=x")
+        kwargs = svc.grep.await_args.kwargs
+        assert "block_type" not in kwargs
+
+    def test_invalid_block_type_returns_400(self) -> None:
+        """SearchService raises ValueError for invalid block_type → 400."""
+        svc = _make_search_service(grep_raises=ValueError("Invalid block_type 'heading'"))
+        client = TestClient(_build_app(search_service=svc))
+        resp = client.get("/api/v2/search/grep?pattern=x&block_type=heading")
+        assert resp.status_code == 400
+        assert "block_type" in resp.json()["detail"]
+
+    def test_post_block_type_non_string_returns_400(self) -> None:
+        """POST block_type must be a string or null."""
+        svc = _make_search_service(grep_return=[])
+        client = TestClient(_build_app(search_service=svc))
+        resp = client.post(
+            "/api/v2/search/grep",
+            json={"pattern": "x", "block_type": 123},
+        )
+        assert resp.status_code == 400
+        assert "block_type" in resp.json()["detail"]
+
+    def test_block_type_pagination_total_reflects_filtered_count(self) -> None:
+        """When block_type filtering reduces results, 'total' reflects
+        the post-filter count, not the pre-filter count."""
+        # SearchService returns 5 results (already block-filtered internally).
+        results = [
+            {"file": f"/doc{i}.md", "line": i + 1, "content": "code", "match": "code"}
+            for i in range(5)
+        ]
+        svc = _make_search_service(grep_return=results)
+        client = TestClient(_build_app(search_service=svc))
+        resp = client.get("/api/v2/search/grep?pattern=code&block_type=code&limit=10")
+        data = resp.json()
+        assert data["total"] == 5
+        assert data["count"] == 5
+
+
 class TestGlobHappyPath:
     def test_basic_match_returns_paths(self) -> None:
         svc = _make_search_service(glob_return=["/a.py", "/b.py", "/c.py"])

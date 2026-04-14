@@ -25,7 +25,13 @@ def extract_structure(text: str) -> dict[str, Any]:
     """
     content = text.encode("utf-8")
     index = parse_markdown_structure(content)
-    headings = [{"level": s.depth, "text": s.heading} for s in index.sections]
+    # Issue #3720 (Codex R3): skip synthetic root sections (depth=0,
+    # empty heading) so the preamble fix doesn't leak into structure APIs.
+    headings = [
+        {"level": s.depth, "text": s.heading}
+        for s in index.sections
+        if not (s.depth == 0 and s.heading == "")
+    ]
     return {
         "headings": headings,
         "has_headings": len(headings) > 0,
@@ -50,11 +56,15 @@ def create_chunks(text: str) -> list[TextChunk]:
     content = text.encode("utf-8")
     index = parse_markdown_structure(content)
 
-    if not index.sections:
+    # Issue #3720 (Codex R6): filter out synthetic root sections
+    # (depth=0, empty heading) so chunking logic sees only real headings.
+    real_sections = [s for s in index.sections if not (s.depth == 0 and s.heading == "")]
+
+    if not real_sections:
         return [TextChunk(text=text, start_index=0, end_index=len(text))]
 
     # Sort all sections by byte_start to get document order.
-    ordered = sorted(index.sections, key=lambda s: s.byte_start)
+    ordered = sorted(real_sections, key=lambda s: s.byte_start)
 
     # Deduplicate positions (hierarchical sections can share a start).
     seen_starts: set[int] = set()

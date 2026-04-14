@@ -309,6 +309,17 @@ def glob(
         "``nexus grep 'auth' -l | nexus grep 'JWT' --files-from=-``."
     ),
 )
+@click.option(
+    "--block-type",
+    type=click.Choice(
+        ["code", "table", "frontmatter", "paragraph", "blockquote", "list", "heading"]
+    ),
+    default=None,
+    help=(
+        "Restrict matches to a markdown block type (#3720). "
+        "Non-markdown files pass through unfiltered."
+    ),
+)
 @add_output_options
 @add_backend_options
 def grep(
@@ -327,6 +338,7 @@ def grep(
     search_mode: str,
     files: tuple[str, ...],
     files_from: str | None,
+    block_type: str | None,
     output_opts: OutputOptions,
     remote_url: str | None,
     remote_api_key: str | None,
@@ -383,6 +395,8 @@ def grep(
                         grep_kwargs["invert_match"] = True
                     if files_list is not None:
                         grep_kwargs["files"] = files_list
+                    if block_type is not None:
+                        grep_kwargs["block_type"] = block_type
 
                     result = nx.service("search").grep(pattern, **grep_kwargs)
 

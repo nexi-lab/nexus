@@ -967,6 +967,7 @@ async def create_mcp_server(
         before_context: int = 0,
         after_context: int = 0,
         invert_match: bool = False,
+        block_type: str | None = None,
         ctx: Context | None = None,
     ) -> str:
         """Search file contents using regex pattern with pagination.
@@ -989,6 +990,12 @@ async def create_mcp_server(
                 (#3701 follow-up). Equivalent to ``grep -A N``.
             invert_match: Return non-matching lines instead of matches
                 (#3701 follow-up). Equivalent to ``grep -v`` / ``--invert-match``.
+            block_type: Restrict matches to a specific markdown block type
+                (#3720). Only matches inside blocks of this type are
+                returned. Valid values: ``"code"``, ``"table"``,
+                ``"frontmatter"``, ``"paragraph"``, ``"blockquote"``,
+                ``"list"``, ``"heading"``. Non-markdown files pass
+                through unfiltered. Omit for default full-file search.
 
         Returns:
             Formatted string with paginated search results containing:
@@ -1038,6 +1045,8 @@ async def create_mcp_server(
             grep_kwargs["after_context"] = after_context
         if invert_match:
             grep_kwargs["invert_match"] = True
+        if block_type is not None:
+            grep_kwargs["block_type"] = block_type
 
         all_results = await _search.grep(pattern, path, **grep_kwargs)
         raw_count = len(all_results)

@@ -23,7 +23,8 @@ from markdown_it import MarkdownIt
 logger = logging.getLogger(__name__)
 
 # Schema version — bump when the stored JSON shape changes.
-SCHEMA_VERSION = 1
+# v2: added paragraph, blockquote, list, heading block types (#3720).
+SCHEMA_VERSION = 2
 
 # ---------------------------------------------------------------------------
 # Data model
@@ -289,6 +290,10 @@ def _parse_rust(content: bytes, content_hash: str) -> MarkdownStructureIndex:
 
         byte_start, byte_end = srcmap
 
+        # Helper: exclusive line_end for Rust srcmap byte ranges.
+        def _excl_line_end() -> int:
+            return _byte_end_to_line_exclusive(byte_end, byte_start, line_offsets)
+
         if node.name == "front_matter":
             fm_text = content[byte_start:byte_end].decode("utf-8", errors="replace")
             keys = _extract_yaml_keys(fm_text)
@@ -296,7 +301,7 @@ def _parse_rust(content: bytes, content_hash: str) -> MarkdownStructureIndex:
                 byte_start=byte_start,
                 byte_end=byte_end,
                 line_start=_byte_to_line(byte_start, line_offsets),
-                line_end=_byte_to_line(byte_end, line_offsets),
+                line_end=_excl_line_end(),
                 keys=keys,
             )
 
@@ -317,11 +322,22 @@ def _parse_rust(content: bytes, content_hash: str) -> MarkdownStructureIndex:
                         cs, ce = child.srcmap
                         heading_text = content[cs:ce].decode("utf-8", errors="replace").strip()
                         break
+            h_line_start = _byte_to_line(byte_start, line_offsets)
             headings.append(
                 _RawHeading(
                     text=heading_text,
                     depth=depth,
-                    line_start=_byte_to_line(byte_start, line_offsets),
+                    line_start=h_line_start,
+                )
+            )
+            # Issue #3720: also record as a searchable block.
+            blocks.append(
+                BlockInfo(
+                    type="heading",
+                    byte_start=byte_start,
+                    byte_end=byte_end,
+                    line_start=h_line_start,
+                    line_end=_excl_line_end(),
                 )
             )
 
@@ -339,7 +355,7 @@ def _parse_rust(content: bytes, content_hash: str) -> MarkdownStructureIndex:
                     byte_start=byte_start,
                     byte_end=byte_end,
                     line_start=_byte_to_line(byte_start, line_offsets),
-                    line_end=_byte_to_line(byte_end, line_offsets),
+                    line_end=_excl_line_end(),
                     language=language,
                 )
             )
@@ -355,14 +371,48 @@ def _parse_rust(content: bytes, content_hash: str) -> MarkdownStructureIndex:
                     byte_start=byte_start,
                     byte_end=byte_end,
                     line_start=_byte_to_line(byte_start, line_offsets),
-                    line_end=_byte_to_line(byte_end, line_offsets),
+                    line_end=_excl_line_end(),
                     rows=row_count,
                 )
             )
 
+        # Issue #3720: track paragraph, blockquote, list blocks.
+        elif node.name == "paragraph":
+            blocks.append(
+                BlockInfo(
+                    type="paragraph",
+                    byte_start=byte_start,
+                    byte_end=byte_end,
+                    line_start=_byte_to_line(byte_start, line_offsets),
+                    line_end=_excl_line_end(),
+                )
+            )
+
+        elif node.name == "blockquote":
+            blocks.append(
+                BlockInfo(
+                    type="blockquote",
+                    byte_start=byte_start,
+                    byte_end=byte_end,
+                    line_start=_byte_to_line(byte_start, line_offsets),
+                    line_end=_excl_line_end(),
+                )
+            )
+
+        elif node.name in ("bullet_list", "ordered_list"):
+            blocks.append(
+                BlockInfo(
+                    type="list",
+                    byte_start=byte_start,
+                    byte_end=byte_end,
+                    line_start=_byte_to_line(byte_start, line_offsets),
+                    line_end=_excl_line_end(),
+                )
+            )
+
         # Recurse into container blocks (blockquotes, list items, etc.)
-        # to find nested fences/tables.
-        if node.name not in ("fence", "front_matter", "heading", "lheading", "table"):
+        # to find nested fences/tables and other tracked blocks.
+        if node.name not in ("fence", "front_matter", "heading", "lheading", "table", "paragraph"):
             for child in node.children:
                 _walk(child)
 
@@ -380,6 +430,23 @@ def _byte_to_line(byte_offset: int, line_offsets: list[int]) -> int:
         else:
             hi = mid - 1
     return lo
+
+
+def _byte_end_to_line_exclusive(byte_end: int, byte_start: int, line_offsets: list[int]) -> int:
+    """Convert an *exclusive* byte-end offset to an exclusive 0-indexed line.
+
+    Rust's ``srcmap`` gives ``(byte_start, byte_end)`` where ``byte_end``
+    is exclusive (one past the last byte).  ``_byte_to_line(byte_end)``
+    returns the line *containing* ``byte_end``, which equals
+    ``line_start`` for single-line blocks — producing an empty
+    ``[start, start)`` range.
+
+    Fix: convert the last *inclusive* byte (``byte_end - 1``) to a line,
+    then add 1 to make the result exclusive.
+    """
+    if byte_end <= byte_start:
+        return _byte_to_line(byte_start, line_offsets) + 1
+    return _byte_to_line(byte_end - 1, line_offsets) + 1
 
 
 # ---------------------------------------------------------------------------
@@ -419,11 +486,22 @@ def _parse_python(content: bytes, content_hash: str) -> MarkdownStructureIndex:
             heading_text = ""
             if i + 1 < len(tokens) and tokens[i + 1].type == "inline":
                 heading_text = tokens[i + 1].content
+            h_start, h_end = tok.map
             headings.append(
                 _RawHeading(
                     text=heading_text,
                     depth=depth,
-                    line_start=tok.map[0],
+                    line_start=h_start,
+                )
+            )
+            # Issue #3720: also record as a searchable block.
+            blocks.append(
+                BlockInfo(
+                    type="heading",
+                    byte_start=line_offsets[h_start],
+                    byte_end=line_offsets[min(h_end, len(line_offsets) - 1)],
+                    line_start=h_start,
+                    line_end=h_end,
                 )
             )
 
@@ -464,6 +542,43 @@ def _parse_python(content: bytes, content_hash: str) -> MarkdownStructureIndex:
                 )
             )
 
+        # Issue #3720: paragraph, blockquote, list blocks.
+        elif tok.type == "paragraph_open" and tok.map is not None:
+            p_start, p_end = tok.map
+            blocks.append(
+                BlockInfo(
+                    type="paragraph",
+                    byte_start=line_offsets[p_start],
+                    byte_end=line_offsets[min(p_end, len(line_offsets) - 1)],
+                    line_start=p_start,
+                    line_end=p_end,
+                )
+            )
+
+        elif tok.type == "blockquote_open" and tok.map is not None:
+            bq_start, bq_end = tok.map
+            blocks.append(
+                BlockInfo(
+                    type="blockquote",
+                    byte_start=line_offsets[bq_start],
+                    byte_end=line_offsets[min(bq_end, len(line_offsets) - 1)],
+                    line_start=bq_start,
+                    line_end=bq_end,
+                )
+            )
+
+        elif tok.type in ("bullet_list_open", "ordered_list_open") and tok.map is not None:
+            li_start, li_end = tok.map
+            blocks.append(
+                BlockInfo(
+                    type="list",
+                    byte_start=line_offsets[li_start],
+                    byte_end=line_offsets[min(li_end, len(line_offsets) - 1)],
+                    line_start=li_start,
+                    line_end=li_end,
+                )
+            )
+
         i += 1
 
     return _build_index(headings, blocks, frontmatter, line_offsets, content_hash)
@@ -484,6 +599,32 @@ def _build_index(
     """Build hierarchical sections from raw headings and blocks."""
     total_lines = len(line_offsets) - 1
     sections: list[SectionInfo] = []
+
+    # Issue #3720 (Codex R1): synthesize a root section for content
+    # before the first heading (or the entire file if headingless) so
+    # blocks in that region are searchable via block_type filtering.
+    first_heading_line = headings[0].line_start if headings else total_lines
+    fm_end = frontmatter.line_end if frontmatter else 0
+    preamble_start = fm_end  # skip frontmatter lines
+    if first_heading_line > preamble_start:
+        pre_blocks = [
+            b for b in blocks if b.line_start >= preamble_start and b.line_end <= first_heading_line
+        ]
+        if pre_blocks:
+            pre_byte_start = line_offsets[preamble_start]
+            pre_byte_end = line_offsets[min(first_heading_line, len(line_offsets) - 1)]
+            sections.append(
+                SectionInfo(
+                    heading="",
+                    depth=0,
+                    byte_start=pre_byte_start,
+                    byte_end=pre_byte_end,
+                    line_start=preamble_start,
+                    line_end=first_heading_line,
+                    tokens_est=(pre_byte_end - pre_byte_start) // 4,
+                    blocks=pre_blocks,
+                )
+            )
 
     for idx, h in enumerate(headings):
         section_line_start = h.line_start

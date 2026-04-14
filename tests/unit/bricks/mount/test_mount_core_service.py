@@ -6,7 +6,7 @@ and remove_mount_sync error collection.
 Formerly tested MountCoreService; now tests the unified MountService.
 """
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -18,35 +18,35 @@ from nexus.contracts.types import OperationContext
 # ---------------------------------------------------------------------------
 
 
-def _mock_gateway(*, permission_ok: bool = True) -> MagicMock:
-    """Create a mock NexusFSGateway with router, rebac, metadata, etc."""
-    gw = MagicMock()
-    gw.router.has_mount.return_value = False
-    gw.mkdir = AsyncMock(return_value=None)
-    gw.rebac_create.return_value = "tuple-1"
-    gw.rebac_check.return_value = permission_ok
-    gw.rebac_delete_object_tuples.return_value = 0
-    gw.metadata_list.return_value = []
-    gw.metadata_delete_batch.return_value = None
-    gw.delete_directory_entries_recursive.return_value = 0
-    gw.remove_parent_tuples.return_value = 0
-    gw.get_database_url.return_value = "sqlite:///test.db"
-    gw.record_store = None
-    return gw
+def _mock_nexus_fs(*, permission_ok: bool = True) -> MagicMock:
+    """Create a mock NexusFS with router, rebac, metadata, etc."""
+    nx = MagicMock()
+    nx.router.has_mount.return_value = False
+    nx.mkdir = MagicMock(return_value=None)
+    nx.rebac_create.return_value = "tuple-1"
+    nx.rebac_check.return_value = permission_ok
+    nx.rebac_delete_object_tuples.return_value = 0
+    nx.metadata_list.return_value = []
+    nx.metadata_delete_batch.return_value = None
+    nx.delete_directory_entries_recursive.return_value = 0
+    nx.remove_parent_tuples.return_value = 0
+    nx.get_database_url.return_value = "sqlite:///test.db"
+    nx.record_store = None
+    return nx
 
 
 def _build_service(
     *,
-    gateway: MagicMock | None = None,
+    nexus_fs: MagicMock | None = None,
     permission_ok: bool = True,
 ) -> tuple[MountService, MagicMock]:
-    """Build a MountService with mocked gateway."""
-    if gateway is None:
-        gateway = _mock_gateway(permission_ok=permission_ok)
-    service = MountService(router=gateway.router, gateway=gateway)
+    """Build a MountService with mocked NexusFS."""
+    if nexus_fs is None:
+        nexus_fs = _mock_nexus_fs(permission_ok=permission_ok)
+    service = MountService(router=nexus_fs.router, nexus_fs=nexus_fs)
     # DriverLifecycleCoordinator is kernel-owned; mock it for unit tests.
     service._driver_coordinator = MagicMock()
-    return service, gateway
+    return service, nexus_fs
 
 
 def _op_context(

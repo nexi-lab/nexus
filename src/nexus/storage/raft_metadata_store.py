@@ -413,6 +413,7 @@ class RaftMetadataStore(MetastoreABC):
         self,
         prefix: str = "",
         recursive: bool = True,
+        zone_id: str | None = None,
         **kwargs: Any,
     ) -> Iterator[FileMetadata]:
         """Iterate over file metadata matching prefix.
@@ -426,11 +427,16 @@ class RaftMetadataStore(MetastoreABC):
         Args:
             prefix: Path prefix to filter by
             recursive: If True, include all nested files
-            **kwargs: Accepts zone_id for API consistency (ignored — store is zone-local)
+            zone_id: Accepted for API consistency (filtering is inherent)
+            **kwargs: Additional keyword arguments (ignored)
 
         Yields:
             FileMetadata entries matching the prefix
         """
+        # Issue #3706: same zone-scope validation as _list_raw
+        if zone_id is not None and zone_id != ROOT_ZONE_ID:
+            if self._zone_id is None and not prefix.startswith(f"/zone/{zone_id}"):
+                raise ValueError(f"zone_id filter '{zone_id}' passed to a non-zone-scoped store")
         entries = self._engine.list_metadata(prefix)
         for path, data in entries:
             # Skip extended attribute keys (format: "meta:{path}:{key}")

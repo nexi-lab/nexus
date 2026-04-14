@@ -5264,7 +5264,22 @@ class NexusFS(  # type: ignore[misc]
                 if not self._is_internal_path(e.path)
             )
             result = paginate_iter(items_iter, limit=limit, cursor_path=cursor)
-            if details:
+            if details and not recursive:
+                # Issue #3706: batch implicit-dir detection for paginated pages too
+                import bisect
+
+                page_paths = sorted(e.path for e in result.items)
+                page_implicit: set[str] = set()
+                for e in result.items:
+                    if e.entry_type == 0:
+                        cp = e.path + "/"
+                        idx = bisect.bisect_left(page_paths, cp)
+                        if idx < len(page_paths) and page_paths[idx].startswith(cp):
+                            page_implicit.add(e.path)
+                result.items = [
+                    self._entry_to_detail_dict_fast(e, page_implicit) for e in result.items
+                ]
+            elif details:
                 result.items = [self._entry_to_detail_dict(e, recursive) for e in result.items]
             else:
                 result.items = [e.path for e in result.items]

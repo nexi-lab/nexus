@@ -898,8 +898,18 @@ impl Kernel {
             let _ = ms.delete(mount_point);
         });
 
-        // 2. DCache evict
+        // 2. DCache evict — clear the mount point AND all entries under
+        //    it. Without the prefix sweep, a read on any previously-cached
+        //    child path after unmount would still see stale content
+        //    (observed as test_unmount_remount_cycle returning the file
+        //    bytes after unmount).
         self.dcache.evict(mount_point);
+        let prefix = if mount_point.ends_with('/') {
+            mount_point.to_string()
+        } else {
+            format!("{}/", mount_point)
+        };
+        self.dcache.evict_prefix(&prefix);
 
         // 3. Remove from router + per-mount metastore
         Ok(self.remove_mount(mount_point, zone_id))

@@ -5050,28 +5050,6 @@ class NexusFS(  # type: ignore[misc]
             "version": entry.version,
         }
 
-    def _entry_to_detail_dict_fast(
-        self, entry: FileMetadata, implicit_dirs: set[str]
-    ) -> dict[str, Any]:
-        """Like _entry_to_detail_dict but uses a pre-computed implicit-dirs set.
-
-        Issue #3706: avoids per-entry is_implicit_directory() calls (each does
-        a full metastore_list) by checking against a set derived from the
-        listing results in O(1).
-        """
-        return {
-            "path": entry.path,
-            "size": entry.size,
-            "etag": entry.etag,
-            "entry_type": 1
-            if (entry.entry_type == 0 and entry.path in implicit_dirs)
-            else entry.entry_type,
-            "zone_id": entry.zone_id,
-            "owner_id": entry.owner_id,
-            "modified_at": entry.modified_at.isoformat() if entry.modified_at else None,
-            "version": entry.version,
-        }
-
     # Issue #3388: Internal metastore prefixes that must not appear in
     # user-facing directory listings (search checkpoints, ReBAC namespaces).
     # These are bare keys (no leading "/") — user paths always start with "/".
@@ -5264,22 +5242,7 @@ class NexusFS(  # type: ignore[misc]
                 if not self._is_internal_path(e.path)
             )
             result = paginate_iter(items_iter, limit=limit, cursor_path=cursor)
-            if details and not recursive:
-                # Issue #3706: batch implicit-dir detection for paginated pages too
-                import bisect
-
-                page_paths = sorted(e.path for e in result.items)
-                page_implicit: set[str] = set()
-                for e in result.items:
-                    if e.entry_type == 0:
-                        cp = e.path + "/"
-                        idx = bisect.bisect_left(page_paths, cp)
-                        if idx < len(page_paths) and page_paths[idx].startswith(cp):
-                            page_implicit.add(e.path)
-                result.items = [
-                    self._entry_to_detail_dict_fast(e, page_implicit) for e in result.items
-                ]
-            elif details:
+            if details:
                 result.items = [self._entry_to_detail_dict(e, recursive) for e in result.items]
             else:
                 result.items = [e.path for e in result.items]
@@ -5293,27 +5256,6 @@ class NexusFS(  # type: ignore[misc]
             for e in self.metadata.list_iter(prefix=prefix, recursive=recursive)
             if not self._is_internal_path(e.path)
         )
-        if details and not recursive:
-            # Issue #3706: For non-recursive detail listings, pre-compute the
-            # set of implicit directories from the listing results instead of
-            # calling is_implicit_directory() per entry (each call does a full
-            # metastore_list).  A path P is an implicit directory if any other
-            # entry in the result set has a path starting with P + "/".
-            # We use bisect to find the first path >= P+"/" — if that path
-            # starts with P+"/", P has descendants.  This handles cases where
-            # sibling paths like "/foo.txt" sort between "/foo" and "/foo/bar".
-            import bisect
-
-            entries = list(entries_iter)
-            all_paths = sorted(e.path for e in entries)
-            implicit_dirs: set[str] = set()
-            for e in entries:
-                if e.entry_type == 0:
-                    child_prefix = e.path + "/"
-                    idx = bisect.bisect_left(all_paths, child_prefix)
-                    if idx < len(all_paths) and all_paths[idx].startswith(child_prefix):
-                        implicit_dirs.add(e.path)
-            return [self._entry_to_detail_dict_fast(e, implicit_dirs) for e in entries]
         if details:
             return [self._entry_to_detail_dict(e, recursive) for e in entries_iter]
         return [e.path for e in entries_iter]

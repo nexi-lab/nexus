@@ -382,6 +382,20 @@ class RustMetastoreProxy(MetastoreABC):
         result: builtins.list[FileMetadata] = self._rust_kernel.metastore_list(prefix)
         return result
 
+    def list_iter(
+        self,
+        prefix: str = "",
+        recursive: bool = True,  # noqa: ARG002
+        **kwargs: Any,  # noqa: ARG002
+    ) -> Iterator[FileMetadata]:
+        """Iterate metadata from Rust metastore (bypasses Python dcache).
+
+        Issue #3706: like list(), delegates directly to Rust without populating
+        the Python-side _dcache, avoiding unbounded cache growth on repeated
+        large directory listings.
+        """
+        yield from self._rust_kernel.metastore_list(prefix)
+
     def dcache_evict_prefix(self, prefix: str) -> int:
         """Evict all dcache entries under prefix (Rust DCache only)."""
         n: int = self._rust_kernel.dcache_evict_prefix(prefix)

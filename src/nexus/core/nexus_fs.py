@@ -5355,36 +5355,42 @@ class NexusFS(  # type: ignore[misc]
             except Exception as exc:
                 logger.debug("sys_readdir connector route failed for %s: %s", path, exc)
 
+        # Non-recursive, non-detailed, unbounded listings go through the
+        # Rust kernel so they see per-mount metastore entries (F2 C5).
+        # Python's ``self.metadata.list_iter`` only hits the default global
+        # metastore, which is empty for federation zones.
+        if (
+            self._kernel is not None
+            and not recursive
+            and not details
+            and limit is None
+            and not self._is_internal_path(path)
+        ):
+            _is_admin = (
+                getattr(context, "is_admin", False)
+                if context is not None and not isinstance(context, dict)
+                else (context.get("is_admin", False) if isinstance(context, dict) else False)
+            )
+            try:
+                _kernel_entries = self._kernel.readdir(path, self._zone_id, _is_admin)
+            except Exception as exc:
+                logger.debug("kernel.readdir failed for %s: %s", path, exc)
+                _kernel_entries = None
+            if _kernel_entries:
+                return [
+                    child for child, _etype in _kernel_entries if not self._is_internal_path(child)
+                ]
+
         prefix = path if path != "/" else ""
         if prefix and not prefix.endswith("/"):
             prefix = prefix + "/"
-
-        # Resolve which metastore to enumerate. For federation zones the
-        # root-zone ``self.metadata`` sees nothing — we need the mount's
-        # own ``route.metastore`` (a RaftMetadataStore for the target
-        # zone). For "/" we fall back to the global metastore because
-        # there is no LPM-matchable mount there.
-        listing_store: MetastoreABC = self.metadata
-        if path and path != "/":
-            try:
-                _is_admin = (
-                    context.is_admin
-                    if context is not None and not isinstance(context, dict)
-                    else (context.get("is_admin", False) if isinstance(context, dict) else False)
-                )
-                _route = self.router.route(
-                    path, is_admin=_is_admin, check_write=False, zone_id=self._zone_id
-                )
-                listing_store = _route.metastore
-            except Exception:
-                listing_store = self.metadata
 
         if limit is not None:
             from nexus.core.pagination import paginate_iter
 
             items_iter = (
                 e
-                for e in listing_store.list_iter(prefix=prefix, recursive=recursive)
+                for e in self.metadata.list_iter(prefix=prefix, recursive=recursive)
                 if not self._is_internal_path(e.path)
             )
             result = paginate_iter(items_iter, limit=limit, cursor_path=cursor)
@@ -5401,7 +5407,7 @@ class NexusFS(  # type: ignore[misc]
         # true streaming requires a Rust-level paginated API (future work).
         entries_iter = (
             e
-            for e in listing_store.list_iter(prefix=prefix, recursive=recursive)
+            for e in self.metadata.list_iter(prefix=prefix, recursive=recursive)
             if not self._is_internal_path(e.path)
         )
         if details:

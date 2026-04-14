@@ -44,17 +44,14 @@ logger = logging.getLogger(__name__)
 class _PyMountInfo:
     """Python-only fields for a mount.
 
-    The kernel (``PyKernel``) owns mount points and backend adapters. The
-    Python side additionally tracks the per-mount ``MetastoreABC`` (e.g.
-    a ``RaftMetadataStore`` for federation zones) so ``PathRouter.route``
-    can populate ``RouteResult.metastore`` with the target zone's store
-    instead of a single global one. Without this, writes land in the
-    root-zone metastore regardless of which federation zone the path
-    targets — cross-node replication silently misses.
+    The kernel (``PyKernel``) is the single source of truth for routing —
+    it owns mount points, readonly flags, backend adapters, and per-zone
+    metastores. This dataclass keeps the Python-only references the kernel
+    does not carry: connector backend objects (some backends are still
+    Python), stream backend factories, and the zone id of the mount.
     """
 
     backend: "ObjectStoreABC"
-    metastore: "MetastoreABC"
     readonly: bool
     admin_only: bool
     io_profile: str
@@ -162,17 +159,8 @@ class DriverLifecycleCoordinator:
         normalized = normalize_path(mount_point)
         canonical = canonicalize_path(normalized, zone_id)
 
-        # Federation mounts pass the target zone's RaftMetadataStore via
-        # ``metastore=``; standalone mounts don't pass one and fall back to
-        # the kernel's global metastore (which the caller already wired into
-        # NexusFS.metadata). Cache the per-mount store so PathRouter.route
-        # can return it on RouteResult — otherwise every federation write
-        # hits the root-zone store and never replicates.
-        effective_metastore = metastore if metastore is not None else self._dispatch.metadata
-
         info = _PyMountInfo(
             backend=backend,
-            metastore=effective_metastore,
             readonly=readonly,
             admin_only=admin_only,
             io_profile=io_profile,

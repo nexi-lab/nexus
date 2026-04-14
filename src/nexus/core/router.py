@@ -163,7 +163,7 @@ class PathRouter:
             if _route_meta is not None and _route_meta.is_external_storage:
                 return ExternalRouteResult(
                     backend=info.backend,
-                    metastore=info.metastore,
+                    metastore=self._metastore,
                     backend_path=rust_result.backend_path,
                     mount_point=user_mp,
                     readonly=rust_result.readonly,
@@ -171,7 +171,7 @@ class PathRouter:
                 )
             return RouteResult(
                 backend=info.backend,
-                metastore=info.metastore,
+                metastore=self._metastore,
                 backend_path=rust_result.backend_path,
                 mount_point=user_mp,
                 readonly=rust_result.readonly,
@@ -196,7 +196,7 @@ class PathRouter:
         if _route_meta is not None and _route_meta.is_external_storage:
             return ExternalRouteResult(
                 backend=info.backend,
-                metastore=info.metastore,
+                metastore=self._metastore,
                 backend_path=backend_path,
                 mount_point=user_mp,
                 readonly=info.readonly,
@@ -204,7 +204,7 @@ class PathRouter:
             )
         return RouteResult(
             backend=info.backend,
-            metastore=info.metastore,
+            metastore=self._metastore,
             backend_path=backend_path,
             mount_point=user_mp,
             readonly=info.readonly,

@@ -273,7 +273,9 @@ class LocalConnectorBackend(Backend):
             physical.write_bytes(content)
 
             content_hash = hash_content(content)
-            return WriteResult(content_id=content_hash, version=content_hash, size=len(content))
+            # PAS: content_id = physical path (not hash). Kernel stores this
+            # in metastore so sys_stat.physical_path returns the real OS path.
+            return WriteResult(content_id=str(physical), version=content_hash, size=len(content))
         except PermissionError as e:
             raise BackendError(f"Permission denied: {write_path} - {e}") from e
         except OSError as e:

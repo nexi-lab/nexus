@@ -5,7 +5,7 @@ edition = "2021"
 
 [lib]
 name = "nexus_kernel"
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]  # cdylib for Python, rlib for Rust deps (e.g. raft::zone_metastore)
 
 [dependencies]
 library = { workspace = true }

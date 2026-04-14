@@ -940,6 +940,31 @@ pub struct PyKernel {
     hooks: Mutex<HookRegistry>,
 }
 
+// Rust-side helpers on PyKernel — NOT exposed to Python (no #[pymethods]).
+// Other crates that depend on `kernel` as an rlib (e.g. `rust/raft`) call
+// these to manipulate the inner `Kernel` without `PyKernel::inner` having
+// to be `pub`. Keeps the struct layout encapsulated while still letting
+// Rust-side cross-crate code drive the kernel.
+impl PyKernel {
+    /// Forward to `Kernel::install_mount_metastore`. Used by
+    /// `rust/raft::PyZoneHandle::attach_to_kernel_mount` to wire a
+    /// `ZoneMetastore` into a federation mount after `add_mount`.
+    pub fn install_mount_metastore(
+        &self,
+        canonical_key: String,
+        ms: std::sync::Arc<dyn crate::metastore::Metastore>,
+    ) {
+        self.inner.install_mount_metastore(canonical_key, ms);
+    }
+
+    /// Compute the kernel's canonical key for a `(mount_point, zone_id)`
+    /// pair. Forwards to `Kernel::canonical_mount_key`. Used by raft so it
+    /// can produce the same key the kernel uses internally.
+    pub fn canonical_mount_key(mount_point: &str, zone_id: &str) -> String {
+        Kernel::canonical_mount_key(mount_point, zone_id)
+    }
+}
+
 #[pymethods]
 impl PyKernel {
     // ── Constructor ────────────────────────────────────────────────────

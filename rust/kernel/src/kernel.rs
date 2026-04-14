@@ -443,14 +443,17 @@ pub struct Kernel {
     zone_revisions: DashMap<String, Arc<ZoneRevisionEntry>>,
     // FileWatcher — inotify equivalent. Arc-shared with observer registry.
     file_watches: Arc<FileWatcher>,
-    // Agent registry — DashMap backing store (§10 B1).
-    // Held in an Arc so components like `AgentStatusResolver` can share
-    // ownership without relying on raw pointers / field address stability.
-    pub(crate) agent_registry: Arc<crate::agent_registry::AgentRegistry>,
-    // Per-mount metastores — federation zones have independent redb instances.
+    // Agent registry — DashMap backing store (§10 B1)
+    pub(crate) agent_registry: crate::agent_registry::AgentRegistry,
+    // Per-mount metastores — federation zones have independent state machines.
     // Keyed by zone-canonical mount point (e.g. "/zone-beta/shared").
     // Syscalls check here first, then fall back to self.metastore (global).
-    mount_metastores: DashMap<String, Box<dyn crate::metastore::Metastore>>,
+    //
+    // `Arc<dyn Metastore>` (not `Box<dyn Metastore>`) so ownership can be
+    // shared with a Python-side `PyKernelMetastore` wrapper — lets crates
+    // like `rust/raft` hand a bridged `Metastore` impl to the kernel via
+    // `add_mount(py_metastore=…)` without moving the trait object.
+    mount_metastores: DashMap<String, Arc<dyn crate::metastore::Metastore>>,
     // IPC registry — PipeManager owns DashMap<String, Arc<dyn PipeBackend>>
     pub(crate) pipe_manager: crate::pipe_manager::PipeManager,
     // IPC registry — StreamManager owns DashMap<String, Arc<dyn StreamBackend>>
@@ -718,8 +721,13 @@ impl Kernel {
     ///   - `backend` is None → no backend (sys_read returns miss).
     ///
     /// When `metastore_path` is provided, opens a Rust-native RedbMetastore
-    /// for this mount point (federation: each zone has its own redb instance).
-    /// Syscalls will use this per-mount metastore instead of the global one.
+    /// for this mount point (standalone embedded mode: each zone has its
+    /// own redb file on disk).
+    ///
+    /// Federation mounts use a different code path: after `add_mount` the
+    /// raft crate calls `Kernel::install_mount_metastore` to wire a
+    /// `ZoneMetastore` (backed by ZoneConsensus state machine) keyed by
+    /// the same canonical path. See `rust/raft/src/zone_metastore.rs`.
     #[allow(clippy::too_many_arguments)]
     pub fn add_mount(
         &self,
@@ -733,12 +741,12 @@ impl Kernel {
         metastore_path: Option<&str>,
         is_external: bool,
     ) -> Result<(), KernelError> {
-        // Open per-mount metastore if path provided (federation mode)
+        // Open per-mount metastore if path provided (standalone mode)
         if let Some(ms_path) = metastore_path {
             let ms = RedbMetastore::open(std::path::Path::new(ms_path))
                 .map_err(|e| KernelError::IOError(format!("RedbMetastore: {e:?}")))?;
             let canonical = canonicalize(mount_point, zone_id);
-            self.mount_metastores.insert(canonical, Box::new(ms));
+            self.mount_metastores.insert(canonical, Arc::new(ms));
         }
         self.router
             .add_mount(
@@ -759,6 +767,36 @@ impl Kernel {
         let canonical = canonicalize(mount_point, zone_id);
         self.mount_metastores.remove(&canonical);
         self.router.remove_mount(mount_point, zone_id)
+    }
+
+    /// Wire a per-mount `Metastore` impl into the kernel's mount table.
+    ///
+    /// Used by code that constructs a `Metastore` *outside* the kernel and
+    /// wants the kernel's syscall fallback path to delegate to it for
+    /// dcache misses on this mount. The canonical example is `rust/raft`'s
+    /// `ZoneMetastore`, which wraps a `ZoneConsensus` state machine and is
+    /// constructed by the raft crate, then handed to the kernel via this
+    /// method (see `PyZoneHandle::attach_to_kernel_mount`).
+    ///
+    /// `canonical_key` must match what `Kernel::add_mount(mount_point,
+    /// zone_id, …)` produces internally — i.e. `/{zone_id}{mount_point}`
+    /// after normalization. Use the `canonicalize` helper on the kernel
+    /// side to compute it consistently.
+    pub fn install_mount_metastore(
+        &self,
+        canonical_key: String,
+        ms: Arc<dyn crate::metastore::Metastore>,
+    ) {
+        self.mount_metastores.insert(canonical_key, ms);
+    }
+
+    /// Compute the zone-canonical key for a (mount_point, zone_id) pair.
+    ///
+    /// Exposed publicly so external crates (e.g. `rust/raft`) can compute
+    /// the same key the kernel uses internally without duplicating the
+    /// normalization rules.
+    pub fn canonical_mount_key(mount_point: &str, zone_id: &str) -> String {
+        canonicalize(mount_point, zone_id)
     }
 
     /// Zone-canonical LPM routing.

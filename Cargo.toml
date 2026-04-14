@@ -17,6 +17,13 @@ contracts = { path = "rust/contracts" }
 library = { path = "rust/library" }
 transport = { path = "rust/transport" }
 services = { path = "rust/services" }
+# `default-features = false` at workspace level so crates that pull kernel
+# as an rlib dependency (e.g. raft's `python` feature → zone_metastore)
+# don't drag in kernel's mimalloc `#[global_allocator]`, which would
+# conflict with the downstream cdylib's own allocator. Re-enable the other
+# kernel defaults (`connectors`, `py-hook-adapters`) explicitly — only
+# `mimalloc` is dropped.
+kernel = { path = "rust/kernel", default-features = false, features = ["connectors", "py-hook-adapters"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 ahash = "0.8"

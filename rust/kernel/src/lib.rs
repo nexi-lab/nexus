@@ -5,7 +5,7 @@
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 mod agent_registry;
-mod backend;
+pub mod backend;
 mod bitmap;
 mod bloom;
 mod cas_chunking;
@@ -18,7 +18,6 @@ mod file_watch;
 mod gcs_backend;
 #[cfg(feature = "connectors")]
 mod gdrive_backend;
-mod generated_pyo3;
 mod glob;
 #[cfg(feature = "connectors")]
 mod gmail_backend;
@@ -28,7 +27,16 @@ mod hook_registry;
 mod io;
 mod kernel;
 mod lock;
-mod metastore;
+pub mod metastore;
+// Mount table (kernel SSOT for mount entries — backend + per-mount
+// metastore + access flags). Mirrors Python `nexus.core.mount_table`.
+pub mod mount_table;
+// `generated_pyo3` kept public so other crates (e.g. `rust/raft`) can
+// reference `PyKernel` via cross-crate PyO3 borrows — needed for
+// `PyZoneHandle::attach_to_kernel_mount()` which wires a Raft-backed
+// `Metastore` into `Kernel::mount_metastores` without surfacing a
+// separate `KernelMetastore` Python class.
+pub mod generated_pyo3;
 #[cfg(feature = "connectors")]
 mod openai_backend;
 #[cfg(feature = "connectors")]

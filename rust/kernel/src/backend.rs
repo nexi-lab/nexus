@@ -21,7 +21,7 @@ use crate::cas_transport::LocalCASTransport;
 /// Error type for ObjectStore operations.
 #[derive(Debug)]
 #[allow(dead_code)]
-pub(crate) enum StorageError {
+pub enum StorageError {
     /// Content not found.
     NotFound(String),
     /// Underlying I/O error.
@@ -49,7 +49,7 @@ impl From<CASError> for StorageError {
 ///   PAS: cloud version_id or content hash.
 /// - `size`: Content size in bytes.
 #[allow(dead_code)]
-pub(crate) struct WriteResult {
+pub struct WriteResult {
     pub(crate) content_id: String,
     pub(crate) version: String,
     pub(crate) size: u64,
@@ -69,7 +69,7 @@ pub(crate) struct WriteResult {
 /// (batch_read/write/delete) have default impls in Python; they are
 /// not needed in the Rust kernel hot path and can be added later.
 #[allow(dead_code)]
-pub(crate) trait ObjectStore: Send + Sync {
+pub trait ObjectStore: Send + Sync {
     /// Backend identifier (e.g. "local", "gcs", "s3").
     fn name(&self) -> &str;
 

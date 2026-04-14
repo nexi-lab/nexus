@@ -13,23 +13,21 @@
 ///
 /// Mirrors the Python `FileMetadata` fields needed by the Rust kernel.
 #[derive(Clone, Debug)]
-#[allow(dead_code)]
-pub(crate) struct FileMetadata {
-    pub(crate) path: String,
-    pub(crate) backend_name: String,
-    pub(crate) physical_path: String,
-    pub(crate) size: u64,
-    pub(crate) etag: Option<String>,
-    pub(crate) version: u32,
-    pub(crate) entry_type: u8,
-    pub(crate) zone_id: Option<String>,
-    pub(crate) mime_type: Option<String>,
+pub struct FileMetadata {
+    pub path: String,
+    pub backend_name: String,
+    pub physical_path: String,
+    pub size: u64,
+    pub etag: Option<String>,
+    pub version: u32,
+    pub entry_type: u8,
+    pub zone_id: Option<String>,
+    pub mime_type: Option<String>,
 }
 
 /// Error type for Metastore operations.
 #[derive(Debug)]
-#[allow(dead_code)]
-pub(crate) enum MetastoreError {
+pub enum MetastoreError {
     /// Key not found.
     NotFound(String),
     /// Underlying I/O or storage error.
@@ -44,8 +42,7 @@ pub(crate) enum MetastoreError {
 ///
 /// 5 abstract methods matching the Python ABC:
 ///   - get, put, delete, list, exists
-#[allow(dead_code)]
-pub(crate) trait Metastore: Send + Sync {
+pub trait Metastore: Send + Sync {
     /// Get metadata for a path. Returns None if not found.
     fn get(&self, path: &str) -> Result<Option<FileMetadata>, MetastoreError>;
 

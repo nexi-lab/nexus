@@ -582,7 +582,10 @@ def parse_pyclass_fields(text: str, class_name: str) -> list[tuple[str, str]]:
 def parse_traits(text: str) -> list[TraitDef]:
     """Extract trait definitions with their method signatures."""
     results = []
-    for m in re.finditer(r"pub\(crate\)\s+trait\s+(\w+)\s*(?::\s*[^{]*)?\s*\{", text):
+    # Match both `pub(crate) trait Foo` and `pub trait Foo` — kernel
+    # traits that external crates (e.g. rust/raft::ZoneMetastore) impl
+    # are `pub`; internal-only traits stay `pub(crate)`.
+    for m in re.finditer(r"pub(?:\(crate\))?\s+trait\s+(\w+)\s*(?::\s*[^{]*)?\s*\{", text):
         trait_name = m.group(1)
         brace_start = m.end() - 1
         brace_end = _find_matching(text, brace_start, "{", "}")
@@ -2360,6 +2363,31 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "    hooks: Mutex<HookRegistry>,",
             "}",
             "",
+            "// Rust-side helpers on PyKernel — NOT exposed to Python (no #[pymethods]).",
+            "// Other crates that depend on `kernel` as an rlib (e.g. `rust/raft`) call",
+            "// these to manipulate the inner `Kernel` without `PyKernel::inner` having",
+            "// to be `pub`. Keeps the struct layout encapsulated while still letting",
+            "// Rust-side cross-crate code drive the kernel.",
+            "impl PyKernel {",
+            "    /// Forward to `Kernel::install_mount_metastore`. Used by",
+            "    /// `rust/raft::PyZoneHandle::attach_to_kernel_mount` to wire a",
+            "    /// `ZoneMetastore` into a federation mount after `add_mount`.",
+            "    pub fn install_mount_metastore(",
+            "        &self,",
+            "        canonical_key: String,",
+            "        ms: std::sync::Arc<dyn crate::metastore::Metastore>,",
+            "    ) {",
+            "        self.inner.install_mount_metastore(canonical_key, ms);",
+            "    }",
+            "",
+            "    /// Compute the kernel's canonical key for a `(mount_point, zone_id)`",
+            "    /// pair. Forwards to `Kernel::canonical_mount_key`. Used by raft so it",
+            "    /// can produce the same key the kernel uses internally.",
+            "    pub fn canonical_mount_key(mount_point: &str, zone_id: &str) -> String {",
+            "        Kernel::canonical_mount_key(mount_point, zone_id)",
+            "    }",
+            "}",
+            "",
             "#[pymethods]",
             "impl PyKernel {",
             "    // ── Constructor ────────────────────────────────────────────────────",
@@ -3720,7 +3748,10 @@ def main() -> int:
         py_files: list[Path] = []
         for path, content in outputs:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(content)
+            # Force LF line endings regardless of platform so Windows users
+            # don't generate CRLF-polluted commits (git core.autocrlf=false
+            # here means text-mode write would leak '\r\n' into the tree).
+            path.write_bytes(content.encode("utf-8"))
             rel = path.relative_to(ROOT)
             print(f"wrote {rel}")
             if path.suffix in (".py", ".pyi"):

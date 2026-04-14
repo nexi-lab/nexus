@@ -1313,6 +1313,37 @@ impl PyZoneHandle {
     pub fn leader_id(&self) -> Option<u64> {
         self.node.leader_id()
     }
+
+    /// Wire this zone's Raft state machine into the kernel as the per-mount
+    /// `Metastore` for `(mount_point, zone_id)`. Call this **after** the
+    /// kernel-side `add_mount` has registered the mount entry — typically
+    /// from Python `DriverLifecycleCoordinator.mount()` for federation
+    /// zones.
+    ///
+    /// The kernel will use the wired `ZoneMetastore` for all dcache-miss
+    /// fallback metadata lookups under that mount (sys_read / sys_stat /
+    /// sys_readdir) — reads and writes go through Raft consensus instead
+    /// of the single global metastore.
+    ///
+    /// Cheap: clones `ZoneConsensus` + `tokio::runtime::Handle` (both
+    /// internally `Arc`-based).
+    pub fn attach_to_kernel_mount(
+        &self,
+        kernel: &Bound<'_, nexus_kernel::generated_pyo3::PyKernel>,
+        mount_point: &str,
+        zone_id: &str,
+    ) -> PyResult<()> {
+        use std::sync::Arc;
+        let zm = crate::zone_metastore::ZoneMetastore::new(
+            self.node.clone(),
+            self.runtime_handle.clone(),
+        );
+        let arc: Arc<dyn nexus_kernel::metastore::Metastore> = Arc::new(zm);
+        let canonical =
+            nexus_kernel::generated_pyo3::PyKernel::canonical_mount_key(mount_point, zone_id);
+        kernel.borrow().install_mount_metastore(canonical, arc);
+        Ok(())
+    }
 }
 
 #[cfg(all(feature = "grpc", has_protos))]

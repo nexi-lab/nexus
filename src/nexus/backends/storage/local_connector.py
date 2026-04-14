@@ -141,6 +141,11 @@ class LocalConnectorBackend(Backend):
         """Return the backend name."""
         return "local_connector"
 
+    @property
+    def root_path(self) -> Path:
+        """Physical root path on host OS (PAS addressing)."""
+        return self.local_path
+
     # =========================================================================
     # Path Translation
     # =========================================================================

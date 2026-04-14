@@ -19,7 +19,7 @@ _DEFAULT_TIMEOUT = 120
 # Match absolute paths starting with / that look like VFS mount paths.
 # Excludes common host OS paths (/usr, /bin, /etc, /tmp, /var, /dev, /proc, /sys, /home).
 _VFS_PATH_RE = re.compile(
-    r"(?<!\w)(/(?!usr/|bin/|etc/|tmp/|var/|dev/|proc/|sys/|home/|Users/|Library/|opt/)\w[\w./-]*)"
+    r"(?<!\w)(/(?!usr/|bin/|etc/|tmp/|var/|dev/|proc/|sys/|home/|Users/|Library/|opt/)\w[\w./*?{}\[\]-]*)"
 )
 
 
@@ -74,7 +74,10 @@ class BashTool:
         mount_cache: dict[str, str | None] = {}
 
         def _resolve_mount_root(vfs_path: str) -> str | None:
-            """Find physical root for a VFS mount point via sys_stat."""
+            """Find physical root for a VFS mount point via sys_stat.
+
+            backend_name format: "type:physical_root" (e.g. "local_connector:/Users/...")
+            """
             parts = vfs_path.strip("/").split("/")
             for i in range(1, len(parts) + 1):
                 candidate = "/" + "/".join(parts[:i])
@@ -82,10 +85,11 @@ class BashTool:
                     return mount_cache[candidate]
                 try:
                     stat = sys_stat(candidate)
-                    if stat and stat.get("backend_name", "").startswith("local_connector"):
-                        # Mount point of a local connector — use cwd as physical root
-                        mount_cache[candidate] = self._cwd
-                        return self._cwd
+                    bn = stat.get("backend_name", "") if stat else ""
+                    if ":" in bn:
+                        phys_root = bn.split(":", 1)[1]
+                        mount_cache[candidate] = phys_root
+                        return phys_root
                 except Exception:
                     pass
             return None

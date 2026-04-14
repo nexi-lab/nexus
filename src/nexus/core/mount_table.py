@@ -195,14 +195,12 @@ class MountTable:
         _backend_name = backend.name
         if not isinstance(_backend_name, str):
             _backend_name = str(_backend_name)
-        # Only CAS backends with local roots get Rust CasLocalBackend (pure Rust,
-        # zero GIL).  All other backends → PyObjectStoreAdapter (GIL cold path).
-        # Detection: CASLocalBackend has has_root_path=True AND uses CAS addressing
-        # (has _cas_engine or class name starts with "CAS").
-        _is_cas_local = getattr(backend, "has_root_path", False) and type(
-            backend
-        ).__name__.startswith("CAS")
-        _local_root = str(getattr(backend, "root_path", None)) if _is_cas_local else None
+        # Encode physical root path into backend_name for PAS backends.
+        # Format: "local_connector:/Users/..." — Rust stores this in
+        # metastore/dcache so sys_stat returns the physical path.
+        _local_root = str(backend.root_path) if hasattr(backend, "root_path") else None
+        if _local_root:
+            _backend_name = f"{_backend_name}:{_local_root}"
         if self._rust is not None:
             self._rust.add_mount(
                 mount_point,

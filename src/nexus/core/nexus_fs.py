@@ -1095,11 +1095,15 @@ class NexusFS(  # type: ignore[misc]
             )
 
             # Write DT_MOUNT metadata to metastore
+            _bn = backend.name
+            _root = str(backend.root_path) if hasattr(backend, "root_path") else ""
+            if _root:
+                _bn = f"{_bn}:{_root}"
             now = datetime.now(UTC)
             metadata = FileMetadata(
                 path=path,
-                backend_name=backend.name,
-                physical_path="",
+                backend_name=_bn,
+                physical_path=_root,
                 size=0,
                 entry_type=DT_MOUNT,
                 mime_type="inode/mount",

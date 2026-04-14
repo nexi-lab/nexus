@@ -529,3 +529,68 @@ class TestMarkdownAwareStrategy:
         preamble_chunks = [c for c in chunks if "Preamble text" in c.text]
         assert len(fm_chunks) == 1
         assert len(preamble_chunks) >= 1
+
+    # ── Adversarial review regressions (Codex round 1) ──
+
+    def test_frontmatter_does_not_absorb_heading_sections(self) -> None:
+        """Short doc: frontmatter must not merge with heading sections."""
+        md = "---\ntitle: Test\n---\n\n# Overview\n\nShort overview text.\n"
+        chunker = self._make_chunker()
+        chunks = chunker.chunk(md, file_path="short.md")
+        # The heading section must NOT have a frontmatter prefix
+        heading_chunks = [
+            c for c in chunks if "# Overview" in c.text or "overview" in c.text.lower()
+        ]
+        for c in heading_chunks:
+            assert "frontmatter" not in (c.heading_prefix or ""), (
+                f"Heading section wrongly embedded as frontmatter: {c.heading_prefix}"
+            )
+
+    def test_oversized_section_preserves_code_fence(self) -> None:
+        """Code block within 1.5x budget must not be split mid-fence."""
+        # Build a code block of ~100 tokens (within 1.5x of chunk_size=128 = 192)
+        code = "\n".join(f"    line_{i} = {i}" for i in range(20))
+        md = (
+            "# Code\n\nSome introductory prose about the code example.\n\n"
+            f"```python\n{code}\n```\n\nTrailing prose after the block.\n"
+        )
+        chunker = self._make_chunker(chunk_size=128)
+        chunks = chunker.chunk(md, file_path="code.md")
+        # The code block should be kept intact in a single chunk
+        fence_chunks = [c for c in chunks if "```python" in c.text]
+        assert len(fence_chunks) >= 1
+        for c in fence_chunks:
+            assert "```" in c.text[c.text.index("```python") + 10 :], (
+                "Code fence was split across chunks — opening ``` without closing ```"
+            )
+
+    def test_setext_headings_detected(self) -> None:
+        """Setext headings (=== / ---) must be recognized as section boundaries."""
+        md = (
+            "Title\n=====\n\nIntro content with enough words to exceed the "
+            "minimum token threshold for a standalone chunk in tests.\n\n"
+            "Subtitle\n--------\n\nMore content with enough text to also "
+            "exceed the minimum threshold for standalone chunks.\n"
+        )
+        chunker = self._make_chunker()
+        chunks = chunker.chunk(md, file_path="setext.md")
+        # Verify setext headings were detected (reflected in heading_prefix)
+        prefixes = [c.heading_prefix or "" for c in chunks]
+        assert any("Title" in p for p in prefixes), f"Setext H1 (===) not detected: {prefixes}"
+        # At least one chunk should exist with correct prefix
+        assert len(chunks) >= 1
+
+    def test_indented_atx_heading_detected(self) -> None:
+        """ATX headings with up to 3 spaces of indentation are valid CommonMark."""
+        md = (
+            "   # Indented Heading\n\nContent under the indented heading "
+            "with enough words to be meaningful for search indexing.\n\n"
+            "## Normal Heading\n\nMore content under a normally formatted "
+            "heading that also has enough text for search.\n"
+        )
+        chunker = self._make_chunker()
+        chunks = chunker.chunk(md, file_path="indent.md")
+        prefixes = [c.heading_prefix or "" for c in chunks]
+        assert any("Indented Heading" in p for p in prefixes), (
+            f"Indented ATX heading not detected: {prefixes}"
+        )

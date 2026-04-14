@@ -154,10 +154,12 @@ def _compute_line_numbers_fast(
 # Minimum tokens for a standalone chunk; smaller sections merge with siblings.
 _MIN_CHUNK_TOKENS = 80
 
-# Regex for ATX headings (# through ######)
-_HEADING_RE = re.compile(r"^(#{1,6})\s+(.*?)$", re.MULTILINE)
-# Regex for code fence openers/closers (``` or ~~~, 3+ chars)
-_FENCE_RE = re.compile(r"^(`{3,}|~{3,})", re.MULTILINE)
+# Regex for ATX headings (# through ######), allowing up to 3 leading spaces (CommonMark)
+_HEADING_RE = re.compile(r"^ {0,3}(#{1,6})\s+(.*?)$", re.MULTILINE)
+# Regex for setext headings: text line followed by === or --- underline
+_SETEXT_RE = re.compile(r"^([^\n]+)\n {0,3}(=+|-+)\s*$", re.MULTILINE)
+# Regex for code fence openers/closers (``` or ~~~, 3+ chars, up to 3 leading spaces)
+_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})", re.MULTILINE)
 
 
 @dataclass(slots=True)
@@ -203,12 +205,28 @@ def _parse_headings_fence_aware(content: str) -> list[_HeadingInfo]:
         return any(s <= offset < e for s, e in fenced)
 
     headings: list[_HeadingInfo] = []
+
+    # ATX headings (# through ######)
     for m in _HEADING_RE.finditer(content):
         if _is_fenced(m.start()):
             continue
         depth = len(m.group(1))
         text = m.group(2).strip()
         headings.append(_HeadingInfo(heading=text, depth=depth, char_offset=m.start()))
+
+    # Setext headings (underline with === or ---)
+    for m in _SETEXT_RE.finditer(content):
+        if _is_fenced(m.start()):
+            continue
+        text = m.group(1).strip()
+        # Skip if the text line looks like a YAML frontmatter delimiter
+        if text == "---" or not text:
+            continue
+        depth = 1 if m.group(2)[0] == "=" else 2
+        headings.append(_HeadingInfo(heading=text, depth=depth, char_offset=m.start()))
+
+    # Sort by position (ATX and setext may interleave)
+    headings.sort(key=lambda h: h.char_offset)
 
     return headings
 
@@ -970,9 +988,24 @@ class DocumentChunker:
         if not segments:
             return self._chunk_fixed(content)
 
-        # ── Merge tiny segments (single-pass greedy, O(n)) ──────────
-        merged = _merge_small_segments(
-            segments,
+        # ── Separate frontmatter/preamble from heading segments ─────
+        # Frontmatter and preamble are emitted as standalone chunks —
+        # they must not be merged with heading segments, otherwise the
+        # merged chunk inherits the wrong heading_prefix.
+        standalone: list[_MdSegment] = []
+        heading_segments: list[_MdSegment] = []
+        for seg in segments:
+            if (
+                seg.heading_prefix.endswith("frontmatter]")
+                or seg.heading_prefix == f"[{file_name}]"
+            ):
+                standalone.append(seg)
+            else:
+                heading_segments.append(seg)
+
+        # ── Merge tiny heading segments (single-pass greedy, O(n)) ──
+        merged = standalone + _merge_small_segments(
+            heading_segments,
             min_tokens=_MIN_CHUNK_TOKENS,
             max_tokens=self.chunk_size,
         )
@@ -997,18 +1030,16 @@ class DocumentChunker:
                     )
                 )
             else:
-                # Oversized section: sub-split with reduced budget
-                sub_chunker = DocumentChunker(
-                    chunk_size=effective_budget,
-                    overlap_size=self.overlap_size,
-                    strategy=ChunkStrategy.FIXED,
-                    encoding_name=self.encoding_name,
+                # Oversized section: split around code fences to keep
+                # fenced blocks intact.  Splits text into alternating
+                # prose / fenced-block fragments, then sub-splits only
+                # the prose parts with the generic fixed splitter.
+                sub_chunks = self._split_preserving_fences(
+                    seg.text,
+                    seg.char_start,
+                    effective_budget,
                 )
-                sub_chunker.encoding = self.encoding  # reuse cached encoding
-                sub_chunks = sub_chunker._chunk_fixed(seg.text)
                 for sc in sub_chunks:
-                    sc.start_offset += seg.char_start
-                    sc.end_offset += seg.char_start
                     sc.heading_prefix = seg.heading_prefix
                     chunks.append(sc)
 
@@ -1024,6 +1055,96 @@ class DocumentChunker:
         )
 
         return chunks
+
+    def _split_preserving_fences(
+        self,
+        text: str,
+        base_offset: int,
+        budget: int,
+    ) -> list[DocumentChunk]:
+        """Split oversized section while keeping fenced code blocks intact.
+
+        Splits *text* into alternating prose / fenced-block fragments.
+        Prose fragments are sub-split with the fixed splitter at *budget*.
+        Fenced blocks up to 1.5× budget are emitted whole; larger blocks
+        are sub-split as a last resort.
+        """
+        # Find fenced ranges within this text
+        fenced_ranges: list[tuple[int, int]] = []
+        opener: tuple[str, int] | None = None
+        for m in _FENCE_RE.finditer(text):
+            marker = m.group(1)
+            if opener is None:
+                opener = (marker, m.start())
+            elif marker[0] == opener[0] and len(marker) >= len(opener[0]):
+                fenced_ranges.append((opener[1], m.end()))
+                opener = None
+        # Unclosed fence: extend to end of text
+        if opener is not None:
+            fenced_ranges.append((opener[1], len(text)))
+
+        if not fenced_ranges:
+            # No fences — safe to use generic splitter
+            return self._sub_split_prose(text, base_offset, budget)
+
+        # Build alternating fragments: prose, fence, prose, fence, ...
+        chunks: list[DocumentChunk] = []
+        pos = 0
+        allowance = int(budget * 1.5)
+
+        for fence_start, fence_end in fenced_ranges:
+            # Prose before this fence
+            if pos < fence_start:
+                prose = text[pos:fence_start]
+                if prose.strip():
+                    chunks.extend(self._sub_split_prose(prose, base_offset + pos, budget))
+
+            # The fenced block itself
+            block_text = text[fence_start:fence_end]
+            block_tokens = self._count_tokens(block_text)
+            if block_tokens <= allowance:
+                # Keep intact
+                chunks.append(
+                    DocumentChunk(
+                        text=block_text,
+                        chunk_index=0,
+                        tokens=block_tokens,
+                        start_offset=base_offset + fence_start,
+                        end_offset=base_offset + fence_end,
+                    )
+                )
+            else:
+                # Truly enormous block — last resort split
+                chunks.extend(self._sub_split_prose(block_text, base_offset + fence_start, budget))
+            pos = fence_end
+
+        # Trailing prose after last fence
+        if pos < len(text):
+            trailing = text[pos:]
+            if trailing.strip():
+                chunks.extend(self._sub_split_prose(trailing, base_offset + pos, budget))
+
+        return chunks
+
+    def _sub_split_prose(
+        self,
+        text: str,
+        base_offset: int,
+        budget: int,
+    ) -> list[DocumentChunk]:
+        """Sub-split a prose fragment using a fixed-budget chunker."""
+        sub_chunker = DocumentChunker(
+            chunk_size=budget,
+            overlap_size=self.overlap_size,
+            strategy=ChunkStrategy.FIXED,
+            encoding_name=self.encoding_name,
+        )
+        sub_chunker.encoding = self.encoding
+        sub_chunks = sub_chunker._chunk_fixed(text)
+        for sc in sub_chunks:
+            sc.start_offset += base_offset
+            sc.end_offset += base_offset
+        return sub_chunks
 
 
 @dataclass

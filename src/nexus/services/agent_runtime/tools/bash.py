@@ -59,19 +59,59 @@ class BashTool:
         self._sys_stat = sys_stat
 
     def _resolve_vfs_paths(self, command: str) -> str:
-        """Replace VFS paths with host OS physical paths via sys_stat."""
+        """Replace VFS paths with host OS physical paths via sys_stat.
+
+        For paths under VFS mounts (e.g. /workspace/foo.txt), uses
+        sys_stat to get physical_path. Falls back to mount-point
+        resolution: stat the mount root, get its backend info, and
+        use cwd as the physical root.
+        """
         sys_stat = self._sys_stat
         if sys_stat is None:
             return command
 
+        # Cache: mount_point -> physical_root
+        mount_cache: dict[str, str | None] = {}
+
+        def _resolve_mount_root(vfs_path: str) -> str | None:
+            """Find physical root for a VFS mount point via sys_stat."""
+            parts = vfs_path.strip("/").split("/")
+            for i in range(1, len(parts) + 1):
+                candidate = "/" + "/".join(parts[:i])
+                if candidate in mount_cache:
+                    return mount_cache[candidate]
+                try:
+                    stat = sys_stat(candidate)
+                    if stat and stat.get("backend_name", "").startswith("local_connector"):
+                        # Mount point of a local connector — use cwd as physical root
+                        mount_cache[candidate] = self._cwd
+                        return self._cwd
+                except Exception:
+                    pass
+            return None
+
         def _replace(match: re.Match[str]) -> str:
             vfs_path: str = match.group(1)
+            # 1. Try direct sys_stat (works for files already in metastore)
             try:
                 stat = sys_stat(vfs_path)
                 if stat and stat.get("physical_path"):
-                    return str(stat["physical_path"])
+                    phys = str(stat["physical_path"])
+                    if not phys.startswith("/"):
+                        pass  # CAS hash, not a real path — fall through
+                    else:
+                        return phys
             except Exception:
                 pass
+
+            # 2. Resolve via mount root (for glob patterns, new files, etc.)
+            parts = vfs_path.strip("/").split("/")
+            if len(parts) >= 2:
+                mount_root = _resolve_mount_root(vfs_path)
+                if mount_root:
+                    relative = "/".join(parts[1:])  # strip mount name
+                    return str(mount_root) + "/" + relative
+
             return str(vfs_path)
 
         return _VFS_PATH_RE.sub(_replace, command)

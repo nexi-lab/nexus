@@ -604,7 +604,7 @@ def create_async_files_router(
             result = fs.write(**write_kwargs)
 
             # Track write in transaction AFTER successful write.
-            # Skip if _write_internal already tracked it (path already in registry).
+            # Skip if write already tracked it (path already in registry).
             if (
                 _ss is not None
                 and _norm_path is not None

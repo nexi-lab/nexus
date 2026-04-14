@@ -56,7 +56,7 @@ class MountService:
     - Save/load/delete mount configurations
 
     Architecture:
-        - Uses NexusFSGateway for all NexusFS access (filesystem, metadata,
+        - Uses NexusFS directly for all filesystem access (metadata,
           permissions, router)
         - Uses MountManager for persistence
         - Uses OperationContext for permissions
@@ -68,7 +68,6 @@ class MountService:
         mount_manager: "MountManager | None" = None,
         nexus_fs: Any = None,
         *,
-        gateway: Any = None,
         mount_persist_service: Any = None,
         oauth_service: Any = None,
         auth_service: Any = None,
@@ -82,8 +81,7 @@ class MountService:
         Args:
             router: Path router for backend resolution
             mount_manager: Optional mount manager for persistence
-            nexus_fs: Optional NexusFS instance (for kernel ops: mkdir, rmdir, rebac)
-            gateway: NexusFSGateway for NexusFS access (preferred over nexus_fs)
+            nexus_fs: NexusFS instance (for kernel ops: mkdir, rmdir, rebac, metadata)
             mount_persist_service: MountPersistService for config persistence
             oauth_service: OAuthCredentialService for credential revocation
             auth_service: UnifiedAuthService for stored/native credential resolution
@@ -96,7 +94,6 @@ class MountService:
         self._driver_coordinator: Any = None  # Injected post-init by factory
         self.mount_manager = mount_manager
         self.nexus_fs = nexus_fs
-        self._gw = gateway
         self._mount_persist_service = mount_persist_service
         self._oauth_service = oauth_service
         self._auth_service = auth_service
@@ -195,9 +192,7 @@ class MountService:
                 return
 
             # Get NexusFS for reading content
-            nx = self.nexus_fs or (
-                self._gw.nexus_fs if self._gw and hasattr(self._gw, "nexus_fs") else None
-            )
+            nx = self.nexus_fs
             if nx is None:
                 return
 
@@ -298,9 +293,7 @@ class MountService:
         from nexus.backends.base.factory import BackendFactory
 
         record_store = None
-        if self._gw is not None:
-            record_store = self._gw.record_store
-        elif self.nexus_fs and hasattr(self.nexus_fs, "_record_store"):
+        if self.nexus_fs and hasattr(self.nexus_fs, "_record_store"):
             record_store = self.nexus_fs._record_store
         return BackendFactory.create(backend_type, config, record_store=record_store)
 
@@ -329,9 +322,8 @@ class MountService:
         logger.info(f"Setting up mount point: {mount_point}")
 
         # Create directory entries for mount point AND parent directories
-        # via sync metadata_put (gateway.mkdir is async and can't be
-        # called from this sync context).
-        if self._gw is not None:
+        # via sync metadata_put.
+        if self.nexus_fs is not None:
             from datetime import UTC, datetime
 
             from nexus.contracts.metadata import DT_DIR, DT_MOUNT, FileMetadata
@@ -346,7 +338,7 @@ class MountService:
             for i in range(2, len(parts) + 1):
                 dir_path = "/".join(parts[:i])
                 try:
-                    existing = self._gw.metadata_get(dir_path)
+                    existing = self.nexus_fs.metadata.get(dir_path)
                     if existing:
                         continue
                     now = datetime.now(UTC)
@@ -363,7 +355,7 @@ class MountService:
                         version=1,
                         zone_id=zone_id,
                     )
-                    self._gw.metadata_put(meta)
+                    self.nexus_fs.metadata.put(meta)
                     logger.info(f"Created directory entry: {dir_path}")
                 except Exception as e:
                     logger.warning(f"Failed to create directory entry {dir_path}: {e}")
@@ -401,9 +393,10 @@ class MountService:
             logger.warning("[MOUNT-PERM] No subject_id, skipping permission grant")
             return
 
-        if self._gw is not None:
+        _rebac = self.nexus_fs.service("rebac") if self.nexus_fs else None
+        if _rebac is not None:
             try:
-                tuple_id = self._gw.rebac_create(
+                tuple_id = _rebac.rebac_create_sync(
                     subject=(subject_type, subject_id),
                     relation="direct_owner",
                     object=("file", mount_point),
@@ -425,31 +418,8 @@ class MountService:
                 mount_point,
                 tuple_id,
             )
-        elif self.nexus_fs and self.nexus_fs.service("rebac"):
-            try:
-                self.nexus_fs.service("rebac").rebac_create_sync(
-                    subject=(subject_type, subject_id),
-                    relation="direct_owner",
-                    object=("file", mount_point),
-                    zone_id=zone_id,
-                )
-                logger.info(
-                    "Granted direct_owner to %s:%s for %s",
-                    subject_type,
-                    subject_id,
-                    mount_point,
-                )
-            except Exception as e:
-                logger.warning(
-                    "Failed to grant direct_owner for %s: %s: %s",
-                    mount_point,
-                    type(e).__name__,
-                    e,
-                )
         else:
-            logger.warning(
-                "[MOUNT-PERM] No gateway or rebac service available, skipping permission grant"
-            )
+            logger.warning("[MOUNT-PERM] No rebac service available, skipping permission grant")
 
     def _check_permission(
         self,
@@ -459,13 +429,13 @@ class MountService:
     ) -> bool:
         """Check if user has permission on path.
 
-        Delegates to shared permission_utils.check_permission when gateway
+        Delegates to shared permission_utils.check_permission when NexusFS
         is available, otherwise returns True (permissive fallback).
         Raises PermissionCheckError on infrastructure failures.
         """
-        if self._gw is not None:
-            return bool(check_permission(self._gw, path, permission, context))
-        # No gateway — permissive fallback
+        if self.nexus_fs is not None:
+            return bool(check_permission(self.nexus_fs, path, permission, context))
+        # No NexusFS — permissive fallback
         return True
 
     def _check_mount_permission(
@@ -535,22 +505,14 @@ class MountService:
 
         # Auto-inject token_manager_db for OAuth backends
         if _needs_token_manager_db(backend_type, config):
-            if self._gw is not None:
+            if self.nexus_fs:
                 try:
-                    database_url = self._gw.get_database_url()
+                    database_url = get_database_url(self.nexus_fs)
                     config["token_manager_db"] = database_url
                 except RuntimeError as e:
                     raise RuntimeError(f"Cannot create {backend_type} mount: {e}") from e
-            elif self.nexus_fs:
-                try:
-                    database_url = get_database_url(self.nexus_fs)
-                    config = {**config, "token_manager_db": database_url}
-                except RuntimeError as e:
-                    raise RuntimeError(f"Cannot create {backend_type} mount: {e}") from e
-                else:
-                    raise RuntimeError(
-                        f"Cannot create {backend_type} mount: no gateway or nexus_fs configured"
-                    )
+            else:
+                raise RuntimeError(f"Cannot create {backend_type} mount: no nexus_fs configured")
 
         if self._auth_service is not None:
             resolution = self._auth_service.resolve_backend_config(
@@ -641,15 +603,21 @@ class MountService:
         # Extract zone_id once for all cleanup operations
         zone_id = get_zone_id(context)
 
-        # --- Gateway-based cleanup (preferred) ---
-        if self._gw is not None:
+        # --- NexusFS-based cleanup ---
+        if self.nexus_fs is not None and hasattr(self.nexus_fs, "metadata"):
             # Delete all metadata entries (mount point + children)
             try:
                 dir_prefix = mount_point if mount_point.endswith("/") else mount_point + "/"
-                child_entries = self._gw.metadata_list(dir_prefix)
+                child_entries = list(
+                    self.nexus_fs.metadata.list(prefix=dir_prefix, recursive=False)
+                )
                 paths_to_delete = [entry.path for entry in child_entries] if child_entries else []
                 paths_to_delete.append(mount_point)  # Include mount point itself
-                self._gw.metadata_delete_batch(paths_to_delete)
+                if hasattr(self.nexus_fs.metadata, "delete_batch"):
+                    self.nexus_fs.metadata.delete_batch(paths_to_delete)
+                else:
+                    for p in paths_to_delete:
+                        self.nexus_fs.metadata.delete(p)
                 result["files_deleted"] = len(paths_to_delete)
                 logger.info(f"Deleted {len(paths_to_delete)} metadata entries for {mount_point}")
             except Exception as e:
@@ -657,36 +625,45 @@ class MountService:
 
             # Clean up sparse directory index entries
             try:
-                dir_entries_deleted = self._gw.delete_directory_entries_recursive(
-                    mount_point, zone_id
-                )
-                result["directory_entries_deleted"] = dir_entries_deleted
-                logger.info(
-                    f"Deleted {dir_entries_deleted} directory index entries under {mount_point}"
-                )
+                if hasattr(self.nexus_fs.metadata, "delete_directory_entries_recursive"):
+                    dir_entries_deleted = self.nexus_fs.metadata.delete_directory_entries_recursive(
+                        mount_point, zone_id
+                    )
+                    result["directory_entries_deleted"] = dir_entries_deleted
+                    logger.info(
+                        f"Deleted {dir_entries_deleted} directory index entries under {mount_point}"
+                    )
             except Exception as e:
                 _record_error(result, f"Failed to clean up directory index: {e}")
 
             # Clean up hierarchy tuples
-            try:
-                removed = self._gw.remove_parent_tuples(mount_point, zone_id)
-                result["permissions_cleaned"] += removed
-                logger.info(f"Removed {removed} parent tuples for {mount_point}")
-            except Exception as e:
-                _record_error(result, f"Failed to clean up parent tuples: {e}")
+            _rebac_mgr = getattr(self.nexus_fs, "_rebac_manager", None)
+            _hierarchy_mgr = getattr(_rebac_mgr, "hierarchy_manager", None) if _rebac_mgr else None
+            if _hierarchy_mgr is not None:
+                try:
+                    removed_count = _hierarchy_mgr.remove_parent_tuples(
+                        mount_point, zone_id=zone_id
+                    )
+                    result["permissions_cleaned"] += removed_count
+                    logger.info(f"Removed {removed_count} parent tuples for {mount_point}")
+                except Exception as e:
+                    _record_error(result, f"Failed to clean up parent tuples: {e}")
 
             # Remove permission tuples
-            try:
-                deleted = self._gw.rebac_delete_object_tuples(
-                    object=("file", mount_point),
-                    zone_id=zone_id,
-                )
-                result["permissions_cleaned"] += deleted
-                logger.info(f"Removed {deleted} permission tuples for {mount_point}")
-            except Exception as e:
-                _record_error(result, f"Failed to delete permission tuples: {e}")
+            _rebac_svc = self.nexus_fs.service("rebac") if self.nexus_fs else None
+            if _rebac_svc is not None:
+                try:
+                    tuples = _rebac_svc.rebac_list_tuples_sync(object=("file", mount_point))
+                    deleted = 0
+                    for t in tuples:
+                        tid = t.get("tuple_id")
+                        if tid and _rebac_svc.rebac_delete_sync(tid):
+                            deleted += 1
+                    result["permissions_cleaned"] += deleted
+                    logger.info(f"Removed {deleted} permission tuples for {mount_point}")
+                except Exception as e:
+                    _record_error(result, f"Failed to delete permission tuples: {e}")
         else:
-            # --- Fallback: NexusFS-based cleanup ---
             # Delete the mount point directory
             if self.nexus_fs and hasattr(self.nexus_fs, "metadata"):
                 try:
@@ -1440,13 +1417,7 @@ class MountService:
         # Normalize token_manager_db for OAuth-backed mounts
         backend_type = mount_config["backend_type"]
         if _needs_token_manager_db(backend_type, backend_config):
-            if self._gw is not None:
-                try:
-                    database_url = self._gw.get_database_url()
-                    backend_config["token_manager_db"] = database_url
-                except RuntimeError as e:
-                    raise RuntimeError(f"Cannot load {backend_type} mount: {e}") from e
-            elif self.nexus_fs:
+            if self.nexus_fs:
                 try:
                     database_url = get_database_url(self.nexus_fs)
                     backend_config["token_manager_db"] = database_url

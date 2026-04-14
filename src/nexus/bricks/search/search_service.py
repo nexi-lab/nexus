@@ -158,8 +158,8 @@ if TYPE_CHECKING:
     from nexus.bricks.search.query_service import QueryService
     from nexus.contracts.types import OperationContext
     from nexus.core.metastore import MetastoreABC
+    from nexus.core.nexus_fs import NexusFS
     from nexus.core.router import PathRouter
-    from nexus.services.gateway import NexusFSGateway
 
 
 def _result_to_dict(r: Any) -> dict[str, Any]:
@@ -196,8 +196,8 @@ class SearchService:
         enforce_permissions: bool = True,
         default_context: "OperationContext | None" = None,
         record_store: Any | None = None,
-        # Gateway for NexusFS operations (Issue #1287, replaces 8 Callable params)
-        gateway: "NexusFSGateway | None" = None,
+        # NexusFS instance for file ops, routing, and dependency tracking (Issue #1287)
+        nx: "NexusFS | None" = None,
         list_parallel_workers: int = LIST_PARALLEL_WORKERS,
         grep_parallel_workers: int = GREP_PARALLEL_WORKERS,
         file_cache: Any | None = None,
@@ -213,7 +213,7 @@ class SearchService:
             enforce_permissions: Whether to enforce permission checks
             default_context: Default operation context (embedded mode)
             record_store: RecordStoreABC for SQL engine (needed for semantic search)
-            gateway: NexusFSGateway for file ops, routing, and dependency tracking
+            nx: NexusFS instance for file ops, routing, and dependency tracking
             zoekt_client: Injected ZoektClient instance (Issue #2188).
         """
         self.metadata = metadata_store
@@ -228,8 +228,8 @@ class SearchService:
         self._enforce_permissions = enforce_permissions
         self._default_context = default_context
 
-        # Gateway for NexusFS operations (Issue #1287)
-        self._gw = gateway
+        # NexusFS instance for file operations (Issue #1287)
+        self._nx = nx
 
         # Semantic search (initialized later via ainitialize_semantic_search)
         self._query_service: QueryService | None = None
@@ -320,30 +320,30 @@ class SearchService:
             self._list_thread_pool = None
 
     @property
-    def _gw_session_factory(self) -> Any:
-        """Session factory via gateway (for memory paths, indexing)."""
-        if self._gw is not None:
-            return self._gw.session_factory
+    def _nx_session_factory(self) -> Any:
+        """Session factory via NexusFS (for memory paths, indexing)."""
+        if self._nx is not None:
+            return getattr(self._nx, "SessionLocal", None)
         return None
 
     @property
-    def _gw_backend(self) -> Any:
-        """Storage backend via gateway (for memory path content)."""
-        if self._gw is not None:
-            return self._gw.backend
+    def _nx_backend(self) -> Any:
+        """Storage backend via NexusFS (for memory path content)."""
+        if self._nx is not None:
+            return getattr(self._nx, "backend", None)
         return None
 
     # =========================================================================
-    # Delegation Helpers (via NexusFSGateway, Issue #1287)
+    # Delegation Helpers (via NexusFS, Issue #1287)
     # =========================================================================
 
-    async def _read(
+    def _read(
         self, path: str, context: Any = None, return_metadata: bool = False
     ) -> bytes | dict[str, Any]:
-        """Read file content via gateway."""
-        if self._gw is None:
-            raise NotImplementedError("gateway not provided to SearchService")
-        result = self._gw.read_file(path, context=context, return_metadata=return_metadata)
+        """Read file content via NexusFS."""
+        if self._nx is None:
+            raise NotImplementedError("NexusFS not provided to SearchService")
+        result = self._nx.read(path, context=context, return_metadata=return_metadata)
         if isinstance(result, str):
             return result.encode("utf-8")
         return result
@@ -355,10 +355,10 @@ class SearchService:
         return_metadata: bool = False,
         skip_errors: bool = True,
     ) -> dict[str, bytes | dict[str, Any] | None]:
-        """Bulk read files via gateway."""
-        if self._gw is None:
-            raise NotImplementedError("gateway not provided to SearchService")
-        return self._gw.read_bulk(
+        """Bulk read files via NexusFS."""
+        if self._nx is None:
+            raise NotImplementedError("NexusFS not provided to SearchService")
+        return self._nx.read_bulk(
             paths,
             context=context,
             return_metadata=return_metadata,
@@ -367,20 +367,20 @@ class SearchService:
 
     def _get_routing_params(self, context: Any) -> tuple[str | None, str | None, bool]:
         """Extract zone_id, agent_id, is_admin from context."""
-        if self._gw:
-            return self._gw.get_routing_params(context)
+        if self._nx:
+            return self._nx._get_context_identity(context)
         return None, None, False
 
     def _has_descendant_access(self, path: str, permission: Permission, context: Any) -> bool:
         """Check if user has access to any descendant of path."""
-        if self._gw:
-            return self._gw.has_descendant_access(path, permission, context)
+        if self._nx:
+            return self._nx._descendant_checker.has_access(path, permission, context)
         return False
 
     def _get_backend_directory_entries(self, path: str) -> set[str]:
         """Get directory entries from backend storage."""
-        if self._gw:
-            return self._gw.get_backend_directory_entries(path)
+        if self._nx:
+            return self._nx._get_backend_directory_entries(path)
         return set()
 
     def _record_read_if_tracking(
@@ -391,8 +391,12 @@ class SearchService:
         access_type: str = "content",
     ) -> None:
         """Record read for dependency tracking (Issue #1166)."""
-        if self._gw:
-            self._gw.record_read_if_tracking(context, resource_type, resource_id, access_type)
+        if self._nx is None or context is None or not context.track_reads:
+            return
+        kernel = getattr(self._nx, "_kernel", None)
+        zone_id = getattr(context, "zone_id", None) or "root"
+        revision = kernel.get_zone_revision(zone_id) if kernel else 0
+        context.record_read(resource_type, resource_id, revision, access_type)
 
     # =========================================================================
     # Public API: File Listing
@@ -411,8 +415,9 @@ class SearchService:
     ) -> builtins.list[str] | builtins.list[dict[str, Any]] | Any:
         """List files in a directory.
 
-        Supports memory virtual paths, cursor-based pagination (Issue #937),
-        dynamic API-backed connectors, and ReBAC permission filtering.
+        Delegates to NexusFS.sys_readdir when available (correct architecture
+        — all I/O through kernel dispatch). Falls back to direct metastore
+        access when NexusFS is not injected.
 
         Args:
             path: Directory path to list (default: "/", supports memory paths)
@@ -423,6 +428,17 @@ class SearchService:
             limit: Max items per page (enables pagination mode)
             cursor: Continuation token from previous page
         """
+        # Delegate to kernel syscall via NexusFS when available
+        if self._nx is not None:
+            return self._nx.sys_readdir(
+                path,
+                recursive=recursive,
+                details=details,
+                context=context,
+                limit=limit,
+                cursor=cursor,
+            )
+
         # Issue #937: Pagination mode
         if limit is not None:
             return self._list_paginated(
@@ -1984,7 +2000,7 @@ class SearchService:
     # =========================================================================
 
     @rpc_expose(description="Search file contents")
-    async def grep(
+    def grep(
         self,
         pattern: str,
         path: str = "/",
@@ -2171,7 +2187,7 @@ class SearchService:
                 if _files_filter_set is not None
                 else max_results
             )
-            trigram_results = await self._try_grep_with_trigram(
+            trigram_results = self._try_grep_with_trigram(
                 pattern=pattern,
                 ignore_case=ignore_case,
                 max_results=trigram_max,
@@ -2266,6 +2282,32 @@ class SearchService:
                         force_python_path=needs_python_path,
                     )
                 )
+
+        if strategy == SearchStrategy.PARALLEL_POOL:
+            results.extend(
+                self._grep_parallel(
+                    regex=regex,
+                    files=files_needing_raw,
+                    max_results=remaining_results,
+                    context=context,
+                )
+            )
+        elif strategy in (SearchStrategy.RUST_BULK, SearchStrategy.SEQUENTIAL):
+            results.extend(
+                self._grep_raw_content(
+                    regex=regex,
+                    pattern=pattern,
+                    files_needing_raw=files_needing_raw,
+                    strategy=strategy,
+                    ignore_case=ignore_case,
+                    remaining_results=remaining_results,
+                    context=context,
+                    before_context=before_context,
+                    after_context=after_context,
+                    invert_match=invert_match,
+                    force_python_path=needs_python_path,
+                )
+            )
 
         # Issue #3720: post-filter by block_type when requested.
         if block_type is not None:
@@ -2462,7 +2504,7 @@ class SearchService:
 
         return filtered
 
-    async def _grep_raw_content(
+    def _grep_raw_content(
         self,
         regex: re.Pattern[str],
         pattern: str,
@@ -2547,7 +2589,7 @@ class SearchService:
                 if len(results) >= remaining_results:
                     break
                 try:
-                    read_result = await self._read(file_path, context=context)
+                    read_result = self._read(file_path, context=context)
                     if not isinstance(read_result, bytes):
                         continue
                     try:
@@ -2643,7 +2685,7 @@ class SearchService:
             logger.warning(f"[GREP] Zoekt search failed: {e}")
             return None
 
-    async def _try_grep_with_trigram(
+    def _try_grep_with_trigram(
         self,
         pattern: str,
         ignore_case: bool,
@@ -2699,7 +2741,7 @@ class SearchService:
             if len(results) >= max_results:
                 break
             try:
-                content = await self._read(file_path, context=context)
+                content = self._read(file_path, context=context)
                 if not isinstance(content, bytes):
                     continue
                 try:
@@ -2757,7 +2799,7 @@ class SearchService:
         entries: builtins.list[tuple[str, bytes]] = []
         for file_path in files:
             try:
-                content = await self._read(file_path, context=context)
+                content = self._read(file_path, context=context)
                 if isinstance(content, bytes):
                     entries.append((file_path, content))
             except Exception as e:
@@ -2799,7 +2841,7 @@ class SearchService:
         if os.path.isfile(index_path):
             os.remove(index_path)
 
-    async def _grep_parallel(
+    def _grep_parallel(
         self,
         regex: re.Pattern[str],
         files: builtins.list[str],
@@ -2825,7 +2867,7 @@ class SearchService:
             chunk_results: builtins.list[dict[str, Any]] = []
             for file_path in chunk_files:
                 try:
-                    read_result = await self._read(file_path, context=context)
+                    read_result = self._read(file_path, context=context)
                     if not isinstance(read_result, bytes):
                         continue
                     try:
@@ -2851,8 +2893,12 @@ class SearchService:
             return chunk_results
 
         all_results: builtins.list[dict[str, Any]] = []
-        chunk_coros = [search_chunk(chunk) for chunk in file_chunks]
-        chunk_results_list = await asyncio.gather(*chunk_coros, return_exceptions=True)
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(
+            max_workers=min(len(file_chunks), self._grep_parallel_workers)
+        ) as pool:
+            chunk_results_list = list(pool.map(search_chunk, file_chunks))
         for chunk_result in chunk_results_list:
             if isinstance(chunk_result, BaseException):
                 logger.debug(f"[GREP-PARALLEL] Chunk failed: {chunk_result}")
@@ -3504,7 +3550,7 @@ class SearchService:
             cache_url=cache_url,
             embedding_cache_ttl=embedding_cache_ttl,
             # RPC-path extras for PipelineIndexer
-            session_factory=self._gw_session_factory,
+            session_factory=self._nx_session_factory,
             metadata=self.metadata,
             file_reader=self._read,
             file_lister=self.list,

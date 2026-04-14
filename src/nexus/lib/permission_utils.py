@@ -5,13 +5,12 @@ to prevent code duplication and ensure consistent error handling.
 """
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from nexus.lib.context_utils import get_user_identity, get_zone_id
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
-    from nexus.services.gateway import NexusFSGateway
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +24,7 @@ class PermissionCheckError(Exception):
 
 
 def check_permission(
-    gw: "NexusFSGateway",
+    nx: Any,
     path: str,
     permission: str,
     context: "OperationContext | None",
@@ -33,7 +32,7 @@ def check_permission(
     """Check if user has permission on path.
 
     Args:
-        gw: NexusFS gateway for ReBAC checks
+        nx: NexusFS instance (uses nx.service("rebac") for ReBAC checks)
         path: Virtual path to check
         permission: Permission to check ("read", "write", "owner")
         context: Operation context
@@ -62,8 +61,11 @@ def check_permission(
     zone_id = get_zone_id(context)
 
     try:
+        rebac_service = nx.service("rebac")
+        if rebac_service is None:
+            return True  # No ReBAC configured — permissive fallback
         return bool(
-            gw.rebac_check(
+            rebac_service.rebac_check_sync(
                 subject=(subject_type, subject_id),
                 permission=permission,
                 object=("file", path),

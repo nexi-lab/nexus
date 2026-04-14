@@ -113,14 +113,16 @@ def chat(
 
 
 def _build_tool_registry(nx: Any, cwd: str) -> Any:
-    """Build ToolRegistry with built-in tools (Tier A).
+    """Build ToolRegistry with all 6 built-in tools (Tier A).
 
-    Tools call sync NexusFS syscalls directly — no async wrappers needed.
+    All tools call sync NexusFS syscalls directly.
     """
     from nexus.services.agent_runtime.tool_registry import ToolRegistry
     from nexus.services.agent_runtime.tools import (
         BashTool,
         EditFileTool,
+        GlobTool,
+        GrepTool,
         ReadFileTool,
         WriteFileTool,
     )
@@ -135,11 +137,18 @@ def _build_tool_registry(nx: Any, cwd: str) -> Any:
         nx.write(path, content.encode("utf-8"))
         return {"status": "ok", "path": path}
 
+    # SearchService with NexusFS for glob/grep (list → sys_readdir, read → sys_read)
+    from nexus.bricks.search.search_service import SearchService
+
+    search = SearchService(metadata_store=nx._metadata, nx=nx)
+
     registry = ToolRegistry()
     registry.register(ReadFileTool(nx.sys_read))
     registry.register(WriteFileTool(nx.write))
     registry.register(EditFileTool(_edit_fn))
     registry.register(BashTool(cwd=cwd))
+    registry.register(GlobTool(search))
+    registry.register(GrepTool(search))
     return registry
 
 

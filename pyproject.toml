@@ -704,7 +704,6 @@ module = [
     "nexus.core.nexus_fs_search",
     "nexus.bricks.versioning.version_service",
     "nexus.bricks.search.search_service",
-    "nexus.services.gateway",
     "nexus.server.fastapi_server",
     "nexus.storage.database",
     "nexus.factory.orchestrator",
@@ -876,10 +875,6 @@ ignore_imports = [
     # search -> rebac: permission enforcement + entity registry in search_service (moved from services/)
     "nexus.bricks.search.search_service -> nexus.bricks.rebac.enforcer",
     "nexus.bricks.search.search_service -> nexus.bricks.rebac.manager",
-    # search -> gateway (TYPE_CHECKING): NexusFSGateway type hint — transitive to workflows/parsers
-    "nexus.bricks.search.search_service -> nexus.services.gateway",
-    # mount -> permission_utils -> gateway: transitive chain to workflows/parsers
-    "nexus.lib.permission_utils -> nexus.services.gateway",
     # parsers -> sandbox: TYPE_CHECKING imports for sandbox provider (Issue #2429)
     "nexus.bricks.parsers.validation.runner -> nexus.bricks.sandbox.sandbox_provider",
     "nexus.bricks.parsers.validation.detector -> nexus.bricks.sandbox.sandbox_provider",
@@ -921,8 +916,6 @@ ignore_imports = [
     "nexus.contracts.types -> nexus.storage.read_set",
     # WirableFS TYPE_CHECKING imports (cross-tier wiring contract, #2359)
     "nexus.contracts.wirable_fs -> nexus.storage.record_store",
-    # --- lib importing services (upward — legacy, to be fixed) ---
-    "nexus.lib.permission_utils -> nexus.services.gateway",
     # --- kernel (core) importing bricks ---
     "nexus.core.config -> nexus.bricks.workflows.protocol",
     # --- services importing bricks ---

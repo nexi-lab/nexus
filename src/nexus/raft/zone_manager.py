@@ -184,6 +184,7 @@ class ZoneManager:
         # Receives dcache invalidation on mount/unmount (dcache entries
         # under a changed mount point become stale).
         self._dcache_proxy: Any | None = None
+        self._coordinator: Any | None = None  # late-bound: DriverLifecycleCoordinator
 
     @property
     def tls_config(self) -> "ZoneTlsConfig | None":
@@ -428,6 +429,7 @@ class ZoneManager:
         target_zone_id: str,
         *,
         increment_links: bool = True,
+        global_path: str | None = None,
     ) -> None:
         """Mount a zone at a path in another zone (NFS-style, strict).
 
@@ -464,12 +466,25 @@ class ZoneManager:
         if target_store is None:
             raise RuntimeError(f"Target zone '{target_zone_id}' not found")
 
-        # NFS compliance: mount point must exist as a directory
+        # NFS compliance: mount point must exist as a directory.
+        # Auto-create DT_DIR if missing (mkdir -p semantics, matches
+        # ensure_topology() behavior for static mounts).
         existing = parent_store.get(mount_path)
         if existing is None:
-            raise ValueError(
-                f"Mount point '{mount_path}' does not exist in zone "
-                f"'{parent_zone_id}'. Create the directory first (mkdir -p)."
+            dir_entry = FileMetadata(
+                path=mount_path,
+                backend_name="virtual",
+                physical_path="",
+                size=0,
+                entry_type=DT_DIR,
+                zone_id=parent_zone_id,
+            )
+            parent_store.put(dir_entry)
+            existing = dir_entry
+            logger.info(
+                "Auto-created mount point directory '%s' in zone '%s'",
+                mount_path,
+                parent_zone_id,
             )
         if existing.is_mount:
             if existing.target_zone_id == target_zone_id:
@@ -509,6 +524,17 @@ class ZoneManager:
         if increment_links:
             self._increment_links(target_store)
 
+        # Register in local MountTable via DLC (runtime routing)
+        if self._coordinator:
+            dlc_path = global_path or mount_path
+            root_entry = self._coordinator._mount_table.get("/")
+            if root_entry is not None:
+                self._coordinator.mount(
+                    dlc_path,
+                    root_entry.backend,
+                    metastore=target_store,
+                )
+
         # Invalidate proxy dcache — entries resolved through this mount point
         # are now stale (the path prefix routes to a different zone).
         # Clear entire dcache because mount_path is zone-relative but dcache
@@ -523,7 +549,9 @@ class ZoneManager:
             parent_zone_id,
         )
 
-    def unmount(self, parent_zone_id: str, mount_path: str) -> None:
+    def unmount(
+        self, parent_zone_id: str, mount_path: str, *, global_path: str | None = None
+    ) -> None:
         """Remove a mount point, restoring the original DT_DIR.
 
         Replaces the DT_MOUNT entry with a DT_DIR (NFS behavior: ``umount``
@@ -566,6 +594,10 @@ class ZoneManager:
             target_store = self.get_store(target_zone_id)
             if target_store is not None:
                 self._decrement_links(target_store)
+
+        # Remove from local MountTable via DLC (runtime routing)
+        if self._coordinator:
+            self._coordinator.unmount(global_path or mount_path)
 
         # Invalidate proxy dcache — entries cached through this mount point
         # would still resolve into the now-unmounted zone.
@@ -982,6 +1014,18 @@ class ZoneManager:
                         zone_id=parent_zone,
                     )
                     parent_store.put(mount_entry)
+
+                    # Register in local MountTable via DLC (runtime routing)
+                    if self._coordinator:
+                        _target_store = self.get_store(target_zone_id)
+                        root_entry = self._coordinator._mount_table.get("/")
+                        if root_entry is not None and _target_store is not None:
+                            self._coordinator.mount(
+                                global_path,
+                                root_entry.backend,
+                                metastore=_target_store,
+                            )
+
                     logger.debug(
                         "Phase A done: DT_MOUNT '%s' in zone '%s'", global_path, parent_zone
                     )

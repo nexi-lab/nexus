@@ -162,6 +162,10 @@ async def _wire_services(
         except Exception as exc:
             logger.debug("[LINK] RaftLockManager upgrade skipped: %s", exc)
 
+        # Wire DLC into ZoneManager for runtime mount registration
+        _zone_mgr = federation.zone_manager
+        _zone_mgr._coordinator = nx._driver_coordinator
+
     # descendant_checker is now accessed via PermissionCheckHook (KernelDispatch INTERCEPT).
     # No kernel DI needed — PermissionCheckHook holds the reference internally.
 

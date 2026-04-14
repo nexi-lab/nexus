@@ -98,7 +98,7 @@ class FederationRPCService:
         # User gives global path (e.g. "/corp/eng"), zone_manager needs
         # zone-relative path (e.g. "/eng" in zone "corp").
         zone_path = self._to_zone_relative(parent_zone, path)
-        self._zone_manager.mount(parent_zone, zone_path, target_zone)
+        self._zone_manager.mount(parent_zone, zone_path, target_zone, global_path=path)
         logger.info(
             "Zone '%s' mounted at '%s' (zone-relative: '%s') in zone '%s' via RPC",
             target_zone,
@@ -116,7 +116,7 @@ class FederationRPCService:
     @rpc_expose(admin_only=True, description="Unmount a zone from a path")
     def federation_unmount(self, parent_zone: str, path: str) -> dict[str, Any]:
         zone_path = self._to_zone_relative(parent_zone, path)
-        self._zone_manager.unmount(parent_zone, zone_path)
+        self._zone_manager.unmount(parent_zone, zone_path, global_path=path)
         logger.info("Unmounted '%s' from zone '%s' via RPC", path, parent_zone)
         return {
             "parent_zone_id": parent_zone,

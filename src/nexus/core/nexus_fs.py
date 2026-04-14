@@ -1113,7 +1113,8 @@ class NexusFS(  # type: ignore[misc]
                 zone_id=zone_id,
                 target_zone_id=target_zone_id,
             )
-            self.metadata.put(metadata)
+            route = self.router.route(path, is_admin=True, zone_id=self._zone_id)
+            route.metastore.put(metadata)
             return {
                 "path": path,
                 "created": True,

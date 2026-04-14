@@ -400,41 +400,46 @@ class TestMountTopology:
         """Mount corp at /corp, corp-eng at /corp/eng, corp-sales at /corp/sales, family at /family."""
         grpc1 = cluster["grpc1"]
 
+        # Mount root-level zones first, then nested (nested mounts need the
+        # parent mount to be active so mkdir can traverse DT_MOUNT boundaries).
         mounts = [
             ("/corp", "root", "corp"),
+            ("/family", "root", "family"),
             ("/corp/eng", "corp", "corp-eng"),
             ("/corp/sales", "corp", "corp-sales"),
-            ("/family", "root", "family"),
         ]
         for mount_path, parent_zone, target_zone in mounts:
             # Create mount-point directory
             mk = _grpc_call(grpc1, "mkdir", {"path": mount_path, "parents": True}, api_key=api_key)
             assert "error" not in mk, f"mkdir {mount_path} failed: {mk}"
 
-            # Mount zone — retry on both nodes (mkdir commit may not have
-            # replicated to the node handling this request yet).
-            # Treat "already a DT_MOUNT" as success (idempotent — zone may have
-            # been auto-mounted during Raft zone join on node-2).
+            # Mount zone — retry on both nodes with brief waits.
+            # mkdir commit may not have replicated to the zone store yet
+            # (Raft replication delay), so retry the mount a few times.
             mounted = False
-            for target in [cluster["grpc1"], cluster["grpc2"]]:
-                r = _grpc_call(
-                    target,
-                    "federation_mount",
-                    {
-                        "parent_zone": parent_zone,
-                        "path": mount_path,
-                        "target_zone": target_zone,
-                    },
-                    api_key=api_key,
-                )
-                if "error" not in r:
-                    mounted = True
-                    break
-                # Already mounted is fine — Raft replication may have auto-mounted
-                err_msg = str(r.get("error", {}).get("message", ""))
-                if "already a DT_MOUNT" in err_msg:
-                    mounted = True
-                    break
+            deadline = time.time() + 10
+            while not mounted and time.time() < deadline:
+                for target in [cluster["grpc1"], cluster["grpc2"]]:
+                    r = _grpc_call(
+                        target,
+                        "federation_mount",
+                        {
+                            "parent_zone": parent_zone,
+                            "path": mount_path,
+                            "target_zone": target_zone,
+                        },
+                        api_key=api_key,
+                    )
+                    if "error" not in r:
+                        mounted = True
+                        break
+                    # Already mounted is fine — Raft replication may have auto-mounted
+                    err_msg = str(r.get("error", {}).get("message", ""))
+                    if "already a DT_MOUNT" in err_msg:
+                        mounted = True
+                        break
+                if not mounted:
+                    time.sleep(0.5)
             assert mounted, f"mount {target_zone} at {mount_path} failed on both nodes: {r}"
 
     def test_mount_crosslink(self, cluster, api_key):
@@ -687,11 +692,15 @@ class TestDistributedLocks:
         lock_id = lock_data.get("lock_id", "")
         assert lock_id, f"No lock_id in response: {lock_data}"
 
-        # Verify held
-        info = _grpc_call(grpc1, "lock_info", {"path": lock_path}, api_key=api_key)
-        assert "error" not in info, f"lock_info failed: {info}"
+        # Verify held via sys_stat(include_lock=True)
+        info = _grpc_call(
+            grpc1, "sys_stat", {"path": lock_path, "include_lock": True}, api_key=api_key
+        )
+        assert "error" not in info, f"sys_stat(include_lock) failed: {info}"
         info_data = info.get("result", info)
-        assert info_data.get("locked") is True, f"Expected locked=True: {info_data}"
+        lock_data_check = info_data.get("lock")
+        assert lock_data_check is not None, f"Expected lock info present: {info_data}"
+        assert len(lock_data_check.get("holders", [])) > 0, f"Expected holders: {lock_data_check}"
 
         # Release
         release_r = _grpc_call(
@@ -782,11 +791,14 @@ class TestDistributedLocks:
         # Wait for TTL to expire
         time.sleep(4)
 
-        # Verify lock is released (either locked=False or a new acquire succeeds)
-        info = _grpc_call(grpc1, "lock_info", {"path": lock_path}, api_key=api_key)
+        # Verify lock is released via sys_stat(include_lock=True)
+        info = _grpc_call(
+            grpc1, "sys_stat", {"path": lock_path, "include_lock": True}, api_key=api_key
+        )
         if "error" not in info:
             info_data = info.get("result", info)
-            if info_data.get("locked") is False or info_data.get("locked") is None:
+            lock_state = info_data.get("lock")
+            if lock_state is None or len(lock_state.get("holders", [])) == 0:
                 return  # expired as expected
 
         # Fallback: try acquiring again -- should succeed if TTL expired
@@ -975,7 +987,7 @@ class TestFederationCacheCoherence:
     2. Permission changes on one node are reflected on the other
     """
 
-    @pytest.mark.order(after="TestFederationE2E::test_25_leader_failure_recovery")
+    @pytest.mark.order(after="TestLeaderFailover::test_failover_and_recovery")
     def test_26_durable_invalidation_health(self, cluster, api_key):
         """Durable invalidation stream should appear in detailed health.
 
@@ -998,7 +1010,7 @@ class TestFederationCacheCoherence:
                         f"Unexpected durable_invalidation status: {status}"
                     )
 
-    @pytest.mark.order(after="TestFederationE2E::test_26_durable_invalidation_health")
+    @pytest.mark.order(after="TestFederationCacheCoherence::test_26_durable_invalidation_health")
     def test_27_cross_zone_write_propagation(self, cluster, api_key):
         """A file written on node-1 should be readable on node-2.
 

@@ -52,21 +52,29 @@ def _resolve_tls_config(app: "FastAPI") -> "ZoneTlsConfig | None":
         if tls_cfg is not None:
             return tls_cfg
 
-    # 3. Load from NEXUS_DATA_DIR/tls/ (Raft or OpenSSL layout)
+    # 3. Load from NEXUS_DATA_DIR/tls/
+    #    - Explicit true: check both Raft + OpenSSL layouts
+    #    - Unset (auto-detect): Raft-only (backward compat)
+    _explicit_on = grpc_tls in ("true", "1", "yes")
     data_dir = os.environ.get("NEXUS_DATA_DIR")
     if data_dir:
-        cfg = ZoneTlsConfig.from_data_dir_any(data_dir)
+        cfg = (
+            ZoneTlsConfig.from_data_dir_any(data_dir)
+            if _explicit_on
+            else ZoneTlsConfig.from_data_dir(data_dir)
+        )
         if cfg is not None:
             return cfg
 
-    # 4. NEXUS_TLS_CERT/KEY/CA env vars (OpenSSL-style, set by `nexus up`)
-    if os.environ.get("NEXUS_TLS_CERT"):
+    # 4. NEXUS_TLS_CERT/KEY/CA env vars — only when explicitly requested
+    #    (avoids stale env vars flipping a plaintext server to mTLS)
+    if _explicit_on and os.environ.get("NEXUS_TLS_CERT"):
         cfg = ZoneTlsConfig.from_env()
         if cfg is not None:
             return cfg
 
     # 5. Explicit enable requested but no certs found — fail closed
-    if grpc_tls in ("true", "1", "yes"):
+    if _explicit_on:
         raise RuntimeError(
             "NEXUS_GRPC_TLS=true but no TLS certificates found. "
             "Provide certs via NEXUS_TLS_CERT/KEY/CA, "

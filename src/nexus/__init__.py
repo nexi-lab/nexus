@@ -315,7 +315,14 @@ async def connect(
         if _data_dir and _tls_enabled:
             from nexus.security.tls.config import ZoneTlsConfig
 
-            _tls_config = ZoneTlsConfig.from_data_dir_any(_data_dir)
+            # Explicit true: check both Raft + OpenSSL layouts
+            # Auto-detect (unset): Raft-only (backward compat)
+            _tls_explicit = _grpc_tls_env in ("true", "1", "yes")
+            _tls_config = (
+                ZoneTlsConfig.from_data_dir_any(_data_dir)
+                if _tls_explicit
+                else ZoneTlsConfig.from_data_dir(_data_dir)
+            )
 
         # Fail closed: NEXUS_GRPC_TLS=true but no certs resolved.
         # As a last resort, check NEXUS_TLS_* env vars — but only when

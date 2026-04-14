@@ -343,13 +343,17 @@ class InternalMixin:
     ) -> dict[str, Any]:
         """Post-write event dispatch (sync, outside lock).
 
-        Fires INTERCEPT POST hooks. OBSERVE dispatch happens inside the
-        kernel's ``sys_write`` via the ThreadPool (§11 Phase 5) — Python
-        only owns the POST-hook path because hook contexts need the GIL.
+        Fires FileEvent notify (OBSERVE) + dispatch_post_hooks (INTERCEPT).
+        Uses context from Rust sys_write result (stored in result).
 
         Returns:
             Dict with metadata {etag, version, modified_at, size}.
         """
+        # --- Lock released — event dispatch + side effects (like Linux inotify after i_rwsem) ---
+
+        # OBSERVE dispatch: Rust kernel fires OBSERVE via ThreadPool (§11 Phase 5).
+
+        # INTERCEPT POST hooks
         from nexus.contracts.vfs_hooks import WriteHookContext
 
         _write_ctx = WriteHookContext(

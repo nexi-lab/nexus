@@ -37,13 +37,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _apply_slice(data: bytes, offset: int = 0, count: int | None = None) -> bytes:
-    """Apply POSIX pread-style offset/count slicing."""
-    if offset or count is not None:
-        return data[offset : offset + count] if count is not None else data[offset:]
-    return data
-
-
 class ContentMixin:
     """Content I/O: sys_read, sys_write, and Tier 2 convenience methods."""
 
@@ -81,9 +74,9 @@ class ContentMixin:
     ) -> bytes:
         """Read file content as bytes (POSIX pread(2)).
 
-        Rust Kernel.sys_read handles DT_REG (CAS read), DT_PIPE (ring buffer
-        pop), DT_STREAM (cursor read), and external connector dispatch.
-        Python handles resolve (intercept), POST-hooks, and offset/count slicing.
+        Thin async wrapper around Rust Kernel.sys_read (pure Rust, zero GIL).
+        DT_PIPE/DT_STREAM, resolve, and hooks are [TRANSITIONAL] — migrates
+        to Rust dispatch middleware in PR 7.
         """
         # DT_PIPE/DT_STREAM: Rust IPC registry handles all backends
         # (memory, SHM, remote) via PipeManager/StreamManager.
@@ -92,7 +85,12 @@ class ContentMixin:
         context = self._parse_context(context)
         _handled, _resolve_hint = self.resolve_read(path, context=context)
         if _handled:
-            return _apply_slice(_resolve_hint or b"", offset, count)
+            content = _resolve_hint or b""
+            if offset or count is not None:
+                content = (
+                    content[offset : offset + count] if count is not None else content[offset:]
+                )
+            return content
 
         _is_admin = (
             getattr(context, "is_admin", False)
@@ -118,8 +116,20 @@ class ContentMixin:
         # DT_PIPE: result.data is the popped frame when available; None = empty.
         if result.entry_type == 3:  # DT_PIPE
             if result.data is not None:
-                return _apply_slice(result.data, offset, count)
-            return b""
+                data = result.data
+                if offset or count is not None:
+                    data = data[offset : offset + count] if count is not None else data[offset:]
+                return data
+            # Empty pipe — try nowait (hot path), then block in Rust (GIL-free)
+            _data = self._kernel.pipe_read_nowait(path)
+            if _data is not None:
+                if offset or count is not None:
+                    _data = _data[offset : offset + count] if count is not None else _data[offset:]
+                return bytes(_data)
+            _data = self._kernel.pipe_read_blocking(path, 5000)
+            if offset or count is not None:
+                _data = _data[offset : offset + count] if count is not None else _data[offset:]
+            return bytes(_data)
 
         # DT_STREAM: blocking reads with offset tracking
         if result.entry_type == 4:  # DT_STREAM
@@ -131,7 +141,10 @@ class ContentMixin:
             return bytes(_data)
 
         # DT_REG: Rust guarantees data is set on success.
-        data = _apply_slice(result.data or b"", offset, count)
+        data = result.data or b""
+
+        if offset or count is not None:
+            data = data[offset : offset + count] if count is not None else data[offset:]
 
         # POST-INTERCEPT: hooks dispatched via Rust dispatch_post_hooks
         if result.post_hook_needed:
@@ -699,9 +712,9 @@ class ContentMixin:
     ) -> dict[str, Any]:
         """Write content to a file (POSIX write(2)).
 
-        Rust Kernel.sys_write handles DT_PIPE/DT_STREAM (ring buffer push),
-        DT_REG (CAS write + metastore.put + dcache update + observer dispatch).
-        Python handles resolve (intercept), POST-hook dispatch, and event emission.
+        Thin async wrapper around Rust Kernel.sys_write (CAS I/O is pure Rust,
+        zero GIL). Metastore.put stays in Python [TRANSITIONAL] — migrates to
+        Rust metastore in PR 7.
         """
         # Normalize input
         if isinstance(buf, str):
@@ -709,6 +722,7 @@ class ContentMixin:
         if count is not None:
             buf = buf[:count]
 
+        # [TRANSITIONAL] PRE-DISPATCH: resolve — migrates to Rust dispatch middleware in PR 7
         context = self._parse_context(context)
 
         # Virtual .readme/ paths are read-only (Issue #3728).
@@ -721,10 +735,21 @@ class ContentMixin:
                 base.update(_result)
             return base
 
-        # Snapshot old metadata BEFORE Rust write (for POST-hook event payload).
+        # IPC write: Rust kernel handles DT_PIPE/DT_STREAM inline.
+        # Rust condvar wakes blocked readers automatically after write.
         _meta = self.metadata.get(path)
+        if _meta is not None and _meta.is_pipe:
+            n = self._kernel.pipe_write_nowait(path, buf)
+            return {"path": path, "bytes_written": n}
+        if _meta is not None and _meta.is_stream:
+            _off = self._kernel.stream_write_nowait(path, buf)
+            return {"path": path, "bytes_written": len(buf), "offset": _off}
+        if _meta is None:
+            raise NexusFileNotFoundError(
+                path, "sys_write requires existing file — use write() for create-on-write"
+            )
 
-        # ── KERNEL (pure Rust — DT_PIPE/DT_STREAM via dcache, DT_REG via CAS, zero GIL) ──
+        # ── KERNEL (pure Rust CAS write, zero GIL) ──
         _is_admin = (
             getattr(context, "is_admin", False)
             if context is not None and not isinstance(context, dict)
@@ -733,38 +758,37 @@ class ContentMixin:
         _rust_ctx = self._build_rust_ctx(context, _is_admin)
         result = self._kernel.sys_write(path, _rust_ctx, buf, offset)
 
-        # DT_PIPE / DT_STREAM: Rust handled inline (no content_id, no post-hooks)
-        if result.hit and not result.content_id:
-            return {"path": path, "bytes_written": len(buf)}
-
-        if result.hit:
-            # Rust wrote to backend (CAS or PAS) + built metadata + updated dcache
-            zone_id, agent_id, _ = self._get_context_identity(context)
-            self._dispatch_write_events(
-                path,
-                _WriteContentResult(
-                    content_hash=result.content_id or "",
+        # Rust wrote to backend + built metadata + updated dcache.
+        # All backends are now native Rust or GrpcObjectStoreAdapter — hit is always true.
+        zone_id, agent_id, _ = self._get_context_identity(context)
+        self._dispatch_write_events(
+            path,
+            _WriteContentResult(
+                content_hash=result.content_id or "",
+                size=result.size,
+                metadata=FileMetadata(
+                    path=path,
+                    backend_name="",
+                    physical_path=result.content_id or "",
                     size=result.size,
-                    metadata=FileMetadata(
-                        path=path,
-                        backend_name="",
-                        physical_path=result.content_id or "",
-                        size=result.size,
-                        etag=result.content_id,
-                        version=result.version,
-                        zone_id=zone_id,
-                    ),
-                    new_version=result.version,
-                    is_new=(_meta is None),
-                    old_etag=_meta.etag if _meta else None,
-                    old_metadata=_meta,
-                    context=context or OperationContext(user_id="anonymous", groups=[]),
+                    etag=result.content_id,
+                    version=result.version,
                     zone_id=zone_id,
                     agent_id=agent_id,
                     is_remote=False,
                 ),
-                buf,
-            )
+                new_version=result.version,
+                is_new=(_meta is None),
+                old_etag=_meta.etag if _meta else None,
+                old_metadata=_meta,
+                context=context or OperationContext(user_id="anonymous", groups=[]),
+                zone_id=zone_id,
+                agent_id=agent_id,
+                is_remote=False,
+                is_external=False,
+            ),
+            buf,
+        )
 
         return {"path": path, "bytes_written": len(buf)}
 
@@ -874,53 +898,43 @@ class ContentMixin:
         if ttl is not None and ttl > 0:
             context = self._ensure_context_ttl(context, ttl)
 
+        # Route through Rust sys_write — handles create-on-write, backend I/O,
+        # metadata build+put, dcache update, and OBSERVE dispatch.
         context = self._parse_context(context)
-        self._reject_if_virtual_readme(path, context, op="write")
+        _is_admin = getattr(context, "is_admin", False) if context else False
+        _rust_ctx = self._build_rust_ctx(context, _is_admin)
+        result = self._kernel.sys_write(path, _rust_ctx, buf)
 
-        zone_id, agent_id, is_admin = self._get_context_identity(context)
-
-        _meta = self.metadata.get(path)
-
-        _rust_ctx = self._build_rust_ctx(context, is_admin)
-        result = self._kernel.sys_write(path, _rust_ctx, buf, offset)
-
-        now = datetime.now(UTC)
-        content_hash = result.content_id or ""
-        size = result.size if result.hit else len(buf)
-        new_version = result.version
-        # Bloom filter is now maintained by Rust CASEngine (Phase 7B PR 5).
-        # No Python-side bloom reach-through needed.
-        post_metadata = FileMetadata(
-            path=path,
-            backend_name=_meta.backend_name if _meta else "",
-            physical_path=content_hash,
-            size=size,
-            etag=content_hash or None,
-            created_at=(_meta.created_at if _meta else now),
-            modified_at=now,
-            version=new_version,
-            zone_id=zone_id or ROOT_ZONE_ID,
-            owner_id=(_meta.owner_id if _meta else (context.subject_id or context.user_id)),
-            ttl_seconds=getattr(context, "ttl_seconds", 0.0) or 0.0,
-        )
-
+        zone_id, agent_id, _ = self._get_context_identity(context)
         return self._dispatch_write_events(
             path,
             _WriteContentResult(
-                content_hash=content_hash,
-                size=size,
-                metadata=post_metadata,
-                new_version=new_version,
-                is_new=(_meta is None),
-                old_etag=_meta.etag if _meta else None,
-                old_metadata=_meta,
-                context=context,
+                content_hash=result.content_id or "",
+                size=result.size,
+                metadata=FileMetadata(
+                    path=path,
+                    backend_name="",
+                    physical_path=result.content_id or "",
+                    size=result.size,
+                    etag=result.content_id,
+                    version=result.version,
+                    zone_id=zone_id,
+                ),
+                new_version=result.version,
+                is_new=False,
+                old_etag=None,
+                old_metadata=None,
+                context=context or OperationContext(user_id="anonymous", groups=[]),
                 zone_id=zone_id,
                 agent_id=agent_id,
                 is_remote=False,
             ),
             buf,
         )
+
+    # _write_internal + _write_content deleted — Rust sys_write handles:
+    # routing, VFS lock, backend write, metadata build+put, dcache update.
+    # write() and sys_write() call Rust kernel directly.
 
     def atomic_update(
         self,

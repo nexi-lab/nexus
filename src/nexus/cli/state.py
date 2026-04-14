@@ -167,16 +167,21 @@ def resolve_connection_env(
     if api_key:
         env_vars["NEXUS_API_KEY"] = api_key
 
-    # TLS paths for gRPC — prefer state.json (runtime-discovered), fall back to config
+    # TLS paths for gRPC — prefer state.json (runtime-discovered), fall back to config.
+    # Also emit NEXUS_GRPC_TLS=true so SDK connect() and admin CLI know
+    # TLS is intentional (not stale env from a previous session).
     tls = state.get("tls", {})
     if tls.get("cert"):
         env_vars["NEXUS_TLS_CERT"] = tls["cert"]
         env_vars["NEXUS_TLS_KEY"] = tls.get("key", "")
         env_vars["NEXUS_TLS_CA"] = tls.get("ca", "")
+        env_vars["NEXUS_GRPC_TLS"] = "true"
     elif config.get("tls_cert"):
         env_vars["NEXUS_TLS_CERT"] = config["tls_cert"]
         env_vars["NEXUS_TLS_KEY"] = config.get("tls_key", "")
         env_vars["NEXUS_TLS_CA"] = config.get("tls_ca", "")
+        # Don't emit NEXUS_GRPC_TLS=true from declarative config —
+        # cert files may not exist yet (e.g. openssl unavailable at init).
 
     # DATABASE_URL if postgres is in the service list
     services = config.get("services", [])

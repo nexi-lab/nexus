@@ -148,7 +148,7 @@ class TestMdStructureE2E:
         # The write hook should have fired during fixture setup.
         # Verify by reading the structure.
         tool = await get_tool(mcp_server, "nexus_md_structure")
-        result = await tool.fn(path=md_file)
+        result = tool.fn(path=md_file)
         listing = json.loads(result)
 
         assert isinstance(listing, list)
@@ -173,7 +173,7 @@ class TestMdStructureE2E:
     async def test_read_full_file_unchanged(self, mcp_server, md_file):
         """Reading without section param returns full content (backward compat)."""
         read_tool = await get_tool(mcp_server, "nexus_read_file")
-        result = await read_tool.fn(path=md_file)
+        result = read_tool.fn(path=md_file)
         assert "# Overview" in result
         assert "## Authentication" in result
         assert "## API Design" in result
@@ -183,7 +183,7 @@ class TestMdStructureE2E:
     async def test_read_section(self, mcp_server, md_file):
         """section='Authentication' returns only that section."""
         read_tool = await get_tool(mcp_server, "nexus_read_file")
-        result = await read_tool.fn(path=md_file, section="Authentication")
+        result = read_tool.fn(path=md_file, section="Authentication")
 
         assert "## Authentication" in result
         assert "verify_token" in result
@@ -195,7 +195,7 @@ class TestMdStructureE2E:
     async def test_read_section_case_insensitive(self, mcp_server, md_file):
         """Section lookup is case-insensitive."""
         read_tool = await get_tool(mcp_server, "nexus_read_file")
-        result = await read_tool.fn(path=md_file, section="authentication")
+        result = read_tool.fn(path=md_file, section="authentication")
         assert "## Authentication" in result
         assert "verify_token" in result
 
@@ -203,14 +203,14 @@ class TestMdStructureE2E:
     async def test_read_section_substring(self, mcp_server, md_file):
         """Section lookup supports substring matching."""
         read_tool = await get_tool(mcp_server, "nexus_read_file")
-        result = await read_tool.fn(path=md_file, section="Auth")
+        result = read_tool.fn(path=md_file, section="Auth")
         assert "## Authentication" in result
 
     @pytest.mark.asyncio
     async def test_read_section_with_code_block_type(self, mcp_server, md_file):
         """block_type='code' filters to only code blocks within section."""
         read_tool = await get_tool(mcp_server, "nexus_read_file")
-        result = await read_tool.fn(path=md_file, section="Authentication", block_type="code")
+        result = read_tool.fn(path=md_file, section="Authentication", block_type="code")
 
         assert result is not None
         assert "verify_token" in result
@@ -223,7 +223,7 @@ class TestMdStructureE2E:
     async def test_read_section_with_table_block_type(self, mcp_server, md_file):
         """block_type='table' filters to only tables within section."""
         read_tool = await get_tool(mcp_server, "nexus_read_file")
-        result = await read_tool.fn(path=md_file, section="API Design", block_type="table")
+        result = read_tool.fn(path=md_file, section="API Design", block_type="table")
 
         assert result is not None
         assert "/api/users" in result
@@ -235,7 +235,7 @@ class TestMdStructureE2E:
     async def test_read_section_star(self, mcp_server, md_file):
         """section='*' returns structure listing as JSON."""
         read_tool = await get_tool(mcp_server, "nexus_read_file")
-        result = await read_tool.fn(path=md_file, section="*")
+        result = read_tool.fn(path=md_file, section="*")
 
         listing = json.loads(result)
         assert isinstance(listing, list)
@@ -252,7 +252,7 @@ class TestMdStructureE2E:
     async def test_read_section_frontmatter(self, mcp_server, md_file):
         """section='frontmatter' returns only the YAML frontmatter."""
         read_tool = await get_tool(mcp_server, "nexus_read_file")
-        result = await read_tool.fn(path=md_file, section="frontmatter")
+        result = read_tool.fn(path=md_file, section="frontmatter")
 
         assert result is not None
         assert "title" in result
@@ -265,7 +265,7 @@ class TestMdStructureE2E:
     async def test_nexus_md_structure_tool(self, mcp_server, md_file):
         """Dedicated structure tool returns listing without content."""
         tool = await get_tool(mcp_server, "nexus_md_structure")
-        result = await tool.fn(path=md_file)
+        result = tool.fn(path=md_file)
 
         listing = json.loads(result)
         sec_entries = [e for e in listing if e.get("type") == "section"]
@@ -295,7 +295,7 @@ class TestMdStructureEdgeCases:
         """section param on non-.md files returns full content."""
         nexus_fs.write("/data.txt", b"# Not markdown\nJust text.")
         read_tool = await get_tool(mcp_server, "nexus_read_file")
-        result = await read_tool.fn(path="/data.txt", section="Not markdown")
+        result = read_tool.fn(path="/data.txt", section="Not markdown")
         # Should return full content since it's not .md
         assert "# Not markdown" in result
         assert "Just text." in result
@@ -304,7 +304,7 @@ class TestMdStructureEdgeCases:
     async def test_missing_section_returns_error(self, mcp_server, md_file):
         """Requesting a non-existent section returns error, not full content."""
         read_tool = await get_tool(mcp_server, "nexus_read_file")
-        result = await read_tool.fn(path=md_file, section="NonexistentSection")
+        result = read_tool.fn(path=md_file, section="NonexistentSection")
         # Should NOT leak full content — should return error
         assert "Error" in result or "not found" in result
         assert "# Overview" not in result
@@ -314,7 +314,7 @@ class TestMdStructureEdgeCases:
         """Empty .md file should not crash."""
         nexus_fs.write("/empty.md", b"")
         read_tool = await get_tool(mcp_server, "nexus_read_file")
-        result = await read_tool.fn(path="/empty.md", section="*")
+        result = read_tool.fn(path="/empty.md", section="*")
         # Should return empty listing
         listing = json.loads(result)
         sec_entries = [e for e in listing if e.get("type") == "section"]
@@ -325,7 +325,7 @@ class TestMdStructureEdgeCases:
         """Markdown with no headings should return error for section requests."""
         nexus_fs.write("/plain.md", b"Just plain text.\nNo headings here.\n")
         read_tool = await get_tool(mcp_server, "nexus_read_file")
-        result = await read_tool.fn(path="/plain.md", section="anything")
+        result = read_tool.fn(path="/plain.md", section="anything")
         # Should NOT leak full content — section not found
         assert "Error" in result or "not found" in result
 
@@ -334,7 +334,7 @@ class TestMdStructureEdgeCases:
         """File with only frontmatter, no content."""
         nexus_fs.write("/fm_only.md", b"---\ntitle: Test\n---\n")
         tool = await get_tool(mcp_server, "nexus_md_structure")
-        result = await tool.fn(path="/fm_only.md")
+        result = tool.fn(path="/fm_only.md")
         listing = json.loads(result)
         fm = [e for e in listing if e.get("type") == "frontmatter"]
         assert len(fm) == 1
@@ -344,7 +344,7 @@ class TestMdStructureEdgeCases:
     async def test_cjk_section_read(self, mcp_server, cjk_file):
         """CJK headings can be read by section with correct byte offsets."""
         read_tool = await get_tool(mcp_server, "nexus_read_file")
-        result = await read_tool.fn(path=cjk_file, section="認証セクション")
+        result = read_tool.fn(path=cjk_file, section="認証セクション")
 
         assert "認証セクション" in result
         assert "認証(トークン)" in result
@@ -355,7 +355,7 @@ class TestMdStructureEdgeCases:
     async def test_cjk_code_block_filter(self, mcp_server, cjk_file):
         """Code block filtering works with CJK content."""
         read_tool = await get_tool(mcp_server, "nexus_read_file")
-        result = await read_tool.fn(path=cjk_file, section="認証", block_type="code")
+        result = read_tool.fn(path=cjk_file, section="認証", block_type="code")
         assert result is not None
         assert "認証(トークン)" in result
 
@@ -363,7 +363,7 @@ class TestMdStructureEdgeCases:
     async def test_cjk_table_filter(self, mcp_server, cjk_file):
         """Table filtering works with CJK content."""
         read_tool = await get_tool(mcp_server, "nexus_read_file")
-        result = await read_tool.fn(path=cjk_file, section="API", block_type="table")
+        result = read_tool.fn(path=cjk_file, section="API", block_type="table")
         assert result is not None
         assert "メソッド" in result
         assert "/api" in result
@@ -384,7 +384,7 @@ Brand new section.
 
         # Read structure — should reflect the NEW content
         tool = await get_tool(mcp_server, "nexus_md_structure")
-        result = await tool.fn(path=md_file)
+        result = tool.fn(path=md_file)
         listing = json.loads(result)
         sec_entries = [e for e in listing if e.get("type") == "section"]
         headings = [e["heading"] for e in sec_entries]
@@ -400,13 +400,13 @@ Brand new section.
     async def test_write_via_mcp_tool_indexes(self, mcp_server):
         """Writing via nexus_write_file MCP tool should trigger indexing."""
         write_tool = await get_tool(mcp_server, "nexus_write_file")
-        await write_tool.fn(
+        write_tool.fn(
             path="/mcp_written.md",
             content="# Written via MCP\n\n## SubSection\n\nContent here.\n",
         )
 
         struct_tool = await get_tool(mcp_server, "nexus_md_structure")
-        result = await struct_tool.fn(path="/mcp_written.md")
+        result = struct_tool.fn(path="/mcp_written.md")
         listing = json.loads(result)
         sec_entries = [e for e in listing if e.get("type") == "section"]
         headings = [e["heading"] for e in sec_entries]
@@ -428,7 +428,7 @@ Brand new section.
 """
         nexus_fs.write("/fenced.md", doc.encode("utf-8"))
         tool = await get_tool(mcp_server, "nexus_md_structure")
-        result = await tool.fn(path="/fenced.md")
+        result = tool.fn(path="/fenced.md")
         listing = json.loads(result)
         sec_entries = [e for e in listing if e.get("type") == "section"]
         headings = [e["heading"] for e in sec_entries]
@@ -442,7 +442,7 @@ Brand new section.
     async def test_structure_tool_on_nonexistent_file(self, mcp_server):
         """nexus_md_structure on non-existent file returns an error."""
         tool = await get_tool(mcp_server, "nexus_md_structure")
-        result = await tool.fn(path="/does/not/exist.md")
+        result = tool.fn(path="/does/not/exist.md")
         # Should return an error string, not crash
         assert "Error" in result or "No markdown structure" in result
 
@@ -450,7 +450,7 @@ Brand new section.
     async def test_block_type_without_section_ignored(self, mcp_server, md_file):
         """block_type without section should return full content."""
         read_tool = await get_tool(mcp_server, "nexus_read_file")
-        result = await read_tool.fn(path=md_file, block_type="code")
+        result = read_tool.fn(path=md_file, block_type="code")
         # Without section, block_type is ignored — full content returned
         assert "# Overview" in result
         assert "## Authentication" in result

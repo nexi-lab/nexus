@@ -1119,12 +1119,27 @@ class SearchService:
             f"{len(dir_entries)} entries (sparse index HIT)"
         )
 
-        all_files = []
+        # Issue #3706: Batch permission check — collect all directory prefixes
+        # and check them in a single call instead of N serial calls.
         _perm_start = _time.time()
+        _resolved_entries: builtins.list[tuple[str, dict[str, Any]]] = []
+        _dir_prefixes: builtins.list[str] = []
         for entry in dir_entries:
             entry_path = f"{path.rstrip('/')}/{entry['name']}"
+            _resolved_entries.append((entry_path, entry))
             if entry["type"] == "directory":
-                if self._permission_enforcer.has_accessible_descendants(entry_path, context):
+                _dir_prefixes.append(entry_path)
+
+        _accessible_dirs: dict[str, bool] = {}
+        if _dir_prefixes and self._permission_enforcer:
+            _accessible_dirs = self._permission_enforcer.has_accessible_descendants_batch(
+                _dir_prefixes, context
+            )
+
+        all_files = []
+        for entry_path, entry in _resolved_entries:
+            if entry["type"] == "directory":
+                if _accessible_dirs.get(entry_path, True):
                     _preapproved_dirs.add(entry_path)
                     all_files.append(
                         FileMetadata(
@@ -1150,8 +1165,9 @@ class SearchService:
                     )
                 )
         logger.info(
-            f"[LIST-TIMING] has_accessible_descendants(): "
-            f"{(_time.time() - _perm_start) * 1000:.1f}ms for {len(dir_entries)} entries"
+            f"[LIST-TIMING] has_accessible_descendants_batch(): "
+            f"{(_time.time() - _perm_start) * 1000:.1f}ms for {len(dir_entries)} entries "
+            f"({len(_dir_prefixes)} dirs checked in 1 batch call)"
         )
 
         # Check revision consistency

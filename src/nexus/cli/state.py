@@ -180,8 +180,11 @@ def resolve_connection_env(
         env_vars["NEXUS_TLS_CERT"] = config["tls_cert"]
         env_vars["NEXUS_TLS_KEY"] = config.get("tls_key", "")
         env_vars["NEXUS_TLS_CA"] = config.get("tls_ca", "")
-        # Don't emit NEXUS_GRPC_TLS=true from declarative config —
-        # cert files may not exist yet (e.g. openssl unavailable at init).
+        # Emit NEXUS_GRPC_TLS=true only if cert files actually exist on disk
+        import pathlib
+
+        if pathlib.Path(config["tls_cert"]).exists():
+            env_vars["NEXUS_GRPC_TLS"] = "true"
     else:
         # Non-TLS stack: clear any stale TLS override from a previous session
         env_vars["NEXUS_GRPC_TLS"] = "false"

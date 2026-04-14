@@ -23,20 +23,36 @@ class ZoneTlsConfig:
     def from_data_dir(cls, data_dir: str | Path) -> ZoneTlsConfig | None:
         """Auto-detect TLS config from ``{data_dir}/tls/``.
 
-        Returns ``None`` if the expected certificate files do not exist.
+        Checks two layouts:
+        1. Raft-style: ``ca.pem``, ``node.pem``, ``node-key.pem``
+        2. OpenSSL-style (``nexus init --tls``): ``ca.crt``, ``server.crt``, ``server.key``
+
+        Returns ``None`` if no recognized certificate layout exists.
         """
         tls_dir = Path(data_dir) / "tls"
+        # 1. Raft-style layout
         ca = tls_dir / "ca.pem"
         cert = tls_dir / "node.pem"
         key = tls_dir / "node-key.pem"
-        if not (ca.exists() and cert.exists() and key.exists()):
-            return None
-        return cls(
-            ca_cert_path=ca,
-            node_cert_path=cert,
-            node_key_path=key,
-            known_zones_path=tls_dir / "known_zones",
-        )
+        if ca.exists() and cert.exists() and key.exists():
+            return cls(
+                ca_cert_path=ca,
+                node_cert_path=cert,
+                node_key_path=key,
+                known_zones_path=tls_dir / "known_zones",
+            )
+        # 2. OpenSSL-style layout (nexus init --tls)
+        ca_ssl = tls_dir / "ca.crt"
+        cert_ssl = tls_dir / "server.crt"
+        key_ssl = tls_dir / "server.key"
+        if ca_ssl.exists() and cert_ssl.exists() and key_ssl.exists():
+            return cls(
+                ca_cert_path=ca_ssl,
+                node_cert_path=cert_ssl,
+                node_key_path=key_ssl,
+                known_zones_path=tls_dir / "known_zones",
+            )
+        return None
 
     @classmethod
     def from_env(cls) -> ZoneTlsConfig | None:

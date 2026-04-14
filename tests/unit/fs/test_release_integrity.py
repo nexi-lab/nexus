@@ -448,7 +448,6 @@ class TestSlimNexusFSLifecycle:
         from nexus.contracts.types import OperationContext
         from nexus.core.config import PermissionConfig
         from nexus.core.nexus_fs import NexusFS
-        from nexus.core.router import PathRouter
         from nexus.fs import _make_mount_entry
 
         db_path = str(tmp_path / "metadata.db")
@@ -457,15 +456,9 @@ class TestSlimNexusFSLifecycle:
         data_dir.mkdir()
         backend = CASLocalBackend(root_path=data_dir)
 
-        from nexus.core.mount_table import MountTable
-
-        mount_table = MountTable(metastore)
-        router = PathRouter(mount_table)
-
         kernel = NexusFS(
             metadata_store=metastore,
             permissions=PermissionConfig(enforce=False),
-            router=router,
         )
         kernel._init_cred = OperationContext(
             user_id="test",
@@ -474,8 +467,8 @@ class TestSlimNexusFSLifecycle:
             is_admin=True,
         )
 
-        # Add mount AFTER NexusFS init so it registers in the Rust Kernel.
-        mount_table.add("/local", backend)
+        # Mount via the driver coordinator (F2 MountTable migration).
+        kernel._driver_coordinator.mount("/local", backend)
         metastore.put(_make_mount_entry("/local", backend.name))
 
         fs = SlimNexusFS(kernel)
@@ -489,7 +482,6 @@ class TestSlimNexusFSLifecycle:
         from nexus.contracts.types import OperationContext
         from nexus.core.config import PermissionConfig
         from nexus.core.nexus_fs import NexusFS
-        from nexus.core.router import PathRouter
         from nexus.fs import _make_mount_entry
 
         db_path = str(tmp_path / "metadata.db")
@@ -498,15 +490,9 @@ class TestSlimNexusFSLifecycle:
         data_dir.mkdir()
         backend = CASLocalBackend(root_path=data_dir)
 
-        from nexus.core.mount_table import MountTable
-
-        mount_table = MountTable(metastore)
-        router = PathRouter(mount_table)
-
         kernel = NexusFS(
             metadata_store=metastore,
             permissions=PermissionConfig(enforce=False),
-            router=router,
         )
         kernel._init_cred = OperationContext(
             user_id="test",
@@ -515,8 +501,8 @@ class TestSlimNexusFSLifecycle:
             is_admin=True,
         )
 
-        # Add mount AFTER NexusFS init so it registers in the Rust Kernel.
-        mount_table.add("/local", backend)
+        # Mount via the driver coordinator (F2 MountTable migration).
+        kernel._driver_coordinator.mount("/local", backend)
         metastore.put(_make_mount_entry("/local", backend.name))
 
         with SlimNexusFS(kernel) as fs:

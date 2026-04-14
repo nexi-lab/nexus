@@ -1,7 +1,8 @@
 """Integration tests for mount I/O profiles (Issue #1413).
 
-Tests that io_profile propagates through the MountTable -> PathRouter -> RouteResult
-pipeline and that MountConfigModel round-trips io_profile through the database.
+Tests that io_profile propagates through the DriverLifecycleCoordinator ->
+PathRouter -> RouteResult pipeline and that MountConfigModel round-trips
+io_profile through the database.
 """
 
 from unittest.mock import MagicMock
@@ -9,9 +10,37 @@ from unittest.mock import MagicMock
 import pytest
 
 from nexus.contracts.io_profile import IOProfile
-from nexus.core.mount_table import MountTable
+from nexus.core.driver_lifecycle_coordinator import DriverLifecycleCoordinator, _PyMountInfo
+from nexus.core.path_utils import canonicalize_path
 from nexus.core.router import PathRouter, RouteResult
 from tests.helpers.dict_metastore import DictMetastore
+
+
+def _add_mount(
+    dlc: DriverLifecycleCoordinator,
+    mount_point: str,
+    backend,
+    *,
+    readonly: bool = False,
+    admin_only: bool = False,
+    io_profile: str = "balanced",
+    zone_id: str = "root",
+) -> None:
+    """Populate the DLC mount map directly — avoids touching the Rust kernel.
+
+    F2 MountTable migration removed the standalone Python MountTable; these
+    tests now exercise the Python fallback in PathRouter by writing
+    ``_PyMountInfo`` records directly into the DLC.
+    """
+    canonical = canonicalize_path(mount_point, zone_id)
+    dlc._mounts[canonical] = _PyMountInfo(
+        backend=backend,
+        readonly=readonly,
+        admin_only=admin_only,
+        io_profile=io_profile,
+        stream_backend_factory=None,
+        zone_id=zone_id,
+    )
 
 
 class TestPathRouterIOProfile:
@@ -22,25 +51,26 @@ class TestPathRouterIOProfile:
         backend.name = "mock-backend"
         return backend
 
-    def _make_mount_table_and_router(self) -> tuple[MountTable, PathRouter]:
+    def _make_dlc_and_router(self) -> tuple[DriverLifecycleCoordinator, PathRouter]:
         metastore = DictMetastore()
-        mount_table = MountTable(metastore)
-        router = PathRouter(mount_table)
-        return mount_table, router
+        # kernel=None → PathRouter uses the Python LPM fallback.
+        dlc = DriverLifecycleCoordinator(dispatch=None, kernel=None)
+        router = PathRouter(dlc, metastore, None)
+        return dlc, router
 
     def test_add_mount_with_io_profile(self) -> None:
-        mount_table, router = self._make_mount_table_and_router()
+        dlc, router = self._make_dlc_and_router()
         backend = self._make_backend()
-        mount_table.add("/weights", backend, io_profile="fast_read")
+        _add_mount(dlc, "/weights", backend, io_profile="fast_read")
 
         mounts = list(router.list_mounts())
         weight_mount = [m for m in mounts if m.mount_point == "/weights"]
         assert len(weight_mount) == 1
 
     def test_route_propagates_io_profile(self) -> None:
-        mount_table, router = self._make_mount_table_and_router()
+        dlc, router = self._make_dlc_and_router()
         backend = self._make_backend()
-        mount_table.add("/models", backend, io_profile="fast_read")
+        _add_mount(dlc, "/models", backend, io_profile="fast_read")
 
         result = router.route("/models/gpt4/weights.bin")
         assert result is not None
@@ -48,16 +78,16 @@ class TestPathRouterIOProfile:
         assert result.io_profile == "fast_read"
 
     def test_route_default_io_profile(self) -> None:
-        mount_table, router = self._make_mount_table_and_router()
+        dlc, router = self._make_dlc_and_router()
         backend = self._make_backend()
-        mount_table.add("/data", backend)
+        _add_mount(dlc, "/data", backend)
 
         result = router.route("/data/file.txt")
         assert result is not None
         assert result.io_profile == "balanced"
 
     def test_multiple_mounts_different_profiles(self) -> None:
-        mount_table, router = self._make_mount_table_and_router()
+        dlc, router = self._make_dlc_and_router()
         backend_read = self._make_backend()
         backend_read.name = "read-backend"
         backend_write = self._make_backend()
@@ -65,9 +95,9 @@ class TestPathRouterIOProfile:
         backend_edit = self._make_backend()
         backend_edit.name = "edit-backend"
 
-        mount_table.add("/models", backend_read, io_profile="fast_read")
-        mount_table.add("/logs", backend_write, io_profile="fast_write")
-        mount_table.add("/workspace", backend_edit, io_profile="edit")
+        _add_mount(dlc, "/models", backend_read, io_profile="fast_read")
+        _add_mount(dlc, "/logs", backend_write, io_profile="fast_write")
+        _add_mount(dlc, "/workspace", backend_edit, io_profile="edit")
 
         result_models = router.route("/models/weights.bin")
         result_logs = router.route("/logs/app.log")

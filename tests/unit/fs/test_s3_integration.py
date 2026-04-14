@@ -20,7 +20,6 @@ from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.types import OperationContext
 from nexus.core.config import PermissionConfig
 from nexus.core.nexus_fs import NexusFS
-from nexus.core.router import PathRouter
 from nexus.fs import _make_mount_entry
 from nexus.fs._facade import SlimNexusFS
 from nexus.fs._sqlite_meta import SQLiteMetastore
@@ -45,22 +44,12 @@ def s3_fs(tmp_path: Path):
         db_path = str(tmp_path / "metadata.db")
         metastore = SQLiteMetastore(db_path)
 
-        # Router with mount
-        from nexus.core.mount_table import MountTable
-
-        mount_table = MountTable(metastore)
-        router = PathRouter(mount_table)
         mount_point = f"/s3/{BUCKET_NAME}"
-        mount_table.add(mount_point, backend)
 
-        # Create DT_MOUNT entry
-        metastore.put(_make_mount_entry(mount_point, backend.name))
-
-        # Kernel
+        # Kernel (constructs DLC + router internally)
         kernel = NexusFS(
             metadata_store=metastore,
             permissions=PermissionConfig(enforce=False),
-            router=router,
         )
         kernel._init_cred = OperationContext(
             user_id="test",
@@ -68,6 +57,8 @@ def s3_fs(tmp_path: Path):
             zone_id=ROOT_ZONE_ID,
             is_admin=True,
         )
+        kernel._driver_coordinator.mount(mount_point, backend)
+        metastore.put(_make_mount_entry(mount_point, backend.name))
 
         yield SlimNexusFS(kernel), mount_point
 

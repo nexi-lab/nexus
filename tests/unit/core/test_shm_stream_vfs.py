@@ -27,19 +27,14 @@ from nexus.core.nexus_fs import NexusFS
 def _make_nexus_fs(tmp_path):
     """Create a minimal NexusFS for stream tests (no backends needed)."""
     from nexus.core.config import PermissionConfig
-    from nexus.core.mount_table import MountTable
-    from nexus.core.router import PathRouter
     from nexus.fs._sqlite_meta import SQLiteMetastore
 
     db_path = str(tmp_path / "meta.db")
     metastore = SQLiteMetastore(db_path)
-    mount_table = MountTable(metastore)
-    router = PathRouter(mount_table)
 
     nx = NexusFS(
         metadata_store=metastore,
         permissions=PermissionConfig(enforce=False),
-        router=router,
     )
     return nx
 

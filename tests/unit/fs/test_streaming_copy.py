@@ -15,7 +15,6 @@ from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.types import OperationContext
 from nexus.core.config import PermissionConfig
 from nexus.core.nexus_fs import NexusFS
-from nexus.core.router import PathRouter
 from nexus.fs import _make_mount_entry
 from nexus.fs._constants import STREAMING_COPY_CHUNK_SIZE
 from nexus.fs._facade import SlimNexusFS
@@ -34,15 +33,9 @@ def slim_fs(tmp_path: Path):
     data_dir.mkdir()
     backend = CASLocalBackend(root_path=data_dir)
 
-    from nexus.core.mount_table import MountTable
-
-    mount_table = MountTable(metastore)
-    router = PathRouter(mount_table)
-
     kernel = NexusFS(
         metadata_store=metastore,
         permissions=PermissionConfig(enforce=False),
-        router=router,
     )
     kernel._init_cred = OperationContext(
         user_id="test",
@@ -51,9 +44,8 @@ def slim_fs(tmp_path: Path):
         is_admin=True,
     )
 
-    # Add mount AFTER NexusFS init so it registers in the Rust Kernel
-    # that NexusFS wired to mount_table._kernel.
-    mount_table.add("/local", backend)
+    # Mount via the driver coordinator (F2 MountTable migration).
+    kernel._driver_coordinator.mount("/local", backend)
     metastore.put(_make_mount_entry("/local", backend.name))
 
     return SlimNexusFS(kernel)

@@ -24,7 +24,6 @@ from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.types import OperationContext
 from nexus.core.config import PermissionConfig
 from nexus.core.nexus_fs import NexusFS
-from nexus.core.router import PathRouter
 from nexus.fs import _make_mount_entry
 from nexus.fs._facade import SlimNexusFS
 from nexus.fs._sqlite_meta import SQLiteMetastore
@@ -44,17 +43,10 @@ def slim_fs(tmp_path: Path):
     data_dir.mkdir()
     backend = CASLocalBackend(root_path=data_dir)
 
-    # Router (empty — mounts added via coordinator)
-    from nexus.core.mount_table import MountTable
-
-    mount_table = MountTable(metastore)
-    router = PathRouter(mount_table)
-
-    # Kernel
+    # Kernel (constructs its own DriverLifecycleCoordinator + PathRouter)
     kernel = NexusFS(
         metadata_store=metastore,
         permissions=PermissionConfig(enforce=False),
-        router=router,
     )
     kernel._init_cred = OperationContext(
         user_id="test",
@@ -105,15 +97,9 @@ def dual_fs(tmp_path: Path):
     backend_a.__class__ = _BackendA
     backend_b.__class__ = _BackendB
 
-    from nexus.core.mount_table import MountTable
-
-    mount_table = MountTable(metastore)
-    router = PathRouter(mount_table)
-
     kernel = NexusFS(
         metadata_store=metastore,
         permissions=PermissionConfig(enforce=False),
-        router=router,
     )
     kernel._init_cred = OperationContext(
         user_id="test",

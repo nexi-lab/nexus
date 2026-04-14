@@ -733,9 +733,7 @@ class TestFsspecIntegration:
         from nexus.contracts.constants import ROOT_ZONE_ID
         from nexus.contracts.types import OperationContext
         from nexus.core.config import PermissionConfig
-        from nexus.core.mount_table import MountTable
         from nexus.core.nexus_fs import NexusFS
-        from nexus.core.router import PathRouter
         from nexus.fs import _make_mount_entry
         from nexus.fs._facade import SlimNexusFS
         from nexus.fs._sqlite_meta import SQLiteMetastore
@@ -747,15 +745,9 @@ class TestFsspecIntegration:
         data_dir.mkdir()
         backend = CASLocalBackend(root_path=data_dir)
 
-        mount_table = MountTable(metastore)
-        router = PathRouter(mount_table)
-        mount_table.add("/local", backend)
-        metastore.put(_make_mount_entry("/local", backend.name))
-
         kernel = NexusFS(
             metadata_store=metastore,
             permissions=PermissionConfig(enforce=False),
-            router=router,
         )
         kernel._init_cred = OperationContext(
             user_id="test",
@@ -763,6 +755,8 @@ class TestFsspecIntegration:
             zone_id=ROOT_ZONE_ID,
             is_admin=True,
         )
+        kernel._driver_coordinator.mount("/local", backend)
+        metastore.put(_make_mount_entry("/local", backend.name))
 
         facade = SlimNexusFS(kernel)
         fs = NexusFileSystem(nexus_fs=facade)

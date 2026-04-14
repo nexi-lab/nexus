@@ -3,7 +3,13 @@
 Tests mount/unmount lifecycle: routing table + VFS hook registration
 + mount/unmount Rust dispatch_observers notification.
 
-Issue #1811, #1320.
+F2 MountTable migration (commit 91ebde62b): the standalone Python
+MountTable was deleted. ``DriverLifecycleCoordinator`` now takes
+``(dispatch, *, kernel=...)`` and owns ``_mounts: dict[str, _PyMountInfo]``
+directly. Tests that used to assert ``mount_table.add.called`` now
+inspect ``coord._mounts``.
+
+Issue #1811, #1320, #3584.
 """
 
 from __future__ import annotations
@@ -13,6 +19,7 @@ from unittest.mock import MagicMock
 from nexus.contracts.protocols.service_hooks import HookSpec
 from nexus.core.driver_lifecycle_coordinator import DriverLifecycleCoordinator
 from nexus.core.nexus_fs_dispatch import DispatchMixin
+from nexus.core.path_utils import canonicalize_path
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -78,11 +85,17 @@ class _TestDispatch(DispatchMixin):
 
 
 def _make_coordinator() -> tuple[MagicMock, _TestDispatch, DriverLifecycleCoordinator]:
-    """Create a coordinator with a mock mount_table and real DispatchMixin."""
-    mount_table = MagicMock()
+    """Create a coordinator with a mock kernel and real DispatchMixin.
+
+    F2 MountTable migration: the coordinator no longer takes a ``mount_table``
+    argument. The first return slot used to be the mock mount table; it is
+    now a mock kernel so callers can still assert on ``add_mount``/
+    ``remove_mount`` interactions.
+    """
+    kernel = MagicMock()
     dispatch = _TestDispatch()
-    coord = DriverLifecycleCoordinator(mount_table, dispatch)
-    return mount_table, dispatch, coord
+    coord = DriverLifecycleCoordinator(dispatch, kernel=kernel)
+    return kernel, dispatch, coord
 
 
 # ---------------------------------------------------------------------------
@@ -91,18 +104,23 @@ def _make_coordinator() -> tuple[MagicMock, _TestDispatch, DriverLifecycleCoordi
 
 
 class TestMount:
-    def test_mount_calls_mount_table_add(self) -> None:
-        mount_table, _, coord = _make_coordinator()
+    def test_mount_records_py_mount_info(self) -> None:
+        """F2: ``mount()`` writes a ``_PyMountInfo`` into ``coord._mounts``."""
+        kernel, _, coord = _make_coordinator()
         backend = _FakeBackend()
 
         coord.mount("/data", backend, readonly=True, io_profile="throughput")
 
-        mount_table.add.assert_called_once()
-        args, kwargs = mount_table.add.call_args
-        assert args == ("/data", backend)
-        assert kwargs["readonly"] is True
-        assert kwargs["admin_only"] is False
-        assert kwargs["io_profile"] == "throughput"
+        canonical = canonicalize_path("/data", "root")
+        assert canonical in coord._mounts
+        info = coord._mounts[canonical]
+        assert info.backend is backend
+        assert info.readonly is True
+        assert info.admin_only is False
+        assert info.io_profile == "throughput"
+
+        # Rust-side ``add_mount`` should have been invoked on the kernel.
+        kernel.add_mount.assert_called_once()
 
     def test_mount_registers_hook_spec_observers(self) -> None:
         _, dispatch, coord = _make_coordinator()
@@ -130,12 +148,13 @@ class TestMount:
             mock_dispatch.assert_called_once_with("mount", "/data")
 
     def test_mount_no_hook_spec_still_routes(self) -> None:
-        mount_table, dispatch, coord = _make_coordinator()
+        kernel, dispatch, coord = _make_coordinator()
         backend = _FakeBackend()
 
         coord.mount("/plain", backend)
 
-        mount_table.add.assert_called_once()
+        assert canonicalize_path("/plain", "root") in coord._mounts
+        kernel.add_mount.assert_called_once()
         assert dispatch.observer_count == 0
 
 
@@ -146,20 +165,17 @@ class TestMount:
 
 class TestUnmount:
     def test_unmount_unregisters_hooks(self) -> None:
-        mount_table, dispatch, coord = _make_coordinator()
+        _, dispatch, coord = _make_coordinator()
         backend = _BackendWithHookSpec()
 
         coord.mount("/data", backend)
         # register_observe is now a no-op — observer_count always 0
         assert dispatch.observer_count == 0
 
-        # Setup mount_table.get to return a MountEntry-like object
-        mount_entry = MagicMock()
-        mount_entry.backend = backend
-        mount_table.get.return_value = mount_entry
-
         result = coord.unmount("/data")
         assert result is True
+        # After unmount the ``_PyMountInfo`` record is gone.
+        assert canonicalize_path("/data", "root") not in coord._mounts
         assert dispatch.observer_count == 0
 
     def test_unmount_fires_unmount_event(self) -> None:
@@ -170,36 +186,29 @@ class TestUnmount:
         """
         from unittest.mock import patch
 
-        mount_table, dispatch, coord = _make_coordinator()
+        _, dispatch, coord = _make_coordinator()
         backend = _BackendWithHookSpec()
 
         coord.mount("/data", backend)
-
-        mount_entry = MagicMock()
-        mount_entry.backend = backend
-        mount_table.get.return_value = mount_entry
 
         with patch.object(dispatch, "dispatch_event") as mock_dispatch:
             coord.unmount("/data")
             mock_dispatch.assert_called_once_with("unmount", "/data")
 
     def test_unmount_not_found_returns_false(self) -> None:
-        mount_table, _, coord = _make_coordinator()
-        mount_table.get.return_value = None
-
+        _, _, coord = _make_coordinator()
+        # No mounts registered — unmount should return False.
         assert coord.unmount("/nonexistent") is False
 
     def test_unmount_catches_dispatch_exception(self) -> None:
         """dispatch_event errors don't propagate (best-effort)."""
-        mount_table, dispatch, coord = _make_coordinator()
+        _, dispatch, coord = _make_coordinator()
         backend = _FakeBackend()
+
+        coord.mount("/data", backend)
 
         # Force dispatch_event to raise
         dispatch.dispatch_event = MagicMock(side_effect=RuntimeError("boom"))
-
-        mount_entry = MagicMock()
-        mount_entry.backend = backend
-        mount_table.get.return_value = mount_entry
 
         # Should not raise
         coord.unmount("/data")

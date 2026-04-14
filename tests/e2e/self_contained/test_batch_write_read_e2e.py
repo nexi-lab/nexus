@@ -19,7 +19,6 @@ from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.types import OperationContext
 from nexus.core.config import PermissionConfig
 from nexus.core.nexus_fs import NexusFS
-from nexus.core.router import PathRouter
 from nexus.fs import _make_mount_entry
 from nexus.fs._sqlite_meta import SQLiteMetastore
 from nexus.server.api.v2.routers.async_files import create_async_files_router
@@ -43,7 +42,6 @@ def _b64(data: bytes) -> str:
 def real_fs(tmp_path: Path) -> NexusFS:
     """Real NexusFS kernel: SQLite metastore + CASLocalBackend, permissions off."""
     from nexus.backends.storage.cas_local import CASLocalBackend
-    from nexus.core.mount_table import MountTable
 
     db_path = str(tmp_path / "meta.db")
     metastore = SQLiteMetastore(db_path)
@@ -52,13 +50,9 @@ def real_fs(tmp_path: Path) -> NexusFS:
     data_dir.mkdir()
     backend = CASLocalBackend(root_path=data_dir)
 
-    mount_table = MountTable(metastore)
-    router = PathRouter(mount_table)
-
     kernel = NexusFS(
         metadata_store=metastore,
         permissions=PermissionConfig(enforce=False),
-        router=router,
     )
     kernel._init_cred = OperationContext(
         user_id="e2e-user",

@@ -354,3 +354,83 @@ class TestCrossDocBatching:
         results = await pipeline.index_documents(docs)
 
         assert all(r.chunks_indexed == 2 for r in results)
+
+
+# ---------------------------------------------------------------------------
+# Tests: Heading prefix in embedding contract (Issue #3719)
+# ---------------------------------------------------------------------------
+
+
+class TestMarkdownAwareHeadingPrefix:
+    """Verify chunk_texts carries heading prefix while stored text stays raw."""
+
+    @pytest.mark.asyncio
+    async def test_heading_prefix_in_embedded_text_not_in_stored(self) -> None:
+        """chunk_texts should have heading prefix; chunks.text should not."""
+        from nexus.bricks.search.chunking import ChunkStrategy
+
+        chunker = DocumentChunker(chunk_size=1024, strategy=ChunkStrategy.MARKDOWN_AWARE)
+        provider = _mock_embedding_provider()
+        session_factory = _mock_session_factory()
+
+        pipeline = IndexingPipeline(
+            chunker=chunker,
+            embedding_provider=provider,
+            async_session_factory=session_factory,
+        )
+
+        md_content = "# Auth\n\nJWT tokens expire after 1 hour.\n\n## OAuth\n\nOAuth2 flow.\n"
+
+        result = await pipeline.index_document("docs/auth.md", md_content, "pid-1")
+        assert result.chunks_indexed >= 1
+
+        # Verify embed_texts_batched was called with heading-prefixed texts
+        embed_call = provider.embed_texts_batched.call_args
+        embedded_texts = embed_call[0][0]
+        assert any("[" in t and "Auth" in t for t in embedded_texts), (
+            f"Expected heading prefix in embedded texts, got: {embedded_texts}"
+        )
+
+        # Verify stored chunk_text (via session.execute) does NOT have prefix
+        session = session_factory._session
+        insert_calls = session.execute.call_args_list
+        # The last batch of insert calls contains the chunk data
+        for call in insert_calls:
+            if call.args and hasattr(call.args[0], "text") and "INSERT" in str(call.args[0]):
+                # Check the params — chunk_text should not contain bracket prefix
+                params_list = call.args[1] if len(call.args) > 1 else []
+                if isinstance(params_list, list):
+                    for params in params_list:
+                        if isinstance(params, dict) and "chunk_text" in params:
+                            assert not params["chunk_text"].startswith("["), (
+                                f"Stored chunk_text should not have heading prefix: "
+                                f"{params['chunk_text'][:80]}"
+                            )
+
+    @pytest.mark.asyncio
+    async def test_non_markdown_no_prefix(self) -> None:
+        """Non-markdown files should not get heading prefix even with MARKDOWN_AWARE."""
+        from nexus.bricks.search.chunking import ChunkStrategy
+
+        chunker = DocumentChunker(chunk_size=1024, strategy=ChunkStrategy.MARKDOWN_AWARE)
+        provider = _mock_embedding_provider()
+        session_factory = _mock_session_factory()
+
+        pipeline = IndexingPipeline(
+            chunker=chunker,
+            embedding_provider=provider,
+            async_session_factory=session_factory,
+        )
+
+        result = await pipeline.index_document(
+            "src/main.py",
+            "def main():\n    pass\n",
+            "pid-2",
+        )
+        assert result.chunks_indexed >= 1
+
+        # Embedded texts should not have bracket prefixes
+        embed_call = provider.embed_texts_batched.call_args
+        embedded_texts = embed_call[0][0]
+        for t in embedded_texts:
+            assert not t.startswith("["), f"Python file should not have heading prefix: {t[:80]}"

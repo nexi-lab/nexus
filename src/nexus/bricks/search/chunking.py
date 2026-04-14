@@ -45,6 +45,7 @@ class ChunkStrategy(StrEnum):
     FIXED = "fixed"  # Fixed-size chunks
     SEMANTIC = "semantic"  # Semantic chunks (paragraphs/sections)
     OVERLAPPING = "overlapping"  # Overlapping fixed-size chunks
+    MARKDOWN_AWARE = "markdown_aware"  # Structure-aware markdown chunks (Issue #3719)
 
 
 @dataclass
@@ -58,6 +59,7 @@ class DocumentChunk:
     end_offset: int  # End character offset
     line_start: int | None = None  # Line number where chunk starts (1-indexed)
     line_end: int | None = None  # Line number where chunk ends (1-indexed)
+    heading_prefix: str | None = None  # Heading hierarchy for embedding (Issue #3719)
 
 
 def _offset_to_line(content: str, offset: int) -> int:
@@ -143,6 +145,225 @@ def _compute_line_numbers_fast(
     line_start = _offset_to_line_fast(start_offset, line_offsets)
     line_end = _offset_to_line_fast(end_offset, line_offsets)
     return line_start, line_end
+
+
+# ---------------------------------------------------------------------------
+# Markdown-aware chunking helpers (Issue #3719)
+# ---------------------------------------------------------------------------
+
+# Minimum tokens for a standalone chunk; smaller sections merge with siblings.
+_MIN_CHUNK_TOKENS = 80
+
+# Regex for ATX headings (# through ######)
+_HEADING_RE = re.compile(r"^(#{1,6})\s+(.*?)$", re.MULTILINE)
+# Regex for code fence openers/closers (``` or ~~~, 3+ chars)
+_FENCE_RE = re.compile(r"^(`{3,}|~{3,})", re.MULTILINE)
+
+
+@dataclass(slots=True)
+class _HeadingInfo:
+    """A heading found in markdown content (search-brick local)."""
+
+    heading: str
+    depth: int
+    char_offset: int  # character offset of the heading line
+
+
+def _parse_headings_fence_aware(content: str) -> list[_HeadingInfo]:
+    """Find ATX headings while ignoring those inside code fences.
+
+    Builds a set of fenced character ranges, then filters headings
+    that fall within them. Handles nested/mismatched fences gracefully.
+
+    Returns:
+        List of headings in document order.
+    """
+    # Build set of fenced ranges
+    fenced: list[tuple[int, int]] = []
+    fence_stack: list[tuple[str, int]] = []  # (fence_char, start_offset)
+    for m in _FENCE_RE.finditer(content):
+        marker = m.group(1)
+        fence_char = marker[0]  # ` or ~
+        fence_len = len(marker)
+        if (
+            fence_stack
+            and fence_stack[-1][0] == fence_char
+            and fence_len >= len(fence_stack[-1][0])
+        ):
+            # Close the fence
+            start = fence_stack.pop()[1]
+            fenced.append((start, m.end()))
+        else:
+            fence_stack.append((marker, m.start()))
+    # Unclosed fences: treat everything from opener to EOF as fenced
+    for _marker, start in fence_stack:
+        fenced.append((start, len(content)))
+
+    def _is_fenced(offset: int) -> bool:
+        return any(s <= offset < e for s, e in fenced)
+
+    headings: list[_HeadingInfo] = []
+    for m in _HEADING_RE.finditer(content):
+        if _is_fenced(m.start()):
+            continue
+        depth = len(m.group(1))
+        text = m.group(2).strip()
+        headings.append(_HeadingInfo(heading=text, depth=depth, char_offset=m.start()))
+
+    return headings
+
+
+@dataclass
+class _MdSegment:
+    """Internal segment for markdown-aware chunking."""
+
+    text: str
+    char_start: int
+    char_end: int
+    heading_prefix: str
+    tokens: int
+
+
+def _safe_line_char_offset(line_offsets: list[int], line_num: int, content_len: int) -> int:
+    """Get the character offset for a 0-indexed line number, clamped safely."""
+    if line_num >= len(line_offsets):
+        return content_len
+    return line_offsets[line_num]
+
+
+def _extract_file_name(file_path: str) -> str:
+    """Extract just the filename from a path."""
+    if "/" in file_path:
+        return file_path.rsplit("/", 1)[-1]
+    return file_path
+
+
+def build_heading_hierarchy(
+    sections: list[Any],
+    section_index: int,
+    file_name: str = "",
+) -> str:
+    """Build heading hierarchy prefix for embedding context.
+
+    Walks backward through sections to find parent headings,
+    building a path like ``[file.md > Auth > JWT Tokens]``.
+
+    Args:
+        sections: List of SectionInfo objects (from md_structure).
+        section_index: Index of the current section.
+        file_name: Filename to include at the start of the path.
+
+    Returns:
+        Bracket-notation heading path string.
+    """
+    if section_index < 0 or section_index >= len(sections):
+        return f"[{file_name}]" if file_name else ""
+
+    target = sections[section_index]
+    parents: list[str] = []
+    current_depth = target.depth
+
+    for i in range(section_index - 1, -1, -1):
+        if sections[i].depth < current_depth:
+            parents.append(sections[i].heading)
+            current_depth = sections[i].depth
+            if current_depth <= 1:
+                break
+
+    parents.reverse()
+    parts = parents + [target.heading]
+    path = " > ".join(parts)
+
+    if file_name:
+        return f"[{file_name} > {path}]"
+    return f"[{path}]"
+
+
+def _merge_small_segments(
+    segments: list[_MdSegment],
+    min_tokens: int = _MIN_CHUNK_TOKENS,
+    max_tokens: int = 1024,
+) -> list[_MdSegment]:
+    """Merge consecutive tiny segments using single-pass greedy algorithm.
+
+    Segments with fewer than *min_tokens* are accumulated and merged with
+    the next segment(s) until the accumulator exceeds *min_tokens* or
+    adding more would exceed *max_tokens*.
+
+    Args:
+        segments: Ordered list of segments.
+        min_tokens: Minimum token threshold for a standalone segment.
+        max_tokens: Maximum token budget for a merged segment.
+
+    Returns:
+        New list of segments with tiny segments merged.
+    """
+    if not segments:
+        return []
+
+    merged: list[_MdSegment] = []
+    acc_texts: list[str] = []
+    acc_start: int = 0
+    acc_end: int = 0
+    acc_prefix: str = ""
+    acc_tokens: int = 0
+
+    def _emit_accumulator() -> None:
+        if acc_texts:
+            merged.append(
+                _MdSegment(
+                    text="\n\n".join(acc_texts),
+                    char_start=acc_start,
+                    char_end=acc_end,
+                    heading_prefix=acc_prefix,
+                    tokens=acc_tokens,
+                )
+            )
+
+    for seg in segments:
+        if not acc_texts:
+            # Start new accumulator
+            acc_texts = [seg.text]
+            acc_start = seg.char_start
+            acc_end = seg.char_end
+            acc_prefix = seg.heading_prefix
+            acc_tokens = seg.tokens
+
+            # If segment is big enough on its own, emit immediately
+            if seg.tokens >= min_tokens:
+                _emit_accumulator()
+                acc_texts = []
+                acc_tokens = 0
+        else:
+            # Try to add to accumulator
+            combined = acc_tokens + seg.tokens
+            if combined <= max_tokens:
+                acc_texts.append(seg.text)
+                acc_end = seg.char_end
+                acc_tokens = combined
+
+                # If big enough now, emit
+                if acc_tokens >= min_tokens:
+                    _emit_accumulator()
+                    acc_texts = []
+                    acc_tokens = 0
+            else:
+                # Would exceed budget — emit accumulator, start fresh
+                _emit_accumulator()
+                acc_texts = [seg.text]
+                acc_start = seg.char_start
+                acc_end = seg.char_end
+                acc_prefix = seg.heading_prefix
+                acc_tokens = seg.tokens
+
+                if seg.tokens >= min_tokens:
+                    _emit_accumulator()
+                    acc_texts = []
+                    acc_tokens = 0
+
+    # Emit any remaining
+    _emit_accumulator()
+    return merged
 
 
 class DocumentChunker:
@@ -267,6 +488,8 @@ class DocumentChunker:
             chunks = self._chunk_semantic(content, file_path)
         elif self.strategy == ChunkStrategy.OVERLAPPING:
             chunks = self._chunk_overlapping(content)
+        elif self.strategy == ChunkStrategy.MARKDOWN_AWARE:
+            chunks = self._chunk_markdown_aware(content, file_path)
         else:
             raise ValueError(f"Unknown chunking strategy: {self.strategy}")
 
@@ -652,6 +875,153 @@ class DocumentChunker:
             # Move forward by step_size
             i += step_size
             current_offset += len(" ".join(words[i - step_size : i])) + 1
+
+        return chunks
+
+    def _chunk_markdown_aware(self, content: str, file_path: str) -> list[DocumentChunk]:
+        """Chunk markdown using structural index with heading context prepend.
+
+        Issue #3719: Uses the md_structure parser for heading boundaries,
+        keeps code blocks and tables atomic, merges tiny sections, and
+        attaches heading hierarchy prefix for embedding enrichment.
+
+        Falls back to ``_chunk_semantic()`` for non-markdown files and to
+        ``_chunk_fixed()`` when the parser produces no sections.
+
+        Args:
+            content: Document content (string).
+            file_path: Path to the file.
+
+        Returns:
+            List of chunks with ``heading_prefix`` set.
+        """
+        # Non-markdown files: delegate to semantic strategy
+        if not file_path.endswith((".md", ".markdown")):
+            return self._chunk_semantic(content, file_path)
+
+        # Parse headings with code-fence awareness (no cross-brick import)
+        headings = _parse_headings_fence_aware(content)
+
+        # Fallback if no headings found
+        if not headings:
+            return self._chunk_fixed(content)
+
+        file_name = _extract_file_name(file_path)
+
+        # ── Build raw segments from heading positions ────────────────
+        segments: list[_MdSegment] = []
+
+        # Detect YAML frontmatter (--- ... ---)
+        fm_end_offset = 0
+        stripped = content.lstrip()
+        leading_ws = len(content) - len(stripped)
+        if stripped.startswith("---"):
+            close = stripped.find("\n---", 3)
+            if close != -1:
+                fm_end_offset = leading_ws + close + 4  # past closing ---
+                # Skip trailing newline after closing ---
+                if fm_end_offset < len(content) and content[fm_end_offset] == "\n":
+                    fm_end_offset += 1
+                fm_text = content[:fm_end_offset].strip()
+                if fm_text:
+                    segments.append(
+                        _MdSegment(
+                            text=fm_text,
+                            char_start=0,
+                            char_end=fm_end_offset,
+                            heading_prefix=f"[{file_name} > frontmatter]",
+                            tokens=self._count_tokens(fm_text),
+                        )
+                    )
+
+        # Preamble (content between frontmatter end and first heading)
+        first_heading_offset = headings[0].char_offset
+        preamble_text = content[fm_end_offset:first_heading_offset].strip()
+        if preamble_text:
+            segments.append(
+                _MdSegment(
+                    text=preamble_text,
+                    char_start=fm_end_offset,
+                    char_end=first_heading_offset,
+                    heading_prefix=f"[{file_name}]",
+                    tokens=self._count_tokens(preamble_text),
+                )
+            )
+
+        # Each heading → a segment (heading to next heading = non-overlapping)
+        for i, h in enumerate(headings):
+            sec_start = h.char_offset
+            sec_end = headings[i + 1].char_offset if i + 1 < len(headings) else len(content)
+            sec_text = content[sec_start:sec_end]
+            if not sec_text.strip():
+                continue
+
+            heading_prefix = build_heading_hierarchy(headings, i, file_name)
+            segments.append(
+                _MdSegment(
+                    text=sec_text,
+                    char_start=sec_start,
+                    char_end=sec_end,
+                    heading_prefix=heading_prefix,
+                    tokens=self._count_tokens(sec_text),
+                )
+            )
+
+        if not segments:
+            return self._chunk_fixed(content)
+
+        # ── Merge tiny segments (single-pass greedy, O(n)) ──────────
+        merged = _merge_small_segments(
+            segments,
+            min_tokens=_MIN_CHUNK_TOKENS,
+            max_tokens=self.chunk_size,
+        )
+
+        # ── Build final chunks, splitting oversized segments ────────
+        chunks: list[DocumentChunk] = []
+        for seg in merged:
+            prefix_tokens = (
+                self._count_tokens(seg.heading_prefix + " ") if seg.heading_prefix else 0
+            )
+            effective_budget = max(self.chunk_size - prefix_tokens, self.chunk_size // 2)
+
+            if seg.tokens <= effective_budget:
+                chunks.append(
+                    DocumentChunk(
+                        text=seg.text,
+                        chunk_index=len(chunks),
+                        tokens=seg.tokens,
+                        start_offset=seg.char_start,
+                        end_offset=seg.char_end,
+                        heading_prefix=seg.heading_prefix,
+                    )
+                )
+            else:
+                # Oversized section: sub-split with reduced budget
+                sub_chunker = DocumentChunker(
+                    chunk_size=effective_budget,
+                    overlap_size=self.overlap_size,
+                    strategy=ChunkStrategy.FIXED,
+                    encoding_name=self.encoding_name,
+                )
+                sub_chunker.encoding = self.encoding  # reuse cached encoding
+                sub_chunks = sub_chunker._chunk_fixed(seg.text)
+                for sc in sub_chunks:
+                    sc.start_offset += seg.char_start
+                    sc.end_offset += seg.char_start
+                    sc.heading_prefix = seg.heading_prefix
+                    chunks.append(sc)
+
+        # Renumber chunk indices
+        for i, chunk in enumerate(chunks):
+            chunk.chunk_index = i
+
+        logger.info(
+            "[MARKDOWN-AWARE] path=%s headings=%d chunks=%d",
+            file_path,
+            len(headings),
+            len(chunks),
+        )
 
         return chunks
 

@@ -301,6 +301,16 @@ class IndexingPipeline:
             chunks = await asyncio.to_thread(self._chunker.chunk, content, path)
             chunk_texts = [c.text for c in chunks]
 
+        # Issue #3719: When chunks carry heading_prefix (markdown-aware strategy),
+        # prepend it to chunk_texts for embedding enrichment while keeping
+        # chunk.text raw for storage.  Skipped when contextual chunking is
+        # active because LLM-generated context is strictly richer.
+        if contextual_result is None:
+            chunk_texts = [
+                f"{c.heading_prefix} {t}" if getattr(c, "heading_prefix", None) else t
+                for c, t in zip(chunks, chunk_texts, strict=True)
+            ]
+
         return _ChunkedDoc(
             path=path,
             path_id=path_id,

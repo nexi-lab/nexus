@@ -182,21 +182,19 @@ def _parse_headings_fence_aware(content: str) -> list[_HeadingInfo]:
     """
     # Build set of fenced ranges
     fenced: list[tuple[int, int]] = []
-    fence_stack: list[tuple[str, int]] = []  # (fence_char, start_offset)
+    fence_stack: list[tuple[str, int]] = []  # (opener_marker, start_offset)
     for m in _FENCE_RE.finditer(content):
         marker = m.group(1)
         fence_char = marker[0]  # ` or ~
         fence_len = len(marker)
-        if (
-            fence_stack
-            and fence_stack[-1][0] == fence_char
-            and fence_len >= len(fence_stack[-1][0])
-        ):
-            # Close the fence
-            start = fence_stack.pop()[1]
-            fenced.append((start, m.end()))
-        else:
-            fence_stack.append((marker, m.start()))
+        if fence_stack:
+            opener_marker = fence_stack[-1][0]
+            # Close: same fence char and at least as many chars as opener
+            if opener_marker[0] == fence_char and fence_len >= len(opener_marker):
+                start = fence_stack.pop()[1]
+                fenced.append((start, m.end()))
+                continue
+        fence_stack.append((marker, m.start()))
     # Unclosed fences: treat everything from opener to EOF as fenced
     for _marker, start in fence_stack:
         fenced.append((start, len(content)))
@@ -214,9 +212,24 @@ def _parse_headings_fence_aware(content: str) -> list[_HeadingInfo]:
         text = m.group(2).strip()
         headings.append(_HeadingInfo(heading=text, depth=depth, char_offset=m.start()))
 
+    # Detect YAML frontmatter range to exclude from setext detection.
+    # Frontmatter `---` / `key: value` / `---` looks like setext H2.
+    fm_end = 0
+    stripped = content.lstrip()
+    leading_ws = len(content) - len(stripped)
+    if stripped.startswith("---"):
+        close = stripped.find("\n---", 3)
+        if close != -1:
+            fm_end = leading_ws + close + 4
+            if fm_end < len(content) and content[fm_end] == "\n":
+                fm_end += 1
+
     # Setext headings (underline with === or ---)
     for m in _SETEXT_RE.finditer(content):
         if _is_fenced(m.start()):
+            continue
+        # Skip matches inside frontmatter
+        if m.start() < fm_end:
             continue
         text = m.group(1).strip()
         # Skip if the text line looks like a YAML frontmatter delimiter

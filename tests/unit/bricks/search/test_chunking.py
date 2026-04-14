@@ -594,3 +594,35 @@ class TestMarkdownAwareStrategy:
         assert any("Indented Heading" in p for p in prefixes), (
             f"Indented ATX heading not detected: {prefixes}"
         )
+
+    # ── Adversarial review regressions (Codex round 2) ──
+
+    def test_heading_after_code_fence_detected(self) -> None:
+        """Headings after fenced code blocks must still be detected."""
+        from nexus.bricks.search.chunking import _parse_headings_fence_aware
+
+        md = (
+            "# First\n\nSome prose.\n\n```python\ndef foo():\n    pass\n```\n\n"
+            "## Second\n\nMore prose after the code block.\n"
+        )
+        # Verify at the parser level that both headings survive
+        headings = _parse_headings_fence_aware(md)
+        heading_names = [h.heading for h in headings]
+        assert "First" in heading_names, f"H1 missing: {heading_names}"
+        assert "Second" in heading_names, f"H2 after fence missing: {heading_names}"
+
+        # Also verify chunker produces chunks containing "## Second" text
+        chunker = self._make_chunker()
+        chunks = chunker.chunk(md, file_path="fenced.md")
+        all_text = " ".join(c.text for c in chunks)
+        assert "## Second" in all_text, "Second heading lost during chunking"
+
+    def test_frontmatter_not_parsed_as_setext_heading(self) -> None:
+        """YAML frontmatter keys must not become setext headings."""
+        md = "---\ntitle: Architecture\ntags: [auth, api]\n---\n\n# Overview\n\nContent.\n"
+        chunker = self._make_chunker()
+        chunks = chunker.chunk(md, file_path="arch.md")
+        prefixes = [c.heading_prefix or "" for c in chunks]
+        # No prefix should contain YAML keys like "tags"
+        for p in prefixes:
+            assert "tags" not in p, f"YAML key parsed as setext heading: {p}"

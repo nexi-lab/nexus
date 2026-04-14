@@ -153,6 +153,8 @@ def _compute_line_numbers_fast(
 
 # Minimum tokens for a standalone chunk; smaller sections merge with siblings.
 _MIN_CHUNK_TOKENS = 80
+# Maximum characters for a heading prefix to prevent oversized embedding inputs.
+_MAX_HEADING_PREFIX_CHARS = 200
 
 # Regex for ATX headings (# through ######), allowing up to 3 leading spaces (CommonMark)
 _HEADING_RE = re.compile(r"^ {0,3}(#{1,6})\s+(.*?)$", re.MULTILINE)
@@ -180,24 +182,28 @@ def _parse_headings_fence_aware(content: str) -> list[_HeadingInfo]:
     Returns:
         List of headings in document order.
     """
-    # Build set of fenced ranges
+    # Build set of fenced ranges using a flat state machine.
+    # CommonMark: a code fence is closed only by a fence line with the
+    # same character and >= the opener length.  Shorter fence-like lines
+    # inside an open fence are just literal content (no nesting).
     fenced: list[tuple[int, int]] = []
-    fence_stack: list[tuple[str, int]] = []  # (opener_marker, start_offset)
+    active_fence: tuple[str, int, int] | None = None  # (char, length, start_offset)
     for m in _FENCE_RE.finditer(content):
         marker = m.group(1)
-        fence_char = marker[0]  # ` or ~
+        fence_char = marker[0]
         fence_len = len(marker)
-        if fence_stack:
-            opener_marker = fence_stack[-1][0]
-            # Close: same fence char and at least as many chars as opener
-            if opener_marker[0] == fence_char and fence_len >= len(opener_marker):
-                start = fence_stack.pop()[1]
-                fenced.append((start, m.end()))
-                continue
-        fence_stack.append((marker, m.start()))
-    # Unclosed fences: treat everything from opener to EOF as fenced
-    for _marker, start in fence_stack:
-        fenced.append((start, len(content)))
+        if active_fence is not None:
+            # Inside a fence — only close if same char and >= length
+            if fence_char == active_fence[0] and fence_len >= active_fence[1]:
+                fenced.append((active_fence[2], m.end()))
+                active_fence = None
+            # Otherwise: literal content inside the fence, ignore
+        else:
+            # Not inside a fence — this is an opener
+            active_fence = (fence_char, fence_len, m.start())
+    # Unclosed fence: treat opener to EOF as fenced
+    if active_fence is not None:
+        fenced.append((active_fence[2], len(content)))
 
     def _is_fenced(offset: int) -> bool:
         return any(s <= offset < e for s, e in fenced)
@@ -304,10 +310,15 @@ def build_heading_hierarchy(
     parents.reverse()
     parts = parents + [target.heading]
     path = " > ".join(parts)
+    result = f"[{file_name} > {path}]" if file_name else f"[{path}]"
 
-    if file_name:
-        return f"[{file_name} > {path}]"
-    return f"[{path}]"
+    # Truncate to prevent oversized embedding inputs.  Keep the
+    # file name and the deepest heading levels (most specific context).
+    if len(result) > _MAX_HEADING_PREFIX_CHARS:
+        tail = " > ".join(parts[-2:]) if len(parts) >= 2 else parts[-1]
+        result = f"[{file_name} > ... > {tail}]" if file_name else f"[... > {tail}]"
+
+    return result
 
 
 def _merge_small_segments(
@@ -1082,19 +1093,22 @@ class DocumentChunker:
         Fenced blocks up to 1.5× budget are emitted whole; larger blocks
         are sub-split as a last resort.
         """
-        # Find fenced ranges within this text
+        # Find fenced ranges within this text (flat state machine,
+        # same logic as _parse_headings_fence_aware).
         fenced_ranges: list[tuple[int, int]] = []
-        opener: tuple[str, int] | None = None
+        active: tuple[str, int, int] | None = None  # (char, length, start)
         for m in _FENCE_RE.finditer(text):
             marker = m.group(1)
-            if opener is None:
-                opener = (marker, m.start())
-            elif marker[0] == opener[0] and len(marker) >= len(opener[0]):
-                fenced_ranges.append((opener[1], m.end()))
-                opener = None
-        # Unclosed fence: extend to end of text
-        if opener is not None:
-            fenced_ranges.append((opener[1], len(text)))
+            fence_char = marker[0]
+            fence_len = len(marker)
+            if active is not None:
+                if fence_char == active[0] and fence_len >= active[1]:
+                    fenced_ranges.append((active[2], m.end()))
+                    active = None
+            else:
+                active = (fence_char, fence_len, m.start())
+        if active is not None:
+            fenced_ranges.append((active[2], len(text)))
 
         if not fenced_ranges:
             # No fences — safe to use generic splitter

@@ -626,3 +626,31 @@ class TestMarkdownAwareStrategy:
         # No prefix should contain YAML keys like "tags"
         for p in prefixes:
             assert "tags" not in p, f"YAML key parsed as setext heading: {p}"
+
+    # ── Adversarial review regressions (Codex round 3) ──
+
+    def test_nested_backtick_fences_do_not_suppress_headings(self) -> None:
+        """4-backtick fence containing literal 3-backtick lines."""
+        from nexus.bricks.search.chunking import _parse_headings_fence_aware
+
+        md = (
+            "## Before\n\nProse.\n\n"
+            "````\n```\ninner literal content\n```\n````\n\n"
+            "## After\n\nMore prose.\n"
+        )
+        headings = _parse_headings_fence_aware(md)
+        names = [h.heading for h in headings]
+        assert "Before" in names
+        assert "After" in names, f"Heading after nested fence lost: {names}"
+
+    def test_heading_prefix_truncated_for_long_paths(self) -> None:
+        """Very long heading hierarchy is truncated to stay under limit."""
+        long_heading = "A" * 100
+        sections = [
+            _FakeSection(long_heading, 1),
+            _FakeSection(long_heading, 2),
+            _FakeSection(long_heading, 3),
+        ]
+        result = build_heading_hierarchy(sections, 2, "file.md")
+        assert len(result) <= 250  # reasonable cap
+        assert "..." in result, f"Expected truncation ellipsis: {result}"

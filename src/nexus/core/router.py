@@ -41,7 +41,6 @@ __all__ = [
     "RouteResult",
     "PipeRouteResult",
     "StreamRouteResult",
-    "ExternalRouteResult",
     "canonicalize_path",
     "extract_zone_id",
     "strip_zone_prefix",
@@ -84,16 +83,6 @@ class StreamRouteResult:
 
     path: str
     metastore: "MetastoreABC"
-
-
-@dataclass(frozen=True, slots=True)
-class ExternalRouteResult:
-    """Route result for DT_EXTERNAL_STORAGE — backend manages own namespace."""
-
-    backend: "ObjectStoreABC"
-    metastore: "MetastoreABC"
-    backend_path: str
-    mount_point: str
 
 
 class PathRouter:

@@ -28,7 +28,6 @@ from nexus.contracts.exceptions import (
 )
 from nexus.contracts.metadata import FileMetadata
 from nexus.contracts.types import OperationContext
-from nexus.core.nexus_fs_internal import _WriteContentResult
 from nexus.lib.rpc_decorator import rpc_expose
 
 if TYPE_CHECKING:
@@ -758,36 +757,34 @@ class ContentMixin:
         _rust_ctx = self._build_rust_ctx(context, _is_admin)
         result = self._kernel.sys_write(path, _rust_ctx, buf, offset)
 
-        # Rust wrote to backend + built metadata + updated dcache.
-        # All backends are now native Rust or GrpcObjectStoreAdapter — hit is always true.
+        # POST-INTERCEPT hooks (Rust handles backend write + metadata + OBSERVE)
         zone_id, agent_id, _ = self._get_context_identity(context)
-        self._dispatch_write_events(
-            path,
-            _WriteContentResult(
-                content_hash=result.content_id or "",
-                size=result.size,
-                metadata=FileMetadata(
-                    path=path,
-                    backend_name="",
-                    physical_path=result.content_id or "",
-                    size=result.size,
-                    etag=result.content_id,
-                    version=result.version,
-                    zone_id=zone_id,
-                    agent_id=agent_id,
-                    is_remote=False,
-                ),
-                new_version=result.version,
-                is_new=(_meta is None),
-                old_etag=_meta.etag if _meta else None,
-                old_metadata=_meta,
-                context=context or OperationContext(user_id="anonymous", groups=[]),
+        _ctx = context or OperationContext(user_id="anonymous", groups=[])
+        _meta_obj = FileMetadata(
+            path=path,
+            backend_name="",
+            physical_path=result.content_id or "",
+            size=result.size,
+            etag=result.content_id,
+            version=result.version,
+            zone_id=zone_id,
+        )
+        from nexus.contracts.vfs_hooks import WriteHookContext
+
+        self._kernel.dispatch_post_hooks(
+            "write",
+            WriteHookContext(
+                path=path,
+                content=buf,
+                context=_ctx,
                 zone_id=zone_id,
                 agent_id=agent_id,
-                is_remote=False,
-                is_external=False,
+                is_new_file=(_meta is None),
+                content_hash=result.content_id or "",
+                metadata=_meta_obj,
+                old_metadata=_meta,
+                new_version=result.version,
             ),
-            buf,
         )
 
         return {"path": path, "bytes_written": len(buf)}
@@ -905,32 +902,42 @@ class ContentMixin:
         _rust_ctx = self._build_rust_ctx(context, _is_admin)
         result = self._kernel.sys_write(path, _rust_ctx, buf)
 
+        # POST-INTERCEPT hooks
         zone_id, agent_id, _ = self._get_context_identity(context)
-        return self._dispatch_write_events(
-            path,
-            _WriteContentResult(
-                content_hash=result.content_id or "",
-                size=result.size,
+        _ctx = context or OperationContext(user_id="anonymous", groups=[])
+        _cid = result.content_id or ""
+        from nexus.contracts.vfs_hooks import WriteHookContext
+
+        self._kernel.dispatch_post_hooks(
+            "write",
+            WriteHookContext(
+                path=path,
+                content=buf,
+                context=_ctx,
+                zone_id=zone_id,
+                agent_id=agent_id,
+                is_new_file=False,
+                content_hash=_cid,
                 metadata=FileMetadata(
                     path=path,
                     backend_name="",
-                    physical_path=result.content_id or "",
+                    physical_path=_cid,
                     size=result.size,
                     etag=result.content_id,
                     version=result.version,
                     zone_id=zone_id,
                 ),
-                new_version=result.version,
-                is_new=False,
-                old_etag=None,
                 old_metadata=None,
-                context=context or OperationContext(user_id="anonymous", groups=[]),
-                zone_id=zone_id,
-                agent_id=agent_id,
-                is_remote=False,
+                new_version=result.version,
             ),
-            buf,
         )
+
+        return {
+            "etag": _cid,
+            "version": result.version,
+            "modified_at": None,
+            "size": result.size,
+        }
 
     # _write_internal + _write_content deleted — Rust sys_write handles:
     # routing, VFS lock, backend write, metadata build+put, dcache update.

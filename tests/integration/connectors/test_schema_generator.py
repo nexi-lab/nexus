@@ -1057,7 +1057,7 @@ class TestParseReadmePathFuzz:
 
 
 class _FakeRoute:
-    """Minimal fake of RouteResult/ExternalRouteResult for dispatch wiring."""
+    """Minimal fake of RouteResult for dispatch wiring."""
 
     def __init__(self, backend, mount_point, backend_path):
         self.backend = backend

@@ -16,9 +16,8 @@ from __future__ import annotations
 
 import logging
 from dataclasses import replace as _dc_replace
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, Any
 
-from nexus.contracts.metadata import FileMetadata
 from nexus.contracts.types import OperationContext
 from nexus.core.path_utils import validate_path
 
@@ -26,22 +25,6 @@ if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
-
-
-class _WriteContentResult(NamedTuple):
-    """Result of content-only write phase."""
-
-    content_hash: str
-    size: int
-    metadata: "FileMetadata"  # Built metadata ready for metastore
-    new_version: int
-    is_new: bool  # True if file didn't exist before
-    old_etag: str | None
-    old_metadata: "FileMetadata | None"  # Pre-write metadata for post-write hooks
-    context: "OperationContext"  # Augmented context (with backend_path/virtual_path)
-    zone_id: str | None
-    agent_id: str | None
-    is_remote: bool  # Remote backend — skip local metadata.put
 
 
 class InternalMixin:
@@ -333,47 +316,4 @@ class InternalMixin:
         except Exception:
             return None
 
-    # ── Post-write event dispatch ────────────────────────────────────
-
-    def _dispatch_write_events(
-        self,
-        path: str,
-        result: _WriteContentResult,
-        content: bytes,
-    ) -> dict[str, Any]:
-        """Post-write event dispatch (sync, outside lock).
-
-        Fires FileEvent notify (OBSERVE) + dispatch_post_hooks (INTERCEPT).
-        Uses context from Rust sys_write result (stored in result).
-
-        Returns:
-            Dict with metadata {etag, version, modified_at, size}.
-        """
-        # --- Lock released — event dispatch + side effects (like Linux inotify after i_rwsem) ---
-
-        # OBSERVE dispatch: Rust kernel fires OBSERVE via ThreadPool (§11 Phase 5).
-
-        # INTERCEPT POST hooks
-        from nexus.contracts.vfs_hooks import WriteHookContext
-
-        _write_ctx = WriteHookContext(
-            path=path,
-            content=content,
-            context=result.context,
-            zone_id=result.zone_id,
-            agent_id=result.agent_id,
-            is_new_file=result.is_new,
-            content_hash=result.content_hash,
-            metadata=result.metadata,
-            old_metadata=result.old_metadata,
-            new_version=result.new_version,
-        )
-        self._kernel.dispatch_post_hooks("write", _write_ctx)
-
-        # Return metadata for optimistic concurrency control
-        return {
-            "etag": result.content_hash,
-            "version": result.new_version,
-            "modified_at": result.metadata.modified_at,
-            "size": result.size,
-        }
+    # _dispatch_write_events deleted — callers inline the post-hook dispatch.

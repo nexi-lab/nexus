@@ -315,14 +315,32 @@ async def connect(
         if _data_dir and _tls_enabled:
             from nexus.security.tls.config import ZoneTlsConfig
 
-            _tls_config = ZoneTlsConfig.from_data_dir(_data_dir)
+            # Explicit true: check both Raft + OpenSSL layouts
+            # Auto-detect (unset): Raft-only (backward compat)
+            _tls_explicit = _grpc_tls_env in ("true", "1", "yes")
+            _tls_config = (
+                ZoneTlsConfig.from_data_dir_any(_data_dir)
+                if _tls_explicit
+                else ZoneTlsConfig.from_data_dir(_data_dir)
+            )
 
-        # Fail closed: NEXUS_GRPC_TLS=true but no certs resolved
+        # Fail closed: NEXUS_GRPC_TLS=true but no certs resolved.
+        # As a last resort, check NEXUS_TLS_* env vars — but only when
+        # TLS was explicitly requested, to avoid stale env vars from a
+        # previous session flipping a plaintext stack onto mTLS.
         _tls_explicit = _grpc_tls_env in ("true", "1", "yes")
+        if _tls_explicit and _tls_config is None and os.getenv("NEXUS_TLS_CERT"):
+            import contextlib
+
+            from nexus.security.tls.config import ZoneTlsConfig
+
+            with contextlib.suppress(Exception):
+                _tls_config = ZoneTlsConfig.from_env()
         if _tls_explicit and _tls_config is None:
             raise RuntimeError(
                 "NEXUS_GRPC_TLS=true but no TLS certificates found. "
-                "Provide certs in {data_dir}/tls/ or set data_dir in nexus.yaml."
+                "Provide certs via NEXUS_TLS_CERT/KEY/CA, "
+                "in {data_dir}/tls/, or set data_dir in nexus.yaml."
             )
 
         transport = RPCTransport(

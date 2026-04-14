@@ -27,9 +27,10 @@ def _resolve_tls_config(app: "FastAPI") -> "ZoneTlsConfig | None":
     Priority:
     1. NEXUS_GRPC_TLS=false → disable TLS unconditionally
     2. ZoneManager.tls_config (Raft / federation)
-    3. Auto-detect from {NEXUS_DATA_DIR}/tls/
-    4. NEXUS_GRPC_TLS=true but no certs → raise (fail closed)
-    5. None → insecure (no certs, no explicit request)
+    3. Auto-detect from {NEXUS_DATA_DIR}/tls/ (Raft-style PEM layout)
+    4. NEXUS_TLS_CERT/KEY/CA env vars (OpenSSL-style, set by nexus up)
+    5. NEXUS_GRPC_TLS=true but no certs → raise (fail closed)
+    6. None → insecure (no certs, no explicit request)
 
     NEXUS_GRPC_TLS=false is an unconditional override (step 1).
     NEXUS_GRPC_TLS=true ensures TLS is required — if no certs are
@@ -52,17 +53,32 @@ def _resolve_tls_config(app: "FastAPI") -> "ZoneTlsConfig | None":
             return tls_cfg
 
     # 3. Load from NEXUS_DATA_DIR/tls/
+    #    - Explicit true: check both Raft + OpenSSL layouts
+    #    - Unset (auto-detect): Raft-only (backward compat)
+    _explicit_on = grpc_tls in ("true", "1", "yes")
     data_dir = os.environ.get("NEXUS_DATA_DIR")
     if data_dir:
-        cfg = ZoneTlsConfig.from_data_dir(data_dir)
+        cfg = (
+            ZoneTlsConfig.from_data_dir_any(data_dir)
+            if _explicit_on
+            else ZoneTlsConfig.from_data_dir(data_dir)
+        )
         if cfg is not None:
             return cfg
 
-    # 4. Explicit enable requested but no certs found — fail closed
-    if grpc_tls in ("true", "1", "yes"):
+    # 4. NEXUS_TLS_CERT/KEY/CA env vars — only when explicitly requested
+    #    (avoids stale env vars flipping a plaintext server to mTLS)
+    if _explicit_on and os.environ.get("NEXUS_TLS_CERT"):
+        cfg = ZoneTlsConfig.from_env()
+        if cfg is not None:
+            return cfg
+
+    # 5. Explicit enable requested but no certs found — fail closed
+    if _explicit_on:
         raise RuntimeError(
             "NEXUS_GRPC_TLS=true but no TLS certificates found. "
-            "Provide certs in {NEXUS_DATA_DIR}/tls/ or configure ZoneManager."
+            "Provide certs via NEXUS_TLS_CERT/KEY/CA, "
+            "in {NEXUS_DATA_DIR}/tls/, or configure ZoneManager."
         )
 
     return None

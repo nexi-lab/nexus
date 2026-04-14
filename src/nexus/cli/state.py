@@ -167,16 +167,34 @@ def resolve_connection_env(
     if api_key:
         env_vars["NEXUS_API_KEY"] = api_key
 
-    # TLS paths for gRPC — prefer state.json (runtime-discovered), fall back to config
+    # TLS paths for gRPC — prefer state.json (runtime-discovered), fall back to config.
+    # Always emit NEXUS_GRPC_TLS so `eval $(nexus env)` clears stale overrides
+    # when switching between TLS and plaintext stacks.
     tls = state.get("tls", {})
     if tls.get("cert"):
         env_vars["NEXUS_TLS_CERT"] = tls["cert"]
         env_vars["NEXUS_TLS_KEY"] = tls.get("key", "")
         env_vars["NEXUS_TLS_CA"] = tls.get("ca", "")
+        env_vars["NEXUS_GRPC_TLS"] = "true"
     elif config.get("tls_cert"):
+        # Always export paths (subprocesses may need them)
         env_vars["NEXUS_TLS_CERT"] = config["tls_cert"]
         env_vars["NEXUS_TLS_KEY"] = config.get("tls_key", "")
         env_vars["NEXUS_TLS_CA"] = config.get("tls_ca", "")
+        # Only signal TLS active when all 3 files actually exist
+        import pathlib
+
+        _cert = pathlib.Path(config["tls_cert"])
+        _key = pathlib.Path(config.get("tls_key", ""))
+        _ca = pathlib.Path(config.get("tls_ca", ""))
+        if _cert.exists() and _key.exists() and _ca.exists():
+            env_vars["NEXUS_GRPC_TLS"] = "true"
+    else:
+        # Non-TLS stack: clear any stale TLS override from a previous session
+        env_vars["NEXUS_GRPC_TLS"] = "false"
+        env_vars["NEXUS_TLS_CERT"] = ""
+        env_vars["NEXUS_TLS_KEY"] = ""
+        env_vars["NEXUS_TLS_CA"] = ""
 
     # DATABASE_URL if postgres is in the service list
     services = config.get("services", [])

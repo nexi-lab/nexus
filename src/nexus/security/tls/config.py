@@ -21,7 +21,12 @@ class ZoneTlsConfig:
 
     @classmethod
     def from_data_dir(cls, data_dir: str | Path) -> ZoneTlsConfig | None:
-        """Auto-detect TLS config from ``{data_dir}/tls/``.
+        """Auto-detect TLS config from ``{data_dir}/tls/`` (Raft layout).
+
+        Recognizes the Raft/federation layout only: ``ca.pem``,
+        ``node.pem``, ``node-key.pem``.  Used by ZoneManager to decide
+        whether to auto-generate federation certs — must NOT match the
+        OpenSSL layout to avoid suppressing Raft bootstrap.
 
         Returns ``None`` if the expected certificate files do not exist.
         """
@@ -29,6 +34,30 @@ class ZoneTlsConfig:
         ca = tls_dir / "ca.pem"
         cert = tls_dir / "node.pem"
         key = tls_dir / "node-key.pem"
+        if not (ca.exists() and cert.exists() and key.exists()):
+            return None
+        return cls(
+            ca_cert_path=ca,
+            node_cert_path=cert,
+            node_key_path=key,
+            known_zones_path=tls_dir / "known_zones",
+        )
+
+    @classmethod
+    def from_data_dir_any(cls, data_dir: str | Path) -> ZoneTlsConfig | None:
+        """Auto-detect TLS config from ``{data_dir}/tls/`` (any layout).
+
+        Checks Raft-style first, then OpenSSL-style (``ca.crt``,
+        ``server.crt``, ``server.key`` from ``nexus init --tls``).
+        Used by the gRPC server/client — NOT by ZoneManager.
+        """
+        cfg = cls.from_data_dir(data_dir)
+        if cfg is not None:
+            return cfg
+        tls_dir = Path(data_dir) / "tls"
+        ca = tls_dir / "ca.crt"
+        cert = tls_dir / "server.crt"
+        key = tls_dir / "server.key"
         if not (ca.exists() and cert.exists() and key.exists()):
             return None
         return cls(

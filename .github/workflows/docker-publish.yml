@@ -171,6 +171,16 @@ jobs:
           echo "NEXUS_API_KEY=${ADMIN_KEY}" >> "$GITHUB_ENV"
           echo "Admin key obtained: ${ADMIN_KEY:0:10}..."
 
+      - name: Seed demo workspace
+        run: |
+          docker exec \
+            -e NEXUS_URL=http://localhost:2026 \
+            -e NEXUS_API_KEY="${NEXUS_API_KEY}" \
+            -e NEXUS_PROFILE=remote \
+            -e NEXUS_GRPC_PORT=2029 \
+            -e NEXUS_GRPC_TLS=false \
+            nexus-e2e nexus demo init --skip-semantic
+
       - name: Copy test scripts into container
         run: |
           docker cp permissions_demo_enhanced.sh nexus-e2e:/tmp/

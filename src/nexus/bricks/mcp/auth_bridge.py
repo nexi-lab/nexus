@@ -121,6 +121,20 @@ def resolve_mcp_operation_context(
     # that key — its _init_cred IS the per-request identity (not
     # ambient). So we allow steps 1-3 to proceed.
     request_key = _request_api_key.get()
+    if request_key and auth_provider is None:
+        # Per-request key set but no auth_provider to verify it.
+        # Fall through to NexusFS-based identity (steps 1-3).
+        # In remote mode, _get_nexus_instance already created a
+        # connection scoped to this key — _init_cred is that identity.
+        # In local mode, _init_cred is the process identity (single
+        # user, no multi-tenancy concern).
+        #
+        # NOTE: callers (e.g. CLI) should thread auth_provider for
+        # full verification. This fallback is safe but less strict.
+        logger.info(
+            "Per-request API key set but no auth_provider available; "
+            "using NexusFS-based identity (steps 1-3)."
+        )
     if request_key and auth_provider is not None:
         auth_result = authenticate_api_key(auth_provider, request_key)
         if auth_result is not None:

@@ -14,7 +14,7 @@ Scenarios:
 Suspicious code under test:
     - bitmap_cache.py ~131  — RLock contention under concurrency
     - zone_graph_loader.py ~49-50  — 300s TTL stale window
-    - enforcer.py ~310-315  — Tiger miss returns all-True (over-permissive)
+    - enforcer.py ~310-315  — Tiger miss was fail-open (fixed to fail-closed)
     - utils/fast.py ~121-161  — fresh Rust graph every bulk call (CPU cost)
 
 Requirements:
@@ -70,14 +70,17 @@ NUM_STORM_FILES = 50
 
 def _pg_is_available() -> bool:
     """Check if PostgreSQL is reachable."""
+    engine = None
     try:
         engine = create_engine(PG_URL)
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
-        engine.dispose()
         return True
     except Exception:
         return False
+    finally:
+        if engine is not None:
+            engine.dispose()
 
 
 pytestmark = [

@@ -173,12 +173,6 @@ pub struct LockState {
     pub current_holders: u32,
     /// Maximum allowed holders.
     pub max_holders: u32,
-    /// Fencing token for the acquiring caller (F4 C1). Monotonically
-    /// non-decreasing across every successful acquire on the path,
-    /// sourced from the raft log index. Zero when the acquire
-    /// happened outside a raft-indexed path (the `execute()` helper,
-    /// used only for EC writes today — locks are always SC).
-    pub fence_token: u64,
     /// If not acquired, who are the current holders.
     pub holders: Vec<HolderInfo>,
 }
@@ -205,22 +199,16 @@ pub struct LockInfo {
     pub path: String,
     /// Maximum concurrent holders.
     pub max_holders: u32,
-    /// Fencing token for this path (F4 C1). `max(current,
-    /// log_index)` on every successful acquire; never decreases.
-    /// Kleppmann-style — any storage layer that adopts the token
-    /// later can reject stale writers.
-    pub fence_token: u64,
     /// Current holders.
     pub holders: Vec<HolderInfo>,
 }
 
 impl LockInfo {
     /// Create a new lock with the first holder.
-    fn new(path: String, max_holders: u32, fence_token: u64, first_holder: HolderInfo) -> Self {
+    fn new(path: String, max_holders: u32, first_holder: HolderInfo) -> Self {
         Self {
             path,
             max_holders,
-            fence_token,
             holders: vec![first_holder],
         }
     }
@@ -276,7 +264,6 @@ impl LockInfo {
             acquired,
             current_holders: self.holders.len() as u32,
             max_holders: self.max_holders,
-            fence_token: self.fence_token,
             holders: self.holders.clone(),
         }
     }
@@ -800,12 +787,6 @@ impl FullStateMachine {
     ///
     /// `now` is the wall-clock timestamp from the replicated command, ensuring
     /// all replicas compute identical lock state (Issue #3029 / Bug 1).
-    ///
-    /// `fence_hint` is the caller-supplied source for the fence
-    /// token. On the raft apply path this is the log index of the
-    /// `Command::AcquireLock` entry (F4 C1). The stored token is
-    /// `max(current, fence_hint)` on every successful acquire so it
-    /// never decreases.
     #[allow(clippy::too_many_arguments)]
     fn apply_acquire_lock(
         &self,
@@ -815,7 +796,6 @@ impl FullStateMachine {
         ttl_secs: u32,
         holder_info: &str,
         mode: LockMode,
-        fence_hint: u64,
         now: u64,
     ) -> Result<CommandResult> {
         let expires_at = now + ttl_secs as u64;
@@ -833,7 +813,7 @@ impl FullStateMachine {
             Some(bytes) => bincode::deserialize(&bytes)?,
             None => {
                 // No existing lock - create new one
-                let lock = LockInfo::new(path.to_string(), max_holders, fence_hint, new_holder);
+                let lock = LockInfo::new(path.to_string(), max_holders, new_holder);
                 let serialized = bincode::serialize(&lock)?;
                 self.locks.set(path.as_bytes(), &serialized)?;
                 return Ok(CommandResult::LockResult(lock.to_state(true)));
@@ -845,10 +825,8 @@ impl FullStateMachine {
 
         // Check if this lock_id already holds the lock (idempotent)
         if lock_info.has_holder(lock_id) {
-            // Already holding - extend TTL and bump the fence token
-            // (a re-acquire is still an acquire in Kleppmann terms).
+            // Already holding — extend TTL.
             lock_info.extend_ttl(lock_id, expires_at);
-            lock_info.fence_token = lock_info.fence_token.max(fence_hint);
             let serialized = bincode::serialize(&lock_info)?;
             self.locks.set(path.as_bytes(), &serialized)?;
             return Ok(CommandResult::LockResult(lock_info.to_state(true)));
@@ -863,7 +841,6 @@ impl FullStateMachine {
 
         if lock_info.can_accept(mode) {
             lock_info.add_holder(new_holder);
-            lock_info.fence_token = lock_info.fence_token.max(fence_hint);
             let serialized = bincode::serialize(&lock_info)?;
             self.locks.set(path.as_bytes(), &serialized)?;
             Ok(CommandResult::LockResult(lock_info.to_state(true)))
@@ -1004,19 +981,7 @@ impl FullStateMachine {
     }
 }
 
-/// Snapshot format version tag (F4 C1).
-///
-/// Future schema changes bump this explicitly rather than relying
-/// on serde's default-field behaviour, which fails silently with
-/// bincode's positional encoding. New snapshots are emitted as
-/// `[SNAPSHOT_VERSION_F4, bincode(Snapshot)]`. A first byte that is
-/// not the current tag is treated as a pre-F4 snapshot (raw bincode
-/// of `PreF4Snapshot`) and migrated with `LockMode::Exclusive` +
-/// `fence_token = 0` defaults.
-const SNAPSHOT_VERSION_F4: u8 = 1;
-
-/// Snapshot format for FullStateMachine (F4-era — locks carry
-/// `fence_token` and per-holder `mode`).
+/// Snapshot format for FullStateMachine.
 #[derive(Debug, Serialize, Deserialize)]
 struct Snapshot {
     /// All metadata entries.
@@ -1025,81 +990,6 @@ struct Snapshot {
     locks: HashMap<String, LockInfo>,
     /// Last applied index.
     last_applied: u64,
-}
-
-/// Pre-F4 lock-holder shape — no `mode` field. Used only for
-/// migrating snapshots produced before F4 C1.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct PreF4HolderInfo {
-    lock_id: String,
-    holder_info: String,
-    acquired_at: u64,
-    expires_at: u64,
-}
-
-/// Pre-F4 lock-entry shape — no `fence_token` field. Used only for
-/// migrating snapshots produced before F4 C1.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct PreF4LockInfo {
-    path: String,
-    max_holders: u32,
-    holders: Vec<PreF4HolderInfo>,
-}
-
-impl From<PreF4HolderInfo> for HolderInfo {
-    fn from(o: PreF4HolderInfo) -> Self {
-        Self {
-            lock_id: o.lock_id,
-            holder_info: o.holder_info,
-            mode: LockMode::Exclusive,
-            acquired_at: o.acquired_at,
-            expires_at: o.expires_at,
-        }
-    }
-}
-
-impl From<PreF4LockInfo> for LockInfo {
-    fn from(o: PreF4LockInfo) -> Self {
-        Self {
-            path: o.path,
-            max_holders: o.max_holders,
-            fence_token: 0,
-            holders: o.holders.into_iter().map(Into::into).collect(),
-        }
-    }
-}
-
-/// Pre-F4 snapshot shape — parsed as a fallback when the first
-/// byte of the buffer is not `SNAPSHOT_VERSION_F4`.
-#[derive(Debug, Serialize, Deserialize)]
-struct PreF4Snapshot {
-    metadata: HashMap<String, Vec<u8>>,
-    locks: HashMap<String, PreF4LockInfo>,
-    last_applied: u64,
-}
-
-impl From<PreF4Snapshot> for Snapshot {
-    fn from(o: PreF4Snapshot) -> Self {
-        Self {
-            metadata: o.metadata,
-            locks: o.locks.into_iter().map(|(k, v)| (k, v.into())).collect(),
-            last_applied: o.last_applied,
-        }
-    }
-}
-
-/// Decode a raw snapshot buffer, handling the version-byte prefix
-/// introduced in F4 C1 and the pre-F4 fallback.
-fn decode_snapshot(data: &[u8]) -> Result<Snapshot> {
-    if data.is_empty() {
-        return Err(super::RaftError::Storage("empty snapshot buffer".into()));
-    }
-    if data[0] == SNAPSHOT_VERSION_F4 {
-        return Ok(bincode::deserialize(&data[1..])?);
-    }
-    // Pre-F4: raw bincode of PreF4Snapshot at offset 0.
-    let old: PreF4Snapshot = bincode::deserialize(data)?;
-    Ok(old.into())
 }
 
 impl FullStateMachine {
@@ -1134,11 +1024,6 @@ impl FullStateMachine {
                 *ttl_secs,
                 holder_info,
                 *mode,
-                // `execute()` has no raft log index — only EC writes
-                // flow through it, and EC rejects lock commands in
-                // `apply_local`. Kept for completeness; locks always
-                // flow through `execute_in_txn` with a real index.
-                0,
                 *now_secs,
             ),
             Command::ReleaseLock { path, lock_id } => self.apply_release_lock(path, lock_id),
@@ -1160,15 +1045,10 @@ impl FullStateMachine {
     /// atomically in a single redb transaction (matching etcd/CockroachDB/TiKV
     /// practice). Without this, a crash between execute and save_last_applied
     /// could cause non-idempotent commands (e.g. AdjustCounter) to replay.
-    ///
-    /// `index` is the raft log index of the command being applied —
-    /// used as the `fence_token` source for `AcquireLock` (F4 C1).
-    /// All other commands ignore it.
     fn execute_in_txn(
         &self,
         txn: &redb::WriteTransaction,
         command: &Command,
-        index: u64,
     ) -> Result<CommandResult> {
         let meta_def = redb::TableDefinition::<&[u8], &[u8]>::new(self.metadata.name());
         let locks_def = redb::TableDefinition::<&[u8], &[u8]>::new(self.locks.name());
@@ -1271,7 +1151,7 @@ impl FullStateMachine {
                 let mut lock_info: LockInfo = match existing {
                     Some(bytes) => bincode::deserialize(&bytes)?,
                     None => {
-                        let lock = LockInfo::new(path.to_string(), *max_holders, index, new_holder);
+                        let lock = LockInfo::new(path.to_string(), *max_holders, new_holder);
                         let serialized = bincode::serialize(&lock)?;
                         table
                             .insert(path.as_bytes(), serialized.as_slice())
@@ -1283,10 +1163,8 @@ impl FullStateMachine {
                 lock_info.remove_expired(*now_secs);
 
                 if lock_info.has_holder(lock_id) {
-                    // Idempotent re-acquire — bump TTL and advance
-                    // the fence token (F4 C1).
+                    // Idempotent re-acquire — bump TTL.
                     lock_info.extend_ttl(lock_id, expires_at);
-                    lock_info.fence_token = lock_info.fence_token.max(index);
                     let serialized = bincode::serialize(&lock_info)?;
                     table
                         .insert(path.as_bytes(), serialized.as_slice())
@@ -1300,7 +1178,6 @@ impl FullStateMachine {
 
                 if lock_info.can_accept(*mode) {
                     lock_info.add_holder(new_holder);
-                    lock_info.fence_token = lock_info.fence_token.max(index);
                     let serialized = bincode::serialize(&lock_info)?;
                     table
                         .insert(path.as_bytes(), serialized.as_slice())
@@ -1476,7 +1353,7 @@ impl StateMachine for FullStateMachine {
         // and unrecoverable — if this replica fails but others succeed, state
         // has diverged. Following etcd/CockroachDB: panic to prevent silent
         // divergence (node must be restored from snapshot).
-        let result = match self.execute_in_txn(&write_txn, command, index) {
+        let result = match self.execute_in_txn(&write_txn, command) {
             Ok(result) => result,
             Err(e) => {
                 panic!(
@@ -1550,18 +1427,11 @@ impl StateMachine for FullStateMachine {
             last_applied: self.last_applied,
         };
 
-        // F4 C1: prefix with an explicit version byte so future
-        // schema changes can be detected + migrated cleanly. The
-        // `decode_snapshot` helper handles the pre-F4 buffer too.
-        let body = bincode::serialize(&snapshot)?;
-        let mut out = Vec::with_capacity(body.len() + 1);
-        out.push(SNAPSHOT_VERSION_F4);
-        out.extend_from_slice(&body);
-        Ok(out)
+        Ok(bincode::serialize(&snapshot)?)
     }
 
     fn restore_snapshot(&mut self, data: &[u8]) -> Result<()> {
-        let snapshot: Snapshot = decode_snapshot(data)?;
+        let snapshot: Snapshot = bincode::deserialize(data)?;
 
         // Atomic restore: all clears + inserts in a single redb transaction.
         // If any step fails, the transaction rolls back and old state is preserved.
@@ -1769,11 +1639,10 @@ mod tests {
         }
 
         // Snapshots must be logically identical (HashMap serialization order may vary).
-        // F4 C1: `snapshot()` prefixes with a version byte, so decode via the helper.
         let snap1 = sm1.snapshot().unwrap();
         let snap2 = sm2.snapshot().unwrap();
-        let decoded1 = decode_snapshot(&snap1).unwrap();
-        let decoded2 = decode_snapshot(&snap2).unwrap();
+        let decoded1: Snapshot = bincode::deserialize(&snap1).unwrap();
+        let decoded2: Snapshot = bincode::deserialize(&snap2).unwrap();
         assert_eq!(decoded1.metadata, decoded2.metadata, "Metadata diverged");
         assert_eq!(decoded1.locks, decoded2.locks, "Locks diverged");
         assert_eq!(
@@ -2223,7 +2092,7 @@ mod tests {
     }
 
     // ───────────────────────────────────────────────────────────────
-    // F4 C1 — LockMode, fence_token, RW semantics, snapshot migration
+    // F4 C1 — LockMode + RW semantics
     // ───────────────────────────────────────────────────────────────
 
     /// Helper: build an AcquireLock command with the given mode.
@@ -2323,95 +2192,22 @@ mod tests {
     }
 
     #[test]
-    fn test_f4_fence_token_monotonic_across_acquires() {
+    fn test_f4_snapshot_roundtrip_with_mode() {
         let store = RedbStore::open_temporary().unwrap();
         let mut sm = FullStateMachine::new(&store).unwrap();
 
-        // First acquire at index=5 → fence_token = 5.
-        sm.apply(5, &acquire_cmd("/rw/e", "r1", 3, LockMode::Shared, 1000))
-            .unwrap();
-        let t1 = sm.get_lock("/rw/e").unwrap().unwrap().fence_token;
-        assert_eq!(t1, 5);
-
-        // Second Shared acquire at index=12 → fence_token = max(5, 12) = 12.
-        sm.apply(12, &acquire_cmd("/rw/e", "r2", 3, LockMode::Shared, 1000))
-            .unwrap();
-        let t2 = sm.get_lock("/rw/e").unwrap().unwrap().fence_token;
-        assert_eq!(t2, 12);
-
-        // Idempotent re-acquire at index=20 still bumps the token.
-        sm.apply(20, &acquire_cmd("/rw/e", "r1", 3, LockMode::Shared, 1000))
-            .unwrap();
-        let t3 = sm.get_lock("/rw/e").unwrap().unwrap().fence_token;
-        assert_eq!(t3, 20);
-
-        // Never goes backwards — apply at lower index is idempotent,
-        // and `max(...)` keeps the token pinned.
-        let t4 = sm.get_lock("/rw/e").unwrap().unwrap().fence_token;
-        assert_eq!(t4, 20);
-    }
-
-    #[test]
-    fn test_f4_snapshot_migration_from_pre_f4() {
-        // Hand-craft a pre-F4 snapshot (raw bincode of PreF4Snapshot,
-        // no version byte prefix) and restore it into an F4 state
-        // machine. The lock holder must materialise with
-        // `mode = Exclusive` and `fence_token = 0`.
-        let mut locks = HashMap::new();
-        locks.insert(
-            "/legacy".to_string(),
-            PreF4LockInfo {
-                path: "/legacy".into(),
-                max_holders: 1,
-                holders: vec![PreF4HolderInfo {
-                    lock_id: "old-holder".into(),
-                    holder_info: "agent:legacy".into(),
-                    acquired_at: 500,
-                    expires_at: u64::MAX,
-                }],
-            },
-        );
-        let old_snap = PreF4Snapshot {
-            metadata: HashMap::new(),
-            locks,
-            last_applied: 42,
-        };
-        let raw = bincode::serialize(&old_snap).unwrap();
-        assert_ne!(raw.first(), Some(&SNAPSHOT_VERSION_F4));
-
-        let store = RedbStore::open_temporary().unwrap();
-        let mut sm = FullStateMachine::new(&store).unwrap();
-        sm.restore_snapshot(&raw).unwrap();
-
-        assert_eq!(sm.last_applied_index(), 42);
-        let lock = sm.get_lock("/legacy").unwrap().expect("lock migrated");
-        assert_eq!(lock.fence_token, 0, "pre-F4 default");
-        assert_eq!(lock.holders.len(), 1);
-        assert_eq!(lock.holders[0].mode, LockMode::Exclusive);
-        assert_eq!(lock.holders[0].lock_id, "old-holder");
-    }
-
-    #[test]
-    fn test_f4_snapshot_roundtrip_with_mode_and_fence() {
-        let store = RedbStore::open_temporary().unwrap();
-        let mut sm = FullStateMachine::new(&store).unwrap();
-
-        // Build a Shared reader-writer lock at index=7.
+        // Build a Shared reader-writer lock.
         sm.apply(7, &acquire_cmd("/rw/f", "r1", 3, LockMode::Shared, 1000))
             .unwrap();
-        let token_before = sm.get_lock("/rw/f").unwrap().unwrap().fence_token;
-        assert_eq!(token_before, 7);
 
         let snap = sm.snapshot().unwrap();
-        assert_eq!(snap.first(), Some(&SNAPSHOT_VERSION_F4));
-
         let store2 = RedbStore::open_temporary().unwrap();
         let mut sm2 = FullStateMachine::new(&store2).unwrap();
         sm2.restore_snapshot(&snap).unwrap();
 
         let lock = sm2.get_lock("/rw/f").unwrap().unwrap();
-        assert_eq!(lock.fence_token, token_before);
         assert_eq!(lock.holders[0].mode, LockMode::Shared);
+        assert_eq!(lock.max_holders, 3);
     }
 
     #[test]

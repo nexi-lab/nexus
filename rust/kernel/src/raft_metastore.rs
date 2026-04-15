@@ -105,7 +105,6 @@ fn raft_lock_to_kernel(lock: RaftLockInfo) -> KernelLockInfo {
     KernelLockInfo {
         path: lock.path,
         max_holders: lock.max_holders,
-        fence_token: lock.fence_token,
         holders: lock
             .holders
             .into_iter()
@@ -306,21 +305,5 @@ impl Metastore for ZoneMetastore {
             MetastoreError::IOError(format!("ZoneMetastore.list_locks({prefix}): {e}"))
         })?;
         Ok(locks.into_iter().map(raft_lock_to_kernel).collect())
-    }
-
-    fn force_release_lock(&self, path: &str) -> Result<bool, MetastoreError> {
-        // No dedicated raft command today — iterate holders via
-        // get_lock + release each. Not atomic under concurrent
-        // acquires, but force-release is an admin path so the
-        // window is acceptable. A dedicated ForceRelease command
-        // can be added in a follow-up.
-        let existing = self.get_lock(path)?;
-        let Some(lock) = existing else {
-            return Ok(false);
-        };
-        for holder in lock.holders {
-            self.release_lock(path, &holder.lock_id)?;
-        }
-        Ok(true)
     }
 }

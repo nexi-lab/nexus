@@ -116,10 +116,9 @@ pub struct KernelHolderInfo {
 
 /// Lock entry returned by `Metastore::get_lock` / `list_locks`.
 ///
-/// This is the full read-side view: capacity + current holders +
-/// Kleppmann fencing token. `acquired` / "did we get it" is only
-/// meaningful on the write path and is returned separately by
-/// `Metastore::acquire_lock`.
+/// This is the full read-side view: capacity + current holders.
+/// `acquired` / "did we get it" is only meaningful on the write
+/// path and is returned separately by `Metastore::acquire_lock`.
 #[derive(Clone, Debug, Default)]
 pub struct KernelLockInfo {
     /// Resource path this lock is attached to.
@@ -127,10 +126,6 @@ pub struct KernelLockInfo {
     /// Maximum concurrent holders. `1` = mutex; `>1` = semaphore /
     /// reader-writer.
     pub max_holders: u32,
-    /// Monotonically non-decreasing fence token — source is the
-    /// raft log index on the federation path, `0` on the
-    /// standalone path.
-    pub fence_token: u64,
     /// Current holders (after expired-holder cleanup).
     pub holders: Vec<KernelHolderInfo>,
 }
@@ -423,15 +418,6 @@ pub trait Metastore: Send + Sync {
         let _ = (prefix, limit);
         Ok(vec![])
     }
-
-    /// Admin path: drop all holders for a path and reset the lock
-    /// slot. Returns `Ok(true)` if the lock existed.
-    fn force_release_lock(&self, path: &str) -> Result<bool, MetastoreError> {
-        let _ = path;
-        Err(MetastoreError::IOError(
-            "force_release_lock not implemented for this metastore".into(),
-        ))
-    }
 }
 
 // PyMetastoreAdapter + conversion helpers (extract_metadata, to_python_metadata)
@@ -460,8 +446,7 @@ pub struct MemoryMetastore {
     /// Advisory lock sidecar (F4 C3). Parallel to the raft state
     /// machine's `locks` tree — same conflict rules, same holder
     /// shape, so standalone and federation observe bit-for-bit
-    /// identical behaviour. No fence-token source is available in
-    /// standalone mode, so new acquires leave `fence_token` at `0`.
+    /// identical behaviour.
     locks: DashMap<String, KernelLockInfo>,
 }
 
@@ -628,7 +613,6 @@ impl Metastore for MemoryMetastore {
                 let lock = KernelLockInfo {
                     path: path.to_string(),
                     max_holders,
-                    fence_token: 0, // standalone has no raft index
                     holders: vec![KernelHolderInfo {
                         lock_id: lock_id.to_string(),
                         holder_info: holder_info.to_string(),
@@ -731,10 +715,6 @@ impl Metastore for MemoryMetastore {
             }
         }
         Ok(out)
-    }
-
-    fn force_release_lock(&self, path: &str) -> Result<bool, MetastoreError> {
-        Ok(self.locks.remove(path).is_some())
     }
 }
 
@@ -1402,7 +1382,6 @@ impl Metastore for RedbMetastore {
                     let lock = KernelLockInfo {
                         path: path.to_string(),
                         max_holders,
-                        fence_token: 0,
                         holders: vec![KernelHolderInfo {
                             lock_id: lock_id.to_string(),
                             holder_info: holder_info.to_string(),
@@ -1592,25 +1571,6 @@ impl Metastore for RedbMetastore {
         }
         Ok(out)
     }
-
-    fn force_release_lock(&self, path: &str) -> Result<bool, MetastoreError> {
-        let txn = self
-            .db
-            .begin_write()
-            .map_err(|e| MetastoreError::IOError(format!("redb begin_write locks: {e}")))?;
-        let existed = {
-            let mut table = txn
-                .open_table(LOCKS_TABLE)
-                .map_err(|e| MetastoreError::IOError(format!("redb open locks: {e}")))?;
-            let prev = table
-                .remove(path)
-                .map_err(|e| MetastoreError::IOError(format!("redb locks remove: {e}")))?;
-            prev.is_some()
-        };
-        txn.commit()
-            .map_err(|e| MetastoreError::IOError(format!("redb commit locks: {e}")))?;
-        Ok(existed)
-    }
 }
 
 // ── Lock record binary serialization (F4 C3) ────────────────────
@@ -1623,7 +1583,6 @@ impl Metastore for RedbMetastore {
 //   [ver:u8=1]
 //   [path_len:u32][path]
 //   [max_holders:u32]
-//   [fence_token:u64]
 //   [holder_count:u32]
 //   holder_count × {
 //     [lock_id_len:u32][lock_id]
@@ -1661,7 +1620,6 @@ fn serialize_lock_info(lock: &KernelLockInfo) -> Vec<u8> {
     buf.push(LOCK_RECORD_VERSION);
     write_str(&mut buf, &lock.path);
     buf.extend_from_slice(&lock.max_holders.to_le_bytes());
-    buf.extend_from_slice(&lock.fence_token.to_le_bytes());
     buf.extend_from_slice(&(lock.holders.len() as u32).to_le_bytes());
     for h in &lock.holders {
         write_str(&mut buf, &h.lock_id);
@@ -1717,7 +1675,6 @@ fn deserialize_lock_info(data: &[u8]) -> Result<KernelLockInfo, MetastoreError> 
 
     let path = read_str(data, &mut pos)?;
     let max_holders = read_u32(data, &mut pos)?;
-    let fence_token = read_u64(data, &mut pos)?;
     let holder_count = read_u32(data, &mut pos)? as usize;
 
     let mut holders = Vec::with_capacity(holder_count);
@@ -1745,7 +1702,6 @@ fn deserialize_lock_info(data: &[u8]) -> Result<KernelLockInfo, MetastoreError> 
     Ok(KernelLockInfo {
         path,
         max_holders,
-        fence_token,
         holders,
     })
 }
@@ -1981,7 +1937,7 @@ mod tests {
     }
 
     #[test]
-    fn memory_lock_list_and_force_release() {
+    fn memory_lock_list_filters_by_prefix() {
         let ms = MemoryMetastore::new();
         ms.acquire_lock("/lk/ns/a", "h1", KernelLockMode::Exclusive, 1, 60, "agent")
             .unwrap();
@@ -1993,9 +1949,8 @@ mod tests {
         let under_ns = ms.list_locks("/lk/ns/", 10).unwrap();
         assert_eq!(under_ns.len(), 2);
 
-        assert!(ms.force_release_lock("/lk/ns/a").unwrap());
-        assert!(ms.get_lock("/lk/ns/a").unwrap().is_none());
-        assert!(ms.get_lock("/lk/ns/b").unwrap().is_some());
+        let all_lk = ms.list_locks("/lk/", 10).unwrap();
+        assert_eq!(all_lk.len(), 3);
     }
 
     #[test]
@@ -2030,7 +1985,6 @@ mod tests {
         let lock = KernelLockInfo {
             path: "/lk/rt".into(),
             max_holders: 3,
-            fence_token: 42,
             holders: vec![
                 KernelHolderInfo {
                     lock_id: "h1".into(),
@@ -2052,7 +2006,6 @@ mod tests {
         let restored = deserialize_lock_info(&buf).unwrap();
         assert_eq!(restored.path, lock.path);
         assert_eq!(restored.max_holders, lock.max_holders);
-        assert_eq!(restored.fence_token, lock.fence_token);
         assert_eq!(restored.holders.len(), 2);
         assert_eq!(restored.holders[0].lock_id, "h1");
         assert_eq!(restored.holders[0].mode, KernelLockMode::Shared);

@@ -128,12 +128,6 @@ pub struct PyLockState {
     pub current_holders: u32,
     #[pyo3(get)]
     pub max_holders: u32,
-    /// Monotonically non-decreasing fencing token (F4 C2). Sourced
-    /// from the raft log index; zero for state machines without an
-    /// index (the `PyMetastore` embedded path passes its
-    /// `next_index`).
-    #[pyo3(get)]
-    pub fence_token: u64,
     #[pyo3(get)]
     pub holders: Vec<PyHolderInfo>,
 }
@@ -144,7 +138,6 @@ impl From<RustLockState> for PyLockState {
             acquired: s.acquired,
             current_holders: s.current_holders,
             max_holders: s.max_holders,
-            fence_token: s.fence_token,
             holders: s.holders.into_iter().map(|h| h.into()).collect(),
         }
     }
@@ -158,9 +151,6 @@ pub struct PyLockInfo {
     pub path: String,
     #[pyo3(get)]
     pub max_holders: u32,
-    /// Monotonically non-decreasing fencing token (F4 C2).
-    #[pyo3(get)]
-    pub fence_token: u64,
     #[pyo3(get)]
     pub holders: Vec<PyHolderInfo>,
 }
@@ -170,7 +160,6 @@ impl From<RustLockInfo> for PyLockInfo {
         Self {
             path: l.path,
             max_holders: l.max_holders,
-            fence_token: l.fence_token,
             holders: l.holders.into_iter().map(|h| h.into()).collect(),
         }
     }

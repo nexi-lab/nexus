@@ -536,10 +536,6 @@ fn proto_result_to_command_result(
                 acquired: lr.acquired,
                 current_holders: holders.len() as u32,
                 max_holders: 0,
-                // Witness-path response has no fence token — pre-F4
-                // protocol. Callers that need fencing must use the
-                // native kernel lock API introduced in F4 C4.
-                fence_token: 0,
                 holders,
             })
         }

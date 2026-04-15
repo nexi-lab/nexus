@@ -16,6 +16,8 @@ Usage:
 from __future__ import annotations
 
 import logging
+import os
+import threading
 from typing import Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
@@ -411,6 +413,113 @@ class SlimNexusFS:
 
     # -- Search operations --
 
+    # Issue #3711: threshold above which lazy trigram index build is worthwhile.
+    _TRIGRAM_LAZY_BUILD_THRESHOLD = 500
+
+    def _trigram_index_path(self) -> str:
+        """Return the expected trigram index path for this facade's zone."""
+        zone_id = self._ctx.zone_id
+        index_dir = os.path.join(os.path.expanduser("~"), ".nexus", "indexes")
+        return os.path.join(index_dir, f"{os.path.basename(zone_id) or ROOT_ZONE_ID}.trgm")
+
+    # Guard to ensure only one background build runs at a time.
+    _trigram_build_lock = threading.Lock()
+    _trigram_build_pending = False
+
+    def _ensure_trigram_index(self, file_paths: list[str]) -> str | None:
+        """Return the trigram index path if it exists, or kick off a background build.
+
+        Issue #3711: The trigram index was never built because
+        ``build_trigram_index_for_zone`` had no callers.
+
+        Design: the first grep is NOT slowed down.  If no index exists,
+        we start a background thread that builds it from the file list.
+        The *current* grep proceeds without the index (full scan).  The
+        *next* grep finds the index on disk and uses the fast path.
+
+        Returns the index path when the index already exists, None otherwise.
+        """
+        index_path = self._trigram_index_path()
+        if os.path.isfile(index_path):
+            return index_path
+
+        if len(file_paths) < self._TRIGRAM_LAZY_BUILD_THRESHOLD:
+            return None
+
+        # Kick off background build (non-blocking).
+        self._maybe_build_trigram_background(file_paths, index_path)
+        return None
+
+    def _maybe_build_trigram_background(self, file_paths: list[str], index_path: str) -> None:
+        """Start a background thread to build the trigram index if not already running."""
+        if self._trigram_build_pending:
+            return
+        if not SlimNexusFS._trigram_build_lock.acquire(blocking=False):
+            return
+
+        SlimNexusFS._trigram_build_pending = True
+        # Snapshot the kernel + ctx references for the background thread.
+        kernel = self._kernel
+        ctx = self._ctx
+
+        def _build() -> None:
+            try:
+                from nexus_kernel import build_trigram_index_from_entries
+
+                entries: list[tuple[str, bytes]] = []
+                for fp in file_paths:
+                    try:
+                        content = kernel.sys_read(fp, context=ctx)
+                        if isinstance(content, bytes):
+                            entries.append((fp, content))
+                    except Exception:
+                        continue
+
+                if entries:
+                    os.makedirs(os.path.dirname(index_path), exist_ok=True)
+                    build_trigram_index_from_entries(entries, index_path)
+                    logger.debug(
+                        "Issue #3711: Built trigram index at %s (%d files)",
+                        index_path,
+                        len(entries),
+                    )
+            except Exception:
+                logger.debug("Background trigram build failed", exc_info=True)
+            finally:
+                SlimNexusFS._trigram_build_pending = False
+                SlimNexusFS._trigram_build_lock.release()
+
+        thread = threading.Thread(target=_build, daemon=True)
+        thread.start()
+
+    def _trigram_candidates(
+        self,
+        index_path: str,
+        pattern: str,
+        path: str,
+        ignore_case: bool,
+    ) -> list[str] | None:
+        """Return candidate file paths from trigram index, or None on error."""
+        try:
+            from nexus_kernel import trigram_search_candidates
+        except (ImportError, OSError):
+            return None
+
+        try:
+            candidates = trigram_search_candidates(index_path, pattern, ignore_case)
+        except (OSError, ValueError, RuntimeError):
+            return None
+
+        if candidates is None:
+            return None
+
+        # Filter to files under the requested path.
+        if path != "/":
+            prefix = path if path.endswith("/") else path + "/"
+            candidates = [c for c in candidates if c.startswith(prefix) or c == path]
+
+        return candidates
+
     def grep(
         self,
         pattern: str,
@@ -442,17 +551,25 @@ class SlimNexusFS:
         except re.error as exc:
             raise ValueError(f"Invalid regex pattern: {exc}") from exc
 
-        # Stream: list files, read and search each one incrementally.
-        # Stop as soon as max_results is reached — no unbounded preloading.
+        # List all files first (needed for both lazy index build and fallback).
         entries = self._kernel.sys_readdir(
             path,
             recursive=True,
             details=True,
             context=self._ctx,
         )
-        file_paths = [
+        all_files = [
             e["path"] for e in entries if isinstance(e, dict) and not e.get("is_directory", False)
         ]
+
+        # Issue #3711: Lazy-build trigram index on first grep above threshold,
+        # then use it to narrow candidates.  Falls back to full scan on miss.
+        file_paths = all_files
+        index_path = self._ensure_trigram_index(all_files)
+        if index_path is not None:
+            narrowed = self._trigram_candidates(index_path, pattern, path, ignore_case)
+            if narrowed is not None:
+                file_paths = narrowed
 
         matches: list[dict[str, Any]] = []
         # Process in bounded batches for Rust bulk grep when available

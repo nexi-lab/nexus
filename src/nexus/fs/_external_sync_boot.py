@@ -50,7 +50,19 @@ def ensure_external_sync() -> None:
                 profile_store=store,
                 startup_timeout=3.0,
             )
-            asyncio.run(registry.startup())
+            coro = registry.startup()
+            # If called inside an already-running event loop (e.g. async mount),
+            # we can't use asyncio.run(). Fall back to running in a new thread.
+            try:
+                asyncio.get_running_loop()
+                # Already in an async context — run sync in a thread
+                import concurrent.futures
+
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    pool.submit(asyncio.run, coro).result(timeout=5.0)
+            except RuntimeError:
+                # No running loop — safe to use asyncio.run()
+                asyncio.run(coro)
         finally:
             store.close()
     except Exception:

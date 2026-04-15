@@ -380,80 +380,74 @@ def _source_display(backend: str) -> str:
 @auth.command("list")
 @add_output_options
 def list_auth(output_opts: OutputOptions) -> None:
-    """List configured auth across services."""
+    """List configured auth across services.
+
+    Merges two sources:
+      1. Profile store (external-CLI synced profiles + migrated OAuth profiles)
+      2. Legacy UnifiedAuthService summaries (OAuth, secret, native discovery)
+
+    Profile store entries take precedence when both sources have the same
+    provider. Legacy entries fill in services not yet in the profile store.
+    """
+    data: list[dict[str, str]] = []
+    seen_providers: set[str] = set()
+
+    # 1. Profile store entries (external-cli synced + migrated)
     profiles = _try_profile_store_list()
-
     if profiles is not None:
-        # New unified table from profile store
-        data = [
-            {
-                "provider": p.provider,
-                "account": p.account_identifier,
-                "source": _source_display(p.backend),
-                "status": _format_status(p),
-                "last_used": _format_relative_time(p.usage_stats.last_used_at),
-            }
-            for p in profiles
-        ]
+        for p in profiles:
+            seen_providers.add(p.provider)
+            data.append(
+                {
+                    "provider": p.provider,
+                    "account": p.account_identifier,
+                    "source": _source_display(p.backend),
+                    "status": _format_status(p),
+                    "last_used": _format_relative_time(p.usage_stats.last_used_at),
+                }
+            )
 
-        def _human_display(_data: object) -> None:
-            table = Table(title="Unified Auth", show_header=True, header_style="bold cyan")
-            table.add_column("Provider", style="green")
-            table.add_column("Account", style="cyan")
-            table.add_column("Source", style="blue")
-            table.add_column("Status", style="yellow")
-            table.add_column("Last used")
-            for row in data:
-                table.add_row(
-                    row["provider"],
-                    row["account"],
-                    row["source"],
-                    row["status"],
-                    row["last_used"],
-                )
-            console.print(table)
+    # 2. Legacy summaries — fill in services not yet in the profile store
+    try:
+        service = _build_auth_service()
+        summaries = asyncio.run(service.list_summaries())
+        for s in summaries:
+            if s.service in seen_providers:
+                continue
+            data.append(
+                {
+                    "provider": s.service,
+                    "account": "",
+                    "source": s.source,
+                    "status": s.status.value,
+                    "last_used": s.message,
+                }
+            )
+    except Exception:
+        pass  # Legacy path unavailable — show only profile store entries
 
-        render_output(data=data, output_opts=output_opts, human_formatter=_human_display)
+    if not data:
+        console.print("[dim]No auth configured. Run `nexus-fs auth connect` to set up.[/dim]")
         return
 
-    # Fallback: old UnifiedAuthService path
-    service = _build_auth_service()
-    summaries = asyncio.run(service.list_summaries())
-
-    data_legacy = [
-        {
-            "service": s.service,
-            "kind": s.kind.value,
-            "status": s.status.value,
-            "source": s.source,
-            "message": s.message,
-        }
-        for s in summaries
-    ]
-
-    def _human_display_legacy(_data: object) -> None:
+    def _human_display(_data: object) -> None:
         table = Table(title="Unified Auth", show_header=True, header_style="bold cyan")
-        table.add_column("Service", style="green")
-        table.add_column("Kind", style="cyan")
-        table.add_column("Status", style="yellow")
+        table.add_column("Provider", style="green")
+        table.add_column("Account", style="cyan")
         table.add_column("Source", style="blue")
-        table.add_column("Message")
-        for summary in summaries:
+        table.add_column("Status", style="yellow")
+        table.add_column("Last used")
+        for row in data:
             table.add_row(
-                summary.service,
-                summary.kind.value,
-                summary.status.value,
-                summary.source,
-                summary.message,
+                row["provider"],
+                row["account"],
+                row["source"],
+                row["status"],
+                row["last_used"],
             )
         console.print(table)
-        console.print(f"[dim]Secret store: {service.secret_store_path}[/dim]")
 
-    render_output(
-        data=data_legacy,
-        output_opts=output_opts,
-        human_formatter=_human_display_legacy,
-    )
+    render_output(data=data, output_opts=output_opts, human_formatter=_human_display)
 
 
 @auth.command("test")

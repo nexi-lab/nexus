@@ -69,9 +69,14 @@ class TestAuthListNewTable:
     def test_new_table_shows_source_column(self) -> None:
         from nexus.fs._auth_cli import auth
 
+        mock_svc = MagicMock()
+        mock_svc.list_summaries = AsyncMock(return_value=[])
         runner = CliRunner(env={"NEXUS_NO_AUTO_JSON": "1"})
-        with patch(
-            "nexus.fs._auth_cli._try_profile_store_list", return_value=_make_store_profiles()
+        with (
+            patch(
+                "nexus.fs._auth_cli._try_profile_store_list", return_value=_make_store_profiles()
+            ),
+            patch("nexus.fs._auth_cli._build_auth_service", return_value=mock_svc),
         ):
             result = runner.invoke(auth, ["list"])
 
@@ -82,9 +87,14 @@ class TestAuthListNewTable:
     def test_new_table_shows_cooldown_status(self) -> None:
         from nexus.fs._auth_cli import auth
 
+        mock_svc = MagicMock()
+        mock_svc.list_summaries = AsyncMock(return_value=[])
         runner = CliRunner(env={"NEXUS_NO_AUTO_JSON": "1"})
-        with patch(
-            "nexus.fs._auth_cli._try_profile_store_list", return_value=_make_store_profiles()
+        with (
+            patch(
+                "nexus.fs._auth_cli._try_profile_store_list", return_value=_make_store_profiles()
+            ),
+            patch("nexus.fs._auth_cli._build_auth_service", return_value=mock_svc),
         ):
             result = runner.invoke(auth, ["list"])
 
@@ -121,8 +131,13 @@ class TestAuthListJsonOutput:
         from nexus.fs._auth_cli import auth
 
         runner = CliRunner()
-        with patch(
-            "nexus.fs._auth_cli._try_profile_store_list", return_value=_make_store_profiles()
+        mock_svc = MagicMock()
+        mock_svc.list_summaries = AsyncMock(return_value=[])
+        with (
+            patch(
+                "nexus.fs._auth_cli._try_profile_store_list", return_value=_make_store_profiles()
+            ),
+            patch("nexus.fs._auth_cli._build_auth_service", return_value=mock_svc),
         ):
             result = runner.invoke(auth, ["list", "--json"])
 

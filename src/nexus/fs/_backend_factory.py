@@ -85,7 +85,16 @@ def _resolve_external_credential(backend_key: str) -> Any:
 
     try:
         adapter = AwsCliSyncAdapter()
-        return asyncio.run(adapter.resolve_credential(backend_key))
+        coro = adapter.resolve_credential(backend_key)
+        try:
+            asyncio.get_running_loop()
+            # Inside async context — run in a thread
+            import concurrent.futures
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                return pool.submit(asyncio.run, coro).result(timeout=10.0)
+        except RuntimeError:
+            return asyncio.run(coro)
     except Exception:
         return None
 

@@ -272,6 +272,11 @@ def _try_profile_store_list() -> list[Any] | None:
     Returns the list of AuthProfile objects on success, or None if the store
     is unavailable, empty, or raises any exception.
     """
+    # Ensure external CLIs (aws-cli, etc.) have been synced into the store.
+    from nexus.fs._external_sync_boot import ensure_external_sync
+
+    ensure_external_sync()
+
     try:
         from nexus.bricks.auth.profile_store import SqliteAuthProfileStore
         from nexus.fs._paths import persistent_dir

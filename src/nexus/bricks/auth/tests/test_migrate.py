@@ -191,7 +191,8 @@ class TestPreExistingDB:
 
 
 class TestDualReadStore:
-    def test_new_store_takes_priority(self, sqlite_store: SqliteAuthProfileStore) -> None:
+    def test_old_store_wins_on_collision(self, sqlite_store: SqliteAuthProfileStore) -> None:
+        """Old store is authoritative during migration window — wins on collision."""
         old_adapter = OldStoreAdapter(_fake_old_creds(("google", "alice@co.com")))
         sqlite_store.upsert(
             make_profile("google/alice@co.com", provider="google", success_count=99)
@@ -200,8 +201,8 @@ class TestDualReadStore:
 
         p = dual.get("google/alice@co.com")
         assert p is not None
-        # Should come from new store (has success_count=99)
-        assert p.usage_stats.success_count == 99
+        # Old store wins (success_count=0, not 99 from new store)
+        assert p.usage_stats.success_count == 0
 
     def test_falls_back_to_old_store(self, sqlite_store: SqliteAuthProfileStore) -> None:
         old_adapter = OldStoreAdapter(_fake_old_creds(("google", "alice@co.com")))
@@ -233,7 +234,8 @@ class TestDualReadStore:
         assert "google/new@co.com" in ids
         assert "google/old@co.com" in ids
 
-    def test_list_new_wins_on_collision(self, sqlite_store: SqliteAuthProfileStore) -> None:
+    def test_list_old_wins_on_collision(self, sqlite_store: SqliteAuthProfileStore) -> None:
+        """Old store is authoritative — wins on list() collision too."""
         old_adapter = OldStoreAdapter(_fake_old_creds(("google", "alice@co.com")))
         sqlite_store.upsert(
             make_profile("google/alice@co.com", provider="google", success_count=99)
@@ -242,7 +244,7 @@ class TestDualReadStore:
 
         results = dual.list(provider="google")
         assert len(results) == 1
-        assert results[0].usage_stats.success_count == 99  # new store version wins
+        assert results[0].usage_stats.success_count == 0  # old store wins
 
     def test_writes_go_to_new_store(self, sqlite_store: SqliteAuthProfileStore) -> None:
         old_adapter = OldStoreAdapter([])

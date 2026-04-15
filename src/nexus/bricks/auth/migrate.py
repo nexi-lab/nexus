@@ -290,22 +290,25 @@ class DualReadAuthProfileStore:
         self._old = old_adapter
 
     def list(self, *, provider: str | None = None) -> list[AuthProfile]:
-        # Merge both stores: new store profiles win on ID collision.
-        # During partial migration, both stores may have valid profiles.
+        # Merge both stores. Old store wins on ID collision because the old
+        # store remains authoritative for writes during the migration window
+        # (Phase 1-3). This ensures revokes/deletes in the old store are
+        # respected and not masked by stale copied rows in the new store.
         new_profiles = self._new.list(provider=provider)
         old_profiles = self._old.list(provider=provider)
         merged: dict[str, AuthProfile] = {}
-        for p in old_profiles:
-            merged[p.id] = p
         for p in new_profiles:
-            merged[p.id] = p  # new wins on collision
+            merged[p.id] = p
+        for p in old_profiles:
+            merged[p.id] = p  # old wins on collision (authoritative)
         return list(merged.values())
 
     def get(self, profile_id: str) -> AuthProfile | None:
-        result = self._new.get(profile_id)
-        if result is not None:
-            return result
-        return self._old.get(profile_id)
+        # Old store wins on collision (authoritative during migration window).
+        old_result = self._old.get(profile_id)
+        if old_result is not None:
+            return old_result
+        return self._new.get(profile_id)
 
     def upsert(self, profile: AuthProfile) -> None:
         self._new.upsert(profile)

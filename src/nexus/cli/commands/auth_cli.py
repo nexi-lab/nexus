@@ -515,10 +515,21 @@ def auth_migrate(apply: bool) -> None:
     This is Phase 1 of the auth unification (#3722). Migration is copy-only:
     the old store is never modified or deleted.
     """
+    # Guard: refuse to run if the source store is a shared/remote DB,
+    # since the destination is always host-local ~/.nexus/auth_profiles.db.
+    import os
     from pathlib import Path
 
     from nexus.bricks.auth.migrate import build_migration_plan, execute_migration
     from nexus.bricks.auth.profile_store import SqliteAuthProfileStore
+
+    db_url = os.environ.get("NEXUS_DATABASE_URL", "")
+    if db_url and not db_url.startswith("sqlite"):
+        raise click.ClickException(
+            "auth migrate only supports local SQLite deployments. "
+            f"Detected NEXUS_DATABASE_URL={db_url!r}. "
+            "Shared-DB migration will be supported in Phase 4 (#3741)."
+        )
 
     # Collect old credentials across ALL zones — pass zone_id=None to
     # TokenManager.list_credentials() to avoid filtering to root only.

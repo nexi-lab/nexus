@@ -268,29 +268,37 @@ class RaftMetadataStore(MetastoreABC):
         return result
 
     @classmethod
-    def embedded(cls, db_path: str, zone_id: str | None = None) -> "RaftMetadataStore":
-        """Create an embedded metastore using direct sled access.
+    def embedded(cls, db_path: str, zone_id: str | None = None) -> "MetastoreABC":
+        """Create an embedded metastore for standalone mode.
 
-        This is the fast path (~5μs per operation) for standalone mode.
+        F2 C8: returns a ``RustMetastoreProxy`` wrapping a fresh Rust kernel
+        with the redb path wired in. This is what NexusFS expects for the
+        kernel hot path — ``kernel.sys_write`` / ``sys_readdir`` / ``sys_stat``
+        all persist through the same store the Python ``self.metadata.*``
+        calls hit. The legacy direct-sled return path left the kernel without
+        a wired metastore, so writes ended in dcache only and reads via the
+        Python store saw nothing.
 
         Args:
-            db_path: Path to the sled database directory
-            zone_id: Zone ID for this store
-
-        Returns:
-            RaftMetadataStore instance
+            db_path: Path to the metastore directory (``.redb`` is appended).
+            zone_id: Zone ID — kept for API compatibility, currently ignored
+                by the kernel-side metastore (single-zone standalone mode).
         """
-        from nexus.raft import Metastore
+        del zone_id  # reserved for future per-zone embedded mode
+        from nexus.core.metastore import RustMetastoreProxy
 
-        if Metastore is None:
+        try:
+            from nexus_kernel import Kernel as _Kernel
+        except ImportError as exc:
             raise RuntimeError(
-                "Metastore not available. Build with: "
-                "maturin develop -m rust/raft/Cargo.toml --features python"
-            )
+                "nexus_kernel not available. Build with: maturin develop -m rust/kernel/Cargo.toml"
+            ) from exc
 
-        metastore = Metastore(db_path)
-        logger.info(f"Created embedded RaftMetadataStore at {db_path}")
-        return cls(engine=metastore, zone_id=zone_id)
+        redb_path = db_path + (".redb" if not db_path.endswith(".redb") else "")
+        kernel = _Kernel()
+        proxy = RustMetastoreProxy(kernel, redb_path)
+        logger.info(f"Created embedded RustMetastoreProxy at {redb_path}")
+        return proxy
 
     def _get_raw(self, path: str) -> FileMetadata | None:
         """Get metadata for a file.

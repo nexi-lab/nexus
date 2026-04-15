@@ -25,17 +25,20 @@ from typing import Any
 from nexus.core.metastore import RustMetastoreProxy
 
 
-def DictMetastore(*_args: Any, **_kwargs: Any) -> RustMetastoreProxy:  # noqa: N802
+def DictMetastore(  # noqa: N802
+    storage_path: Any = None,
+    *_args: Any,
+    **_kwargs: Any,
+) -> RustMetastoreProxy:
     """Return a fresh kernel-backed metastore for tests.
 
-    The factory signature accepts (and ignores) any positional or
-    keyword arguments the old class constructor took, so existing
-    ``DictMetastore()``, ``DictMetastore(storage_path=...)`` etc. still
-    work without editing call sites. The returned object is a
-    ``RustMetastoreProxy`` over a freshly constructed ``Kernel``; the
-    kernel's default in-memory metastore persists for the lifetime of
-    the proxy.
+    Delegates to the production ``nexus.storage.dict_metastore``
+    factory so the test helper and the shipped symbol stay in
+    lockstep. The factory signature accepts (and ignores) any extra
+    positional / keyword arguments the old class constructor took so
+    existing ``DictMetastore()``, ``DictMetastore(storage_path=...)``
+    etc. still work without editing call sites.
     """
-    from nexus_kernel import Kernel
+    from nexus.storage.dict_metastore import DictMetastore as _factory
 
-    return RustMetastoreProxy(Kernel())
+    return _factory(storage_path)

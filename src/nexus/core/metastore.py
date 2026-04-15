@@ -469,6 +469,31 @@ class RustMetastoreProxy(MetastoreABC):
     def rename_path(self, old_path: str, new_path: str) -> None:
         self._rust_kernel.metastore_rename_path(old_path, new_path)
 
+    def list_paginated(
+        self,
+        prefix: str = "",
+        recursive: bool = True,
+        limit: int = 1000,
+        cursor: str | None = None,
+        _zone_id: str | None = None,  # noqa: ARG002 — API compat
+    ) -> Any:
+        """Return a page of entries matching ``prefix``.
+
+        Thin wrapper over ``kernel.metastore_list_paginated`` (F3 C2) — the
+        kernel returns a ``{items, next_cursor, has_more, total_count}``
+        dict; we wrap it in a ``PaginatedResult`` dataclass so callers
+        keep using ``.items`` / ``.next_cursor`` attribute access.
+        """
+        from nexus.core.pagination import PaginatedResult
+
+        page = self._rust_kernel.metastore_list_paginated(prefix, recursive, limit, cursor)
+        return PaginatedResult(
+            items=page["items"],
+            next_cursor=page["next_cursor"],
+            has_more=page["has_more"],
+            total_count=page["total_count"],
+        )
+
     def put_if_version(
         self,
         metadata: FileMetadata,

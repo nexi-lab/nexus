@@ -70,9 +70,12 @@ def authenticate_api_key(auth_provider: Any, api_key: str) -> Any:
     # Use the repo's shared sync bridge which handles event-loop
     # detection, timeout, and clean thread management (#3731 R5).
     try:
+        from collections.abc import Coroutine as CoroutineABC
+        from typing import cast
+
         from nexus.lib.sync_bridge import run_sync
 
-        return run_sync(coro, timeout=10.0)
+        return run_sync(cast(CoroutineABC[Any, Any, Any], coro), timeout=10.0)
     except Exception:
         logger.warning(
             "Failed to authenticate per-request API key via auth_provider; "

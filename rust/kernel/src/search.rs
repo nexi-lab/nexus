@@ -40,6 +40,11 @@ const GREP_MMAP_PARALLEL_THRESHOLD: usize = 10;
 /// Maximum file size to mmap.
 const GREP_MMAP_MAX_FILE_SIZE: u64 = 1024 * 1024 * 1024; // 1GB
 
+/// Issue #3711: Below this size, std::fs::read() outperforms mmap.
+/// mmap incurs page-table setup overhead (~20-35 µs) that dominates for
+/// small files.  Regular read() is ~5-10 µs for files under 32 KB.
+const GREP_MMAP_SMALL_FILE_THRESHOLD: u64 = 32 * 1024; // 32KB
+
 // ---------------------------------------------------------------------------
 // Regex compilation cache (thread-local LRU, 16 entries)
 // ---------------------------------------------------------------------------
@@ -406,8 +411,13 @@ fn grep_files_mmap_parallel(
     results
 }
 
-/// Grep a single file using memory-mapped I/O.
-fn grep_single_file_mmap(
+/// Search pre-loaded content string for pattern matches.
+///
+/// Extracted from `grep_single_file_mmap` so both the mmap and read()
+/// paths share identical search logic (Issue #3711).
+#[allow(clippy::too_many_arguments)]
+fn search_content(
+    content_str: &str,
     file_path: &str,
     pattern: &str,
     pattern_lower: &str,
@@ -415,23 +425,7 @@ fn grep_single_file_mmap(
     ignore_case: bool,
     regex_opt: Option<&regex::bytes::Regex>,
     max_results: usize,
-) -> Option<Vec<GrepMatch>> {
-    let file = File::open(file_path).ok()?;
-    let metadata = file.metadata().ok()?;
-    let file_size = metadata.len();
-
-    if file_size == 0 {
-        return Some(Vec::new());
-    }
-
-    if file_size > GREP_MMAP_MAX_FILE_SIZE {
-        return None;
-    }
-
-    // SAFETY: Read-only mmap, same approach as ripgrep.
-    let mmap = unsafe { Mmap::map(&file).ok()? };
-    let content_str = simd_from_utf8(&mmap).ok()?;
-
+) -> Vec<GrepMatch> {
     let mut results = Vec::new();
 
     if is_literal {
@@ -500,7 +494,70 @@ fn grep_single_file_mmap(
         }
     }
 
-    Some(results)
+    results
+}
+
+/// Grep a single file using memory-mapped I/O (large files) or regular
+/// read (small files).
+///
+/// Issue #3711: Files below `GREP_MMAP_SMALL_FILE_THRESHOLD` are read
+/// with `std::fs::read()` to avoid mmap page-table overhead that dominates
+/// on small-file corpora.
+fn grep_single_file_mmap(
+    file_path: &str,
+    pattern: &str,
+    pattern_lower: &str,
+    is_literal: bool,
+    ignore_case: bool,
+    regex_opt: Option<&regex::bytes::Regex>,
+    max_results: usize,
+) -> Option<Vec<GrepMatch>> {
+    let file = File::open(file_path).ok()?;
+    let metadata = file.metadata().ok()?;
+    let file_size = metadata.len();
+
+    if file_size == 0 {
+        return Some(Vec::new());
+    }
+
+    if file_size > GREP_MMAP_MAX_FILE_SIZE {
+        return None;
+    }
+
+    // Issue #3711: For small files, read() avoids mmap syscall overhead.
+    // Reuse the already-opened File handle to avoid a second open syscall.
+    if file_size < GREP_MMAP_SMALL_FILE_THRESHOLD {
+        use std::io::Read;
+        let mut bytes = Vec::with_capacity(file_size as usize);
+        let mut file = file;
+        file.read_to_end(&mut bytes).ok()?;
+        let content_str = simd_from_utf8(&bytes).ok()?;
+        return Some(search_content(
+            content_str,
+            file_path,
+            pattern,
+            pattern_lower,
+            is_literal,
+            ignore_case,
+            regex_opt,
+            max_results,
+        ));
+    }
+
+    // SAFETY: Read-only mmap, same approach as ripgrep.
+    let mmap = unsafe { Mmap::map(&file).ok()? };
+    let content_str = simd_from_utf8(&mmap).ok()?;
+
+    Some(search_content(
+        content_str,
+        file_path,
+        pattern,
+        pattern_lower,
+        is_literal,
+        ignore_case,
+        regex_opt,
+        max_results,
+    ))
 }
 
 // ---------------------------------------------------------------------------

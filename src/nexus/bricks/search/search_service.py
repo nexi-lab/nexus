@@ -2131,6 +2131,22 @@ class SearchService:
                 else SearchStrategy.SEQUENTIAL
             )
         else:
+            # Issue #3711: Kick off background trigram index build when
+            # the file count exceeds the threshold but no index exists.
+            # The current grep proceeds without blocking; the *next*
+            # grep will find the index and use the fast path.
+            if (
+                len(candidate_files) > GREP_TRIGRAM_THRESHOLD
+                and zone_id
+                and trigram_fast.is_available()
+                and not trigram_fast.index_exists(zone_id)
+            ):
+                task = asyncio.ensure_future(
+                    self._build_trigram_background(zone_id, context),
+                )
+                # Suppress "exception was never retrieved" warning.
+                task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
+
             strategy = self._select_grep_strategy(
                 file_count=len(candidate_files),
                 cached_text_ratio=cached_text_ratio,
@@ -2725,6 +2741,31 @@ class SearchService:
 
         return results
 
+    # Dedup guard for background trigram builds.  Safe without a lock
+    # because grep() runs in a single asyncio event loop and there are
+    # no await points between the check and the add.
+    _trigram_build_in_progress: set[str] = set()
+
+    async def _build_trigram_background(self, zone_id: str, context: Any = None) -> None:
+        """Issue #3711: Non-blocking trigram index build.
+
+        Fires and forgets — errors are logged, not raised.  A guard set
+        prevents duplicate builds for the same zone.
+        """
+        if zone_id in self._trigram_build_in_progress:
+            return
+        self._trigram_build_in_progress.add(zone_id)
+        try:
+            await self.build_trigram_index_for_zone(zone_id, context=context)
+        except Exception:
+            logger.debug(
+                "[GREP] Issue #3711: Background trigram build failed for zone=%s",
+                zone_id,
+                exc_info=True,
+            )
+        finally:
+            self._trigram_build_in_progress.discard(zone_id)
+
     async def build_trigram_index_for_zone(
         self,
         zone_id: str,
@@ -2894,7 +2935,7 @@ class SearchService:
         zoekt_available: bool | None = None,
         zone_id: str | None = None,
     ) -> SearchStrategy:
-        """Select optimal grep strategy (Issue #929, #954)."""
+        """Select optimal grep strategy (Issue #929, #954, #3711)."""
         if cached_text_ratio >= GREP_CACHED_TEXT_RATIO:
             return SearchStrategy.CACHED_TEXT
         if file_count < GREP_SEQUENTIAL_THRESHOLD:
@@ -2912,10 +2953,12 @@ class SearchService:
                 zoekt_available = self._is_zoekt_available()
             if zoekt_available:
                 return SearchStrategy.ZOEKT_INDEX
-        if GREP_PARALLEL_THRESHOLD <= file_count <= 10000:
-            return SearchStrategy.PARALLEL_POOL
+        # Issue #3711: Rust bulk (400x) >> Python parallel pool (4x).
+        # PARALLEL_POOL is only useful when Rust is unavailable.
         if grep_fast.is_available():
             return SearchStrategy.RUST_BULK
+        if GREP_PARALLEL_THRESHOLD <= file_count <= 10000:
+            return SearchStrategy.PARALLEL_POOL
         return SearchStrategy.SEQUENTIAL
 
     def _select_glob_strategy(self, pattern: str, file_count: int) -> GlobStrategy:

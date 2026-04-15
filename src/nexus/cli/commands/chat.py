@@ -207,7 +207,7 @@ async def _run_chat(
         nx = await nexus.connect(config={"profile": "remote", "url": f"http://{with_addr}"})
     else:
         # Embedded mode: in-process NexusFS (invocation-style, exclusive)
-        profile = deployment_profile or os.environ.get("NEXUS_PROFILE", "cluster")
+        profile = deployment_profile or os.environ.get("NEXUS_PROFILE", "slim")
         state_dir = Path(getattr(nexus, "NEXUS_STATE_DIR", Path.home() / ".nexus"))
         data_dir = os.environ.get("NEXUS_DATA_DIR", str(state_dir / "data"))
         nx = await nexus.connect(config={"profile": profile, "data_dir": data_dir})

@@ -64,6 +64,13 @@ class ClassDef:
     name: str
     methods: list[FuncDef] = field(default_factory=list)
     fields: list[tuple[str, str]] = field(default_factory=list)  # (name, py_type) for get_all
+    # Python-facing class name (the ``name = "..."`` override inside a
+    # ``#[pyclass(...)]`` attribute). Defaults to the Rust struct name
+    # when PyO3 does not rename the class — PyKernel, for example, is
+    # exposed to Python as ``Kernel`` via ``#[pyclass(name = "Kernel")]``
+    # and must appear as ``class Kernel:`` in the generated stub so
+    # ``from nexus_kernel import Kernel`` type-checks.
+    py_name: str = ""
 
 
 @dataclass
@@ -537,6 +544,26 @@ def parse_pymethods(text: str, class_name: str) -> list[FuncDef]:
     return results
 
 
+def parse_pyclass_name(text: str, class_name: str) -> str:
+    """Return the Python-facing name for a ``#[pyclass(...)]`` struct.
+
+    Looks for ``#[pyclass(... name = "X" ...)]`` attached to the struct
+    ``class_name`` and returns ``X``; falls back to ``class_name`` if no
+    rename is present. Handles both ``#[pyclass(name = "X")]`` and
+    ``#[pyclass(name = "X", get_all)]``-style attribute layouts and
+    attributes split across lines (``#[pyclass(\n    name = "X",\n)]``).
+    """
+    pattern = r"#\[pyclass\(([^\)]*)\)\]\s*(?:#\[[^\]]*\]\s*)*(?:pub\s+)?struct\s+" + re.escape(
+        class_name
+    )
+    m = re.search(pattern, text, re.DOTALL)
+    if not m:
+        return class_name
+    attrs = m.group(1)
+    name_m = re.search(r'name\s*=\s*"([^"]+)"', attrs)
+    return name_m.group(1) if name_m else class_name
+
+
 def parse_pyclass_fields(text: str, class_name: str) -> list[tuple[str, str]]:
     """Extract #[pyo3(get)] or #[pyclass(get_all)] fields."""
     fields: list[tuple[str, str]] = []
@@ -743,7 +770,12 @@ def generate_stubs(
         if cls_name not in classes:
             continue
         cls = classes[cls_name]
-        lines.append(f"class {cls.name}:")
+        # Emit the Python-facing class name (``#[pyclass(name = "X")]``
+        # rename). Falls back to the Rust struct name when there is no
+        # rename, so existing stubs like ``class BloomFilter:`` are
+        # unchanged.
+        stub_class_name = cls.py_name or cls.name
+        lines.append(f"class {stub_class_name}:")
 
         # Class-level fields (from get_all or pyo3(get))
         if cls.fields and not cls.methods or cls.fields:
@@ -3890,7 +3922,8 @@ def collect_all() -> tuple[
         text = rs_path.read_text()
         methods = parse_pymethods(text, cls_name)
         fields = parse_pyclass_fields(text, cls_name)
-        cls = ClassDef(name=cls_name, methods=methods, fields=fields)
+        py_name = parse_pyclass_name(text, cls_name)
+        cls = ClassDef(name=cls_name, methods=methods, fields=fields, py_name=py_name)
         classes[cls_name] = cls
         class_order.append(cls_name)
 

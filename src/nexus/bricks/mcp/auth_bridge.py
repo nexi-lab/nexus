@@ -75,9 +75,10 @@ def authenticate_api_key(auth_provider: Any, api_key: str) -> Any:
     def _run() -> Any:
         return asyncio.run(coro)
 
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            return pool.submit(_run).result(timeout=10)
+        future = pool.submit(_run)
+        return future.result(timeout=10)
     except Exception:
         logger.warning(
             "Failed to authenticate per-request API key via auth_provider; "
@@ -85,6 +86,9 @@ def authenticate_api_key(auth_provider: Any, api_key: str) -> Any:
             exc_info=True,
         )
         return None
+    finally:
+        # shutdown(wait=False) so a hung authenticate() doesn't block.
+        pool.shutdown(wait=False)
 
 
 def resolve_mcp_operation_context(
@@ -109,23 +113,15 @@ def resolve_mcp_operation_context(
     # (0) Per-request API key — most authoritative when MCP is behind
     # HTTP middleware that sets _request_api_key (#3731).
     #
-    # FAIL-CLOSED: if a per-request key IS present and auth_provider
-    # rejects or errors, we return None immediately — we do NOT fall
-    # through to ambient credentials (_init_cred / _default_context).
-    # This matches HTTP behavior where a bad key → 401, not a
-    # privileged fallback.  Steps 1-4 only run when no per-request
-    # key was set (i.e., the caller is the process itself).
+    # When auth_provider is available, use it to verify the key.
+    # If verification fails, fail closed (return None).
+    #
+    # When auth_provider is NOT available but a per-request key is set,
+    # _get_nexus_instance already created a remote NexusFS scoped to
+    # that key — its _init_cred IS the per-request identity (not
+    # ambient). So we allow steps 1-3 to proceed.
     request_key = _request_api_key.get()
-    if request_key:
-        # A per-request key is present — it MUST be verified.
-        # If no auth_provider is available, fail closed.
-        if auth_provider is None:
-            logger.warning(
-                "Per-request API key is set but no auth_provider is "
-                "available to verify it; returning None (fail-closed)."
-            )
-            return None
-        # auth_provider is available — verify the key.
+    if request_key and auth_provider is not None:
         auth_result = authenticate_api_key(auth_provider, request_key)
         if auth_result is not None:
             # Normalize to dict so we can use the shared HTTP helper.
@@ -155,8 +151,9 @@ def resolve_mcp_operation_context(
                 from nexus.server.dependencies import get_operation_context
 
                 return get_operation_context(auth_dict)
-        # Per-request key was present but auth failed/rejected —
-        # fail closed rather than falling through to ambient creds.
+        # Per-request key was present and auth_provider actively
+        # rejected it — fail closed. Do NOT fall through to ambient
+        # creds from _init_cred/_default_context.
         logger.warning(
             "Per-request API key authentication failed or was rejected; "
             "returning None (fail-closed) instead of falling through "

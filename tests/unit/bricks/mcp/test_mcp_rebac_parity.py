@@ -178,9 +178,14 @@ class TestResolveMcpOperationContext:
         assert ctx is init_cred
         provider.authenticate.assert_not_called()
 
-    def test_step0_fails_closed_without_auth_provider(self):
-        """Per-request key + no auth_provider → fail closed (not fallthrough)."""
-        init_cred = OperationContext(user_id="local", groups=[])
+    def test_step0_no_provider_falls_through_to_init_cred(self):
+        """Per-request key + no auth_provider → use NexusFS identity.
+
+        When auth_provider is unavailable, _get_nexus_instance already
+        created a remote NexusFS scoped to the per-request key — its
+        _init_cred IS the per-request identity, not ambient.
+        """
+        init_cred = OperationContext(user_id="remote-user", groups=[])
         nx = Mock()
         nx._init_cred = init_cred
 
@@ -190,9 +195,9 @@ class TestResolveMcpOperationContext:
         finally:
             reset_request_api_key(token)
 
-        # Fail-closed: per-request key present but no provider to
-        # verify it → None, NOT fallthrough to ambient _init_cred.
-        assert ctx is None
+        # No auth_provider → step 0 skipped → step 1 uses _init_cred
+        # (which is the per-request remote identity, not ambient).
+        assert ctx is init_cred
 
     def test_step0_unauthenticated_fails_closed(self):
         """Step 0: unauthenticated result → fail closed (not fall through)."""
@@ -517,22 +522,31 @@ class TestRejectedApiKeyDeniesSearch:
         assert "unauthorized" in raw.lower() or "error" in raw.lower()
         nx._mock_search.glob.assert_not_called()
 
-    async def test_grep_no_auth_provider_with_key_denies(self):
-        """Per-request key + no auth_provider → grep denied."""
+    async def test_grep_no_auth_provider_with_key_uses_nx_identity(self):
+        """Per-request key + no auth_provider → uses NexusFS identity.
+
+        When no auth_provider is available, the per-request NexusFS
+        (created by _get_nexus_instance with the API key) carries its
+        own _init_cred identity. Grep should proceed using it.
+        """
         nx = _make_nx_with_search(
             grep_return=[
                 {"file": "/a.py", "line": 1, "content": "hit"},
             ]
         )
+        # Simulate a remote per-request NexusFS that carries identity
+        # via _init_cred (set by nexus.connect with the API key).
+        nx._init_cred = OperationContext(user_id="remote-user", groups=[])
 
         server = await create_mcp_server(nx=nx, auth_provider=None)
         grep_tool = _get_tool(server, "nexus_grep")
 
-        token = set_request_api_key("sk-unverifiable")
+        token = set_request_api_key("sk-remote-key")
         try:
             raw = await grep_tool.fn(pattern="hit")
         finally:
             reset_request_api_key(token)
 
-        assert "unauthorized" in raw.lower() or "error" in raw.lower()
-        nx._mock_search.grep.assert_not_called()
+        response = json.loads(raw)
+        assert len(response["items"]) == 1
+        nx._mock_search.grep.assert_called_once()

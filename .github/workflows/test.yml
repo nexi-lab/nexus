@@ -160,7 +160,7 @@ jobs:
       - name: Verify Rust extensions
         run: |
           uv run python -c "import nexus_kernel; print('nexus_kernel OK')"
-          uv run python -c "from _nexus_raft import Metastore; print('nexus_raft OK')"
+          uv run python -c "from nexus_kernel import ZoneManager, Metastore; print('raft bindings OK')"
         shell: bash
 
       - name: Run unit tests

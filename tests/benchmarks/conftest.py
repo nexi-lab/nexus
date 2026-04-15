@@ -7,9 +7,27 @@ import pytest
 
 from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.core.config import CacheConfig, ParseConfig, PermissionConfig
+from nexus.core.metastore import RustMetastoreProxy
 from nexus.factory import create_nexus_fs
-from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
+
+
+def _build_kernel_metastore(db_path) -> tuple[object, RustMetastoreProxy]:
+    """Create a Rust kernel + RustMetastoreProxy pair for benchmarks.
+
+    Mirrors ``nexus.connect()`` — production builds metastore via
+    ``RustMetastoreProxy(kernel, redb_path)`` so kernel.sys_write /
+    sys_readdir / sys_stat persist through the same store Python reads
+    from. Benchmarks that constructed ``RaftMetadataStore.embedded``
+    directly bypassed the kernel's metastore wiring and hit empty
+    dcache/metastore after F2 C4 delegated writes to ``kernel.sys_write``.
+    """
+    from nexus_kernel import Kernel as _Kernel
+
+    redb_path = str(db_path).replace(".db", "") + ".redb"
+    kernel = _Kernel()
+    metastore = RustMetastoreProxy(kernel, redb_path)
+    return kernel, metastore
 
 
 @pytest.fixture
@@ -59,7 +77,7 @@ def benchmark_nexus(benchmark_backend, benchmark_db, benchmark_loop):
     - Permissions disabled (for raw operation benchmarks)
     - Auto-parse disabled (for raw write benchmarks)
     """
-    metadata_store = RaftMetadataStore.embedded(str(benchmark_db).replace(".db", ""))
+    _, metadata_store = _build_kernel_metastore(benchmark_db)
     record_store = SQLAlchemyRecordStore()  # in-memory SQLite for benchmarks
     nx = benchmark_loop.run_until_complete(
         create_nexus_fs(
@@ -79,7 +97,7 @@ def benchmark_nexus(benchmark_backend, benchmark_db, benchmark_loop):
 @pytest.fixture
 def benchmark_nexus_with_permissions(benchmark_backend, benchmark_db, benchmark_loop):
     """Create a NexusFS instance with permissions enabled for ReBAC benchmarks."""
-    metadata_store = RaftMetadataStore.embedded(str(benchmark_db).replace(".db", "") + "_perms")
+    _, metadata_store = _build_kernel_metastore(str(benchmark_db).replace(".db", "") + "_perms.db")
     record_store = SQLAlchemyRecordStore()  # in-memory SQLite for benchmarks
     nx = benchmark_loop.run_until_complete(
         create_nexus_fs(

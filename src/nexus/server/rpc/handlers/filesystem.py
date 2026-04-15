@@ -51,7 +51,11 @@ def generate_download_url(
         Dict with download_url, expires_in, method, backend if supported, None otherwise
     """
     try:
+        from nexus.core.router import RouteResult
+
         route = nexus_fs.router.route(path)
+        if not isinstance(route, RouteResult):
+            return None  # Pipe/Stream/External don't support signed URLs
         backend = route.backend
         backend_path = route.backend_path
 

@@ -1,5 +1,5 @@
 name: Build Rust Extensions
-description: Build kernel, raft, and tasks Python wheels from Rust source
+description: Build kernel and tasks Python wheels from Rust source (raft is rlib-only since F2 C8 — its PyO3 bindings live in nexus_kernel)
 
 inputs:
   profile:
@@ -68,7 +68,8 @@ runs:
         fi
 
         mkdir -p ${{ inputs.output-dir }}
+        # F2 C8 (Option A): raft is rlib-only, its PyO3 bindings live in
+        # nexus_kernel's cdylib. No standalone _nexus_raft wheel.
         cd rust/kernel && maturin build $PROFILE_FLAG --out ../../${{ inputs.output-dir }} && cd ../..
-        cd rust/raft && maturin build $PROFILE_FLAG --features full --out ../../${{ inputs.output-dir }} && cd ../..
         cd rust/tasks && maturin build $PROFILE_FLAG --features mimalloc --out ../../${{ inputs.output-dir }} && cd ../..
       shell: bash

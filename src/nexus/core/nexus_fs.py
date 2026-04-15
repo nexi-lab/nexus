@@ -5165,8 +5165,9 @@ class NexusFS(  # type: ignore[misc]
         # Rust kernel so they see per-mount metastore entries (F2 C5).
         # Python's ``self.metadata.list_iter`` only hits the default global
         # metastore, which is empty for federation zones.
+        _kernel = getattr(self, "_kernel", None)
         if (
-            self._kernel is not None
+            _kernel is not None
             and not recursive
             and not details
             and limit is None
@@ -5178,7 +5179,7 @@ class NexusFS(  # type: ignore[misc]
                 else (context.get("is_admin", False) if isinstance(context, dict) else False)
             )
             try:
-                _kernel_entries = self._kernel.readdir(path, self._zone_id, _is_admin)
+                _kernel_entries = _kernel.readdir(path, self._zone_id, _is_admin)
             except Exception as exc:
                 logger.debug("kernel.readdir failed for %s: %s", path, exc)
                 _kernel_entries = None

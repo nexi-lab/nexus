@@ -74,8 +74,8 @@ class TestPythonFallback:
         """Verify Python fallback produces correct results."""
 
         class MockTigerCache:
-            def get_accessible_paths_list(self, **kwargs):
-                return ["/docs/readme.md", "/docs/guide.md"]
+            def get_accessible_paths(self, **kwargs):
+                return {"/docs/readme.md", "/docs/guide.md"}
 
         class MockReBACManager:
             _tiger_cache = MockTigerCache()
@@ -93,8 +93,8 @@ class TestPythonFallback:
         """Verify has_accessible_descendants() delegates to batch."""
 
         class MockTigerCache:
-            def get_accessible_paths_list(self, **kwargs):
-                return ["/docs/readme.md"]
+            def get_accessible_paths(self, **kwargs):
+                return {"/docs/readme.md"}
 
         class MockReBACManager:
             _tiger_cache = MockTigerCache()

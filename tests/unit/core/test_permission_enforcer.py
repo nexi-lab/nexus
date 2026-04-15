@@ -356,12 +356,15 @@ class TestHasAccessibleDescendantsBatch:
         result = enforcer.has_accessible_descendants_batch(["/docs", "/skills", "/archive"], ctx)
         assert result == {"/docs": True, "/skills": True, "/archive": True}
 
-    def test_no_bitmap_returns_all_true(self):
-        """When bitmap is None for the user, fallback returns True for all."""
+    def test_no_bitmap_returns_all_false(self):
+        """When bitmap is None (cache miss), fail-closed returns False for all.
+
+        Fix(#3709): previously returned all-True (fail-open vulnerability).
+        """
 
         class MockTigerCache:
-            def get_accessible_paths_list(self, **kwargs):
-                return None  # No bitmap
+            def get_accessible_paths(self, **kwargs):
+                return None  # No bitmap — cache miss
 
         class MockReBACManager:
             _tiger_cache = MockTigerCache()
@@ -369,14 +372,14 @@ class TestHasAccessibleDescendantsBatch:
         enforcer = PermissionEnforcer(rebac_manager=MockReBACManager())
         ctx = OperationContext(user_id="alice", groups=["dev"])
         result = enforcer.has_accessible_descendants_batch(["/docs", "/skills"], ctx)
-        assert result == {"/docs": True, "/skills": True}
+        assert result == {"/docs": False, "/skills": False}
 
     def test_all_accessible(self):
         """All prefixes have matching descendants in the bitmap."""
 
         class MockTigerCache:
-            def get_accessible_paths_list(self, **kwargs):
-                return ["/docs/readme.md", "/skills/python.md", "/archive/old.txt"]
+            def get_accessible_paths(self, **kwargs):
+                return {"/docs/readme.md", "/skills/python.md", "/archive/old.txt"}
 
         class MockReBACManager:
             _tiger_cache = MockTigerCache()
@@ -390,8 +393,8 @@ class TestHasAccessibleDescendantsBatch:
         """Some prefixes have descendants, some don't."""
 
         class MockTigerCache:
-            def get_accessible_paths_list(self, **kwargs):
-                return ["/docs/readme.md", "/docs/guide.md"]
+            def get_accessible_paths(self, **kwargs):
+                return {"/docs/readme.md", "/docs/guide.md"}
 
         class MockReBACManager:
             _tiger_cache = MockTigerCache()
@@ -407,7 +410,7 @@ class TestHasAccessibleDescendantsBatch:
         """On decode error, fail-closed returns False for all prefixes (security)."""
 
         class MockTigerCache:
-            def get_accessible_paths_list(self, **kwargs):
+            def get_accessible_paths(self, **kwargs):
                 raise RuntimeError("bitmap decode error")
 
         class MockReBACManager:
@@ -423,8 +426,8 @@ class TestHasAccessibleDescendantsBatch:
         """/workspace must NOT match /workspace-old/x (Issue #1565)."""
 
         class MockTigerCache:
-            def get_accessible_paths_list(self, **kwargs):
-                return ["/workspace-old/file.txt"]
+            def get_accessible_paths(self, **kwargs):
+                return {"/workspace-old/file.txt"}
 
         class MockReBACManager:
             _tiger_cache = MockTigerCache()
@@ -438,8 +441,8 @@ class TestHasAccessibleDescendantsBatch:
         """/a/b/ and /a/b should be equivalent prefixes."""
 
         class MockTigerCache:
-            def get_accessible_paths_list(self, **kwargs):
-                return ["/a/b/c.txt"]
+            def get_accessible_paths(self, **kwargs):
+                return {"/a/b/c.txt"}
 
         class MockReBACManager:
             _tiger_cache = MockTigerCache()
@@ -454,8 +457,8 @@ class TestHasAccessibleDescendantsBatch:
         """path /a/b matches prefix /a/b (exact match, not just descendants)."""
 
         class MockTigerCache:
-            def get_accessible_paths_list(self, **kwargs):
-                return ["/a/b"]
+            def get_accessible_paths(self, **kwargs):
+                return {"/a/b"}
 
         class MockReBACManager:
             _tiger_cache = MockTigerCache()
@@ -469,8 +472,8 @@ class TestHasAccessibleDescendantsBatch:
         """prefix '/' matches everything."""
 
         class MockTigerCache:
-            def get_accessible_paths_list(self, **kwargs):
-                return ["/docs/readme.md"]
+            def get_accessible_paths(self, **kwargs):
+                return {"/docs/readme.md"}
 
         class MockReBACManager:
             _tiger_cache = MockTigerCache()
@@ -484,8 +487,8 @@ class TestHasAccessibleDescendantsBatch:
         """Bitmap exists but maps to no paths."""
 
         class MockTigerCache:
-            def get_accessible_paths_list(self, **kwargs):
-                return []
+            def get_accessible_paths(self, **kwargs):
+                return set()
 
         class MockReBACManager:
             _tiger_cache = MockTigerCache()
@@ -499,8 +502,8 @@ class TestHasAccessibleDescendantsBatch:
         """has_accessible_descendants() delegates to batch."""
 
         class MockTigerCache:
-            def get_accessible_paths_list(self, **kwargs):
-                return ["/docs/readme.md"]
+            def get_accessible_paths(self, **kwargs):
+                return {"/docs/readme.md"}
 
         class MockReBACManager:
             _tiger_cache = MockTigerCache()

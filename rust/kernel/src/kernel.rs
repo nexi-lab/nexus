@@ -776,32 +776,38 @@ impl Kernel {
         }
     }
 
-    // ── Advisory lock syscalls (F4 C4) ────────────────────────
+    // ── Advisory lock pillar (F4 C4 + C4.1) ───────────────────
     //
-    // Public Kernel API for the lock pillar. All four syscalls
-    // fan out through `with_routed_metastore` so federation
-    // (per-zone `ZoneMetastore`, where reads go through ReadIndex
-    // per F4 C3.6) and standalone (`MemoryMetastore` /
-    // `RedbMetastore`) share one entry point.
+    // Three Tier-1 syscalls for write operations + one
+    // metastore-proxy read helper for listing. All four fan out
+    // through `with_routed_metastore` so federation (per-zone
+    // `ZoneMetastore`, reads via ReadIndex per F4 C3.6) and
+    // standalone (`MemoryMetastore` / `RedbMetastore`) share one
+    // entry point.
     //
     // Contract (matches etcd / Consul default):
     //   * sys_lock / sys_unlock / sys_lock_extend — Strong
     //     Consistency (raft propose on federation, local atomic
     //     op on standalone).
-    //   * sys_lock_list — linearizable read (raft ReadIndex on
-    //     federation, local read on standalone).
+    //   * metastore_list_locks — linearizable read (raft
+    //     ReadIndex on federation, local read on standalone).
     //
-    // There is deliberately no "get one lock" syscall: the only
-    // historical caller was `sys_stat(include_lock=True)`, which
-    // F4 deletes. Consumers that need the full holder list for a
-    // specific path can call `sys_lock_list(path, 1)`. The
-    // `Metastore::get_lock` trait method stays for tests and for
-    // `list_locks` implementations.
+    // No dedicated `sys_lock_list` syscall (C4.1 revert): the
+    // Python convention for listing locks is
+    // `sys_readdir("/__sys__/locks/")` — a virtual namespace like
+    // Linux `/proc/locks`. Python's `NexusFS.sys_readdir`
+    // intercepts the prefix at the top and (post-F4) calls
+    // `metastore_list_locks` through the PyKernel / proxy layer.
+    // That matches `_lock_manager.list_locks()` structurally and
+    // preserves the user-facing API exactly.
     //
-    // `sys_stat` also does not embed a lock field: paying a
-    // ReadIndex heartbeat round-trip per FUSE getattr is
-    // unacceptable. Debug tooling that wants lock state calls
-    // `sys_lock_list` explicitly.
+    // No "get one lock" syscall either: the only historical
+    // caller was `sys_stat(include_lock=True)`, which F4 deletes.
+    // Consumers that need per-path lock info use
+    // `sys_readdir("/__sys__/locks/some/path/")` (prefix filter
+    // at the listing level). `sys_stat` does not embed a lock
+    // field — paying a ReadIndex round-trip per FUSE getattr is
+    // unacceptable.
 
     /// Acquire a lock on `path`. Returns `true` if the caller
     /// became or already was a holder, `false` on conflict.
@@ -850,11 +856,17 @@ impl Kernel {
         }
     }
 
-    /// Linearizable enumeration of locks under `prefix`. Used by
-    /// the `/api/v2/locks` TUI endpoint and the `nx locks list`
-    /// CLI — these are the only callers that need to observe
-    /// lock state from outside the holder itself.
-    pub fn sys_lock_list(
+    /// Linearizable enumeration of locks under `prefix`, as a
+    /// metastore-proxy read helper. Called by the Python-side
+    /// `NexusFS.sys_readdir` intercept for `/__sys__/locks/` so
+    /// user code keeps using the existing `sys_readdir`
+    /// convention — this method is implementation plumbing, not a
+    /// separate user-facing syscall. Lives in the `metastore_*`
+    /// family alongside `metastore_get` / `metastore_list` /
+    /// `metastore_list_paginated` because locks are stored in the
+    /// same redb table family (F4 C3 `LOCKS_TABLE`) as file
+    /// metadata.
+    pub fn metastore_list_locks(
         &self,
         prefix: &str,
         limit: usize,
@@ -863,9 +875,9 @@ impl Kernel {
         // metastore, matching `metastore_list` routing.
         let route_path = if prefix.is_empty() { "/" } else { prefix };
         match self.with_routed_metastore(route_path, |ms| ms.list_locks(prefix, limit)) {
-            Some(result) => {
-                result.map_err(|e| KernelError::IOError(format!("sys_lock_list({prefix}): {e:?}")))
-            }
+            Some(result) => result.map_err(|e| {
+                KernelError::IOError(format!("metastore_list_locks({prefix}): {e:?}"))
+            }),
             None => Err(KernelError::IOError("no metastore wired".into())),
         }
     }

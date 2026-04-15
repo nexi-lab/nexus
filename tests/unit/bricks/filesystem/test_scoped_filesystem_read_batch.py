@@ -18,7 +18,9 @@ from tests.conftest import make_test_nexus
 
 @pytest.fixture()
 async def nx(tmp_path):
-    return await make_test_nexus(tmp_path)
+    # use_raft=True ensures Rust kernel and Python share the same redb
+    # metastore, so writes via nx.write() are visible to sys_read/read_batch.
+    return await make_test_nexus(tmp_path, use_raft=True)
 
 
 @pytest.fixture()

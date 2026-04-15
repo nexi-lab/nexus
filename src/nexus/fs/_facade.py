@@ -418,9 +418,9 @@ class SlimNexusFS:
 
     def _trigram_index_path(self) -> str:
         """Return the expected trigram index path for this facade's zone."""
-        zone_id = self._ctx.zone_id
+        zone_id = self._ctx.zone_id or ROOT_ZONE_ID
         index_dir = os.path.join(os.path.expanduser("~"), ".nexus", "indexes")
-        return os.path.join(index_dir, f"{os.path.basename(zone_id) or ROOT_ZONE_ID}.trgm")
+        return os.path.join(index_dir, f"{os.path.basename(zone_id)}.trgm")
 
     # Per-zone guard: prevents duplicate background builds for the same zone.
     _trigram_build_lock = threading.Lock()

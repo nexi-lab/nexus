@@ -234,7 +234,21 @@ fn extract_metadata(
             .map_err(|e| MetastoreError::IOError(format!("field entry_type: {e}")))?,
         zone_id: get_opt_str("zone_id")?,
         mime_type: get_opt_str("mime_type")?,
+        created_at_ms: extract_opt_datetime_ms(obj, "created_at"),
+        modified_at_ms: extract_opt_datetime_ms(obj, "modified_at"),
     })
+}
+
+/// Convert a Python ``datetime`` attribute to epoch milliseconds.
+/// Returns None if the attribute is missing or not a datetime.
+fn extract_opt_datetime_ms(obj: &Bound<'_, PyAny>, name: &str) -> Option<i64> {
+    let v = obj.getattr(name).ok()?;
+    if v.is_none() {
+        return None;
+    }
+    let ts = v.call_method0("timestamp").ok()?;
+    let secs = ts.extract::<f64>().ok()?;
+    Some((secs * 1000.0) as i64)
 }
 
 /// Convert Rust FileMetadata -> Python FileMetadata (for metastore.put()).
@@ -270,7 +284,46 @@ fn to_python_metadata<'py>(
     kwargs
         .set_item("mime_type", meta.mime_type.as_deref())
         .map_err(err)?;
+    set_optional_datetime(py, &kwargs, "created_at", meta.created_at_ms).map_err(err)?;
+    set_optional_datetime(py, &kwargs, "modified_at", meta.modified_at_ms).map_err(err)?;
     cls.call((), Some(&kwargs)).map_err(err)
+}
+
+/// Set a kwargs entry to a UTC datetime built from epoch ms (or None).
+fn set_optional_datetime(
+    py: Python<'_>,
+    kwargs: &Bound<'_, PyDict>,
+    key: &str,
+    ms: Option<i64>,
+) -> PyResult<()> {
+    let Some(ms) = ms else {
+        return kwargs.set_item(key, py.None());
+    };
+    let datetime = py.import("datetime")?;
+    let utc = datetime.getattr("timezone")?.getattr("utc")?;
+    let from_ts = datetime.getattr("datetime")?.getattr("fromtimestamp")?;
+    let secs = ms as f64 / 1000.0;
+    let dt = from_ts.call((secs, &utc), None)?;
+    kwargs.set_item(key, dt)
+}
+
+/// Set a stat-dict entry to a UTC ISO-8601 string built from epoch ms.
+fn set_optional_iso_datetime(
+    py: Python<'_>,
+    dict: &Bound<'_, PyDict>,
+    key: &str,
+    ms: Option<i64>,
+) -> PyResult<()> {
+    let Some(ms) = ms else {
+        return dict.set_item(key, py.None());
+    };
+    let datetime = py.import("datetime")?;
+    let utc = datetime.getattr("timezone")?.getattr("utc")?;
+    let from_ts = datetime.getattr("datetime")?.getattr("fromtimestamp")?;
+    let secs = ms as f64 / 1000.0;
+    let dt = from_ts.call((secs, &utc), None)?;
+    let iso = dt.call_method0("isoformat")?;
+    dict.set_item(key, iso)
 }
 
 /// Convert Rust OperationContext -> Python OperationContext.
@@ -1796,8 +1849,8 @@ impl PyKernel {
                 dict.set_item("size", s.size)?;
                 dict.set_item("etag", s.etag.as_deref())?;
                 dict.set_item("mime_type", &s.mime_type)?;
-                dict.set_item("created_at", py.None())?;
-                dict.set_item("modified_at", py.None())?;
+                set_optional_iso_datetime(py, &dict, "created_at", s.created_at_ms)?;
+                set_optional_iso_datetime(py, &dict, "modified_at", s.modified_at_ms)?;
                 dict.set_item("is_directory", s.is_directory)?;
                 dict.set_item("entry_type", s.entry_type)?;
                 dict.set_item("mode", s.mode)?;

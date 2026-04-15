@@ -76,6 +76,8 @@ fn proto_to_kernel(bytes: &[u8]) -> Result<KernelFileMetadata, MetastoreError> {
         } else {
             Some(proto.mime_type)
         },
+        created_at_ms: None,
+        modified_at_ms: None,
     })
 }
 

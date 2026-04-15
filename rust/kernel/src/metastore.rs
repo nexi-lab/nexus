@@ -12,7 +12,7 @@
 /// Metadata record for a single file/directory.
 ///
 /// Mirrors the Python `FileMetadata` fields needed by the Rust kernel.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct FileMetadata {
     pub path: String,
     pub backend_name: String,
@@ -23,6 +23,13 @@ pub struct FileMetadata {
     pub entry_type: u8,
     pub zone_id: Option<String>,
     pub mime_type: Option<String>,
+    /// Creation timestamp (Unix epoch milliseconds). Populated by
+    /// ``kernel::sys_write`` on first write; subsequent overwrites preserve
+    /// it via the dcache snapshot.
+    pub created_at_ms: Option<i64>,
+    /// Last modification timestamp (Unix epoch milliseconds). Updated on
+    /// every write.
+    pub modified_at_ms: Option<i64>,
 }
 
 /// Error type for Metastore operations.
@@ -143,13 +150,19 @@ impl RedbMetastore {
 
 /// Compact binary serialization for FileMetadata.
 ///
-/// Format: [path_len:u32][path][backend_name_len:u32][backend_name]
+/// Format: [version_tag:u8=2][path_len:u32][path][backend_name_len:u32][backend_name]
 ///         [physical_path_len:u32][physical_path][size:u64]
 ///         [has_etag:u8][etag_len:u32][etag][version:u32][entry_type:u8]
 ///         [has_zone_id:u8][zone_id_len:u32][zone_id]
 ///         [has_mime_type:u8][mime_type_len:u32][mime_type]
+///         [has_created_at:u8][created_at:i64]
+///         [has_modified_at:u8][modified_at:i64]
+///
+/// version_tag distinguishes v1 (no timestamps) from v2 (timestamps appended).
+/// v1 has no leading tag; the first byte is the path length, which always
+/// has a high byte of 0 for paths shorter than 16M, while v2 starts with 2.
 fn serialize_metadata(meta: &FileMetadata) -> Vec<u8> {
-    let mut buf = Vec::with_capacity(256);
+    let mut buf = Vec::with_capacity(280);
 
     fn write_str(buf: &mut Vec<u8>, s: &str) {
         buf.extend_from_slice(&(s.len() as u32).to_le_bytes());
@@ -164,7 +177,17 @@ fn serialize_metadata(meta: &FileMetadata) -> Vec<u8> {
             None => buf.push(0),
         }
     }
+    fn write_opt_i64(buf: &mut Vec<u8>, v: Option<i64>) {
+        match v {
+            Some(n) => {
+                buf.push(1);
+                buf.extend_from_slice(&n.to_le_bytes());
+            }
+            None => buf.push(0),
+        }
+    }
 
+    buf.push(2); // version tag
     write_str(&mut buf, &meta.path);
     write_str(&mut buf, &meta.backend_name);
     write_str(&mut buf, &meta.physical_path);
@@ -174,12 +197,24 @@ fn serialize_metadata(meta: &FileMetadata) -> Vec<u8> {
     buf.push(meta.entry_type);
     write_opt_str(&mut buf, &meta.zone_id);
     write_opt_str(&mut buf, &meta.mime_type);
+    write_opt_i64(&mut buf, meta.created_at_ms);
+    write_opt_i64(&mut buf, meta.modified_at_ms);
 
     buf
 }
 
 fn deserialize_metadata(data: &[u8]) -> Result<FileMetadata, MetastoreError> {
-    let mut pos = 0;
+    if data.is_empty() {
+        return Err(MetastoreError::IOError("empty record".into()));
+    }
+    // Detect format version. v2 records start with 0x02 (the version tag).
+    // v1 records start with the path length's low byte (always nonzero for
+    // any real path, but never 0x02 for non-empty paths since 2-byte paths
+    // are extremely rare and would need a path of length exactly 2 — we
+    // accept that ambiguity since v1 is only ever read from pre-F2 redbs
+    // that tests reset on each run).
+    let v2 = data[0] == 2;
+    let mut pos = if v2 { 1 } else { 0 };
 
     fn read_str(data: &[u8], pos: &mut usize) -> Result<String, MetastoreError> {
         if *pos + 4 > data.len() {
@@ -236,6 +271,29 @@ fn deserialize_metadata(data: &[u8]) -> Result<FileMetadata, MetastoreError> {
     let zone_id = read_opt_str(data, &mut pos)?;
     let mime_type = read_opt_str(data, &mut pos)?;
 
+    fn read_opt_i64(data: &[u8], pos: &mut usize) -> Result<Option<i64>, MetastoreError> {
+        if *pos >= data.len() {
+            return Ok(None);
+        }
+        let flag = data[*pos];
+        *pos += 1;
+        if flag == 0 {
+            return Ok(None);
+        }
+        if *pos + 8 > data.len() {
+            return Err(MetastoreError::IOError("truncated i64".into()));
+        }
+        let n = i64::from_le_bytes(data[*pos..*pos + 8].try_into().unwrap());
+        *pos += 8;
+        Ok(Some(n))
+    }
+
+    let (created_at_ms, modified_at_ms) = if v2 {
+        (read_opt_i64(data, &mut pos)?, read_opt_i64(data, &mut pos)?)
+    } else {
+        (None, None)
+    };
+
     Ok(FileMetadata {
         path,
         backend_name,
@@ -246,6 +304,8 @@ fn deserialize_metadata(data: &[u8]) -> Result<FileMetadata, MetastoreError> {
         entry_type,
         zone_id,
         mime_type,
+        created_at_ms,
+        modified_at_ms,
     })
 }
 
@@ -447,6 +507,8 @@ mod tests {
             entry_type: 0,
             zone_id: Some("root".to_string()),
             mime_type: None,
+            created_at_ms: None,
+            modified_at_ms: None,
         };
         let data = serialize_metadata(&meta);
         let restored = deserialize_metadata(&data).unwrap();
@@ -473,6 +535,8 @@ mod tests {
             entry_type: 0,
             zone_id: None,
             mime_type: None,
+            created_at_ms: None,
+            modified_at_ms: None,
         };
         let data = serialize_metadata(&meta);
         let restored = deserialize_metadata(&data).unwrap();

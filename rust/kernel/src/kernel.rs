@@ -139,8 +139,6 @@ pub struct SysReadResult {
     /// DT_PIPE(3)/DT_STREAM(4) when hit=false — tells wrapper to dispatch IPC.
     /// 0 = normal miss (not found or no backend).
     pub entry_type: u8,
-    /// True when the routed mount is an external connector — Python must handle.
-    pub is_external: bool,
 }
 
 /// Result of sys_write(): concrete type instead of Option<str>.
@@ -230,6 +228,8 @@ pub struct StatResult {
     pub mode: u32,
     pub version: u32,
     pub zone_id: Option<String>,
+    pub created_at_ms: Option<i64>,
+    pub modified_at_ms: Option<i64>,
 }
 
 // ── KernelObserverRegistry — pure Rust observer dispatch ────────────────
@@ -687,6 +687,8 @@ impl Kernel {
                 entry_type,
                 zone_id: zone_id.map(|s| s.to_string()),
                 mime_type: mime_type.map(|s| s.to_string()),
+                created_at_ms: None,
+                modified_at_ms: None,
             },
         );
     }
@@ -770,7 +772,6 @@ impl Kernel {
         backend_name: &str,
         backend: Option<Box<dyn crate::backend::ObjectStore>>,
         metastore_path: Option<&str>,
-        is_external: bool,
     ) -> Result<(), KernelError> {
         self.mount_table.add_mount(
             mount_point,
@@ -877,7 +878,6 @@ impl Kernel {
             backend_name,
             backend,
             metastore_path,
-            false,
         )?;
 
         // 2. Create DT_MOUNT metadata entry (best-effort)
@@ -893,6 +893,8 @@ impl Kernel {
                 entry_type: 2, // DT_MOUNT
                 zone_id: Some(zone_id.to_string()),
                 mime_type: None,
+                created_at_ms: None,
+                modified_at_ms: None,
             };
             let _ = ms.put(mount_point, meta);
         });
@@ -909,6 +911,8 @@ impl Kernel {
                 entry_type: 2, // DT_MOUNT
                 zone_id: Some(zone_id.to_string()),
                 mime_type: None,
+                created_at_ms: None,
+                modified_at_ms: None,
             },
         );
 
@@ -1253,6 +1257,8 @@ impl Kernel {
                 entry_type: DT_PIPE,
                 zone_id: Some(contracts::ROOT_ZONE_ID.to_string()),
                 mime_type: None,
+                created_at_ms: None,
+                modified_at_ms: None,
             };
             let _ = ms.put(path, meta);
         });
@@ -1268,6 +1274,8 @@ impl Kernel {
                 entry_type: DT_PIPE,
                 zone_id: Some(contracts::ROOT_ZONE_ID.to_string()),
                 mime_type: None,
+                created_at_ms: None,
+                modified_at_ms: None,
             },
         );
 
@@ -1357,6 +1365,8 @@ impl Kernel {
                 entry_type: DT_STREAM,
                 zone_id: Some(contracts::ROOT_ZONE_ID.to_string()),
                 mime_type: None,
+                created_at_ms: None,
+                modified_at_ms: None,
             };
             let _ = ms.put(path, meta);
         });
@@ -1372,6 +1382,8 @@ impl Kernel {
                 entry_type: DT_STREAM,
                 zone_id: Some(contracts::ROOT_ZONE_ID.to_string()),
                 mime_type: None,
+                created_at_ms: None,
+                modified_at_ms: None,
             },
         );
 
@@ -1494,7 +1506,6 @@ impl Kernel {
                 post_hook_needed: false,
                 content_hash: None,
                 entry_type: 0,
-                is_external: false,
             })
         };
 
@@ -1529,18 +1540,6 @@ impl Kernel {
             Err(_) => return miss(),
         };
 
-        // 2b. External mount — signal Python to handle via connector backend
-        if route.is_external {
-            return Ok(SysReadResult {
-                hit: false,
-                data: None,
-                post_hook_needed: false,
-                content_hash: None,
-                entry_type: 0,
-                is_external: true,
-            });
-        }
-
         // 3. DCache lookup — on miss, fallback to metastore (cold path)
         let entry = match self.dcache.get_entry(path) {
             Some(e) => e,
@@ -1558,6 +1557,8 @@ impl Kernel {
                             entry_type: meta.entry_type,
                             zone_id: meta.zone_id.clone(),
                             mime_type: meta.mime_type.clone(),
+                            created_at_ms: None,
+                            modified_at_ms: None,
                         };
                         self.dcache.put(path, cached);
                         // Re-fetch from dcache (now populated)
@@ -1582,7 +1583,6 @@ impl Kernel {
                             post_hook_needed: false,
                             content_hash: None,
                             entry_type: DT_PIPE,
-                            is_external: false,
                         });
                     }
                     Err(crate::pipe::PipeError::Empty) => {
@@ -1593,7 +1593,6 @@ impl Kernel {
                             post_hook_needed: false,
                             content_hash: None,
                             entry_type: DT_PIPE,
-                            is_external: false,
                         });
                     }
                     Err(crate::pipe::PipeError::ClosedEmpty) => {
@@ -1609,7 +1608,6 @@ impl Kernel {
                 post_hook_needed: false,
                 content_hash: None,
                 entry_type: DT_PIPE,
-                is_external: false,
             });
         }
 
@@ -1623,7 +1621,6 @@ impl Kernel {
                 post_hook_needed: false,
                 content_hash: None,
                 entry_type: DT_STREAM,
-                is_external: false,
             });
         }
 
@@ -1675,7 +1672,6 @@ impl Kernel {
                 post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
                 content_hash: entry.etag,
                 entry_type: DT_REG,
-                is_external: false,
             }),
             None => miss(),
         }
@@ -1817,10 +1813,23 @@ impl Kernel {
                 let new_version = old_version + 1;
 
                 // Build FileMetadata and persist via metastore (per-mount or global)
+                let now_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as i64)
+                    .unwrap_or(0);
+                let backend_display_name = self
+                    .mount_table
+                    .get_canonical(&route.mount_point)
+                    .map(|e| e.backend_name.clone())
+                    .unwrap_or_else(|| route.io_profile.clone());
+                let created_at_ms = old_entry
+                    .as_ref()
+                    .and_then(|e| e.created_at_ms)
+                    .or(Some(now_ms));
                 self.with_metastore(&route.mount_point, |ms| {
                     let meta = crate::metastore::FileMetadata {
                         path: path.to_string(),
-                        backend_name: route.io_profile.clone(),
+                        backend_name: backend_display_name.clone(),
                         physical_path: wr.content_id.clone(),
                         size: wr.size,
                         etag: Some(wr.content_id.clone()),
@@ -1828,6 +1837,8 @@ impl Kernel {
                         entry_type: DT_REG,
                         zone_id: Some(ctx.zone_id.clone()),
                         mime_type: None,
+                        created_at_ms,
+                        modified_at_ms: Some(now_ms),
                     };
                     // Best-effort metastore.put -- error logged but doesn't fail write
                     let _ = ms.put(path, meta);
@@ -1837,7 +1848,7 @@ impl Kernel {
                 self.dcache.put(
                     path,
                     CachedEntry {
-                        backend_name: route.io_profile.clone(),
+                        backend_name: backend_display_name,
                         physical_path: wr.content_id.clone(),
                         size: wr.size,
                         etag: Some(wr.content_id.clone()),
@@ -1845,6 +1856,8 @@ impl Kernel {
                         entry_type: DT_REG,
                         zone_id: Some(ctx.zone_id.clone()),
                         mime_type: None,
+                        created_at_ms,
+                        modified_at_ms: Some(now_ms),
                     },
                 );
 
@@ -1923,6 +1936,8 @@ impl Kernel {
                     entry_type: meta.entry_type,
                     zone_id: meta.zone_id.clone(),
                     mime_type: meta.mime_type.clone(),
+                    created_at_ms: meta.created_at_ms,
+                    modified_at_ms: meta.modified_at_ms,
                 };
                 self.dcache.put(path, cached.clone());
                 cached
@@ -1956,6 +1971,8 @@ impl Kernel {
             mode: if is_dir { 0o755 } else { 0o644 },
             version: entry.version,
             zone_id: entry.zone_id,
+            created_at_ms: entry.created_at_ms,
+            modified_at_ms: entry.modified_at_ms,
         })
     }
 
@@ -2024,6 +2041,8 @@ impl Kernel {
                         entry_type: m.entry_type,
                         zone_id: m.zone_id,
                         mime_type: m.mime_type,
+                        created_at_ms: None,
+                        modified_at_ms: None,
                     })
                 })
                 .flatten(),
@@ -2242,6 +2261,8 @@ impl Kernel {
                 entry_type: meta.entry_type,
                 zone_id: meta.zone_id.clone(),
                 mime_type: meta.mime_type.clone(),
+                created_at_ms: None,
+                modified_at_ms: None,
             };
             self.with_metastore(&old_route.mount_point, |ms| {
                 let _ = ms.put(new_path, new_meta);
@@ -2267,6 +2288,8 @@ impl Kernel {
                             entry_type: child.entry_type,
                             zone_id: child.zone_id.clone(),
                             mime_type: child.mime_type.clone(),
+                            created_at_ms: None,
+                            modified_at_ms: None,
                         };
                         let _ = ms.put(&child_new_path, child_new_meta);
                         let _ = ms.delete(&child.path);
@@ -2375,6 +2398,8 @@ impl Kernel {
                 entry_type: DT_DIR,
                 zone_id: Some(ctx.zone_id.clone()),
                 mime_type: Some("inode/directory".to_string()),
+                created_at_ms: None,
+                modified_at_ms: None,
             };
             let _ = ms.put(path, meta);
         });
@@ -2391,6 +2416,8 @@ impl Kernel {
                 entry_type: DT_DIR,
                 zone_id: Some(ctx.zone_id.clone()),
                 mime_type: Some("inode/directory".to_string()),
+                created_at_ms: None,
+                modified_at_ms: None,
             },
         );
 
@@ -2452,6 +2479,8 @@ impl Kernel {
                     entry_type: DT_DIR,
                     zone_id: Some(ctx.zone_id.clone()),
                     mime_type: Some("inode/directory".to_string()),
+                    created_at_ms: None,
+                    modified_at_ms: None,
                 };
                 let _ = ms.put(&dir_path, meta);
             });
@@ -2466,6 +2495,8 @@ impl Kernel {
                     entry_type: DT_DIR,
                     zone_id: Some(ctx.zone_id.clone()),
                     mime_type: Some("inode/directory".to_string()),
+                    created_at_ms: None,
+                    modified_at_ms: None,
                 },
             );
         }
@@ -2692,6 +2723,8 @@ impl Kernel {
                         entry_type: DT_REG,
                         zone_id: Some(ctx.zone_id.clone()),
                         mime_type: None,
+                        created_at_ms: None,
+                        modified_at_ms: None,
                     };
                     batch_meta.push((route.mount_point.clone(), path.clone(), meta));
 
@@ -2707,6 +2740,8 @@ impl Kernel {
                             entry_type: DT_REG,
                             zone_id: Some(ctx.zone_id.clone()),
                             mime_type: None,
+                            created_at_ms: None,
+                            modified_at_ms: None,
                         },
                     );
 
@@ -2789,7 +2824,6 @@ impl Kernel {
                     post_hook_needed: false,
                     content_hash: None,
                     entry_type: 0,
-                    is_external: false,
                 })
             })
             .collect();

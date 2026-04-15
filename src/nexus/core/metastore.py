@@ -443,6 +443,21 @@ class RustMetastoreProxy(MetastoreABC):
         entries = self._rust_kernel.metastore_list(prefix)
         return len(entries) > 0
 
+    # ── Search service compatibility ─────────────────────────────────────
+
+    def get_searchable_text_bulk(
+        self,
+        paths: "Sequence[str]",  # noqa: F821 — forward-ref to avoid circular import
+    ) -> dict[str, str]:
+        """Return cached parsed text for the given paths.
+
+        The Rust metastore does not cache parsed text yet; return an empty
+        map so callers (search_service grep, pipeline_indexer) fall through
+        to the raw-content path that reads bytes from the backend directly.
+        """
+        del paths
+        return {}
+
     # ── Abstract method implementations (fallback, used by base class) ───
 
     def _get_raw(self, path: str) -> FileMetadata | None:

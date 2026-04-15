@@ -113,6 +113,7 @@ def _apply_rebac_filter(
     permission_enforcer: Any | None,
     auth_result: dict[str, Any],
     zone_id: str,
+    path_extractor: Any | None = None,
 ) -> tuple[list[Any], float]:
     """Apply ReBAC file-level permission filtering to search results.
 
@@ -122,6 +123,17 @@ def _apply_rebac_filter(
     rebac_list_objects() (Rust-accelerated, 1 SQL query + 1 Rust computation).
     This bypasses the NamespaceManager pre-filter (search paths lack mount entries)
     and avoids the stale graph cache bug in compute_permissions_bulk.
+
+    Args:
+        results: Search results to filter.
+        permission_enforcer: PermissionEnforcer instance (or None to skip).
+        auth_result: Authentication dict with subject_id, is_admin, etc.
+        zone_id: Zone ID for ReBAC scope.
+        path_extractor: Callable ``(result) -> str`` that extracts the file
+            path from a result element. Defaults to ``lambda r: r.path``
+            (suitable for search_query results). Pass
+            ``lambda r: r["file"]`` for grep dicts, ``lambda r: r`` for
+            bare path strings (#3731: eliminates per-caller shim classes).
     """
     if permission_enforcer is None:
         return results, 0.0
@@ -129,16 +141,29 @@ def _apply_rebac_filter(
     if not hasattr(permission_enforcer, "filter_search_results"):
         return results, 0.0
 
+    if path_extractor is None:
+        path_extractor = lambda r: r.path  # noqa: E731
+
     user_id = auth_result.get("subject_id") or auth_result.get("user_id", "anonymous")
     is_admin = bool(auth_result.get("is_admin", False))
 
-    # Normalize paths to absolute for ReBAC compatibility
-    path_map = {_normalize_path(r.path): r for r in results}
-    abs_paths = list(path_map.keys())
+    # Two-pass approach: (1) deduplicate paths for the permission
+    # check, (2) filter the original ordered list against the
+    # permitted set. A dict-based path_map would silently drop
+    # multiple grep results from the same file (#3731 review).
+    unique_abs_paths: list[str] = []
+    seen: set[str] = set()
+    result_abs_paths: list[str] = []  # parallel to ``results``
+    for r in results:
+        abs_path = _normalize_path(path_extractor(r))
+        result_abs_paths.append(abs_path)
+        if abs_path not in seen:
+            seen.add(abs_path)
+            unique_abs_paths.append(abs_path)
 
     filter_start = time.perf_counter()
     permitted_abs = permission_enforcer.filter_search_results(
-        abs_paths,
+        unique_abs_paths,
         user_id=user_id,
         zone_id=zone_id,
         is_admin=is_admin,
@@ -148,12 +173,12 @@ def _apply_rebac_filter(
     logger.debug(
         "[SEARCH-REBAC] permitted %d/%d paths in %.1fms",
         len(permitted_abs),
-        len(abs_paths),
+        len(unique_abs_paths),
         filter_ms,
     )
 
     permitted_set = set(permitted_abs)
-    filtered = [path_map[p] for p in abs_paths if p in permitted_set]
+    filtered = [r for r, p in zip(results, result_abs_paths, strict=True) if p in permitted_set]
     return filtered, filter_ms
 
 
@@ -759,18 +784,14 @@ async def _do_grep_operation(
     # a second-layer guarantee for the HTTP surface.
     pre_filter_count = len(raw_results)
 
-    class _GrepResultShim:
-        __slots__ = ("path",)
-
-        def __init__(self, path: str) -> None:
-            self.path = path
-
-    shims = [_GrepResultShim(r["file"]) for r in raw_results if "file" in r]
-    filtered_shims, filter_ms = _apply_rebac_filter(
-        shims, permission_enforcer, auth_result, zone_id
+    # #3731: path_extractor eliminates the _GrepResultShim shim class.
+    filtered_results, filter_ms = _apply_rebac_filter(
+        raw_results,
+        permission_enforcer,
+        auth_result,
+        zone_id,
+        path_extractor=lambda r: r.get("file", ""),
     )
-    permitted_files = {shim.path for shim in filtered_shims}
-    filtered_results = [r for r in raw_results if r.get("file") in permitted_files]
     post_filter_count = len(filtered_results)
 
     # Sentinel detection: if we got at least one result beyond the
@@ -877,21 +898,15 @@ async def _do_glob_operation(
         logger.error("glob failed: %s", exc, exc_info=True)
         raise HTTPException(status_code=500, detail=f"glob failed: {type(exc).__name__}") from exc
 
-    # ReBAC filtering: wrap bare paths in a shim with a ``.path`` attribute
-    # so we can reuse ``_apply_rebac_filter``.
+    # #3731: path_extractor=identity eliminates the _GlobResultShim shim class.
     pre_filter_count = len(all_matches)
-
-    class _GlobResultShim:
-        __slots__ = ("path",)
-
-        def __init__(self, p: str) -> None:
-            self.path = p
-
-    shims = [_GlobResultShim(p) for p in all_matches]
-    filtered_shims, filter_ms = _apply_rebac_filter(
-        shims, permission_enforcer, auth_result, zone_id
+    filtered_paths, filter_ms = _apply_rebac_filter(
+        all_matches,
+        permission_enforcer,
+        auth_result,
+        zone_id,
+        path_extractor=lambda p: p,
     )
-    filtered_paths = [shim.path for shim in filtered_shims]
     post_filter_count = len(filtered_paths)
 
     total = len(filtered_paths)

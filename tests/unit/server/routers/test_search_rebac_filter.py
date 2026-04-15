@@ -199,16 +199,17 @@ class TestApplyRebacFilterBehaviour:
         # Both results came back because the enforcer permitted both.
         assert len(filtered) == 2
 
-    def test_duplicate_paths_are_collapsed_by_path_map(self) -> None:
-        """If two result rows share a path, only one survives the dict key.
+    def test_duplicate_paths_all_preserved(self) -> None:
+        """Multiple results sharing a path are ALL preserved (#3731).
 
-        This is the current behaviour documented via `path_map = {p: r ...}`
-        in the implementation. The test locks it in so future changes are
-        deliberate.
+        The previous path_map dict collapsed duplicates, silently
+        dropping grep lines from the same file. The two-pass approach
+        deduplicates paths for the permission check but keeps every
+        original result row.
         """
         results = [
             _StubResult("/a.py", marker="first"),
-            _StubResult("/a.py", marker="second-overwrites-first"),
+            _StubResult("/a.py", marker="second"),
         ]
         enforcer = _make_enforcer(permitted=["/a.py"])
 
@@ -219,8 +220,12 @@ class TestApplyRebacFilterBehaviour:
             zone_id="root",
         )
 
-        assert len(filtered) == 1
-        assert filtered[0].marker == "second-overwrites-first"
+        assert len(filtered) == 2
+        assert filtered[0].marker == "first"
+        assert filtered[1].marker == "second"
+        # Enforcer should see only one unique path, not two.
+        call = enforcer.filter_search_results.call_args
+        assert call.args[0] == ["/a.py"]
 
 
 # ---------------------------------------------------------------------------

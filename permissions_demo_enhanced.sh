@@ -555,6 +555,9 @@ print_subsection "4.2 Rename/move the file"
 # (admin should inherit via parent_owner, but cache may be stale after previous sections)
 nexus rebac create user admin direct_editor file $DEMO_BASE/original-name.txt 2>/dev/null || true
 
+# Clean stale destination from previous runs (Raft metastore retains across rmdir)
+nexus rm -f $DEMO_BASE/renamed-file.txt 2>/dev/null || true
+
 nexus move $DEMO_BASE/original-name.txt $DEMO_BASE/renamed-file.txt --force
 print_success "File renamed: /original-name.txt → /renamed-file.txt"
 

@@ -5415,6 +5415,8 @@ class NexusFS(  # type: ignore[misc]
 
     def has_pipe(self, path: str) -> bool:
         """Check if a DT_PIPE exists in the kernel registry."""
+        if self._kernel is None:
+            return False
         return self._kernel.has_pipe(path)
 
     def pipe_destroy(self, path: str) -> None:
@@ -5440,6 +5442,8 @@ class NexusFS(  # type: ignore[misc]
 
     def has_stream(self, path: str) -> bool:
         """Check if a DT_STREAM exists in the kernel registry."""
+        if self._kernel is None:
+            return False
         return self._kernel.has_stream(path)
 
     def stream_read_at_blocking(self, path: str, offset: int, timeout_ms: int) -> tuple[bytes, int]:
@@ -5537,8 +5541,10 @@ class NexusFS(  # type: ignore[misc]
                 logger.debug("close: callback failed (best-effort): %s", exc)
 
         # Close IPC primitives — Rust kernel (§4.2)
-        self._kernel.close_all_pipes()
-        self._kernel.close_all_streams()
+        # _kernel is None in remote connection mode (no local kernel)
+        if self._kernel is not None:
+            self._kernel.close_all_pipes()
+            self._kernel.close_all_streams()
         self._custom_pipe_backends.clear()
         self._custom_stream_backends.clear()
         # Close transport pool (persistent gRPC connections)

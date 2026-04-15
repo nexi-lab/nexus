@@ -299,7 +299,8 @@ class PermissionEnforcer:
             zone_id = context.zone_id
 
             # Get accessible paths via Tiger cache public API (Issue #1565)
-            accessible_paths = tiger_cache.get_accessible_paths_list(
+            # Fix(#3709): was get_accessible_paths_list (non-existent method)
+            accessible_paths = tiger_cache.get_accessible_paths(
                 subject_type=subject_type,
                 subject_id=subject_id,
                 permission="read",
@@ -308,11 +309,15 @@ class PermissionEnforcer:
             )
 
             if accessible_paths is None:
+                # Fix(#3709): Tiger cache miss must fail-closed (deny), not
+                # fail-open.  Returning all-True here would grant access to
+                # every directory prefix for any user whose bitmap hasn't
+                # been materialized yet.
                 logger.debug(
                     f"[BATCH-OPT] No bitmap for {subject_type}:{subject_id}, "
-                    f"returning all True for {len(prefixes)} prefixes"
+                    f"returning all False for {len(prefixes)} prefixes (fail-closed)"
                 )
-                return dict.fromkeys(prefixes, True)
+                return dict.fromkeys(prefixes, False)
 
             if not accessible_paths:
                 if logger.isEnabledFor(logging.DEBUG):
@@ -324,7 +329,9 @@ class PermissionEnforcer:
             try:
                 import nexus_kernel
 
-                results_list = nexus_kernel.batch_prefix_check(accessible_paths, list(prefixes))
+                results_list = nexus_kernel.batch_prefix_check(
+                    list(accessible_paths), list(prefixes)
+                )
                 results = dict(zip(prefixes, results_list, strict=True))
             except (ImportError, AttributeError):
                 # Python fallback (same logic, O(N×M))
@@ -346,7 +353,7 @@ class PermissionEnforcer:
             )
             return results
 
-        except (OperationalError, TimeoutError, OSError, RuntimeError) as e:
+        except (OperationalError, TimeoutError, OSError, RuntimeError, AttributeError) as e:
             logger.warning(
                 "[BATCH-OPT] has_accessible_descendants_batch error for "
                 "zone=%s subject=%s prefix_count=%d: %s, returning all False (fail-closed)",

@@ -32,6 +32,9 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from nexus.lib.pagination import build_paginated_list_response
+from nexus.lib.rebac_filter import apply_rebac_filter as _apply_rebac_filter
+from nexus.lib.rebac_filter import compute_rebac_fetch_limit as _compute_rebac_fetch_limit
+from nexus.lib.rebac_filter import rebac_denial_stats as _rebac_denial_stats
 from nexus.server.dependencies import require_auth
 
 logger = logging.getLogger(__name__)
@@ -47,11 +50,8 @@ router = APIRouter(prefix="/api/v2/search", tags=["search"])
 # value chosen empirically when #2056 landed. Beware: when the denial rate
 # exceeds ~66% this factor is insufficient and the response reports
 # ``truncated_by_permissions`` so callers can detect the silent undercount.
-_REBAC_OVERFETCH_FACTOR: int = 3
 
-# Threshold above which a high denial rate triggers a server-side warning
-# log (Issue 16A). Below this the silent-undercount risk is minimal.
-_REBAC_HIGH_DENIAL_WARN_THRESHOLD: float = 0.5
+# ReBAC constants and helpers are now in nexus.lib.rebac_filter (#3731).
 
 # =============================================================================
 # Dependencies
@@ -96,91 +96,7 @@ def _get_async_read_session_factory(request: Request) -> Any:
     return factory
 
 
-# =============================================================================
-# ReBAC filtering helper
-# =============================================================================
-
-
-def _normalize_path(path: str) -> str:
-    """Ensure path is absolute for ReBAC filter_list compatibility."""
-    if not path.startswith("/"):
-        return f"/{path}"
-    return path
-
-
-def _apply_rebac_filter(
-    results: list[Any],
-    permission_enforcer: Any | None,
-    auth_result: dict[str, Any],
-    zone_id: str,
-    path_extractor: Any | None = None,
-) -> tuple[list[Any], float]:
-    """Apply ReBAC file-level permission filtering to search results.
-
-    Returns (filtered_results, filter_time_ms).
-
-    Uses PermissionEnforcer.filter_search_results() which delegates to
-    rebac_list_objects() (Rust-accelerated, 1 SQL query + 1 Rust computation).
-    This bypasses the NamespaceManager pre-filter (search paths lack mount entries)
-    and avoids the stale graph cache bug in compute_permissions_bulk.
-
-    Args:
-        results: Search results to filter.
-        permission_enforcer: PermissionEnforcer instance (or None to skip).
-        auth_result: Authentication dict with subject_id, is_admin, etc.
-        zone_id: Zone ID for ReBAC scope.
-        path_extractor: Callable ``(result) -> str`` that extracts the file
-            path from a result element. Defaults to ``lambda r: r.path``
-            (suitable for search_query results). Pass
-            ``lambda r: r["file"]`` for grep dicts, ``lambda r: r`` for
-            bare path strings (#3731: eliminates per-caller shim classes).
-    """
-    if permission_enforcer is None:
-        return results, 0.0
-
-    if not hasattr(permission_enforcer, "filter_search_results"):
-        return results, 0.0
-
-    if path_extractor is None:
-        path_extractor = lambda r: r.path  # noqa: E731
-
-    user_id = auth_result.get("subject_id") or auth_result.get("user_id", "anonymous")
-    is_admin = bool(auth_result.get("is_admin", False))
-
-    # Two-pass approach: (1) deduplicate paths for the permission
-    # check, (2) filter the original ordered list against the
-    # permitted set. A dict-based path_map would silently drop
-    # multiple grep results from the same file (#3731 review).
-    unique_abs_paths: list[str] = []
-    seen: set[str] = set()
-    result_abs_paths: list[str] = []  # parallel to ``results``
-    for r in results:
-        abs_path = _normalize_path(path_extractor(r))
-        result_abs_paths.append(abs_path)
-        if abs_path not in seen:
-            seen.add(abs_path)
-            unique_abs_paths.append(abs_path)
-
-    filter_start = time.perf_counter()
-    permitted_abs = permission_enforcer.filter_search_results(
-        unique_abs_paths,
-        user_id=user_id,
-        zone_id=zone_id,
-        is_admin=is_admin,
-    )
-    filter_ms = (time.perf_counter() - filter_start) * 1000
-
-    logger.debug(
-        "[SEARCH-REBAC] permitted %d/%d paths in %.1fms",
-        len(permitted_abs),
-        len(unique_abs_paths),
-        filter_ms,
-    )
-
-    permitted_set = set(permitted_abs)
-    filtered = [r for r, p in zip(results, result_abs_paths, strict=True) if p in permitted_set]
-    return filtered, filter_ms
-
+# ReBAC filtering helpers are in nexus.lib.rebac_filter (#3731).
 
 # =============================================================================
 # Response shaping helpers (#3701 review — Issue 5A)
@@ -213,49 +129,6 @@ def _serialize_search_result(result: Any) -> dict[str, Any]:
     reranker = getattr(result, "reranker_score", None)
     out["reranker_score"] = round(reranker, 4) if reranker is not None else None
     return out
-
-
-def _compute_rebac_fetch_limit(effective_limit: int, has_enforcer: bool) -> int:
-    """Compute the over-fetch size for a given effective limit.
-
-    Shared helper used by ``search_query``, ``search_grep``, and
-    ``search_glob`` so the over-fetch factor lives in exactly one place.
-    Returns ``effective_limit`` unchanged when no permission enforcer is
-    active (#3701 review — Issue 16A).
-    """
-    if not has_enforcer:
-        return effective_limit
-    return effective_limit * _REBAC_OVERFETCH_FACTOR
-
-
-def _rebac_denial_stats(
-    pre_filter_count: int, post_filter_count: int, effective_limit: int
-) -> dict[str, Any]:
-    """Compute denial-rate instrumentation for response envelopes.
-
-    Returns a dict that gets merged into the response envelope so
-    callers can detect silent under-counting after permission filtering.
-    Emits a WARNING log when the denial rate is high *and* the caller
-    did not get enough results — the exact failure mode 3x over-fetch
-    cannot always absorb.
-    """
-    denial_rate = 0.0 if pre_filter_count == 0 else 1.0 - (post_filter_count / pre_filter_count)
-
-    truncated = (
-        post_filter_count < effective_limit and denial_rate >= _REBAC_HIGH_DENIAL_WARN_THRESHOLD
-    )
-    if truncated:
-        logger.warning(
-            "[SEARCH-REBAC] high denial rate (%.1f%%) caused undercount: "
-            "got %d of %d requested; consider paginating or increasing limit",
-            denial_rate * 100.0,
-            post_filter_count,
-            effective_limit,
-        )
-    return {
-        "permission_denial_rate": round(denial_rate, 4),
-        "truncated_by_permissions": truncated,
-    }
 
 
 # =============================================================================

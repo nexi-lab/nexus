@@ -15,12 +15,22 @@ from dataclasses import dataclass
 from typing import Any
 from unittest.mock import MagicMock
 
+from nexus.lib.rebac_filter import (
+    REBAC_OVERFETCH_FACTOR as _REBAC_OVERFETCH_FACTOR,
+)
+from nexus.lib.rebac_filter import (
+    apply_rebac_filter as _apply_rebac_filter,
+)
+from nexus.lib.rebac_filter import (
+    compute_rebac_fetch_limit as _compute_rebac_fetch_limit,
+)
+from nexus.lib.rebac_filter import (
+    normalize_path as _normalize_path,
+)
+from nexus.lib.rebac_filter import (
+    rebac_denial_stats as _rebac_denial_stats,
+)
 from nexus.server.api.v2.routers.search import (
-    _REBAC_OVERFETCH_FACTOR,
-    _apply_rebac_filter,
-    _compute_rebac_fetch_limit,
-    _normalize_path,
-    _rebac_denial_stats,
     _serialize_search_result,
 )
 

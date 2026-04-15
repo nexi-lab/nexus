@@ -855,9 +855,9 @@ async def create_mcp_server(
             Narrowed: nexus_glob("**/*.py", files=["/src/a.py", "/src/b.py"])
         """
         from nexus.core.path_utils import split_zone_from_internal_path
-        from nexus.server.api.v2.routers.search import (
-            _apply_rebac_filter,
-            _rebac_denial_stats,
+        from nexus.lib.rebac_filter import (
+            apply_rebac_filter,
+            rebac_denial_stats,
         )
 
         nx_instance: Any = _get_nexus_instance(ctx)
@@ -887,7 +887,7 @@ async def create_mcp_server(
         # #3731: Apply file-level ReBAC filtering (second layer,
         # same as HTTP _do_glob_operation).
         pre_filter_count = len(all_matches)
-        filtered_paths, filter_ms = _apply_rebac_filter(
+        filtered_paths, filter_ms = apply_rebac_filter(
             all_matches,
             permission_enforcer,
             auth_result,
@@ -926,7 +926,7 @@ async def create_mcp_server(
         glob_multi_zone_ambiguous = len(set(_keys)) < len(_keys)
 
         extras: dict[str, Any] = {
-            **_rebac_denial_stats(pre_filter_count, post_filter_count, limit + offset),
+            **rebac_denial_stats(pre_filter_count, post_filter_count, limit + offset),
             "item_zones": item_zones,
         }
         if glob_multi_zone_ambiguous:
@@ -1010,10 +1010,10 @@ async def create_mcp_server(
             Non-matching lines: nexus_grep("debug", invert_match=True)
         """
         from nexus.core.path_utils import split_zone_from_internal_path
-        from nexus.server.api.v2.routers.search import (
-            _apply_rebac_filter,
-            _compute_rebac_fetch_limit,
-            _rebac_denial_stats,
+        from nexus.lib.rebac_filter import (
+            apply_rebac_filter,
+            compute_rebac_fetch_limit,
+            rebac_denial_stats,
         )
 
         nx_instance: Any = _get_nexus_instance(ctx)
@@ -1040,7 +1040,7 @@ async def create_mcp_server(
         # Sentinel fetch + ReBAC over-fetch (#3731).
         window_size = limit + offset
         sentinel_window = window_size + 1
-        fetch_limit = _compute_rebac_fetch_limit(
+        fetch_limit = compute_rebac_fetch_limit(
             sentinel_window, has_enforcer=permission_enforcer is not None
         )
         grep_kwargs: dict[str, Any] = {
@@ -1070,7 +1070,7 @@ async def create_mcp_server(
         # #3731: Apply file-level ReBAC filtering (second layer,
         # same as HTTP _do_grep_operation).
         pre_filter_count = len(all_results)
-        filtered_results, filter_ms = _apply_rebac_filter(
+        filtered_results, filter_ms = apply_rebac_filter(
             all_results,
             permission_enforcer,
             auth_result,
@@ -1115,7 +1115,7 @@ async def create_mcp_server(
 
         # #3731: Include permission stats in response (parity with HTTP).
         extras: dict[str, Any] = {
-            **_rebac_denial_stats(pre_filter_count, post_filter_count, window_size),
+            **rebac_denial_stats(pre_filter_count, post_filter_count, window_size),
         }
         if multi_zone_ambiguous:
             extras["multi_zone_ambiguous"] = True

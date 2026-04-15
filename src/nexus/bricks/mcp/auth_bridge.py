@@ -151,11 +151,21 @@ def resolve_mcp_operation_context(
                 }
 
             if auth_dict.get("authenticated", False):
-                # Use the same builder as HTTP to carry all fields
-                # (agent_generation, admin_capabilities, etc.).
-                from nexus.server.dependencies import get_operation_context
-
-                return get_operation_context(auth_dict)
+                subject_type = auth_dict.get("subject_type") or "user"
+                subject_id = auth_dict.get("subject_id") or "anonymous"
+                zone_id = auth_dict.get("zone_id") or ROOT_ZONE_ID
+                is_admin = bool(auth_dict.get("is_admin", False))
+                agent_generation = auth_dict.get("agent_generation")
+                return OperationContext(
+                    user_id=subject_id,
+                    subject_type=subject_type,
+                    subject_id=subject_id,
+                    zone_id=zone_id,
+                    groups=[],
+                    is_admin=is_admin,
+                    is_system=False,
+                    agent_generation=agent_generation,
+                )
         # Per-request key was present and auth_provider actively
         # rejected it — fail closed. Do NOT fall through to ambient
         # creds from _init_cred/_default_context.

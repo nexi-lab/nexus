@@ -479,7 +479,7 @@ jobs:
         if: matrix.variant == 'cpu'
         run: |
           docker run --rm --entrypoint "" \
-            -e LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libgomp.so.1 \
+            -e GLIBC_TUNABLES=glibc.rtld.optional_static_tls=16384 \
             ghcr.io/nexi-lab/nexus:smoke-test \
             python3 -c "
           import nexus_kernel

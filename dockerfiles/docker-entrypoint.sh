@@ -7,31 +7,39 @@ set -e
 set -o pipefail
 
 # ---------------------------------------------------------------------------
+# Static-TLS reservation (all platforms)
+#
+# faiss-cpu bundles its own libgomp (faiss_cpu.libs/libgomp-*.so) which is a
+# different .so from the system libgomp preloaded via LD_PRELOAD.  On x86_64
+# CPU-only containers the Dockerfile's LD_PRELOAD ensures the *system* libgomp
+# gets TLS early, but when faiss later dlopen()s its *bundled* copy the default
+# static-TLS pool is already full → "cannot allocate memory in static TLS block".
+#
+# GLIBC_TUNABLES expands the reservation so both copies fit.  It is harmless on
+# all platforms and also covers libc10 (PyTorch), ggml, numpy, etc.
+# ---------------------------------------------------------------------------
+export GLIBC_TUNABLES="${GLIBC_TUNABLES:-glibc.rtld.optional_static_tls=16384}"
+
+# ---------------------------------------------------------------------------
 # ARM64 mitigations (Issue #3125)
-# Applied only on aarch64 to avoid regressing x86_64 throughput.
 #   FAISS_OPT_LEVEL=generic  — prevent faiss SVE auto-detection crash in
 #                               Docker where CPU feature flags may be masked.
 #   OMP_NUM_THREADS=1        — avoid OpenMP runtime conflict between faiss-cpu
 #                               and PyTorch on ARM (libiomp5 vs libomp).
-#   GLIBC_TUNABLES           — work around PyTorch libc10.so TLS allocation
-#                               failure on aarch64 (pytorch/pytorch#76689).
 # Users can still override by setting the variable before starting the container.
 # ---------------------------------------------------------------------------
 if [ "$(uname -m)" = "aarch64" ]; then
     export FAISS_OPT_LEVEL="${FAISS_OPT_LEVEL:-generic}"
     export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
-    export GLIBC_TUNABLES="${GLIBC_TUNABLES:-glibc.rtld.optional_static_tls=16384}"
 fi
 
 # ---------------------------------------------------------------------------
-# TLS block exhaustion fix (ggml, numpy, etc.)
-# CPU: LD_PRELOAD loads libgomp before TLS slots fill up.
-# CUDA: LD_PRELOAD conflicts with NVIDIA's libgomp (SIGILL); use
-#       GLIBC_TUNABLES to expand the static TLS reservation instead.
+# LD_PRELOAD fallback (CPU-only)
+# Preloading the system libgomp helps libraries other than faiss that link
+# against the system copy.  On CUDA, LD_PRELOAD conflicts with NVIDIA's
+# libgomp (SIGILL), so we skip it — GLIBC_TUNABLES above is sufficient.
 # ---------------------------------------------------------------------------
-if [ -d /usr/local/cuda ]; then
-    export GLIBC_TUNABLES="${GLIBC_TUNABLES:-glibc.rtld.optional_static_tls=16384}"
-elif [ -z "${LD_PRELOAD:-}" ]; then
+if [ ! -d /usr/local/cuda ] && [ -z "${LD_PRELOAD:-}" ]; then
     _gomp=$(find /usr/lib -name 'libgomp.so.1' -print -quit 2>/dev/null || true)
     [ -n "$_gomp" ] && export LD_PRELOAD="$_gomp"
     unset _gomp

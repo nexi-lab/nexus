@@ -790,64 +790,37 @@ class NexusFS(  # type: ignore[misc]
     ) -> dict[str, Any] | None:
         """Get file metadata without reading content (FUSE getattr).
 
-        When include_lock=True, appends a "lock" field with advisory lock
-        state from _lock_manager (zero cost when False — default).
+        ``include_lock=True`` is a *transitional* knob: today the
+        advisory lock table is Python-owned and a lookup in federation
+        mode costs a raft round-trip, so callers opt in. F4 moves the
+        lock table into the kernel (free lookup) and deletes this
+        parameter entirely — ``sys_stat`` will then always return a
+        ``"lock"`` key. Do not build new consumers around the flag.
         """
-        # ── Rust fast path (Phase H): dcache hit → dict from Rust ──────
-        # Skipped when include_lock=True (needs Python _lock_manager).
-        if not include_lock and self._kernel is not None:
-            _is_admin = (
-                getattr(context, "is_admin", False)
-                if context is not None and not isinstance(context, dict)
-                else (context.get("is_admin", False) if isinstance(context, dict) else False)
-            )
-            _stat = self._kernel.sys_stat(path, self._zone_id, _is_admin)
-            if _stat is not None:
-                # Rust returns dict without owner/group (context-dependent)
-                ctx = self._resolve_cred(context)
-                _stat["owner"] = ctx.user_id
-                _stat["group"] = ctx.user_id
-                return _stat
-
         ctx = self._resolve_cred(context)
         normalized = self._validate_path(path, allow_root=True)
 
-        # Fetch metadata once, share with _check_is_directory to avoid duplicate lookup
-        file_meta = self.metadata.get(normalized)
-
-        # Check if it's a directory (pass pre-fetched meta to avoid second metadata.get)
-        is_dir = self._check_is_directory(normalized, context=ctx, _meta=file_meta)
-
-        if is_dir:
-            if file_meta is not None:
-                # Explicit directory metadata exists — use it (preserves custom attrs from sys_setattr)
-                return {
-                    "path": file_meta.path,
-                    "backend_name": file_meta.backend_name,
-                    "physical_path": file_meta.physical_path,
-                    "size": file_meta.size or 4096,
-                    "etag": file_meta.etag,
-                    "mime_type": file_meta.mime_type or "inode/directory",
-                    "created_at": file_meta.created_at.isoformat()
-                    if file_meta.created_at
-                    else None,
-                    "modified_at": file_meta.modified_at.isoformat()
-                    if file_meta.modified_at
-                    else None,
-                    "is_directory": True,
-                    "entry_type": file_meta.entry_type,
-                    "owner": ctx.user_id,
-                    "group": ctx.user_id,
-                    "mode": 0o755,  # drwxr-xr-x
-                    "version": file_meta.version,
-                    "zone_id": file_meta.zone_id,
-                }
-            # Synthesize for implicit directories (no explicit metadata)
-            return {
+        # Build the base stat via a single code path. F3 C1 guarantees a
+        # metastore is always wired (``Kernel::new()`` installs
+        # ``MemoryMetastore`` by default), so the Rust kernel is the
+        # authoritative source for explicit entries — a second
+        # ``self.metadata.get`` would be a TOCTOU duplicate with a
+        # different view of the per-mount ``ZoneMetastore`` in
+        # federation mode. The two ``None``-returning cases handled
+        # after the kernel call are the ones the kernel cannot see:
+        # implicit directories (paths with children but no explicit
+        # entry) and the Python-side ``.readme/`` virtual-doc overlay
+        # (Issue #3728).
+        result = self._kernel.sys_stat(normalized, self._zone_id, ctx.is_admin)
+        if result is not None:
+            result["owner"] = ctx.user_id
+            result["group"] = ctx.user_id
+        elif self._check_is_directory(normalized, context=ctx, _meta=None):
+            result = {
                 "path": normalized,
                 "backend_name": "",
                 "physical_path": "",
-                "size": 4096,  # Standard directory size
+                "size": 4096,
                 "mime_type": "inode/directory",
                 "created_at": None,
                 "modified_at": None,
@@ -857,34 +830,11 @@ class NexusFS(  # type: ignore[misc]
                 "group": ctx.user_id,
                 "mode": 0o755,  # drwxr-xr-x
             }
+        else:
+            result = self._try_virtual_readme_stat(normalized, ctx)
+            if result is None:
+                return None
 
-        if file_meta is None:
-            # Virtual .readme/ overlay check (Issue #3728) — before giving
-            # up, see if this is a synthetic file under a skill backend's
-            # .readme/ directory.
-            _vstat = self._try_virtual_readme_stat(normalized, ctx)
-            if _vstat is not None:
-                return _vstat
-            return None
-
-        result: dict[str, Any] = {
-            "path": file_meta.path,
-            "backend_name": file_meta.backend_name,
-            "physical_path": file_meta.physical_path,
-            "size": file_meta.size or 0,
-            "etag": file_meta.etag,
-            "mime_type": file_meta.mime_type or "application/octet-stream",
-            "created_at": file_meta.created_at.isoformat() if file_meta.created_at else None,
-            "modified_at": file_meta.modified_at.isoformat() if file_meta.modified_at else None,
-            "is_directory": False,
-            "owner": ctx.user_id,
-            "group": ctx.user_id,
-            "mode": 0o644,  # -rw-r--r--
-            "version": file_meta.version,
-            "zone_id": file_meta.zone_id,
-        }
-
-        # Optional lock enrichment (zero cost when include_lock=False)
         if include_lock:
             lock_info = self._lock_manager.get_lock_info(normalized)
             result["lock"] = self._format_lock_info(lock_info) if lock_info else None

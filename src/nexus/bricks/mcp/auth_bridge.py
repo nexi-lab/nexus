@@ -53,9 +53,6 @@ def authenticate_api_key(auth_provider: Any, api_key: str) -> Any:
 
     Returns the ``AuthResult`` on success, ``None`` on any failure.
     """
-    import asyncio
-    import concurrent.futures
-
     try:
         coro = auth_provider.authenticate(api_key)
     except Exception:
@@ -70,15 +67,12 @@ def authenticate_api_key(auth_provider: Any, api_key: str) -> Any:
     if not inspect.isawaitable(coro):
         return coro
 
-    # Use a background thread so we work whether or not an event loop
-    # is already running (same pattern as _get_nexus_instance).
-    def _run() -> Any:
-        return asyncio.run(coro)
-
-    pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    # Use the repo's shared sync bridge which handles event-loop
+    # detection, timeout, and clean thread management (#3731 R5).
     try:
-        future = pool.submit(_run)
-        return future.result(timeout=10)
+        from nexus.lib.sync_bridge import run_sync
+
+        return run_sync(coro, timeout=10.0)
     except Exception:
         logger.warning(
             "Failed to authenticate per-request API key via auth_provider; "
@@ -86,9 +80,6 @@ def authenticate_api_key(auth_provider: Any, api_key: str) -> Any:
             exc_info=True,
         )
         return None
-    finally:
-        # shutdown(wait=False) so a hung authenticate() doesn't block.
-        pool.shutdown(wait=False)
 
 
 def resolve_mcp_operation_context(

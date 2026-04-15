@@ -1009,7 +1009,7 @@ async def create_mcp_server(
         if block_type is not None:
             grep_kwargs["block_type"] = block_type
 
-        all_results = _search.grep(pattern, path, **grep_kwargs)
+        all_results = await _search.grep(pattern, path, **grep_kwargs)
         raw_count = len(all_results)
         # Sentinel-based has_more: if SearchService returned at least
         # one row beyond the caller's window, there's a next page.

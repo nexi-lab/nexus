@@ -9,6 +9,7 @@ Includes:
 from __future__ import annotations
 
 import socket as _socket_mod
+from collections.abc import Generator
 from datetime import datetime
 
 import pytest
@@ -52,7 +53,7 @@ def no_network(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture()
-def sqlite_store() -> SqliteAuthProfileStore:
+def sqlite_store() -> Generator[SqliteAuthProfileStore]:
     """Fresh SqliteAuthProfileStore backed by :memory: for each test."""
     store = SqliteAuthProfileStore(":memory:")
     yield store

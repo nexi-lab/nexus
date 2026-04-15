@@ -11,7 +11,6 @@ Coverage map:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 import pytest
@@ -23,17 +22,11 @@ from nexus.bricks.auth.credential_backend import (
     HealthStatus,
     NexusTokenManagerBackend,
 )
+from nexus.bricks.auth.oauth.token_resolver import ResolvedToken
 
 # ---------------------------------------------------------------------------
 # Fake TokenResolver for tests
 # ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class FakeResolvedToken:
-    access_token: str
-    expires_at: datetime | None
-    scopes: tuple[str, ...]
 
 
 class FakeTokenResolver:
@@ -55,13 +48,13 @@ class FakeTokenResolver:
 
     async def resolve(
         self, provider: str, user_email: str, *, zone_id: str = "root"
-    ) -> FakeResolvedToken:
+    ) -> ResolvedToken:
         self.resolve_calls.append(
             {"provider": provider, "user_email": user_email, "zone_id": zone_id}
         )
         if self._fail:
             raise RuntimeError("resolver failed")
-        return FakeResolvedToken(
+        return ResolvedToken(
             access_token=self._token,
             expires_at=self._expires_at,
             scopes=self._scopes,

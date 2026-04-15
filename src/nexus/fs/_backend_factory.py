@@ -17,19 +17,6 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-def _try_profile_store_select(provider: str, *, account: str | None = None) -> Any:
-    """Try to select a usable auth profile from the profile store.
-
-    Returns a single AuthProfile that is NOT on cooldown or disabled.
-    Returns None when: no profiles exist, selection is ambiguous (multiple
-    profiles with no explicit account), or all profiles are blocked.
-    """
-    from nexus.fs._external_sync_boot import ensure_external_sync, select_profile
-
-    ensure_external_sync()
-    return select_profile(provider, account=account)
-
-
 def create_backend(spec: Any) -> Any:
     """Create a storage backend from a parsed MountSpec.
 
@@ -49,20 +36,15 @@ def create_backend(spec: Any) -> Any:
                 "boto3 is required for S3 backends. Install with: pip install nexus-fs[s3]"
             ) from None
 
-        # Phase 2: verify S3 credentials are available via profile store.
-        # We do NOT inject static credentials — boto3's native provider chain
-        # handles credential refresh (SSO, STS, instance metadata). The profile
-        # store is for discovery/listing only.
-        profile = _try_profile_store_select(provider="s3", account=os.environ.get("AWS_PROFILE"))
-        if profile is not None and profile.backend == "external-cli":
-            # Profile found — AWS credentials are confirmed available.
-            # Let boto3 resolve them natively (keeps refresh working).
-            return PathS3Backend(
-                bucket_name=spec.authority,
-                prefix=spec.path.lstrip("/") if spec.path else "",
-            )
+        # Phase 2: ensure external-CLI sync has run (populates auth list).
+        # S3 credential resolution always uses boto3's native provider chain
+        # (which handles SSO/STS refresh, instance metadata, etc.). The profile
+        # store is for discovery/listing in `auth list`, not for credential
+        # injection at mount time.
+        from nexus.fs._external_sync_boot import ensure_external_sync
 
-        # No profile store match — fall back to old discover_credentials() path
+        ensure_external_sync()
+
         from nexus.fs._credentials import discover_credentials
 
         discover_credentials(spec.scheme)

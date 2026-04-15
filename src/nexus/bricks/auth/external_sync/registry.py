@@ -159,12 +159,16 @@ class AdapterRegistry:
                     breaker.record_failure()
                 else:
                     result = task.result()
+                    # Always upsert discovered profiles, even when degraded
+                    # (e.g. one file parsed OK, another failed). Partial
+                    # discovery is better than losing all profiles.
+                    if result.profiles:
+                        self._upsert_sync_results(result)
+                        self._last_sync_times[name] = time.monotonic()
                     if result.error is not None:
                         breaker.record_failure()
                     else:
                         breaker.record_success()
-                        self._upsert_sync_results(result)
-                        self._last_sync_times[name] = time.monotonic()
             else:
                 if not task.done():
                     task.cancel()
@@ -214,12 +218,14 @@ class AdapterRegistry:
         except Exception as exc:
             result = SyncResult(adapter_name=name, error=str(exc))
 
+        # Always upsert discovered profiles even when degraded
+        if result.profiles:
+            self._upsert_sync_results(result)
+            self._last_sync_times[name] = time.monotonic()
         if result.error is not None:
             breaker.record_failure()
         else:
             breaker.record_success()
-            self._upsert_sync_results(result)
-            self._last_sync_times[name] = time.monotonic()
 
         return result
 

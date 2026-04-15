@@ -128,25 +128,28 @@ def select_profile(provider: str, *, account: str | None = None):  # noqa: ANN20
             if not profiles:
                 return None
 
-        # Ambiguous: multiple profiles and no account specified — let the
-        # native provider chain decide instead of silently picking one.
-        if len(profiles) > 1 and account is None:
-            return None
-
+        # Remove blocked profiles (cooldown/disabled) before ambiguity check.
+        # This ensures {default: blocked, work-prod: healthy} resolves to
+        # work-prod rather than falling back to the native chain.
         from datetime import UTC, datetime
 
         now = datetime.now(UTC)
-        for profile in profiles:
-            stats = profile.usage_stats
-            if stats.cooldown_until and stats.cooldown_until > now:
-                continue
-            if stats.disabled_until and stats.disabled_until > now:
-                continue
-            return profile
+        usable = [
+            p
+            for p in profiles
+            if not (p.usage_stats.cooldown_until and p.usage_stats.cooldown_until > now)
+            and not (p.usage_stats.disabled_until and p.usage_stats.disabled_until > now)
+        ]
 
-        # All matching profiles are on cooldown/disabled — do not force a
-        # known-broken profile back into service.
-        return None
+        if not usable:
+            # All matching profiles are blocked — fail closed.
+            return None
+
+        # Ambiguous: multiple usable profiles and no account specified.
+        if len(usable) > 1 and account is None:
+            return None
+
+        return usable[0]
     except Exception:
         return None
 

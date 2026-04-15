@@ -67,6 +67,7 @@ class FileAdapter(ExternalCliSyncAdapter):
             )
 
         all_profiles: list[SyncedProfile] = []
+        seen_keys: set[str] = set()
         errors: list[str] = []
         any_read = False
 
@@ -88,7 +89,12 @@ class FileAdapter(ExternalCliSyncAdapter):
 
             try:
                 profiles = self.parse_file(path, content)
-                all_profiles.extend(profiles)
+                # Deduplicate by backend_key: first file wins (paths are
+                # in priority order, e.g. credentials before config).
+                for p in profiles:
+                    if p.backend_key not in seen_keys:
+                        seen_keys.add(p.backend_key)
+                        all_profiles.append(p)
             except Exception as exc:
                 errors.append(f"{path}: parse error: {exc}")
 

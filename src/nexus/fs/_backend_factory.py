@@ -66,6 +66,10 @@ def _resolve_external_credential(backend_key: str) -> Any:
     """Resolve a credential using the AwsCliSyncAdapter.
 
     Returns a ResolvedCredential on success, None on any exception.
+
+    Phase 2 shortcut: directly instantiates AwsCliSyncAdapter instead of
+    going through ExternalCliBackend + AdapterRegistry. Replace with proper
+    backend integration in Phase 3 when additional adapters are added.
     """
     try:
         import asyncio

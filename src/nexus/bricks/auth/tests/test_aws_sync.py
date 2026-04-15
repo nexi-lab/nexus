@@ -214,6 +214,34 @@ class TestAwsSync:
         names = {p.account_identifier for p in result.profiles}
         assert names == {"default", "extra"}
 
+    async def test_sync_credentials_file_takes_precedence_over_config(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When both files have the same profile, credentials wins."""
+        cred_file = tmp_path / "credentials"
+        config_file = tmp_path / "config"
+
+        # Both files define "default" — credentials should win
+        cred_file.write_text(
+            "[default]\naws_access_key_id = AKIACRED\naws_secret_access_key = credSecret\n",
+            encoding="utf-8",
+        )
+        config_file.write_text(
+            "[default]\naws_access_key_id = AKIACONFIG\naws_secret_access_key = configSecret\n",
+            encoding="utf-8",
+        )
+
+        monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(cred_file))
+        monkeypatch.setenv("AWS_CONFIG_FILE", str(config_file))
+
+        adapter = AwsCliSyncAdapter()
+        result = await adapter.sync()
+
+        assert result.error is None
+        # Only one profile — deduped by backend_key, first file wins
+        assert len(result.profiles) == 1
+        assert result.profiles[0].account_identifier == "default"
+
     async def test_sync_missing_files_returns_degraded(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

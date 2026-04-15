@@ -63,6 +63,7 @@ class RemoteServiceProxy:
             raise AttributeError(name)
 
         # Lazy import to avoid circular dependency at module load
+        from nexus.remote.method_registry import METHOD_REGISTRY
         from nexus.remote.rpc_proxy import RPCProxyBase
 
         def rpc_forwarder(*args: Any, **kwargs: Any) -> Any:
@@ -89,7 +90,18 @@ class RemoteServiceProxy:
             # long-running calls like ACP agent invocations.
             read_timeout = kwargs.get("timeout")
 
-            return self._call_rpc(rpc_name, kwargs or None, read_timeout=read_timeout)
+            result = self._call_rpc(rpc_name, kwargs or None, read_timeout=read_timeout)
+
+            # Apply response_key extraction from METHOD_REGISTRY (#3731).
+            # Without this, methods like grep/glob return the server's
+            # dict wrapper ({"results": [...]}) instead of the unwrapped
+            # list that callers expect. This matches the unwrapping that
+            # RPCProxyBase._dispatch_rpc() does for the main NexusFS proxy.
+            spec = METHOD_REGISTRY.get(rpc_name)
+            if spec and spec.response_key and isinstance(result, dict):
+                return result.get(spec.response_key, result)
+
+            return result
 
         # Preserve method name for debugging
         rpc_forwarder.__name__ = name

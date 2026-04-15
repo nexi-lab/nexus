@@ -36,6 +36,7 @@ EXCEPTIONS = [
     "src/nexus/server/fastapi_server.py",  # 2,133 lines - Phase 4 splitting
     "src/nexus/services/memory/memory_api.py",  # 3,012 lines - moved from core/, split tracked
     "src/nexus/bricks/search/daemon.py",  # ~2,300 lines - Issue #3698 additions; split tracked as follow-up
+    "src/nexus/bricks/mcp/server.py",  # 2,157 lines - was 2,136 pre-#3731; auth helpers extracted to auth_bridge.py
 ]
 
 

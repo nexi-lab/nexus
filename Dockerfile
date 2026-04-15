@@ -164,9 +164,12 @@ RUN set -eux; \
     && rm -rf /var/lib/apt/lists/*
 
 # PyTorch/txtai on slim Linux containers can fail with:
-# "libc10.so: cannot allocate memory in static TLS block".
-# Preload libgomp plus torch's libc10 via stable symlinks so
-# ``from txtai import Embeddings`` works reliably at runtime.
+# "cannot allocate memory in static TLS block" for libgomp or libc10.
+# Two-layer fix:
+#   1. LD_PRELOAD: load the system libgomp + torch libc10 early so they
+#      get TLS slots before the pool fills up.
+#   2. GLIBC_TUNABLES: expand the static-TLS reservation so that
+#      *additional* copies (e.g. faiss-cpu's bundled libgomp) still fit.
 RUN set -eux; \
     if [ "${TARGETARCH}" = "arm64" ]; then \
         ln -sf /usr/lib/aarch64-linux-gnu/libgomp.so.1 /usr/lib/libgomp.so.1; \
@@ -175,6 +178,7 @@ RUN set -eux; \
     fi && \
     ln -sf /usr/local/lib/python3.13/site-packages/torch/lib/libc10.so /usr/lib/libc10.so
 ENV LD_PRELOAD="/usr/lib/libgomp.so.1 /usr/lib/libc10.so"
+ENV GLIBC_TUNABLES="glibc.rtld.optional_static_tls=16384"
 
 # ---------- CLI connectors: gws + gh (Issue #3148) ----------
 # gws: Google Workspace CLI for Gmail/Calendar/Drive/Sheets/Docs/Chat connectors
@@ -264,9 +268,9 @@ RUN mkdir -p /app/data && chown -R nexus:nexus /app
 USER nexus
 
 # ---------- Environment variables ----------
-# ARM64-specific mitigations (FAISS_OPT_LEVEL, OMP_NUM_THREADS, GLIBC_TUNABLES)
-# are applied conditionally at runtime in docker-entrypoint.sh to avoid
-# regressing x86_64 throughput (Issue #3125).
+# ARM64-specific mitigations (FAISS_OPT_LEVEL, OMP_NUM_THREADS) are applied
+# conditionally at runtime in docker-entrypoint.sh to avoid regressing x86_64
+# throughput (Issue #3125).  GLIBC_TUNABLES is set unconditionally above.
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     NEXUS_HOST=0.0.0.0 \

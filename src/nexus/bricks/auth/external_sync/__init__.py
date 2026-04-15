@@ -5,10 +5,12 @@ from nexus.bricks.auth.external_sync.base import (
     SyncedProfile,
     SyncResult,
 )
+from nexus.bricks.auth.external_sync.file_adapter import FileAdapter
 from nexus.bricks.auth.external_sync.subprocess_adapter import SubprocessAdapter
 
 __all__ = [
     "ExternalCliSyncAdapter",
+    "FileAdapter",
     "SubprocessAdapter",
     "SyncedProfile",
     "SyncResult",

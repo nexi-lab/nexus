@@ -404,6 +404,10 @@ def list_auth(output_opts: OutputOptions) -> None:
                     "source": s.source,
                     "status": s.status.value,
                     "last_used": s.message,
+                    # Backward-compatible keys for JSON consumers
+                    "service": s.service,
+                    "kind": s.kind.value,
+                    "message": s.message,
                 }
             )
     except Exception as exc:

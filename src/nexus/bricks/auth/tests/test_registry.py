@@ -5,12 +5,16 @@ Covers:
   - AdapterRegistry.startup() with concurrency and global timeout
   - Per-adapter circuit breaker integration
   - Background refresh loop with TTL
+  - Concurrency safety (torn reads, crash-freedom)
+  - Offline safety (FileAdapter / SubprocessAdapter degrade gracefully)
 """
 
 from __future__ import annotations
 
 import asyncio
+import socket as _socket_mod
 import time
+from pathlib import Path
 
 import pytest
 
@@ -20,7 +24,9 @@ from nexus.bricks.auth.external_sync.base import (
     SyncedProfile,
     SyncResult,
 )
+from nexus.bricks.auth.external_sync.file_adapter import FileAdapter
 from nexus.bricks.auth.external_sync.registry import AdapterRegistry, CircuitBreaker
+from nexus.bricks.auth.external_sync.subprocess_adapter import SubprocessAdapter
 from nexus.bricks.auth.profile import InMemoryAuthProfileStore
 
 # ---------------------------------------------------------------------------
@@ -368,3 +374,132 @@ class TestRegistryRefreshLoop:
 
         # With TTL=0.3s and tick=0.1s over ~0.8s, we expect at least 2 additional syncs
         assert adapter.sync_count >= 3
+
+
+# ---------------------------------------------------------------------------
+# TestConcurrency
+# ---------------------------------------------------------------------------
+
+
+class TestConcurrency:
+    async def test_concurrent_list_during_upsert(self) -> None:
+        """Two readers + one writer — no torn reads, no crashes."""
+
+        class _ShortTTLAdapter(_FastAdapter):
+            adapter_name = "short-ttl"
+            sync_ttl_seconds = 0.1
+
+        adapter = _ShortTTLAdapter()
+        store = InMemoryAuthProfileStore()
+        registry = AdapterRegistry(
+            [adapter],
+            store,
+            startup_timeout=3.0,
+            loop_tick_seconds=0.05,
+        )
+        await registry.startup()
+
+        read_results: list[list] = [[], []]
+
+        async def reader(idx: int) -> None:
+            for _ in range(20):
+                result = store.list(provider="test")
+                read_results[idx].append(result)
+                await asyncio.sleep(0.01)
+
+        async def writer() -> None:
+            loop_task = asyncio.create_task(registry.run_refresh_loop())
+            await asyncio.sleep(0.3)
+            loop_task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await loop_task
+
+        # Run 2 readers + 1 writer concurrently
+        await asyncio.gather(reader(0), reader(1), writer())
+
+        # Assert: no exceptions were raised, and all read results are lists
+        for idx in range(2):
+            assert len(read_results[idx]) == 20
+            for result in read_results[idx]:
+                assert isinstance(result, list)
+
+
+# ---------------------------------------------------------------------------
+# TestOfflineSafety
+# ---------------------------------------------------------------------------
+
+
+class TestOfflineSafety:
+    """Verify adapters degrade gracefully when network is blocked.
+
+    These tests are sync because the ``no_network`` fixture monkeypatches
+    ``socket.socket``, which also blocks ``socket.socketpair()`` — the call
+    asyncio uses internally for its event-loop self-pipe.  We therefore
+    create the event loop *first*, block sockets *second*, then run the
+    adapter coroutines inside the pre-existing loop.
+    """
+
+    def test_file_adapter_returns_degraded_with_no_network(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """FileAdapter with nonexistent file returns error, no hang."""
+
+        class _MissingFileAdapter(FileAdapter):
+            adapter_name = "missing-file"
+
+            def paths(self) -> list[Path]:
+                return [Path("/tmp/__nexus_test_nonexistent_config_1234567890__")]
+
+            def parse_file(self, _path: Path, _content: str) -> list[SyncedProfile]:
+                return []
+
+            async def resolve_credential(self, _backend_key: str) -> ResolvedCredential:
+                return ResolvedCredential(kind="api_key", api_key="never")
+
+        adapter = _MissingFileAdapter()
+
+        # Create the event loop BEFORE blocking sockets, then block.
+        loop = asyncio.new_event_loop()
+        try:
+            monkeypatch.setattr(
+                _socket_mod,
+                "socket",
+                lambda *_a, **_kw: (_ for _ in ()).throw(RuntimeError("network blocked")),
+            )
+            result = loop.run_until_complete(asyncio.wait_for(adapter.sync(), timeout=2.0))
+        finally:
+            loop.close()
+        assert result.error is not None
+
+    def test_subprocess_adapter_returns_degraded_with_no_network(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """SubprocessAdapter with nonexistent binary returns error, no hang."""
+
+        class _MissingBinaryAdapter(SubprocessAdapter):
+            adapter_name = "missing-binary"
+            binary_name = "__nexus_test_nonexistent_binary_1234567890__"
+
+            def get_status_args(self) -> tuple[str, ...]:
+                return ("--version",)
+
+            def parse_output(self, _stdout: str, _stderr: str) -> list[SyncedProfile]:
+                return []
+
+            async def resolve_credential(self, _backend_key: str) -> ResolvedCredential:
+                return ResolvedCredential(kind="api_key", api_key="never")
+
+        adapter = _MissingBinaryAdapter()
+
+        # Create the event loop BEFORE blocking sockets, then block.
+        loop = asyncio.new_event_loop()
+        try:
+            monkeypatch.setattr(
+                _socket_mod,
+                "socket",
+                lambda *_a, **_kw: (_ for _ in ()).throw(RuntimeError("network blocked")),
+            )
+            result = loop.run_until_complete(asyncio.wait_for(adapter.sync(), timeout=2.0))
+        finally:
+            loop.close()
+        assert result.error is not None

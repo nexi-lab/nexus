@@ -32,7 +32,6 @@ from nexus.bricks.auth.credential_pool import (
     SelectionStrategy,
 )
 from nexus.bricks.auth.profile import (
-    ApiKeyCredential,
     AuthProfile,
     AuthProfileFailureReason,
     InMemoryAuthProfileStore,
@@ -66,7 +65,8 @@ def make_profile(
         id=profile_id,
         provider=provider,
         account_identifier=account_identifier or profile_id,
-        credential=ApiKeyCredential(key=f"sk-{profile_id}"),
+        backend="nexus-token-manager",
+        backend_key=f"openai/{profile_id}",
         usage_stats=stats,
     )
 

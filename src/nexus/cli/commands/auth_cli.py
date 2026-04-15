@@ -502,3 +502,63 @@ def auth_doctor() -> None:
         )
     if failures:
         raise click.ClickException("One or more services need auth setup.")
+
+
+@auth.command("migrate")
+@click.option("--apply", is_flag=True, default=False, help="Actually copy rows (default: dry-run)")
+def auth_migrate(apply: bool) -> None:
+    """Migrate OAuth credentials to the unified auth-profile store.
+
+    Dry-run by default — prints what would be copied without writing.
+    Pass --apply to actually copy rows into the new store.
+
+    This is Phase 1 of the auth unification (#3722). Migration is copy-only:
+    the old store is never modified or deleted.
+    """
+    from pathlib import Path
+
+    from nexus.bricks.auth.migrate import build_migration_plan, execute_migration
+    from nexus.bricks.auth.oauth.credential_service import OAuthCredentialService
+    from nexus.bricks.auth.profile_store import SqliteAuthProfileStore
+
+    # Collect old credentials
+    oauth_service = OAuthCredentialService(token_manager=get_token_manager())
+    old_creds = asyncio.run(oauth_service.list_credentials())
+
+    if not old_creds:
+        console.print("[nexus.muted]No OAuth credentials found to migrate.[/nexus.muted]")
+        return
+
+    # Open (or create) the new profile store
+    db_path = Path("~/.nexus/auth_profiles.db").expanduser()
+    store = SqliteAuthProfileStore(db_path)
+    try:
+        plan = build_migration_plan(old_creds, store)
+        result = execute_migration(plan, old_creds, store, apply=apply)
+
+        if not apply:
+            console.print("[bold]Dry-run[/bold] (pass --apply to write):\n")
+
+        for entry in result.entries:
+            if entry.action == "copy":
+                style = "nexus.success" if apply else "nexus.info"
+                verb = "Copied" if apply else "Would copy"
+                console.print(f"  [{style}]{verb}[/{style}] {entry.profile_id}")
+            elif entry.action == "skip_exists":
+                console.print(f"  [nexus.muted]Skip (exists)[/nexus.muted] {entry.profile_id}")
+            elif entry.action == "skip_unmappable":
+                console.print(
+                    f"  [nexus.warning]Skip (unmappable)[/nexus.warning] "
+                    f"{entry.provider}/{entry.user_email}: {entry.reason}"
+                )
+            elif entry.action == "error":
+                console.print(
+                    f"  [nexus.error]Error[/nexus.error] {entry.profile_id}: {entry.reason}"
+                )
+
+        console.print(
+            f"\n{'Dry-run' if result.dry_run else 'Result'}: "
+            f"{result.copied} copied, {result.skipped} skipped, {result.errors} errors"
+        )
+    finally:
+        store.close()

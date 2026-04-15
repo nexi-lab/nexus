@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 _UNSET = object()
 
 if TYPE_CHECKING:
+    from nexus.bricks.auth.profile import AuthProfileStore
     from nexus.contracts.types import OperationContext
 
 _DEFAULT_STORE_PATH = Path("~/.nexus/auth/credentials.json").expanduser()
@@ -256,9 +257,15 @@ class UnifiedAuthService:
         oauth_service: OAuthCredentialService | None = None,
         *,
         secret_store: FileSecretCredentialStore | None = None,
+        profile_store: "AuthProfileStore | None" = None,
     ) -> None:
         self._oauth_service = oauth_service
         self._secret_store = secret_store or FileSecretCredentialStore()
+        # Unified auth-profile store (Phase 1, #3738). When provided, reads
+        # go through this store first (typically a DualReadAuthProfileStore
+        # that wraps the new SqliteAuthProfileStore + old store adapter).
+        # Writes and CLI commands still use the old stores until Phase 4.
+        self._profile_store = profile_store
 
     @property
     def secret_store_path(self) -> Path:

@@ -347,7 +347,7 @@ class RustMetastoreProxy(MetastoreABC):
         metadata_store = RustMetastoreProxy(kernel)
     """
 
-    def __init__(self, kernel: Any, redb_path: str | None = None) -> None:
+    def __init__(self, kernel: Any, redb_path: str | None = None, /) -> None:
         super().__init__()
         self._rust_kernel = kernel
         # Federation mode: kernel has no global redb — every call routes
@@ -439,9 +439,44 @@ class RustMetastoreProxy(MetastoreABC):
 
     def is_implicit_directory(self, path: str) -> bool:
         """Check if path is an implicit directory (has children but no metadata)."""
-        prefix = path.rstrip("/") + "/"
-        entries = self._rust_kernel.metastore_list(prefix)
-        return len(entries) > 0
+        return bool(self._rust_kernel.metastore_is_implicit_directory(path))
+
+    # ── Auxiliary per-path metadata (F3 C2 kernel bindings) ───────────────
+    #
+    # These route through ``kernel.metastore_set/get_file_metadata`` so
+    # tests that previously stored ``parsed_text`` / ``parser_name`` /
+    # tag blobs on a Python DictMetastore hit the kernel's DashMap
+    # side-car instead. The kernel boundary stores strings — callers
+    # that want to persist structured data JSON-encode themselves.
+
+    def set_file_metadata(self, path: str, key: str, value: Any) -> None:
+        if value is None:
+            # Sentinel used by parser hooks to clear a field — the kernel
+            # treats "absent" and "None" identically, so do nothing.
+            return
+        if not isinstance(value, str):
+            import json
+
+            value = json.dumps(value)
+        self._rust_kernel.metastore_set_file_metadata(path, key, value)
+
+    def get_file_metadata(self, path: str, key: str) -> Any:
+        return self._rust_kernel.metastore_get_file_metadata(path, key)
+
+    def get_file_metadata_bulk(self, paths: Sequence[str], key: str) -> dict[str, Any]:
+        return dict(self._rust_kernel.metastore_get_file_metadata_bulk(list(paths), key))
+
+    def rename_path(self, old_path: str, new_path: str) -> None:
+        self._rust_kernel.metastore_rename_path(old_path, new_path)
+
+    def put_if_version(
+        self,
+        metadata: FileMetadata,
+        expected_version: int,
+        *,
+        consistency: str = "sc",  # noqa: ARG002
+    ) -> Any:
+        return self._rust_kernel.metastore_put_if_version(metadata, expected_version)
 
     # ── Search service compatibility ─────────────────────────────────────
 
@@ -449,14 +484,16 @@ class RustMetastoreProxy(MetastoreABC):
         self,
         paths: "Sequence[str]",  # noqa: F821 — forward-ref to avoid circular import
     ) -> dict[str, str]:
-        """Return cached parsed text for the given paths.
+        """Return cached ``parsed_text`` for the given paths.
 
-        The Rust metastore does not cache parsed text yet; return an empty
-        map so callers (search_service grep, pipeline_indexer) fall through
-        to the raw-content path that reads bytes from the backend directly.
+        F3 C2 wired ``parsed_text`` storage into the kernel's file_metadata
+        side-car; this call fans out to
+        ``kernel.metastore_get_file_metadata_bulk`` and drops paths with
+        no cached text so search_service grep / pipeline_indexer fall
+        through to the raw-content path for un-parsed files.
         """
-        del paths
-        return {}
+        bulk = self._rust_kernel.metastore_get_file_metadata_bulk(list(paths), "parsed_text")
+        return {p: v for p, v in bulk.items() if v is not None}
 
     # ── Abstract method implementations (fallback, used by base class) ───
 

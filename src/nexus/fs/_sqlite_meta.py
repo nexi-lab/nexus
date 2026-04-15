@@ -1,333 +1,69 @@
-"""SQLite-backed MetastoreABC for the nexus-fs slim package.
+"""``SQLiteMetastore`` compatibility factory (F3 C4).
 
-Lightweight, stdlib-only metastore using sqlite3. Designed for single-process
-local use where the full Raft metastore is not needed. WAL mode is enabled for
-safe concurrent reads and the busy_timeout handles brief writer contention.
+Historical note — this module used to implement a full stdlib-only
+``MetastoreABC`` subclass backed by a local SQLite file, as the
+nexus-fs slim SDK's metadata store for environments that could not
+build the Rust kernel. The kernel has since become the single source
+of truth for metastore state: every ``nfs.sys_*`` write now funnels
+through ``kernel.metastore_put``, so a Python-only SQLite side-store
+was invisible to the kernel and silently dropped writes.
 
-No connection pooling — a single serialized-mode connection is used, which is
-thread-safe via sqlite3's internal locking (check_same_thread=False).
+This file preserves the ``SQLiteMetastore`` import path as a thin
+factory **function** — not a class — that returns a
+``RustMetastoreProxy`` wired to a fresh bare ``Kernel`` with its
+redb-backed metastore pointed at ``db_path``. The .db suffix is
+rewritten to .redb so an existing sqlite file from a previous run is
+not accidentally overwritten.
+
+Open question from the F3 plan: whether SQLite remains a public
+contract for the slim wheel. For now the public ``SQLiteMetastore``
+call shape keeps working; the on-disk format is redb, not sqlite.
 """
 
 from __future__ import annotations
 
-import logging
-import sqlite3
-import time
-from collections.abc import Iterator, Sequence
-from datetime import datetime
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
-from nexus.contracts.metadata import FileMetadata
-from nexus.core.metastore import MetastoreABC
+from nexus.core.metastore import RustMetastoreProxy
 
-logger = logging.getLogger(__name__)
-
-# Retry parameters for write operations hitting SQLITE_BUSY
-_MAX_RETRIES = 3
-_BASE_BACKOFF_S = 0.010  # 10ms, doubles each retry
-
-_CREATE_TABLE = """\
-CREATE TABLE IF NOT EXISTS metadata (
-    path          TEXT PRIMARY KEY,
-    backend_name  TEXT NOT NULL,
-    physical_path TEXT NOT NULL,
-    size          INTEGER NOT NULL DEFAULT 0,
-    etag          TEXT,
-    mime_type     TEXT,
-    created_at    TEXT,
-    modified_at   TEXT,
-    version       INTEGER NOT NULL DEFAULT 1,
-    created_by    TEXT,
-    zone_id       TEXT,
-    owner_id      TEXT,
-    entry_type    INTEGER NOT NULL DEFAULT 0,
-    target_zone_id TEXT
-);
-"""
-
-_UPSERT = """\
-INSERT INTO metadata (
-    path, backend_name, physical_path, size, etag, mime_type,
-    created_at, modified_at, version, zone_id,
-    owner_id, entry_type, target_zone_id
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT(path) DO UPDATE SET
-    backend_name   = excluded.backend_name,
-    physical_path  = excluded.physical_path,
-    size           = excluded.size,
-    etag           = excluded.etag,
-    mime_type      = excluded.mime_type,
-    created_at     = excluded.created_at,
-    modified_at    = excluded.modified_at,
-    version        = excluded.version,
-    zone_id        = excluded.zone_id,
-    owner_id       = excluded.owner_id,
-    entry_type     = excluded.entry_type,
-    target_zone_id = excluded.target_zone_id;
-"""
+F = TypeVar("F", bound=Callable[..., Any])
 
 
-def _dt_to_iso(dt: datetime | None) -> str | None:
-    """Serialize datetime to ISO-8601 string for SQLite storage."""
-    return dt.isoformat() if dt else None
+def _retry_on_busy(fn: F) -> F:
+    """No-op compat shim for the old SQLITE_BUSY retry decorator.
 
-
-def _iso_to_dt(val: str | None) -> datetime | None:
-    """Deserialize ISO-8601 string back to datetime."""
-    if val is None:
-        return None
-    return datetime.fromisoformat(val)
-
-
-def _row_to_metadata(row: sqlite3.Row) -> FileMetadata:
-    """Convert a sqlite3.Row into a FileMetadata instance."""
-    return FileMetadata(
-        path=row["path"],
-        backend_name=row["backend_name"],
-        physical_path=row["physical_path"],
-        size=row["size"],
-        etag=row["etag"],
-        mime_type=row["mime_type"],
-        created_at=_iso_to_dt(row["created_at"]),
-        modified_at=_iso_to_dt(row["modified_at"]),
-        version=row["version"],
-        zone_id=row["zone_id"],
-        owner_id=row["owner_id"],
-        entry_type=row["entry_type"],
-        target_zone_id=row["target_zone_id"],
-    )
-
-
-def _metadata_to_tuple(m: FileMetadata) -> tuple[Any, ...]:
-    """Convert FileMetadata to a parameter tuple matching the INSERT column order."""
-    return (
-        m.path,
-        m.backend_name,
-        m.physical_path,
-        m.size,
-        m.etag,
-        m.mime_type,
-        _dt_to_iso(m.created_at),
-        _dt_to_iso(m.modified_at),
-        m.version,
-        m.zone_id,
-        m.owner_id,
-        m.entry_type,
-        m.target_zone_id,
-    )
-
-
-def _retry_on_busy(fn: Any) -> Any:
-    """Decorator: retry a write function up to _MAX_RETRIES on SQLITE_BUSY.
-
-    Backoff schedule: 10ms, 20ms, 40ms (exponential).
+    The previous stdlib-sqlite3 implementation wrapped every mutating
+    call in a decorator that retried on ``SQLITE_BUSY`` with
+    exponential backoff. The kernel-backed metastore does not contend
+    on a process-wide SQLite writer lock, so the decorator is a no-op
+    — it is kept only so existing imports (tests/unit/fs/
+    test_release_integrity.py) do not break at collection time.
     """
-    import functools
-
-    @functools.wraps(fn)
-    def wrapper(*args: Any, **kwargs: Any) -> Any:
-        last_exc: sqlite3.OperationalError | None = None
-        for attempt in range(_MAX_RETRIES + 1):
-            try:
-                return fn(*args, **kwargs)
-            except sqlite3.OperationalError as exc:
-                if "database is locked" not in str(exc):
-                    raise
-                last_exc = exc
-                if attempt < _MAX_RETRIES:
-                    backoff = _BASE_BACKOFF_S * (2**attempt)
-                    logger.warning(
-                        "SQLiteMetastore: SQLITE_BUSY on %s, retry %d/%d in %.0fms",
-                        fn.__name__,
-                        attempt + 1,
-                        _MAX_RETRIES,
-                        backoff * 1000,
-                    )
-                    time.sleep(backoff)
-        assert last_exc is not None  # guaranteed by loop logic
-        raise last_exc
-
-    return wrapper
+    return fn
 
 
-class SQLiteMetastore(MetastoreABC):
-    """SQLite-backed metastore for the nexus-fs slim package.
+def SQLiteMetastore(
+    db_path: str | Path, *, _args: Any = None, **_kwargs: Any
+) -> RustMetastoreProxy:  # noqa: N802
+    """Return a kernel-backed metastore compatible with the old API.
 
-    Uses a single ``metadata`` table with columns mirroring FileMetadata fields.
-    WAL journal mode is enabled for better concurrent-read performance.
+    Args:
+        db_path: Path the previous SQLite class wrote to. Rewritten to
+            a ``.redb`` sibling so the kernel's redb store opens in
+            its own file. Any existing sqlite db at ``db_path`` is
+            left untouched.
+
+    Returns:
+        A fresh ``RustMetastoreProxy`` with the redb database wired
+        into its kernel. The kernel is exclusively owned by this
+        proxy; callers that want to share a kernel should build a
+        ``RustMetastoreProxy`` directly.
     """
+    from nexus_kernel import Kernel
 
-    def __init__(self, db_path: str | Path) -> None:
-        super().__init__()
-        self._db_path = Path(db_path)
-        self._db_path.parent.mkdir(parents=True, exist_ok=True)
-
-        self._conn = sqlite3.connect(
-            str(self._db_path),
-            check_same_thread=False,
-        )
-        self._conn.row_factory = sqlite3.Row
-
-        # Enable WAL for concurrent readers + single writer
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        # 5-second busy timeout before raising SQLITE_BUSY
-        self._conn.execute("PRAGMA busy_timeout=5000")
-        # Create schema
-        self._conn.execute(_CREATE_TABLE)
-        self._conn.commit()
-
-    # ------------------------------------------------------------------
-    # Abstract method implementations
-    # ------------------------------------------------------------------
-
-    def _get_raw(self, path: str) -> FileMetadata | None:
-        row = self._conn.execute("SELECT * FROM metadata WHERE path = ?", (path,)).fetchone()
-        return _row_to_metadata(row) if row else None
-
-    @_retry_on_busy
-    def _put_raw(self, metadata: FileMetadata, *, consistency: str = "sc") -> int | None:
-        del consistency
-        self._conn.execute(_UPSERT, _metadata_to_tuple(metadata))
-        self._conn.commit()
-        return None
-
-    @_retry_on_busy
-    def _delete_raw(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:
-        del consistency
-        cur = self._conn.execute("DELETE FROM metadata WHERE path = ? RETURNING path", (path,))
-        deleted = cur.fetchone()
-        self._conn.commit()
-        return {"deleted": path} if deleted else None
-
-    def _exists_raw(self, path: str) -> bool:
-        row = self._conn.execute("SELECT 1 FROM metadata WHERE path = ?", (path,)).fetchone()
-        return row is not None
-
-    def _list_raw(self, prefix: str = "", recursive: bool = True, **_kw: Any) -> list[FileMetadata]:
-        if prefix:
-            rows = self._conn.execute(
-                "SELECT * FROM metadata WHERE path LIKE ? ESCAPE '\\'",
-                (_escape_like(prefix) + "%",),
-            ).fetchall()
-        else:
-            rows = self._conn.execute("SELECT * FROM metadata").fetchall()
-
-        results = [_row_to_metadata(r) for r in rows]
-
-        if not recursive:
-            depth = prefix.rstrip("/").count("/") + 1
-            results = [m for m in results if m.path.rstrip("/").count("/") == depth]
-
-        return results
-
-    def close(self) -> None:
-        # Checkpoint and optimize before closing so WAL/SHM files are
-        # cleaned up and the database is left in a compact state.
-        try:
-            self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-            self._conn.execute("PRAGMA optimize")
-        except Exception:
-            pass  # best-effort; closing is more important
-        self._conn.close()
-
-    # ------------------------------------------------------------------
-    # Concrete overrides for better performance
-    # ------------------------------------------------------------------
-
-    def _list_iter_raw(
-        self, prefix: str = "", recursive: bool = True, **_kw: Any
-    ) -> Iterator[FileMetadata]:
-        """Memory-efficient iteration — yields rows one at a time from the cursor."""
-        if prefix:
-            cur = self._conn.execute(
-                "SELECT * FROM metadata WHERE path LIKE ? ESCAPE '\\'",
-                (_escape_like(prefix) + "%",),
-            )
-        else:
-            cur = self._conn.execute("SELECT * FROM metadata")
-
-        depth = prefix.rstrip("/").count("/") + 1 if not recursive else -1
-        for row in cur:
-            meta = _row_to_metadata(row)
-            if not recursive and meta.path.rstrip("/").count("/") != depth:
-                continue
-            yield meta
-
-    def _get_batch_raw(self, paths: Sequence[str]) -> dict[str, FileMetadata | None]:
-        if not paths:
-            return {}
-        placeholders = ",".join("?" for _ in paths)
-        rows = self._conn.execute(
-            f"SELECT * FROM metadata WHERE path IN ({placeholders})",  # noqa: S608
-            tuple(paths),
-        ).fetchall()
-        found = {r["path"]: _row_to_metadata(r) for r in rows}
-        return {p: found.get(p) for p in paths}
-
-    @_retry_on_busy
-    def _put_batch_raw(
-        self,
-        metadata_list: Sequence[FileMetadata],
-        *,
-        consistency: str = "sc",  # noqa: ARG002
-        skip_snapshot: bool = False,  # noqa: ARG002
-    ) -> None:
-        if not metadata_list:
-            return
-        self._conn.executemany(_UPSERT, [_metadata_to_tuple(m) for m in metadata_list])
-        self._conn.commit()
-
-    @_retry_on_busy
-    def _delete_batch_raw(self, paths: Sequence[str]) -> None:
-        if not paths:
-            return
-        placeholders = ",".join("?" for _ in paths)
-        self._conn.execute(
-            f"DELETE FROM metadata WHERE path IN ({placeholders})",  # noqa: S608
-            tuple(paths),
-        )
-        self._conn.commit()
-
-    def batch_get_content_ids(self, paths: Sequence[str]) -> dict[str, str | None]:
-        if not paths:
-            return {}
-        placeholders = ",".join("?" for _ in paths)
-        rows = self._conn.execute(
-            f"SELECT path, etag FROM metadata WHERE path IN ({placeholders})",  # noqa: S608
-            tuple(paths),
-        ).fetchall()
-        found = {r["path"]: r["etag"] for r in rows}
-        return {p: found.get(p) for p in paths}
-
-    @_retry_on_busy
-    def delete_directory_entries_recursive(self, path: str) -> None:
-        """Delete all directory index entries under a path."""
-        prefix = path.rstrip("/") + "/"
-        self._conn.execute(
-            "DELETE FROM metadata WHERE path LIKE ? ESCAPE '\\' AND entry_type = 1",
-            (_escape_like(prefix) + "%",),
-        )
-        self._conn.commit()
-
-    def is_implicit_directory(self, path: str) -> bool:
-        """A path is an implicit directory if any stored entry has it as a prefix.
-
-        Example: ``/a/b`` is an implicit directory if ``/a/b/c.txt`` exists.
-        """
-        prefix = path.rstrip("/") + "/"
-        row = self._conn.execute(
-            "SELECT 1 FROM metadata WHERE path LIKE ? ESCAPE '\\' LIMIT 1",
-            (_escape_like(prefix) + "%",),
-        ).fetchone()
-        return row is not None
-
-
-# ------------------------------------------------------------------
-# Helpers
-# ------------------------------------------------------------------
-
-
-def _escape_like(text: str) -> str:
-    r"""Escape LIKE-special characters (%, _, \\) so prefix matching is exact."""
-    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    redb_path = Path(str(db_path)).with_suffix(".redb")
+    redb_path.parent.mkdir(parents=True, exist_ok=True)
+    kernel = Kernel()
+    return RustMetastoreProxy(kernel, str(redb_path))

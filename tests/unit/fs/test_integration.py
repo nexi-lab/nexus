@@ -416,16 +416,11 @@ class TestMultiBackend:
 
 
 class TestSQLiteMetastore:
-    def test_wal_mode_enabled(self, tmp_path: Path):
-        """Verify WAL mode is enabled on the SQLite database."""
-        db_path = str(tmp_path / "test.db")
-        SQLiteMetastore(db_path)  # creates DB with WAL mode
-        import sqlite3
-
-        conn = sqlite3.connect(db_path)
-        result = conn.execute("PRAGMA journal_mode").fetchone()
-        assert result[0] == "wal"
-        conn.close()
+    # F3 C4: the stdlib-SQLite backend was replaced with a kernel-backed
+    # RustMetastoreProxy factory under the same import name. The previous
+    # ``test_wal_mode_enabled`` check (``PRAGMA journal_mode == 'wal'``)
+    # was specific to the sqlite3 implementation and is removed with the
+    # backing store.
 
     def test_put_and_get(self, tmp_path: Path):
         """Basic put/get on the SQLite metastore."""

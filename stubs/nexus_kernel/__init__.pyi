@@ -478,3 +478,8 @@ class PyKernel:
 
 class PySysReadResult: ...
 class PySysWriteResult: ...
+
+# Python-facing alias: PyO3 exposes the Rust ``PyKernel`` class as
+# ``Kernel`` at module level via ``#[pyclass(name = "Kernel")]``, so
+# ``from nexus_kernel import Kernel`` is the canonical import.
+Kernel = PyKernel

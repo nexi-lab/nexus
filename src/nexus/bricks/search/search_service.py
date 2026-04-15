@@ -2262,7 +2262,7 @@ class SearchService:
 
             if strategy == SearchStrategy.PARALLEL_POOL:
                 results.extend(
-                    await self._grep_parallel(
+                    self._grep_parallel(
                         regex=regex,
                         files=files_needing_raw,
                         max_results=remaining_results,
@@ -2271,7 +2271,7 @@ class SearchService:
                 )
             elif strategy in (SearchStrategy.RUST_BULK, SearchStrategy.SEQUENTIAL):
                 results.extend(
-                    await self._grep_raw_content(
+                    self._grep_raw_content(
                         regex=regex,
                         pattern=pattern,
                         files_needing_raw=files_needing_raw,

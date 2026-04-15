@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import importlib
 import logging
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +91,7 @@ def list_profiles() -> list | None:
         return None
 
 
-def select_profile(provider: str, *, account: str | None = None):  # noqa: ANN201
+def select_profile(provider: str, *, account: str | None = None) -> Any:
     """Select a usable profile for a provider. Returns None on any failure.
 
     When ``account`` is given, only that profile is considered. For S3,
@@ -154,7 +155,7 @@ def select_profile(provider: str, *, account: str | None = None):  # noqa: ANN20
         return None
 
 
-def resolve_external_credential(backend_key: str):  # noqa: ANN201
+def resolve_external_credential(backend_key: str) -> Any:
     """Resolve a credential via AwsCliSyncAdapter. Returns None on failure."""
     try:
         import asyncio

@@ -663,7 +663,7 @@ async def test_grep_simple_search(embedded: NexusFS) -> None:
     embedded.write("/file2.txt", b"Goodbye\nWorld Peace")
 
     # Search for "Hello"
-    results = await embedded.service("search").grep("Hello")
+    results = embedded.service("search").grep("Hello")
 
     assert len(results) == 2
     assert results[0]["file"] == "/file1.txt"
@@ -683,7 +683,7 @@ async def test_grep_regex_pattern(embedded: NexusFS) -> None:
     embedded.write("/code.py", b"def foo():\n    pass\ndef bar():\n    return 42")
 
     # Search for function definitions
-    results = await embedded.service("search").grep(r"def \w+")
+    results = embedded.service("search").grep(r"def \w+")
 
     assert len(results) == 2
     assert results[0]["match"] == "def foo"
@@ -699,7 +699,7 @@ async def test_grep_with_file_pattern(embedded: NexusFS) -> None:
     embedded.write("/file.txt", b"import nothing")
 
     # Search only in .py files
-    results = await embedded.service("search").grep("import", file_pattern="*.py")
+    results = embedded.service("search").grep("import", file_pattern="*.py")
 
     assert len(results) == 3
     # Should not include file.txt
@@ -713,11 +713,11 @@ async def test_grep_case_insensitive(embedded: NexusFS) -> None:
     embedded.write("/file.txt", b"ERROR: Something went wrong\nError in processing\nerror detected")
 
     # Case-sensitive (default)
-    results = await embedded.service("search").grep("ERROR")
+    results = embedded.service("search").grep("ERROR")
     assert len(results) == 1
 
     # Case-insensitive
-    results = await embedded.service("search").grep("ERROR", ignore_case=True)
+    results = embedded.service("search").grep("ERROR", ignore_case=True)
     assert len(results) == 3
 
 
@@ -729,7 +729,7 @@ async def test_grep_max_results(embedded: NexusFS) -> None:
     embedded.write("/file.txt", content.encode())
 
     # Limit results
-    results = await embedded.service("search").grep("MATCH", max_results=10)
+    results = embedded.service("search").grep("MATCH", max_results=10)
     assert len(results) == 10
 
 
@@ -743,7 +743,7 @@ async def test_grep_skips_binary_files(embedded: NexusFS) -> None:
     embedded.write("/text.txt", b"findme")
 
     # Search should only find text file
-    results = await embedded.service("search").grep("findme")
+    results = embedded.service("search").grep("findme")
     assert len(results) == 1
     assert results[0]["file"] == "/text.txt"
 
@@ -753,7 +753,7 @@ async def test_grep_empty_results(embedded: NexusFS) -> None:
     """Test grep with no matches."""
     embedded.write("/file.txt", b"Hello World")
 
-    results = await embedded.service("search").grep("nonexistent")
+    results = embedded.service("search").grep("nonexistent")
     assert len(results) == 0
 
 

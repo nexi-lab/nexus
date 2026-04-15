@@ -406,10 +406,11 @@ class CASOpenAIBackend(CASAddressingEngine):
             def _open_stream(profile: Any) -> Any:
                 nonlocal _pool_profile
                 _pool_profile = profile  # capture so mid-stream failures can mark it
-                # Extract API key from profile credential (ApiKeyCredential.key), or
-                # fall back to the configured api_key if the credential type differs.
-                _cred = getattr(profile, "credential", None)
-                _key = getattr(_cred, "key", None) or self._api_key
+                # Resolve API key from the profile's backend_key (new model) or
+                # fall back to the configured api_key. The backend_key for
+                # nexus-token-manager profiles encodes provider/user_email;
+                # for API-key pools the key itself may be passed via account_identifier.
+                _key = getattr(profile, "account_identifier", None) or self._api_key
                 _client = _build_openai_client(self._base_url, _key, self._timeout)
                 return _client.chat.completions.create(
                     model=model,

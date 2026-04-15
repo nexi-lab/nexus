@@ -221,24 +221,25 @@ class SqliteAuthProfileStore:
     def list(self, *, provider: str | None = None) -> list[AuthProfile]:
         with self._lock:
             self._maybe_flush()
-            # If cache is populated and covers all profiles, serve from cache.
-            # Otherwise, fall through to SQLite.
-            if self._cache:
-                profiles = list(self._cache.values())
-                if provider is not None:
-                    profiles = [p for p in profiles if p.provider == provider]
-                return profiles
-            # Cache empty — load from SQLite
+            # Always query SQLite for list() to avoid returning a partial set
+            # from the LRU cache (adversarial finding #4). The cache is an
+            # object cache for get(), not a complete-snapshot cache for list().
             if provider is not None:
                 rows = self._conn.execute(
                     "SELECT * FROM auth_profiles WHERE provider = ?", (provider,)
                 ).fetchall()
             else:
                 rows = self._conn.execute("SELECT * FROM auth_profiles").fetchall()
-            profiles = [_row_to_profile(r) for r in rows]
-            # Populate cache
-            for p in profiles:
-                self._cache_put(p)
+            profiles = []
+            for r in rows:
+                profile_id = r["id"]
+                # Prefer dirty cached version (has buffered success stats)
+                if profile_id in self._dirty and profile_id in self._cache:
+                    profiles.append(self._cache[profile_id])
+                else:
+                    p = _row_to_profile(r)
+                    self._cache_put(p)
+                    profiles.append(p)
             return profiles
 
     def get(self, profile_id: str) -> AuthProfile | None:

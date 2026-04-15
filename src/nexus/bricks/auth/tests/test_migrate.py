@@ -222,15 +222,27 @@ class TestDualReadStore:
         results = dual.list(provider="google")
         assert len(results) == 2
 
-    def test_list_prefers_new_when_populated(self, sqlite_store: SqliteAuthProfileStore) -> None:
+    def test_list_merges_old_and_new(self, sqlite_store: SqliteAuthProfileStore) -> None:
         old_adapter = OldStoreAdapter(_fake_old_creds(("google", "old@co.com")))
         sqlite_store.upsert(make_profile("google/new@co.com", provider="google"))
         dual = DualReadAuthProfileStore(sqlite_store, old_adapter)
 
         results = dual.list(provider="google")
-        # New store has data — returns new store only
+        # Both stores merged — should have both profiles
+        ids = {p.id for p in results}
+        assert "google/new@co.com" in ids
+        assert "google/old@co.com" in ids
+
+    def test_list_new_wins_on_collision(self, sqlite_store: SqliteAuthProfileStore) -> None:
+        old_adapter = OldStoreAdapter(_fake_old_creds(("google", "alice@co.com")))
+        sqlite_store.upsert(
+            make_profile("google/alice@co.com", provider="google", success_count=99)
+        )
+        dual = DualReadAuthProfileStore(sqlite_store, old_adapter)
+
+        results = dual.list(provider="google")
         assert len(results) == 1
-        assert results[0].id == "google/new@co.com"
+        assert results[0].usage_stats.success_count == 99  # new store version wins
 
     def test_writes_go_to_new_store(self, sqlite_store: SqliteAuthProfileStore) -> None:
         old_adapter = OldStoreAdapter([])

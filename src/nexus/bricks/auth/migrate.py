@@ -86,6 +86,7 @@ def build_migration_plan(
     for cred in old_credentials:
         provider = cred.get("provider", "")
         user_email = cred.get("user_email", "")
+        zone_id = cred.get("zone_id") or ""
 
         if not provider or not user_email:
             entries.append(
@@ -99,7 +100,12 @@ def build_migration_plan(
             )
             continue
 
-        profile_id = f"{provider}/{user_email}"
+        # Include zone_id in profile identity to avoid collapsing distinct
+        # zone-scoped credentials onto one profile (adversarial finding #1).
+        if zone_id and zone_id != "root":
+            profile_id = f"{provider}/{user_email}/{zone_id}"
+        else:
+            profile_id = f"{provider}/{user_email}"
 
         # Check if already exists in new store
         existing = new_store.get(profile_id)
@@ -147,13 +153,18 @@ def execute_migration(
     """
     result = MigrationResult(dry_run=not apply)
 
-    # Index old credentials by profile_id for fast lookup
+    # Index old credentials by zone-aware profile_id for fast lookup
     cred_by_id: dict[str, dict[str, Any]] = {}
     for cred in old_credentials:
         provider = cred.get("provider", "")
         user_email = cred.get("user_email", "")
+        zone_id = cred.get("zone_id") or ""
         if provider and user_email:
-            cred_by_id[f"{provider}/{user_email}"] = cred
+            if zone_id and zone_id != "root":
+                key = f"{provider}/{user_email}/{zone_id}"
+            else:
+                key = f"{provider}/{user_email}"
+            cred_by_id[key] = cred
 
     for entry in plan:
         result.entries.append(entry)
@@ -226,12 +237,15 @@ class OldStoreAdapter:
             user_email = cred.get("user_email", "")
             if not provider or not user_email:
                 continue
-            profile_id = f"{provider}/{user_email}"
-            zone_id = cred.get("zone_id")
+            zone_id = cred.get("zone_id") or ""
+            if zone_id and zone_id != "root":
+                profile_id = f"{provider}/{user_email}/{zone_id}"
+            else:
+                profile_id = f"{provider}/{user_email}"
             backend_key = NexusTokenManagerBackend.make_backend_key(
                 provider,
                 user_email,
-                zone_id,
+                zone_id if zone_id and zone_id != "root" else None,
             )
             self._profiles[profile_id] = AuthProfile(
                 id=profile_id,
@@ -269,11 +283,16 @@ class DualReadAuthProfileStore:
         self._old = old_adapter
 
     def list(self, *, provider: str | None = None) -> list[AuthProfile]:
+        # Merge both stores: new store profiles win on ID collision.
+        # During partial migration, both stores may have valid profiles.
         new_profiles = self._new.list(provider=provider)
-        if new_profiles:
-            return new_profiles
-        # New store empty for this provider — fall back to old
-        return self._old.list(provider=provider)
+        old_profiles = self._old.list(provider=provider)
+        merged: dict[str, AuthProfile] = {}
+        for p in old_profiles:
+            merged[p.id] = p
+        for p in new_profiles:
+            merged[p.id] = p  # new wins on collision
+        return list(merged.values())
 
     def get(self, profile_id: str) -> AuthProfile | None:
         result = self._new.get(profile_id)

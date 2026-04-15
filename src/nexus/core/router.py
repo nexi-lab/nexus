@@ -50,7 +50,19 @@ __all__ = [
 
 @dataclass
 class RouteResult:
-    """Result of path routing — dispatches to ObjectStoreABC backend + MetastoreABC."""
+    """Result of path routing — dispatches to ObjectStoreABC backend + MetastoreABC.
+
+    ``metastore`` is the *root-zone default* store (the Python metastore
+    handed to ``PathRouter.__init__``). It is usable for the write path
+    and for DT_PIPE/DT_STREAM inode checks, but **not** for read-side
+    metadata lookups: in federation mode the Rust kernel's mount_table
+    owns the per-zone ``ZoneMetastore`` for each mount, and the
+    root-zone store here has no record of entries that live in a
+    non-root zone. NexusFS read-side callers (``read_range``,
+    ``stream``, ``stream_range``) go through
+    ``self._kernel.metastore_get`` instead, which fans out through
+    ``with_routed_metastore`` and sees the per-zone entry.
+    """
 
     backend: "ObjectStoreABC"
     metastore: "MetastoreABC"  # Default Python metastore (kernel owns per-mount)

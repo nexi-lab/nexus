@@ -1812,7 +1812,11 @@ class NexusFS(  # type: ignore[misc]
                 path, is_admin=is_admin, check_write=False, zone_id=self._zone_id
             )
 
-            meta = route.metastore.get(path)
+            # Per-zone metastore lookup — go through the kernel so federation
+            # mode hits the ZoneMetastore registered in mount_table, not the
+            # root-zone ``RaftMetadataStore`` that ``route.metastore`` points
+            # at in PathRouter.
+            meta = self._kernel.metastore_get(path)
 
             if meta is None or meta.etag is None:
                 raise NexusFileNotFoundError(path)
@@ -1887,8 +1891,11 @@ class NexusFS(  # type: ignore[misc]
             zone_id=self._zone_id,
         )
 
-        # Check if file exists in metadata
-        meta = route.metastore.get(path)
+        # Check if file exists in metadata.  Kernel-routed lookup so
+        # federation mode hits the per-zone ``ZoneMetastore`` in
+        # mount_table — the PathRouter-side ``route.metastore`` only
+        # points at the root-zone ``RaftMetadataStore``.
+        meta = self._kernel.metastore_get(path)
         if meta is None or meta.etag is None:
             raise NexusFileNotFoundError(path)
 
@@ -1933,7 +1940,10 @@ class NexusFS(  # type: ignore[misc]
             zone_id=self._zone_id,
         )
 
-        meta = route.metastore.get(path)
+        # Kernel-routed lookup — see ``stream`` above for the federation
+        # rationale (per-zone ZoneMetastore vs. root-zone PathRouter
+        # metastore).
+        meta = self._kernel.metastore_get(path)
         if meta is None or meta.etag is None:
             raise NexusFileNotFoundError(path)
 

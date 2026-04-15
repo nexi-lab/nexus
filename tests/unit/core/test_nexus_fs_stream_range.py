@@ -102,7 +102,15 @@ def stub_fs():
     router = MagicMock()
     router.route.return_value = route
 
-    return _StubFS(backend=backend, metadata=metadata, router=router)
+    stub = _StubFS(backend=backend, metadata=metadata, router=router)
+    # F3 C6b: read_range / stream / stream_range now fetch metadata via
+    # ``self._kernel.metastore_get`` so the per-zone ``ZoneMetastore`` in
+    # mount_table is honoured (was ``route.metastore.get``, which only
+    # saw the root-zone store in federation mode). Wire the kernel mock
+    # at the same target so the tests that poke ``metadata.get`` keep
+    # working without duplicating fixture setup.
+    stub._kernel.metastore_get = metadata.get
+    return stub
 
 
 class TestReadRange:

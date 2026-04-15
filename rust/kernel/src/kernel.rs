@@ -521,6 +521,13 @@ impl Kernel {
         Ok(())
     }
 
+    /// Wire an in-memory metastore (DashMap-backed) — for tests + minimal mode.
+    /// Replaces the old Python ``DictMetastore`` test helper.
+    #[allow(dead_code)] // wired up in follow-up commit (PyKernel.set_memory_metastore)
+    pub fn set_memory_metastore(&mut self) {
+        self.metastore = Some(Box::new(crate::metastore::MemoryMetastore::new()));
+    }
+
     /// Resolve metastore for a syscall: per-mount first, then global fallback.
     ///
     /// In federation mode each mount has its own state machine (Raft-backed

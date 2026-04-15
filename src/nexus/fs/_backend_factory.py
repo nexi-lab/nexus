@@ -17,29 +17,17 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-def _try_profile_store_select(provider: str) -> Any:
+def _try_profile_store_select(provider: str, *, account: str | None = None) -> Any:
     """Try to select a usable auth profile from the profile store.
 
-    Returns the first AuthProfile that is NOT on cooldown or disabled.
-    If all are on cooldown, returns the first profile anyway (let the
-    caller decide). Returns None on any error.
+    Returns a single AuthProfile that is NOT on cooldown or disabled.
+    Returns None when: no profiles exist, selection is ambiguous (multiple
+    profiles with no explicit account), or all profiles are blocked.
     """
     from nexus.fs._external_sync_boot import ensure_external_sync, select_profile
 
     ensure_external_sync()
-    return select_profile(provider)
-
-
-def _resolve_external_credential(backend_key: str) -> Any:
-    """Resolve a credential via the external CLI adapter.
-
-    Phase 2 shortcut: directly instantiates AwsCliSyncAdapter instead of
-    going through ExternalCliBackend + AdapterRegistry. Replace with proper
-    backend integration in Phase 3 when additional adapters are added.
-    """
-    from nexus.fs._external_sync_boot import resolve_external_credential
-
-    return resolve_external_credential(backend_key)
+    return select_profile(provider, account=account)
 
 
 def create_backend(spec: Any) -> Any:
@@ -61,21 +49,20 @@ def create_backend(spec: Any) -> Any:
                 "boto3 is required for S3 backends. Install with: pip install nexus-fs[s3]"
             ) from None
 
-        # Phase 2: try profile store first
-        profile = _try_profile_store_select(provider="s3")
+        # Phase 2: verify S3 credentials are available via profile store.
+        # We do NOT inject static credentials — boto3's native provider chain
+        # handles credential refresh (SSO, STS, instance metadata). The profile
+        # store is for discovery/listing only.
+        profile = _try_profile_store_select(provider="s3", account=os.environ.get("AWS_PROFILE"))
         if profile is not None and profile.backend == "external-cli":
-            cred = _resolve_external_credential(profile.backend_key)
-            if cred is not None:
-                return PathS3Backend(
-                    bucket_name=spec.authority,
-                    prefix=spec.path.lstrip("/") if spec.path else "",
-                    access_key_id=cred.api_key,
-                    secret_access_key=cred.metadata.get("secret_access_key", ""),
-                    session_token=cred.metadata.get("session_token") or None,
-                    region_name=cred.metadata.get("region") or None,
-                )
+            # Profile found — AWS credentials are confirmed available.
+            # Let boto3 resolve them natively (keeps refresh working).
+            return PathS3Backend(
+                bucket_name=spec.authority,
+                prefix=spec.path.lstrip("/") if spec.path else "",
+            )
 
-        # Fallback: old discover_credentials() path
+        # No profile store match — fall back to old discover_credentials() path
         from nexus.fs._credentials import discover_credentials
 
         discover_credentials(spec.scheme)

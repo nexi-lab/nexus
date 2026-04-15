@@ -90,8 +90,18 @@ def list_profiles() -> list | None:
         return None
 
 
-def select_profile(provider: str):  # noqa: ANN201
-    """Select a usable profile for a provider. Returns None on any failure."""
+def select_profile(provider: str, *, account: str | None = None):  # noqa: ANN201
+    """Select a usable profile for a provider. Returns None on any failure.
+
+    When ``account`` is given, only that profile is considered. For S3,
+    callers should pass ``os.environ.get("AWS_PROFILE")`` so the user's
+    explicit account selection is honored. When multiple profiles exist
+    and no account is specified, returns None (ambiguous — let the native
+    provider chain decide).
+
+    Returns None when all matching profiles are on cooldown or disabled,
+    rather than forcing a known-broken profile back into service.
+    """
     try:
         store_mod = importlib.import_module("nexus.bricks.auth.profile_store")
         from nexus.fs._paths import persistent_dir
@@ -112,6 +122,17 @@ def select_profile(provider: str):  # noqa: ANN201
         if not profiles:
             return None
 
+        # Filter to explicit account if requested
+        if account is not None:
+            profiles = [p for p in profiles if p.account_identifier == account]
+            if not profiles:
+                return None
+
+        # Ambiguous: multiple profiles and no account specified — let the
+        # native provider chain decide instead of silently picking one.
+        if len(profiles) > 1 and account is None:
+            return None
+
         from datetime import UTC, datetime
 
         now = datetime.now(UTC)
@@ -122,7 +143,10 @@ def select_profile(provider: str):  # noqa: ANN201
             if stats.disabled_until and stats.disabled_until > now:
                 continue
             return profile
-        return profiles[0]
+
+        # All matching profiles are on cooldown/disabled — do not force a
+        # known-broken profile back into service.
+        return None
     except Exception:
         return None
 

@@ -2286,32 +2286,6 @@ class SearchService:
                     )
                 )
 
-        if strategy == SearchStrategy.PARALLEL_POOL:
-            results.extend(
-                self._grep_parallel(
-                    regex=regex,
-                    files=files_needing_raw,
-                    max_results=remaining_results,
-                    context=context,
-                )
-            )
-        elif strategy in (SearchStrategy.RUST_BULK, SearchStrategy.SEQUENTIAL):
-            results.extend(
-                self._grep_raw_content(
-                    regex=regex,
-                    pattern=pattern,
-                    files_needing_raw=files_needing_raw,
-                    strategy=strategy,
-                    ignore_case=ignore_case,
-                    remaining_results=remaining_results,
-                    context=context,
-                    before_context=before_context,
-                    after_context=after_context,
-                    invert_match=invert_match,
-                    force_python_path=needs_python_path,
-                )
-            )
-
         # Issue #3720: post-filter by block_type when requested.
         if block_type is not None:
             results = self._filter_results_by_block_type(results, block_type)

@@ -32,6 +32,9 @@ def mock_fs():
     fs.skill_service = MagicMock()
     fs.skill_package_service = MagicMock()
     fs.metadata = MagicMock()
+    fs._kernel = MagicMock()
+    fs._kernel.sys_readdir = MagicMock(return_value=[])
+    fs._zone_id = "test_zone"
     registry = ServiceRegistry()
     registry.register_service("rebac", MagicMock())
     registry.register_service("search", MagicMock())

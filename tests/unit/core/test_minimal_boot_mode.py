@@ -123,7 +123,7 @@ class TestSlimFileOperations:
     async def minimal_nx(self, tmp_path: "Path") -> "NexusFS":
         from tests.conftest import make_test_nexus
 
-        return await make_test_nexus(tmp_path)
+        return await make_test_nexus(tmp_path, use_raft=True)
 
     @pytest.mark.asyncio
     async def test_write_and_read(self, minimal_nx: "NexusFS") -> None:
@@ -315,7 +315,7 @@ class TestSlimIntegrationViaConnect:
         from nexus.contracts.deployment_profile import DeploymentProfile, resolve_enabled_bricks
         from nexus.core.config import PermissionConfig
         from nexus.factory.orchestrator import create_nexus_fs
-        from tests.helpers.dict_metastore import DictMetastore
+        from nexus.storage.raft_metadata_store import RaftMetadataStore
 
         data_dir = tmp_path / "data"
         data_dir.mkdir(exist_ok=True)
@@ -328,7 +328,7 @@ class TestSlimIntegrationViaConnect:
 
         nx = await create_nexus_fs(
             backend=PathLocalBackend(root_path=data_dir),
-            metadata_store=DictMetastore(),
+            metadata_store=RaftMetadataStore.embedded(str(tmp_path / "raft")),
             record_store=None,
             enabled_bricks=enabled_bricks,
             permissions=PermissionConfig(enforce=False),

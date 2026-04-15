@@ -132,6 +132,9 @@ class RaftMetadataStore(MetastoreABC):
 
         self._engine = engine
         self._zone_id = zone_id
+        # Expose redb path so NexusFS can wire the Rust kernel metastore.
+        # Set by embedded() factory method; None for ZoneHandle engines.
+        self._redb_path: str | None = None
 
     def is_leader(self) -> bool:
         """Check if this node is the Raft leader for its zone.
@@ -290,7 +293,9 @@ class RaftMetadataStore(MetastoreABC):
 
         metastore = Metastore(db_path)
         logger.info(f"Created embedded RaftMetadataStore at {db_path}")
-        return cls(engine=metastore, zone_id=zone_id)
+        store = cls(engine=metastore, zone_id=zone_id)
+        store._redb_path = db_path
+        return store
 
     def _get_raw(self, path: str) -> FileMetadata | None:
         """Get metadata for a file.

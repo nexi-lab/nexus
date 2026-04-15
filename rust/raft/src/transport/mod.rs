@@ -508,7 +508,7 @@ pub(crate) async fn forward_propose(
 fn proto_result_to_command_result(
     result: Option<proto::nexus::raft::RaftResponse>,
 ) -> crate::raft::CommandResult {
-    use crate::raft::{CommandResult, HolderInfo, LockState};
+    use crate::raft::{CommandResult, HolderInfo, LockMode, LockState};
     use proto::nexus::raft::raft_response::Result as ProtoVariant;
 
     let Some(resp) = result else {
@@ -521,6 +521,11 @@ fn proto_result_to_command_result(
                 vec![HolderInfo {
                     lock_id: String::new(),
                     holder_info: lr.current_holder.clone().unwrap_or_default(),
+                    // Witness-path gRPC response has no per-holder
+                    // mode field — predates F4 C1. Default to
+                    // Exclusive (the only mode witnesses could
+                    // observe before F4).
+                    mode: LockMode::Exclusive,
                     acquired_at: 0,
                     expires_at: (lr.expires_at_ms / 1000) as u64,
                 }]
@@ -531,6 +536,10 @@ fn proto_result_to_command_result(
                 acquired: lr.acquired,
                 current_holders: holders.len() as u32,
                 max_holders: 0,
+                // Witness-path response has no fence token — pre-F4
+                // protocol. Callers that need fencing must use the
+                // native kernel lock API introduced in F4 C4.
+                fence_token: 0,
                 holders,
             })
         }

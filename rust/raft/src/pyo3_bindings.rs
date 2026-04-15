@@ -421,6 +421,9 @@ impl PyMetastore {
             max_holders,
             ttl_secs,
             holder_info: holder_info.to_string(),
+            // F4 C1: default to Exclusive; the `mode` parameter is
+            // surfaced on the public Python API in F4 C2.
+            mode: crate::prelude::LockMode::Exclusive,
             now_secs: crate::prelude::FullStateMachine::now(),
         };
 
@@ -1181,6 +1184,9 @@ impl PyZoneHandle {
             max_holders,
             ttl_secs,
             holder_info: holder_info.to_string(),
+            // F4 C1: default to Exclusive; the `mode` parameter is
+            // surfaced on the public Python API in F4 C2.
+            mode: crate::prelude::LockMode::Exclusive,
             now_secs: crate::prelude::FullStateMachine::now(),
         };
         let result = self.propose_command_raw(py, cmd)?;

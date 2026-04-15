@@ -53,8 +53,8 @@ mod zone_registry;
 pub use error::{RaftError, Result};
 pub use replication_log::ReplicationLog;
 pub use state_machine::{
-    Command, CommandResult, FullStateMachine, HolderInfo, LockInfo, LockState, StateMachine,
-    WitnessStateMachine, WitnessStateMachineInMemory,
+    Command, CommandResult, FullStateMachine, HolderInfo, LockInfo, LockMode, LockState,
+    StateMachine, WitnessStateMachine, WitnessStateMachineInMemory,
 };
 
 #[cfg(feature = "consensus")]

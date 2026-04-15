@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Protocol, runtime_checkable
 
@@ -193,28 +193,41 @@ class NexusTokenManagerBackend:
         )
 
     async def health_check(self, backend_key: str) -> BackendHealth:
+        """Check backend health by resolving the credential.
+
+        NOTE: This calls resolve(), which may trigger a token refresh. For a
+        truly read-only health probe, Phase 2 should add a separate method
+        that inspects stored metadata without refreshing.
+        """
+
+        now = datetime.now(UTC)
         try:
             provider, user_email, zone_id = self.parse_backend_key(backend_key)
             kwargs: dict = {"provider": provider, "user_email": user_email}
             if zone_id is not None:
                 kwargs["zone_id"] = zone_id
             resolved = await self._resolver.resolve(**kwargs)
-            if resolved.expires_at and resolved.expires_at < datetime.utcnow():
-                return BackendHealth(
-                    status=HealthStatus.DEGRADED,
-                    message="Token resolved but already expired",
-                    checked_at=datetime.utcnow(),
-                )
+            if resolved.expires_at:
+                # Normalize to timezone-aware UTC for safe comparison
+                expires = resolved.expires_at
+                if expires.tzinfo is None:
+                    expires = expires.replace(tzinfo=UTC)
+                if expires < now:
+                    return BackendHealth(
+                        status=HealthStatus.DEGRADED,
+                        message="Token resolved but already expired",
+                        checked_at=now,
+                    )
             return BackendHealth(
                 status=HealthStatus.HEALTHY,
                 message="Token resolved successfully",
-                checked_at=datetime.utcnow(),
+                checked_at=now,
             )
         except Exception as exc:
             return BackendHealth(
                 status=HealthStatus.UNHEALTHY,
                 message=str(exc),
-                checked_at=datetime.utcnow(),
+                checked_at=now,
             )
 
 

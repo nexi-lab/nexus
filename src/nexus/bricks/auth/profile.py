@@ -142,7 +142,12 @@ class AuthProfileStore(Protocol):
         *,
         raw_error: str | None = None,
     ) -> None:
-        """Record a failure and apply cooldown for the given reason."""
+        """Record a failure reason and increment failure count.
+
+        Does NOT set cooldown_until — cooldown duration policy is owned by
+        CredentialPool, which calls store.upsert() after computing the
+        cooldown. This method only persists the failure classification.
+        """
         ...
 
 

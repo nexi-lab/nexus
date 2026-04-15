@@ -374,13 +374,11 @@ def list_auth(output_opts: OutputOptions) -> None:
     provider. Legacy entries fill in services not yet in the profile store.
     """
     data: list[dict[str, str]] = []
-    seen_providers: set[str] = set()
 
     # 1. Profile store entries (external-cli synced + migrated)
     profiles = _try_profile_store_list()
     if profiles is not None:
         for p in profiles:
-            seen_providers.add(p.provider)
             data.append(
                 {
                     "provider": p.provider,
@@ -391,13 +389,14 @@ def list_auth(output_opts: OutputOptions) -> None:
                 }
             )
 
-    # 2. Legacy summaries — fill in services not yet in the profile store
+    # 2. Legacy summaries — always included alongside profile store entries.
+    # The external-cli adapter (Phase 2) only discovers inline-key AWS profiles,
+    # so legacy summaries still provide valuable info for SSO/role/credential_process
+    # setups and non-AWS services. No provider dedup — both sources complement.
     try:
         service = _build_auth_service()
         summaries = asyncio.run(service.list_summaries())
         for s in summaries:
-            if s.service in seen_providers:
-                continue
             data.append(
                 {
                     "provider": s.service,

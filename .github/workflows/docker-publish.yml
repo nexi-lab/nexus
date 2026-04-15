@@ -182,7 +182,7 @@ jobs:
             -e NEXUS_PROFILE=remote \
             -e NEXUS_GRPC_PORT=2029 \
             -e NEXUS_GRPC_TLS=false \
-            nexus-e2e nexus demo init
+            nexus-e2e nexus demo init --skip-semantic
 
       - name: Copy test scripts into container
         run: |

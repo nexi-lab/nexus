@@ -22,81 +22,24 @@ def _try_profile_store_select(provider: str) -> Any:
 
     Returns the first AuthProfile that is NOT on cooldown or disabled.
     If all are on cooldown, returns the first profile anyway (let the
-    caller decide). Returns None on any error (ImportError, no DB,
-    empty list, exception).
+    caller decide). Returns None on any error.
     """
-    # Ensure external CLIs (aws-cli, etc.) have been synced into the store.
-    from nexus.fs._external_sync_boot import ensure_external_sync
+    from nexus.fs._external_sync_boot import ensure_external_sync, select_profile
 
     ensure_external_sync()
-
-    try:
-        from nexus.bricks.auth.profile_store import SqliteAuthProfileStore
-        from nexus.fs._paths import persistent_dir
-    except ImportError:
-        return None
-
-    try:
-        db_path = persistent_dir() / "auth_profiles.db"
-        if not db_path.exists():
-            return None
-
-        store = SqliteAuthProfileStore(db_path)
-        try:
-            profiles = store.list(provider=provider)
-        finally:
-            store.close()
-
-        if not profiles:
-            return None
-
-        from datetime import UTC, datetime
-
-        now = datetime.now(UTC)
-        for profile in profiles:
-            stats = profile.usage_stats
-            if stats.cooldown_until and stats.cooldown_until > now:
-                continue
-            if stats.disabled_until and stats.disabled_until > now:
-                continue
-            return profile
-
-        # All on cooldown — return first anyway
-        return profiles[0]
-    except Exception:
-        return None
+    return select_profile(provider)
 
 
 def _resolve_external_credential(backend_key: str) -> Any:
-    """Resolve a credential using the AwsCliSyncAdapter.
-
-    Returns a ResolvedCredential on success, None on any exception.
+    """Resolve a credential via the external CLI adapter.
 
     Phase 2 shortcut: directly instantiates AwsCliSyncAdapter instead of
     going through ExternalCliBackend + AdapterRegistry. Replace with proper
     backend integration in Phase 3 when additional adapters are added.
     """
-    try:
-        import asyncio
+    from nexus.fs._external_sync_boot import resolve_external_credential
 
-        from nexus.bricks.auth.external_sync.aws_sync import AwsCliSyncAdapter
-    except ImportError:
-        return None
-
-    try:
-        adapter = AwsCliSyncAdapter()
-        coro = adapter.resolve_credential(backend_key)
-        try:
-            asyncio.get_running_loop()
-            # Inside async context — run in a thread
-            import concurrent.futures
-
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                return pool.submit(asyncio.run, coro).result(timeout=10.0)
-        except RuntimeError:
-            return asyncio.run(coro)
-    except Exception:
-        return None
+    return resolve_external_credential(backend_key)
 
 
 def create_backend(spec: Any) -> Any:

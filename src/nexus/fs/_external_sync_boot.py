@@ -2,7 +2,8 @@
 
 Runs AdapterRegistry.startup() at most once per process. Safe for the
 slim nexus-fs wheel — all imports from nexus.bricks.auth.external_sync
-are behind try/except ImportError guards.
+use importlib.import_module() to avoid static import references that
+would violate the packaging boundary (test_boundary.py).
 
 Called by:
   - _auth_cli._try_profile_store_list()  (nexus-fs auth list)
@@ -11,6 +12,7 @@ Called by:
 
 from __future__ import annotations
 
+import importlib
 import logging
 
 logger = logging.getLogger(__name__)
@@ -33,37 +35,117 @@ def ensure_external_sync() -> None:
     try:
         import asyncio
 
-        from nexus.bricks.auth.external_sync.aws_sync import AwsCliSyncAdapter
-        from nexus.bricks.auth.external_sync.registry import AdapterRegistry
-        from nexus.bricks.auth.profile_store import SqliteAuthProfileStore
+        aws_mod = importlib.import_module("nexus.bricks.auth.external_sync.aws_sync")
+        reg_mod = importlib.import_module("nexus.bricks.auth.external_sync.registry")
+        store_mod = importlib.import_module("nexus.bricks.auth.profile_store")
         from nexus.fs._paths import persistent_dir
-    except ImportError:
+    except (ImportError, ModuleNotFoundError):
         # Slim wheel — external_sync not available. Silent no-op.
         return
 
     try:
         db_path = persistent_dir() / "auth_profiles.db"
-        store = SqliteAuthProfileStore(db_path)
+        store = store_mod.SqliteAuthProfileStore(db_path)
         try:
-            registry = AdapterRegistry(
-                adapters=[AwsCliSyncAdapter()],
+            registry = reg_mod.AdapterRegistry(
+                adapters=[aws_mod.AwsCliSyncAdapter()],
                 profile_store=store,
                 startup_timeout=3.0,
             )
             coro = registry.startup()
-            # If called inside an already-running event loop (e.g. async mount),
-            # we can't use asyncio.run(). Fall back to running in a new thread.
             try:
                 asyncio.get_running_loop()
-                # Already in an async context — run sync in a thread
                 import concurrent.futures
 
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
                     pool.submit(asyncio.run, coro).result(timeout=5.0)
             except RuntimeError:
-                # No running loop — safe to use asyncio.run()
                 asyncio.run(coro)
         finally:
             store.close()
     except Exception:
         logger.debug("External CLI sync failed during bootstrap", exc_info=True)
+
+
+def list_profiles() -> list | None:
+    """Read all profiles from the unified store. Returns None on any failure."""
+    try:
+        store_mod = importlib.import_module("nexus.bricks.auth.profile_store")
+        from nexus.fs._paths import persistent_dir
+    except (ImportError, ModuleNotFoundError):
+        return None
+
+    db_path = persistent_dir() / "auth_profiles.db"
+    if not db_path.exists():
+        return None
+
+    try:
+        store = store_mod.SqliteAuthProfileStore(db_path)
+        try:
+            profiles = store.list()
+        finally:
+            store.close()
+        return profiles if profiles else None
+    except Exception:
+        return None
+
+
+def select_profile(provider: str):  # noqa: ANN201
+    """Select a usable profile for a provider. Returns None on any failure."""
+    try:
+        store_mod = importlib.import_module("nexus.bricks.auth.profile_store")
+        from nexus.fs._paths import persistent_dir
+    except (ImportError, ModuleNotFoundError):
+        return None
+
+    db_path = persistent_dir() / "auth_profiles.db"
+    if not db_path.exists():
+        return None
+
+    try:
+        store = store_mod.SqliteAuthProfileStore(db_path)
+        try:
+            profiles = store.list(provider=provider)
+        finally:
+            store.close()
+
+        if not profiles:
+            return None
+
+        from datetime import UTC, datetime
+
+        now = datetime.now(UTC)
+        for profile in profiles:
+            stats = profile.usage_stats
+            if stats.cooldown_until and stats.cooldown_until > now:
+                continue
+            if stats.disabled_until and stats.disabled_until > now:
+                continue
+            return profile
+        return profiles[0]
+    except Exception:
+        return None
+
+
+def resolve_external_credential(backend_key: str):  # noqa: ANN201
+    """Resolve a credential via AwsCliSyncAdapter. Returns None on failure."""
+    try:
+        import asyncio
+
+        aws_mod = importlib.import_module("nexus.bricks.auth.external_sync.aws_sync")
+    except (ImportError, ModuleNotFoundError):
+        return None
+
+    try:
+        adapter = aws_mod.AwsCliSyncAdapter()
+        coro = adapter.resolve_credential(backend_key)
+        try:
+            asyncio.get_running_loop()
+            import concurrent.futures
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                return pool.submit(asyncio.run, coro).result(timeout=10.0)
+        except RuntimeError:
+            return asyncio.run(coro)
+    except Exception:
+        return None

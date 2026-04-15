@@ -272,36 +272,10 @@ def _try_profile_store_list() -> list[Any] | None:
     Returns the list of AuthProfile objects on success, or None if the store
     is unavailable, empty, or raises any exception.
     """
-    # Ensure external CLIs (aws-cli, etc.) have been synced into the store.
-    from nexus.fs._external_sync_boot import ensure_external_sync
+    from nexus.fs._external_sync_boot import ensure_external_sync, list_profiles
 
     ensure_external_sync()
-
-    try:
-        from nexus.bricks.auth.profile_store import SqliteAuthProfileStore
-        from nexus.fs._paths import persistent_dir
-    except ImportError:
-        return None
-
-    db_path = persistent_dir() / "auth_profiles.db"
-    if not db_path.exists():
-        return None
-
-    import contextlib
-
-    store = None
-    try:
-        store = SqliteAuthProfileStore(db_path)
-        profiles = store.list()
-        if not profiles:
-            return None
-        return profiles
-    except Exception:
-        return None
-    finally:
-        if store is not None:
-            with contextlib.suppress(Exception):
-                store.close()
+    return list_profiles()
 
 
 def _format_status(profile: Any) -> str:

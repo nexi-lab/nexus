@@ -238,7 +238,23 @@ class NexusFS(  # type: ignore[misc]
                         _redb_path = tempfile.mktemp(suffix=".redb")
                     from nexus.core.metastore import RustMetastoreProxy
 
-                    self.metadata = RustMetastoreProxy(self._kernel, str(_redb_path))
+                    _proxy = RustMetastoreProxy(self._kernel, str(_redb_path))
+                    # Delegate non-MetastoreABC methods (get_file_metadata,
+                    # get_searchable_text_bulk, set_file_metadata, etc.) to the
+                    # original store. These are Raft KV methods not part of the
+                    # metastore core contract — they store parsed text, custom KV.
+                    for _attr in (
+                        "get_file_metadata",
+                        "get_file_metadata_bulk",
+                        "set_file_metadata",
+                        "set_file_metadata_bulk",
+                        "get_searchable_text",
+                        "get_searchable_text_bulk",
+                        "set_searchable_text",
+                    ):
+                        if hasattr(metadata_store, _attr):
+                            setattr(_proxy, _attr, getattr(metadata_store, _attr))
+                    self.metadata = _proxy
                     # Also update mount table's default metastore so route.metastore
                     # returns the same RustMetastoreProxy (11 call sites use route.metastore).
                     self._mount_table._default_metastore = self.metadata

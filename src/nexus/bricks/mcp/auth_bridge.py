@@ -108,29 +108,52 @@ def resolve_mcp_operation_context(
 
     # (0) Per-request API key — most authoritative when MCP is behind
     # HTTP middleware that sets _request_api_key (#3731).
+    #
+    # FAIL-CLOSED: if a per-request key IS present and auth_provider
+    # rejects or errors, we return None immediately — we do NOT fall
+    # through to ambient credentials (_init_cred / _default_context).
+    # This matches HTTP behavior where a bad key → 401, not a
+    # privileged fallback.  Steps 1-4 only run when no per-request
+    # key was set (i.e., the caller is the process itself).
     request_key = _request_api_key.get()
     if request_key and auth_provider is not None:
         auth_result = authenticate_api_key(auth_provider, request_key)
         if auth_result is not None:
-            _get = (
-                auth_result.get
-                if hasattr(auth_result, "get")
-                else lambda k, d=None: getattr(auth_result, k, d)
-            )
-            if _get("authenticated", False):
-                subject_id = _get("subject_id", None) or "anonymous"
-                zone_id = _get("zone_id", None) or ROOT_ZONE_ID
-                is_admin = bool(_get("is_admin", False))
-                subject_type = _get("subject_type", None) or "user"
-                return OperationContext(
-                    user_id=subject_id,
-                    subject_type=subject_type,
-                    subject_id=subject_id,
-                    zone_id=zone_id,
-                    groups=[],
-                    is_admin=is_admin,
-                    is_system=False,
-                )
+            # Normalize to dict so we can use the shared HTTP helper.
+            if hasattr(auth_result, "__dataclass_fields__"):
+                import dataclasses
+
+                auth_dict = dataclasses.asdict(auth_result)
+            elif hasattr(auth_result, "get"):
+                auth_dict = dict(auth_result)
+            else:
+                auth_dict = {
+                    k: getattr(auth_result, k, None)
+                    for k in (
+                        "authenticated",
+                        "subject_type",
+                        "subject_id",
+                        "zone_id",
+                        "is_admin",
+                        "agent_generation",
+                        "inherit_permissions",
+                    )
+                }
+
+            if auth_dict.get("authenticated", False):
+                # Use the same builder as HTTP to carry all fields
+                # (agent_generation, admin_capabilities, etc.).
+                from nexus.server.dependencies import get_operation_context
+
+                return get_operation_context(auth_dict)
+        # Per-request key was present but auth failed/rejected —
+        # fail closed rather than falling through to ambient creds.
+        logger.warning(
+            "Per-request API key authentication failed or was rejected; "
+            "returning None (fail-closed) instead of falling through "
+            "to ambient credentials."
+        )
+        return None
 
     # (1) Kernel init_cred.
     init_cred = getattr(nx_instance, "_init_cred", None)

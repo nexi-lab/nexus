@@ -193,8 +193,8 @@ class TestResolveMcpOperationContext:
         # Falls through to step 1.
         assert ctx is init_cred
 
-    def test_step0_unauthenticated_falls_through(self):
-        """Step 0: unauthenticated result → fall through to step 1."""
+    def test_step0_unauthenticated_fails_closed(self):
+        """Step 0: unauthenticated result → fail closed (not fall through)."""
         provider = Mock()
         provider.authenticate = Mock(return_value=_FakeAuthResult(authenticated=False))
         init_cred = OperationContext(user_id="local", groups=[])
@@ -207,7 +207,9 @@ class TestResolveMcpOperationContext:
         finally:
             reset_request_api_key(token)
 
-        assert ctx is init_cred  # Step 1 wins
+        # Fail-closed: per-request key present but rejected → None,
+        # NOT fallthrough to ambient _init_cred.
+        assert ctx is None
 
     def test_step1_init_cred(self):
         """Step 1: _init_cred attr present → return it directly."""
@@ -258,8 +260,13 @@ def _make_nx_with_search(
     grep_return: list[dict[str, Any]] | None = None,
     glob_return: list[str] | None = None,
 ) -> MagicMock:
-    """Build a mock NexusFS that returns controlled search results."""
-    nx = MagicMock()
+    """Build a mock NexusFS that returns controlled search results.
+
+    Uses ``spec=[]`` on the root mock to prevent MagicMock from
+    auto-creating attributes like ``permission_enforcer`` that the
+    auto-resolution code in ``create_mcp_server`` would pick up.
+    """
+    nx = MagicMock(spec=[])
     search = MagicMock()
     search.grep = AsyncMock(return_value=list(grep_return or []))
     search.glob = MagicMock(return_value=list(glob_return or []))

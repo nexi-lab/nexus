@@ -17,6 +17,70 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+def _try_profile_store_select(provider: str) -> Any:
+    """Try to select a usable auth profile from the profile store.
+
+    Returns the first AuthProfile that is NOT on cooldown or disabled.
+    If all are on cooldown, returns the first profile anyway (let the
+    caller decide). Returns None on any error (ImportError, no DB,
+    empty list, exception).
+    """
+    try:
+        from nexus.bricks.auth.profile_store import SqliteAuthProfileStore
+        from nexus.fs._paths import persistent_dir
+    except ImportError:
+        return None
+
+    try:
+        db_path = persistent_dir() / "auth_profiles.db"
+        if not db_path.exists():
+            return None
+
+        store = SqliteAuthProfileStore(db_path)
+        try:
+            profiles = store.list(provider=provider)
+        finally:
+            store.close()
+
+        if not profiles:
+            return None
+
+        from datetime import UTC, datetime
+
+        now = datetime.now(UTC)
+        for profile in profiles:
+            stats = profile.usage_stats
+            if stats.cooldown_until and stats.cooldown_until > now:
+                continue
+            if stats.disabled_until and stats.disabled_until > now:
+                continue
+            return profile
+
+        # All on cooldown — return first anyway
+        return profiles[0]
+    except Exception:
+        return None
+
+
+def _resolve_external_credential(backend_key: str) -> Any:
+    """Resolve a credential using the AwsCliSyncAdapter.
+
+    Returns a ResolvedCredential on success, None on any exception.
+    """
+    try:
+        import asyncio
+
+        from nexus.bricks.auth.external_sync.aws_sync import AwsCliSyncAdapter
+    except ImportError:
+        return None
+
+    try:
+        adapter = AwsCliSyncAdapter()
+        return asyncio.run(adapter.resolve_credential(backend_key))
+    except Exception:
+        return None
+
+
 def create_backend(spec: Any) -> Any:
     """Create a storage backend from a parsed MountSpec.
 
@@ -28,11 +92,6 @@ def create_backend(spec: Any) -> Any:
         ImportError: If the backend's optional dependency is not installed.
         BackendNotFoundError: If the backend resource doesn't exist.
     """
-    from nexus.fs._credentials import discover_credentials
-
-    # Discover credentials (raises CloudCredentialError if missing)
-    discover_credentials(spec.scheme)
-
     if spec.scheme == "s3":
         try:
             from nexus.backends.storage.path_s3 import PathS3Backend
@@ -40,12 +99,34 @@ def create_backend(spec: Any) -> Any:
             raise ImportError(
                 "boto3 is required for S3 backends. Install with: pip install nexus-fs[s3]"
             ) from None
+
+        # Phase 2: try profile store first
+        profile = _try_profile_store_select(provider="s3")
+        if profile is not None and profile.backend == "external-cli":
+            cred = _resolve_external_credential(profile.backend_key)
+            if cred is not None:
+                return PathS3Backend(
+                    bucket_name=spec.authority,
+                    prefix=spec.path.lstrip("/") if spec.path else "",
+                    access_key_id=cred.api_key,
+                    secret_access_key=cred.metadata.get("secret_access_key", ""),
+                    session_token=cred.metadata.get("session_token") or None,
+                    region_name=cred.metadata.get("region") or None,
+                )
+
+        # Fallback: old discover_credentials() path
+        from nexus.fs._credentials import discover_credentials
+
+        discover_credentials(spec.scheme)
         return PathS3Backend(
             bucket_name=spec.authority,
             prefix=spec.path.lstrip("/") if spec.path else "",
         )
 
     elif spec.scheme == "gcs":
+        from nexus.fs._credentials import discover_credentials
+
+        discover_credentials(spec.scheme)
         try:
             from nexus.backends.storage.cas_gcs import CASGCSBackend
         except ImportError:

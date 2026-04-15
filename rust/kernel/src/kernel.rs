@@ -2365,52 +2365,15 @@ impl Kernel {
             return miss();
         }
 
-        // 6. Put-then-delete (crash-safe): metastore.put(new) → metastore.delete(old)
-        if let Some(ref meta) = old_meta {
-            let new_meta = crate::metastore::FileMetadata {
-                path: new_path.to_string(),
-                backend_name: meta.backend_name.clone(),
-                physical_path: meta.physical_path.clone(),
-                size: meta.size,
-                etag: meta.etag.clone(),
-                version: meta.version,
-                entry_type: meta.entry_type,
-                zone_id: meta.zone_id.clone(),
-                mime_type: meta.mime_type.clone(),
-                created_at_ms: None,
-                modified_at_ms: None,
-            };
+        // 6. Atomic rename (and, for directories, recursive child rewrite)
+        //    via the `Metastore::rename_path` helper added in F3 C1. Redb
+        //    overrides this with a single write txn, so the entire rename
+        //    is crash-safe on the standalone-redb hot path; the default
+        //    trait impl is a put-then-delete that matches the previous
+        //    hand-rolled loop below.
+        if old_meta.is_some() {
             self.with_metastore(&old_route.mount_point, |ms| {
-                let _ = ms.put(new_path, new_meta);
-                let _ = ms.delete(old_path);
-            });
-        }
-
-        // 7. Recursive child rename (directories)
-        if is_directory {
-            self.with_metastore(&old_route.mount_point, |ms| {
-                let prefix = format!("{}/", old_path.trim_end_matches('/'));
-                if let Ok(children) = ms.list(&prefix) {
-                    for child in &children {
-                        let child_new_path =
-                            format!("{}{}", new_path, &child.path[old_path.len()..]);
-                        let child_new_meta = crate::metastore::FileMetadata {
-                            path: child_new_path.clone(),
-                            backend_name: child.backend_name.clone(),
-                            physical_path: child.physical_path.clone(),
-                            size: child.size,
-                            etag: child.etag.clone(),
-                            version: child.version,
-                            entry_type: child.entry_type,
-                            zone_id: child.zone_id.clone(),
-                            mime_type: child.mime_type.clone(),
-                            created_at_ms: None,
-                            modified_at_ms: None,
-                        };
-                        let _ = ms.put(&child_new_path, child_new_meta);
-                        let _ = ms.delete(&child.path);
-                    }
-                }
+                let _ = ms.rename_path(old_path, new_path);
             });
         }
 

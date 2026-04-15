@@ -3616,14 +3616,14 @@ class NexusFS(  # type: ignore[misc]
         self._reject_if_virtual_readme(old_path, context, op="rename")
         self._reject_if_virtual_readme(new_path, context, op="rename")
 
-        # ── Fast-fail (unlocked, optimization only) ──
-        # Avoids lock acquisition for the common "file not found" error case.
-        # Not authoritative — re-checked under lock below.
-        if not old_route.metastore.exists(old_path) and not self.metadata.is_implicit_directory(
-            old_path
-        ):
-            raise NexusFileNotFoundError(old_path)
-
+        # F3 C3: the Rust kernel performs the source-existence check and the
+        # authoritative under-lock rename; the previous Python fast-fail +
+        # second `metastore.get` was either double work (on a kernel hit) or
+        # a redundant TOCTOU duplicate of the fallback's own under-lock check.
+        # Pre-compute `is_directory` only from what's visible to the Python
+        # proxy so the POST-hook payload still reports the right flag when
+        # the fallback path runs below; the kernel already reports this on
+        # hit via ``_rename_result.is_directory``.
         meta = old_route.metastore.get(old_path)
         is_directory = (
             meta and meta.mime_type == "inode/directory"

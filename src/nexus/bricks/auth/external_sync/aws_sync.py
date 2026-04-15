@@ -1,7 +1,12 @@
 """AWS CLI sync adapter — discovers profiles from ~/.aws/credentials + config.
 
-FileAdapter subclass. ~40 LOC of descriptor logic. All I/O, error handling,
-and retry logic lives in the FileAdapter base class.
+FileAdapter subclass. All I/O, error handling, and retry logic lives in the
+FileAdapter base class.
+
+Phase 2 limitation: only discovers profiles with inline ``aws_access_key_id``.
+Profiles defined by ``role_arn``, ``source_profile``, ``credential_process``,
+or SSO fields in ``~/.aws/config`` are not yet discovered. These config-only
+profile types are planned for Phase 3 alongside gcloud/gh adapters.
 """
 
 from __future__ import annotations

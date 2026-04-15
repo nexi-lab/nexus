@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import logging
 import os
 import re
 from typing import Any
@@ -17,6 +18,7 @@ from nexus.contracts.unified_auth import AuthStatus, CredentialKind
 from nexus.fs._oauth_support import get_token_manager, run_google_oauth_setup, run_x_oauth_setup
 from nexus.fs._output import OutputOptions, add_output_options, render_output
 
+logger = logging.getLogger(__name__)
 console = Console()
 
 _SERVICE_AUTH_TYPES: dict[str, tuple[str, ...]] = {
@@ -308,6 +310,14 @@ def _format_status(profile: Any) -> str:
     if profile.last_synced_at is None:
         return "not yet synced"
 
+    # Check if sync is stale (last_synced_at + sync_ttl_seconds < now)
+    last_synced = profile.last_synced_at
+    if last_synced.tzinfo is None:
+        last_synced = last_synced.replace(tzinfo=_dt.UTC)
+    stale_after = last_synced + _dt.timedelta(seconds=profile.sync_ttl_seconds)
+    if stale_after < now:
+        return "stale"
+
     return "ok"
 
 
@@ -397,11 +407,27 @@ def list_auth(output_opts: OutputOptions) -> None:
                     "last_used": s.message,
                 }
             )
-    except Exception:
-        pass  # Legacy path unavailable — show only profile store entries
+    except Exception as exc:
+        logger.debug("Legacy auth service unavailable: %s", exc)
+        data.append(
+            {
+                "provider": "(legacy)",
+                "account": "",
+                "source": "error",
+                "status": "degraded",
+                "last_used": f"Legacy auth check failed: {exc}",
+            }
+        )
 
     if not data:
-        console.print("[dim]No auth configured. Run `nexus-fs auth connect` to set up.[/dim]")
+        # Use render_output for consistent JSON/human output
+        render_output(
+            data=[],
+            output_opts=output_opts,
+            human_formatter=lambda _: console.print(
+                "[dim]No auth configured. Run `nexus-fs auth connect` to set up.[/dim]"
+            ),
+        )
         return
 
     def _human_display(_data: object) -> None:

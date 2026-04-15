@@ -25,7 +25,7 @@ def _make_store_profiles() -> list[AuthProfile]:
             account_identifier="default",
             backend="external-cli",
             backend_key="aws/default",
-            last_synced_at=now - timedelta(hours=1),
+            last_synced_at=now - timedelta(seconds=30),
             usage_stats=ProfileUsageStats(
                 last_used_at=now - timedelta(minutes=14),
                 success_count=42,
@@ -38,7 +38,7 @@ def _make_store_profiles() -> list[AuthProfile]:
             account_identifier="work-prod",
             backend="external-cli",
             backend_key="aws/work-prod",
-            last_synced_at=now - timedelta(hours=2),
+            last_synced_at=now - timedelta(seconds=30),
             usage_stats=ProfileUsageStats(
                 last_used_at=now - timedelta(minutes=60),
                 success_count=10,
@@ -53,7 +53,7 @@ def _make_store_profiles() -> list[AuthProfile]:
             account_identifier="team",
             backend="nexus-token-manager",
             backend_key="openai/team",
-            last_synced_at=now - timedelta(minutes=5),
+            last_synced_at=now - timedelta(seconds=30),
             usage_stats=ProfileUsageStats(
                 last_used_at=now - timedelta(minutes=2),
                 success_count=100,

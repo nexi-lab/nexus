@@ -56,6 +56,36 @@ fn validate_consistency(consistency: &str) -> PyResult<()> {
     }
 }
 
+/// Python lock-mode string constants (F4 C2).
+const LOCK_MODE_EXCLUSIVE: &str = "exclusive";
+const LOCK_MODE_SHARED: &str = "shared";
+
+/// Parse the Python `mode` parameter into a Rust `LockMode`.
+///
+/// Accepts `"exclusive"` / `"shared"`, case-insensitive. `"mutex"`
+/// and `"semaphore"` are explicitly rejected — those are the
+/// computed display labels for `max_holders`, not the per-holder
+/// conflict mode.
+fn parse_lock_mode(s: &str) -> PyResult<crate::prelude::LockMode> {
+    use crate::prelude::LockMode;
+    match s.to_ascii_lowercase().as_str() {
+        LOCK_MODE_EXCLUSIVE => Ok(LockMode::Exclusive),
+        LOCK_MODE_SHARED => Ok(LockMode::Shared),
+        other => Err(PyRuntimeError::new_err(format!(
+            "Invalid lock mode '{}': expected '{}' or '{}'",
+            other, LOCK_MODE_EXCLUSIVE, LOCK_MODE_SHARED
+        ))),
+    }
+}
+
+/// Render a `LockMode` back to its string form for the Python side.
+fn lock_mode_str(mode: crate::prelude::LockMode) -> &'static str {
+    match mode {
+        crate::prelude::LockMode::Exclusive => LOCK_MODE_EXCLUSIVE,
+        crate::prelude::LockMode::Shared => LOCK_MODE_SHARED,
+    }
+}
+
 /// Python-compatible holder info.
 #[pyclass(name = "HolderInfo")]
 #[derive(Clone)]
@@ -64,6 +94,12 @@ pub struct PyHolderInfo {
     pub lock_id: String,
     #[pyo3(get)]
     pub holder_info: String,
+    /// Per-holder conflict mode (F4 C2): `"exclusive"` or
+    /// `"shared"`. Not to be confused with the lock-level display
+    /// label ("mutex"/"semaphore"), which is computed from
+    /// `max_holders` on the Python side and never stored.
+    #[pyo3(get)]
+    pub mode: String,
     #[pyo3(get)]
     pub acquired_at: u64,
     #[pyo3(get)]
@@ -75,6 +111,7 @@ impl From<RustHolderInfo> for PyHolderInfo {
         Self {
             lock_id: h.lock_id,
             holder_info: h.holder_info,
+            mode: lock_mode_str(h.mode).to_string(),
             acquired_at: h.acquired_at,
             expires_at: h.expires_at,
         }
@@ -91,6 +128,12 @@ pub struct PyLockState {
     pub current_holders: u32,
     #[pyo3(get)]
     pub max_holders: u32,
+    /// Monotonically non-decreasing fencing token (F4 C2). Sourced
+    /// from the raft log index; zero for state machines without an
+    /// index (the `PyMetastore` embedded path passes its
+    /// `next_index`).
+    #[pyo3(get)]
+    pub fence_token: u64,
     #[pyo3(get)]
     pub holders: Vec<PyHolderInfo>,
 }
@@ -101,6 +144,7 @@ impl From<RustLockState> for PyLockState {
             acquired: s.acquired,
             current_holders: s.current_holders,
             max_holders: s.max_holders,
+            fence_token: s.fence_token,
             holders: s.holders.into_iter().map(|h| h.into()).collect(),
         }
     }
@@ -114,6 +158,9 @@ pub struct PyLockInfo {
     pub path: String,
     #[pyo3(get)]
     pub max_holders: u32,
+    /// Monotonically non-decreasing fencing token (F4 C2).
+    #[pyo3(get)]
+    pub fence_token: u64,
     #[pyo3(get)]
     pub holders: Vec<PyHolderInfo>,
 }
@@ -123,6 +170,7 @@ impl From<RustLockInfo> for PyLockInfo {
         Self {
             path: l.path,
             max_holders: l.max_holders,
+            fence_token: l.fence_token,
             holders: l.holders.into_iter().map(|h| h.into()).collect(),
         }
     }
@@ -406,7 +454,7 @@ impl PyMetastore {
     ///
     /// Returns:
     ///     LockState with acquisition result.
-    #[pyo3(signature = (path, lock_id, max_holders=1, ttl_secs=30, holder_info=""))]
+    #[pyo3(signature = (path, lock_id, max_holders=1, ttl_secs=30, holder_info="", mode="exclusive"))]
     pub fn acquire_lock(
         &mut self,
         path: &str,
@@ -414,6 +462,7 @@ impl PyMetastore {
         max_holders: u32,
         ttl_secs: u32,
         holder_info: &str,
+        mode: &str,
     ) -> PyResult<PyLockState> {
         let cmd = Command::AcquireLock {
             path: path.to_string(),
@@ -421,9 +470,7 @@ impl PyMetastore {
             max_holders,
             ttl_secs,
             holder_info: holder_info.to_string(),
-            // F4 C1: default to Exclusive; the `mode` parameter is
-            // surfaced on the public Python API in F4 C2.
-            mode: crate::prelude::LockMode::Exclusive,
+            mode: parse_lock_mode(mode)?,
             now_secs: crate::prelude::FullStateMachine::now(),
         };
 
@@ -1168,7 +1215,8 @@ impl PyZoneHandle {
     // =========================================================================
 
     /// Acquire a distributed lock (always replicated through consensus).
-    #[pyo3(signature = (path, lock_id, max_holders=1, ttl_secs=30, holder_info=""))]
+    #[pyo3(signature = (path, lock_id, max_holders=1, ttl_secs=30, holder_info="", mode="exclusive"))]
+    #[allow(clippy::too_many_arguments)]
     pub fn acquire_lock(
         &self,
         py: Python<'_>,
@@ -1177,6 +1225,7 @@ impl PyZoneHandle {
         max_holders: u32,
         ttl_secs: u32,
         holder_info: &str,
+        mode: &str,
     ) -> PyResult<PyLockState> {
         let cmd = Command::AcquireLock {
             path: path.to_string(),
@@ -1184,9 +1233,7 @@ impl PyZoneHandle {
             max_holders,
             ttl_secs,
             holder_info: holder_info.to_string(),
-            // F4 C1: default to Exclusive; the `mode` parameter is
-            // surfaced on the public Python API in F4 C2.
-            mode: crate::prelude::LockMode::Exclusive,
+            mode: parse_lock_mode(mode)?,
             now_secs: crate::prelude::FullStateMachine::now(),
         };
         let result = self.propose_command_raw(py, cmd)?;

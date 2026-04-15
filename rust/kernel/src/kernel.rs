@@ -665,6 +665,117 @@ impl Kernel {
         }
     }
 
+    /// OCC put. See `Metastore::put_if_version`.
+    pub fn metastore_put_if_version(
+        &self,
+        metadata: crate::metastore::FileMetadata,
+        expected_version: u32,
+    ) -> Result<crate::metastore::PutIfVersionResult, KernelError> {
+        let path = metadata.path.clone();
+        match self.with_routed_metastore(&path, move |ms| {
+            ms.put_if_version(metadata, expected_version)
+        }) {
+            Some(result) => result.map_err(|e| {
+                KernelError::IOError(format!("metastore_put_if_version({path}): {e:?}"))
+            }),
+            None => Err(KernelError::IOError("no metastore wired".into())),
+        }
+    }
+
+    /// Rename `old_path` → `new_path` (and prefix children). See
+    /// `Metastore::rename_path`.
+    pub fn metastore_rename_path(&self, old_path: &str, new_path: &str) -> Result<(), KernelError> {
+        match self.with_routed_metastore(old_path, |ms| ms.rename_path(old_path, new_path)) {
+            Some(result) => result.map_err(|e| {
+                KernelError::IOError(format!(
+                    "metastore_rename_path({old_path} → {new_path}): {e:?}"
+                ))
+            }),
+            None => Err(KernelError::IOError("no metastore wired".into())),
+        }
+    }
+
+    pub fn metastore_set_file_metadata(
+        &self,
+        path: &str,
+        key: &str,
+        value: String,
+    ) -> Result<(), KernelError> {
+        match self.with_routed_metastore(path, move |ms| ms.set_file_metadata(path, key, value)) {
+            Some(result) => result.map_err(|e| {
+                KernelError::IOError(format!("metastore_set_file_metadata({path}, {key}): {e:?}"))
+            }),
+            None => Err(KernelError::IOError("no metastore wired".into())),
+        }
+    }
+
+    pub fn metastore_get_file_metadata(
+        &self,
+        path: &str,
+        key: &str,
+    ) -> Result<Option<String>, KernelError> {
+        match self.with_routed_metastore(path, |ms| ms.get_file_metadata(path, key)) {
+            Some(result) => result.map_err(|e| {
+                KernelError::IOError(format!("metastore_get_file_metadata({path}, {key}): {e:?}"))
+            }),
+            None => Err(KernelError::IOError("no metastore wired".into())),
+        }
+    }
+
+    pub fn metastore_get_file_metadata_bulk(
+        &self,
+        paths: &[String],
+        key: &str,
+    ) -> Result<Vec<crate::metastore::PathValueStr>, KernelError> {
+        // Bulk: fan out to the global metastore. Mixed-mount bulk reads
+        // go through the Python wrapper.
+        match &self.metastore {
+            Some(ms) => ms.get_file_metadata_bulk(paths, key).map_err(|e| {
+                KernelError::IOError(format!("metastore_get_file_metadata_bulk: {e:?}"))
+            }),
+            None => Err(KernelError::IOError("no metastore wired".into())),
+        }
+    }
+
+    pub fn metastore_is_implicit_directory(&self, path: &str) -> Result<bool, KernelError> {
+        match self.with_routed_metastore(path, |ms| ms.is_implicit_directory(path)) {
+            Some(result) => result.map_err(|e| {
+                KernelError::IOError(format!("metastore_is_implicit_directory({path}): {e:?}"))
+            }),
+            None => Err(KernelError::IOError("no metastore wired".into())),
+        }
+    }
+
+    pub fn metastore_list_paginated(
+        &self,
+        prefix: &str,
+        recursive: bool,
+        limit: usize,
+        cursor: Option<&str>,
+    ) -> Result<crate::metastore::PaginatedList, KernelError> {
+        let route_path = if prefix.is_empty() { "/" } else { prefix };
+        match self.with_routed_metastore(route_path, |ms| {
+            ms.list_paginated(prefix, recursive, limit, cursor)
+        }) {
+            Some(result) => result.map_err(|e| {
+                KernelError::IOError(format!("metastore_list_paginated({prefix}): {e:?}"))
+            }),
+            None => Err(KernelError::IOError("no metastore wired".into())),
+        }
+    }
+
+    pub fn metastore_batch_get_content_ids(
+        &self,
+        paths: &[String],
+    ) -> Result<Vec<crate::metastore::PathEtag>, KernelError> {
+        match &self.metastore {
+            Some(ms) => ms.batch_get_content_ids(paths).map_err(|e| {
+                KernelError::IOError(format!("metastore_batch_get_content_ids: {e:?}"))
+            }),
+            None => Err(KernelError::IOError("no metastore wired".into())),
+        }
+    }
+
     // ── DCache proxy methods ───────────────────────────────────────────
 
     /// Insert or update a cache entry.

@@ -57,10 +57,11 @@ pub struct PutIfVersionResult {
     pub current_version: u32,
 }
 
-/// `(path, optional value)` pair used by bulk auxiliary-metadata reads
-/// and bulk content-id lookups. Aliased to keep long trait signatures
-/// under clippy's `type_complexity` threshold.
-pub type PathValueBytes = (String, Option<Vec<u8>>);
+/// `(path, optional value)` pairs used by bulk auxiliary-metadata reads
+/// and bulk content-id lookups. Values are UTF-8 strings — every real
+/// caller stores text (`parsed_text`, `parser_name`, JSON-encoded
+/// blobs), so the kernel boundary avoids a `PyBytes` GIL crossing.
+pub type PathValueStr = (String, Option<String>);
 pub type PathEtag = (String, Option<String>);
 
 /// One page of a paginated list scan.
@@ -201,7 +202,7 @@ pub trait Metastore: Send + Sync {
         &self,
         path: &str,
         key: &str,
-        value: Vec<u8>,
+        value: String,
     ) -> Result<(), MetastoreError> {
         let _ = (path, key, value);
         Err(MetastoreError::IOError(
@@ -210,7 +211,7 @@ pub trait Metastore: Send + Sync {
     }
 
     /// Read an auxiliary key/value blob. Default impl returns `Ok(None)`.
-    fn get_file_metadata(&self, path: &str, key: &str) -> Result<Option<Vec<u8>>, MetastoreError> {
+    fn get_file_metadata(&self, path: &str, key: &str) -> Result<Option<String>, MetastoreError> {
         let _ = (path, key);
         Ok(None)
     }
@@ -221,7 +222,7 @@ pub trait Metastore: Send + Sync {
         &self,
         paths: &[String],
         key: &str,
-    ) -> Result<Vec<PathValueBytes>, MetastoreError> {
+    ) -> Result<Vec<PathValueStr>, MetastoreError> {
         let mut out = Vec::with_capacity(paths.len());
         for p in paths {
             out.push((p.clone(), self.get_file_metadata(p, key)?));
@@ -298,9 +299,10 @@ pub struct MemoryMetastore {
     entries: DashMap<String, FileMetadata>,
     /// Auxiliary per-file metadata (e.g. `parsed_text`, tags). Separate
     /// namespace from the main `entries` map. Outer key is the file path,
-    /// inner key is the metadata key (e.g. `"parsed_text"`), value is
-    /// opaque bytes (usually UTF-8 text or pickled Python).
-    file_metadata: DashMap<String, DashMap<String, Vec<u8>>>,
+    /// inner key is the metadata key (e.g. `"parsed_text"`), value is a
+    /// UTF-8 string — callers that want to store structured data JSON-
+    /// encode it themselves at the boundary (see `metadata_export.py`).
+    file_metadata: DashMap<String, DashMap<String, String>>,
 }
 
 impl MemoryMetastore {
@@ -432,14 +434,14 @@ impl Metastore for MemoryMetastore {
         &self,
         path: &str,
         key: &str,
-        value: Vec<u8>,
+        value: String,
     ) -> Result<(), MetastoreError> {
         let inner = self.file_metadata.entry(path.to_string()).or_default();
         inner.insert(key.to_string(), value);
         Ok(())
     }
 
-    fn get_file_metadata(&self, path: &str, key: &str) -> Result<Option<Vec<u8>>, MetastoreError> {
+    fn get_file_metadata(&self, path: &str, key: &str) -> Result<Option<String>, MetastoreError> {
         Ok(self
             .file_metadata
             .get(path)
@@ -993,7 +995,7 @@ impl Metastore for RedbMetastore {
         &self,
         path: &str,
         key: &str,
-        value: Vec<u8>,
+        value: String,
     ) -> Result<(), MetastoreError> {
         let composite = fm_composite_key(path, key);
         let txn = self
@@ -1005,7 +1007,7 @@ impl Metastore for RedbMetastore {
                 .open_table(FILE_METADATA_TABLE)
                 .map_err(|e| MetastoreError::IOError(format!("redb open fm table: {e}")))?;
             table
-                .insert(composite.as_str(), value.as_slice())
+                .insert(composite.as_str(), value.as_bytes())
                 .map_err(|e| MetastoreError::IOError(format!("redb fm insert: {e}")))?;
         }
         txn.commit()
@@ -1013,7 +1015,7 @@ impl Metastore for RedbMetastore {
         Ok(())
     }
 
-    fn get_file_metadata(&self, path: &str, key: &str) -> Result<Option<Vec<u8>>, MetastoreError> {
+    fn get_file_metadata(&self, path: &str, key: &str) -> Result<Option<String>, MetastoreError> {
         let composite = fm_composite_key(path, key);
         let txn = self
             .db
@@ -1023,7 +1025,13 @@ impl Metastore for RedbMetastore {
             .open_table(FILE_METADATA_TABLE)
             .map_err(|e| MetastoreError::IOError(format!("redb open fm table: {e}")))?;
         match table.get(composite.as_str()) {
-            Ok(Some(guard)) => Ok(Some(guard.value().to_vec())),
+            Ok(Some(guard)) => {
+                let bytes = guard.value();
+                let s = std::str::from_utf8(bytes).map_err(|e| {
+                    MetastoreError::IOError(format!("redb fm utf8 decode {path}/{key}: {e}"))
+                })?;
+                Ok(Some(s.to_string()))
+            }
             Ok(None) => Ok(None),
             Err(e) => Err(MetastoreError::IOError(format!("redb fm get: {e}"))),
         }
@@ -1105,7 +1113,7 @@ mod tests {
         ms.put("/old/child", mk_meta("/old/child", 1)).unwrap();
         ms.put("/old/sub/deep", mk_meta("/old/sub/deep", 1))
             .unwrap();
-        ms.set_file_metadata("/old/child", "tag", b"value".to_vec())
+        ms.set_file_metadata("/old/child", "tag", "value".to_string())
             .unwrap();
 
         ms.rename_path("/old", "/new").unwrap();
@@ -1121,18 +1129,18 @@ mod tests {
         );
         assert_eq!(
             ms.get_file_metadata("/new/child", "tag").unwrap(),
-            Some(b"value".to_vec())
+            Some("value".to_string())
         );
     }
 
     #[test]
     fn memory_set_and_get_file_metadata() {
         let ms = MemoryMetastore::new();
-        ms.set_file_metadata("/x", "parsed_text", b"hello".to_vec())
+        ms.set_file_metadata("/x", "parsed_text", "hello".to_string())
             .unwrap();
         assert_eq!(
             ms.get_file_metadata("/x", "parsed_text").unwrap(),
-            Some(b"hello".to_vec())
+            Some("hello".to_string())
         );
         assert_eq!(ms.get_file_metadata("/x", "missing").unwrap(), None);
     }
@@ -1167,7 +1175,7 @@ mod tests {
     fn memory_delete_clears_file_metadata() {
         let ms = MemoryMetastore::new();
         ms.put("/x", mk_meta("/x", 1)).unwrap();
-        ms.set_file_metadata("/x", "k", b"v".to_vec()).unwrap();
+        ms.set_file_metadata("/x", "k", "v".to_string()).unwrap();
         ms.delete("/x").unwrap();
         assert_eq!(ms.get_file_metadata("/x", "k").unwrap(), None);
     }

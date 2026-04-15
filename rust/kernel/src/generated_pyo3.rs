@@ -1131,6 +1131,121 @@ impl PyKernel {
         self.inner.metastore_put_batch(&batch).map_err(Into::into)
     }
 
+    /// Optimistic-concurrency put. Returns a ``dict`` with ``success``
+    /// and ``current_version`` keys so Python callers can branch on
+    /// conflict without another round-trip.
+    fn metastore_put_if_version(
+        &self,
+        py: Python<'_>,
+        metadata: &Bound<'_, PyAny>,
+        expected_version: u32,
+    ) -> PyResult<Py<PyAny>> {
+        let meta = extract_metadata(py, metadata)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e:?}")))?;
+        let result = self
+            .inner
+            .metastore_put_if_version(meta, expected_version)
+            .map_err::<PyErr, _>(Into::into)?;
+        let dict = PyDict::new(py);
+        dict.set_item("success", result.success)?;
+        dict.set_item("current_version", result.current_version)?;
+        Ok(dict.into())
+    }
+
+    fn metastore_rename_path(&self, old_path: &str, new_path: &str) -> PyResult<()> {
+        self.inner
+            .metastore_rename_path(old_path, new_path)
+            .map_err(Into::into)
+    }
+
+    /// Auxiliary per-path metadata storage (e.g. ``parsed_text``,
+    /// ``parser_name``). Values are UTF-8 strings; callers that want
+    /// to store structured data JSON-encode at this boundary — no
+    /// opaque bytes cross the GIL.
+    fn metastore_set_file_metadata(&self, path: &str, key: &str, value: String) -> PyResult<()> {
+        self.inner
+            .metastore_set_file_metadata(path, key, value)
+            .map_err(Into::into)
+    }
+
+    fn metastore_get_file_metadata(&self, path: &str, key: &str) -> PyResult<Option<String>> {
+        self.inner
+            .metastore_get_file_metadata(path, key)
+            .map_err(Into::into)
+    }
+
+    fn metastore_get_file_metadata_bulk(
+        &self,
+        py: Python<'_>,
+        paths: Vec<String>,
+        key: &str,
+    ) -> PyResult<Py<PyAny>> {
+        let pairs = self
+            .inner
+            .metastore_get_file_metadata_bulk(&paths, key)
+            .map_err::<PyErr, _>(Into::into)?;
+        let dict = PyDict::new(py);
+        for (path, value) in pairs {
+            match value {
+                Some(text) => dict.set_item(path, text)?,
+                None => dict.set_item(path, py.None())?,
+            }
+        }
+        Ok(dict.into())
+    }
+
+    fn metastore_is_implicit_directory(&self, path: &str) -> PyResult<bool> {
+        self.inner
+            .metastore_is_implicit_directory(path)
+            .map_err(Into::into)
+    }
+
+    #[pyo3(signature = (prefix, recursive=true, limit=1000, cursor=None))]
+    fn metastore_list_paginated(
+        &self,
+        py: Python<'_>,
+        prefix: &str,
+        recursive: bool,
+        limit: usize,
+        cursor: Option<&str>,
+    ) -> PyResult<Py<PyAny>> {
+        let page = self
+            .inner
+            .metastore_list_paginated(prefix, recursive, limit, cursor)
+            .map_err::<PyErr, _>(Into::into)?;
+        let dict = PyDict::new(py);
+        let items: Vec<Py<PyAny>> = page
+            .items
+            .iter()
+            .map(|m| {
+                to_python_metadata(py, m)
+                    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e:?}")))
+                    .map(Into::into)
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+        dict.set_item("items", items)?;
+        dict.set_item("next_cursor", page.next_cursor)?;
+        dict.set_item("has_more", page.has_more)?;
+        dict.set_item("total_count", page.total_count)?;
+        Ok(dict.into())
+    }
+
+    fn metastore_batch_get_content_ids(
+        &self,
+        py: Python<'_>,
+        paths: Vec<String>,
+    ) -> PyResult<Py<PyAny>> {
+        let pairs = self
+            .inner
+            .metastore_batch_get_content_ids(&paths)
+            .map_err::<PyErr, _>(Into::into)?;
+        let dict = PyDict::new(py);
+        for (path, etag) in pairs {
+            dict.set_item(path, etag)?;
+        }
+        Ok(dict.into())
+    }
+
     // ── DCache proxy methods ─────────────��─────────────────────────────
 
     #[pyo3(signature = (path, backend_name, physical_path, size, entry_type, version=1, etag=None, zone_id=None, mime_type=None))]

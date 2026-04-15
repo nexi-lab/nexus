@@ -178,15 +178,15 @@ def execute_migration(
             continue
 
         # Actually copy
-        cred = cred_by_id.get(entry.profile_id)
-        if cred is None:
+        matched_cred = cred_by_id.get(entry.profile_id)
+        if matched_cred is None:
             entry.action = "skip_unmappable"
             entry.reason = "credential disappeared between plan and execute"
             result.errors += 1
             continue
 
         try:
-            zone_id = cred.get("zone_id")
+            zone_id = matched_cred.get("zone_id")
             backend_key = NexusTokenManagerBackend.make_backend_key(
                 entry.provider,
                 entry.user_email,

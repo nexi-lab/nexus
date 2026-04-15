@@ -180,20 +180,13 @@ async def create_mcp_server(
             except Exception:
                 pass  # Graceful degradation — tool returns "unavailable"
 
-    # Auto-resolve permission_enforcer and auth_provider from NexusFS
-    # when not explicitly provided (#3731 review finding: without this,
-    # the security fix is opt-in and existing callers remain unprotected).
-    # Only use the service() registry — getattr on NexusFS can pick up
-    # mock artifacts or unrelated attributes in test environments.
-    if permission_enforcer is None and nx is not None and hasattr(nx, "service"):
-        _pe = nx.service("permission_enforcer")
-        if _pe is not None and hasattr(_pe, "filter_search_results"):
-            permission_enforcer = _pe
-
-    if auth_provider is None and nx is not None and hasattr(nx, "service"):
-        _ap = nx.service("auth")
-        if _ap is not None and hasattr(_ap, "authenticate"):
-            auth_provider = _ap
+    # NOTE: permission_enforcer and auth_provider are intentionally NOT
+    # auto-resolved from NexusFS services. A NexusFS with enforce=False
+    # may still register a PermissionEnforcer service that denies all
+    # requests (no grants → empty permit list). Callers that need ReBAC
+    # must pass permission_enforcer explicitly. The HTTP server does
+    # this via app.state.permission_enforcer; the CLI MCP command
+    # should thread it when auth is configured (#3731).
 
     # Store default connection and config for per-request API key support
     assert nx is not None  # guaranteed by the if-block above

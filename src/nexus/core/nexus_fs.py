@@ -239,6 +239,9 @@ class NexusFS(  # type: ignore[misc]
                     from nexus.core.metastore import RustMetastoreProxy
 
                     self.metadata = RustMetastoreProxy(self._kernel, str(_redb_path))
+                    # Also update mount table's default metastore so route.metastore
+                    # returns the same RustMetastoreProxy (11 call sites use route.metastore).
+                    self._mount_table._default_metastore = self.metadata
                     self._mount_table.bind_kernel(self._kernel)
                     _vfs_rust = getattr(self._vfs_lock_manager, "_rust", None)
                     if _vfs_rust is not None:

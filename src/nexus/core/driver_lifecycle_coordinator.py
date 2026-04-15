@@ -197,18 +197,33 @@ class DriverLifecycleCoordinator:
                 )
 
             # Federation hook — wire per-zone ZoneMetastore into the kernel.
+            # F2 C8 (Option A): both Kernel and ZoneHandle live in the
+            # same cdylib (nexus_kernel). ``attach_raft_zone_to_kernel``
+            # builds a pure Rust ``ZoneMetastore`` (impl kernel::Metastore
+            # via ZoneConsensus) and installs it on the kernel's mount
+            # map, so sys_read / sys_stat / sys_readdir cold paths hit
+            # the raft state machine directly without any Python re-entry.
             if metastore is not None:
                 engine = getattr(metastore, "_engine", None)
-                if engine is not None and hasattr(engine, "attach_to_kernel_mount"):
-                    try:
-                        engine.attach_to_kernel_mount(self._kernel, normalized, zone_id)
-                    except Exception as exc:  # pragma: no cover — logged
-                        logger.warning(
-                            "[DRIVER] attach_to_kernel_mount failed for %s (zone=%s): %s",
-                            normalized,
-                            zone_id,
-                            exc,
-                        )
+                if engine is not None:
+                    import nexus_kernel as _nk  # runtime lookup: stubs may lag
+
+                    py_zone_handle = getattr(_nk, "ZoneHandle", None)
+                    attach_fn = getattr(_nk, "attach_raft_zone_to_kernel", None)
+                    if (
+                        py_zone_handle is not None
+                        and attach_fn is not None
+                        and isinstance(engine, py_zone_handle)
+                    ):
+                        try:
+                            attach_fn(self._kernel, engine, normalized, zone_id)
+                        except Exception as exc:  # pragma: no cover — logged
+                            logger.warning(
+                                "[DRIVER] attach_raft_zone_to_kernel failed for %s (zone=%s): %s",
+                                normalized,
+                                zone_id,
+                                exc,
+                            )
 
         self._register_backend_hooks(normalized, backend)
         self._dispatch.dispatch_event("mount", normalized)

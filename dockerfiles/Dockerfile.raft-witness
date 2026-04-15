@@ -34,20 +34,14 @@ COPY proto/ ./proto/
 # them at build time.
 COPY rust/raft/ ./rust/raft/
 COPY rust/transport/ ./rust/transport/
-RUN for d in contracts library services tasks; do \
+# Stub out workspace members raft does not depend on at build time.
+# F2 C8 removed the ``kernel`` workspace dep on raft, so kernel no longer
+# needs a feature-matched stub here — plain empty package is enough.
+RUN for d in contracts library kernel services tasks; do \
         mkdir -p rust/$d/src && \
         printf '[package]\nname = "%s"\nversion = "0.1.0"\nedition = "2021"\n' "$d" > rust/$d/Cargo.toml && \
         echo '' > rust/$d/src/lib.rs; \
     done
-# Kernel stub needs empty `connectors` and `py-hook-adapters` features
-# because the workspace root Cargo.toml declares
-#     kernel = { ..., features = ["connectors", "py-hook-adapters"] }
-# and cargo validates feature names eagerly even when the dep is gated
-# off by `dep:kernel` (witness builds without `python`, so kernel never
-# actually compiles — but the stub's feature list still needs to match).
-RUN mkdir -p rust/kernel/src && \
-    printf '[package]\nname = "kernel"\nversion = "0.1.0"\nedition = "2021"\n\n[features]\nconnectors = []\npy-hook-adapters = []\n' > rust/kernel/Cargo.toml && \
-    echo '' > rust/kernel/src/lib.rs
 
 # Build the witness binary
 WORKDIR /build/rust/raft

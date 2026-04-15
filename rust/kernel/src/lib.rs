@@ -37,6 +37,11 @@ pub mod mount_table;
 // `Metastore` into `Kernel::mount_metastores` without surfacing a
 // separate `KernelMetastore` Python class.
 pub mod generated_pyo3;
+// F2 C8 (Option A): kernel-side raft bridge. These modules live in the
+// kernel cdylib so they can reach both ``kernel::Metastore`` (trait) and
+// ``raft::ZoneConsensus`` (rlib dep) inside the same .so — no cross-
+// cdylib trait-object dispatch, no SIGSEGV from duplicated thread_local!
+// state.
 #[cfg(feature = "connectors")]
 mod openai_backend;
 #[cfg(feature = "connectors")]
@@ -46,6 +51,8 @@ mod permission_hook;
 mod pipe;
 mod pipe_manager;
 mod prefix;
+mod raft_bindings;
+mod raft_metastore;
 mod rebac;
 mod replication;
 #[cfg(feature = "connectors")]
@@ -173,5 +180,17 @@ fn nexus_kernel(m: &Bound<PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(path_utils::unscope_internal_path, m)?)?;
     m.add_function(wrap_pyfunction!(path_utils::canonicalize_path, m)?)?;
     m.add_function(wrap_pyfunction!(path_utils::extract_zone_id, m)?)?;
+
+    // F2 C8 (Option A): register raft's PyO3 classes (Metastore,
+    // ZoneManager, ZoneHandle, …) + the kernel-side function that
+    // wires a ZoneHandle into the kernel's mount_metastores map. Both
+    // come from the same cdylib now, so Python sees them under
+    // ``nexus_kernel`` alongside ``Kernel``.
+    nexus_raft::pyo3_bindings::register_python_classes(m)?;
+    m.add_function(wrap_pyfunction!(
+        raft_bindings::attach_raft_zone_to_kernel,
+        m
+    )?)?;
+
     Ok(())
 }

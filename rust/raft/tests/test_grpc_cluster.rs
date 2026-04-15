@@ -21,8 +21,8 @@
 
 #[cfg(all(feature = "grpc", has_protos))]
 mod grpc_cluster {
-    use _nexus_raft::raft::ZoneRaftRegistry;
-    use _nexus_raft::transport::{
+    use nexus_raft::raft::ZoneRaftRegistry;
+    use nexus_raft::transport::{
         ClientConfig, NodeAddress, RaftApiClient, RaftGrpcServer, ServerConfig,
     };
     use std::sync::Arc;
@@ -33,7 +33,7 @@ mod grpc_cluster {
     async fn connect_client(
         endpoint: &str,
         config: ClientConfig,
-    ) -> _nexus_raft::transport::Result<RaftApiClient> {
+    ) -> nexus_raft::transport::Result<RaftApiClient> {
         RaftApiClient::connect(endpoint, config)
             .await
             .map(|c| c.with_zone_id("default".into()))
@@ -219,7 +219,7 @@ mod grpc_cluster {
             .expect("Failed to connect to leader");
 
         // Construct a FileMetadata proto message
-        use _nexus_raft::transport::proto::nexus::core::FileMetadata;
+        use nexus_raft::transport::proto::nexus::core::FileMetadata;
         let metadata = FileMetadata {
             path: "/test/hello.txt".to_string(),
             backend_name: "local".to_string(),
@@ -478,7 +478,7 @@ mod grpc_cluster {
             .await
             .expect("Failed to connect to leader");
 
-        use _nexus_raft::transport::proto::nexus::core::FileMetadata;
+        use nexus_raft::transport::proto::nexus::core::FileMetadata;
         let metadata = FileMetadata {
             path: "/docker-test/hello.txt".to_string(),
             backend_name: "local".to_string(),

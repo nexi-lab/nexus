@@ -17,11 +17,11 @@ contracts = { path = "rust/contracts" }
 library = { path = "rust/library" }
 transport = { path = "rust/transport" }
 services = { path = "rust/services" }
-# kernel is NOT a workspace dependency: F2 C1 tried this so raft could
-# impl `kernel::Metastore` directly, but linking kernel rlib into
-# `_nexus_raft.so` caused a post-start SIGSEGV (two cdylib copies of
-# kernel's thread_local! state and vtables collide in one process).
-# Reverted in C7; kernel is only consumed via its own cdylib wheel.
+# F2 C8 (Option A): raft is an rlib inside the nexus_kernel cdylib.
+# kernel pulls it in as a Rust dependency to reach ZoneConsensus /
+# FullStateMachine for federation metastore wiring. Direction is
+# kernel -> raft only (no cycle).
+raft = { path = "rust/raft", default-features = false, features = ["python", "grpc"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 ahash = "0.8"

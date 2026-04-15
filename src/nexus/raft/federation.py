@@ -158,7 +158,7 @@ class NexusFederation:
                     if join_peer:
                         import importlib
 
-                        _raft_mod = importlib.import_module("_nexus_raft")
+                        _raft_mod = importlib.import_module("nexus_kernel")
                         _join_cluster = _raft_mod.join_cluster
 
                         logger.info(

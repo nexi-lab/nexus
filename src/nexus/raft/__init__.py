@@ -45,28 +45,31 @@ LockInfo: Any = None
 HolderInfo: Any = None
 
 try:
-    import _nexus_raft as _pyo3_mod
+    # F2 C8 (Option A): raft's PyO3 classes were moved into the
+    # ``nexus_kernel`` cdylib. A single .so holds Kernel + Metastore +
+    # ZoneManager + ZoneHandle so raft's ``kernel::Metastore`` impls can
+    # be installed as true Rust trait objects without cross-cdylib
+    # duplication. Use ``getattr`` so mypy doesn't trip on stale stubs
+    # while a locally-installed wheel lags behind.
+    import nexus_kernel as _pyo3_mod
 
-    Metastore = _pyo3_mod.Metastore
-    LockState = _pyo3_mod.LockState
-    LockInfo = _pyo3_mod.LockInfo
-    HolderInfo = _pyo3_mod.HolderInfo
-    _HAS_METASTORE = True
+    Metastore = getattr(_pyo3_mod, "Metastore", None)
+    LockState = getattr(_pyo3_mod, "LockState", None)
+    LockInfo = getattr(_pyo3_mod, "LockInfo", None)
+    HolderInfo = getattr(_pyo3_mod, "HolderInfo", None)
+    _HAS_METASTORE = Metastore is not None
 except ImportError:
-    logger.debug(
-        "Metastore not available. Install with: "
-        "maturin develop -m rust/raft/Cargo.toml --features python"
-    )
+    logger.debug("Metastore not available. Install with: maturin develop -m rust/kernel/Cargo.toml")
 
 # =========================================================================
 # ZoneHandle: Per-zone Raft node handle (requires --features full)
 # =========================================================================
 ZoneHandle: Any = None
 try:
-    import _nexus_raft as _pyo3_mod2
+    import nexus_kernel as _pyo3_mod2
 
-    ZoneHandle = _pyo3_mod2.ZoneHandle
-except (ImportError, AttributeError):
+    ZoneHandle = getattr(_pyo3_mod2, "ZoneHandle", None)
+except ImportError:
     pass
 
 # Python wrappers for multi-zone federation

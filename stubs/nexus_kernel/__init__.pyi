@@ -152,6 +152,14 @@ def trigram_index_stats(index_path: str) -> dict[str, Any]: ...
 def invalidate_trigram_cache(index_path: str) -> None: ...
 
 # ---------------------------------------------------------------------------
+# Raft bridge (raft_bindings.rs)
+# ---------------------------------------------------------------------------
+
+def attach_raft_zone_to_kernel(
+    kernel: Any, zone_handle: Any, mount_point: str, zone_id: str
+) -> None: ...
+
+# ---------------------------------------------------------------------------
 # Classes
 # ---------------------------------------------------------------------------
 

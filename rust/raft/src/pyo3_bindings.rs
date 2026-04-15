@@ -964,6 +964,28 @@ pub struct PyZoneHandle {
 }
 
 #[cfg(all(feature = "grpc", has_protos))]
+impl PyZoneHandle {
+    /// Cheap clone of the underlying `ZoneConsensus` (Arc-based internally).
+    ///
+    /// Exposed so sibling crates (specifically ``nexus_kernel``'s
+    /// ``raft_metastore`` module) can construct a ``Metastore`` impl over
+    /// the same Raft state machine without touching private fields. The
+    /// ``#[pymethods]`` block below can't hold this because it would
+    /// require the return type to be a Python class.
+    pub fn consensus_node(&self) -> crate::raft::ZoneConsensus<FullStateMachine> {
+        self.node.clone()
+    }
+
+    /// Clone the tokio runtime handle for the zone manager.
+    ///
+    /// Used by ``nexus_kernel::raft_metastore::ZoneMetastore`` to bridge
+    /// the sync ``Metastore`` trait onto Raft's async ``propose`` API.
+    pub fn runtime_handle(&self) -> tokio::runtime::Handle {
+        self.runtime_handle.clone()
+    }
+}
+
+#[cfg(all(feature = "grpc", has_protos))]
 #[pymethods]
 impl PyZoneHandle {
     /// Get this zone's ID.
@@ -1314,13 +1336,12 @@ impl PyZoneHandle {
         self.node.leader_id()
     }
 
-    // F2 C1's `attach_to_kernel_mount` was removed in C7: linking the
-    // kernel rlib into `_nexus_raft.so` caused a post-start SIGSEGV in
-    // tokio worker threads (two cdylib copies of kernel's thread_local!
-    // state and vtables cannot coexist in one process). Federation
-    // metastore bridging now happens Python-side via
-    // `kernel.add_mount(metastore_path=…)` and a Python Metastore
-    // adapter — see TODO in `driver_lifecycle_coordinator.mount()`.
+    // F2 C8 (Option A): federation metastore bridging now lives on the
+    // ``nexus_kernel`` side (rust/kernel/src/raft_metastore.rs). It
+    // takes a ``&PyZoneHandle`` via ``consensus_node()`` /
+    // ``runtime_handle()``, builds a ``ZoneMetastore``, and installs
+    // it on the kernel's mount_metastores map. No cross-crate PyO3
+    // handoff — raft and kernel are both inside the same cdylib now.
 }
 
 #[cfg(all(feature = "grpc", has_protos))]
@@ -1458,11 +1479,15 @@ fn hostname_to_node_id(hostname: &str) -> u64 {
     crate::transport::hostname_to_node_id(hostname)
 }
 
-/// Python module initialization.
-/// Module name: _nexus_raft (consistent with _nexus_kernel)
-/// Import as: from _nexus_raft import Metastore, ZoneManager, ZoneHandle
-#[pymodule]
-fn _nexus_raft(m: &Bound<'_, PyModule>) -> PyResult<()> {
+/// Register raft's PyO3 classes on the calling crate's Python module.
+///
+/// F2 C8 (Option A): raft is an rlib inside the ``nexus_kernel`` cdylib
+/// now — the old ``#[pymodule] fn _nexus_raft`` is gone. Kernel's own
+/// ``#[pymodule]`` calls this function to expose ``Metastore`` /
+/// ``ZoneManager`` / ``ZoneHandle`` from the single ``nexus_kernel``
+/// Python module. Kept ``pub`` so ``kernel::lib::nexus_kernel`` can
+/// reach it via the ``nexus_raft_lib::register_python_classes`` path.
+pub fn register_python_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyMetastore>()?;
     m.add_class::<PyLockState>()?;
     m.add_class::<PyLockInfo>()?;

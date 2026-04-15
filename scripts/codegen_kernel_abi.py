@@ -704,6 +704,7 @@ def generate_stubs(
         "bitmap": "Tiger Cache Bitmap (bitmap.rs)",
         "simd": "SIMD vector similarity (simd.rs)",
         "trigram": "Trigram Index (trigram.rs)",
+        "raft_bindings": "Raft bridge (raft_bindings.rs)",
     }
 
     MODULE_ORDER = [
@@ -717,6 +718,7 @@ def generate_stubs(
         "bitmap",
         "simd",
         "trigram",
+        "raft_bindings",
     ]
 
     for mod_name in MODULE_ORDER:

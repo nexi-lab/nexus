@@ -41,14 +41,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive("_nexus_raft=debug".parse()?)
+                .add_directive("nexus_raft=debug".parse()?)
                 .add_directive("tonic=info".parse()?),
         )
         .init();
 
     let hostname = env::var("NEXUS_HOSTNAME")
         .unwrap_or_else(|_| gethostname::gethostname().to_string_lossy().into_owned());
-    let node_id = _nexus_raft::transport::hostname_to_node_id(&hostname);
+    let node_id = nexus_raft::transport::hostname_to_node_id(&hostname);
 
     let bind_addr: SocketAddr = env::var("NEXUS_BIND_ADDR")
         .unwrap_or_else(|_| "0.0.0.0:2126".to_string())
@@ -236,8 +236,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 /// Load TLS certs from disk if all three files exist.
 #[cfg(all(feature = "grpc", has_protos))]
-fn load_tls_from_disk(tls_dir: &std::path::Path) -> Option<_nexus_raft::transport::TlsConfig> {
-    use _nexus_raft::transport::TlsConfig;
+fn load_tls_from_disk(tls_dir: &std::path::Path) -> Option<nexus_raft::transport::TlsConfig> {
+    use nexus_raft::transport::TlsConfig;
 
     let ca = tls_dir.join("ca.pem");
     let cert = tls_dir.join("node.pem");
@@ -261,12 +261,12 @@ fn load_tls_from_disk(tls_dir: &std::path::Path) -> Option<_nexus_raft::transpor
 async fn tls_bootstrap_loop(
     node_id: u64,
     node_address: &str,
-    peers: &[_nexus_raft::transport::NodeAddress],
+    peers: &[nexus_raft::transport::NodeAddress],
     tls_dir: &std::path::Path,
     password: &str,
     expected_ca_fingerprint: &str,
 ) {
-    use _nexus_raft::transport::call_join_cluster;
+    use nexus_raft::transport::call_join_cluster;
 
     // Wait a bit for leader election
     tokio::time::sleep(std::time::Duration::from_secs(5)).await;

@@ -9,6 +9,10 @@ crate-type = ["cdylib", "rlib"]  # cdylib for Python, rlib for Rust deps (e.g. r
 
 [dependencies]
 library = { workspace = true }
+# F2 C8 (Option A): raft rlib pulled in so kernel can impl Metastore over
+# raft's ZoneConsensus directly, no cross-cdylib Rust trait object
+# dispatch. See rust/kernel/src/raft_metastore.rs.
+raft = { workspace = true }
 pyo3 = { version = "0.27.2", features = ["extension-module", "hashbrown"] }
 serde = { workspace = true }
 serde_json = { workspace = true }

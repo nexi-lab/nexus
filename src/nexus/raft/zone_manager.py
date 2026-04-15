@@ -31,12 +31,16 @@ logger = logging.getLogger(__name__)
 
 
 def _get_py_zone_manager() -> type | None:
-    """Import PyO3 ZoneManager from _nexus_raft (avoid circular import with __init__)."""
+    """Import PyO3 ZoneManager from ``nexus_kernel`` (F2 C8 merged the raft
+    PyO3 classes into the kernel cdylib). Uses ``getattr`` so local stale
+    stubs don't trip mypy while a freshly-built wheel is pending.
+    """
     try:
-        from _nexus_raft import ZoneManager as PyZoneManager
+        import nexus_kernel as _nk
     except ImportError:
         return None
-    return PyZoneManager
+    py_zm = getattr(_nk, "ZoneManager", None)
+    return py_zm if isinstance(py_zm, type) else None
 
 
 def _make_py_zone_manager(

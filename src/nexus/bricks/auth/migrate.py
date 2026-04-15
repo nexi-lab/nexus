@@ -228,6 +228,13 @@ class OldStoreAdapter:
     Only implements list() and get() — the old store is read-only from the
     dual-read perspective. Writes still go through OAuthCredentialService
     directly (until Phase 4).
+
+    IMPORTANT: This is a point-in-time snapshot, not a live read-through.
+    Credentials added/revoked in the old store after construction are not
+    visible until the adapter is reconstructed. This is acceptable for the
+    migration CLI (runs once) and short-lived dual-read windows. Phase 2
+    (#3739) should replace this with a live adapter backed by the actual
+    OAuthCredentialService if dual-read is used in long-running processes.
     """
 
     def __init__(self, old_credentials: list[dict[str, Any]]) -> None:

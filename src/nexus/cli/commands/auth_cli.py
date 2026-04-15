@@ -518,12 +518,12 @@ def auth_migrate(apply: bool) -> None:
     from pathlib import Path
 
     from nexus.bricks.auth.migrate import build_migration_plan, execute_migration
-    from nexus.bricks.auth.oauth.credential_service import OAuthCredentialService
     from nexus.bricks.auth.profile_store import SqliteAuthProfileStore
 
-    # Collect old credentials
-    oauth_service = OAuthCredentialService(token_manager=get_token_manager())
-    old_creds = asyncio.run(oauth_service.list_credentials())
+    # Collect old credentials across ALL zones — pass zone_id=None to
+    # TokenManager.list_credentials() to avoid filtering to root only.
+    token_manager = get_token_manager()
+    old_creds = asyncio.run(token_manager.list_credentials(zone_id=None))
 
     if not old_creds:
         console.print("[nexus.muted]No OAuth credentials found to migrate.[/nexus.muted]")

@@ -3,13 +3,19 @@
 This module defines:
   - AuthProfileFailureReason: enum mapping every provider's failure vocabulary
     to a single classification (ported from OpenClaw's AuthProfileFailureReason).
-  - AuthProfile / ProfileUsageStats: runtime credential data model.
-  - AuthProfileStore: Protocol that #3722 implements with SQLite. All code in
-    #3723 depends only on this Protocol — never on the concrete implementation.
-  - InMemoryAuthProfileStore: dict-backed stub for tests and pre-#3722 use.
+  - AuthProfile / ProfileUsageStats: unified routing metadata for credentials.
+  - ResolvedCredential: the output of a backend resolve() call (re-exported
+    from credential_backend.py for convenience).
+  - AuthProfileStore: Protocol for the unified auth-profile store. Concrete
+    implementations: SqliteAuthProfileStore (#3738), InMemoryAuthProfileStore.
+  - InMemoryAuthProfileStore: dict-backed stub for tests.
 
-Issue #3722 will land SqliteAuthProfileStore implementing AuthProfileStore.
-This issue (#3723) uses only the Protocol so it can land independently.
+Architecture (epic #3722, decision 1A):
+  AuthProfile is *routing metadata only*. It holds identity (id, provider,
+  account_identifier), a pointer to the credential backend (backend,
+  backend_key), sync bookkeeping, and usage stats. The actual credential
+  lives inside a pluggable CredentialBackend implementation — see
+  credential_backend.py.
 """
 
 from __future__ import annotations
@@ -17,40 +23,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Literal, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
-# ---------------------------------------------------------------------------
-# Credential shapes
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class ApiKeyCredential:
-    kind: Literal["api_key"] = "api_key"
-    key: str = ""
-
-
-@dataclass
-class TokenCredential:
-    kind: Literal["token"] = "token"
-    access_token: str = ""
-    refresh_token: str | None = None
-    expires_at: datetime | None = None
-
-
-@dataclass
-class OAuthCredential:
-    kind: Literal["oauth"] = "oauth"
-    access_token: str = ""
-    refresh_token: str | None = None
-    expires_at: datetime | None = None
-    scopes: list[str] = field(default_factory=list)
-
-
-AuthProfileCredential = ApiKeyCredential | TokenCredential | OAuthCredential
-
-ExternalCliManager = Literal["aws-cli", "gcloud", "gh-cli", "gws-cli", "codex-cli"]
-
+from nexus.bricks.auth.credential_backend import ResolvedCredential as ResolvedCredential
 
 # ---------------------------------------------------------------------------
 # Failure reason enum (OpenClaw pattern)
@@ -65,9 +40,17 @@ class AuthProfileFailureReason(Enum):
     RATE_LIMIT = "rate_limit"  # 429 — cooldown + auto-recover
     BILLING = "billing"  # 402 / insufficient_quota — long cooldown
     TIMEOUT = "timeout"  # network issue, retry immediately
-    MODEL_NOT_FOUND = "model_not_found"  # not applicable to all providers
     SESSION_EXPIRED = "session_expired"  # requires user re-authentication
+    MFA_REQUIRED = "mfa_required"  # multi-factor challenge pending
+    PROXY_OR_TLS = "proxy_or_tls"  # TLS handshake / proxy misconfiguration
+    UPSTREAM_CLI_MISSING = "upstream_cli_missing"  # aws/gcloud/gh binary not found
+    SCOPE_INSUFFICIENT = "scope_insufficient"  # token lacks required OAuth scopes
+    CLOCK_SKEW = "clock_skew"  # client/server clock drift broke signature validation
     UNKNOWN = "unknown"  # fallback when classifier can't map the error
+
+    # Deprecated: remove in Phase 4 (#3741). Kept for backward compatibility
+    # with existing classifiers and cooldown policy entries.
+    MODEL_NOT_FOUND = "model_not_found"
 
 
 # ---------------------------------------------------------------------------
@@ -86,27 +69,41 @@ class ProfileUsageStats:
     # cooldown_until is for automatic cooldowns after failures.
     # Both are checked by _is_usable; either blocks selection.
     disabled_until: datetime | None = None
+    # Escape hatch: raw error string from the provider for debugging UNKNOWN
+    # failures. Truncated to _RAW_ERROR_MAX_LEN on store write.
+    raw_error: str | None = None
+
+
+# Maximum length for raw_error persisted to the store. The dataclass itself
+# accepts any length — truncation is enforced at the store write path.
+RAW_ERROR_MAX_LEN = 500
 
 
 # ---------------------------------------------------------------------------
-# Auth profile
+# Auth profile (decision 1A: routing metadata only)
 # ---------------------------------------------------------------------------
 
 
 @dataclass
 class AuthProfile:
-    id: str  # e.g. "openai/default"
-    provider: str  # e.g. "openai"
-    account_identifier: str  # e.g. "default" or "user@example.com"
-    credential: AuthProfileCredential
-    managed_by: ExternalCliManager | None = None  # None = nexus-native
+    """Unified routing record for a single credential.
+
+    Does NOT hold the credential itself. The ``backend`` + ``backend_key``
+    pair identifies which CredentialBackend can resolve the actual secret.
+    """
+
+    id: str  # e.g. "google/user@example.com"
+    provider: str  # e.g. "google", "openai", "aws"
+    account_identifier: str  # e.g. "user@example.com"
+    backend: str  # e.g. "nexus-token-manager", "aws-cli", "gcloud"
+    backend_key: str  # opaque key the backend uses to resolve the credential
     last_synced_at: datetime | None = None
     sync_ttl_seconds: int = 300
     usage_stats: ProfileUsageStats = field(default_factory=ProfileUsageStats)
 
 
 # ---------------------------------------------------------------------------
-# Store protocol — #3722 provides SqliteAuthProfileStore.
+# Store protocol
 # ---------------------------------------------------------------------------
 
 
@@ -114,9 +111,8 @@ class AuthProfile:
 class AuthProfileStore(Protocol):
     """Protocol for the unified auth-profile store.
 
-    Issue #3723 depends only on this Protocol.
-    Issue #3722 provides the concrete SqliteAuthProfileStore.
-    Tests use InMemoryAuthProfileStore so #3723 can land without #3722.
+    Implementations: SqliteAuthProfileStore (profile_store.py),
+    InMemoryAuthProfileStore (below).
     """
 
     def list(self, *, provider: str | None = None) -> list[AuthProfile]:
@@ -135,14 +131,33 @@ class AuthProfileStore(Protocol):
         """Remove a profile by ID."""
         ...
 
+    def mark_success(self, profile_id: str) -> None:
+        """Record a successful credential use for the given profile."""
+        ...
+
+    def mark_failure(
+        self,
+        profile_id: str,
+        reason: AuthProfileFailureReason,
+        *,
+        raw_error: str | None = None,
+    ) -> None:
+        """Record a failure reason and increment failure count.
+
+        Does NOT set cooldown_until — cooldown duration policy is owned by
+        CredentialPool, which calls store.upsert() after computing the
+        cooldown. This method only persists the failure classification.
+        """
+        ...
+
 
 # ---------------------------------------------------------------------------
-# In-memory store — tests and pre-#3722 fallback
+# In-memory store — tests and pre-SQLite fallback
 # ---------------------------------------------------------------------------
 
 
 class InMemoryAuthProfileStore:
-    """Dict-backed AuthProfileStore for tests and local use before #3722 lands.
+    """Dict-backed AuthProfileStore for tests.
 
     Not thread-safe. Wrap with asyncio.Lock if used across concurrent tasks.
     """
@@ -163,3 +178,28 @@ class InMemoryAuthProfileStore:
 
     def delete(self, profile_id: str) -> None:
         self._profiles.pop(profile_id, None)
+
+    def mark_success(self, profile_id: str) -> None:
+        profile = self._profiles.get(profile_id)
+        if profile is None:
+            return
+        stats = profile.usage_stats
+        stats.success_count += 1
+        stats.last_used_at = datetime.utcnow()
+
+    def mark_failure(
+        self,
+        profile_id: str,
+        reason: AuthProfileFailureReason,
+        *,
+        raw_error: str | None = None,
+    ) -> None:
+        profile = self._profiles.get(profile_id)
+        if profile is None:
+            return
+        stats = profile.usage_stats
+        stats.failure_count += 1
+        stats.last_used_at = datetime.utcnow()
+        stats.cooldown_reason = reason
+        if raw_error is not None:
+            stats.raw_error = raw_error[:RAW_ERROR_MAX_LEN]

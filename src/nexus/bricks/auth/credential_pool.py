@@ -27,7 +27,9 @@ pool.execute(); never add credential-switching inside tenacity callbacks.
     # In a connector:
     pool = registry.get("openai", strategy="least_used")
     result = await pool.execute(
-        lambda profile: openai_client.chat(token=profile.credential.key),
+        lambda profile: openai_client.chat(
+            token=resolve_credential(profile.backend_key)
+        ),
         classifier=classify_openai_error,
     )
 """
@@ -65,20 +67,21 @@ _RETRIABLE_REASONS: frozenset[AuthProfileFailureReason] = frozenset(
 
 # Default cooldown durations per failure reason.
 # Override per-pool via the cooldown_overrides constructor argument.
-#
-# NOTE: mark_success() calls store.upsert() on every successful call.
-# For high-frequency agentic workloads this is one write per API call.
-# TODO(#3723 perf): buffer success stats in-memory; flush on failure or shutdown.
 _DEFAULT_COOLDOWN_POLICY: dict[AuthProfileFailureReason, timedelta | None] = {
     AuthProfileFailureReason.RATE_LIMIT: timedelta(hours=1),
     AuthProfileFailureReason.OVERLOADED: timedelta(minutes=5),
     AuthProfileFailureReason.TIMEOUT: timedelta(seconds=30),
     AuthProfileFailureReason.BILLING: timedelta(hours=24),
-    AuthProfileFailureReason.SESSION_EXPIRED: timedelta(days=365),  # require user re-auth
-    AuthProfileFailureReason.AUTH_PERMANENT: timedelta(days=365),  # require user action
-    AuthProfileFailureReason.AUTH: None,  # transient — no cooldown, user likely fixing
-    AuthProfileFailureReason.FORMAT: None,  # structural — no automatic recovery
-    AuthProfileFailureReason.MODEL_NOT_FOUND: None,
+    AuthProfileFailureReason.SESSION_EXPIRED: timedelta(days=365),
+    AuthProfileFailureReason.AUTH_PERMANENT: timedelta(days=365),
+    AuthProfileFailureReason.AUTH: None,
+    AuthProfileFailureReason.FORMAT: None,
+    AuthProfileFailureReason.MODEL_NOT_FOUND: None,  # deprecated — remove in Phase 4
+    AuthProfileFailureReason.MFA_REQUIRED: timedelta(days=365),
+    AuthProfileFailureReason.PROXY_OR_TLS: timedelta(minutes=5),
+    AuthProfileFailureReason.UPSTREAM_CLI_MISSING: None,  # structural — needs user fix
+    AuthProfileFailureReason.SCOPE_INSUFFICIENT: None,  # structural — needs re-auth
+    AuthProfileFailureReason.CLOCK_SKEW: timedelta(minutes=5),
     AuthProfileFailureReason.UNKNOWN: timedelta(minutes=1),
 }
 
@@ -161,13 +164,11 @@ class CredentialPool:
     The pool is a *view* over AuthProfileStore — it does not store credentials
     itself; it implements selection + failure-handling policy.
 
-    Thread/async safety: _last_index (round_robin) is protected by asyncio.Lock.
+    Thread/async safety: _last_index (round_robin) is protected by threading.Lock.
     All other operations are safe under concurrent async access.
 
-    Performance note: store.list() is called on every select() to pick up
-    freshly-recovered profiles. For most pools (1-3 credentials) this is
-    negligible. TODO(#3723 perf): add registry-level profile cache invalidated
-    on mark_failure/success.
+    Performance: when the store's LRU cache is enabled (SqliteAuthProfileStore),
+    store.list() is a cache read — no SQLite I/O on the hot path.
     """
 
     def __init__(
@@ -194,118 +195,83 @@ class CredentialPool:
         }
 
     # ------------------------------------------------------------------
-    # Selection
+    # Selection (shared implementation)
     # ------------------------------------------------------------------
+
+    def _select_impl(
+        self,
+        *,
+        account_identifier: str | None = None,
+    ) -> AuthProfile:
+        """Core selection logic shared by select() and select_sync().
+
+        Freeze ``now`` once so every _is_usable comparison uses the same instant.
+        This prevents off-by-one races at exact cooldown boundaries and makes
+        parametrized boundary tests deterministic.
+        """
+        now = datetime.utcnow()
+
+        all_profiles = self.store.list(provider=self.provider)
+        if account_identifier is not None:
+            all_profiles = [p for p in all_profiles if p.account_identifier == account_identifier]
+
+        candidates = [p for p in all_profiles if self._is_usable(p, now)]
+
+        if not candidates:
+            exhausted = [
+                ExhaustedProfile(
+                    profile=p,
+                    reason=p.usage_stats.cooldown_reason,
+                    cooldown_eta=(p.usage_stats.cooldown_until or p.usage_stats.disabled_until),
+                )
+                for p in all_profiles
+            ]
+            raise NoAvailableCredentialError(
+                provider=self.provider,
+                exhausted_profiles=exhausted,
+            )
+
+        match self.strategy:
+            case "first_ok":
+                return candidates[0]
+            case "round_robin":
+                with self._lock:
+                    self._last_index = (self._last_index + 1) % len(candidates)
+                    idx = self._last_index
+                return candidates[idx]
+            case "random":
+                return random.choice(candidates)
+            case "least_used":
+                return min(
+                    candidates,
+                    key=lambda p: p.usage_stats.success_count + p.usage_stats.failure_count,
+                )
+            case _:
+                raise ValueError(f"Unknown strategy: {self.strategy!r}")
 
     async def select(
         self,
         *,
         account_identifier: str | None = None,
     ) -> AuthProfile:
-        """Return a usable profile per this pool's strategy.
+        """Return a usable profile per this pool's strategy (async).
 
         Skips profiles on cooldown or operator-disabled. Raises
-        NoAvailableCredentialError (with structured per-profile state) if all
-        profiles are unavailable.
-
-        Args:
-            account_identifier: If set, restrict to profiles matching this
-                account (for user-scoped multi-tenant pools).
+        NoAvailableCredentialError if all profiles are unavailable.
         """
-        # Freeze now once so every _is_usable comparison uses the same instant.
-        # This prevents off-by-one races at exact cooldown boundaries and makes
-        # parametrized boundary tests deterministic.
-        now = datetime.utcnow()
-
-        all_profiles = self.store.list(provider=self.provider)
-        if account_identifier is not None:
-            all_profiles = [p for p in all_profiles if p.account_identifier == account_identifier]
-
-        candidates = [p for p in all_profiles if self._is_usable(p, now)]
-
-        if not candidates:
-            exhausted = [
-                ExhaustedProfile(
-                    profile=p,
-                    reason=p.usage_stats.cooldown_reason,
-                    cooldown_eta=(p.usage_stats.cooldown_until or p.usage_stats.disabled_until),
-                )
-                for p in all_profiles
-            ]
-            raise NoAvailableCredentialError(
-                provider=self.provider,
-                exhausted_profiles=exhausted,
-            )
-
-        match self.strategy:
-            case "first_ok":
-                return candidates[0]
-            case "round_robin":
-                with self._lock:
-                    self._last_index = (self._last_index + 1) % len(candidates)
-                    idx = self._last_index
-                return candidates[idx]
-            case "random":
-                return random.choice(candidates)
-            case "least_used":
-                return min(
-                    candidates,
-                    key=lambda p: p.usage_stats.success_count + p.usage_stats.failure_count,
-                )
-            case _:
-                raise ValueError(f"Unknown strategy: {self.strategy!r}")
+        return self._select_impl(account_identifier=account_identifier)
 
     def select_sync(
         self,
         *,
         account_identifier: str | None = None,
     ) -> AuthProfile:
-        """Synchronous version of select() for non-async call sites.
+        """Return a usable profile per this pool's strategy (sync).
 
-        Semantically identical to select(). Use this from sync code (e.g.
-        generator functions, thread-pool executors). Cannot be awaited.
-
-        Raises:
-            NoAvailableCredentialError: if all profiles are on cooldown or disabled.
+        Semantically identical to select(). Use from sync code
+        (generator functions, thread-pool executors).
         """
-        now = datetime.utcnow()
-        all_profiles = self.store.list(provider=self.provider)
-        if account_identifier is not None:
-            all_profiles = [p for p in all_profiles if p.account_identifier == account_identifier]
-
-        candidates = [p for p in all_profiles if self._is_usable(p, now)]
-
-        if not candidates:
-            exhausted = [
-                ExhaustedProfile(
-                    profile=p,
-                    reason=p.usage_stats.cooldown_reason,
-                    cooldown_eta=(p.usage_stats.cooldown_until or p.usage_stats.disabled_until),
-                )
-                for p in all_profiles
-            ]
-            raise NoAvailableCredentialError(
-                provider=self.provider,
-                exhausted_profiles=exhausted,
-            )
-
-        match self.strategy:
-            case "first_ok":
-                return candidates[0]
-            case "round_robin":
-                with self._lock:
-                    self._last_index = (self._last_index + 1) % len(candidates)
-                    idx = self._last_index
-                return candidates[idx]
-            case "random":
-                return random.choice(candidates)
-            case "least_used":
-                return min(
-                    candidates,
-                    key=lambda p: p.usage_stats.success_count + p.usage_stats.failure_count,
-                )
-            case _:
-                raise ValueError(f"Unknown strategy: {self.strategy!r}")
+        return self._select_impl(account_identifier=account_identifier)
 
     # ------------------------------------------------------------------
     # Outcome recording
@@ -355,8 +321,65 @@ class CredentialPool:
         )
 
     # ------------------------------------------------------------------
-    # Combined execute with single credential-switch retry
+    # Combined execute with single credential-switch retry (shared impl)
     # ------------------------------------------------------------------
+
+    def _execute_attempt(
+        self,
+        fn: Callable[[AuthProfile], Any],
+        profile: AuthProfile,
+        classifier: CredentialErrorClassifier,
+        bypass_exceptions: tuple[type[Exception], ...],
+        *,
+        is_retry: bool = False,
+    ) -> tuple[bool, Any]:
+        """Run fn with profile, handle success/failure classification.
+
+        Returns (success, result_or_none). On retriable failure during the
+        first attempt, returns (False, None) to signal the caller to retry.
+        On non-retriable failure or retry failure, re-raises.
+        """
+        try:
+            result = fn(profile)
+            return True, result
+        except Exception as exc:
+            if bypass_exceptions and isinstance(exc, bypass_exceptions):
+                raise
+            try:
+                reason = classifier(exc)
+            except Exception:
+                reason = AuthProfileFailureReason.UNKNOWN
+            self.mark_failure(profile, reason)
+            if is_retry or reason not in _RETRIABLE_REASONS:
+                raise exc
+            return False, None
+
+    async def _execute_attempt_async(
+        self,
+        fn: Callable[[AuthProfile], Any],
+        profile: AuthProfile,
+        classifier: CredentialErrorClassifier,
+        bypass_exceptions: tuple[type[Exception], ...],
+        *,
+        is_retry: bool = False,
+    ) -> tuple[bool, Any]:
+        """Async version of _execute_attempt — awaits fn if it returns awaitable."""
+        try:
+            result = fn(profile)
+            if inspect.isawaitable(result):
+                result = await result
+            return True, result
+        except Exception as exc:
+            if bypass_exceptions and isinstance(exc, bypass_exceptions):
+                raise
+            try:
+                reason = classifier(exc)
+            except Exception:
+                reason = AuthProfileFailureReason.UNKNOWN
+            self.mark_failure(profile, reason)
+            if is_retry or reason not in _RETRIABLE_REASONS:
+                raise exc
+            return False, None
 
     def execute_sync(
         self,
@@ -366,20 +389,13 @@ class CredentialPool:
         account_identifier: str | None = None,
         bypass_exceptions: tuple[type[Exception], ...] = (),
     ) -> Any:
-        """Synchronous version of execute() for non-async call sites.
-
-        Semantically identical to execute(): selects a credential, calls fn,
-        handles failure, retries once on retriable errors. Use from sync code
-        (connector methods, thread-pool executors, generators).
+        """Select a credential, call fn, handle failure, retry on retriable errors (sync).
 
         Args:
             fn: Callable accepting an AuthProfile, returning T.
             classifier: Maps provider exceptions to AuthProfileFailureReason.
             account_identifier: Passed through to select_sync() for scoped pools.
             bypass_exceptions: Exception types that are NOT credential failures.
-                Re-raised immediately without marking the profile or counting
-                toward cooldown. Use for path-level errors (e.g. FileNotFoundError)
-                that should never poison healthy credentials.
 
         Returns:
             Whatever fn returns.
@@ -389,36 +405,27 @@ class CredentialPool:
             Exception: non-retriable failure from fn, re-raised after mark_failure.
         """
         profile = self.select_sync(account_identifier=account_identifier)
-        try:
-            result = fn(profile)
+        ok, result = self._execute_attempt(
+            fn,
+            profile,
+            classifier,
+            bypass_exceptions,
+        )
+        if ok:
             self.mark_success(profile)
             return result
-        except Exception as exc:
-            if bypass_exceptions and isinstance(exc, bypass_exceptions):
-                raise
-            try:
-                reason = classifier(exc)
-            except Exception:
-                reason = AuthProfileFailureReason.UNKNOWN
-            self.mark_failure(profile, reason)
-            if reason not in _RETRIABLE_REASONS:
-                raise exc
 
         # Single retry with a different credential (first is now on cooldown)
         next_profile = self.select_sync(account_identifier=account_identifier)
-        try:
-            result = fn(next_profile)
-            self.mark_success(next_profile)
-            return result
-        except Exception as retry_exc:
-            if bypass_exceptions and isinstance(retry_exc, bypass_exceptions):
-                raise
-            try:
-                retry_reason = classifier(retry_exc)
-            except Exception:
-                retry_reason = AuthProfileFailureReason.UNKNOWN
-            self.mark_failure(next_profile, retry_reason)
-            raise
+        ok, result = self._execute_attempt(
+            fn,
+            next_profile,
+            classifier,
+            bypass_exceptions,
+            is_retry=True,
+        )
+        self.mark_success(next_profile)
+        return result
 
     async def execute(
         self,
@@ -428,25 +435,13 @@ class CredentialPool:
         account_identifier: str | None = None,
         bypass_exceptions: tuple[type[Exception], ...] = (),
     ) -> Any:
-        """Select a credential, call fn, handle failure, retry on retriable errors.
-
-        Retriable reasons (RATE_LIMIT, OVERLOADED, TIMEOUT): mark the failing
-        profile on cooldown, then select a different credential and retry once.
-
-        Non-retriable reasons: mark failure, re-raise immediately.
-
-        If the classifier itself raises, the profile is marked UNKNOWN and the
-        original exception is re-raised — the pool never leaves a profile in an
-        undefined state.
+        """Select a credential, call fn, handle failure, retry on retriable errors (async).
 
         Args:
             fn: Callable accepting an AuthProfile, returning T or Awaitable[T].
-                Should use profile.credential to authenticate the API call.
             classifier: Maps the provider's exception to AuthProfileFailureReason.
             account_identifier: Passed through to select() for user-scoped pools.
             bypass_exceptions: Exception types that are NOT credential failures.
-                Re-raised immediately without marking the profile or counting
-                toward cooldown.
 
         Returns:
             Whatever fn returns (awaited if it is a coroutine).
@@ -456,40 +451,27 @@ class CredentialPool:
             Exception: non-retriable failure from fn, re-raised after mark_failure.
         """
         profile = await self.select(account_identifier=account_identifier)
-        try:
-            result = fn(profile)
-            if inspect.isawaitable(result):
-                result = await result
+        ok, result = await self._execute_attempt_async(
+            fn,
+            profile,
+            classifier,
+            bypass_exceptions,
+        )
+        if ok:
             self.mark_success(profile)
             return result
-        except Exception as exc:
-            if bypass_exceptions and isinstance(exc, bypass_exceptions):
-                raise
-            try:
-                reason = classifier(exc)
-            except Exception:
-                reason = AuthProfileFailureReason.UNKNOWN
-            self.mark_failure(profile, reason)
-            if reason not in _RETRIABLE_REASONS:
-                raise exc
 
         # Single retry with a different credential (first profile is now on cooldown).
         next_profile = await self.select(account_identifier=account_identifier)
-        try:
-            result = fn(next_profile)
-            if inspect.isawaitable(result):
-                result = await result
-            self.mark_success(next_profile)
-            return result
-        except Exception as retry_exc:
-            if bypass_exceptions and isinstance(retry_exc, bypass_exceptions):
-                raise
-            try:
-                retry_reason = classifier(retry_exc)
-            except Exception:
-                retry_reason = AuthProfileFailureReason.UNKNOWN
-            self.mark_failure(next_profile, retry_reason)
-            raise
+        ok, result = await self._execute_attempt_async(
+            fn,
+            next_profile,
+            classifier,
+            bypass_exceptions,
+            is_retry=True,
+        )
+        self.mark_success(next_profile)
+        return result
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -501,11 +483,6 @@ class CredentialPool:
 
         Both disabled_until (operator-set) and cooldown_until (auto-set) block
         selection independently. A profile is usable when neither is in the future.
-
-        Args:
-            profile: The profile to check.
-            now: Frozen timestamp from the caller — ensures all profiles in a
-                 single select() are evaluated against the same instant.
         """
         stats: ProfileUsageStats = profile.usage_stats
         if stats.disabled_until is not None and stats.disabled_until > now:
@@ -524,9 +501,6 @@ class CredentialPoolRegistry:
     Instantiate once at application startup alongside the auth brick and pass
     to connectors as a dependency. This ensures round_robin and least_used
     strategies are fairly distributed across all callers and requests.
-
-    Without a registry, each connector-instance creates its own pool with its
-    own _last_index, so round_robin has no cross-connector fairness.
 
     Usage:
         registry = CredentialPoolRegistry(store=profile_store)

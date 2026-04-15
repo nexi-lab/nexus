@@ -232,6 +232,18 @@ pub enum RaftMsg {
     },
     /// Campaign to become leader.
     Campaign { tx: oneshot::Sender<Result<()>> },
+    /// Linearizable read request (F4 C3.6 — ReadIndex).
+    ///
+    /// The driver calls `RawNode::read_index` with a unique 8-byte
+    /// request context, stores the oneshot sender in
+    /// `pending_reads_by_ctx`, and the caller awaits. When raft-rs
+    /// emits a `ReadState` (after the leader confirms via heartbeat
+    /// quorum), the driver matches the request context back to the
+    /// tx and either resolves immediately (if the local state
+    /// machine's `last_applied` already covers `ReadState.index`)
+    /// or parks it in `pending_reads_by_index` until a later
+    /// `apply_entries` catches up.
+    ReadIndex { tx: oneshot::Sender<Result<()>> },
 }
 
 // ---------------------------------------------------------------------------
@@ -337,6 +349,18 @@ pub struct ZoneConsensusDriver<S: StateMachine + 'static> {
     /// Pending ConfChanges waiting for commit, keyed by target node_id.
     /// Resolved in `apply_entries` when the ConfChange is committed.
     pending_conf_changes: HashMap<u64, oneshot::Sender<Result<ConfState>>>,
+    /// Pending linearizable reads waiting for raft-rs to emit a
+    /// `ReadState` (F4 C3.6), keyed by the 8-byte request context
+    /// we passed to `RawNode::read_index`.
+    pending_reads_by_ctx: HashMap<u64, oneshot::Sender<Result<()>>>,
+    /// Pending linearizable reads that have their `read_index`
+    /// assigned but are waiting for `state_machine.last_applied`
+    /// to catch up. Drained after every `apply_entries` pass.
+    pending_reads_by_index: Vec<(u64, oneshot::Sender<Result<()>>)>,
+    /// Monotonic counter for the 8-byte `ReadIndex` request
+    /// context. Driver-local — the handle always passes 0 and
+    /// the driver assigns the real id (mirrors `Propose`).
+    read_request_counter: u64,
     /// Proposal ID counter (shared with handle for ID generation).
     proposal_id: Arc<AtomicU64>,
     /// Last tick time.
@@ -488,6 +512,9 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
             config,
             pending: HashMap::new(),
             pending_conf_changes: HashMap::new(),
+            pending_reads_by_ctx: HashMap::new(),
+            pending_reads_by_index: Vec::new(),
+            read_request_counter: 0,
             proposal_id,
             last_tick: Instant::now(),
             msg_rx,
@@ -567,12 +594,63 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
     ///
     /// This provides safe read access for query operations (e.g., get_metadata)
     /// without going through the Raft log or the channel.
+    ///
+    /// **Consistency**: this is a *sequential-consistency* read — it
+    /// returns whatever the local state machine currently sees,
+    /// which on a follower may be behind the leader by up to the
+    /// replication lag (ZooKeeper-default style). For a
+    /// linearizable read (etcd / TiKV / Consul default), use
+    /// [`read_linearizable`](Self::read_linearizable) instead.
     pub async fn with_state_machine<F, R>(&self, f: F) -> R
     where
         F: FnOnce(&S) -> R,
     {
         let sm = self.state_machine.read().await;
         f(&*sm)
+    }
+
+    /// Execute a read-only closure against the state machine with
+    /// **linearizable consistency** (F4 C3.6 — ReadIndex).
+    ///
+    /// Implements the standard Raft ReadIndex protocol (§8 of the
+    /// Raft paper, etcd / TiKV / CockroachDB / Consul all use this
+    /// same pattern):
+    ///
+    /// 1. Driver calls `RawNode::read_index(ctx)` with a unique
+    ///    request context.
+    /// 2. raft-rs sends `MsgReadIndex` to the leader (or, if we
+    ///    are the leader, broadcasts a heartbeat quorum to confirm
+    ///    we are still leader).
+    /// 3. Once the leader confirms, raft-rs emits a `ReadState`
+    ///    carrying the leader's `commit_index` as the read index
+    ///    and echoing our `request_ctx`.
+    /// 4. The driver waits for the local state machine to apply
+    ///    entries up to that index, then resolves the caller's
+    ///    oneshot.
+    /// 5. The caller acquires `state_machine.read()` and runs the
+    ///    closure.
+    ///
+    /// The resulting read observes every write that was committed
+    /// cluster-wide before this call was issued. Cost: one leader
+    /// heartbeat round-trip (no log write, no disk fsync) — about
+    /// 5–10× cheaper than a `propose`-based read fallback.
+    ///
+    /// Used by `ZoneMetastore::get_lock` / `list_locks` so that
+    /// `Kernel::lock_get` matches the industry-standard etcd
+    /// contract ("reads are linearizable by default") without
+    /// paying the full propose round-trip.
+    pub async fn read_linearizable<F, R>(&self, f: F) -> Result<R>
+    where
+        F: FnOnce(&S) -> R,
+    {
+        let (tx, rx) = oneshot::channel();
+        self.msg_tx
+            .try_send(RaftMsg::ReadIndex { tx })
+            .map_err(channel_try_send_err)?;
+        // Driver resolves the oneshot as soon as the read is safe.
+        rx.await.map_err(|_| RaftError::ChannelClosed)??;
+        let sm = self.state_machine.read().await;
+        Ok(f(&*sm))
     }
 
     /// Execute a mutable closure against the state machine.
@@ -926,6 +1004,20 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
                     self.update_cached_status();
                     let _ = tx.send(result);
                 }
+                RaftMsg::ReadIndex { tx } => {
+                    // F4 C3.6: post a ReadIndex request to raft-rs
+                    // and stash the oneshot by request context. The
+                    // `ReadState` will appear in a later `advance()`
+                    // ready, at which point we move it to
+                    // `pending_reads_by_index` (or resolve
+                    // immediately if apply already caught up).
+                    let id = self.read_request_counter;
+                    self.read_request_counter = self.read_request_counter.wrapping_add(1);
+                    let ctx = id.to_be_bytes().to_vec();
+                    tracing::trace!(read_request_id = id, "raft.driver.read_index");
+                    self.raw_node.read_index(ctx);
+                    self.pending_reads_by_ctx.insert(id, tx);
+                }
             }
         }
     }
@@ -963,6 +1055,14 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
         // Handle persisted messages
         if !ready.persisted_messages().is_empty() {
             messages.extend(ready.take_persisted_messages());
+        }
+
+        // F4 C3.6: promote any freshly-confirmed ReadIndex requests
+        // to `pending_reads_by_index` (or resolve immediately if the
+        // local apply pointer already covers the returned index).
+        if !ready.read_states().is_empty() {
+            let states = ready.take_read_states();
+            self.promote_read_states(states).await;
         }
 
         // Ordering invariant (per raft-rs five_mem_node example / Raft paper §3):
@@ -1015,6 +1115,8 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
         if !committed.is_empty() {
             tracing::debug!(count = committed.len(), "raft.apply");
             self.apply_entries(committed).await?;
+            // F4 C3.6: fresh apply pointer may unblock linearizable reads.
+            self.resolve_ready_reads().await;
         }
 
         // Advance the ready — NO TOCTOU: we never dropped ownership
@@ -1028,6 +1130,7 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
         if !light_rd.committed_entries().is_empty() {
             let committed = light_rd.take_committed_entries();
             self.apply_entries(committed).await?;
+            self.resolve_ready_reads().await;
         }
 
         self.raw_node.advance_apply();
@@ -1292,6 +1395,68 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
         Ok(())
     }
 
+    /// F4 C3.6: process freshly-emitted `ReadState`s.
+    ///
+    /// For each state, match the 8-byte `request_ctx` back to a
+    /// `pending_reads_by_ctx` entry. If the local state machine's
+    /// `last_applied` is already at or beyond the confirmed
+    /// `read_index`, resolve the caller's oneshot immediately;
+    /// otherwise park it in `pending_reads_by_index` and let the
+    /// next `apply_entries` / `resolve_ready_reads` cycle release
+    /// it.
+    async fn promote_read_states(&mut self, states: Vec<raft::ReadState>) {
+        if states.is_empty() {
+            return;
+        }
+        let applied = self.state_machine.read().await.last_applied_index();
+        for state in states {
+            if state.request_ctx.len() != 8 {
+                tracing::warn!(
+                    ctx_len = state.request_ctx.len(),
+                    "raft.read_index: unexpected request_ctx length, dropping"
+                );
+                continue;
+            }
+            let id = u64::from_be_bytes(
+                state
+                    .request_ctx
+                    .as_slice()
+                    .try_into()
+                    .expect("length checked above"),
+            );
+            let Some(tx) = self.pending_reads_by_ctx.remove(&id) else {
+                // Unknown context — likely a ReadIndex issued by a
+                // previous driver instance or a stale ctx; drop.
+                continue;
+            };
+            if applied >= state.index {
+                let _ = tx.send(Ok(()));
+            } else {
+                self.pending_reads_by_index.push((state.index, tx));
+            }
+        }
+    }
+
+    /// F4 C3.6: release any parked linearizable reads whose
+    /// `read_index` is now covered by the state machine's
+    /// `last_applied`. Called after every successful
+    /// `apply_entries` pass.
+    async fn resolve_ready_reads(&mut self) {
+        if self.pending_reads_by_index.is_empty() {
+            return;
+        }
+        let applied = self.state_machine.read().await.last_applied_index();
+        let mut i = 0;
+        while i < self.pending_reads_by_index.len() {
+            if self.pending_reads_by_index[i].0 <= applied {
+                let (_, tx) = self.pending_reads_by_index.swap_remove(i);
+                let _ = tx.send(Ok(()));
+            } else {
+                i += 1;
+            }
+        }
+    }
+
     /// Update the atomic cached status values from the current raw_node state.
     fn update_cached_status(&self) {
         let role: NodeRole = self.raw_node.raft.state.into();
@@ -1529,6 +1694,24 @@ mod tests {
         };
         let ec_result = handles[leader_idx].propose_ec(ec_cmd).await;
         assert!(ec_result.is_ok(), "EC propose should return Ok immediately");
+
+        // Phase 6: F4 C3.6 — linearizable read via ReadIndex.
+        // Fire on every node (including followers) so we exercise
+        // both the leader-local fast path and the follower
+        // forward-to-leader path. Every caller must observe the
+        // write from Phase 4.
+        for (i, handle) in handles.iter().enumerate() {
+            let value = handle
+                .read_linearizable(|sm| sm.get_metadata("/test.txt"))
+                .await
+                .unwrap_or_else(|e| panic!("read_linearizable on node {i}: {e}"))
+                .unwrap_or_else(|e| panic!("get_metadata on node {i}: {e:?}"));
+            assert_eq!(
+                value,
+                Some(b"hello world".to_vec()),
+                "node {i} linearizable read must see the committed write"
+            );
+        }
 
         // Shutdown all drivers
         let _ = shutdown_tx.send(true);

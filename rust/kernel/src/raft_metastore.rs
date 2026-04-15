@@ -281,14 +281,25 @@ impl Metastore for ZoneMetastore {
     }
 
     fn get_lock(&self, path: &str) -> Result<Option<KernelLockInfo>, MetastoreError> {
+        // F4 C3.6: linearizable read via raft ReadIndex.
+        // Matches etcd/Consul/TiKV "reads are linearizable by
+        // default" contract. On the hot path `sys_stat` this would
+        // be too expensive, so `sys_stat` does not include lock
+        // info — callers that want lock state call `lock_get`
+        // explicitly and pay the ~0.5ms heartbeat round-trip.
         let key = path.to_string();
         let fut = self
             .node
-            .with_state_machine(move |sm: &FullStateMachine| sm.get_lock(&key));
+            .read_linearizable(move |sm: &FullStateMachine| sm.get_lock(&key));
         let lock_opt = self
             .runtime
             .block_on(fut)
-            .map_err(|e| MetastoreError::IOError(format!("ZoneMetastore.get_lock({path}): {e}")))?;
+            .map_err(|e| {
+                MetastoreError::IOError(format!("ZoneMetastore.get_lock({path}) read_index: {e}"))
+            })?
+            .map_err(|e| {
+                MetastoreError::IOError(format!("ZoneMetastore.get_lock({path}): {e:?}"))
+            })?;
         Ok(lock_opt.map(raft_lock_to_kernel))
     }
 
@@ -297,13 +308,22 @@ impl Metastore for ZoneMetastore {
         prefix: &str,
         limit: usize,
     ) -> Result<Vec<KernelLockInfo>, MetastoreError> {
+        // F4 C3.6: linearizable read via ReadIndex (see get_lock).
         let key = prefix.to_string();
         let fut = self
             .node
-            .with_state_machine(move |sm: &FullStateMachine| sm.list_locks(&key, limit));
-        let locks = self.runtime.block_on(fut).map_err(|e| {
-            MetastoreError::IOError(format!("ZoneMetastore.list_locks({prefix}): {e}"))
-        })?;
+            .read_linearizable(move |sm: &FullStateMachine| sm.list_locks(&key, limit));
+        let locks = self
+            .runtime
+            .block_on(fut)
+            .map_err(|e| {
+                MetastoreError::IOError(format!(
+                    "ZoneMetastore.list_locks({prefix}) read_index: {e}"
+                ))
+            })?
+            .map_err(|e| {
+                MetastoreError::IOError(format!("ZoneMetastore.list_locks({prefix}): {e:?}"))
+            })?;
         Ok(locks.into_iter().map(raft_lock_to_kernel).collect())
     }
 }

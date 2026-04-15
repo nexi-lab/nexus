@@ -871,6 +871,14 @@ async def create_mcp_server(
         # MCP server was booted with. ``_resolve_mcp_operation_context``
         # fails closed if the identity can't be resolved.
         op_context = _resolve_mcp_operation_context(nx_instance, auth_provider=auth_provider)
+        # #3731 R2: if a per-request key was set but identity resolution
+        # failed (fail-closed → None), reject the request rather than
+        # executing with an anonymous/ambient context.
+        if op_context is None and _request_api_key.get():
+            return tool_error(
+                "unauthorized",
+                "Per-request API key could not be verified; search denied.",
+            )
         auth_result = _op_context_to_auth_dict(op_context)
         zone_id = auth_result.get("zone_id", "root")
 
@@ -1017,6 +1025,12 @@ async def create_mcp_server(
         # semantics). Previously grep ran without any context so ReBAC
         # filtering fell back to the ambient connection identity.
         op_context = _resolve_mcp_operation_context(nx_instance, auth_provider=auth_provider)
+        # #3731 R2: reject if per-request key present but auth failed.
+        if op_context is None and _request_api_key.get():
+            return tool_error(
+                "unauthorized",
+                "Per-request API key could not be verified; search denied.",
+            )
 
         # #3731: Build auth_result dict from OperationContext for
         # _apply_rebac_filter. Falls back to anonymous if no context.

@@ -178,8 +178,8 @@ class TestResolveMcpOperationContext:
         assert ctx is init_cred
         provider.authenticate.assert_not_called()
 
-    def test_step0_skipped_without_auth_provider(self):
-        """Step 0 skipped when no auth_provider is passed."""
+    def test_step0_fails_closed_without_auth_provider(self):
+        """Per-request key + no auth_provider → fail closed (not fallthrough)."""
         init_cred = OperationContext(user_id="local", groups=[])
         nx = Mock()
         nx._init_cred = init_cred
@@ -190,8 +190,9 @@ class TestResolveMcpOperationContext:
         finally:
             reset_request_api_key(token)
 
-        # Falls through to step 1.
-        assert ctx is init_cred
+        # Fail-closed: per-request key present but no provider to
+        # verify it → None, NOT fallthrough to ambient _init_cred.
+        assert ctx is None
 
     def test_step0_unauthenticated_fails_closed(self):
         """Step 0: unauthenticated result → fail closed (not fall through)."""
@@ -463,3 +464,75 @@ class TestContextNoneFallback:
         assert len(response["items"]) == 1
         call_kwargs = search.glob.call_args
         assert call_kwargs.kwargs.get("context") is None or call_kwargs[1].get("context") is None
+
+
+# ---------------------------------------------------------------------------
+# Rejected API key → tool-level auth denial tests (#3731 R2)
+# ---------------------------------------------------------------------------
+
+
+class TestRejectedApiKeyDeniesSearch:
+    """When a per-request API key is present but rejected, MCP tools
+    must return an auth error and NOT call SearchService.
+    """
+
+    async def test_grep_rejected_key_does_not_call_search(self):
+        """Rejected API key → grep returns error, SearchService not called."""
+        nx = _make_nx_with_search(
+            grep_return=[
+                {"file": "/a.py", "line": 1, "content": "hit"},
+            ]
+        )
+        # Auth provider rejects the key.
+        provider = Mock()
+        provider.authenticate = Mock(return_value=_FakeAuthResult(authenticated=False))
+
+        server = await create_mcp_server(nx=nx, auth_provider=provider)
+        grep_tool = _get_tool(server, "nexus_grep")
+
+        token = set_request_api_key("sk-revoked-key")
+        try:
+            raw = await grep_tool.fn(pattern="hit")
+        finally:
+            reset_request_api_key(token)
+
+        assert "unauthorized" in raw.lower() or "error" in raw.lower()
+        nx._mock_search.grep.assert_not_called()
+
+    async def test_glob_rejected_key_does_not_call_search(self):
+        """Rejected API key → glob returns error, SearchService not called."""
+        nx = _make_nx_with_search(glob_return=["/a.py"])
+        provider = Mock()
+        provider.authenticate = Mock(return_value=_FakeAuthResult(authenticated=False))
+
+        server = await create_mcp_server(nx=nx, auth_provider=provider)
+        glob_tool = _get_tool(server, "nexus_glob")
+
+        token = set_request_api_key("sk-revoked-key")
+        try:
+            raw = glob_tool.fn(pattern="*.py")
+        finally:
+            reset_request_api_key(token)
+
+        assert "unauthorized" in raw.lower() or "error" in raw.lower()
+        nx._mock_search.glob.assert_not_called()
+
+    async def test_grep_no_auth_provider_with_key_denies(self):
+        """Per-request key + no auth_provider → grep denied."""
+        nx = _make_nx_with_search(
+            grep_return=[
+                {"file": "/a.py", "line": 1, "content": "hit"},
+            ]
+        )
+
+        server = await create_mcp_server(nx=nx, auth_provider=None)
+        grep_tool = _get_tool(server, "nexus_grep")
+
+        token = set_request_api_key("sk-unverifiable")
+        try:
+            raw = await grep_tool.fn(pattern="hit")
+        finally:
+            reset_request_api_key(token)
+
+        assert "unauthorized" in raw.lower() or "error" in raw.lower()
+        nx._mock_search.grep.assert_not_called()

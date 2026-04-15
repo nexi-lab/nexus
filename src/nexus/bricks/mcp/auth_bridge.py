@@ -116,7 +116,16 @@ def resolve_mcp_operation_context(
     # privileged fallback.  Steps 1-4 only run when no per-request
     # key was set (i.e., the caller is the process itself).
     request_key = _request_api_key.get()
-    if request_key and auth_provider is not None:
+    if request_key:
+        # A per-request key is present — it MUST be verified.
+        # If no auth_provider is available, fail closed.
+        if auth_provider is None:
+            logger.warning(
+                "Per-request API key is set but no auth_provider is "
+                "available to verify it; returning None (fail-closed)."
+            )
+            return None
+        # auth_provider is available — verify the key.
         auth_result = authenticate_api_key(auth_provider, request_key)
         if auth_result is not None:
             # Normalize to dict so we can use the shared HTTP helper.

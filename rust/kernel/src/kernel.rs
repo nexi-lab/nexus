@@ -544,15 +544,37 @@ impl Kernel {
     }
 
     // ── Metastore proxy methods (for Python RustMetastoreProxy) ────────
+    //
+    // F2 C8: these route via ``mount_table.route(path, ROOT_ZONE_ID, ...)`` so a
+    // lookup under a federation mount (e.g. ``/corp/eng/foo.txt``) lands on
+    // the corresponding per-mount ``ZoneMetastore`` installed by
+    // ``attach_raft_zone_to_kernel``. Without this, every Python-side
+    // RustMetastoreProxy call went to the global kernel metastore and
+    // federation data was invisible on follower nodes.
+
+    /// Route ``path`` via the mount table and run ``f`` against whichever
+    /// ``Metastore`` owns it (per-mount entry first, global fallback).
+    fn with_routed_metastore<F, R>(&self, path: &str, f: F) -> Option<R>
+    where
+        F: FnOnce(&dyn crate::metastore::Metastore) -> R,
+    {
+        match self
+            .mount_table
+            .route(path, contracts::ROOT_ZONE_ID, true, false)
+        {
+            Ok(route) => self.with_metastore(&route.mount_point, f),
+            Err(_) => self.metastore.as_ref().map(|ms| f(ms.as_ref())),
+        }
+    }
 
     pub fn metastore_get(
         &self,
         path: &str,
     ) -> Result<Option<crate::metastore::FileMetadata>, KernelError> {
-        match &self.metastore {
-            Some(ms) => ms
-                .get(path)
-                .map_err(|e| KernelError::IOError(format!("metastore_get({path}): {e:?}"))),
+        match self.with_routed_metastore(path, |ms| ms.get(path)) {
+            Some(result) => {
+                result.map_err(|e| KernelError::IOError(format!("metastore_get({path}): {e:?}")))
+            }
             None => Err(KernelError::IOError("no metastore wired".into())),
         }
     }
@@ -562,19 +584,19 @@ impl Kernel {
         path: &str,
         metadata: crate::metastore::FileMetadata,
     ) -> Result<(), KernelError> {
-        match &self.metastore {
-            Some(ms) => ms
-                .put(path, metadata)
-                .map_err(|e| KernelError::IOError(format!("metastore_put({path}): {e:?}"))),
+        match self.with_routed_metastore(path, move |ms| ms.put(path, metadata)) {
+            Some(result) => {
+                result.map_err(|e| KernelError::IOError(format!("metastore_put({path}): {e:?}")))
+            }
             None => Err(KernelError::IOError("no metastore wired".into())),
         }
     }
 
     pub fn metastore_delete(&self, path: &str) -> Result<bool, KernelError> {
-        match &self.metastore {
-            Some(ms) => ms
-                .delete(path)
-                .map_err(|e| KernelError::IOError(format!("metastore_delete({path}): {e:?}"))),
+        match self.with_routed_metastore(path, |ms| ms.delete(path)) {
+            Some(result) => {
+                result.map_err(|e| KernelError::IOError(format!("metastore_delete({path}): {e:?}")))
+            }
             None => Err(KernelError::IOError("no metastore wired".into())),
         }
     }
@@ -583,19 +605,22 @@ impl Kernel {
         &self,
         prefix: &str,
     ) -> Result<Vec<crate::metastore::FileMetadata>, KernelError> {
-        match &self.metastore {
-            Some(ms) => ms
-                .list(prefix)
-                .map_err(|e| KernelError::IOError(format!("metastore_list({prefix}): {e:?}"))),
+        // Empty / root prefix fan-outs still hit the global metastore; for
+        // a concrete prefix we route to the mount that owns it.
+        let route_path = if prefix.is_empty() { "/" } else { prefix };
+        match self.with_routed_metastore(route_path, |ms| ms.list(prefix)) {
+            Some(result) => {
+                result.map_err(|e| KernelError::IOError(format!("metastore_list({prefix}): {e:?}")))
+            }
             None => Err(KernelError::IOError("no metastore wired".into())),
         }
     }
 
     pub fn metastore_exists(&self, path: &str) -> Result<bool, KernelError> {
-        match &self.metastore {
-            Some(ms) => ms
-                .exists(path)
-                .map_err(|e| KernelError::IOError(format!("metastore_exists({path}): {e:?}"))),
+        match self.with_routed_metastore(path, |ms| ms.exists(path)) {
+            Some(result) => {
+                result.map_err(|e| KernelError::IOError(format!("metastore_exists({path}): {e:?}")))
+            }
             None => Err(KernelError::IOError("no metastore wired".into())),
         }
     }
@@ -1214,7 +1239,7 @@ impl Kernel {
         // Persist DT_PIPE inode (best-effort — metastore may not be wired in tests).
         let mount_point = self
             .mount_table
-            .route(path, "root", true, false)
+            .route(path, contracts::ROOT_ZONE_ID, true, false)
             .map(|r| r.mount_point)
             .unwrap_or_default();
         self.with_metastore(&mount_point, |ms| {
@@ -1226,7 +1251,7 @@ impl Kernel {
                 etag: None,
                 version: 1,
                 entry_type: DT_PIPE,
-                zone_id: Some("root".to_string()),
+                zone_id: Some(contracts::ROOT_ZONE_ID.to_string()),
                 mime_type: None,
             };
             let _ = ms.put(path, meta);
@@ -1241,7 +1266,7 @@ impl Kernel {
                 etag: None,
                 version: 1,
                 entry_type: DT_PIPE,
-                zone_id: Some("root".to_string()),
+                zone_id: Some(contracts::ROOT_ZONE_ID.to_string()),
                 mime_type: None,
             },
         );
@@ -1256,7 +1281,7 @@ impl Kernel {
         // Remove DT_PIPE inode (best-effort)
         let mount_point = self
             .mount_table
-            .route(path, "root", true, false)
+            .route(path, contracts::ROOT_ZONE_ID, true, false)
             .map(|r| r.mount_point)
             .unwrap_or_default();
         self.with_metastore(&mount_point, |ms| {
@@ -1318,7 +1343,7 @@ impl Kernel {
 
         let mount_point = self
             .mount_table
-            .route(path, "root", true, false)
+            .route(path, contracts::ROOT_ZONE_ID, true, false)
             .map(|r| r.mount_point)
             .unwrap_or_default();
         self.with_metastore(&mount_point, |ms| {
@@ -1330,7 +1355,7 @@ impl Kernel {
                 etag: None,
                 version: 1,
                 entry_type: DT_STREAM,
-                zone_id: Some("root".to_string()),
+                zone_id: Some(contracts::ROOT_ZONE_ID.to_string()),
                 mime_type: None,
             };
             let _ = ms.put(path, meta);
@@ -1345,7 +1370,7 @@ impl Kernel {
                 etag: None,
                 version: 1,
                 entry_type: DT_STREAM,
-                zone_id: Some("root".to_string()),
+                zone_id: Some(contracts::ROOT_ZONE_ID.to_string()),
                 mime_type: None,
             },
         );
@@ -1359,7 +1384,7 @@ impl Kernel {
 
         let mount_point = self
             .mount_table
-            .route(path, "root", true, false)
+            .route(path, contracts::ROOT_ZONE_ID, true, false)
             .map(|r| r.mount_point)
             .unwrap_or_default();
         self.with_metastore(&mount_point, |ms| {

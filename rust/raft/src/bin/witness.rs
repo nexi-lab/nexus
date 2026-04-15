@@ -131,7 +131,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let runtime_handle = tokio::runtime::Handle::current();
 
         registry
-            .create_zone("root", peers.clone(), &runtime_handle)
+            .create_zone(contracts::ROOT_ZONE_ID, peers.clone(), &runtime_handle)
             .map_err(|e| format!("Failed to create root zone: {}", e))?;
         for zone_id in &federation_zones {
             registry
@@ -290,7 +290,7 @@ async fn tls_bootstrap_loop(
                 &peer.endpoint,
                 node_id,
                 node_address,
-                "root",
+                contracts::ROOT_ZONE_ID,
                 password,
                 10, // timeout
             )

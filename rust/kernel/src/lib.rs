@@ -4,6 +4,13 @@
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+/// Canonical root zone identifier — re-exported from the ``contracts``
+/// crate (the Rust mirror of ``nexus.contracts.constants``) so kernel
+/// users can reach it via ``nexus_kernel::ROOT_ZONE_ID`` without pulling
+/// another workspace dep. Prefer this constant over hardcoded ``"root"``
+/// literals.
+pub use contracts::ROOT_ZONE_ID;
+
 mod agent_registry;
 pub mod backend;
 mod bitmap;

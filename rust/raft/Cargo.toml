@@ -25,6 +25,10 @@ path = "src/bin/witness.rs"
 required-features = ["grpc"]
 
 [dependencies]
+# Cross-tier constants (ROOT_ZONE_ID, …) — mirror of
+# ``nexus.contracts.constants``. Pulled in so raft shares one source
+# of truth with the kernel crate instead of hardcoding ``"root"``.
+contracts = { workspace = true }
 # Embedded KV storage — redb 2.x (stable since 1.0, June 2023).
 # Issue #1330: Replaced sled 0.34 with redb for reliability + maintenance.
 redb = "2"

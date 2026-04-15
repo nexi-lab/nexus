@@ -1060,7 +1060,7 @@ impl ZoneApiService for ZoneApiServiceImpl {
 
         // --- Sign node certificate ---
         let zone_id = if req.zone_id.is_empty() {
-            "root"
+            contracts::ROOT_ZONE_ID
         } else {
             &req.zone_id
         };

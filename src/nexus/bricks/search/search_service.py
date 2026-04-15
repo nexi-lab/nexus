@@ -2141,9 +2141,11 @@ class SearchService:
                 and trigram_fast.is_available()
                 and not trigram_fast.index_exists(zone_id)
             ):
-                asyncio.ensure_future(
+                task = asyncio.ensure_future(
                     self._build_trigram_background(zone_id, context),
                 )
+                # Suppress "exception was never retrieved" warning.
+                task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
 
             strategy = self._select_grep_strategy(
                 file_count=len(candidate_files),
@@ -2739,6 +2741,9 @@ class SearchService:
 
         return results
 
+    # Dedup guard for background trigram builds.  Safe without a lock
+    # because grep() runs in a single asyncio event loop and there are
+    # no await points between the check and the add.
     _trigram_build_in_progress: set[str] = set()
 
     async def _build_trigram_background(self, zone_id: str, context: Any = None) -> None:

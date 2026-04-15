@@ -525,8 +525,12 @@ fn grep_single_file_mmap(
     }
 
     // Issue #3711: For small files, read() avoids mmap syscall overhead.
+    // Reuse the already-opened File handle to avoid a second open syscall.
     if file_size < GREP_MMAP_SMALL_FILE_THRESHOLD {
-        let bytes = std::fs::read(file_path).ok()?;
+        use std::io::Read;
+        let mut bytes = Vec::with_capacity(file_size as usize);
+        let mut file = file;
+        file.read_to_end(&mut bytes).ok()?;
         let content_str = simd_from_utf8(&bytes).ok()?;
         return Some(search_content(
             content_str,

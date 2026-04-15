@@ -422,9 +422,12 @@ class SlimNexusFS:
         index_dir = os.path.join(os.path.expanduser("~"), ".nexus", "indexes")
         return os.path.join(index_dir, f"{os.path.basename(zone_id) or ROOT_ZONE_ID}.trgm")
 
-    # Guard to ensure only one background build runs at a time.
+    # Per-zone guard: prevents duplicate background builds for the same zone.
     _trigram_build_lock = threading.Lock()
-    _trigram_build_pending = False
+    _trigram_builds_in_progress: set[str] = set()
+
+    # Max file size to include in trigram index (skip large binaries).
+    _TRIGRAM_MAX_FILE_SIZE = 1024 * 1024  # 1 MB
 
     def _ensure_trigram_index(self, file_paths: list[str]) -> str | None:
         """Return the trigram index path if it exists, or kick off a background build.
@@ -452,15 +455,15 @@ class SlimNexusFS:
 
     def _maybe_build_trigram_background(self, file_paths: list[str], index_path: str) -> None:
         """Start a background thread to build the trigram index if not already running."""
-        if self._trigram_build_pending:
-            return
-        if not SlimNexusFS._trigram_build_lock.acquire(blocking=False):
-            return
+        with SlimNexusFS._trigram_build_lock:
+            if index_path in SlimNexusFS._trigram_builds_in_progress:
+                return
+            SlimNexusFS._trigram_builds_in_progress.add(index_path)
 
-        SlimNexusFS._trigram_build_pending = True
         # Snapshot the kernel + ctx references for the background thread.
         kernel = self._kernel
         ctx = self._ctx
+        max_size = self._TRIGRAM_MAX_FILE_SIZE
 
         def _build() -> None:
             try:
@@ -470,7 +473,7 @@ class SlimNexusFS:
                 for fp in file_paths:
                     try:
                         content = kernel.sys_read(fp, context=ctx)
-                        if isinstance(content, bytes):
+                        if isinstance(content, bytes) and len(content) <= max_size:
                             entries.append((fp, content))
                     except Exception:
                         continue
@@ -486,8 +489,8 @@ class SlimNexusFS:
             except Exception:
                 logger.debug("Background trigram build failed", exc_info=True)
             finally:
-                SlimNexusFS._trigram_build_pending = False
-                SlimNexusFS._trigram_build_lock.release()
+                with SlimNexusFS._trigram_build_lock:
+                    SlimNexusFS._trigram_builds_in_progress.discard(index_path)
 
         thread = threading.Thread(target=_build, daemon=True)
         thread.start()

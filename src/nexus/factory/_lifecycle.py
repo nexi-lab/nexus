@@ -153,10 +153,18 @@ async def _wire_services(
         logger.debug("[LINK] Federation service enlisted")
 
         # Upgrade lock manager: LocalLockManager → RaftLockManager (kernel owns)
+        # Lock ops still need the raft root zone store directly (Python
+        # RaftMetadataStore exposes acquire_lock/release_lock/force_release_lock
+        # by proposing lock commands through ZoneConsensus). ``nx.metadata`` is
+        # a ``RustMetastoreProxy`` in federation mode which only forwards
+        # metastore_get/put/list/delete — it has no lock API.
         try:
             from nexus.raft.lock_manager import RaftLockManager
 
-            _raft_lm = RaftLockManager(nx.metadata)
+            _lock_store = federation.zone_manager.get_store("root")
+            if _lock_store is None:
+                raise RuntimeError("root zone store unavailable for RaftLockManager")
+            _raft_lm = RaftLockManager(_lock_store)
             nx._upgrade_lock_manager(_raft_lm)
             logger.info("[LINK] RaftLockManager upgraded into kernel")
         except Exception as exc:
@@ -165,6 +173,13 @@ async def _wire_services(
         # Wire DLC into ZoneManager for runtime mount registration
         _zone_mgr = federation.zone_manager
         _zone_mgr._coordinator = nx._driver_coordinator
+        # Start the background reconciler now that DLC is available.
+        # It scans each local zone's replicated state machine for
+        # DT_MOUNT entries and ensures the kernel mount table matches.
+        # Needed because federation_mount may run on a peer node and
+        # replicate via Raft without triggering a local DLC hook here.
+        if hasattr(_zone_mgr, "start_mount_reconciler"):
+            _zone_mgr.start_mount_reconciler()
 
     # descendant_checker is now accessed via PermissionCheckHook (KernelDispatch INTERCEPT).
     # No kernel DI needed — PermissionCheckHook holds the reference internally.

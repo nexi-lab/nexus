@@ -531,85 +531,17 @@ async def connect(
 
             return nfs
 
-        # ── Local node (single-node or federated, auto-detected) ────────
-        # Heavy imports for local profiles
-        from nexus.backends.base.backend import Backend
-        from nexus.backends.storage.cas_local import CASLocalBackend
-        from nexus.core.nexus_fs import NexusFS
-
-        # Create backend based on configuration
-        backend: Backend
-        if cfg.backend == "gcs":
-            from nexus.backends.storage.cas_gcs import CASGCSBackend
-
-            if not cfg.gcs_bucket_name:
-                raise ValueError(
-                    "gcs_bucket_name is required when backend='gcs'. "
-                    "Set gcs_bucket_name in your config or NEXUS_GCS_BUCKET_NAME environment variable."
-                )
-            backend = CASGCSBackend(
-                bucket_name=cfg.gcs_bucket_name,
-                project_id=cfg.gcs_project_id,
-                credentials_path=cfg.gcs_credentials_path,
+            federation, metadata_store = NexusFederation.bootstrap(
+                metadata_path=metadata_path,
+                kernel=_early_kernel,
             )
-            nexus_root = _resolve_state_dir()
-            data_dir = str(Path(nexus_root) / "data")
-        else:
-            data_dir = (
-                cfg.data_dir
-                if cfg.data_dir is not None
-                else str(Path(_resolve_state_dir()) / "data")
-            )
-            # nexus_root hosts sibling state directories (metastore, record_store).
-            # When data_dir is explicitly provided (e.g. --data-dir /some/path), USE
-            # data_dir itself as nexus_root so metastore goes inside it — this avoids
-            # polluting the parent directory (which could be /tmp or /) and ensures
-            # each data_dir is fully self-contained.  When data_dir is the default
-            # (~/.nexus/data), the parent (~/.nexus) is still used as nexus_root
-            # for backward compatibility.
-            nexus_root = data_dir if cfg.data_dir is not None else str(Path(data_dir).parent)
-            if cfg.backend == "path_local":
-                from nexus.backends.storage.path_local import PathLocalBackend
-
-                backend = PathLocalBackend(root_path=Path(data_dir).resolve())
-            else:
-                # Parse tiering config from YAML if present (Issue #3406)
-                tiering_cfg = None
-                if cfg.tiering and cfg.tiering.get("enabled"):
-                    from nexus.core.config import TieringConfig
-
-                    t = cfg.tiering
-                    tiering_cfg = TieringConfig(
-                        enabled=True,
-                        quiet_period_seconds=float(t.get("quiet_period", 3600)),
-                        min_volume_size_bytes=int(t.get("min_volume_size", 100 * 1024 * 1024)),
-                        cloud_backend=str(t.get("cloud_backend", "gcs")),
-                        cloud_bucket=str(t.get("cloud_bucket", "")),
-                        upload_rate_limit_bytes=int(t.get("upload_rate_limit", 25 * 1024 * 1024)),
-                        sweep_interval_seconds=float(t.get("sweep_interval", 60)),
-                        local_cache_size_bytes=int(
-                            t.get("local_cache_size", 10 * 1024 * 1024 * 1024)
-                        ),
-                        burst_read_threshold=int(t.get("burst_read_threshold", 5)),
-                        burst_read_window_seconds=float(t.get("burst_read_window", 60)),
-                    )
-                backend = CASLocalBackend(
-                    root_path=Path(data_dir).resolve(),
-                    tiering_config=tiering_cfg,
-                )
-
-        # Resolve paths — new fields take precedence, db_path is legacy fallback
-        metadata_path = cfg.metastore_path or cfg.db_path or str(Path(nexus_root) / "metastore")
-        record_store_path = cfg.record_store_path or None
-
-        # --- Profile resolution (Issue #1708, moved before metadata store for federation gating) ---
-        from nexus.contracts.deployment_profile import DeploymentProfile, resolve_enabled_bricks
-
-        if cfg.profile == "auto":
-            from nexus.lib.device_capabilities import detect_capabilities, suggest_profile
-
-            caps = detect_capabilities()
-            resolved_profile = suggest_profile(caps)
+        except ImportError:
+            logger.warning("Federation brick enabled but Rust extensions unavailable")
+            federation = None
+            metadata_store = _open_local_metastore(metadata_path, kernel=_early_kernel)
+        except RuntimeError as exc:
+            if "ZoneManager requires PyO3 build with --features full" not in str(exc):
+                raise
             logger.info(
                 "Auto-detected profile: %s (RAM=%dMB, GPU=%s, cores=%d)",
                 resolved_profile,

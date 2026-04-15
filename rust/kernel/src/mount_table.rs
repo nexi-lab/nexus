@@ -156,8 +156,22 @@ impl MountTable {
     // ── Write ops (called by DLC.mount/unmount) ────────────────────────
 
     /// Insert a mount entry under its zone-canonical key.
-    pub fn add(&self, mount_point: &str, zone_id: &str, entry: MountEntry) {
+    ///
+    /// If an entry already exists under the same canonical key and the
+    /// *new* entry has no metastore wired, the previous entry's metastore
+    /// is preserved. This makes the `install_metastore` → `add_mount`
+    /// ordering (used by federation when `attach_raft_zone_to_kernel`
+    /// runs before the root DLC mount) insensitive so the ZoneMetastore
+    /// isn't wiped when the backend mount registers afterwards.
+    pub fn add(&self, mount_point: &str, zone_id: &str, mut entry: MountEntry) {
         let canonical = canonicalize_mount_path(mount_point, zone_id);
+        if entry.metastore.is_none() {
+            if let Some(existing) = self.entries.get(&canonical) {
+                if let Some(ms) = existing.metastore.as_ref() {
+                    entry.metastore = Some(Arc::clone(ms));
+                }
+            }
+        }
         self.entries.insert(canonical, entry);
     }
 
@@ -188,16 +202,22 @@ impl MountTable {
         self.entries.remove(&canonical).is_some()
     }
 
-    /// Replace (or set) the per-mount metastore on an existing entry.
+    /// Replace (or set) the per-mount metastore on an entry.
     ///
-    /// Used by `rust/raft::PyZoneHandle::attach_to_kernel_mount` after the
-    /// federation mount is registered, to install a `ZoneMetastore` backed
-    /// by Raft consensus on this mount. No-op if the canonical key isn't
-    /// present (caller should ensure ordering: add first, then install).
+    /// Upsert semantics: if no entry exists under ``canonical_key`` yet,
+    /// a bare placeholder entry (no backend) is created and tagged with
+    /// the metastore. This lets federation bootstrap attach a
+    /// ``ZoneMetastore`` at ``/`` before the root DLC mount registers its
+    /// backend — when the backend mount arrives later, ``add`` preserves
+    /// the already-installed metastore.
     pub fn install_metastore(&self, canonical_key: &str, metastore: Arc<dyn Metastore>) {
         if let Some(mut entry) = self.entries.get_mut(canonical_key) {
             entry.metastore = Some(metastore);
+            return;
         }
+        let mut entry = MountEntry::new(None, false, false, "balanced", "federation");
+        entry.metastore = Some(metastore);
+        self.entries.insert(canonical_key.to_string(), entry);
     }
 
     // ── Read ops ───────────────────────────────────────────────────────

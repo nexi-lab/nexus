@@ -103,6 +103,7 @@ class NexusFederation:
         cls,
         *,
         metadata_path: str,
+        kernel: Any = None,
     ) -> tuple["NexusFederation", Any]:
         """Bootstrap federation: create ZoneManager + root zone MetastoreABC.
 
@@ -222,11 +223,39 @@ class NexusFederation:
                 _time.sleep(delay)
 
         assert zone_mgr is not None  # guaranteed by loop above
-        # Root zone metastore — PathRouter per-mount metastore binding (#3580)
-        # handles cross-zone routing. No FederatedMetadataProxy needed.
-        metadata_store = zone_mgr.get_store("root")
-        if metadata_store is None:
+        # Root zone must exist before we continue.
+        _root_store = zone_mgr.get_store("root")
+        if _root_store is None:
             raise RuntimeError("Root zone metastore not available after bootstrap")
+
+        # F2 C8: return a ``RustMetastoreProxy`` so every ``nfs.metadata``
+        # call (get/put/list/delete/exists) routes via
+        # ``Kernel::metastore_*`` which in turn routes via the kernel
+        # mount table to the correct per-mount ``ZoneMetastore``. The
+        # root zone handle is also attached at the ``/`` mount below so
+        # root-zone paths (e.g. ``/workspace/…``) hit raft as well.
+        metadata_store: Any
+        if kernel is not None:
+            from nexus.core.metastore import RustMetastoreProxy
+
+            metadata_store = RustMetastoreProxy(kernel)
+            # Install the root zone's ZoneMetastore at the ``/`` mount so
+            # kernel-side routing for root-zone paths reaches raft. Use
+            # runtime ``getattr`` to dodge stale local type stubs while
+            # an installed wheel lags the regenerated .pyi.
+            try:
+                import nexus_kernel as _nk
+
+                _attach = getattr(_nk, "attach_raft_zone_to_kernel", None)
+                _root_engine = getattr(_root_store, "_engine", None)
+                if _attach is not None and _root_engine is not None:
+                    _attach(kernel, _root_engine, "/", "root")
+                    logger.info("[FED] installed root ZoneMetastore at '/' for kernel routing")
+            except Exception as exc:  # pragma: no cover — logged
+                logger.warning("[FED] attach_raft_zone_to_kernel('/') failed: %s", exc)
+        else:
+            metadata_store = _root_store
+
         federation = cls(zone_manager=zone_mgr)
         return federation, metadata_store
 

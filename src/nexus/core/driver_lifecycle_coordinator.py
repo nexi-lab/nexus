@@ -205,11 +205,24 @@ class DriverLifecycleCoordinator:
             # the raft state machine directly without any Python re-entry.
             if metastore is not None:
                 engine = getattr(metastore, "_engine", None)
+                logger.info(
+                    "[DRIVER][FED] mount(%s zone=%s): metastore=%s engine=%s",
+                    normalized,
+                    zone_id,
+                    type(metastore).__name__,
+                    type(engine).__name__ if engine is not None else None,
+                )
                 if engine is not None:
                     import nexus_kernel as _nk  # runtime lookup: stubs may lag
 
                     py_zone_handle = getattr(_nk, "ZoneHandle", None)
                     attach_fn = getattr(_nk, "attach_raft_zone_to_kernel", None)
+                    logger.info(
+                        "[DRIVER][FED]   ZoneHandle=%s attach_fn=%s isinstance=%s",
+                        py_zone_handle,
+                        attach_fn,
+                        isinstance(engine, py_zone_handle) if py_zone_handle is not None else None,
+                    )
                     if (
                         py_zone_handle is not None
                         and attach_fn is not None
@@ -217,6 +230,11 @@ class DriverLifecycleCoordinator:
                     ):
                         try:
                             attach_fn(self._kernel, engine, normalized, zone_id)
+                            logger.info(
+                                "[DRIVER][FED]   attach_raft_zone_to_kernel OK for %s (zone=%s)",
+                                normalized,
+                                zone_id,
+                            )
                         except Exception as exc:  # pragma: no cover — logged
                             logger.warning(
                                 "[DRIVER] attach_raft_zone_to_kernel failed for %s (zone=%s): %s",

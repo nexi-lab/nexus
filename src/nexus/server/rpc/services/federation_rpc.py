@@ -51,6 +51,14 @@ class FederationRPCService:
             # Fallback: single-node (no peers)
             self._zone_manager.create_zone(zone_id)
         logger.info("Zone '%s' created via RPC", zone_id)
+        # Newly-created zone may be the target of a DT_MOUNT already
+        # committed to some parent zone on this node via raft replication
+        # (e.g. test_zones_visible_on_both_nodes runs after the mount on
+        # node-1). Reconcile to pick those up.
+        try:
+            self._zone_manager.reconcile_mounts_from_raft()
+        except Exception as exc:
+            logger.debug("[FED] create_zone reconcile skipped: %s", exc)
         return {"zone_id": zone_id, "created": True}
 
     @rpc_expose(admin_only=True, description="Remove a Raft zone")
@@ -106,6 +114,13 @@ class FederationRPCService:
             zone_path,
             parent_zone,
         )
+        # Run reconcile so any *other* replicated DT_MOUNT entries on this
+        # node also get pushed into DLC — catches up for mounts that
+        # happened on a peer before this node processed them.
+        try:
+            self._zone_manager.reconcile_mounts_from_raft()
+        except Exception as exc:
+            logger.debug("[FED] mount reconcile skipped: %s", exc)
         return {
             "parent_zone_id": parent_zone,
             "mount_path": path,

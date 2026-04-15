@@ -16,6 +16,7 @@ All zones share one gRPC port (zone_id routing in transport layer).
 
 import logging
 import os
+import threading
 from inspect import signature
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -189,6 +190,8 @@ class ZoneManager:
         # under a changed mount point become stale).
         self._dcache_proxy: Any | None = None
         self._coordinator: Any | None = None  # late-bound: DriverLifecycleCoordinator
+        self._reconcile_thread: threading.Thread | None = None
+        self._reconcile_stop = threading.Event()
 
     @property
     def tls_config(self) -> "ZoneTlsConfig | None":
@@ -422,6 +425,128 @@ class ZoneManager:
         result: list[str] = self._py_mgr.list_zones()
         return result
 
+    def reconcile_mounts_from_raft(self) -> int:
+        """Sync DLC mount entries from each local zone's replicated state.
+
+        federation_mount only runs on the node that received the RPC. The
+        resulting DT_MOUNT metadata replicates via Raft to follower nodes,
+        but without a local ``DriverLifecycleCoordinator.mount`` call the
+        kernel's mount table stays unaware of the federation mount and
+        sys_* cold paths fall through to the global metastore.
+
+        This method scans every local zone's state machine for DT_MOUNT
+        entries and, for each one whose target zone is present on this
+        node, calls ``self.mount(..., idempotent)``. The updated mount
+        code already skips the put-to-raft side when the DT_MOUNT is
+        already present, but still wires DLC — so it's safe to call
+        repeatedly.
+
+        Returns the number of DLC entries ensured in this pass.
+        """
+        if self._coordinator is None:
+            return 0
+
+        ensured = 0
+        # Iterate a snapshot since zone_manager.mount() may mutate _stores.
+        zones_snapshot = list(self._stores.items())
+        for zone_id, store in zones_snapshot:
+            try:
+                entries = list(store.list_iter(prefix="/", recursive=True))
+            except Exception as exc:
+                logger.debug("reconcile_mounts: list_iter(%s) failed: %s", zone_id, exc)
+                continue
+            for meta in entries:
+                if not getattr(meta, "is_mount", False):
+                    continue
+                target_zone_id = getattr(meta, "target_zone_id", None) or ""
+                if not target_zone_id:
+                    continue
+                if target_zone_id not in self._stores:
+                    # Target zone hasn't been created on this node yet.
+                    continue
+                # Compute the global path that matches how
+                # zone_manager.mount() keyed DLC on the source node.
+                local_path = meta.path
+                global_path = local_path
+                # For non-root parent zones the zone_manager.mount source
+                # side passes a global_path. Replicated DT_MOUNT entries
+                # store only the zone-relative local_path, so prepend the
+                # parent zone id (e.g. zone='corp', local='/eng' →
+                # global='/corp/eng') to match the original DLC key.
+                if (
+                    zone_id != self._root_zone_id
+                    and zone_id
+                    and not local_path.startswith(f"/{zone_id}")
+                ):
+                    global_path = f"/{zone_id}{local_path}"
+                try:
+                    self.mount(
+                        zone_id,
+                        local_path,
+                        target_zone_id,
+                        global_path=global_path,
+                        increment_links=False,
+                    )
+                    ensured += 1
+                except Exception as exc:
+                    logger.debug(
+                        "reconcile_mounts: mount(%s %s -> %s) skipped: %s",
+                        zone_id,
+                        local_path,
+                        target_zone_id,
+                        exc,
+                    )
+        if ensured:
+            logger.info(
+                "[MOUNT-RECONCILE] ensured %d DLC mount entries from raft state",
+                ensured,
+            )
+        return ensured
+
+    def start_mount_reconciler(self, interval_seconds: float = 1.0) -> None:
+        """Start a background thread that reconciles DLC mounts from raft.
+
+        Federation_mount runs on whichever node the client hit, so the
+        resulting DT_MOUNT metadata only propagates to peer nodes via
+        Raft replication. Without a listener, the peer's kernel mount
+        table stays empty and cross-node reads fall back to the global
+        metastore. This thread polls every ``interval_seconds`` and
+        idempotently applies any DT_MOUNT entries whose target zones
+        are local to this node.
+
+        Called from the service-link phase once the DLC is wired in.
+        """
+        if self._reconcile_thread is not None and self._reconcile_thread.is_alive():
+            return
+        self._reconcile_stop.clear()
+
+        def _loop() -> None:
+            while not self._reconcile_stop.wait(interval_seconds):
+                try:
+                    self.reconcile_mounts_from_raft()
+                except Exception as exc:
+                    logger.debug("[MOUNT-RECONCILE] iteration failed: %s", exc)
+
+        t = threading.Thread(
+            target=_loop,
+            name="nexus-mount-reconcile",
+            daemon=True,
+        )
+        t.start()
+        self._reconcile_thread = t
+        logger.info(
+            "[MOUNT-RECONCILE] background thread started (interval=%.1fs)",
+            interval_seconds,
+        )
+
+    def stop_mount_reconciler(self) -> None:
+        """Stop the background mount reconciler (for shutdown)."""
+        self._reconcile_stop.set()
+        thread = self._reconcile_thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=2.0)
+        self._reconcile_thread = None
+
     @property
     def node_id(self) -> int:
         return int(self._node_id)
@@ -492,9 +617,23 @@ class ZoneManager:
             )
         if existing.is_mount:
             if existing.target_zone_id == target_zone_id:
-                # Idempotent: already mounted to the same target — no-op
+                # Idempotent raft replication: another node already committed
+                # the DT_MOUNT into this zone's state machine. We still need
+                # to register the mount with THIS node's DLC so kernel syscall
+                # routing picks it up — otherwise sys_read on /corp/eng/foo
+                # on a follower node falls through to the global metastore
+                # and federation replication is invisible.
+                if self._coordinator:
+                    dlc_path = global_path or mount_path
+                    root_backend = self._coordinator.get_root_backend()
+                    if root_backend is not None:
+                        self._coordinator.mount(
+                            dlc_path,
+                            root_backend,
+                            metastore=target_store,
+                        )
                 logger.debug(
-                    "Mount '%s' → '%s' already exists, skipping",
+                    "Mount '%s' → '%s' already committed to raft; ensured DLC entry",
                     mount_path,
                     target_zone_id,
                 )

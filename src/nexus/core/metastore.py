@@ -347,10 +347,18 @@ class RustMetastoreProxy(MetastoreABC):
         metadata_store = RustMetastoreProxy(kernel)
     """
 
-    def __init__(self, kernel: Any, redb_path: str) -> None:
+    def __init__(self, kernel: Any, redb_path: str | None = None) -> None:
         super().__init__()
         self._rust_kernel = kernel
-        kernel.set_metastore_path(redb_path)
+        # Federation mode: kernel has no global redb — every call routes
+        # via ``mount_table.route(path, ROOT_ZONE_ID, ...)`` and hits a
+        # per-mount ZoneMetastore installed by
+        # ``nexus_kernel.attach_raft_zone_to_kernel``. Skipping
+        # ``set_metastore_path`` keeps the global fallback unset so an
+        # accidental route miss blows up loudly instead of silently
+        # returning empty.
+        if redb_path is not None:
+            kernel.set_metastore_path(redb_path)
 
     # ── Public API (bypass Python dcache — Rust DCache is authoritative) ─
 

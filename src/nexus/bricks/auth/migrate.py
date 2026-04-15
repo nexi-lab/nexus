@@ -290,25 +290,48 @@ class DualReadAuthProfileStore:
         self._old = old_adapter
 
     def list(self, *, provider: str | None = None) -> list[AuthProfile]:
-        # Merge both stores. Old store wins on ID collision because the old
-        # store remains authoritative for writes during the migration window
-        # (Phase 1-3). This ensures revokes/deletes in the old store are
-        # respected and not masked by stale copied rows in the new store.
+        # Merge both stores. On ID collision: old store provides identity/routing
+        # (authoritative for writes during migration window), but new store's
+        # usage_stats are preserved (cooldowns, failure counts, disable flags).
         new_profiles = self._new.list(provider=provider)
         old_profiles = self._old.list(provider=provider)
-        merged: dict[str, AuthProfile] = {}
-        for p in new_profiles:
-            merged[p.id] = p
+        new_by_id: dict[str, AuthProfile] = {p.id: p for p in new_profiles}
+        merged: dict[str, AuthProfile] = dict(new_by_id)
         for p in old_profiles:
-            merged[p.id] = p  # old wins on collision (authoritative)
+            if p.id in new_by_id:
+                # Collision: use old identity, preserve new store's usage_stats
+                merged[p.id] = AuthProfile(
+                    id=p.id,
+                    provider=p.provider,
+                    account_identifier=p.account_identifier,
+                    backend=p.backend,
+                    backend_key=p.backend_key,
+                    last_synced_at=p.last_synced_at,
+                    sync_ttl_seconds=p.sync_ttl_seconds,
+                    usage_stats=new_by_id[p.id].usage_stats,
+                )
+            else:
+                merged[p.id] = p
         return list(merged.values())
 
     def get(self, profile_id: str) -> AuthProfile | None:
-        # Old store wins on collision (authoritative during migration window).
         old_result = self._old.get(profile_id)
+        new_result = self._new.get(profile_id)
+        if old_result is not None and new_result is not None:
+            # Collision: old identity + new usage_stats
+            return AuthProfile(
+                id=old_result.id,
+                provider=old_result.provider,
+                account_identifier=old_result.account_identifier,
+                backend=old_result.backend,
+                backend_key=old_result.backend_key,
+                last_synced_at=old_result.last_synced_at,
+                sync_ttl_seconds=old_result.sync_ttl_seconds,
+                usage_stats=new_result.usage_stats,
+            )
         if old_result is not None:
             return old_result
-        return self._new.get(profile_id)
+        return new_result
 
     def upsert(self, profile: AuthProfile) -> None:
         self._new.upsert(profile)

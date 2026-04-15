@@ -523,13 +523,16 @@ def auth_migrate(apply: bool) -> None:
     from nexus.bricks.auth.migrate import build_migration_plan, execute_migration
     from nexus.bricks.auth.profile_store import SqliteAuthProfileStore
 
-    db_url = os.environ.get("NEXUS_DATABASE_URL", "")
-    if db_url and not db_url.startswith("sqlite"):
-        raise click.ClickException(
-            "auth migrate only supports local SQLite deployments. "
-            f"Detected NEXUS_DATABASE_URL={db_url!r}. "
-            "Shared-DB migration will be supported in Phase 4 (#3741)."
-        )
+    # Guard: refuse to run if the source store is a shared/remote DB.
+    # Check all env vars that get_token_manager() / get_database_url() consult.
+    for env_var in ("NEXUS_DATABASE_URL", "POSTGRES_URL", "DATABASE_URL"):
+        db_url = os.environ.get(env_var, "")
+        if db_url and not db_url.startswith("sqlite"):
+            raise click.ClickException(
+                "auth migrate only supports local SQLite deployments. "
+                f"Detected {env_var}={db_url!r}. "
+                "Shared-DB migration will be supported in Phase 4 (#3741)."
+            )
 
     # Collect old credentials across ALL zones — pass zone_id=None to
     # TokenManager.list_credentials() to avoid filtering to root only.

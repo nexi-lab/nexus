@@ -191,8 +191,10 @@ class TestPreExistingDB:
 
 
 class TestDualReadStore:
-    def test_old_store_wins_on_collision(self, sqlite_store: SqliteAuthProfileStore) -> None:
-        """Old store is authoritative during migration window — wins on collision."""
+    def test_collision_merges_old_identity_new_stats(
+        self, sqlite_store: SqliteAuthProfileStore
+    ) -> None:
+        """On collision: old store provides identity, new store provides usage_stats."""
         old_adapter = OldStoreAdapter(_fake_old_creds(("google", "alice@co.com")))
         sqlite_store.upsert(
             make_profile("google/alice@co.com", provider="google", success_count=99)
@@ -201,8 +203,9 @@ class TestDualReadStore:
 
         p = dual.get("google/alice@co.com")
         assert p is not None
-        # Old store wins (success_count=0, not 99 from new store)
-        assert p.usage_stats.success_count == 0
+        assert p.provider == "google"
+        # Usage stats preserved from new store (cooldowns, counters durable)
+        assert p.usage_stats.success_count == 99
 
     def test_falls_back_to_old_store(self, sqlite_store: SqliteAuthProfileStore) -> None:
         old_adapter = OldStoreAdapter(_fake_old_creds(("google", "alice@co.com")))
@@ -234,8 +237,8 @@ class TestDualReadStore:
         assert "google/new@co.com" in ids
         assert "google/old@co.com" in ids
 
-    def test_list_old_wins_on_collision(self, sqlite_store: SqliteAuthProfileStore) -> None:
-        """Old store is authoritative — wins on list() collision too."""
+    def test_list_collision_preserves_new_stats(self, sqlite_store: SqliteAuthProfileStore) -> None:
+        """On list() collision: old identity + new usage_stats."""
         old_adapter = OldStoreAdapter(_fake_old_creds(("google", "alice@co.com")))
         sqlite_store.upsert(
             make_profile("google/alice@co.com", provider="google", success_count=99)
@@ -244,7 +247,7 @@ class TestDualReadStore:
 
         results = dual.list(provider="google")
         assert len(results) == 1
-        assert results[0].usage_stats.success_count == 0  # old store wins
+        assert results[0].usage_stats.success_count == 99  # new store stats preserved
 
     def test_writes_go_to_new_store(self, sqlite_store: SqliteAuthProfileStore) -> None:
         old_adapter = OldStoreAdapter([])

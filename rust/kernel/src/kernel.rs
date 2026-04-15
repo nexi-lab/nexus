@@ -776,6 +776,100 @@ impl Kernel {
         }
     }
 
+    // ── Advisory lock syscalls (F4 C4) ────────────────────────
+    //
+    // Public Kernel API for the lock pillar. All four syscalls
+    // fan out through `with_routed_metastore` so federation
+    // (per-zone `ZoneMetastore`, where reads go through ReadIndex
+    // per F4 C3.6) and standalone (`MemoryMetastore` /
+    // `RedbMetastore`) share one entry point.
+    //
+    // Contract (matches etcd / Consul default):
+    //   * sys_lock / sys_unlock / sys_lock_extend — Strong
+    //     Consistency (raft propose on federation, local atomic
+    //     op on standalone).
+    //   * sys_lock_list — linearizable read (raft ReadIndex on
+    //     federation, local read on standalone).
+    //
+    // There is deliberately no "get one lock" syscall: the only
+    // historical caller was `sys_stat(include_lock=True)`, which
+    // F4 deletes. Consumers that need the full holder list for a
+    // specific path can call `sys_lock_list(path, 1)`. The
+    // `Metastore::get_lock` trait method stays for tests and for
+    // `list_locks` implementations.
+    //
+    // `sys_stat` also does not embed a lock field: paying a
+    // ReadIndex heartbeat round-trip per FUSE getattr is
+    // unacceptable. Debug tooling that wants lock state calls
+    // `sys_lock_list` explicitly.
+
+    /// Acquire a lock on `path`. Returns `true` if the caller
+    /// became or already was a holder, `false` on conflict.
+    #[allow(clippy::too_many_arguments)]
+    pub fn sys_lock(
+        &self,
+        path: &str,
+        lock_id: &str,
+        mode: crate::metastore::KernelLockMode,
+        max_holders: u32,
+        ttl_secs: u64,
+        holder_info: &str,
+    ) -> Result<bool, KernelError> {
+        match self.with_routed_metastore(path, |ms| {
+            ms.acquire_lock(path, lock_id, mode, max_holders, ttl_secs, holder_info)
+        }) {
+            Some(result) => {
+                result.map_err(|e| KernelError::IOError(format!("sys_lock({path}): {e:?}")))
+            }
+            None => Err(KernelError::IOError("no metastore wired".into())),
+        }
+    }
+
+    /// Release a specific holder.
+    pub fn sys_unlock(&self, path: &str, lock_id: &str) -> Result<bool, KernelError> {
+        match self.with_routed_metastore(path, |ms| ms.release_lock(path, lock_id)) {
+            Some(result) => {
+                result.map_err(|e| KernelError::IOError(format!("sys_unlock({path}): {e:?}")))
+            }
+            None => Err(KernelError::IOError("no metastore wired".into())),
+        }
+    }
+
+    /// Extend a holder's TTL.
+    pub fn sys_lock_extend(
+        &self,
+        path: &str,
+        lock_id: &str,
+        ttl_secs: u64,
+    ) -> Result<bool, KernelError> {
+        match self.with_routed_metastore(path, |ms| ms.extend_lock(path, lock_id, ttl_secs)) {
+            Some(result) => {
+                result.map_err(|e| KernelError::IOError(format!("sys_lock_extend({path}): {e:?}")))
+            }
+            None => Err(KernelError::IOError("no metastore wired".into())),
+        }
+    }
+
+    /// Linearizable enumeration of locks under `prefix`. Used by
+    /// the `/api/v2/locks` TUI endpoint and the `nx locks list`
+    /// CLI — these are the only callers that need to observe
+    /// lock state from outside the holder itself.
+    pub fn sys_lock_list(
+        &self,
+        prefix: &str,
+        limit: usize,
+    ) -> Result<Vec<crate::metastore::KernelLockInfo>, KernelError> {
+        // Empty / root prefix fan-outs still hit the global
+        // metastore, matching `metastore_list` routing.
+        let route_path = if prefix.is_empty() { "/" } else { prefix };
+        match self.with_routed_metastore(route_path, |ms| ms.list_locks(prefix, limit)) {
+            Some(result) => {
+                result.map_err(|e| KernelError::IOError(format!("sys_lock_list({prefix}): {e:?}")))
+            }
+            None => Err(KernelError::IOError("no metastore wired".into())),
+        }
+    }
+
     // ── DCache proxy methods ───────────────────────────────────────────
 
     /// Insert or update a cache entry.

@@ -210,6 +210,12 @@ async def _run_chat(
         profile = deployment_profile or os.environ.get("NEXUS_PROFILE", "slim")
         state_dir = Path(getattr(nexus, "NEXUS_STATE_DIR", Path.home() / ".nexus"))
         data_dir = os.environ.get("NEXUS_DATA_DIR", str(state_dir / "data"))
+        # ACP mode: each session gets its own data dir to avoid redb lock
+        # conflicts with nexusd or other concurrent ACP sessions.
+        if acp and "NEXUS_DATA_DIR" not in os.environ:
+            import tempfile
+
+            data_dir = tempfile.mkdtemp(prefix="nexus-acp-")
         nx = await nexus.connect(config={"profile": profile, "data_dir": data_dir})
 
     try:

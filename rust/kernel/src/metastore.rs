@@ -41,6 +41,37 @@ pub enum MetastoreError {
     IOError(String),
 }
 
+/// Result of a `put_if_version` optimistic-concurrency check.
+///
+/// Naming note: "CAS" in the kernel already means **Content-Addressed
+/// Storage** (see `cas_engine.rs`) — the blob pillar. This struct is
+/// the unrelated *compare-and-swap* primitive used by the metastore's
+/// version guard on `put`, so it is spelled out in full to avoid
+/// collision with the CAS blob namespace.
+#[derive(Debug, Clone, Copy)]
+pub struct PutIfVersionResult {
+    /// True if the write was applied.
+    pub success: bool,
+    /// Version currently in the store after this call (new version on
+    /// success, existing version on conflict).
+    pub current_version: u32,
+}
+
+/// `(path, optional value)` pair used by bulk auxiliary-metadata reads
+/// and bulk content-id lookups. Aliased to keep long trait signatures
+/// under clippy's `type_complexity` threshold.
+pub type PathValueBytes = (String, Option<Vec<u8>>);
+pub type PathEtag = (String, Option<String>);
+
+/// One page of a paginated list scan.
+#[derive(Debug, Default, Clone)]
+pub struct PaginatedList {
+    pub items: Vec<FileMetadata>,
+    pub next_cursor: Option<String>,
+    pub has_more: bool,
+    pub total_count: usize,
+}
+
 /// Metastore pillar — kernel metadata contract.
 ///
 /// Rust equivalent of Python `MetastoreABC`.
@@ -96,6 +127,156 @@ pub trait Metastore: Send + Sync {
         }
         Ok(count)
     }
+
+    /// Compare-and-swap put: write only if current stored version equals
+    /// `expected_version`. Returns a `PutIfVersionResult` whose `current_version`
+    /// field reflects the state after this call (caller can use the
+    /// mismatch case to rebuild a retry).
+    ///
+    /// Default impl is racy (get → compare → put). Redb overrides with a
+    /// single write txn; ZoneMetastore overrides with a raft propose.
+    fn put_if_version(
+        &self,
+        metadata: FileMetadata,
+        expected_version: u32,
+    ) -> Result<PutIfVersionResult, MetastoreError> {
+        let path = metadata.path.clone();
+        let current = self.get(&path)?;
+        let current_ver = current.as_ref().map(|m| m.version).unwrap_or(0);
+        if current_ver != expected_version {
+            return Ok(PutIfVersionResult {
+                success: false,
+                current_version: current_ver,
+            });
+        }
+        let new_ver = metadata.version;
+        self.put(&path, metadata)?;
+        Ok(PutIfVersionResult {
+            success: true,
+            current_version: new_ver,
+        })
+    }
+
+    /// Rename a path (and optionally all children, if the path is a
+    /// directory with entries under `old_path + "/"`).
+    ///
+    /// Default impl: rewrites `old_path` entry and every entry under
+    /// `old_path + "/"` prefix via get → put(new_key) → delete(old_key).
+    /// Not atomic under concurrent writers — callers that need
+    /// atomicity override (redb uses a single write txn).
+    fn rename_path(&self, old_path: &str, new_path: &str) -> Result<(), MetastoreError> {
+        if old_path == new_path {
+            return Ok(());
+        }
+        if let Some(mut meta) = self.get(old_path)? {
+            meta.path = new_path.to_string();
+            self.put(new_path, meta)?;
+            self.delete(old_path)?;
+        }
+        let old_prefix = format!("{}/", old_path.trim_end_matches('/'));
+        let new_prefix = format!("{}/", new_path.trim_end_matches('/'));
+        let children = self.list(&old_prefix)?;
+        for mut child in children {
+            let suffix = match child.path.strip_prefix(&old_prefix) {
+                Some(s) => s.to_string(),
+                None => continue,
+            };
+            let old_child = child.path.clone();
+            let new_child = format!("{}{}", new_prefix, suffix);
+            child.path = new_child.clone();
+            self.put(&new_child, child)?;
+            self.delete(&old_child)?;
+        }
+        Ok(())
+    }
+
+    /// Store an auxiliary key/value blob attached to a path (e.g.
+    /// `parsed_text`, tags, observer state). Separate namespace from the
+    /// `FileMetadata` struct fields.
+    ///
+    /// Default impl returns an error — each concrete impl must provide
+    /// its own storage (DashMap sidecar, second redb table, raft
+    /// command).
+    fn set_file_metadata(
+        &self,
+        path: &str,
+        key: &str,
+        value: Vec<u8>,
+    ) -> Result<(), MetastoreError> {
+        let _ = (path, key, value);
+        Err(MetastoreError::IOError(
+            "set_file_metadata not implemented for this metastore".into(),
+        ))
+    }
+
+    /// Read an auxiliary key/value blob. Default impl returns `Ok(None)`.
+    fn get_file_metadata(&self, path: &str, key: &str) -> Result<Option<Vec<u8>>, MetastoreError> {
+        let _ = (path, key);
+        Ok(None)
+    }
+
+    /// Bulk read a single auxiliary key across multiple paths. Default
+    /// impl loops `get_file_metadata`.
+    fn get_file_metadata_bulk(
+        &self,
+        paths: &[String],
+        key: &str,
+    ) -> Result<Vec<PathValueBytes>, MetastoreError> {
+        let mut out = Vec::with_capacity(paths.len());
+        for p in paths {
+            out.push((p.clone(), self.get_file_metadata(p, key)?));
+        }
+        Ok(out)
+    }
+
+    /// Return true if `path` has any children under `path + "/"`.
+    fn is_implicit_directory(&self, path: &str) -> Result<bool, MetastoreError> {
+        let prefix = format!("{}/", path.trim_end_matches('/'));
+        let children = self.list(&prefix)?;
+        Ok(!children.is_empty())
+    }
+
+    /// Paginated list. Default impl materializes `list(prefix)` and
+    /// slices. Override for backends where streaming matters.
+    fn list_paginated(
+        &self,
+        prefix: &str,
+        recursive: bool,
+        limit: usize,
+        cursor: Option<&str>,
+    ) -> Result<PaginatedList, MetastoreError> {
+        let mut all = self.list(prefix)?;
+        if !recursive {
+            let depth = prefix.trim_end_matches('/').matches('/').count() + 1;
+            all.retain(|m| m.path.trim_end_matches('/').matches('/').count() == depth);
+        }
+        let start: usize = cursor.and_then(|c| c.parse().ok()).unwrap_or(0);
+        let end = (start + limit).min(all.len());
+        let items = all[start..end].to_vec();
+        let has_more = end < all.len();
+        let next_cursor = if has_more {
+            Some(end.to_string())
+        } else {
+            None
+        };
+        Ok(PaginatedList {
+            items,
+            next_cursor,
+            has_more,
+            total_count: all.len(),
+        })
+    }
+
+    /// Bulk fetch content IDs (etags) for many paths. Default impl
+    /// loops `get` and returns the etag from each record.
+    fn batch_get_content_ids(&self, paths: &[String]) -> Result<Vec<PathEtag>, MetastoreError> {
+        let mut out = Vec::with_capacity(paths.len());
+        for p in paths {
+            let etag = self.get(p)?.and_then(|m| m.etag);
+            out.push((p.clone(), etag));
+        }
+        Ok(out)
+    }
 }
 
 // PyMetastoreAdapter + conversion helpers (extract_metadata, to_python_metadata)
@@ -115,12 +296,18 @@ use dashmap::DashMap;
 /// In-memory metastore impl backed by a ``DashMap`` (concurrent, no I/O).
 pub struct MemoryMetastore {
     entries: DashMap<String, FileMetadata>,
+    /// Auxiliary per-file metadata (e.g. `parsed_text`, tags). Separate
+    /// namespace from the main `entries` map. Outer key is the file path,
+    /// inner key is the metadata key (e.g. `"parsed_text"`), value is
+    /// opaque bytes (usually UTF-8 text or pickled Python).
+    file_metadata: DashMap<String, DashMap<String, Vec<u8>>>,
 }
 
 impl MemoryMetastore {
     pub fn new() -> Self {
         Self {
             entries: DashMap::new(),
+            file_metadata: DashMap::new(),
         }
     }
 }
@@ -142,6 +329,7 @@ impl Metastore for MemoryMetastore {
     }
 
     fn delete(&self, path: &str) -> Result<bool, MetastoreError> {
+        self.file_metadata.remove(path);
         Ok(self.entries.remove(path).is_some())
     }
 
@@ -158,6 +346,105 @@ impl Metastore for MemoryMetastore {
     fn exists(&self, path: &str) -> Result<bool, MetastoreError> {
         Ok(self.entries.contains_key(path))
     }
+
+    fn put_if_version(
+        &self,
+        metadata: FileMetadata,
+        expected_version: u32,
+    ) -> Result<PutIfVersionResult, MetastoreError> {
+        let path = metadata.path.clone();
+        use dashmap::mapref::entry::Entry;
+        match self.entries.entry(path) {
+            Entry::Vacant(slot) => {
+                if expected_version != 0 {
+                    return Ok(PutIfVersionResult {
+                        success: false,
+                        current_version: 0,
+                    });
+                }
+                let new_ver = metadata.version;
+                slot.insert(metadata);
+                Ok(PutIfVersionResult {
+                    success: true,
+                    current_version: new_ver,
+                })
+            }
+            Entry::Occupied(mut slot) => {
+                let current_ver = slot.get().version;
+                if current_ver != expected_version {
+                    return Ok(PutIfVersionResult {
+                        success: false,
+                        current_version: current_ver,
+                    });
+                }
+                let new_ver = metadata.version;
+                slot.insert(metadata);
+                Ok(PutIfVersionResult {
+                    success: true,
+                    current_version: new_ver,
+                })
+            }
+        }
+    }
+
+    fn rename_path(&self, old_path: &str, new_path: &str) -> Result<(), MetastoreError> {
+        if old_path == new_path {
+            return Ok(());
+        }
+        if let Some((_, mut meta)) = self.entries.remove(old_path) {
+            meta.path = new_path.to_string();
+            self.entries.insert(new_path.to_string(), meta);
+            if let Some((_, fm)) = self.file_metadata.remove(old_path) {
+                self.file_metadata.insert(new_path.to_string(), fm);
+            }
+        }
+        let old_prefix = format!("{}/", old_path.trim_end_matches('/'));
+        let new_prefix = format!("{}/", new_path.trim_end_matches('/'));
+        let child_keys: Vec<String> = self
+            .entries
+            .iter()
+            .filter_map(|e| {
+                if e.key().starts_with(&old_prefix) {
+                    Some(e.key().clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        for old_child in child_keys {
+            if let Some((_, mut meta)) = self.entries.remove(&old_child) {
+                let suffix = old_child
+                    .strip_prefix(&old_prefix)
+                    .map(|s| s.to_string())
+                    .unwrap_or_default();
+                let new_child = format!("{}{}", new_prefix, suffix);
+                meta.path = new_child.clone();
+                self.entries.insert(new_child.clone(), meta);
+                if let Some((_, fm)) = self.file_metadata.remove(&old_child) {
+                    self.file_metadata.insert(new_child, fm);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn set_file_metadata(
+        &self,
+        path: &str,
+        key: &str,
+        value: Vec<u8>,
+    ) -> Result<(), MetastoreError> {
+        let inner = self.file_metadata.entry(path.to_string()).or_default();
+        inner.insert(key.to_string(), value);
+        Ok(())
+    }
+
+    fn get_file_metadata(&self, path: &str, key: &str) -> Result<Option<Vec<u8>>, MetastoreError> {
+        Ok(self
+            .file_metadata
+            .get(path)
+            .and_then(|inner| inner.get(key).map(|v| v.value().clone())))
+    }
 }
 
 // ── RedbMetastore — pure Rust metastore using redb ──────────────────────
@@ -171,6 +458,12 @@ use std::sync::Arc;
 /// Serialization: compact binary format (not JSON — too slow for hot path).
 /// Fields are written in fixed order; strings are length-prefixed.
 const METADATA_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("metadata");
+
+/// redb table: "path\0key" → auxiliary metadata value bytes. Mirrors the
+/// Python `DictMetastore._file_metadata` dict-of-dicts, flattened into a
+/// single table with a composite key so range-scans can enumerate all
+/// keys for a given path.
+const FILE_METADATA_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("file_metadata");
 
 /// Pure Rust metastore backed by redb — ~5μs reads, zero GIL.
 ///
@@ -190,7 +483,7 @@ impl RedbMetastore {
         let db = Database::create(path)
             .map_err(|e| MetastoreError::IOError(format!("redb open {}: {e}", path.display())))?;
 
-        // Ensure table exists (single empty write txn on first open)
+        // Ensure both tables exist (single empty write txn on first open)
         let txn = db
             .begin_write()
             .map_err(|e| MetastoreError::IOError(format!("redb begin_write: {e}")))?;
@@ -198,12 +491,24 @@ impl RedbMetastore {
             let _table = txn
                 .open_table(METADATA_TABLE)
                 .map_err(|e| MetastoreError::IOError(format!("redb open_table: {e}")))?;
+            let _fm_table = txn.open_table(FILE_METADATA_TABLE).map_err(|e| {
+                MetastoreError::IOError(format!("redb open file_metadata table: {e}"))
+            })?;
         }
         txn.commit()
             .map_err(|e| MetastoreError::IOError(format!("redb commit: {e}")))?;
 
         Ok(Self { db: Arc::new(db) })
     }
+}
+
+/// Compose the flat `FILE_METADATA_TABLE` key `path\0key`.
+fn fm_composite_key(path: &str, key: &str) -> String {
+    let mut s = String::with_capacity(path.len() + key.len() + 1);
+    s.push_str(path);
+    s.push('\0');
+    s.push_str(key);
+    s
 }
 
 /// Compact binary serialization for FileMetadata.
@@ -420,6 +725,33 @@ impl Metastore for RedbMetastore {
                 .map_err(|e| MetastoreError::IOError(format!("redb remove: {e}")))?
                 .is_some();
         }
+        // Drop any auxiliary file_metadata entries for this path in the
+        // same txn via a range scan on the "path\0..." prefix.
+        {
+            let mut fm_table = txn
+                .open_table(FILE_METADATA_TABLE)
+                .map_err(|e| MetastoreError::IOError(format!("redb open fm table: {e}")))?;
+            let start = fm_composite_key(path, "");
+            let mut end = start.clone();
+            end.push('\u{1}'); // next byte after null separator
+            let keys: Vec<String> = {
+                let iter = fm_table
+                    .range(start.as_str()..end.as_str())
+                    .map_err(|e| MetastoreError::IOError(format!("redb fm range: {e}")))?;
+                let mut keys = Vec::new();
+                for entry in iter {
+                    let (k, _) =
+                        entry.map_err(|e| MetastoreError::IOError(format!("redb fm iter: {e}")))?;
+                    keys.push(k.value().to_string());
+                }
+                keys
+            };
+            for k in keys {
+                fm_table
+                    .remove(k.as_str())
+                    .map_err(|e| MetastoreError::IOError(format!("redb fm remove: {e}")))?;
+            }
+        }
         txn.commit()
             .map_err(|e| MetastoreError::IOError(format!("redb commit: {e}")))?;
         Ok(existed)
@@ -545,6 +877,157 @@ impl Metastore for RedbMetastore {
         }
         Ok(results)
     }
+
+    /// Single write txn: read current version, compare, write on match.
+    fn put_if_version(
+        &self,
+        metadata: FileMetadata,
+        expected_version: u32,
+    ) -> Result<PutIfVersionResult, MetastoreError> {
+        let path = metadata.path.clone();
+        let new_ver = metadata.version;
+        let data = serialize_metadata(&metadata);
+        let txn = self
+            .db
+            .begin_write()
+            .map_err(|e| MetastoreError::IOError(format!("redb write txn: {e}")))?;
+        let result;
+        {
+            let mut table = txn
+                .open_table(METADATA_TABLE)
+                .map_err(|e| MetastoreError::IOError(format!("redb open_table: {e}")))?;
+            let current_ver = match table.get(path.as_str()) {
+                Ok(Some(guard)) => deserialize_metadata(guard.value())?.version,
+                Ok(None) => 0,
+                Err(e) => {
+                    return Err(MetastoreError::IOError(format!(
+                        "redb put_if_version get: {e}"
+                    )))
+                }
+            };
+            if current_ver != expected_version {
+                result = PutIfVersionResult {
+                    success: false,
+                    current_version: current_ver,
+                };
+            } else {
+                table
+                    .insert(path.as_str(), data.as_slice())
+                    .map_err(|e| MetastoreError::IOError(format!("redb cas insert: {e}")))?;
+                result = PutIfVersionResult {
+                    success: true,
+                    current_version: new_ver,
+                };
+            }
+        }
+        txn.commit()
+            .map_err(|e| MetastoreError::IOError(format!("redb commit: {e}")))?;
+        Ok(result)
+    }
+
+    /// Single write txn: rewrite `old_path` and all children under
+    /// `old_path + "/"` to their new names. Keys are rewritten in place
+    /// (remove + insert) since redb has no rename primitive.
+    fn rename_path(&self, old_path: &str, new_path: &str) -> Result<(), MetastoreError> {
+        if old_path == new_path {
+            return Ok(());
+        }
+        let old_prefix = format!("{}/", old_path.trim_end_matches('/'));
+        let new_prefix = format!("{}/", new_path.trim_end_matches('/'));
+        let txn = self
+            .db
+            .begin_write()
+            .map_err(|e| MetastoreError::IOError(format!("redb write txn: {e}")))?;
+        {
+            let mut table = txn
+                .open_table(METADATA_TABLE)
+                .map_err(|e| MetastoreError::IOError(format!("redb open_table: {e}")))?;
+            // Gather everything first (top-level + children) so the range
+            // iterator / remove guards all drop before we start inserting.
+            let mut to_rewrite: Vec<(String, String, Vec<u8>)> = Vec::new();
+            {
+                let top_bytes = table
+                    .get(old_path)
+                    .map_err(|e| MetastoreError::IOError(format!("redb get: {e}")))?
+                    .map(|guard| guard.value().to_vec());
+                if let Some(bytes) = top_bytes {
+                    to_rewrite.push((old_path.to_string(), new_path.to_string(), bytes));
+                }
+                let mut range_end = old_prefix.clone();
+                if let Some(last) = range_end.pop() {
+                    range_end.push(char::from_u32(last as u32 + 1).unwrap_or(char::MAX));
+                }
+                let iter = table
+                    .range(old_prefix.as_str()..range_end.as_str())
+                    .map_err(|e| MetastoreError::IOError(format!("redb range: {e}")))?;
+                for entry in iter {
+                    let (k, v) =
+                        entry.map_err(|e| MetastoreError::IOError(format!("redb iter: {e}")))?;
+                    let old_child = k.value().to_string();
+                    let suffix = old_child
+                        .strip_prefix(&old_prefix)
+                        .map(|s| s.to_string())
+                        .unwrap_or_default();
+                    let new_child = format!("{}{}", new_prefix, suffix);
+                    to_rewrite.push((old_child, new_child, v.value().to_vec()));
+                }
+            }
+            for (old_key, new_key, bytes) in to_rewrite {
+                let mut meta = deserialize_metadata(&bytes)?;
+                meta.path = new_key.clone();
+                let new_bytes = serialize_metadata(&meta);
+                table
+                    .remove(old_key.as_str())
+                    .map_err(|e| MetastoreError::IOError(format!("redb remove: {e}")))?;
+                table
+                    .insert(new_key.as_str(), new_bytes.as_slice())
+                    .map_err(|e| MetastoreError::IOError(format!("redb insert: {e}")))?;
+            }
+        }
+        txn.commit()
+            .map_err(|e| MetastoreError::IOError(format!("redb commit: {e}")))?;
+        Ok(())
+    }
+
+    fn set_file_metadata(
+        &self,
+        path: &str,
+        key: &str,
+        value: Vec<u8>,
+    ) -> Result<(), MetastoreError> {
+        let composite = fm_composite_key(path, key);
+        let txn = self
+            .db
+            .begin_write()
+            .map_err(|e| MetastoreError::IOError(format!("redb write txn: {e}")))?;
+        {
+            let mut table = txn
+                .open_table(FILE_METADATA_TABLE)
+                .map_err(|e| MetastoreError::IOError(format!("redb open fm table: {e}")))?;
+            table
+                .insert(composite.as_str(), value.as_slice())
+                .map_err(|e| MetastoreError::IOError(format!("redb fm insert: {e}")))?;
+        }
+        txn.commit()
+            .map_err(|e| MetastoreError::IOError(format!("redb fm commit: {e}")))?;
+        Ok(())
+    }
+
+    fn get_file_metadata(&self, path: &str, key: &str) -> Result<Option<Vec<u8>>, MetastoreError> {
+        let composite = fm_composite_key(path, key);
+        let txn = self
+            .db
+            .begin_read()
+            .map_err(|e| MetastoreError::IOError(format!("redb read txn: {e}")))?;
+        let table = txn
+            .open_table(FILE_METADATA_TABLE)
+            .map_err(|e| MetastoreError::IOError(format!("redb open fm table: {e}")))?;
+        match table.get(composite.as_str()) {
+            Ok(Some(guard)) => Ok(Some(guard.value().to_vec())),
+            Ok(None) => Ok(None),
+            Err(e) => Err(MetastoreError::IOError(format!("redb fm get: {e}"))),
+        }
+    }
 }
 
 // ── Tests ───────────────────────────────────────────────────────────
@@ -579,6 +1062,114 @@ mod tests {
         assert_eq!(restored.entry_type, meta.entry_type);
         assert_eq!(restored.zone_id, meta.zone_id);
         assert_eq!(restored.mime_type, meta.mime_type);
+    }
+
+    fn mk_meta(path: &str, version: u32) -> FileMetadata {
+        FileMetadata {
+            path: path.to_string(),
+            backend_name: "mem".to_string(),
+            physical_path: path.to_string(),
+            size: 0,
+            etag: None,
+            version,
+            entry_type: 0,
+            zone_id: None,
+            mime_type: None,
+            created_at_ms: None,
+            modified_at_ms: None,
+        }
+    }
+
+    #[test]
+    fn memory_put_if_version_vacant_accepts_zero() {
+        let ms = MemoryMetastore::new();
+        let r = ms.put_if_version(mk_meta("/a", 1), 0).unwrap();
+        assert!(r.success);
+        assert_eq!(r.current_version, 1);
+    }
+
+    #[test]
+    fn memory_put_if_version_conflict_returns_current() {
+        let ms = MemoryMetastore::new();
+        ms.put("/a", mk_meta("/a", 3)).unwrap();
+        let r = ms.put_if_version(mk_meta("/a", 4), 2).unwrap();
+        assert!(!r.success);
+        assert_eq!(r.current_version, 3);
+        assert_eq!(ms.get("/a").unwrap().unwrap().version, 3);
+    }
+
+    #[test]
+    fn memory_rename_path_moves_entry_and_children() {
+        let ms = MemoryMetastore::new();
+        ms.put("/old", mk_meta("/old", 1)).unwrap();
+        ms.put("/old/child", mk_meta("/old/child", 1)).unwrap();
+        ms.put("/old/sub/deep", mk_meta("/old/sub/deep", 1))
+            .unwrap();
+        ms.set_file_metadata("/old/child", "tag", b"value".to_vec())
+            .unwrap();
+
+        ms.rename_path("/old", "/new").unwrap();
+
+        assert!(ms.get("/old").unwrap().is_none());
+        assert!(ms.get("/old/child").unwrap().is_none());
+        assert!(ms.get("/old/sub/deep").unwrap().is_none());
+        assert_eq!(ms.get("/new").unwrap().unwrap().path, "/new");
+        assert_eq!(ms.get("/new/child").unwrap().unwrap().path, "/new/child");
+        assert_eq!(
+            ms.get("/new/sub/deep").unwrap().unwrap().path,
+            "/new/sub/deep"
+        );
+        assert_eq!(
+            ms.get_file_metadata("/new/child", "tag").unwrap(),
+            Some(b"value".to_vec())
+        );
+    }
+
+    #[test]
+    fn memory_set_and_get_file_metadata() {
+        let ms = MemoryMetastore::new();
+        ms.set_file_metadata("/x", "parsed_text", b"hello".to_vec())
+            .unwrap();
+        assert_eq!(
+            ms.get_file_metadata("/x", "parsed_text").unwrap(),
+            Some(b"hello".to_vec())
+        );
+        assert_eq!(ms.get_file_metadata("/x", "missing").unwrap(), None);
+    }
+
+    #[test]
+    fn memory_is_implicit_directory() {
+        let ms = MemoryMetastore::new();
+        ms.put("/dir/a", mk_meta("/dir/a", 1)).unwrap();
+        assert!(ms.is_implicit_directory("/dir").unwrap());
+        assert!(!ms.is_implicit_directory("/empty").unwrap());
+    }
+
+    #[test]
+    fn memory_list_paginated_slices_and_returns_cursor() {
+        let ms = MemoryMetastore::new();
+        for i in 0..5 {
+            let p = format!("/{i:02}");
+            ms.put(&p, mk_meta(&p, 1)).unwrap();
+        }
+        let page = ms.list_paginated("", true, 2, None).unwrap();
+        assert_eq!(page.items.len(), 2);
+        assert!(page.has_more);
+        assert_eq!(page.total_count, 5);
+        let page2 = ms
+            .list_paginated("", true, 2, page.next_cursor.as_deref())
+            .unwrap();
+        assert_eq!(page2.items.len(), 2);
+        assert!(page2.has_more);
+    }
+
+    #[test]
+    fn memory_delete_clears_file_metadata() {
+        let ms = MemoryMetastore::new();
+        ms.put("/x", mk_meta("/x", 1)).unwrap();
+        ms.set_file_metadata("/x", "k", b"v".to_vec()).unwrap();
+        ms.delete("/x").unwrap();
+        assert_eq!(ms.get_file_metadata("/x", "k").unwrap(), None);
     }
 
     #[test]

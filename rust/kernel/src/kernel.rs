@@ -473,7 +473,12 @@ impl Kernel {
             mount_table: MountTable::new(),
             trie: Trie::new(),
             vfs_lock: None,
-            metastore: None,
+            // Bare kernels boot with an in-memory metastore so tests,
+            // quickstarts and minimal-mode boots have a working SSOT
+            // without explicit wiring. `set_metastore_path` swaps it
+            // for a redb-backed one on demand; federation installs a
+            // per-mount `ZoneMetastore` via `install_mount_metastore`.
+            metastore: Some(Box::new(crate::metastore::MemoryMetastore::new())),
             vfs_lock_timeout_ms: 5000,
             read_hook_count: AtomicU64::new(0),
             write_hook_count: AtomicU64::new(0),
@@ -519,13 +524,6 @@ impl Kernel {
             .map_err(|e| KernelError::IOError(format!("RedbMetastore: {e:?}")))?;
         self.metastore = Some(Box::new(ms));
         Ok(())
-    }
-
-    /// Wire an in-memory metastore (DashMap-backed) — for tests + minimal mode.
-    /// Replaces the old Python ``DictMetastore`` test helper.
-    #[allow(dead_code)] // wired up in follow-up commit (PyKernel.set_memory_metastore)
-    pub fn set_memory_metastore(&mut self) {
-        self.metastore = Some(Box::new(crate::metastore::MemoryMetastore::new()));
     }
 
     /// Resolve metastore for a syscall: per-mount first, then global fallback.

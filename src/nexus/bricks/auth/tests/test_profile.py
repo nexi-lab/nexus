@@ -171,8 +171,10 @@ class TestInMemoryStore:
             )
         )
         store.mark_success("a")
-        assert store.get("a").usage_stats.success_count == 1
-        assert store.get("a").usage_stats.last_used_at is not None
+        p = store.get("a")
+        assert p is not None
+        assert p.usage_stats.success_count == 1
+        assert p.usage_stats.last_used_at is not None
 
     def test_mark_failure(self) -> None:
         store = InMemoryAuthProfileStore()
@@ -187,6 +189,7 @@ class TestInMemoryStore:
         )
         store.mark_failure("a", AuthProfileFailureReason.BILLING, raw_error="quota exceeded")
         p = store.get("a")
+        assert p is not None
         assert p.usage_stats.failure_count == 1
         assert p.usage_stats.cooldown_reason == AuthProfileFailureReason.BILLING
         assert p.usage_stats.raw_error == "quota exceeded"
@@ -203,7 +206,10 @@ class TestInMemoryStore:
             )
         )
         store.mark_failure("a", AuthProfileFailureReason.UNKNOWN, raw_error="x" * 1000)
-        assert len(store.get("a").usage_stats.raw_error) == RAW_ERROR_MAX_LEN
+        p = store.get("a")
+        assert p is not None
+        assert p.usage_stats.raw_error is not None
+        assert len(p.usage_stats.raw_error) == RAW_ERROR_MAX_LEN
 
     def test_mark_on_nonexistent(self) -> None:
         store = InMemoryAuthProfileStore()

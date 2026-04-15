@@ -178,7 +178,7 @@ def execute_migration(
             continue
 
         # Actually copy
-        cred = cred_by_id.get(entry.profile_id)
+        cred: dict[str, Any] | None = cred_by_id.get(entry.profile_id)
         if cred is None:
             entry.action = "skip_unmappable"
             entry.reason = "credential disappeared between plan and execute"

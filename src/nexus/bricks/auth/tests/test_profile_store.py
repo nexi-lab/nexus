@@ -116,11 +116,15 @@ class TestLRUCache:
     def test_upsert_evicts_cache_entry(self, sqlite_store: SqliteAuthProfileStore) -> None:
         p = make_profile("p1", success_count=0)
         sqlite_store.upsert(p)
-        assert sqlite_store.get("p1").usage_stats.success_count == 0
+        r = sqlite_store.get("p1")
+        assert r is not None
+        assert r.usage_stats.success_count == 0
 
         p2 = make_profile("p1", success_count=42)
         sqlite_store.upsert(p2)
-        assert sqlite_store.get("p1").usage_stats.success_count == 42
+        r2 = sqlite_store.get("p1")
+        assert r2 is not None
+        assert r2.usage_stats.success_count == 42
 
 
 # ---------------------------------------------------------------------------
@@ -223,6 +227,7 @@ class TestRawErrorTruncation:
         sqlite_store.mark_failure("p1", AuthProfileFailureReason.UNKNOWN, raw_error=long_error)
         p = sqlite_store.get("p1")
         assert p is not None
+        assert p.usage_stats.raw_error is not None
         assert len(p.usage_stats.raw_error) == RAW_ERROR_MAX_LEN
 
     def test_raw_error_none_by_default(self, sqlite_store: SqliteAuthProfileStore) -> None:
@@ -243,6 +248,7 @@ class TestOutcomeRecording:
         sqlite_store.mark_success("p1")
         sqlite_store.mark_success("p1")
         p = sqlite_store.get("p1")
+        assert p is not None
         assert p.usage_stats.success_count == 2
 
     def test_mark_success_clears_expired_cooldown(
@@ -256,6 +262,7 @@ class TestOutcomeRecording:
         )
         sqlite_store.mark_success("p1")
         p = sqlite_store.get("p1")
+        assert p is not None
         assert p.usage_stats.cooldown_until is None
         assert p.usage_stats.cooldown_reason is None
 
@@ -270,12 +277,14 @@ class TestOutcomeRecording:
         )
         sqlite_store.mark_success("p1")
         p = sqlite_store.get("p1")
+        assert p is not None
         assert p.usage_stats.cooldown_until is not None
 
     def test_mark_failure_sets_reason(self, sqlite_store: SqliteAuthProfileStore) -> None:
         sqlite_store.upsert(make_profile("p1"))
         sqlite_store.mark_failure("p1", AuthProfileFailureReason.BILLING)
         p = sqlite_store.get("p1")
+        assert p is not None
         assert p.usage_stats.cooldown_reason == AuthProfileFailureReason.BILLING
         assert p.usage_stats.failure_count == 1
 
@@ -376,6 +385,7 @@ class TestCooldownExpiryRace:
 
             # Verify profile is currently on cooldown
             p = store.get("p1")
+            assert p is not None
             assert p.usage_stats.cooldown_until is not None
 
             # Wait for cooldown to expire
@@ -384,17 +394,20 @@ class TestCooldownExpiryRace:
             # Success should clear expired cooldown
             store.mark_success("p1")
             p = store.get("p1")
+            assert p is not None
             assert p.usage_stats.cooldown_until is None
             assert p.usage_stats.cooldown_reason is None
 
             # Simulate pool behavior: failure sets cooldown via upsert
             p = store.get("p1")
+            assert p is not None
             p.usage_stats.failure_count += 1
             p.usage_stats.cooldown_until = datetime.utcnow() + timedelta(hours=1)
             p.usage_stats.cooldown_reason = AuthProfileFailureReason.OVERLOADED
             store.upsert(p)
 
             p = store.get("p1")
+            assert p is not None
             assert p.usage_stats.cooldown_until is not None
             assert p.usage_stats.cooldown_reason == AuthProfileFailureReason.OVERLOADED
         finally:
@@ -433,6 +446,7 @@ class TestCooldownExpiryRace:
             assert not errors, f"Thread errors: {errors}"
             store.flush()
             p = store.get("p1")
+            assert p is not None
             # Both operations completed — counts should reflect both
             assert p.usage_stats.success_count == 1
             assert p.usage_stats.failure_count == 1

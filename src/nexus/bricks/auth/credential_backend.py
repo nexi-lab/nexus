@@ -23,6 +23,8 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import Protocol, runtime_checkable
 
+from nexus.bricks.auth.oauth.token_resolver import TokenResolver
+
 logger = logging.getLogger(__name__)
 
 
@@ -142,7 +144,7 @@ class NexusTokenManagerBackend:
 
     _NAME = "nexus-token-manager"
 
-    def __init__(self, token_resolver: _TokenResolverLike) -> None:
+    def __init__(self, token_resolver: TokenResolver) -> None:
         self._resolver = token_resolver
 
     @property
@@ -254,26 +256,3 @@ class CredentialBackendRegistry:
 
     def list_backends(self) -> list[str]:
         return list(self._backends.keys())
-
-
-# ---------------------------------------------------------------------------
-# Private type alias for TokenResolver duck typing
-# ---------------------------------------------------------------------------
-
-
-# We use a Protocol here rather than importing TokenResolver directly to
-# avoid a circular dependency (token_resolver imports from contracts).
-class _ResolvedTokenLike(Protocol):
-    access_token: str
-    expires_at: datetime | None
-    scopes: tuple[str, ...]
-
-
-class _TokenResolverLike(Protocol):
-    async def resolve(
-        self,
-        provider: str,
-        user_email: str,
-        *,
-        zone_id: str = "root",
-    ) -> _ResolvedTokenLike: ...

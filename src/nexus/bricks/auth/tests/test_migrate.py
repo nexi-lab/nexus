@@ -104,6 +104,7 @@ class TestIdempotency:
         execute_migration(plan2, old_creds, sqlite_store, apply=True)
 
         p_after = sqlite_store.get("google/alice@co.com")
+        assert p_after is not None
         assert p_after.usage_stats.success_count == 42  # preserved
 
 
@@ -271,4 +272,5 @@ class TestDualReadStore:
         dual.upsert(make_profile("openai/test"))
         dual.mark_failure("openai/test", AuthProfileFailureReason.RATE_LIMIT)
         p = sqlite_store.get("openai/test")
+        assert p is not None
         assert p.usage_stats.cooldown_reason == AuthProfileFailureReason.RATE_LIMIT

@@ -76,7 +76,7 @@ class SearchProtocol(Protocol):
     Four tiers:
     - ``list``: Directory listing with pagination (sync)
     - ``glob`` / ``glob_batch``: Pattern matching (sync)
-    - ``grep``: Content search with adaptive strategy selection (async)
+    - ``grep``: Content search with adaptive strategy selection (sync)
     - ``semantic_search``: Natural language queries over indexed documents (async)
     """
 
@@ -107,7 +107,7 @@ class SearchProtocol(Protocol):
         context: "OperationContext | None" = None,
     ) -> dict[str, builtins.list[str]]: ...
 
-    async def grep(
+    def grep(
         self,
         pattern: str,
         path: str = "/",

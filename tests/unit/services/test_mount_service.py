@@ -426,11 +426,15 @@ class TestGrantMountOwnerPermission:
 
     def test_grants_permission_with_context(self, mount_service, mock_nexus_fs, operation_context):
         """Owner permission is granted when context has a user."""
+        # Setup rebac mock via nexus_fs.service("rebac")
+        rebac_mock = MagicMock()
+        mock_nexus_fs.service.return_value = rebac_mock
+
         mount_service._grant_owner_permission("/mnt/test", operation_context)
 
         # Issue #2033: MountService now uses rebac_service.rebac_create_sync
-        mock_nexus_fs.service("rebac").rebac_create_sync.assert_called_once()
-        call_kwargs = mock_nexus_fs.service("rebac").rebac_create_sync.call_args
+        rebac_mock.rebac_create_sync.assert_called_once()
+        call_kwargs = rebac_mock.rebac_create_sync.call_args
         assert call_kwargs.kwargs["relation"] == "direct_owner"
 
     def test_skips_permission_without_context(self, mount_service, mock_nexus_fs):
@@ -440,27 +444,26 @@ class TestGrantMountOwnerPermission:
 
     def test_creates_directory_entry(self, mount_service, mock_nexus_fs, operation_context):
         """Mount point directory entries are created via _setup_mount_point."""
-        from unittest.mock import MagicMock
+        # nexus_fs.metadata.get returns None so dirs don't exist yet
+        mock_nexus_fs.metadata.get.return_value = None
+        # Setup rebac mock for _grant_owner_permission called at end of _setup_mount_point
+        rebac_mock = MagicMock()
+        mock_nexus_fs.service.return_value = rebac_mock
 
-        # Provide a gateway mock with metadata_put + metadata_get
-        gw = MagicMock()
-        gw.metadata_get.return_value = None  # dirs don't exist yet
-        mount_service._gw = gw
         mount_service._setup_mount_point("/mnt/test", operation_context)
-        # metadata_put called for /mnt and /mnt/test
-        assert gw.metadata_put.call_count == 2
+        # metadata.put called for /mnt and /mnt/test
+        assert mock_nexus_fs.metadata.put.call_count == 2
 
     def test_handles_mkdir_error(self, mount_service, mock_nexus_fs, operation_context):
         """Errors creating directory do not prevent permission grant."""
-        from unittest.mock import MagicMock
-
-        gw = MagicMock()
-        gw.metadata_get.return_value = None
-        gw.metadata_put.side_effect = RuntimeError("put failed")
-        mount_service._gw = gw
+        mock_nexus_fs.metadata.get.return_value = None
+        mock_nexus_fs.metadata.put.side_effect = RuntimeError("put failed")
+        # Setup rebac mock for _grant_owner_permission called at end of _setup_mount_point
+        rebac_mock = MagicMock()
+        mock_nexus_fs.service.return_value = rebac_mock
 
         # Should not raise — errors in directory creation are logged but not fatal
         mount_service._setup_mount_point("/mnt/test", operation_context)
 
         # Permission grant should still be attempted even when mkdir fails
-        gw.rebac_create.assert_called_once()
+        rebac_mock.rebac_create_sync.assert_called_once()

@@ -8,7 +8,7 @@ All async service methods are tested via asyncio.run().
 
 import asyncio
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -37,30 +37,34 @@ def _populate_model_defaults(model: object) -> None:
 
 
 @pytest.fixture
-def mock_gateway():
-    """Create a mock NexusFSGateway with session factory."""
-    gw = MagicMock()
-    gw.rebac_check.return_value = True
-    gw.access = AsyncMock(return_value=True)
-    gw.metadata_get.return_value = MagicMock(is_dir=False)
+def mock_nexus_fs():
+    """Create a mock NexusFS instance for ShareLinkService."""
+    nx = MagicMock()
+    # rebac is accessed via nx.service("rebac")
+    rebac_mock = MagicMock()
+    rebac_mock.rebac_check_sync.return_value = True
+    nx.service.return_value = rebac_mock
+    nx.access.return_value = True
+    nx.metadata = MagicMock()
+    nx.metadata.get.return_value = MagicMock(is_dir=False)
     # Wire session.add to populate DB-generated defaults
     session = MagicMock()
     session.add.side_effect = _populate_model_defaults
-    gw.session_factory.return_value.__enter__ = MagicMock(return_value=session)
-    gw.session_factory.return_value.__exit__ = MagicMock(return_value=False)
-    return gw
+    nx.SessionLocal.return_value.__enter__ = MagicMock(return_value=session)
+    nx.SessionLocal.return_value.__exit__ = MagicMock(return_value=False)
+    return nx
 
 
 @pytest.fixture
-def service(mock_gateway):
-    """Create a ShareLinkService with mock gateway."""
-    return ShareLinkService(gateway=mock_gateway, enforce_permissions=True)
+def service(mock_nexus_fs):
+    """Create a ShareLinkService with mock NexusFS."""
+    return ShareLinkService(nx=mock_nexus_fs, enforce_permissions=True)
 
 
 @pytest.fixture
-def service_no_perms(mock_gateway):
+def service_no_perms(mock_nexus_fs):
     """Create a ShareLinkService with permissions disabled."""
-    return ShareLinkService(gateway=mock_gateway, enforce_permissions=False)
+    return ShareLinkService(nx=mock_nexus_fs, enforce_permissions=False)
 
 
 @pytest.fixture
@@ -95,20 +99,20 @@ def admin_context():
 class TestShareLinkServiceInit:
     """Tests for ShareLinkService construction."""
 
-    def test_init_stores_dependencies(self, mock_gateway):
-        """Service stores gateway and enforce flag."""
-        svc = ShareLinkService(gateway=mock_gateway, enforce_permissions=True)
-        assert svc._gw is mock_gateway
+    def test_init_stores_dependencies(self, mock_nexus_fs):
+        """Service stores nx and enforce flag."""
+        svc = ShareLinkService(nx=mock_nexus_fs, enforce_permissions=True)
+        assert svc._nx is mock_nexus_fs
         assert svc._enforce_permissions is True
 
-    def test_init_defaults_to_enforce(self, mock_gateway):
+    def test_init_defaults_to_enforce(self, mock_nexus_fs):
         """Default is to enforce permissions."""
-        svc = ShareLinkService(gateway=mock_gateway)
+        svc = ShareLinkService(nx=mock_nexus_fs)
         assert svc._enforce_permissions is True
 
-    def test_init_disable_permissions(self, mock_gateway):
+    def test_init_disable_permissions(self, mock_nexus_fs):
         """Permissions can be disabled."""
-        svc = ShareLinkService(gateway=mock_gateway, enforce_permissions=False)
+        svc = ShareLinkService(nx=mock_nexus_fs, enforce_permissions=False)
         assert svc._enforce_permissions is False
 
 
@@ -213,9 +217,9 @@ class TestCreateShareLink:
                 )
             )
 
-    def test_permission_denied(self, service, mock_gateway, context):
-        """Denied rebac_check raises AccessDeniedError."""
-        mock_gateway.rebac_check.return_value = False
+    def test_permission_denied(self, service, mock_nexus_fs, context):
+        """Denied rebac_check_sync raises AccessDeniedError."""
+        mock_nexus_fs.service("rebac").rebac_check_sync.return_value = False
         with pytest.raises(AccessDeniedError):
             asyncio.run(
                 service.create_share_link(
@@ -225,10 +229,10 @@ class TestCreateShareLink:
                 )
             )
 
-    def test_no_session_factory_returns_500(self, mock_gateway, context):
-        """Missing session_factory raises ServiceUnavailableError."""
-        mock_gateway.session_factory = None
-        svc = ShareLinkService(gateway=mock_gateway)
+    def test_no_session_factory_returns_500(self, mock_nexus_fs, context):
+        """Missing SessionLocal raises ServiceUnavailableError."""
+        mock_nexus_fs.SessionLocal = None
+        svc = ShareLinkService(nx=mock_nexus_fs)
         with pytest.raises(ServiceUnavailableError):
             asyncio.run(
                 svc.create_share_link(
@@ -238,9 +242,11 @@ class TestCreateShareLink:
                 )
             )
 
-    def test_skips_permission_check_when_disabled(self, service_no_perms, mock_gateway, context):
-        """With enforce_permissions=False, no rebac_check is called."""
-        mock_gateway.rebac_check.return_value = False  # Would fail if checked
+    def test_skips_permission_check_when_disabled(self, service_no_perms, mock_nexus_fs, context):
+        """With enforce_permissions=False, no rebac_check_sync is called."""
+        mock_nexus_fs.service(
+            "rebac"
+        ).rebac_check_sync.return_value = False  # Would fail if checked
         # Should still succeed because enforce_permissions=False
         # (will fail at DB level since mock session is used)
         asyncio.run(
@@ -250,8 +256,8 @@ class TestCreateShareLink:
                 context=context,
             )
         )
-        # rebac_check should not be called
-        mock_gateway.rebac_check.assert_not_called()
+        # rebac_check_sync should not be called
+        mock_nexus_fs.service("rebac").rebac_check_sync.assert_not_called()
 
 
 # =============================================================================
@@ -262,10 +268,10 @@ class TestCreateShareLink:
 class TestGetShareLink:
     """Tests for the get_share_link method."""
 
-    def test_no_session_factory(self, mock_gateway):
-        """Missing session_factory raises ServiceUnavailableError."""
-        mock_gateway.session_factory = None
-        svc = ShareLinkService(gateway=mock_gateway)
+    def test_no_session_factory(self, mock_nexus_fs):
+        """Missing SessionLocal raises ServiceUnavailableError."""
+        mock_nexus_fs.SessionLocal = None
+        svc = ShareLinkService(nx=mock_nexus_fs)
         with pytest.raises(ServiceUnavailableError):
             asyncio.run(svc.get_share_link(link_id="abc123"))
 
@@ -278,10 +284,10 @@ class TestGetShareLink:
 class TestRevokeShareLink:
     """Tests for the revoke_share_link method."""
 
-    def test_no_session_factory(self, mock_gateway):
-        """Missing session_factory raises ServiceUnavailableError."""
-        mock_gateway.session_factory = None
-        svc = ShareLinkService(gateway=mock_gateway)
+    def test_no_session_factory(self, mock_nexus_fs):
+        """Missing SessionLocal raises ServiceUnavailableError."""
+        mock_nexus_fs.SessionLocal = None
+        svc = ShareLinkService(nx=mock_nexus_fs)
         with pytest.raises(ServiceUnavailableError):
             asyncio.run(svc.revoke_share_link(link_id="abc123"))
 
@@ -294,10 +300,10 @@ class TestRevokeShareLink:
 class TestListShareLinks:
     """Tests for the list_share_links method."""
 
-    def test_no_session_factory(self, mock_gateway):
-        """Missing session_factory raises ServiceUnavailableError."""
-        mock_gateway.session_factory = None
-        svc = ShareLinkService(gateway=mock_gateway)
+    def test_no_session_factory(self, mock_nexus_fs):
+        """Missing SessionLocal raises ServiceUnavailableError."""
+        mock_nexus_fs.SessionLocal = None
+        svc = ShareLinkService(nx=mock_nexus_fs)
         with pytest.raises(ServiceUnavailableError):
             asyncio.run(svc.list_share_links())
 
@@ -310,10 +316,10 @@ class TestListShareLinks:
 class TestAccessShareLink:
     """Tests for the access_share_link method."""
 
-    def test_no_session_factory(self, mock_gateway):
-        """Missing session_factory raises ServiceUnavailableError."""
-        mock_gateway.session_factory = None
-        svc = ShareLinkService(gateway=mock_gateway)
+    def test_no_session_factory(self, mock_nexus_fs):
+        """Missing SessionLocal raises ServiceUnavailableError."""
+        mock_nexus_fs.SessionLocal = None
+        svc = ShareLinkService(nx=mock_nexus_fs)
         with pytest.raises(ServiceUnavailableError):
             asyncio.run(svc.access_share_link(link_id="abc123"))
 
@@ -326,9 +332,9 @@ class TestAccessShareLink:
 class TestGetShareLinkAccessLogs:
     """Tests for the get_share_link_access_logs method."""
 
-    def test_no_session_factory(self, mock_gateway):
-        """Missing session_factory raises ServiceUnavailableError."""
-        mock_gateway.session_factory = None
-        svc = ShareLinkService(gateway=mock_gateway)
+    def test_no_session_factory(self, mock_nexus_fs):
+        """Missing SessionLocal raises ServiceUnavailableError."""
+        mock_nexus_fs.SessionLocal = None
+        svc = ShareLinkService(nx=mock_nexus_fs)
         with pytest.raises(ServiceUnavailableError):
             asyncio.run(svc.get_share_link_access_logs(link_id="abc123"))

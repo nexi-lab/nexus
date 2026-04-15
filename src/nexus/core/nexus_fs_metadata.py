@@ -1253,6 +1253,16 @@ class MetadataMixin:
             except PermissionDeniedError:
                 return False
 
+            # Rust kernel fast-path: dcache hit → redb metastore fallback
+            if getattr(self, "_kernel", None) is not None:
+                _is_admin = (
+                    getattr(context, "is_admin", False)
+                    if context is not None and not isinstance(context, dict)
+                    else (context.get("is_admin", False) if isinstance(context, dict) else False)
+                )
+                if self._kernel.access(path, self._zone_id, _is_admin):
+                    return True
+
             if self.metadata.exists(path):
                 return True
             # Fallback: check Rust dcache/metastore (sys_write only updates Rust side)
@@ -1262,6 +1272,7 @@ class MetadataMixin:
                     return True
             except Exception:
                 pass
+            # Check implicit directory (path has children but no explicit entry)
             if is_implicit_dir:
                 return True
             # Virtual .readme/ overlay check (Issue #3728) — before reporting

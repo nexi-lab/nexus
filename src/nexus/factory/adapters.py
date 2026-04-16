@@ -1,5 +1,6 @@
 """Factory adapters — NexusFSFileReader, DaemonSkeletonBM25, WorkflowLifecycleAdapter."""
 
+import asyncio
 import logging
 from collections.abc import Callable
 from typing import Any
@@ -69,53 +70,63 @@ class _NexusFSFileReader:
         # search index gets real text, not utf-8 garbage from raw bytes.  The
         # metastore parsed_text cache, populated by ContentParserEngine /
         # AutoParseWriteHook, is checked first to avoid re-parsing.
+        #
+        # Fail-closed: if the parser is missing or errors out, we return an
+        # empty string instead of the raw-byte decoding.  Shipping utf-8 soup
+        # into the embedding pipeline wastes API budget and pollutes results;
+        # an empty content makes the daemon skip indexing and fall through to
+        # its content_cache probe.
         if any(path.endswith(ext) for ext in PARSEABLE_EXTENSIONS):
-            parsed = self._get_parsed_text(path, raw_bytes)
-            if parsed is not None:
-                return _sanitize_for_index(parsed)
+            parsed = await self._get_parsed_text(path, raw_bytes)
+            return _sanitize_for_index(parsed) if parsed is not None else ""
 
         if isinstance(content_raw, bytes):
             return _sanitize_for_index(content_raw.decode("utf-8", errors="ignore"))
         return _sanitize_for_index(str(content_raw))
 
-    def _get_parsed_text(self, path: str, raw: bytes) -> str | None:
+    async def _get_parsed_text(self, path: str, raw: bytes) -> str | None:
         """Return cached or freshly-parsed markdown for a parseable binary.
 
-        Returns None when no parser is wired or parsing fails; caller falls
-        back to raw-byte decoding so search still sees *something*.
+        Returns None when no parser is wired or parsing fails — caller maps
+        this to an empty ``read_text`` result so the indexing pipeline skips
+        the file instead of embedding raw bytes.
         """
         # 1) Metastore cache (shared with VirtualViewResolver / ContentParserEngine).
+        #    Defense in depth: sanitize on read in case an older entry was cached
+        #    before the write-path sanitizer existed.
         try:
             cached = self._nx.metadata.get_file_metadata(path, "parsed_text")
             if cached:
-                return (
+                cached_str = (
                     cached if isinstance(cached, str) else cached.decode("utf-8", errors="ignore")
                 )
+                return _sanitize_for_index(cached_str)
         except Exception:
             pass
 
-        # 2) Synchronous parse via injected parse_fn. parse_fn is the same
-        #    callable used by the VFS virtual-view resolver.
+        # 2) Synchronous parse via injected parse_fn.  The callable is sync, so
+        #    run it in a worker thread — otherwise a slow PDF blocks the event
+        #    loop and pins unrelated search/RPC traffic while it parses.
         if self._parse_fn is None:
             logger.warning(
                 "read_text: no parse_fn wired for parseable binary %s — "
-                "indexing will receive raw bytes",
+                "skipping instead of indexing raw bytes",
                 path,
             )
             return None
         try:
-            parsed_bytes = self._parse_fn(raw, path)
+            parsed_bytes = await asyncio.to_thread(self._parse_fn, raw, path)
         except Exception:
             logger.warning("read_text: parse_fn raised for %s", path, exc_info=True)
             return None
         if parsed_bytes is None:
             logger.warning("read_text: parse_fn returned None for %s", path)
             return None
-        text = parsed_bytes.decode("utf-8", errors="ignore")
+        text = _sanitize_for_index(parsed_bytes.decode("utf-8", errors="ignore"))
         logger.info("read_text: parsed %s → %d chars markdown", path, len(text))
 
-        # 3) Populate the metastore cache so subsequent read_text / virtual-view
-        #    reads are free.
+        # 3) Populate the metastore cache with the sanitized text so subsequent
+        #    reads (virtual view resolver, next index refresh) never see NULs.
         try:
             from datetime import UTC, datetime
 

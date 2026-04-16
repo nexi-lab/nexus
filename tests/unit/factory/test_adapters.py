@@ -116,26 +116,38 @@ class TestNexusFSFileReader:
         assert cache_calls[0].args[2] == "# Title\n\nBody text."
 
     @pytest.mark.asyncio
-    async def test_read_text_falls_back_to_raw_when_parse_returns_none(self) -> None:
+    async def test_read_text_fails_closed_when_parse_returns_none(self) -> None:
+        # Fail-closed: parseable binary with broken parser must NOT emit
+        # raw utf-8 garbage — the indexer would waste embedding budget on
+        # it and pollute search results.  Returning "" lets the daemon
+        # skip the file.
         nx = MagicMock()
         nx.sys_read = MagicMock(return_value=b"%PDF-1.4 unparseable")
         nx.metadata.get_file_metadata = MagicMock(return_value=None)
         parse_fn = MagicMock(return_value=None)
         reader = _NexusFSFileReader(nx, parse_fn=parse_fn)
 
-        # errors="ignore" means we get best-effort garbage — acceptable
-        # fallback; the point is read_text must not crash.
-        result = await reader.read_text("/doc.pdf")
-        assert isinstance(result, str)
+        assert await reader.read_text("/doc.pdf") == ""
 
     @pytest.mark.asyncio
-    async def test_read_text_no_parse_fn_falls_back_to_raw_for_pdf(self) -> None:
+    async def test_read_text_fails_closed_when_parse_fn_missing(self) -> None:
+        # Same fail-closed semantics when no parser is wired at all.
         nx = MagicMock()
         nx.sys_read = MagicMock(return_value=b"hello")
         nx.metadata.get_file_metadata = MagicMock(return_value=None)
         reader = _NexusFSFileReader(nx, parse_fn=None)
 
-        assert await reader.read_text("/doc.pdf") == "hello"
+        assert await reader.read_text("/doc.pdf") == ""
+
+    @pytest.mark.asyncio
+    async def test_read_text_fails_closed_when_parse_fn_raises(self) -> None:
+        nx = MagicMock()
+        nx.sys_read = MagicMock(return_value=b"%PDF-1.4")
+        nx.metadata.get_file_metadata = MagicMock(return_value=None)
+        parse_fn = MagicMock(side_effect=RuntimeError("boom"))
+        reader = _NexusFSFileReader(nx, parse_fn=parse_fn)
+
+        assert await reader.read_text("/doc.pdf") == ""
 
     @pytest.mark.asyncio
     async def test_read_text_non_parseable_extension_skips_parse_fn(self) -> None:
@@ -162,6 +174,40 @@ class TestNexusFSFileReader:
         result = await reader.read_text("/doc.pdf")
         assert "\x00" not in result
         assert result == "Clean DirtyText"
+
+    @pytest.mark.asyncio
+    async def test_read_text_strips_nul_bytes_before_caching(self) -> None:
+        # Regression for the adversarial-review finding: the metastore cache
+        # used to receive the un-sanitized string, so the next reindex that
+        # took the cached fast path re-hit the Postgres NUL rejection.
+        nx = MagicMock()
+        nx.sys_read = MagicMock(return_value=b"%PDF-1.4")
+        nx.metadata.get_file_metadata = MagicMock(return_value=None)
+        nx.metadata.set_file_metadata = MagicMock()
+        parse_fn = MagicMock(return_value=b"A\x00B\x00C")
+        reader = _NexusFSFileReader(nx, parse_fn=parse_fn)
+
+        await reader.read_text("/doc.pdf")
+        cache_calls = [
+            c for c in nx.metadata.set_file_metadata.call_args_list if c.args[1] == "parsed_text"
+        ]
+        assert len(cache_calls) == 1
+        assert "\x00" not in cache_calls[0].args[2]
+        assert cache_calls[0].args[2] == "ABC"
+
+    @pytest.mark.asyncio
+    async def test_read_text_sanitizes_poisoned_cache_on_read(self) -> None:
+        # Defense-in-depth: older cache entries (written before sanitization)
+        # must also be scrubbed on the cached-read path.
+        nx = MagicMock()
+        nx.sys_read = MagicMock(return_value=b"%PDF-1.4")
+        nx.metadata.get_file_metadata = MagicMock(return_value="cached\x00 string")
+        parse_fn = MagicMock()
+        reader = _NexusFSFileReader(nx, parse_fn=parse_fn)
+
+        result = await reader.read_text("/doc.pdf")
+        assert result == "cached string"
+        parse_fn.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_read_text_strips_nul_bytes_from_raw_fallback(self) -> None:

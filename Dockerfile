@@ -268,9 +268,11 @@ RUN mkdir -p /app/data && chown -R nexus:nexus /app
 USER nexus
 
 # ---------- Environment variables ----------
-# ARM64-specific mitigations (FAISS_OPT_LEVEL, OMP_NUM_THREADS) are applied
-# conditionally at runtime in docker-entrypoint.sh to avoid regressing x86_64
-# throughput (Issue #3125).  GLIBC_TUNABLES is set unconditionally above.
+# SIMD mitigations (FAISS_OPT_LEVEL, OMP_NUM_THREADS, MKL_ENABLE_INSTRUCTIONS)
+# are applied as portable defaults at runtime in docker-entrypoint.sh to avoid
+# faiss/torch SIGILL on diverse CPUs (Issue #3125).  Users with known-good
+# modern CPUs can override via `docker run -e <VAR>=<value>` for full SIMD
+# throughput.  GLIBC_TUNABLES is set unconditionally above.
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     NEXUS_HOST=0.0.0.0 \

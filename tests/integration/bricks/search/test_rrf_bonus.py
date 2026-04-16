@@ -9,6 +9,7 @@ from nexus.bricks.search.fusion import (
     RRF_TOP1_BONUS,
     RRF_TOP3_BONUS,
     rrf_fusion,
+    rrf_weighted_fusion,
 )
 
 
@@ -74,3 +75,23 @@ class TestRrfTop1Bonus:
         r4 = next(r for r in results if r["path"] == "r3.txt")  # zero-indexed -> rank 4
         expected = 1.0 / 64
         assert abs(r4["score"] - expected) < 1e-9
+
+
+class TestRrfWeightedBonus:
+    def test_weighted_top1_gets_bonus(self) -> None:
+        """rrf_weighted_fusion also applies the top-rank bonus."""
+        kw = [{"path": "only.txt", "chunk_index": 0, "score": 1.0}]
+        vec = [{"path": "only.txt", "chunk_index": 0, "score": 1.0}]
+        results = rrf_weighted_fusion(kw, vec, alpha=0.5, k=60, limit=10, id_key=None)
+        # alpha=0.5, rank=1 in both: 0.5*(1/61) + 0.5*(1/61) + RRF_TOP1_BONUS
+        expected = 0.5 * (1.0 / 61) + 0.5 * (1.0 / 61) + RRF_TOP1_BONUS
+        assert abs(results[0]["score"] - expected) < 1e-9
+
+    def test_weighted_bonus_disabled(self) -> None:
+        kw = [{"path": "only.txt", "chunk_index": 0, "score": 1.0}]
+        vec = [{"path": "only.txt", "chunk_index": 0, "score": 1.0}]
+        results = rrf_weighted_fusion(
+            kw, vec, alpha=0.5, k=60, limit=10, id_key=None, top_rank_bonus=False
+        )
+        expected = 0.5 * (1.0 / 61) + 0.5 * (1.0 / 61)
+        assert abs(results[0]["score"] - expected) < 1e-9

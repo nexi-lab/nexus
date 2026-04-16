@@ -275,13 +275,12 @@ def rrf_weighted_fusion(
     k: int = 60,
     limit: int = 10,
     id_key: str | None = "chunk_id",
+    top_rank_bonus: bool = True,
 ) -> list[dict[str, Any]]:
     """Combine results using RRF with alpha weighting.
 
     RRF score = (1 - alpha) * (1/(k+keyword_rank)) + alpha * (1/(k+vector_rank))
-
-    This combines the robustness of RRF (no score normalization needed)
-    with the ability to bias towards keyword or vector search.
+                + top-rank bonus (Issue #3773)
 
     Args:
         keyword_results: Results from keyword search
@@ -290,11 +289,13 @@ def rrf_weighted_fusion(
         k: RRF constant
         limit: Maximum results to return
         id_key: Key for identifying unique results
+        top_rank_bonus: Apply top-rank bonus (Issue #3773). Default True.
 
     Returns:
         Combined results ranked by weighted RRF score
     """
     rrf_scores: dict[str, dict[str, Any]] = {}
+    best_rank: dict[str, int] = {}
 
     # Add keyword results with (1 - alpha) weight
     for rank, raw_result in enumerate(keyword_results, start=1):
@@ -304,6 +305,7 @@ def rrf_weighted_fusion(
             rrf_scores[key] = {"result": result.copy(), "rrf_score": 0.0}
         rrf_scores[key]["rrf_score"] += (1 - alpha) * (1.0 / (k + rank))
         rrf_scores[key]["result"]["keyword_score"] = result.get("score", 0.0)
+        best_rank[key] = min(best_rank.get(key, rank), rank)
 
     # Add vector results with alpha weight
     for rank, raw_result in enumerate(vector_results, start=1):
@@ -313,15 +315,22 @@ def rrf_weighted_fusion(
             rrf_scores[key] = {"result": result.copy(), "rrf_score": 0.0}
         rrf_scores[key]["rrf_score"] += alpha * (1.0 / (k + rank))
         rrf_scores[key]["result"]["vector_score"] = result.get("score", 0.0)
+        best_rank[key] = min(best_rank.get(key, rank), rank)
 
-    # Sort by RRF score
+    if top_rank_bonus:
+        for key, entry in rrf_scores.items():
+            br = best_rank.get(key, 999)
+            if br == 1:
+                entry["rrf_score"] += RRF_TOP1_BONUS
+            elif br <= 3:
+                entry["rrf_score"] += RRF_TOP3_BONUS
+
     sorted_results = sorted(
         rrf_scores.values(),
         key=lambda x: x["rrf_score"],
         reverse=True,
     )[:limit]
 
-    # Update final scores
     for item in sorted_results:
         item["result"]["score"] = item["rrf_score"]
 

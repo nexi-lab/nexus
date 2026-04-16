@@ -375,15 +375,13 @@ impl crate::pipe::PipeBackend for SharedMemoryPipeBackend {
 }
 
 // ---------------------------------------------------------------------------
-// PyO3 methods
+// Pure Rust constructors (no PyO3 dependency)
 // ---------------------------------------------------------------------------
 
-#[pymethods]
 impl SharedMemoryPipeBackend {
-    /// Pure Rust constructor — no PyO3 dependency.
+    /// Pure Rust constructor — called by Kernel::setattr_pipe.
     ///
     /// Returns `(self, shm_path, data_rd_fd, space_rd_fd)`.
-    /// Used by `Kernel::setattr_pipe(io_profile="shared_memory")`.
     pub(crate) fn create_native(
         capacity: usize,
     ) -> Result<(Self, String, i32, i32), std::io::Error> {
@@ -462,7 +460,14 @@ impl SharedMemoryPipeBackend {
 
         Ok((core, shm_path, data_fds[0], space_fds[0]))
     }
+}
 
+// ---------------------------------------------------------------------------
+// PyO3 methods
+// ---------------------------------------------------------------------------
+
+#[pymethods]
+impl SharedMemoryPipeBackend {
     /// Create a new shared ring buffer (PyO3 wrapper over `create_native`).
     ///
     /// Returns `(self, shm_path, data_rd_fd, space_rd_fd)`.

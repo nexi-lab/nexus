@@ -281,15 +281,13 @@ impl crate::stream::StreamBackend for SharedMemoryStreamBackend {
 }
 
 // ---------------------------------------------------------------------------
-// PyO3 methods
+// Pure Rust constructors (no PyO3 dependency)
 // ---------------------------------------------------------------------------
 
-#[pymethods]
 impl SharedMemoryStreamBackend {
-    /// Pure Rust constructor — no PyO3 dependency.
+    /// Pure Rust constructor — called by Kernel::setattr_stream.
     ///
     /// Returns `(self, shm_path, data_rd_fd)`.
-    /// Used by `Kernel::setattr_stream(io_profile="shared_memory")`.
     pub(crate) fn create_native(capacity: usize) -> Result<(Self, String, i32), std::io::Error> {
         if capacity == 0 {
             return Err(std::io::Error::new(
@@ -341,7 +339,14 @@ impl SharedMemoryStreamBackend {
 
         Ok((core, shm_path, data_fds[0]))
     }
+}
 
+// ---------------------------------------------------------------------------
+// PyO3 methods
+// ---------------------------------------------------------------------------
+
+#[pymethods]
+impl SharedMemoryStreamBackend {
     /// Create a new shared stream buffer (PyO3 wrapper over `create_native`).
     ///
     /// Returns `(self, shm_path, data_rd_fd)`.

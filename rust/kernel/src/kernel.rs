@@ -219,6 +219,7 @@ pub struct SysCopyResult {
 }
 
 /// Result of sys_setattr(): Rust handles ALL filesystem entry types.
+#[derive(Debug)]
 pub struct SysSetAttrResult {
     /// Path that was operated on.
     pub path: String,
@@ -4085,5 +4086,140 @@ mod tests {
         assert!(event.user_id.is_none());
         assert!(event.agent_id.is_none());
         assert_eq!(event.zone_id.as_deref(), Some("root"));
+    }
+
+    // ── sys_setattr tests ─────────────────────────────────────────────
+
+    /// Helper: call sys_setattr with only the fields needed, rest defaulted.
+    fn setattr(
+        kernel: &Kernel,
+        path: &str,
+        entry_type: i32,
+    ) -> Result<SysSetAttrResult, KernelError> {
+        kernel.sys_setattr(
+            path, entry_type, "",    // backend_name
+            None,  // backend
+            None,  // metastore
+            None,  // raft_backend
+            false, // readonly
+            false, // admin_only
+            "memory", "root", 65536, // capacity
+            None,  // read_fd
+            None,  // write_fd
+            None,  // mime_type
+            None,  // modified_at_ms
+        )
+    }
+
+    #[test]
+    fn sys_setattr_create_dir() {
+        let k = Kernel::new();
+        let r = setattr(&k, "/test-dir", 1).unwrap();
+        assert!(r.created);
+        assert_eq!(r.entry_type, 1);
+
+        // Idempotent: second call returns created=false
+        let r2 = setattr(&k, "/test-dir", 1).unwrap();
+        assert!(!r2.created);
+    }
+
+    #[test]
+    fn sys_setattr_create_pipe() {
+        let k = Kernel::new();
+        let r = setattr(&k, "/test-pipe", 3).unwrap();
+        assert!(r.created);
+        assert_eq!(r.entry_type, 3);
+        assert_eq!(r.capacity, Some(65536));
+        assert!(k.has_pipe("/test-pipe"));
+
+        // Idempotent open
+        let r2 = setattr(&k, "/test-pipe", 3).unwrap();
+        assert!(!r2.created);
+    }
+
+    #[test]
+    fn sys_setattr_create_stream() {
+        let k = Kernel::new();
+        let r = setattr(&k, "/test-stream", 4).unwrap();
+        assert!(r.created);
+        assert_eq!(r.entry_type, 4);
+        assert!(k.has_stream("/test-stream"));
+
+        // Idempotent open
+        let r2 = setattr(&k, "/test-stream", 4).unwrap();
+        assert!(!r2.created);
+    }
+
+    #[test]
+    fn sys_setattr_entry_type_immutable() {
+        let k = Kernel::new();
+        // Create as DT_DIR
+        setattr(&k, "/immut", 1).unwrap();
+        // Try to change to DT_PIPE — should fail
+        let err = setattr(&k, "/immut", 3);
+        assert!(err.is_err());
+        match err.unwrap_err() {
+            KernelError::PermissionDenied(msg) => {
+                assert!(msg.contains("immutable"), "unexpected msg: {msg}");
+            }
+            other => panic!("expected PermissionDenied, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn sys_setattr_update_mime_type() {
+        let k = Kernel::new();
+        // Write a file via metastore so UPDATE has something to find
+        k.metastore_put(
+            "/update-test.txt",
+            crate::metastore::FileMetadata {
+                path: "/update-test.txt".to_string(),
+                backend_name: "test".to_string(),
+                physical_path: "".to_string(),
+                size: 0,
+                etag: None,
+                version: 1,
+                entry_type: 0,
+                zone_id: None,
+                mime_type: None,
+                created_at_ms: None,
+                modified_at_ms: None,
+            },
+        )
+        .unwrap();
+
+        // UPDATE with mime_type
+        let r = k
+            .sys_setattr(
+                "/update-test.txt",
+                0,
+                "",
+                None,
+                None,
+                None,
+                false,
+                false,
+                "memory",
+                "root",
+                65536,
+                None,
+                None,
+                Some("text/plain"),
+                None,
+            )
+            .unwrap();
+        assert!(!r.created);
+        assert_eq!(r.updated, vec!["mime_type"]);
+    }
+
+    #[test]
+    fn sys_setattr_update_file_not_found() {
+        let k = Kernel::new();
+        let err = setattr(&k, "/nonexistent", 0);
+        assert!(err.is_err());
+        match err.unwrap_err() {
+            KernelError::FileNotFound(_) => {}
+            other => panic!("expected FileNotFound, got: {other:?}"),
+        }
     }
 }

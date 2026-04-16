@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -230,3 +231,56 @@ class TestOfflineSafety:
             adapter = GwsCliSyncAdapter()
             result = await asyncio.wait_for(adapter.sync(), timeout=2.0)
         assert result.error is not None
+
+
+# ---------------------------------------------------------------------------
+# Opt-in real-binary e2e tests (nightly)
+# ---------------------------------------------------------------------------
+# Set TEST_WITH_REAL_<CLI>=1 to exercise actual binaries. Skipped by default
+# so local / CI runs stay hermetic. Runs against the user's real config —
+# validates that sync() produces parseable output on a working install.
+
+
+@pytest.mark.skipif(
+    not os.environ.get("TEST_WITH_REAL_GCLOUD_CLI"),
+    reason="opt-in: set TEST_WITH_REAL_GCLOUD_CLI=1",
+)
+class TestRealGcloudBinary:
+    async def test_gcloud_real_sync(self) -> None:
+        from nexus.bricks.auth.external_sync.gcloud_sync import GcloudSyncAdapter
+
+        adapter = GcloudSyncAdapter()
+        if not await adapter.detect():
+            pytest.skip("gcloud not configured on this machine")
+        result = await adapter.sync()
+        assert result.profiles, "Expected at least one gcloud profile"
+
+
+@pytest.mark.skipif(
+    not os.environ.get("TEST_WITH_REAL_GH_CLI"),
+    reason="opt-in: set TEST_WITH_REAL_GH_CLI=1",
+)
+class TestRealGhBinary:
+    async def test_gh_real_sync(self) -> None:
+        from nexus.bricks.auth.external_sync.gh_sync import GhCliSyncAdapter
+
+        adapter = GhCliSyncAdapter()
+        if not await adapter.detect():
+            pytest.skip("gh not configured on this machine")
+        result = await adapter.sync()
+        assert result.profiles, "Expected at least one gh profile"
+
+
+@pytest.mark.skipif(
+    not os.environ.get("TEST_WITH_REAL_GWS_CLI"),
+    reason="opt-in: set TEST_WITH_REAL_GWS_CLI=1",
+)
+class TestRealGwsBinary:
+    async def test_gws_real_sync(self) -> None:
+        from nexus.bricks.auth.external_sync.gws_sync import GwsCliSyncAdapter
+
+        adapter = GwsCliSyncAdapter()
+        if not await adapter.detect():
+            pytest.skip("gws not configured on this machine")
+        result = await adapter.sync()
+        assert result.profiles, "Expected at least one gws profile"

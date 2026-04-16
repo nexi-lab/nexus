@@ -14,6 +14,7 @@ Issue #3584.
 from __future__ import annotations
 
 import contextlib
+import os
 import posixpath
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -70,6 +71,23 @@ def extract_zone_id(canonical_path: str) -> tuple[str, str]:
     zone_id = parts[0]
     relative = "/" + parts[1] if len(parts) > 1 else "/"
     return zone_id, relative
+
+
+def _safe_metastore_path(ms: Any) -> str | None:
+    """Extract _redb_path from a metastore, guarding against mocks/invalid values.
+
+    Rust Kernel.add_mount(metastore_path=...) tries to open the path — if the
+    metastore is a MagicMock, getattr returns another MagicMock that str()s to
+    ``<MagicMock ...>`` and causes an IOError. Return None for non-str/PathLike.
+    """
+    if ms is None:
+        return None
+    value = getattr(ms, "_redb_path", None)
+    if value is None:
+        return None
+    if not isinstance(value, (str, os.PathLike)):
+        return None
+    return str(value)
 
 
 # ---------------------------------------------------------------------------
@@ -152,11 +170,10 @@ class MountTable:
                 backend
             ).__name__.startswith("CAS")
             _local_root = str(getattr(backend, "root_path", None)) if _is_cas_local else None
-            _ms = entry.metastore
-            _ms_path = getattr(_ms, "_redb_path", None) if _ms else None
+            _ms_path = _safe_metastore_path(entry.metastore)
             _bk_kwargs: dict = {
                 "py_backend": backend,
-                "metastore_path": str(_ms_path) if _ms_path else None,
+                "metastore_path": _ms_path,
             }
             # Best-effort per mount — a single bad metastore path or backend
             # must not disable the kernel globally (develop behavior).
@@ -248,11 +265,10 @@ class MountTable:
         # path sees live mounts. Pass py_backend= when no local_root so
         # Rust wraps Python backend via PyObjectStoreAdapter.
         if self._kernel is not None:
-            _ms = self._entries[canonical].metastore
-            _ms_path = getattr(_ms, "_redb_path", None) if _ms else None
+            _ms_path = _safe_metastore_path(self._entries[canonical].metastore)
             _kwargs: dict = {
                 "py_backend": backend,
-                "metastore_path": str(_ms_path) if _ms_path else None,
+                "metastore_path": _ms_path,
             }
             # is_external added in Task 2 (Issue #3710); guard for older kernels.
             try:

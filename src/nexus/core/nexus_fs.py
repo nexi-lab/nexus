@@ -1761,32 +1761,33 @@ class NexusFS(  # type: ignore[misc]
         for path in allowed_set:
             try:
                 result = self._kernel.sys_read(path, _rust_ctx)
-                content = None
+                bulk_content: bytes | None
                 if getattr(result, "is_external", False):
                     # External mount — delegate to sys_read which handles
                     # connector dispatch via Python router.
-                    content = self.sys_read(path, context=context)
+                    bulk_content = self.sys_read(path, context=context)
                 elif result.hit:
-                    content = result.data or b""
+                    bulk_content = result.data or b""
                 else:
                     # Rust fast path missed.  Virtual ``.readme/`` paths
                     # (Issue #3728) are not in the metastore, so we
                     # route through the same dispatch helper that the
                     # async ``sys_read`` uses before declaring "not found".
-                    content = self._try_virtual_readme_bytes(path, context)
+                    bulk_content = self._try_virtual_readme_bytes(path, context)
                     # Legacy/version-skew fallback: unflagged external mount
                     # won't set is_external. Delegate to sys_read which has
                     # the full compatibility fallback (matches single-read).
-                    if content is None:
+                    if bulk_content is None:
                         try:
-                            content = self.sys_read(path, context=context)
+                            bulk_content = self.sys_read(path, context=context)
                         except NexusFileNotFoundError:
-                            content = None
-                if content is None:
+                            bulk_content = None
+                if bulk_content is None:
                     if skip_errors:
                         results[path] = None
                         continue
                     raise NexusFileNotFoundError(path)
+                content = bulk_content
                 if return_metadata:
                     assert batch_meta is not None
                     meta = batch_meta.get(path)

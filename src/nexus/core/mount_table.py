@@ -93,6 +93,7 @@ class MountEntry:
     admin_only: bool
     io_profile: str
     stream_backend_factory: Any = None
+    is_external: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -153,7 +154,12 @@ class MountTable:
             _local_root = str(getattr(backend, "root_path", None)) if _is_cas_local else None
             _ms = entry.metastore
             _ms_path = getattr(_ms, "_redb_path", None) if _ms else None
-            with contextlib.suppress(Exception):
+            _bk_kwargs: dict = {
+                "py_backend": backend,
+                "metastore_path": str(_ms_path) if _ms_path else None,
+            }
+            # is_external added in Task 2 (Issue #3710); guard for older kernels.
+            try:
                 kernel.add_mount(
                     mount_point,
                     zone_id,
@@ -163,9 +169,22 @@ class MountTable:
                     _backend_name,
                     _local_root,
                     True,
-                    py_backend=backend,
-                    metastore_path=str(_ms_path) if _ms_path else None,
+                    is_external=entry.is_external,
+                    **_bk_kwargs,
                 )
+            except TypeError:
+                with contextlib.suppress(Exception):
+                    kernel.add_mount(
+                        mount_point,
+                        zone_id,
+                        entry.readonly,
+                        entry.admin_only,
+                        entry.io_profile,
+                        _backend_name,
+                        _local_root,
+                        True,
+                        **_bk_kwargs,
+                    )
 
     # -- Write operations (called by coordinator) ---------------------------
 
@@ -180,6 +199,7 @@ class MountTable:
         io_profile: str = "balanced",
         stream_backend_factory: Any = None,
         zone_id: str = ROOT_ZONE_ID,
+        is_external: bool = False,
     ) -> None:
         """Add a mount entry. Called by coordinator.mount()."""
         mount_point = normalize_path(mount_point)
@@ -191,6 +211,7 @@ class MountTable:
             admin_only=admin_only,
             io_profile=io_profile,
             stream_backend_factory=stream_backend_factory,
+            is_external=is_external,
         )
         _backend_name = backend.name
         if not isinstance(_backend_name, str):
@@ -218,9 +239,14 @@ class MountTable:
         # fast path sees live mounts.  Pass py_backend= when no local_root
         # so Rust wraps Python backend via PyObjectStoreAdapter.
         if self._kernel is not None:
-            with contextlib.suppress(Exception):
-                _ms = self._entries[canonical].metastore
-                _ms_path = getattr(_ms, "_redb_path", None) if _ms else None
+            _ms = self._entries[canonical].metastore
+            _ms_path = getattr(_ms, "_redb_path", None) if _ms else None
+            _kwargs: dict = {
+                "py_backend": backend,
+                "metastore_path": str(_ms_path) if _ms_path else None,
+            }
+            # is_external added in Task 2 (Issue #3710); guard for older kernels.
+            try:
                 self._kernel.add_mount(
                     mount_point,
                     zone_id,
@@ -230,9 +256,23 @@ class MountTable:
                     _backend_name,
                     _local_root,
                     True,
-                    py_backend=backend,
-                    metastore_path=str(_ms_path) if _ms_path else None,
+                    is_external=is_external,
+                    **_kwargs,
                 )
+            except TypeError:
+                # Kernel binary predates is_external — fall back without it.
+                with contextlib.suppress(Exception):
+                    self._kernel.add_mount(
+                        mount_point,
+                        zone_id,
+                        readonly,
+                        admin_only,
+                        io_profile,
+                        _backend_name,
+                        _local_root,
+                        True,
+                        **_kwargs,
+                    )
 
     def remove(self, mount_point: str, zone_id: str = ROOT_ZONE_ID) -> bool:
         """Remove a mount entry. Called by coordinator.unmount().

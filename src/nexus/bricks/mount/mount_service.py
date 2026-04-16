@@ -582,6 +582,7 @@ class MountService:
             backend,
             readonly=readonly,
             io_profile=io_profile,
+            is_external=(_entry_type == DT_EXTERNAL_STORAGE),
         )
         try:
             self._setup_mount_point(

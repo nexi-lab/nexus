@@ -86,11 +86,13 @@ impl DriverLifecycleCoordinator {
             raft_backend,
         )?;
 
-        // 2. Write DT_MOUNT metadata entry (best-effort)
+        // 2. Write DT_MOUNT metadata entry (best-effort) — zone-relative key.
+        // Mount point is always "/" in its own zone context (like Linux
+        // per-superblock root inode: ext4 stores "/", not "/mnt/disk1").
         let canonical = canonicalize(mount_point, zone_id);
         kernel.with_metastore(&canonical, |ms| {
             let meta = crate::metastore::FileMetadata {
-                path: mount_point.to_string(),
+                path: "/".to_string(),
                 backend_name: backend_name.to_string(),
                 physical_path: String::new(),
                 size: 0,
@@ -102,7 +104,7 @@ impl DriverLifecycleCoordinator {
                 created_at_ms: None,
                 modified_at_ms: None,
             };
-            let _ = ms.put(mount_point, meta);
+            let _ = ms.put("/", meta);
         });
 
         // 3. DCache entry for mount point
@@ -144,9 +146,10 @@ impl DriverLifecycleCoordinator {
     pub fn unmount(&self, kernel: &Kernel, mount_point: &str, zone_id: &str) -> bool {
         let canonical = canonicalize(mount_point, zone_id);
 
-        // 1. Delete metastore entry (best-effort)
+        // 1. Delete metastore entry (best-effort) — zone-relative key
+        // Mount point itself is always "/" in its own zone context.
         kernel.with_metastore(&canonical, |ms| {
-            let _ = ms.delete(mount_point);
+            let _ = ms.delete("/");
         });
 
         // 2. DCache evict — mount point + all children

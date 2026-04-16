@@ -551,6 +551,43 @@ class ZoneManager:
     def node_id(self) -> int:
         return int(self._node_id)
 
+    def _mount_via_kernel(
+        self,
+        mount_point: str,
+        backend: Any,
+        metastore: "RaftMetadataStore",
+    ) -> None:
+        """Register a mount with the kernel directly (sys_setattr + DLC bookkeeping).
+
+        Replaces the legacy ``DLC.mount()`` shim — calls the Rust kernel
+        ``sys_setattr(DT_MOUNT)`` for routing/metastore/dcache wiring,
+        then ``_store_mount_info()`` for Python-side bookkeeping.
+        """
+        import contextlib
+
+        from nexus.core.path_utils import normalize_path
+
+        normalized = normalize_path(mount_point)
+        backend_name = backend.name if isinstance(backend.name, str) else str(backend.name)
+        zone_handle = getattr(metastore, "_engine", None)
+
+        coordinator = self._coordinator
+        if coordinator is None:
+            return
+
+        kernel = coordinator._kernel
+        if kernel is not None:
+            with contextlib.suppress(Exception):
+                kernel.sys_setattr(
+                    normalized,
+                    DT_MOUNT,
+                    backend_name,
+                    py_backend=backend,
+                    py_zone_handle=zone_handle,
+                )
+
+        coordinator._store_mount_info(normalized, backend)
+
     def mount(
         self,
         parent_zone_id: str,
@@ -627,11 +664,7 @@ class ZoneManager:
                     dlc_path = global_path or mount_path
                     root_backend = self._coordinator.get_root_backend()
                     if root_backend is not None:
-                        self._coordinator.mount(
-                            dlc_path,
-                            root_backend,
-                            metastore=target_store,
-                        )
+                        self._mount_via_kernel(dlc_path, root_backend, target_store)
                 logger.debug(
                     "Mount '%s' → '%s' already committed to raft; ensured DLC entry",
                     mount_path,
@@ -672,11 +705,7 @@ class ZoneManager:
             dlc_path = global_path or mount_path
             root_backend = self._coordinator.get_root_backend()
             if root_backend is not None:
-                self._coordinator.mount(
-                    dlc_path,
-                    root_backend,
-                    metastore=target_store,
-                )
+                self._mount_via_kernel(dlc_path, root_backend, target_store)
 
         # Invalidate proxy dcache — entries resolved through this mount point
         # are now stale (the path prefix routes to a different zone).
@@ -1163,11 +1192,7 @@ class ZoneManager:
                         _target_store = self.get_store(target_zone_id)
                         root_backend = self._coordinator.get_root_backend()
                         if root_backend is not None and _target_store is not None:
-                            self._coordinator.mount(
-                                global_path,
-                                root_backend,
-                                metastore=_target_store,
-                            )
+                            self._mount_via_kernel(global_path, root_backend, _target_store)
 
                     logger.debug(
                         "Phase A done: DT_MOUNT '%s' in zone '%s'", global_path, parent_zone

@@ -219,6 +219,7 @@ dev = [
     "pytest-timeout>=2.3.0",  # Per-test timeout enforcement
     "freezegun>=1.4.0",  # Time mocking for tests
     "hypothesis>=6.0.0",  # Property-based testing for crypto/identity (Issue #1355)
+    "syrupy>=4.6.0",  # Snapshot testing for doctor output (Issue #3741)
 
     # Code Quality
     "ruff>=0.14.0",

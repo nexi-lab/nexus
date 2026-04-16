@@ -3555,6 +3555,7 @@ dev = [
     { name = "pytest-timeout" },
     { name = "pytest-xdist" },
     { name = "ruff" },
+    { name = "syrupy" },
     { name = "types-cachetools" },
     { name = "types-pyyaml" },
     { name = "types-requests" },
@@ -3779,6 +3780,7 @@ requires-dist = [
     { name = "sse-starlette", marker = "extra == 'event-streaming'", specifier = ">=2.2.0" },
     { name = "sse-starlette", marker = "extra == 'sse'", specifier = ">=2.2.0" },
     { name = "structlog", specifier = ">=24.4.0" },
+    { name = "syrupy", marker = "extra == 'dev'", specifier = ">=4.6.0" },
     { name = "tenacity", specifier = ">=8.2.0" },
     { name = "tigerbeetle", marker = "extra == 'pay'", specifier = ">=0.16.4" },
     { name = "tiktoken", specifier = ">=0.12" },
@@ -6129,6 +6131,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/83/d3/803453b36afefb7c2bb238361cd4ae6125a569b4db67cd9e79846ba2d68c/sympy-1.14.0.tar.gz", hash = "sha256:d3d3fe8df1e5a0b42f0e7bdf50541697dbe7d23746e894990c030e2b05e72517", size = 7793921 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a2/09/77d55d46fd61b4a135c444fc97158ef34a095e5681d0a6c10b75bf356191/sympy-1.14.0-py3-none-any.whl", hash = "sha256:e091cc3e99d2141a0ba2847328f5479b05d94a6635cb96148ccb3f34671bd8f5", size = 6299353 },
+]
+
+[[package]]
+name = "syrupy"
+version = "5.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pytest" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/2e/b0/24bca682d6a6337854be37f242d116cceeda9942571d5804c44bc1bdd427/syrupy-5.1.0.tar.gz", hash = "sha256:df543c7aa50d3cf1246e83d58fe490afe5f7dab7b41e74ecc0d8d23ae19bd4b8", size = 50495 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/de/70/cf880c3b95a6034ef673e74b369941b42315c01f1554a5637a4f8b911009/syrupy-5.1.0-py3-none-any.whl", hash = "sha256:95162d2b05e61ed3e13f117b88dfab7c58bd6f90e66ebbf918e8a77114ad51c5", size = 51658 },
 ]
 
 [[package]]

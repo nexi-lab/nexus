@@ -873,37 +873,33 @@ async def handle_is_directory(nexus_fs: "NexusFS", params: Any, context: Any) ->
 
 
 def handle_sys_lock(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:  # noqa: ARG001
-    """Acquire or extend advisory lock via Rust kernel."""
-    lock_id = nexus_fs._kernel.sys_lock(
-        nexus_fs._validate_path(params.path),
-        lock_id=getattr(params, "lock_id", "") or "",
+    """Acquire or extend advisory lock via NexusFS.sys_lock."""
+    lock_id = nexus_fs.sys_lock(
+        params.path,
+        lock_id=getattr(params, "lock_id", None),
         mode=getattr(params, "mode", "exclusive"),
         max_holders=getattr(params, "max_holders", 1),
-        ttl_secs=int(getattr(params, "ttl", 30)),
+        ttl=float(getattr(params, "ttl", 30)),
     )
     return {"acquired": lock_id is not None, "lock_id": lock_id}
 
 
 def handle_sys_unlock(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:  # noqa: ARG001
-    """Release advisory lock via Rust kernel."""
-    lock_id = getattr(params, "lock_id", "") or ""
-    force = getattr(params, "force", False)
-    if not force and not lock_id:
-        raise ValueError("lock_id is required for non-force release")
-    released = nexus_fs._kernel.sys_unlock(
-        nexus_fs._validate_path(params.path),
-        lock_id=lock_id,
-        force=force,
+    """Release advisory lock via NexusFS.sys_unlock."""
+    released = nexus_fs.sys_unlock(
+        params.path,
+        lock_id=getattr(params, "lock_id", None),
+        force=getattr(params, "force", False),
     )
     return {"released": released}
 
 
 def handle_lock_acquire(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:  # noqa: ARG001
     """Tier 2 lock_acquire — dict wrapper over sys_lock for gRPC."""
-    lock_id = nexus_fs._kernel.sys_lock(
-        nexus_fs._validate_path(params.path),
+    lock_id = nexus_fs.sys_lock(
+        params.path,
         mode=getattr(params, "mode", "exclusive"),
         max_holders=getattr(params, "max_holders", 1),
-        ttl_secs=int(getattr(params, "ttl", 30)),
+        ttl=float(getattr(params, "ttl", 30)),
     )
     return {"acquired": lock_id is not None, "lock_id": lock_id}

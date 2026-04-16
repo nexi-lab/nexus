@@ -13,7 +13,6 @@ and no longer exposed to Python.
 import pytest
 from nexus_kernel import (
     Kernel,
-    VFSLockManager,
 )
 
 # Entry type constants
@@ -27,11 +26,9 @@ DT_EXTERNAL = 5
 
 @pytest.fixture
 def kernel():
-    """Create Kernel with root mount and VFS lock."""
+    """Create Kernel with root mount."""
     k = Kernel()
-    vfs_lock = VFSLockManager()
     k.add_mount("/", "root", False, False, "balanced")
-    k.set_vfs_lock(vfs_lock)
     return k
 
 
@@ -42,9 +39,7 @@ class TestSysStat:
     def test_dcache_hit_file(self):
         """DCache hit for regular file returns dict."""
         kernel = Kernel()
-        vfs_lock = VFSLockManager()
         kernel.add_mount("/", "root", False, False, "balanced")
-        kernel.set_vfs_lock(vfs_lock)
         kernel.dcache_put(
             "/workspace/test.txt",
             "local",
@@ -73,9 +68,7 @@ class TestSysStat:
     def test_dcache_hit_directory(self):
         """DCache hit for directory returns dict with dir defaults."""
         kernel = Kernel()
-        vfs_lock = VFSLockManager()
         kernel.add_mount("/", "root", False, False, "balanced")
-        kernel.set_vfs_lock(vfs_lock)
         kernel.dcache_put(
             "/workspace/docs",
             "local",
@@ -100,9 +93,7 @@ class TestSysStat:
     def test_virtual_path_returns_none(self):
         """PathTrie resolver match returns None (Python handles)."""
         kernel = Kernel()
-        vfs_lock = VFSLockManager()
         kernel.add_mount("/", "root", False, False, "balanced")
-        kernel.set_vfs_lock(vfs_lock)
         kernel.trie_register("/{}/proc/{}/status", 42)
         result = kernel.sys_stat("/zone/proc/123/status", "root", False)
         assert result is None
@@ -110,9 +101,7 @@ class TestSysStat:
     def test_hooks_no_longer_bypass(self):
         """Stat hooks no longer bypass kernel — always returns dcache result."""
         kernel = Kernel()
-        vfs_lock = VFSLockManager()
         kernel.add_mount("/", "root", False, False, "balanced")
-        kernel.set_vfs_lock(vfs_lock)
         kernel.dcache_put("/workspace/test.txt", "local", "test.txt", 100, DT_REG)
         kernel.set_hook_count("stat", 1)
         result = kernel.sys_stat("/workspace/test.txt", "root", False)
@@ -121,9 +110,7 @@ class TestSysStat:
     def test_default_mime_type_file(self):
         """File without mime_type gets application/octet-stream."""
         kernel = Kernel()
-        vfs_lock = VFSLockManager()
         kernel.add_mount("/", "root", False, False, "balanced")
-        kernel.set_vfs_lock(vfs_lock)
         kernel.dcache_put("/workspace/data.bin", "local", "data.bin", 512, DT_REG)
         result = kernel.sys_stat("/workspace/data.bin", "root", False)
         assert result is not None
@@ -132,9 +119,7 @@ class TestSysStat:
     def test_default_mime_type_directory(self):
         """Directory without mime_type gets inode/directory."""
         kernel = Kernel()
-        vfs_lock = VFSLockManager()
         kernel.add_mount("/", "root", False, False, "balanced")
-        kernel.set_vfs_lock(vfs_lock)
         kernel.dcache_put("/workspace/dir", "local", "", 0, DT_DIR)
         result = kernel.sys_stat("/workspace/dir", "root", False)
         assert result is not None
@@ -148,9 +133,7 @@ class TestSysStat:
     def test_timestamps_are_none(self):
         """Timestamps are None from Rust (Python fills from FileMetadata)."""
         kernel = Kernel()
-        vfs_lock = VFSLockManager()
         kernel.add_mount("/", "root", False, False, "balanced")
-        kernel.set_vfs_lock(vfs_lock)
         kernel.dcache_put("/workspace/f.txt", "local", "f.txt", 100, DT_REG)
         result = kernel.sys_stat("/workspace/f.txt", "root", False)
         assert result is not None
@@ -165,9 +148,7 @@ class TestHookCounts:
     def test_stat_always_returns_dcache_hit(self):
         """Hooks no longer bypass sys_stat — kernel always returns dcache result."""
         kernel = Kernel()
-        vfs_lock = VFSLockManager()
         kernel.add_mount("/", "root", False, False, "balanced")
-        kernel.set_vfs_lock(vfs_lock)
         kernel.dcache_put("/workspace/f.txt", "local", "f.txt", 100, DT_REG)
         # Without hooks -> returns result
         assert kernel.sys_stat("/workspace/f.txt", "root", False) is not None

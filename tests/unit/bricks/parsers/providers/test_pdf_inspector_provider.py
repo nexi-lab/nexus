@@ -6,6 +6,7 @@ import sys
 import pytest
 
 from nexus.bricks.parsers.providers.pdf_inspector_provider import PdfInspectorProvider
+from nexus.contracts.exceptions import ParserError
 
 FIXTURES = pathlib.Path(__file__).parent / "fixtures"
 
@@ -50,3 +51,15 @@ async def test_parse_text_pdf_returns_markdown_and_metadata():
     assert result.metadata["has_encoding_issues"] is False
     assert result.chunks  # non-empty
     assert isinstance(result.structure, dict)
+
+
+@pytest.mark.asyncio
+async def test_parse_invalid_bytes_raises_parser_error():
+    pytest.importorskip("pdf_inspector")
+    provider = PdfInspectorProvider()
+
+    with pytest.raises(ParserError) as exc_info:
+        await provider.parse(b"not a real pdf", "broken.pdf")
+
+    assert exc_info.value.parser == "pdf-inspector"
+    assert "broken.pdf" in str(exc_info.value) or exc_info.value.path == "broken.pdf"

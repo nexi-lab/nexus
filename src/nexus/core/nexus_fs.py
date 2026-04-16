@@ -2440,9 +2440,15 @@ class NexusFS(  # type: ignore[misc]
         # Virtual .readme/ paths are read-only (Issue #3728).
         self._reject_if_virtual_readme(path, context, op="write")
 
-        # Get existing metadata for permission check and update detection (single query)
+        # Get existing metadata — lazy when no write hooks (avoids wasted metastore query on new files)
         now = datetime.now(UTC)
-        meta = _meta if _meta is not None else route.metastore.get(path)
+        if _meta is not None:
+            meta = _meta
+        elif self._kernel.hook_count("write") > 0:
+            # Hooks need old_metadata for permission check (owner fast-path vs parent check)
+            meta = route.metastore.get(path)
+        else:
+            meta = None
 
         # PRE-INTERCEPT: pre-write hooks (Issue #899)
         # Hook handles existing-file (owner fast-path) vs new-file (parent check)

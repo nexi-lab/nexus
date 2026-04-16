@@ -4132,12 +4132,15 @@ def collect_all() -> tuple[
             text = rs_path.read_text()
             traits.extend(parse_traits(text))
 
-    # All export names (for kernel_exports.py)
+    # All export names (for kernel_exports.py) — use Python-visible names
+    # (#[pyclass(name = "...")] renaming), not Rust struct names.
     all_names: list[str] = []
     for _mod, func_name in func_exports:
         all_names.append(func_name)
     for _mod, cls_name in class_exports:
-        all_names.append(cls_name)
+        cls_def = classes.get(cls_name)
+        py_name = cls_def.py_name if cls_def and cls_def.py_name else cls_name
+        all_names.append(py_name)
 
     return module_functions, classes, class_order, traits, all_names
 

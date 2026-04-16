@@ -152,9 +152,8 @@ async def _wire_services(
         nx.sys_setattr("/__sys__/services/federation", service=federation)
         logger.debug("[LINK] Federation service enlisted")
 
-        # Lock manager upgrade deleted — Rust kernel LockManager handles
-        # federation upgrade via upgrade_to_distributed() internally when
-        # attach_raft_zone_to_kernel wires the ZoneConsensus node.
+        # Lock manager upgrade handled by Rust kernel: sys_setattr(DT_MOUNT) with
+        # py_zone_handle upgrades LockManager to distributed for root zone.
 
         # Wire DLC into ZoneManager for runtime mount registration
         _zone_mgr = federation.zone_manager

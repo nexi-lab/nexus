@@ -1,7 +1,6 @@
 """Unified filesystem implementation for Nexus."""
 # Kernel interface unification — see KERNEL-ARCHITECTURE.md §4.5
 
-import asyncio
 import builtins
 import contextlib
 import logging
@@ -19,7 +18,7 @@ from nexus.contracts.exceptions import (
     InvalidPathError,
     NexusFileNotFoundError,
 )
-from nexus.contracts.metadata import DT_DIR, FileMetadata
+from nexus.contracts.metadata import DT_DIR, DT_MOUNT, FileMetadata
 from nexus.contracts.types import OperationContext
 from nexus.core.config import (
     CacheConfig,
@@ -28,7 +27,6 @@ from nexus.core.config import (
     ParseConfig,
     PermissionConfig,
 )
-from nexus.core.hash_fast import hash_content
 from nexus.core.metastore import MetastoreABC
 from nexus.core.nexus_fs_dispatch import DispatchMixin
 from nexus.core.nexus_fs_watch import WatchMixin
@@ -214,10 +212,6 @@ class NexusFS(  # type: ignore[misc]
             metadata_store,
             self._kernel,
         )
-
-        # Custom backends for SHM/remote pipes/streams (non-standard, keep in Python)
-        self._custom_pipe_backends: dict[str, Any] = {}
-        self._custom_stream_backends: dict[str, Any] = {}
 
         logger.info(
             "IPC primitives initialized: DriverCoordinator (self_address=%s)",
@@ -637,12 +631,10 @@ class NexusFS(  # type: ignore[misc]
             parent_path = self._get_parent_path(parent_path)
 
         for parent_dir in reversed(parents_to_create):
-            self._setattr_create(
+            self._kernel.sys_setattr(
                 parent_dir,
                 DT_DIR,
-                {
-                    "zone_id": ctx.zone_id or ROOT_ZONE_ID,
-                },
+                zone_id=ctx.zone_id or ROOT_ZONE_ID,
             )
 
     def _check_is_directory(
@@ -911,12 +903,15 @@ class NexusFS(  # type: ignore[misc]
     ) -> dict[str, Any]:
         """Upsert file metadata (chmod/chown/utimensat + mknod analog).
 
+        Rust kernel handles ALL filesystem entry types. Python dispatches
+        ``/__sys__/`` (ServiceRegistry) before the Rust call.
+
         Upsert semantics — create-on-write for metadata:
         - Path missing + entry_type provided → CREATE inode
         - Path missing + no entry_type → NexusFileNotFoundError
         - Path exists + no entry_type → UPDATE mutable fields
         - Path exists + same entry_type (DT_PIPE/DT_STREAM) → IDEMPOTENT OPEN (recover buffer)
-        - Path exists + different entry_type → ValueError (immutable after creation)
+        - Path exists + different entry_type → PermissionDenied (immutable after creation)
 
         Args:
             path: Virtual file path. Paths under ``/__sys__/`` are kernel
@@ -929,9 +924,8 @@ class NexusFS(  # type: ignore[misc]
             Dict with path, created flag, and type-specific fields.
         """
         # ── /__sys__/ kernel management dispatch ──────────────────────
-        # Service and hook registration via syscall. These paths bypass
-        # the normal metastore path — kernel routes them to ServiceRegistry
-        # or KernelDispatch instead.
+        # Service registration via syscall. These paths bypass the normal
+        # metastore path — kernel routes them to ServiceRegistry.
         if path.startswith("/__sys__/services/"):
             name = path.rsplit("/", 1)[-1]
             service = attrs.get("service")
@@ -946,75 +940,11 @@ class NexusFS(  # type: ignore[misc]
             )
             return {"path": path, "registered": True, "service": name}
 
-        if path.startswith("/__sys__/hooks/"):
-            # Standalone hook registration. Services with hook_spec use
-            # /__sys__/services/ instead (enlist auto-detects hooks).
-            # TODO: Add KernelDispatch.register_hook(name, hook) for
-            # standalone hooks (debug tracers, temporary observers).
-            raise NotImplementedError(
-                "Standalone hook registration via /__sys__/hooks/ not yet supported. "
-                "Use /__sys__/services/ with a service that declares hook_spec()."
-            )
-
         path = self._validate_path(path)
+        entry_type = attrs.get("entry_type", 0)
 
-        meta = self.metadata.get(path)
-
-        # --- CREATE path (inode doesn't exist + entry_type provided) ---
-        if meta is None:
-            entry_type = attrs.get("entry_type")
-            if entry_type is None:
-                raise NexusFileNotFoundError(path)
-            return self._setattr_create(path, entry_type, attrs)
-
-        # --- IDEMPOTENT OPEN: same entry_type → recover buffer ---
-        if "entry_type" in attrs:
-            from nexus.contracts.metadata import DT_MOUNT, DT_PIPE, DT_STREAM
-
-            requested_type = attrs["entry_type"]
-            if meta.entry_type == requested_type and requested_type == DT_MOUNT:
-                return {"path": path, "created": False, "entry_type": requested_type}
-            if meta.entry_type == requested_type and requested_type == DT_PIPE:
-                # Idempotent open: re-create Rust buffer if lost after restart
-                if not self._kernel.has_pipe(path):
-                    self._kernel.create_pipe(path, attrs.get("capacity", 65_536))
-                return {"path": path, "created": False, "entry_type": requested_type}
-            if meta.entry_type == requested_type and requested_type == DT_STREAM:
-                # Idempotent open: re-create Rust buffer if lost after restart
-                if not self._kernel.has_stream(path):
-                    self._kernel.create_stream(path, attrs.get("capacity", 65_536))
-                return {"path": path, "created": False, "entry_type": requested_type}
-            if meta.entry_type == requested_type and requested_type == DT_DIR:
-                return {"path": path, "created": False, "entry_type": requested_type}
-            raise ValueError(
-                f"entry_type is immutable (cannot change {meta.entry_type} → {requested_type})"
-            )
-
-        # --- UPDATE path (existing inode, mutable fields only) ---
-        from dataclasses import replace
-
-        _MUTABLE_FIELDS = frozenset({"mime_type", "modified_at"})
-        valid_attrs = {k: v for k, v in attrs.items() if k in _MUTABLE_FIELDS}
-        invalid_attrs = {k for k in attrs if k not in _MUTABLE_FIELDS and k != "entry_type"}
-        if invalid_attrs and not valid_attrs:
-            raise ValueError(f"Cannot update immutable fields: {invalid_attrs}")
-        if not valid_attrs:
-            return {"path": path, "created": False, "updated": []}
-
-        new_meta = replace(meta, **valid_attrs)
-        self.metadata.put(new_meta)
-        return {"path": path, "created": False, "updated": list(valid_attrs.keys())}
-
-    def _setattr_create(self, path: str, entry_type: int, attrs: dict[str, Any]) -> dict[str, Any]:
-        """Create an inode via sys_setattr upsert — dispatches by entry_type."""
-        from nexus.contracts.metadata import DT_MOUNT, DT_PIPE, DT_STREAM
-
-        capacity = attrs.get("capacity", 65_536)
-
+        # ── DT_MOUNT: resolve backend params for Rust kernel ─────────
         if entry_type == DT_MOUNT:
-            # Mount a backend to this path via DriverLifecycleCoordinator.
-            # Accepts a pre-constructed backend instance (kernel module API)
-            # or backend_type + config for service-level construction (future).
             backend = attrs.get("backend")
             if backend is None:
                 raise ValueError(
@@ -1025,112 +955,61 @@ class NexusFS(  # type: ignore[misc]
             admin_only = attrs.get("admin_only", False)
             io_profile = attrs.get("io_profile", "balanced")
             zone_id = attrs.get("zone_id", ROOT_ZONE_ID)
-            target_zone_id = attrs.get("target_zone_id")
+            metastore = attrs.get("metastore")
+            _backend_name = backend.name if isinstance(backend.name, str) else str(backend.name)
 
-            self._driver_coordinator.mount(
+            # CAS-local detection — Rust takes ownership of the backend natively.
+            _is_cas_local = getattr(backend, "has_root_path", False) and type(
+                backend
+            ).__name__.startswith("CAS")
+            _local_root = str(getattr(backend, "root_path", None)) if _is_cas_local else None
+
+            # Metastore resolution: redb path or ZoneHandle for federation DI.
+            _ms_path = getattr(metastore, "_redb_path", None) if metastore is not None else None
+            _zone_handle = getattr(metastore, "_engine", None) if metastore is not None else None
+
+            result = self._kernel.sys_setattr(
+                path,
+                entry_type,
+                _backend_name,
+                local_root=_local_root,
+                fsync=True,
+                py_backend=backend,
+                readonly=readonly,
+                admin_only=admin_only,
+                io_profile=io_profile,
+                zone_id=zone_id,
+                metastore_path=str(_ms_path) if _ms_path else None,
+                py_zone_handle=_zone_handle,
+            )
+
+            # Python-side bookkeeping: store _PyMountInfo + dispatch event
+            self._driver_coordinator._store_mount_info(
                 path,
                 backend,
                 readonly=readonly,
                 admin_only=admin_only,
                 io_profile=io_profile,
-            )
-
-            # Write DT_MOUNT metadata to metastore
-            now = datetime.now(UTC)
-            metadata = FileMetadata(
-                path=path,
-                backend_name=backend.name,
-                physical_path="",
-                size=0,
-                entry_type=DT_MOUNT,
-                mime_type="inode/mount",
-                created_at=now,
-                modified_at=now,
-                version=1,
                 zone_id=zone_id,
-                target_zone_id=target_zone_id,
             )
-            route = self.router.route(path, is_admin=True, zone_id=self._zone_id)
-            route.metastore.put(metadata)
-            return {
-                "path": path,
-                "created": True,
-                "entry_type": entry_type,
-                "backend": backend.name,
-            }
+            return result
 
-        if entry_type == DT_PIPE:
-            from nexus.core.pipe import PipeError
+        # ── All other FS types → Rust kernel sys_setattr ─────────────
+        capacity = attrs.get("capacity", 65_536)
+        mime_type = attrs.get("mime_type")
+        modified_at_ms = attrs.get("modified_at_ms")
+        zone_id = attrs.get("zone_id", ROOT_ZONE_ID)
 
-            io_profile = attrs.get("io_profile", "memory")
-            try:
-                if io_profile == "shared_memory":
-                    from nexus.core.shm_pipe import SharedMemoryPipeBackend
+        result = self._kernel.sys_setattr(
+            path,
+            entry_type,
+            zone_id=zone_id,
+            capacity=capacity,
+            mime_type=mime_type,
+            modified_at_ms=modified_at_ms,
+        )
 
-                    pipe_backend, _shm_path, _data_rd_fd, _space_rd_fd = (
-                        SharedMemoryPipeBackend.create(capacity)
-                    )
-                    self._custom_pipe_backends[path] = pipe_backend
-                    # Rust kernel tracks the inode (metastore + dcache)
-                    self._kernel.create_pipe(path, capacity)
-                else:
-                    # Standard memory pipe → Rust kernel IPC registry
-                    self._kernel.create_pipe(path, capacity)
-            except (PipeError, Exception) as exc:
-                raise BackendError(str(exc)) from exc
-            return {"path": path, "created": True, "entry_type": entry_type, "capacity": capacity}
-
-        if entry_type == DT_STREAM:
-            from nexus.core.stream import StreamError
-
-            io_profile = attrs.get("io_profile", "memory")
-
-            # Check if mount provides a custom stream backend factory
-            # (e.g. CAS-backed or WAL-backed streams). Default: Rust kernel IPC stream.
-            _mount_entry = self.router.get_mount_entry_for_path(path)
-            _factory = _mount_entry.stream_backend_factory if _mount_entry else None
-
-            try:
-                if _factory is not None:
-                    backend = _factory(path, capacity)
-                    self._custom_stream_backends[path] = backend
-                    self._kernel.create_stream(path, capacity)
-                elif io_profile == "shared_memory":
-                    from nexus.core.shm_stream import SharedMemoryStreamBackend
-
-                    stream_backend, _shm_path, _data_rd_fd = SharedMemoryStreamBackend.create(
-                        capacity
-                    )
-                    self._custom_stream_backends[path] = stream_backend
-                    self._kernel.create_stream(path, capacity)
-                else:
-                    # Standard memory stream → Rust kernel IPC registry
-                    self._kernel.create_stream(path, capacity)
-            except (StreamError, Exception) as exc:
-                raise BackendError(str(exc)) from exc
-            return {"path": path, "created": True, "entry_type": entry_type, "capacity": capacity}
-
-        if entry_type == DT_DIR:
-            now = datetime.now(UTC)
-            empty_hash = hash_content(b"")
-            route = self.router.route(path, is_admin=True, zone_id=self._zone_id)
-            metadata = FileMetadata(
-                path=path,
-                backend_name=self._driver_coordinator.backend_key(route.backend, route.mount_point),
-                physical_path=empty_hash,
-                size=0,
-                etag=empty_hash,
-                entry_type=DT_DIR,
-                mime_type="inode/directory",
-                created_at=now,
-                modified_at=now,
-                version=1,
-                zone_id=attrs.get("zone_id", ROOT_ZONE_ID),
-            )
-            route.metastore.put(metadata)
-            return {"path": path, "created": True, "entry_type": entry_type}
-
-        raise ValueError(f"sys_setattr create not supported for entry_type={entry_type}")
+        return result
 
     @rpc_expose(description="Get ETag (content hash) for HTTP caching")
     def get_etag(
@@ -1230,38 +1109,8 @@ class NexusFS(  # type: ignore[misc]
         DT_PIPE/DT_STREAM, resolve, and hooks are [TRANSITIONAL] — migrates
         to Rust dispatch middleware in PR 7.
         """
-        # DT_PIPE: Rust IPC registry handles hot path.  Check custom backends
-        # (SHM/remote) first; standard memory pipes are in Rust kernel.
-        _custom_pbuf = self._custom_pipe_backends.get(path)
-        if _custom_pbuf is not None:
-            from nexus.core.pipe import PipeClosedError, PipeEmptyError
-
-            try:
-                data = _custom_pbuf.read_nowait()
-            except PipeEmptyError:
-                return self._pipe_read(path, count=count, offset=offset)
-            except PipeClosedError:
-                raise NexusFileNotFoundError(path, f"Pipe closed: {path}") from None
-            if offset or count is not None:
-                data = data[offset : offset + count] if count is not None else data[offset:]
-            return data
-
-        # DT_STREAM: custom backends (SHM/factory-provided)
-        _custom_sbuf = self._custom_stream_backends.get(path)
-        if _custom_sbuf is not None:
-            from nexus.core.stream import StreamClosedError, StreamEmptyError
-
-            try:
-                if count is not None and count > 1:
-                    # [TRANSITIONAL] Sync: use sync read_batch for custom backends.
-                    items, _ = _custom_sbuf.read_batch(offset, count)
-                    return b"".join(items)
-                data, _ = _custom_sbuf.read_at(offset)
-                return data
-            except StreamEmptyError:
-                raise NexusFileNotFoundError(path, f"Stream empty at offset {offset}") from None
-            except StreamClosedError:
-                raise NexusFileNotFoundError(path, f"Stream closed: {path}") from None
+        # DT_PIPE/DT_STREAM: Rust IPC registry handles all backends
+        # (memory, SHM, remote) via PipeManager/StreamManager.
 
         path = self._validate_path(path)
         context = self._parse_context(context)
@@ -2086,20 +1935,6 @@ class NexusFS(  # type: ignore[misc]
         zero GIL). Metastore.put stays in Python [TRANSITIONAL] — migrates to
         Rust metastore in PR 7.
         """
-        # DT_PIPE: custom backends (SHM/remote) checked first
-        _custom_pbuf = self._custom_pipe_backends.get(path)
-        if _custom_pbuf is not None:
-            n = _custom_pbuf.write_nowait(buf if isinstance(buf, bytes) else buf.encode("utf-8"))
-            return {"path": path, "bytes_written": n}
-
-        # DT_STREAM: custom backends (SHM/factory-provided)
-        _custom_sbuf = self._custom_stream_backends.get(path)
-        if _custom_sbuf is not None:
-            if isinstance(buf, str):
-                buf = buf.encode("utf-8")
-            _off = _custom_sbuf.write_nowait(buf)
-            return {"path": path, "bytes_written": len(buf), "offset": _off}
-
         # Normalize input
         if isinstance(buf, str):
             buf = buf.encode("utf-8")
@@ -2188,7 +2023,7 @@ class NexusFS(  # type: ignore[misc]
         """Create a directory (Tier 2 convenience over sys_setattr).
 
         Defaults: parents=True, exist_ok=True (mkdir -p semantics).
-        Uses _setattr_create(DT_DIR) for metadata creation.
+        DT_DIR metadata creation delegated to Rust kernel sys_setattr.
         """
         path = self._validate_path(path)
         ctx = self._resolve_cred(context)
@@ -2228,12 +2063,10 @@ class NexusFS(  # type: ignore[misc]
         if parents:
             self._ensure_parent_directories(path, ctx)
 
-        self._setattr_create(
+        self._kernel.sys_setattr(
             path,
             DT_DIR,
-            {
-                "zone_id": ctx.zone_id or ROOT_ZONE_ID,
-            },
+            zone_id=ctx.zone_id or ROOT_ZONE_ID,
         )
 
         # OBSERVE: Rust kernel fires DirCreate when hit=true (§11 Phase 5).
@@ -3325,16 +3158,11 @@ class NexusFS(  # type: ignore[misc]
             self._service_registry.unregister_service_full(name)
             return {"path": path, "unregistered": True, "service": name}
 
-        if path.startswith("/__sys__/hooks/"):
-            raise NotImplementedError(
-                "Standalone hook removal via /__sys__/hooks/ not yet supported."
-            )
-
-        # DT_PIPE fast-path: check Rust IPC registry + custom backends
-        if self._kernel.has_pipe(path) or path in self._custom_pipe_backends:
+        # DT_PIPE fast-path: check Rust IPC registry
+        if self._kernel.has_pipe(path):
             return self._pipe_destroy(path)
-        # DT_STREAM fast-path: check Rust IPC registry + custom backends
-        if self._kernel.has_stream(path) or path in self._custom_stream_backends:
+        # DT_STREAM fast-path: check Rust IPC registry
+        if self._kernel.has_stream(path):
             return self._stream_destroy(path)
 
         path = self._validate_path(path)
@@ -5092,23 +4920,6 @@ class NexusFS(  # type: ignore[misc]
                 _data = _data[offset : offset + count] if count is not None else _data[offset:]
             return bytes(_data)
 
-        # Custom backend fallback (SHM/remote)
-        _buf = self._custom_pipe_backends.get(path)
-        if _buf is not None:
-            from nexus.core.pipe import PipeClosedError, PipeEmptyError
-
-            try:
-                data: bytes = _buf.read_nowait()
-            except PipeEmptyError:
-                # [TRANSITIONAL] Sync blocking: custom async backends run in temp event loop.
-                # Eliminated when all pipe backends migrate to Rust.
-                data = asyncio.run(_buf.read(blocking=True))
-            except PipeClosedError:
-                raise NexusFileNotFoundError(path, f"Pipe closed: {path}") from None
-            if offset or count is not None:
-                data = data[offset : offset + count] if count is not None else data[offset:]
-            return data
-
         # Slow path: block in Rust (GIL released by PyO3), 5s timeout
         _data = self._kernel.pipe_read_blocking(path, 5000)
         if offset or count is not None:
@@ -5120,14 +4931,11 @@ class NexusFS(  # type: ignore[misc]
         return self._kernel.pipe_write_nowait(path, data)
 
     def _pipe_destroy(self, path: str) -> dict[str, Any]:
-        """Destroy DT_PIPE — close Rust buffer + clean up Python state."""
+        """Destroy DT_PIPE — close Rust buffer."""
         import contextlib
 
         with contextlib.suppress(Exception):
             self._kernel.destroy_pipe(path)
-        _buf = self._custom_pipe_backends.pop(path, None)
-        if _buf is not None:
-            _buf.close()
         return {}
 
     # ------------------------------------------------------------------
@@ -5244,24 +5052,6 @@ class NexusFS(  # type: ignore[misc]
         if _result is not None:
             return bytes(_result[0])
 
-        # Custom backend fallback (async stream backends bridged via run_sync)
-        _buf = self._custom_stream_backends.get(path)
-        if _buf is not None:
-            from nexus.core.stream import StreamClosedError, StreamEmptyError
-            from nexus.lib.sync_bridge import run_sync
-
-            try:
-                if count is not None and count > 1:
-                    items, _ = run_sync(_buf.read_batch_blocking(offset, count, blocking=True))
-                    return b"".join(items)
-                sdata: bytes
-                sdata, _ = run_sync(_buf.read(offset, blocking=True))
-                return sdata
-            except StreamEmptyError:
-                raise NexusFileNotFoundError(path, f"Stream empty at offset {offset}") from None
-            except StreamClosedError:
-                raise NexusFileNotFoundError(path, f"Stream closed: {path}") from None
-
         # Slow path: block in Rust, release GIL
         _data, _next = self._kernel.stream_read_at_blocking(path, offset, 30000)
         return bytes(_data)
@@ -5271,14 +5061,11 @@ class NexusFS(  # type: ignore[misc]
         return self._kernel.stream_write_nowait(path, data)
 
     def _stream_destroy(self, path: str) -> dict[str, Any]:
-        """Destroy DT_STREAM — close Rust buffer + clean up Python state."""
+        """Destroy DT_STREAM — close Rust buffer."""
         import contextlib
 
         with contextlib.suppress(Exception):
             self._kernel.destroy_stream(path)
-        _buf = self._custom_stream_backends.pop(path, None)
-        if _buf is not None:
-            _buf.close()
         return {}
 
     def close(self) -> None:
@@ -5297,8 +5084,6 @@ class NexusFS(  # type: ignore[misc]
         if self._kernel is not None:
             self._kernel.close_all_pipes()
             self._kernel.close_all_streams()
-        self._custom_pipe_backends.clear()
-        self._custom_stream_backends.clear()
         # Close transport pool (persistent gRPC connections)
         if hasattr(self, "_transport_pool") and self._transport_pool is not None:
             self._transport_pool.close_all()

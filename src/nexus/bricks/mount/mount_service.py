@@ -573,13 +573,15 @@ class MountService:
         _info = ConnectorRegistry.get_info(backend_type)
         _entry_type = DT_EXTERNAL_STORAGE if (_info and _info.category != "storage") else DT_MOUNT
 
-        # Add to router via DriverLifecycleCoordinator (registers hook_spec +
-        # broadcasts mount event), then setup -- rollback on failure (#2754).
-        # If _setup_mount_point fails after the mount is active in the router,
-        # the mount would be accessible without proper permissions configured.
-        self._driver_coordinator.mount(
+        # Mount via sys_setattr (Rust DLC handles routing + metastore + dcache,
+        # Python DLC stores _PyMountInfo + dispatches event), then setup --
+        # rollback on failure (#2754).
+        from nexus.contracts.metadata import DT_MOUNT
+
+        self.nexus_fs.sys_setattr(
             mount_point,
-            backend,
+            entry_type=DT_MOUNT,
+            backend=backend,
             readonly=readonly,
             io_profile=io_profile,
             is_external=(_entry_type == DT_EXTERNAL_STORAGE),

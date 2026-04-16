@@ -1032,25 +1032,9 @@ pub struct PyKernel {
 }
 
 // Rust-side helpers on PyKernel — NOT exposed to Python (no #[pymethods]).
-// Other crates that depend on `kernel` as an rlib (e.g. `rust/raft`) call
-// these to manipulate the inner `Kernel` without `PyKernel::inner` having
-// to be `pub`. Keeps the struct layout encapsulated while still letting
-// Rust-side cross-crate code drive the kernel.
 impl PyKernel {
-    /// Forward to `Kernel::install_mount_metastore`. Used by
-    /// `rust/raft::PyZoneHandle::attach_to_kernel_mount` to wire a
-    /// `ZoneMetastore` into a federation mount after `add_mount`.
-    pub fn install_mount_metastore(
-        &self,
-        canonical_key: String,
-        ms: Arc<dyn crate::metastore::Metastore>,
-    ) {
-        self.inner.install_mount_metastore(canonical_key, ms);
-    }
-
     /// Compute the kernel's canonical key for a `(mount_point, zone_id)`
-    /// pair. Forwards to `Kernel::canonical_mount_key`. Used by raft so it
-    /// can produce the same key the kernel uses internally.
+    /// pair. Forwards to `Kernel::canonical_mount_key`.
     pub fn canonical_mount_key(mount_point: &str, zone_id: &str) -> String {
         Kernel::canonical_mount_key(mount_point, zone_id)
     }
@@ -1461,17 +1445,15 @@ impl PyKernel {
         self.inner.dcache_len()
     }
 
-    // ── Router proxy methods ───────────────────────────────────────────
+    // ── sys_setattr — unified mount/attr syscall ─────────────────────
 
-    #[pyo3(signature = (mount_point, zone_id, readonly, admin_only, io_profile, backend_name="", local_root=None, fsync=false, py_backend=None, backend_type="cas", follow_symlinks=true, grpc_addr=None, openai_base_url=None, openai_api_key=None, openai_model=None, s3_bucket=None, s3_prefix=None, aws_region=None, aws_access_key=None, aws_secret_key=None, s3_endpoint=None, gcs_bucket=None, gcs_prefix=None, access_token=None, root_folder_id=None, bot_token=None, default_channel=None, metastore_path=None, is_external=false))]
+    #[pyo3(signature = (path, entry_type, backend_name="", local_root=None, fsync=false, py_backend=None, backend_type="cas", follow_symlinks=true, grpc_addr=None, openai_base_url=None, openai_api_key=None, openai_model=None, s3_bucket=None, s3_prefix=None, aws_region=None, aws_access_key=None, aws_secret_key=None, s3_endpoint=None, gcs_bucket=None, gcs_prefix=None, access_token=None, root_folder_id=None, bot_token=None, default_channel=None, metastore_path=None, py_zone_handle=None, readonly=false, admin_only=false, io_profile="balanced", zone_id="root", capacity=65536, mime_type=None, modified_at_ms=None))]
     #[allow(clippy::too_many_arguments)]
-    fn add_mount(
+    fn sys_setattr<'py>(
         &self,
-        mount_point: &str,
-        zone_id: &str,
-        readonly: bool,
-        admin_only: bool,
-        io_profile: &str,
+        py: Python<'py>,
+        path: &str,
+        entry_type: i32,
         backend_name: &str,
         local_root: Option<&str>,
         fsync: bool,
@@ -1495,31 +1477,16 @@ impl PyKernel {
         bot_token: Option<&str>,
         default_channel: Option<&str>,
         metastore_path: Option<&str>,
-        is_external: bool,
-    ) -> PyResult<()> {
-        #[cfg(not(feature = "connectors"))]
-        let _ = (
-            openai_base_url,
-            openai_api_key,
-            openai_model,
-            s3_bucket,
-            s3_prefix,
-            aws_region,
-            aws_access_key,
-            aws_secret_key,
-            s3_endpoint,
-            gcs_bucket,
-            gcs_prefix,
-            access_token,
-            root_folder_id,
-            bot_token,
-            default_channel,
-        );
-
-        // Backend resolution: grpc_addr -> GrpcObjectStoreAdapter (zero GIL)
-        //                     local_root -> CasLocalBackend/PathLocalBackend/LocalConnectorBackend
-        //                     openai_* -> OpenAIBackend (§10 D3)
-        //                     py_backend -> PyObjectStoreAdapter (GIL crossing)
+        py_zone_handle: Option<&Bound<'_, PyAny>>,
+        readonly: bool,
+        admin_only: bool,
+        io_profile: &str,
+        zone_id: &str,
+        capacity: usize,
+        mime_type: Option<&str>,
+        modified_at_ms: Option<i64>,
+    ) -> PyResult<Py<PyAny>> {
+        // Backend resolution (moved from old add_mount)
         let backend: Option<Box<dyn ObjectStore>> = if backend_type == "openai" {
             #[cfg(feature = "connectors")]
             {
@@ -1649,24 +1616,77 @@ impl PyKernel {
             })
         };
 
-        self.inner
-            .add_mount(
-                mount_point,
-                zone_id,
+        // Metastore resolution: py_zone_handle -> ZoneMetastore + raft_backend
+        //                       metastore_path -> RedbMetastore
+        let (metastore, raft_backend) = if let Some(zh) = py_zone_handle {
+            let zh_ref = zh
+                .cast::<nexus_raft::pyo3_bindings::PyZoneHandle>()
+                .map_err(|e| {
+                    pyo3::exceptions::PyTypeError::new_err(format!("expected ZoneHandle: {e}"))
+                })?;
+            let zh_borrow = zh_ref.borrow();
+            let consensus = zh_borrow.consensus_node();
+            let handle = zh_borrow.runtime_handle();
+            let ms: Arc<dyn crate::metastore::Metastore> =
+                crate::raft_metastore::ZoneMetastore::new_arc(consensus.clone(), handle.clone());
+            (Some(ms), Some((consensus, handle)))
+        } else if let Some(ms_path) = metastore_path {
+            let ms = crate::metastore::RedbMetastore::open(std::path::Path::new(ms_path)).map_err(
+                |e| pyo3::exceptions::PyIOError::new_err(format!("RedbMetastore: {e:?}")),
+            )?;
+            (
+                Some(Arc::new(ms) as Arc<dyn crate::metastore::Metastore>),
+                None,
+            )
+        } else {
+            (None, None)
+        };
+
+        let result = self
+            .inner
+            .sys_setattr(
+                path,
+                entry_type,
+                backend_name,
+                backend,
+                metastore,
+                raft_backend,
                 readonly,
                 admin_only,
                 io_profile,
-                backend_name,
-                backend,
-                metastore_path,
-                is_external,
+                zone_id,
+                capacity,
+                mime_type,
+                modified_at_ms,
             )
-            .map_err(Into::into)
+            .map_err::<PyErr, _>(Into::into)?;
+
+        let dict = PyDict::new(py);
+        dict.set_item("path", result.path)?;
+        dict.set_item("created", result.created)?;
+        dict.set_item("entry_type", result.entry_type)?;
+        if let Some(bn) = result.backend_name {
+            dict.set_item("backend_name", bn)?;
+        }
+        if let Some(cap) = result.capacity {
+            dict.set_item("capacity", cap)?;
+        }
+        if !result.updated.is_empty() {
+            dict.set_item("updated", result.updated)?;
+        }
+        if let Some(shm) = result.shm_path {
+            dict.set_item("shm_path", shm)?;
+        }
+        if let Some(fd) = result.data_rd_fd {
+            dict.set_item("data_rd_fd", fd)?;
+        }
+        if let Some(fd) = result.space_rd_fd {
+            dict.set_item("space_rd_fd", fd)?;
+        }
+        Ok(dict.into())
     }
 
-    fn remove_mount(&self, mount_point: &str, zone_id: &str) -> bool {
-        self.inner.remove_mount(mount_point, zone_id)
-    }
+    // ── Router proxy methods ───────────────────────────────────────────
 
     fn route(
         &self,
@@ -1689,10 +1709,9 @@ impl PyKernel {
         self.inner.get_mount_points()
     }
 
-    fn kernel_unmount(&self, mount_point: &str, zone_id: &str) -> PyResult<bool> {
-        self.inner
-            .kernel_unmount(mount_point, zone_id)
-            .map_err(Into::into)
+    #[pyo3(signature = (mount_point, zone_id="root"))]
+    fn kernel_unmount(&self, mount_point: &str, zone_id: &str) -> bool {
+        self.inner.dlc.unmount(&self.inner, mount_point, zone_id)
     }
 
     // ── IPC Registry — Pipe methods ──────────────────────────────────

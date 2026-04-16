@@ -268,8 +268,10 @@ async def create_nexus_fs(
         init_cred=_init_cred,
     )
 
-    # Root mount — through coordinator (unified lifecycle: pool + hooks + notify)
-    nx._driver_coordinator.mount("/", backend)
+    # Root mount — Rust kernel DLC handles routing + metastore + dcache.
+    from nexus.contracts.metadata import DT_MOUNT
+
+    nx.sys_setattr("/", entry_type=DT_MOUNT, backend=backend)
 
     # Create services if record_store is provided and no pre-built services.
     # KERNEL mode (Issue #2194): When record_store is None (e.g. profile=kernel),

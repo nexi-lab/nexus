@@ -11,7 +11,7 @@ Responsibilities:
     2. Register/unregister backend's hook_spec with KernelDispatch
     3. Broadcast mount/unmount events via KernelDispatch hooks
     4. Own a Python-side map of ``_PyMountInfo`` records for fields the
-       Rust kernel does not track (stream_backend_factory, connector
+       Rust kernel does not track (connector
        backend refs) — the kernel is the single source of truth for
        routing (F2 MountTable migration).
 
@@ -29,7 +29,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.contracts.protocols.service_hooks import HookSpec
 from nexus.core.path_utils import canonicalize_path, extract_zone_id, normalize_path
 
 if TYPE_CHECKING:
@@ -48,22 +47,21 @@ class _PyMountInfo:
     it owns mount points, readonly flags, backend adapters, and per-zone
     metastores. This dataclass keeps the Python-only references the kernel
     does not carry: connector backend objects (some backends are still
-    Python), stream backend factories, and the zone id of the mount.
+    Python) and the zone id of the mount.
     """
 
     backend: "ObjectStoreABC"
     readonly: bool
     admin_only: bool
     io_profile: str
-    stream_backend_factory: Any
     zone_id: str
 
 
 class DriverLifecycleCoordinator:
-    """Kernel primitive: driver mount lifecycle.
+    """Kernel primitive: driver mount lifecycle (Python bookkeeping).
 
-    Manages driver mount lifecycle: routing table + VFS hook registration
-    + mount/unmount notification via KernelDispatch.
+    Rust DLC (``dlc.rs``) owns routing table + metastore + dcache.
+    Python DLC stores ``_PyMountInfo`` (backend refs) + dispatches events.
 
     Parallel to ServiceRegistry lifecycle orchestration (services vs drivers).
     """
@@ -72,7 +70,6 @@ class DriverLifecycleCoordinator:
         "_mounts",
         "_dispatch",
         "_kernel",
-        "_mount_specs",
         "_self_address",
         "_transport_pool",
     )
@@ -88,7 +85,6 @@ class DriverLifecycleCoordinator:
         self._mounts: dict[str, _PyMountInfo] = {}
         self._dispatch = dispatch
         self._kernel = kernel
-        self._mount_specs: dict[str, HookSpec] = {}
         self._self_address: str | None = self_address
         self._transport_pool: RPCTransportPool | None = transport_pool
 
@@ -138,23 +134,21 @@ class DriverLifecycleCoordinator:
     # Mount / unmount
     # ------------------------------------------------------------------
 
-    def mount(
+    def _store_mount_info(
         self,
         mount_point: str,
         backend: "ObjectStoreABC",
         *,
-        metastore: "MetastoreABC | None" = None,
         readonly: bool = False,
         admin_only: bool = False,
         io_profile: str = "balanced",
-        stream_backend_factory: Any = None,
         zone_id: str = ROOT_ZONE_ID,
     ) -> None:
-        """Mount a backend with full lifecycle: routing + hooks + notification.
+        """Store Python-side mount info + dispatch mount event.
 
-        Records a ``_PyMountInfo`` in the DLC map, registers the mount in
-        the Rust kernel via ``add_mount``, attaches a ``ZoneMetastore`` for
-        federation zones, registers VFS hooks, and dispatches a mount event.
+        Kernel-side wiring (routing table, metastore, dcache, lock manager)
+        is handled by Rust ``Kernel::sys_setattr(DT_MOUNT)`` before this
+        method is called.
         """
         normalized = normalize_path(mount_point)
         canonical = canonicalize_path(normalized, zone_id)
@@ -164,90 +158,65 @@ class DriverLifecycleCoordinator:
             readonly=readonly,
             admin_only=admin_only,
             io_profile=io_profile,
-            stream_backend_factory=stream_backend_factory,
             zone_id=zone_id,
         )
         self._mounts[canonical] = info
+        self._dispatch.dispatch_event("mount", normalized)
 
+    def mount(
+        self,
+        mount_point: str,
+        backend: "ObjectStoreABC",
+        *,
+        metastore: "MetastoreABC | None" = None,
+        readonly: bool = False,
+        admin_only: bool = False,
+        io_profile: str = "balanced",
+        zone_id: str = ROOT_ZONE_ID,
+    ) -> None:
+        """Mount a backend — delegates to NexusFS.sys_setattr(DT_MOUNT).
+
+        Legacy callers that haven't migrated to ``sys_setattr`` yet go
+        through this shim. It calls the Rust kernel directly, then stores
+        Python bookkeeping.
+        """
+        normalized = normalize_path(mount_point)
         _backend_name = backend.name if isinstance(backend.name, str) else str(backend.name)
-        # CAS-local detection: Rust takes ownership of the backend natively.
         _is_cas_local = getattr(backend, "has_root_path", False) and type(
             backend
         ).__name__.startswith("CAS")
         _local_root = str(getattr(backend, "root_path", None)) if _is_cas_local else None
-
-        # Standalone metastore: hand Rust the redb path so it constructs its
-        # own Metastore. Federation metastores attach below via
-        # PyZoneHandle.attach_to_kernel_mount.
         _ms_path = getattr(metastore, "_redb_path", None) if metastore is not None else None
+        _zone_handle = getattr(metastore, "_engine", None) if metastore is not None else None
 
         if self._kernel is not None:
             with contextlib.suppress(Exception):
-                self._kernel.add_mount(
+                self._kernel.sys_setattr(
                     normalized,
-                    zone_id,
-                    readonly,
-                    admin_only,
-                    io_profile,
+                    2,  # DT_MOUNT
                     _backend_name,
-                    _local_root,
-                    True,  # fsync
+                    local_root=_local_root,
+                    fsync=True,
                     py_backend=backend,
+                    readonly=readonly,
+                    admin_only=admin_only,
+                    io_profile=io_profile,
+                    zone_id=zone_id,
                     metastore_path=str(_ms_path) if _ms_path else None,
+                    py_zone_handle=_zone_handle,
                 )
 
-            # Federation hook — wire per-zone ZoneMetastore into the kernel.
-            # F2 C8 (Option A): both Kernel and ZoneHandle live in the
-            # same cdylib (nexus_kernel). ``attach_raft_zone_to_kernel``
-            # builds a pure Rust ``ZoneMetastore`` (impl kernel::Metastore
-            # via ZoneConsensus) and installs it on the kernel's mount
-            # map, so sys_read / sys_stat / sys_readdir cold paths hit
-            # the raft state machine directly without any Python re-entry.
-            if metastore is not None:
-                engine = getattr(metastore, "_engine", None)
-                logger.info(
-                    "[DRIVER][FED] mount(%s zone=%s): metastore=%s engine=%s",
-                    normalized,
-                    zone_id,
-                    type(metastore).__name__,
-                    type(engine).__name__ if engine is not None else None,
-                )
-                if engine is not None:
-                    import nexus_kernel as _nk  # runtime lookup: stubs may lag
-
-                    py_zone_handle = getattr(_nk, "ZoneHandle", None)
-                    attach_fn = getattr(_nk, "attach_raft_zone_to_kernel", None)
-                    logger.info(
-                        "[DRIVER][FED]   ZoneHandle=%s attach_fn=%s isinstance=%s",
-                        py_zone_handle,
-                        attach_fn,
-                        isinstance(engine, py_zone_handle) if py_zone_handle is not None else None,
-                    )
-                    if (
-                        py_zone_handle is not None
-                        and attach_fn is not None
-                        and isinstance(engine, py_zone_handle)
-                    ):
-                        try:
-                            attach_fn(self._kernel, engine, normalized, zone_id)
-                            logger.info(
-                                "[DRIVER][FED]   attach_raft_zone_to_kernel OK for %s (zone=%s)",
-                                normalized,
-                                zone_id,
-                            )
-                        except Exception as exc:  # pragma: no cover — logged
-                            logger.warning(
-                                "[DRIVER] attach_raft_zone_to_kernel failed for %s (zone=%s): %s",
-                                normalized,
-                                zone_id,
-                                exc,
-                            )
-
-        self._register_backend_hooks(normalized, backend)
-        self._dispatch.dispatch_event("mount", normalized)
+        self._store_mount_info(
+            mount_point,
+            backend,
+            readonly=readonly,
+            admin_only=admin_only,
+            io_profile=io_profile,
+            zone_id=zone_id,
+        )
 
     def unmount(self, mount_point: str, zone_id: str = ROOT_ZONE_ID) -> bool:
-        """Unmount with full lifecycle: unhook + notify + remove.
+        """Unmount: notify + Rust DLC unmount + remove Python bookkeeping.
 
         Returns True if mount was removed, False if not found.
         """
@@ -259,21 +228,16 @@ class DriverLifecycleCoordinator:
         if canonical not in self._mounts:
             return False
 
-        # Fire unmount event BEFORE unregistering hooks (observers must still be active)
+        # Fire unmount event BEFORE removing state
         try:
             self._dispatch.dispatch_event("unmount", normalized)
         except Exception as exc:
             logger.warning("[DRIVER] on_unmount notification failed for %s: %s", normalized, exc)
 
-        spec = self._mount_specs.pop(normalized, None)
-        if spec is not None:
-            self._unregister_hooks_for_spec(spec)
-
+        # Rust DLC handles metastore delete + dcache evict + routing remove
         if self._kernel is not None:
             with contextlib.suppress(Exception):
                 self._kernel.kernel_unmount(normalized, zone_id)
-            with contextlib.suppress(Exception):
-                self._kernel.remove_mount(normalized, zone_id)
 
         del self._mounts[canonical]
         return True
@@ -318,61 +282,3 @@ class DriverLifecycleCoordinator:
                 continue
             result.append(user_mp)
         return sorted(result)
-
-    # ------------------------------------------------------------------
-    # Internal hook registration
-    # ------------------------------------------------------------------
-
-    def _register_backend_hooks(self, mount_point: str, backend: "ObjectStoreABC") -> None:
-        if not hasattr(backend, "hook_spec"):
-            return
-        spec: HookSpec = backend.hook_spec()
-        if spec is None or spec.is_empty:
-            return
-        self._mount_specs[mount_point] = spec
-        self._register_hooks_for_spec(spec)
-        logger.debug("[DRIVER] registered %d hooks for mount %s", spec.total_hooks, mount_point)
-
-    def _register_hooks_for_spec(self, spec: HookSpec) -> None:
-        d = self._dispatch
-        for h in spec.resolvers:
-            d.register_resolver(h)
-        for h in spec.read_hooks:
-            d.register_intercept_read(h)
-        for h in spec.write_hooks:
-            d.register_intercept_write(h)
-        for h in spec.write_batch_hooks:
-            d.register_intercept_write_batch(h)
-        for h in spec.delete_hooks:
-            d.register_intercept_delete(h)
-        for h in spec.rename_hooks:
-            d.register_intercept_rename(h)
-        for h in spec.copy_hooks:
-            d.register_intercept_copy(h)
-        for h in spec.mkdir_hooks:
-            d.register_intercept_mkdir(h)
-        for h in spec.rmdir_hooks:
-            d.register_intercept_rmdir(h)
-        # spec.observers: no-op — observer dispatch is fully Rust-native.
-
-    def _unregister_hooks_for_spec(self, spec: HookSpec) -> None:
-        d = self._dispatch
-        for h in spec.resolvers:
-            d.unregister_resolver(h)
-        for h in spec.read_hooks:
-            d.unregister_intercept_read(h)
-        for h in spec.write_hooks:
-            d.unregister_intercept_write(h)
-        for h in spec.write_batch_hooks:
-            d.unregister_intercept_write_batch(h)
-        for h in spec.delete_hooks:
-            d.unregister_intercept_delete(h)
-        for h in spec.rename_hooks:
-            d.unregister_intercept_rename(h)
-        for h in spec.copy_hooks:
-            d.unregister_intercept_copy(h)
-        for h in spec.mkdir_hooks:
-            d.unregister_intercept_mkdir(h)
-        for h in spec.rmdir_hooks:
-            d.unregister_intercept_rmdir(h)
-        # spec.observers: no-op — observer dispatch is fully Rust-native.

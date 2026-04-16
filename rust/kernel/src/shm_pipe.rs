@@ -380,46 +380,39 @@ impl crate::pipe::PipeBackend for SharedMemoryPipeBackend {
 
 #[pymethods]
 impl SharedMemoryPipeBackend {
-    /// Create a new shared ring buffer.
+    /// Pure Rust constructor — no PyO3 dependency.
     ///
     /// Returns `(self, shm_path, data_rd_fd, space_rd_fd)`.
-    /// The caller should pass `data_rd_fd` to the reader process and
-    /// `space_rd_fd` to the writer (self) for wake-up.
-    #[staticmethod]
-    fn create(capacity: usize) -> PyResult<(Self, String, i32, i32)> {
+    /// Used by `Kernel::setattr_pipe(io_profile="shared_memory")`.
+    pub(crate) fn create_native(
+        capacity: usize,
+    ) -> Result<(Self, String, i32, i32), std::io::Error> {
         if capacity == 0 {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "capacity must be > 0, got 0",
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "capacity must be > 0",
             ));
         }
 
         let ring_cap = capacity * 2;
         let total_size = DATA_OFFSET + ring_cap;
 
-        // Create temp file — keep() preserves the path for attach()
-        let tmp = tempfile::NamedTempFile::new()
-            .map_err(|e| pyo3::exceptions::PyOSError::new_err(format!("tmpfile: {e}")))?;
+        let tmp = tempfile::NamedTempFile::new()?;
         let (file, path) = tmp
             .keep()
-            .map_err(|e| pyo3::exceptions::PyOSError::new_err(format!("keep tmpfile: {e}")))?;
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{e}")))?;
         let shm_path = path.to_string_lossy().to_string();
 
-        // Resize
-        file.set_len(total_size as u64)
-            .map_err(|e| pyo3::exceptions::PyOSError::new_err(format!("ftruncate: {e}")))?;
+        file.set_len(total_size as u64)?;
 
-        // mmap MAP_SHARED
-        let mut mmap = unsafe { memmap2::MmapOptions::new().len(total_size).map_mut(&file) }
-            .map_err(|e| pyo3::exceptions::PyOSError::new_err(format!("mmap: {e}")))?;
+        let mut mmap = unsafe { memmap2::MmapOptions::new().len(total_size).map_mut(&file) }?;
 
-        // Initialize header
         let base = mmap.as_mut_ptr();
         write_u32(base, OFF_MAGIC, MAGIC);
         write_u32(base, OFF_VERSION, VERSION);
         write_u32(base, OFF_RING_CAP, ring_cap as u32);
         write_u32(base, OFF_USER_CAP, capacity as u32);
 
-        // Zero out atomics (already zeroed by ftruncate, but be explicit)
         unsafe {
             atomic_usize(base, OFF_TAIL).store(0, Ordering::Relaxed);
             atomic_usize(base, OFF_HEAD).store(0, Ordering::Relaxed);
@@ -430,22 +423,19 @@ impl SharedMemoryPipeBackend {
             atomic_bool(base, OFF_CLOSED).store(false, Ordering::Relaxed);
         }
 
-        // Create two OS pipes: data notification + space notification
         let mut data_fds = [0i32; 2];
         let mut space_fds = [0i32; 2];
         unsafe {
             if libc::pipe(data_fds.as_mut_ptr()) != 0 {
-                return Err(pyo3::exceptions::PyOSError::new_err("pipe(data) failed"));
+                return Err(std::io::Error::last_os_error());
             }
             if libc::pipe(space_fds.as_mut_ptr()) != 0 {
                 libc::close(data_fds[0]);
                 libc::close(data_fds[1]);
-                return Err(pyo3::exceptions::PyOSError::new_err("pipe(space) failed"));
+                return Err(std::io::Error::last_os_error());
             }
-            // Set non-blocking on read ends
             libc::fcntl(data_fds[0], libc::F_SETFL, libc::O_NONBLOCK);
             libc::fcntl(space_fds[0], libc::F_SETFL, libc::O_NONBLOCK);
-            // Set non-blocking on write ends too (avoid blocking on full pipe)
             libc::fcntl(data_fds[1], libc::F_SETFL, libc::O_NONBLOCK);
             libc::fcntl(space_fds[1], libc::F_SETFL, libc::O_NONBLOCK);
         }
@@ -464,15 +454,22 @@ impl SharedMemoryPipeBackend {
             mmap,
             ring_cap,
             user_capacity: capacity,
-            notify_data_wr: data_fds[1], // creator is the writer
-            notify_space_wr: -1,         // creator does not send space notifications
+            notify_data_wr: data_fds[1],
+            notify_space_wr: space_fds[1],
             is_creator: true,
             shm_path: shm_path.clone(),
         };
 
-        // data_rd_fd: reader listens for data availability
-        // space_rd_fd: writer (creator) listens for space freed
         Ok((core, shm_path, data_fds[0], space_fds[0]))
+    }
+
+    /// Create a new shared ring buffer (PyO3 wrapper over `create_native`).
+    ///
+    /// Returns `(self, shm_path, data_rd_fd, space_rd_fd)`.
+    #[staticmethod]
+    fn create(capacity: usize) -> PyResult<(Self, String, i32, i32)> {
+        Self::create_native(capacity)
+            .map_err(|e| pyo3::exceptions::PyOSError::new_err(e.to_string()))
     }
 
     /// Attach to an existing shared ring buffer from another process.

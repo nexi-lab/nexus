@@ -259,7 +259,7 @@ class PathRouter:
     ) -> "_PyMountInfo | None":
         """Find the mount info covering *path* via longest-prefix match.
 
-        Returns the ``_PyMountInfo`` (includes stream_backend_factory).
+        Returns the ``_PyMountInfo`` for the covering mount.
         For public mount info, use ``get_mount()`` instead.
         """
         result = self._lookup_lpm(path, zone_id)

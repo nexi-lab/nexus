@@ -218,6 +218,28 @@ pub struct SysCopyResult {
     pub version: u32,
 }
 
+/// Result of sys_setattr(): Rust handles ALL filesystem entry types.
+pub struct SysSetAttrResult {
+    /// Path that was operated on.
+    pub path: String,
+    /// True if a new inode was created.
+    pub created: bool,
+    /// Entry type that was set.
+    pub entry_type: i32,
+    /// Backend name (when DT_MOUNT).
+    pub backend_name: Option<String>,
+    /// Buffer capacity (DT_PIPE/DT_STREAM).
+    pub capacity: Option<usize>,
+    /// Field names changed (UPDATE path).
+    pub updated: Vec<String>,
+    /// SHM path (when io_profile="shared_memory", unix only).
+    pub shm_path: Option<String>,
+    /// SHM data read fd — reader listens for data availability.
+    pub data_rd_fd: Option<i32>,
+    /// SHM space read fd — writer listens for space freed (pipe only).
+    pub space_rd_fd: Option<i32>,
+}
+
 // ── DcacheStats ──────────────────────────────────────────────────────
 
 /// DCache statistics — pure Rust struct returned by dcache_stats().
@@ -407,6 +429,8 @@ impl ZoneRevisionEntry {
 ///   - `dcache_put(...)` — populate dentry cache.
 ///   - `trie_register(...)` — register path resolvers.
 pub struct Kernel {
+    // DriverLifecycleCoordinator — owns mount lifecycle (routing + metastore + dcache).
+    pub(crate) dlc: crate::dlc::DriverLifecycleCoordinator,
     // DCache (owned)
     dcache: DCache,
     // Mount table — owns backend + per-mount metastore + access flags.
@@ -486,6 +510,7 @@ impl Kernel {
     /// Create an empty kernel. Components wired by wrapper after construction.
     pub fn new() -> Self {
         Self {
+            dlc: crate::dlc::DriverLifecycleCoordinator::new(),
             dcache: DCache::new(),
             mount_table: MountTable::new(),
             trie: Trie::new(),
@@ -543,7 +568,7 @@ impl Kernel {
     /// In federation mode each mount has its own state machine (Raft-backed
     /// zone store). Standalone mode uses a single global metastore.
     /// `mount_point` must be the zone-canonical key from `mount_table.route()`.
-    fn with_metastore<F, R>(&self, mount_point: &str, f: F) -> Option<R>
+    pub(crate) fn with_metastore<F, R>(&self, mount_point: &str, f: F) -> Option<R>
     where
         F: FnOnce(&dyn crate::metastore::Metastore) -> R,
     {
@@ -900,6 +925,11 @@ impl Kernel {
         );
     }
 
+    /// Put a pre-built CachedEntry into the dcache. Used by DLC.mount().
+    pub(crate) fn dcache_put_entry(&self, path: &str, entry: CachedEntry) {
+        self.dcache.put(path, entry);
+    }
+
     /// Get hot-path tuple: (backend_name, physical_path, entry_type).
     pub fn dcache_get(&self, path: &str) -> Option<(String, String, u8)> {
         self.dcache.get_hot(path)
@@ -960,14 +990,13 @@ impl Kernel {
     ///   - `backend` provided → uses it directly.
     ///   - `backend` is None → no backend (sys_read returns miss).
     ///
-    /// When `metastore_path` is provided, opens a Rust-native RedbMetastore
-    /// for this mount point (standalone embedded mode: each zone has its
-    /// own redb file on disk).
+    /// Caller provides an optional pre-built `Metastore` impl (e.g.
+    /// `RedbMetastore` for standalone, `ZoneMetastore` for federation).
+    /// Kernel just installs it — it doesn't know or care which impl.
     ///
-    /// Federation mounts use a different code path: after `add_mount` the
-    /// raft crate calls `Kernel::install_mount_metastore` to wire a
-    /// `ZoneMetastore` (backed by ZoneConsensus state machine) keyed by
-    /// the same canonical path. See `rust/raft/src/zone_metastore.rs`.
+    /// When `raft_backend` is `Some` **and** `zone_id` is the root zone,
+    /// the kernel automatically upgrades its `LockManager` to distributed
+    /// mode (federation DI).
     #[allow(clippy::too_many_arguments)]
     pub fn add_mount(
         &self,
@@ -978,7 +1007,11 @@ impl Kernel {
         io_profile: &str,
         backend_name: &str,
         backend: Option<Box<dyn crate::backend::ObjectStore>>,
-        metastore_path: Option<&str>,
+        metastore: Option<Arc<dyn crate::metastore::Metastore>>,
+        raft_backend: Option<(
+            nexus_raft::prelude::ZoneConsensus<nexus_raft::prelude::FullStateMachine>,
+            tokio::runtime::Handle,
+        )>,
     ) -> Result<(), KernelError> {
         self.mount_table.add_mount(
             mount_point,
@@ -989,19 +1022,24 @@ impl Kernel {
             backend_name,
             backend,
         );
-        // Open per-mount metastore if path provided (standalone mode).
-        // Must come AFTER the entry is inserted so `install_metastore`
-        // finds it.
-        if let Some(ms_path) = metastore_path {
-            let ms = RedbMetastore::open(std::path::Path::new(ms_path))
-                .map_err(|e| KernelError::IOError(format!("RedbMetastore: {e:?}")))?;
+        // Install per-mount metastore if provided. Must come AFTER the
+        // entry is inserted so `install_metastore` finds it.
+        if let Some(ms) = metastore {
             let canonical = canonicalize(mount_point, zone_id);
-            self.mount_table.install_metastore(&canonical, Arc::new(ms));
+            self.mount_table.install_metastore(&canonical, ms);
+        }
+        // Federation DI: upgrade lock manager for root zone.
+        if let Some((node, runtime)) = raft_backend {
+            if zone_id == crate::ROOT_ZONE_ID {
+                self.lock_manager.upgrade_to_distributed(node, runtime);
+            }
         }
         Ok(())
     }
 
     /// Remove a mount point (and its per-mount metastore if any).
+    /// Called by DLC.unmount() — not directly exposed to Python.
+    #[allow(dead_code)]
     pub fn remove_mount(&self, mount_point: &str, zone_id: &str) -> bool {
         self.mount_table.remove(mount_point, zone_id)
     }
@@ -1019,6 +1057,7 @@ impl Kernel {
     /// zone_id, …)` produces internally — i.e. `/{zone_id}{mount_point}`
     /// after normalization. Use the `canonicalize` helper on the kernel
     /// side to compute it consistently.
+    #[allow(dead_code)]
     pub fn install_mount_metastore(
         &self,
         canonical_key: String,
@@ -1059,96 +1098,449 @@ impl Kernel {
         self.mount_table.canonical_keys()
     }
 
-    /// High-level mount: add_mount + create DT_MOUNT metastore entry.
+    /// Syscall: set attributes on a path. Handles ALL filesystem entry types.
     ///
-    /// Encapsulates routing table update + metadata persistence in one call.
-    /// DLC calls this, then does Python-side hook registration.
-    #[allow(clippy::too_many_arguments, dead_code)]
-    pub fn kernel_mount(
+    /// - `entry_type == 2` (DT_MOUNT) → DLC mount lifecycle
+    /// - `entry_type == 3` (DT_PIPE) → create pipe buffer
+    /// - `entry_type == 4` (DT_STREAM) → create stream buffer
+    /// - `entry_type == 1` (DT_DIR) → create directory inode
+    /// - `entry_type == 0` (UPDATE/IDEMPOTENT) → update mutable fields or no-op
+    ///
+    /// `/__sys__/` paths are dispatched by Python BEFORE reaching Rust.
+    #[allow(clippy::too_many_arguments)]
+    pub fn sys_setattr(
         &self,
-        mount_point: &str,
-        zone_id: &str,
+        path: &str,
+        entry_type: i32,
+        // -- DT_MOUNT params (entry_type == 2) --
+        backend_name: &str,
+        backend: Option<Box<dyn crate::backend::ObjectStore>>,
+        metastore: Option<Arc<dyn crate::metastore::Metastore>>,
+        raft_backend: Option<(
+            nexus_raft::prelude::ZoneConsensus<nexus_raft::prelude::FullStateMachine>,
+            tokio::runtime::Handle,
+        )>,
         readonly: bool,
         admin_only: bool,
         io_profile: &str,
-        backend_name: &str,
-        backend: Option<Box<dyn crate::backend::ObjectStore>>,
-        metastore_path: Option<&str>,
-    ) -> Result<(), KernelError> {
-        // 1. Router + per-mount metastore
-        self.add_mount(
-            mount_point,
-            zone_id,
-            readonly,
-            admin_only,
-            io_profile,
-            backend_name,
-            backend,
-            metastore_path,
-        )?;
+        zone_id: &str,
+        // -- DT_PIPE/DT_STREAM params (entry_type == 3, 4) --
+        capacity: usize,
+        // -- UPDATE params (entry_type == 0) --
+        mime_type: Option<&str>,
+        modified_at_ms: Option<i64>,
+    ) -> Result<SysSetAttrResult, KernelError> {
+        match entry_type {
+            2 => {
+                // DT_MOUNT — full mount lifecycle via DLC
+                self.dlc.mount(
+                    self,
+                    path,
+                    zone_id,
+                    readonly,
+                    admin_only,
+                    io_profile,
+                    backend_name,
+                    backend,
+                    metastore,
+                    raft_backend,
+                )?;
+                Ok(SysSetAttrResult {
+                    path: path.to_string(),
+                    created: true,
+                    entry_type,
+                    backend_name: Some(backend_name.to_string()),
+                    capacity: None,
+                    updated: Vec::new(),
+                    shm_path: None,
+                    data_rd_fd: None,
+                    space_rd_fd: None,
+                })
+            }
+            3 => {
+                // DT_PIPE — create or idempotent-open
+                self.setattr_pipe(path, capacity, io_profile)
+            }
+            4 => {
+                // DT_STREAM — create or idempotent-open
+                self.setattr_stream(path, capacity, io_profile)
+            }
+            1 => {
+                // DT_DIR — create directory inode
+                self.setattr_create_dir(path, zone_id)
+            }
+            0 => {
+                // UPDATE or IDEMPOTENT OPEN
+                self.setattr_update(path, mime_type, modified_at_ms)
+            }
+            _ => Err(KernelError::PermissionDenied(format!(
+                "sys_setattr: unsupported entry_type={entry_type}"
+            ))),
+        }
+    }
 
-        // 2. Create DT_MOUNT metadata entry (best-effort)
-        let canonical = canonicalize(mount_point, zone_id);
-        self.with_metastore(&canonical, |ms| {
+    /// DT_PIPE: create pipe buffer, or idempotent-open if it already exists.
+    ///
+    /// `io_profile`:
+    /// - `"memory"` (default) → MemoryPipeBackend
+    /// - `"shared_memory"` → SharedMemoryPipeBackend (mmap, cross-process)
+    fn setattr_pipe(
+        &self,
+        path: &str,
+        capacity: usize,
+        io_profile: &str,
+    ) -> Result<SysSetAttrResult, KernelError> {
+        // Idempotent open: if DT_PIPE already exists, re-create buffer if lost
+        if let Some(meta) = self.metastore_get(path).ok().flatten() {
+            if meta.entry_type == DT_PIPE {
+                if !self.has_pipe(path) {
+                    self.create_pipe(path, capacity)?;
+                }
+                return Ok(SysSetAttrResult {
+                    path: path.to_string(),
+                    created: false,
+                    entry_type: DT_PIPE as i32,
+                    backend_name: None,
+                    capacity: Some(capacity),
+                    updated: Vec::new(),
+                    shm_path: None,
+                    data_rd_fd: None,
+                    space_rd_fd: None,
+                });
+            }
+            return Err(KernelError::PermissionDenied(format!(
+                "entry_type immutable (cannot change {} → DT_PIPE)",
+                meta.entry_type
+            )));
+        }
+
+        // Create based on io_profile
+        let (shm_path, data_rd_fd, space_rd_fd) = if io_profile == "shared_memory" {
+            #[cfg(unix)]
+            {
+                let (backend, shm, dfd, sfd) =
+                    crate::shm_pipe::SharedMemoryPipeBackend::create_native(capacity)?;
+                // Register SHM backend in PipeManager (replaces default)
+                self.pipe_manager
+                    .register(path, Arc::new(backend))
+                    .map_err(pipe_mgr_err)?;
+                // Write metastore + dcache (same as create_pipe but skip PipeManager create)
+                self.write_pipe_inode(path, capacity);
+                (Some(shm), Some(dfd), Some(sfd))
+            }
+            #[cfg(not(unix))]
+            {
+                return Err(KernelError::IOError(
+                    "shared_memory pipes require unix".into(),
+                ));
+            }
+        } else {
+            self.create_pipe(path, capacity)?;
+            (None, None, None)
+        };
+
+        Ok(SysSetAttrResult {
+            path: path.to_string(),
+            created: true,
+            entry_type: DT_PIPE as i32,
+            backend_name: None,
+            capacity: Some(capacity),
+            updated: Vec::new(),
+            shm_path,
+            data_rd_fd,
+            space_rd_fd,
+        })
+    }
+
+    /// DT_STREAM: create stream buffer, or idempotent-open if it already exists.
+    fn setattr_stream(
+        &self,
+        path: &str,
+        capacity: usize,
+        io_profile: &str,
+    ) -> Result<SysSetAttrResult, KernelError> {
+        if let Some(meta) = self.metastore_get(path).ok().flatten() {
+            if meta.entry_type == DT_STREAM {
+                if !self.has_stream(path) {
+                    self.create_stream(path, capacity)?;
+                }
+                return Ok(SysSetAttrResult {
+                    path: path.to_string(),
+                    created: false,
+                    entry_type: DT_STREAM as i32,
+                    backend_name: None,
+                    capacity: Some(capacity),
+                    updated: Vec::new(),
+                    shm_path: None,
+                    data_rd_fd: None,
+                    space_rd_fd: None,
+                });
+            }
+            return Err(KernelError::PermissionDenied(format!(
+                "entry_type immutable (cannot change {} → DT_STREAM)",
+                meta.entry_type
+            )));
+        }
+
+        let (shm_path, data_rd_fd) = if io_profile == "shared_memory" {
+            #[cfg(unix)]
+            {
+                let (backend, shm, dfd) =
+                    crate::shm_stream::SharedMemoryStreamBackend::create_native(capacity)?;
+                self.stream_manager
+                    .register(path, Arc::new(backend))
+                    .map_err(stream_mgr_err)?;
+                self.write_stream_inode(path, capacity);
+                (Some(shm), Some(dfd))
+            }
+            #[cfg(not(unix))]
+            {
+                return Err(KernelError::IOError(
+                    "shared_memory streams require unix".into(),
+                ));
+            }
+        } else {
+            self.create_stream(path, capacity)?;
+            (None, None)
+        };
+
+        Ok(SysSetAttrResult {
+            path: path.to_string(),
+            created: true,
+            entry_type: DT_STREAM as i32,
+            backend_name: None,
+            capacity: Some(capacity),
+            updated: Vec::new(),
+            shm_path,
+            data_rd_fd,
+            space_rd_fd: None,
+        })
+    }
+
+    /// Write DT_PIPE inode to metastore + dcache (shared by create_pipe and SHM path).
+    #[allow(dead_code)]
+    fn write_pipe_inode(&self, path: &str, capacity: usize) {
+        let mount_point = self
+            .mount_table
+            .route(path, contracts::ROOT_ZONE_ID, true, false)
+            .map(|r| r.mount_point)
+            .unwrap_or_default();
+        self.with_metastore(&mount_point, |ms| {
             let meta = crate::metastore::FileMetadata {
-                path: mount_point.to_string(),
-                backend_name: backend_name.to_string(),
-                physical_path: String::new(),
-                size: 0,
+                path: path.to_string(),
+                backend_name: "pipe".to_string(),
+                physical_path: "shm://".to_string(),
+                size: capacity as u64,
                 etag: None,
                 version: 1,
-                entry_type: 2, // DT_MOUNT
-                zone_id: Some(zone_id.to_string()),
+                entry_type: DT_PIPE,
+                zone_id: Some(contracts::ROOT_ZONE_ID.to_string()),
                 mime_type: None,
                 created_at_ms: None,
                 modified_at_ms: None,
             };
-            let _ = ms.put(mount_point, meta);
+            let _ = ms.put(path, meta);
         });
-
-        // 3. DCache entry for mount point
         self.dcache.put(
-            mount_point,
+            path,
             CachedEntry {
-                backend_name: backend_name.to_string(),
-                physical_path: String::new(),
-                size: 0,
+                backend_name: "pipe".to_string(),
+                physical_path: "shm://".to_string(),
+                size: capacity as u64,
                 etag: None,
                 version: 1,
-                entry_type: 2, // DT_MOUNT
-                zone_id: Some(zone_id.to_string()),
+                entry_type: DT_PIPE,
+                zone_id: Some(contracts::ROOT_ZONE_ID.to_string()),
                 mime_type: None,
                 created_at_ms: None,
                 modified_at_ms: None,
             },
         );
-
-        Ok(())
     }
 
-    /// High-level unmount: remove_mount + cleanup metastore entry.
-    pub fn kernel_unmount(&self, mount_point: &str, zone_id: &str) -> Result<bool, KernelError> {
-        // 1. Cleanup metastore entry (best-effort)
-        let canonical = canonicalize(mount_point, zone_id);
-        self.with_metastore(&canonical, |ms| {
-            let _ = ms.delete(mount_point);
+    /// Write DT_STREAM inode to metastore + dcache (shared by create_stream and SHM path).
+    #[allow(dead_code)]
+    fn write_stream_inode(&self, path: &str, capacity: usize) {
+        let mount_point = self
+            .mount_table
+            .route(path, contracts::ROOT_ZONE_ID, true, false)
+            .map(|r| r.mount_point)
+            .unwrap_or_default();
+        self.with_metastore(&mount_point, |ms| {
+            let meta = crate::metastore::FileMetadata {
+                path: path.to_string(),
+                backend_name: "stream".to_string(),
+                physical_path: "shm://".to_string(),
+                size: capacity as u64,
+                etag: None,
+                version: 1,
+                entry_type: DT_STREAM,
+                zone_id: Some(contracts::ROOT_ZONE_ID.to_string()),
+                mime_type: None,
+                created_at_ms: None,
+                modified_at_ms: None,
+            };
+            let _ = ms.put(path, meta);
+        });
+        self.dcache.put(
+            path,
+            CachedEntry {
+                backend_name: "stream".to_string(),
+                physical_path: "shm://".to_string(),
+                size: capacity as u64,
+                etag: None,
+                version: 1,
+                entry_type: DT_STREAM,
+                zone_id: Some(contracts::ROOT_ZONE_ID.to_string()),
+                mime_type: None,
+                created_at_ms: None,
+                modified_at_ms: None,
+            },
+        );
+    }
+
+    /// DT_DIR: create directory inode via metastore + dcache.
+    fn setattr_create_dir(
+        &self,
+        path: &str,
+        zone_id: &str,
+    ) -> Result<SysSetAttrResult, KernelError> {
+        // Idempotent: if DT_DIR already exists, no-op
+        if let Some(meta) = self.metastore_get(path).ok().flatten() {
+            if meta.entry_type == DT_DIR {
+                return Ok(SysSetAttrResult {
+                    path: path.to_string(),
+                    created: false,
+                    entry_type: DT_DIR as i32,
+                    backend_name: None,
+                    capacity: None,
+                    updated: Vec::new(),
+                    shm_path: None,
+                    data_rd_fd: None,
+                    space_rd_fd: None,
+                });
+            }
+            return Err(KernelError::PermissionDenied(format!(
+                "entry_type immutable (cannot change {} → DT_DIR)",
+                meta.entry_type
+            )));
+        }
+
+        // Route to find the owning mount's backend_name
+        let route = self
+            .mount_table
+            .route(path, zone_id, true, false)
+            .unwrap_or_else(|_| crate::mount_table::RouteResult {
+                mount_point: String::new(),
+                backend_path: String::new(),
+                readonly: false,
+                io_profile: String::new(),
+            });
+
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+
+        let meta = crate::metastore::FileMetadata {
+            path: path.to_string(),
+            backend_name: String::new(),
+            physical_path: contracts::BLAKE3_EMPTY.to_string(),
+            size: 0,
+            etag: Some(contracts::BLAKE3_EMPTY.to_string()),
+            version: 1,
+            entry_type: DT_DIR,
+            zone_id: Some(zone_id.to_string()),
+            mime_type: Some("inode/directory".to_string()),
+            created_at_ms: Some(now_ms),
+            modified_at_ms: Some(now_ms),
+        };
+
+        // Write to metastore (routed via mount_point)
+        self.with_metastore(&route.mount_point, |ms| {
+            let _ = ms.put(path, meta);
         });
 
-        // 2. DCache evict — clear the mount point AND all entries under
-        //    it. Without the prefix sweep, a read on any previously-cached
-        //    child path after unmount would still see stale content
-        //    (observed as test_unmount_remount_cycle returning the file
-        //    bytes after unmount).
-        self.dcache.evict(mount_point);
-        let prefix = if mount_point.ends_with('/') {
-            mount_point.to_string()
-        } else {
-            format!("{}/", mount_point)
-        };
-        self.dcache.evict_prefix(&prefix);
+        // DCache entry
+        self.dcache.put(
+            path,
+            CachedEntry {
+                backend_name: String::new(),
+                physical_path: contracts::BLAKE3_EMPTY.to_string(),
+                size: 0,
+                etag: Some(contracts::BLAKE3_EMPTY.to_string()),
+                version: 1,
+                entry_type: DT_DIR,
+                zone_id: Some(zone_id.to_string()),
+                mime_type: Some("inode/directory".to_string()),
+                created_at_ms: Some(now_ms),
+                modified_at_ms: Some(now_ms),
+            },
+        );
 
-        // 3. Remove from router + per-mount metastore
-        Ok(self.remove_mount(mount_point, zone_id))
+        Ok(SysSetAttrResult {
+            path: path.to_string(),
+            created: true,
+            entry_type: DT_DIR as i32,
+            backend_name: None,
+            capacity: None,
+            updated: Vec::new(),
+            shm_path: None,
+            data_rd_fd: None,
+            space_rd_fd: None,
+        })
+    }
+
+    /// UPDATE or IDEMPOTENT OPEN: modify mutable fields on existing inode.
+    fn setattr_update(
+        &self,
+        path: &str,
+        mime_type: Option<&str>,
+        modified_at_ms: Option<i64>,
+    ) -> Result<SysSetAttrResult, KernelError> {
+        let existing = self.metastore_get(path)?;
+        let meta = existing.ok_or_else(|| KernelError::FileNotFound(path.to_string()))?;
+
+        // No fields to update → idempotent open (no-op)
+        if mime_type.is_none() && modified_at_ms.is_none() {
+            return Ok(SysSetAttrResult {
+                path: path.to_string(),
+                created: false,
+                entry_type: meta.entry_type as i32,
+                backend_name: None,
+                capacity: None,
+                updated: Vec::new(),
+                shm_path: None,
+                data_rd_fd: None,
+                space_rd_fd: None,
+            });
+        }
+
+        // Update mutable fields
+        let mut updated_fields = Vec::new();
+        let mut new_meta = meta;
+        if let Some(mt) = mime_type {
+            new_meta.mime_type = Some(mt.to_string());
+            updated_fields.push("mime_type".to_string());
+        }
+        if let Some(ms) = modified_at_ms {
+            new_meta.modified_at_ms = Some(ms);
+            updated_fields.push("modified_at_ms".to_string());
+        }
+
+        self.metastore_put(path, new_meta)?;
+
+        Ok(SysSetAttrResult {
+            path: path.to_string(),
+            created: false,
+            entry_type: 0,
+            backend_name: None,
+            capacity: None,
+            updated: updated_fields,
+            shm_path: None,
+            data_rd_fd: None,
+            space_rd_fd: None,
+        })
     }
 
     // ── Trie proxy methods ─────────────────────────────────────────────

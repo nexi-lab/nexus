@@ -672,7 +672,9 @@ def _initialize_wired_ipc(nx: Any, services: dict[str, Any]) -> None:
         _ipc_data_dir = Path(getattr(nx, "_data_dir", "data")) / "ipc"
         _ipc_data_dir.mkdir(parents=True, exist_ok=True)
         _ipc_connector = LocalConnectorBackend(local_path=_ipc_data_dir)
-        nx._driver_coordinator.mount("/agents", _ipc_connector)
+        from nexus.contracts.metadata import DT_MOUNT
+
+        nx.sys_setattr("/agents", entry_type=DT_MOUNT, backend=_ipc_connector)
 
         # Ensure the /agents metadata entry has target_zone_id set.
         # Single source of truth = _ipc_zone_id. Using nx._zone_id here would

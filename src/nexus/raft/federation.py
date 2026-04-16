@@ -239,20 +239,10 @@ class NexusFederation:
             from nexus.core.metastore import RustMetastoreProxy
 
             metadata_store = RustMetastoreProxy(kernel)
-            # Install the root zone's ZoneMetastore at the ``/`` mount so
-            # kernel-side routing for root-zone paths reaches raft. Use
-            # runtime ``getattr`` to dodge stale local type stubs while
-            # an installed wheel lags the regenerated .pyi.
-            try:
-                import nexus_kernel as _nk
-
-                _attach = getattr(_nk, "attach_raft_zone_to_kernel", None)
-                _root_engine = getattr(_root_store, "_engine", None)
-                if _attach is not None and _root_engine is not None:
-                    _attach(kernel, _root_engine, "/", "root")
-                    logger.info("[FED] installed root ZoneMetastore at '/' for kernel routing")
-            except Exception as exc:  # pragma: no cover — logged
-                logger.warning("[FED] attach_raft_zone_to_kernel('/') failed: %s", exc)
+            # Root zone ZoneMetastore is now installed via DLC.mount()
+            # which passes py_zone_handle to kernel.add_mount(). The
+            # kernel handles ZoneMetastore creation + lock manager
+            # upgrade internally. No separate attach call needed here.
         else:
             metadata_store = _root_store
 

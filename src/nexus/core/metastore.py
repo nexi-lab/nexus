@@ -352,8 +352,8 @@ class RustMetastoreProxy(MetastoreABC):
         self._rust_kernel = kernel
         # Federation mode: kernel has no global redb — every call routes
         # via ``mount_table.route(path, ROOT_ZONE_ID, ...)`` and hits a
-        # per-mount ZoneMetastore installed by
-        # ``nexus_kernel.attach_raft_zone_to_kernel``. Skipping
+        # per-mount ZoneMetastore installed by ``kernel.add_mount()``
+        # (via ``py_zone_handle``). Skipping
         # ``set_metastore_path`` keeps the global fallback unset so an
         # accidental route miss blows up loudly instead of silently
         # returning empty.

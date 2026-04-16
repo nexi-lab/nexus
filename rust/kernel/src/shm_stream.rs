@@ -286,33 +286,30 @@ impl crate::stream::StreamBackend for SharedMemoryStreamBackend {
 
 #[pymethods]
 impl SharedMemoryStreamBackend {
-    /// Create a new shared stream buffer.
+    /// Pure Rust constructor — no PyO3 dependency.
     ///
     /// Returns `(self, shm_path, data_rd_fd)`.
-    #[staticmethod]
-    fn create(capacity: usize) -> PyResult<(Self, String, i32)> {
+    /// Used by `Kernel::setattr_stream(io_profile="shared_memory")`.
+    pub(crate) fn create_native(capacity: usize) -> Result<(Self, String, i32), std::io::Error> {
         if capacity == 0 {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "capacity must be > 0, got 0",
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "capacity must be > 0",
             ));
         }
 
         let total_size = DATA_OFFSET + capacity;
 
-        let tmp = tempfile::NamedTempFile::new()
-            .map_err(|e| pyo3::exceptions::PyOSError::new_err(format!("tmpfile: {e}")))?;
+        let tmp = tempfile::NamedTempFile::new()?;
         let (file, path) = tmp
             .keep()
-            .map_err(|e| pyo3::exceptions::PyOSError::new_err(format!("keep tmpfile: {e}")))?;
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{e}")))?;
         let shm_path = path.to_string_lossy().to_string();
 
-        file.set_len(total_size as u64)
-            .map_err(|e| pyo3::exceptions::PyOSError::new_err(format!("ftruncate: {e}")))?;
+        file.set_len(total_size as u64)?;
 
-        let mut mmap = unsafe { memmap2::MmapOptions::new().len(total_size).map_mut(&file) }
-            .map_err(|e| pyo3::exceptions::PyOSError::new_err(format!("mmap: {e}")))?;
+        let mut mmap = unsafe { memmap2::MmapOptions::new().len(total_size).map_mut(&file) }?;
 
-        // Initialize header
         let base = mmap.as_mut_ptr();
         write_u32(base, OFF_MAGIC, MAGIC);
         write_u32(base, OFF_VERSION, VERSION);
@@ -325,11 +322,10 @@ impl SharedMemoryStreamBackend {
             atomic_bool(base, OFF_CLOSED).store(false, Ordering::Relaxed);
         }
 
-        // Create one OS pipe: data notification (writer → readers)
         let mut data_fds = [0i32; 2];
         unsafe {
             if libc::pipe(data_fds.as_mut_ptr()) != 0 {
-                return Err(pyo3::exceptions::PyOSError::new_err("pipe(data) failed"));
+                return Err(std::io::Error::last_os_error());
             }
             libc::fcntl(data_fds[0], libc::F_SETFL, libc::O_NONBLOCK);
             libc::fcntl(data_fds[1], libc::F_SETFL, libc::O_NONBLOCK);
@@ -344,6 +340,15 @@ impl SharedMemoryStreamBackend {
         };
 
         Ok((core, shm_path, data_fds[0]))
+    }
+
+    /// Create a new shared stream buffer (PyO3 wrapper over `create_native`).
+    ///
+    /// Returns `(self, shm_path, data_rd_fd)`.
+    #[staticmethod]
+    fn create(capacity: usize) -> PyResult<(Self, String, i32)> {
+        Self::create_native(capacity)
+            .map_err(|e| pyo3::exceptions::PyOSError::new_err(e.to_string()))
     }
 
     /// Attach to an existing shared stream buffer.

@@ -243,14 +243,11 @@ class AcpService:
             # Register DT_PIPEs in VFS (graceful degradation)
             if self._nexus_fs is not None:
                 try:
+                    from nexus.contracts.metadata import DT_PIPE
+
                     _nx: Any = self._nexus_fs
-                    for fd_path, pipe_backend in (
-                        (fd0_path, stdin_pipe),
-                        (fd1_path, stdout_pipe),
-                        (fd2_path, stderr_pipe),
-                    ):
-                        _nx._custom_pipe_backends[fd_path] = pipe_backend
-                        _nx.pipe_create(fd_path, 65_536)
+                    for fd_path in (fd0_path, fd1_path, fd2_path):
+                        _nx.sys_setattr(fd_path, entry_type=DT_PIPE)
                 except Exception as exc:
                     logger.debug("DT_PIPE registration failed (degraded): %s", exc)
 

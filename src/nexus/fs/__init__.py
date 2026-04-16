@@ -191,8 +191,10 @@ async def mount(
             ),
         )
 
+        from nexus.contracts.metadata import DT_MOUNT
+
         for mp, backend, _ in backends:
-            kernel._driver_coordinator.mount(mp, backend)
+            kernel.sys_setattr(mp, entry_type=DT_MOUNT, backend=backend)
 
         # Persist mount entries so playground/fsspec/cp can auto-discover them.
         # Merges with existing entries so repeated `mount` calls accumulate.

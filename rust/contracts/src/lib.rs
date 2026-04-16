@@ -13,3 +13,8 @@
 /// default is this value. Mirrors
 /// ``nexus.contracts.constants.ROOT_ZONE_ID``.
 pub const ROOT_ZONE_ID: &str = "root";
+
+/// BLAKE3 hash of the empty byte string — used as the canonical ETag
+/// for zero-content inodes (DT_DIR, empty files). Mirrors the Python
+/// ``nexus.core.hash_utils.BLAKE3_EMPTY`` constant.
+pub const BLAKE3_EMPTY: &str = "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262";

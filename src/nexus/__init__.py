@@ -366,8 +366,10 @@ async def connect(
             init_cred=_RemoteOC(user_id="remote", groups=[], is_admin=False),
         )
 
-        # Mount root backend via DLC — kernel is SSOT for routing (F2).
-        nfs._driver_coordinator.mount("/", remote_backend)
+        # Mount root backend — Rust kernel is SSOT for routing (F2).
+        from nexus.contracts.metadata import DT_MOUNT
+
+        nfs.sys_setattr("/", entry_type=DT_MOUNT, backend=remote_backend)
 
         # Wire service proxies for REMOTE profile (Issue #1171).
         # Fills all 25+ service slots with RemoteServiceProxy — forwards

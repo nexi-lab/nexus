@@ -204,6 +204,10 @@ class MountTable:
         """Add a mount entry. Called by coordinator.mount()."""
         mount_point = normalize_path(mount_point)
         canonical = canonicalize_path(mount_point, zone_id)
+        # Save prior state for atomic rollback on kernel failure (covers
+        # remount-over-existing case, not just fresh-add).
+        _prior_entry = self._entries.get(canonical)
+        _prior_in_rust = _prior_entry is not None  # assume rust mirrors entries
         self._entries[canonical] = MountEntry(
             backend=backend,
             metastore=metastore or self._default_metastore,
@@ -238,9 +242,8 @@ class MountTable:
         # Also wire into Kernel router (Issue #1868) so sys_read/sys_stat
         # fast path sees live mounts.  Pass py_backend= when no local_root
         # so Rust wraps Python backend via PyObjectStoreAdapter.
-        # Atomic: if kernel add_mount fails, roll back Python _entries to
-        # avoid split-brain state where Python routing sees the mount but
-        # kernel does not.
+        # Atomic: if kernel add_mount fails, roll back Python _entries
+        # (restore prior entry if this was a remount) to avoid split-brain.
         if self._kernel is not None:
             _ms = self._entries[canonical].metastore
             _ms_path = getattr(_ms, "_redb_path", None) if _ms else None
@@ -278,8 +281,11 @@ class MountTable:
                     )
             except Exception:
                 # Roll back Python-side registration on kernel failure.
-                self._entries.pop(canonical, None)
-                if self._rust is not None:
+                if _prior_entry is not None:
+                    self._entries[canonical] = _prior_entry
+                else:
+                    self._entries.pop(canonical, None)
+                if self._rust is not None and not _prior_in_rust:
                     with contextlib.suppress(Exception):
                         self._rust.remove_mount(mount_point, zone_id)
                 raise

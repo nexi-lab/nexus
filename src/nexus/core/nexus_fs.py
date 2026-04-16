@@ -1530,6 +1530,19 @@ class NexusFS(  # type: ignore[misc]
                 if offset or count is not None:
                     data = data[offset : offset + count] if count is not None else data[offset:]
                 return data
+            # Normal mount that Rust kernel doesn't know about (Python mount
+            # table ahead of kernel backfill — see MountTable.bind_kernel).
+            # Read through Python backend directly to avoid false 404s.
+            if _fb_route is not None and getattr(_fb_route, "backend", None) is not None:
+                _fb_backend = _fb_route.backend
+                _fb_backend_path = getattr(_fb_route, "backend_path", "") or ""
+                try:
+                    data = _fb_backend.read_content(_fb_backend_path)
+                    if offset or count is not None:
+                        data = data[offset : offset + count] if count is not None else data[offset:]
+                    return data
+                except (FileNotFoundError, NexusFileNotFoundError):
+                    pass
             raise NexusFileNotFoundError(path)
         data = result.data or b""
 

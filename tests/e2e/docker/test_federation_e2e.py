@@ -692,13 +692,11 @@ class TestDistributedLocks:
         lock_id = lock_data.get("lock_id", "")
         assert lock_id, f"No lock_id in response: {lock_data}"
 
-        # Verify held via sys_stat(include_lock=True)
-        info = _grpc_call(
-            grpc1, "sys_stat", {"path": lock_path, "include_lock": True}, api_key=api_key
-        )
-        assert "error" not in info, f"sys_stat(include_lock) failed: {info}"
+        # Verify held via sys_stat (lock info always included)
+        info = _grpc_call(grpc1, "sys_stat", {"path": lock_path}, api_key=api_key)
+        assert "error" not in info, f"sys_stat failed: {info}"
         info_data = info.get("result", info)
-        # lock data may be nested under "metadata" (sys_stat wraps in metadata dict)
+        # lock data may be nested under "metadata" (RPC wraps in metadata dict)
         stat_meta = info_data.get("metadata", info_data)
         lock_data_check = stat_meta.get("lock")
         assert lock_data_check is not None, f"Expected lock info present: {info_data}"
@@ -793,13 +791,12 @@ class TestDistributedLocks:
         # Wait for TTL to expire
         time.sleep(4)
 
-        # Verify lock is released via sys_stat(include_lock=True)
-        info = _grpc_call(
-            grpc1, "sys_stat", {"path": lock_path, "include_lock": True}, api_key=api_key
-        )
+        # Verify lock is released via sys_stat (lock info always included)
+        info = _grpc_call(grpc1, "sys_stat", {"path": lock_path}, api_key=api_key)
         if "error" not in info:
             info_data = info.get("result", info)
-            lock_state = info_data.get("lock")
+            stat_meta = info_data.get("metadata", info_data)
+            lock_state = stat_meta.get("lock")
             if lock_state is None or len(lock_state.get("holders", [])) == 0:
                 return  # expired as expected
 

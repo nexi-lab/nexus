@@ -822,17 +822,13 @@ class NexusFS(  # type: ignore[misc]
         self,
         path: str,
         *,
-        include_lock: bool = False,
         context: OperationContext | None = None,
+        **_kwargs: Any,
     ) -> dict[str, Any] | None:
         """Get file metadata without reading content (FUSE getattr).
 
-        ``include_lock=True`` is a *transitional* knob: today the
-        advisory lock table is Python-owned and a lookup in federation
-        mode costs a raft round-trip, so callers opt in. F4 moves the
-        lock table into the kernel (free lookup) and deletes this
-        parameter entirely — ``sys_stat`` will then always return a
-        ``"lock"`` key. Do not build new consumers around the flag.
+        Lock info is always included (Rust LockManager lookup is free).
+        ``include_lock`` kwarg accepted for backward compat but ignored.
         """
         ctx = self._resolve_cred(context)
         normalized = self._validate_path(path, allow_root=True)
@@ -873,25 +869,6 @@ class NexusFS(  # type: ignore[misc]
                 return None
 
         return result
-
-    @staticmethod
-    def _format_lock_info(info: Any) -> dict[str, Any]:
-        """Format LockInfo for sys_stat(include_lock=True) response."""
-        return {
-            "path": info.path,
-            "mode": info.mode,
-            "max_holders": info.max_holders,
-            "fence_token": info.fence_token,
-            "holders": [
-                {
-                    "lock_id": h.lock_id,
-                    "holder_info": h.holder_info,
-                    "acquired_at": h.acquired_at,
-                    "expires_at": h.expires_at,
-                }
-                for h in info.holders
-            ],
-        }
 
     @rpc_expose(description="Upsert file metadata attributes")
     def sys_setattr(

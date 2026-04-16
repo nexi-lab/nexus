@@ -10,7 +10,6 @@ import asyncio
 import json
 import logging
 import os
-import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -418,13 +417,16 @@ class UnifiedAuthService:
 
         if self._oauth_service is not None:
             oauth_creds = await self._oauth_service.list_credentials(context=context)
+            # Phase 3 (#3740): lookup gws-cli-synced profiles from the unified
+            # profile store instead of probing the CLI directly. The adapter
+            # framework keeps these profiles fresh via AdapterRegistry.
             cached_native: dict[str, str] | None | object = _UNSET
             for service, providers in _OAUTH_PROVIDER_ALIASES.items():
                 seen_services.add(service)
                 matching = [cred for cred in oauth_creds if cred.get("provider") in providers]
                 if service in _GOOGLE_OAUTH_SERVICES:
                     if cached_native is _UNSET:
-                        cached_native = await self._detect_google_workspace_cli_native()
+                        cached_native = self._gws_native_from_profile_store()
                     native = cached_native if isinstance(cached_native, dict) else None
                 else:
                     native = None
@@ -607,7 +609,8 @@ class UnifiedAuthService:
         if user_email is not None:
             matches = [cred for cred in matches if cred.get("user_email") == user_email]
         desired_targets = self._google_targets_for_service(service, target=target)
-        native = await self._detect_oauth_native(service, user_email=user_email)
+        # Phase 3 (#3740): read from profile store instead of probing gws CLI.
+        native = self._oauth_native_from_profile_store(service, user_email=user_email)
         if not matches:
             if native is not None:
                 if desired_targets:
@@ -741,70 +744,51 @@ class UnifiedAuthService:
         message = f"Native provider chain available via {details.get('source', 'native')}."
         return {**{k: str(v) for k, v in details.items()}, "message": message}
 
-    async def _detect_oauth_native(
-        self,
-        service: str,
-        *,
-        user_email: str | None = None,
-    ) -> dict[str, str] | None:
-        if service not in _GOOGLE_OAUTH_SERVICES:
-            return None
-        return await self._detect_google_workspace_cli_native(user_email=user_email)
+    def _gws_native_from_profile_store(self) -> dict[str, str] | None:
+        """Return gws-cli-synced profile info from the unified profile store.
 
-    async def _detect_google_workspace_cli_native(
-        self,
-        *,
-        user_email: str | None = None,
-    ) -> dict[str, str] | None:
-        if shutil.which("gws") is None:
-            return None
-
-        proc: asyncio.subprocess.Process | None = None
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                "gws",
-                "gmail",
-                "users",
-                "getProfile",
-                "--params",
-                '{"userId":"me"}',
-                "--format",
-                "json",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout_bytes, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
-        except BaseException:
-            if proc is not None and proc.returncode is None:
-                proc.kill()
-                await proc.wait()
-            return None
-
-        if proc.returncode != 0:
-            return None
-
-        stdout = stdout_bytes.decode().strip()
-        if not stdout:
+        Phase 3 (#3740): replaces _detect_google_workspace_cli_native(), which
+        was a hardcoded subprocess probe. The adapter framework
+        (GwsCliSyncAdapter + AdapterRegistry) now keeps google profiles fresh
+        in the store — we just read them here.
+        """
+        if self._profile_store is None:
             return None
 
         try:
-            start = stdout.find("{")
-            payload = stdout[start:] if start >= 0 else stdout
-            data = json.loads(payload)
+            gws_profiles = [
+                p
+                for p in self._profile_store.list(provider="google")
+                if p.backend == "external-cli" and p.backend_key.startswith("gws-cli/")
+            ]
         except Exception:
             return None
 
-        email = str(data.get("emailAddress") or "").strip()
-        if not email:
-            return None
-        if user_email and user_email != email:
+        if not gws_profiles:
             return None
 
+        email = gws_profiles[0].account_identifier
         return {
             "source": "native:gws_cli",
             "email": email,
             "message": f"Local gws CLI profile available for {email}.",
         }
+
+    def _oauth_native_from_profile_store(
+        self,
+        service: str,
+        *,
+        user_email: str | None = None,
+    ) -> dict[str, str] | None:
+        """OAuth-specific wrapper: filter by service + optional user email."""
+        if service not in _GOOGLE_OAUTH_SERVICES:
+            return None
+        native = self._gws_native_from_profile_store()
+        if native is None:
+            return None
+        if user_email and user_email != native.get("email"):
+            return None
+        return native
 
     def _google_targets_for_service(
         self,

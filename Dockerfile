@@ -58,6 +58,11 @@ RUN if [ "$USE_CHINA_MIRROR" = "true" ]; then \
 # ---------- uv + maturin ----------
 RUN pip install --no-cache-dir -i $(cat /tmp/pip_index) uv maturin
 
+# ---------- pdf-inspector forward-compat (Issue #3757) ----------
+# pdf-inspector 0.1.1 pins pyo3=0.25 which caps at Python 3.13. On 3.14+ we
+# build from sdist and this env lets ABI3 forward-compat bypass the check.
+ENV PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1
+
 # ---------- Install 3rd-party Python dependencies (stable cache layer) ----------
 # Copy only metadata — src/ changes won't invalidate this expensive layer
 WORKDIR /build

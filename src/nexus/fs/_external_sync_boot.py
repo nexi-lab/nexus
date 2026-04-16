@@ -20,36 +20,44 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # Sync state tracking (Phase 3, #3740):
-#   - _sync_last_ok_at: monotonic() at last successful startup; suppresses
-#     redundant syncs during the same process life.
+#   - _sync_last_ok_at: monotonic() at last successful startup. After
+#     ``_SYNC_REFRESH_INTERVAL_S`` elapses, the next call re-syncs to pick
+#     up credential changes made outside this process (`gws auth login`,
+#     `gh auth switch`, keychain rotation, etc.).
 #   - _sync_last_attempt_at: monotonic() at last attempt (success OR failure);
 #     rate-limits retries so a broken CLI doesn't get hammered.
-#   - _MIN_RETRY_INTERVAL_S: how long to wait after a failed attempt before
+#   - _MIN_RETRY_INTERVAL_S: how long to wait after a FAILED attempt before
 #     trying again. Gives the user time to `gws auth login` or fix the broken
 #     config without restarting the process.
+#   - _SYNC_REFRESH_INTERVAL_S: how long a SUCCESSFUL sync stays fresh. After
+#     this, the next request-path consult triggers a re-sync. Picks up live
+#     CLI-auth changes in long-lived server processes without a restart.
 _sync_last_ok_at: float | None = None
 _sync_last_attempt_at: float | None = None
 _MIN_RETRY_INTERVAL_S = 60.0
+_SYNC_REFRESH_INTERVAL_S = 300.0  # 5 minutes
 
 
 def ensure_external_sync() -> None:
     """Run external-CLI adapter sync, populating the profile store.
 
-    First call runs sync inline. Subsequent calls are no-ops until either:
-      - The previous attempt succeeded (profiles were written), OR
-      - It has been at least ``_MIN_RETRY_INTERVAL_S`` since the last failure
+    First call runs sync inline. Subsequent calls:
+      - If the last successful sync is within ``_SYNC_REFRESH_INTERVAL_S``,
+        short-circuit (no-op).
+      - If the last attempt failed and we're within ``_MIN_RETRY_INTERVAL_S``
+        of that attempt, short-circuit (rate-limit).
+      - Otherwise, re-sync to pick up live credential changes.
 
-    The old implementation marked sync-done *before* running, so a first
-    call that raced with `gws auth login` permanently pinned the process
-    to an empty view of the store. That's fixed: a failure just rate-limits
-    retries, it doesn't lock them out.
+    The old one-shot implementation (pre-Codex Round 2) cached success forever,
+    so ``gws auth login/switch`` after process start was invisible until
+    restart. Now long-lived servers pick up credential rotations within 5 min.
     """
     global _sync_last_ok_at, _sync_last_attempt_at  # noqa: PLW0603
 
     now = time.monotonic()
 
-    # Already synced successfully this process — stay idempotent.
-    if _sync_last_ok_at is not None:
+    # Recent successful sync — still fresh, short-circuit.
+    if _sync_last_ok_at is not None and now - _sync_last_ok_at < _SYNC_REFRESH_INTERVAL_S:
         return
 
     # Previous attempt failed; don't hammer the CLI on every request.

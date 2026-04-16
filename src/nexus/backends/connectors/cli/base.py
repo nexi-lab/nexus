@@ -58,6 +58,17 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class ScopedAuthRequiredError(RuntimeError):
+    """No scoped credential is available for a request that requires one.
+
+    Raised by PathCLIBackend._get_user_token when a connector has
+    ``AUTH_SOURCE`` set but neither the external-CLI path nor TokenManager
+    could produce a credential. We raise instead of returning None because
+    None would cause the CLI to fall back to whatever login is active on
+    the host — a silent cross-tenant / cross-user leak.
+    """
+
+
 class PathCLIBackend(
     PathAddressingEngine,
     ReadmeDocMixin,
@@ -257,17 +268,25 @@ class PathCLIBackend(
 
         Phase 2 (existing): TokenManager.get_credentials() scoped by user+zone.
 
-        Returns None if neither path yields a token (allows CLI to use
-        its own auth, e.g., `gh auth login`).
+        **Fail-closed contract when AUTH_SOURCE is set:** if no zone/account
+        scoped credential resolves, this method raises
+        ``ScopedAuthRequiredError`` rather than returning ``None``. Returning
+        ``None`` would let the CLI fall back to whatever login is active on
+        the host — a silent cross-tenant / cross-user privilege leak. This
+        fail-closed behavior replaces the ambient-auth fallback for any
+        connector that declares ``AUTH_SOURCE``.
+
+        Connectors *without* ``AUTH_SOURCE`` (legacy TokenManager-only flow)
+        retain the original ``return None → CLI falls back to its own auth``
+        behavior.
 
         **Zone-scope safety:** the external-CLI profile store is host-global
-        — it has no concept of zones yet. Using it to satisfy a zone-scoped
-        request would leak the host's active CLI identity into a zone that
-        expected an isolated credential. Until the profile store becomes
-        zone-aware (sister epic: PostgresAuthProfileStore), Phase 1 is
-        skipped whenever ``context.zone_id`` is set to anything other than
-        the root zone sentinel.
+        — it has no concept of zones. A zone-scoped request that can't be
+        served by TokenManager must not silently leak the host's CLI identity
+        into the zone. Non-root zones skip Phase 1 and rely on Phase 2 only.
         """
+        provider = self._resolve_provider()
+
         # Phase 1: external-CLI credential via unified profile store (#3740).
         # Gated on root-or-unscoped zone to preserve zone-scoped token safety.
         if self.AUTH_SOURCE and self._is_zone_safe_for_external_cli(context):
@@ -275,33 +294,50 @@ class PathCLIBackend(
             if token:
                 return token
 
-        # Phase 2: TokenManager (existing behavior, unchanged)
-        if self._token_manager is None:
-            return None
-        if context is None:
-            return None
+        # Phase 2: TokenManager (existing behavior).
+        if self._token_manager is not None and context is not None:
+            try:
+                user_email = getattr(context, "user_id", None)
+                zone_id = getattr(context, "zone_id", None)
+                if user_email:
+                    credentials = self._token_manager.get_credentials(
+                        user_email=user_email,
+                        provider=provider,
+                        zone_id=zone_id,
+                    )
+                    if credentials:
+                        return str(credentials.get("access_token", ""))
+            except Exception:
+                logger.debug("Token resolution failed for %s", context.user_id, exc_info=True)
 
-        try:
-            user_email = getattr(context, "user_id", None)
-            zone_id = getattr(context, "zone_id", None)
-            if not user_email:
-                return None
-
-            provider = "google"  # Default; subclasses override
-            if self._config and self._config.auth:
-                provider = self._config.auth.provider
-
-            credentials = self._token_manager.get_credentials(
-                user_email=user_email,
-                provider=provider,
-                zone_id=zone_id,
+        # Fail closed for AUTH_SOURCE connectors — do NOT let the CLI fall
+        # back to host-global auth (which would bypass zone/account scoping).
+        if self.AUTH_SOURCE:
+            zone_info = ""
+            user_info = ""
+            if context is not None:
+                zone_id = getattr(context, "zone_id", None)
+                user_id = getattr(context, "user_id", None)
+                if zone_id:
+                    zone_info = f" zone={zone_id!r}"
+                if user_id:
+                    user_info = f" user={user_id!r}"
+            raise ScopedAuthRequiredError(
+                f"{self.CLI_NAME}: no scoped credential available for "
+                f"provider={provider!r}{zone_info}{user_info}. "
+                f"Refusing to fall back to host-global CLI auth — that would "
+                f"leak the workstation's active login into a scoped request."
             )
-            if credentials:
-                return str(credentials.get("access_token", ""))
-        except Exception:
-            logger.debug("Token resolution failed for %s", context.user_id, exc_info=True)
 
+        # Legacy path (connectors without AUTH_SOURCE): return None so the
+        # CLI can use its own auth chain. This preserves pre-Phase-3 behavior.
         return None
+
+    def _resolve_provider(self) -> str:
+        """Return the configured OAuth provider name, defaulting to ``google``."""
+        if self._config and self._config.auth:
+            return self._config.auth.provider
+        return "google"
 
     @staticmethod
     def _is_zone_safe_for_external_cli(context: "OperationContext | None") -> bool:
@@ -336,9 +372,7 @@ class PathCLIBackend(
         Returns None on any failure; ``_get_user_token`` falls back to
         TokenManager in that case.
         """
-        provider = "google"  # default
-        if self._config and self._config.auth:
-            provider = self._config.auth.provider
+        provider = self._resolve_provider()
 
         account: str | None = None
         if context is not None:

@@ -232,10 +232,11 @@ class TestGhResolveCredential:
         assert args[0:4] == ["/usr/bin/gh", "auth", "token", "-h"]
         assert "testuser" in args
 
-    def test_resolve_subprocess_retries_without_u_flag_on_failure(
+    def test_resolve_subprocess_retries_only_on_unknown_flag(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Old gh (< 2.40) doesn't accept -u; retry without it."""
+        """Old gh (< 2.40) doesn't know ``-u``; retry without it is fine
+        (version skew). Stderr must clearly indicate unsupported flag."""
         monkeypatch.setenv("GH_CONFIG_DIR", str(tmp_path / "empty-gh"))
 
         call_count = {"n": 0}
@@ -243,8 +244,12 @@ class TestGhResolveCredential:
         def _fake_run(args, **_kwargs):  # noqa: ANN001, ANN003
             call_count["n"] += 1
             if "-u" in args:
-                # First call: unknown flag
-                return type("P", (), {"returncode": 1, "stdout": "", "stderr": "unknown flag"})()
+                # Exact error pattern from real gh < 2.40
+                return type(
+                    "P",
+                    (),
+                    {"returncode": 1, "stdout": "", "stderr": "unknown flag: --user"},
+                )()
             return type("P", (), {"returncode": 0, "stdout": "gho_legacy_token", "stderr": ""})()
 
         with (
@@ -261,4 +266,50 @@ class TestGhResolveCredential:
             cred = adapter.resolve_credential_sync("gh-cli/github.com/testuser")
 
         assert cred.access_token == "gho_legacy_token"
-        assert call_count["n"] == 2  # first -u attempt, then retry without
+        assert call_count["n"] == 2  # -u attempt, then retry without
+
+    def test_resolve_subprocess_does_not_retry_without_u_on_user_errors(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """If ``-u <user>`` fails with a non-flag error (e.g., wrong user,
+        keyring issue), retrying without ``-u`` would silently return the
+        host's active-account token — a different user's credential.
+        Must fail through instead."""
+        config_dir = tmp_path / "gh"
+        config_dir.mkdir()
+        shutil.copy(_HOSTS_V240, config_dir / "hosts.yml")
+        monkeypatch.setenv("GH_CONFIG_DIR", str(config_dir))
+
+        call_count = {"subprocess": 0}
+
+        def _fake_run(_args, **_kwargs):  # noqa: ANN001, ANN003
+            call_count["subprocess"] += 1
+            # Non-flag error: wrong user
+            return type(
+                "P",
+                (),
+                {"returncode": 1, "stdout": "", "stderr": "no oauth token found"},
+            )()
+
+        import contextlib
+
+        with (
+            patch(
+                "nexus.bricks.auth.external_sync.gh_sync.shutil.which",
+                return_value="/usr/bin/gh",
+            ),
+            patch(
+                "nexus.bricks.auth.external_sync.gh_sync.subprocess.run",
+                side_effect=_fake_run,
+            ),
+        ):
+            adapter = GhCliSyncAdapter()
+            # 'nobody' is not in the v2.40 fixture either; file fallback
+            # will raise CredentialResolutionError. Either way, we want
+            # to verify subprocess was called EXACTLY ONCE (no broad retry).
+            with contextlib.suppress(CredentialResolutionError):
+                adapter.resolve_credential_sync("gh-cli/github.com/nobody")
+
+        assert call_count["subprocess"] == 1, (
+            "Must NOT retry without -u on non-flag errors — would leak the active-account token"
+        )

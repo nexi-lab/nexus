@@ -69,9 +69,16 @@ class TestPathCLIBackendAuthSource:
         assert token == "alice-token"
         mock_resolve.assert_called_once_with("google", account="alice@example.com")
 
-    def test_falls_back_to_none_when_no_external_profile_and_no_tm(self) -> None:
-        """No external profile and no TokenManager → returns None."""
-        from nexus.backends.connectors.cli.base import PathCLIBackend
+    def test_fails_closed_when_no_profile_and_no_tm(self) -> None:
+        """AUTH_SOURCE set + no external profile + no TokenManager → raise.
+
+        Must NOT return None (which would cause the CLI to fall back to
+        whatever login is active on the host, leaking identity).
+        """
+        from nexus.backends.connectors.cli.base import (
+            PathCLIBackend,
+            ScopedAuthRequiredError,
+        )
 
         class _TestConnector(PathCLIBackend):
             CLI_NAME = "gws"
@@ -86,10 +93,23 @@ class TestPathCLIBackendAuthSource:
                 return_value=None,
             ),
             patch("nexus.fs._external_sync_boot.ensure_external_sync"),
+            pytest.raises(ScopedAuthRequiredError),
         ):
-            token = connector._get_user_token(context=None)
+            connector._get_user_token(context=None)
 
-        assert token is None
+    def test_legacy_connector_without_auth_source_still_returns_none(self) -> None:
+        """AUTH_SOURCE=None connector keeps pre-Phase-3 behavior: returns
+        None so the CLI can use its own auth chain (no fail-closed semantics)."""
+        from nexus.backends.connectors.cli.base import PathCLIBackend
+
+        class _LegacyConnector(PathCLIBackend):
+            CLI_NAME = "gws"
+            CLI_SERVICE = "gmail"
+            # AUTH_SOURCE not set — legacy TokenManager-only flow
+
+        connector = _LegacyConnector()
+        token = connector._get_user_token(context=None)
+        assert token is None  # pre-Phase-3 behavior preserved
 
     def test_no_auth_source_skips_external_cli(self) -> None:
         """AUTH_SOURCE=None → helper is never called."""
@@ -110,9 +130,15 @@ class TestPathCLIBackendAuthSource:
         assert token is None
         mock_resolve.assert_not_called()
 
-    def test_resolver_exception_falls_through_to_token_manager(self) -> None:
-        """If the external helper raises, _get_user_token must swallow and fall through."""
-        from nexus.backends.connectors.cli.base import PathCLIBackend
+    def test_resolver_exception_still_fails_closed(self) -> None:
+        """If the external helper raises, _get_user_token must not leak the
+        raw exception — but with AUTH_SOURCE set and no TokenManager fallback,
+        it still fails closed with ScopedAuthRequiredError rather than
+        returning None."""
+        from nexus.backends.connectors.cli.base import (
+            PathCLIBackend,
+            ScopedAuthRequiredError,
+        )
 
         class _TestConnector(PathCLIBackend):
             CLI_NAME = "gws"
@@ -121,14 +147,14 @@ class TestPathCLIBackendAuthSource:
 
         connector = _TestConnector()
 
-        with patch(
-            "nexus.fs._external_sync_boot.resolve_token_for_provider",
-            side_effect=RuntimeError("boom"),
+        with (
+            patch(
+                "nexus.fs._external_sync_boot.resolve_token_for_provider",
+                side_effect=RuntimeError("boom"),
+            ),
+            pytest.raises(ScopedAuthRequiredError),
         ):
-            # No TokenManager configured → returns None rather than propagating
-            token = connector._get_user_token(context=None)
-
-        assert token is None
+            connector._get_user_token(context=None)
 
 
 class TestEnsureExternalSyncRetries:
@@ -276,8 +302,14 @@ class TestZoneScopedRequestsSkipExternalCli:
     """Regression: external-CLI store is host-global; zone-scoped requests
     must go to TokenManager, not the host's CLI login."""
 
-    def test_non_root_zone_skips_external_cli(self) -> None:
-        from nexus.backends.connectors.cli.base import PathCLIBackend
+    def test_non_root_zone_skips_external_cli_and_fails_closed(self) -> None:
+        """Non-root zone → skip external CLI. With no TokenManager, must
+        raise ScopedAuthRequiredError rather than return None (which would
+        let the CLI fall back to host-global auth)."""
+        from nexus.backends.connectors.cli.base import (
+            PathCLIBackend,
+            ScopedAuthRequiredError,
+        )
 
         class _TestConnector(PathCLIBackend):
             CLI_NAME = "gws"
@@ -287,14 +319,18 @@ class TestZoneScopedRequestsSkipExternalCli:
         connector = _TestConnector()
         ctx = SimpleNamespace(user_id="alice@example.com", zone_id="tenant-a")
 
-        with patch(
-            "nexus.fs._external_sync_boot.resolve_token_for_provider",
-            return_value="should-not-be-used",
-        ) as mock_resolve:
-            token = connector._get_user_token(context=ctx)
+        with (
+            patch(
+                "nexus.fs._external_sync_boot.resolve_token_for_provider",
+                return_value="should-not-be-used",
+            ) as mock_resolve,
+            pytest.raises(ScopedAuthRequiredError) as exc_info,
+        ):
+            connector._get_user_token(context=ctx)
 
-        assert token is None  # TokenManager path (which is empty) took over
         mock_resolve.assert_not_called()
+        assert "tenant-a" in str(exc_info.value)
+        assert "alice@example.com" in str(exc_info.value)
 
     def test_root_zone_uses_external_cli(self) -> None:
         from nexus.backends.connectors.cli.base import PathCLIBackend

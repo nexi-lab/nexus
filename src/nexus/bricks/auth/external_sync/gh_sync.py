@@ -60,7 +60,15 @@ class GhCliSyncAdapter(ExternalCliSyncAdapter):
         return self._sync_file()
 
     async def _sync_subprocess(self) -> SyncResult:
-        """Run gh auth status and parse output."""
+        """Run gh auth status and parse output.
+
+        On non-zero exit (not logged in, keyring unavailable, enterprise
+        quirks, …) fall back to parsing ``hosts.yml`` instead of silently
+        reporting zero profiles. A successful-but-empty SyncResult would
+        combine with the TTL-aware refresh gate to permanently suppress
+        later profile discovery in a long-lived process; always surface
+        the failure so the file-fallback path runs.
+        """
         proc: asyncio.subprocess.Process | None = None
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -80,27 +88,49 @@ class GhCliSyncAdapter(ExternalCliSyncAdapter):
                     await proc.wait()
                 except ProcessLookupError:
                     pass
-            return SyncResult(adapter_name=self.adapter_name, error="gh: timeout after 5s")
+            # Fall back to hosts.yml rather than reporting empty success.
+            return self._sync_file_with_reason("gh: timeout after 5s")
         except FileNotFoundError:
-            return SyncResult(adapter_name=self.adapter_name, error="gh: binary not found")
+            return self._sync_file_with_reason("gh: binary not found")
 
-        # gh auth status prints to stderr in older versions, stdout in newer
+        # gh auth status prints to stderr in older versions, stdout in newer.
         output = stdout_bytes.decode("utf-8", errors="replace")
+        stderr = stderr_bytes.decode("utf-8", errors="replace")
         if not output.strip():
-            output = stderr_bytes.decode("utf-8", errors="replace")
+            output = stderr
+
+        # Non-zero exit: not logged in, keyring unavailable, etc. Surface the
+        # failure via the file-fallback rather than reporting zero profiles.
+        if proc.returncode != 0:
+            detail = stderr.strip() or output.strip() or f"exit code {proc.returncode}"
+            return self._sync_file_with_reason(f"gh auth status: {detail}")
 
         if not output.strip():
-            return SyncResult(
-                adapter_name=self.adapter_name,
-                error="gh auth status returned empty output",
-            )
+            return self._sync_file_with_reason("gh auth status returned empty output")
 
         try:
             profiles = self.parse_status_output(output)
         except Exception as exc:
-            return SyncResult(adapter_name=self.adapter_name, error=f"gh: parse error: {exc}")
+            return self._sync_file_with_reason(f"gh: parse error: {exc}")
+
+        if not profiles:
+            # Subprocess succeeded but parsed no accounts — the file might have
+            # them (e.g. user hasn't run ``gh auth status`` recently). Try file.
+            return self._sync_file_with_reason("gh auth status parsed 0 profiles")
 
         return SyncResult(adapter_name=self.adapter_name, profiles=profiles)
+
+    def _sync_file_with_reason(self, reason: str) -> SyncResult:
+        """Try file-based sync; if that also fails, attach the subprocess reason."""
+        result = self._sync_file()
+        if result.profiles:
+            # Success via file — ignore subprocess issue.
+            return result
+        # Both failed — combine error messages for diagnostics.
+        combined = reason
+        if result.error:
+            combined = f"{reason} | file: {result.error}"
+        return SyncResult(adapter_name=self.adapter_name, error=combined)
 
     def _sync_file(self) -> SyncResult:
         """Parse hosts.yml as fallback when gh binary is not available."""
@@ -239,7 +269,14 @@ class GhCliSyncAdapter(ExternalCliSyncAdapter):
         """Call ``gh auth token -h <host> -u <user>`` and return its stdout.
 
         Returns None (not raises) on any failure — caller falls back to file.
-        Note: ``-u`` is accepted in gh >= 2.40 when multiple users exist per host.
+
+        **Narrow -u retry:** only retry without ``-u`` when stderr clearly
+        indicates an unsupported-flag / version-skew case (gh < 2.40 before
+        per-user tokens existed). For every other failure (wrong user, keyring
+        locked, auth drift, enterprise quirks), retrying without ``-u`` would
+        silently return the host's active-account token — a different user's
+        credential. Fall through to None instead so the file path can verify
+        account membership or fail cleanly.
         """
         try:
             proc = subprocess.run(
@@ -253,7 +290,23 @@ class GhCliSyncAdapter(ExternalCliSyncAdapter):
             return None
 
         if proc.returncode != 0:
-            # Retry without -u for single-user v2.40 installs.
+            # Only retry without -u if gh doesn't understand the flag.
+            # gh < 2.40 emits "unknown flag: --user" or similar; modern gh
+            # with a wrong user emits "no oauth token found" or "user not found".
+            stderr_lower = (proc.stderr or "").lower()
+            looks_like_unknown_flag = any(
+                needle in stderr_lower
+                for needle in (
+                    "unknown flag",
+                    "unknown shorthand flag",
+                    "flag needs an argument",
+                    "invalid argument",
+                )
+            )
+            if not looks_like_unknown_flag:
+                # Any other failure: refuse to fall back to the active-account
+                # token. Caller will try the file path next.
+                return None
             try:
                 proc = subprocess.run(
                     [binary_path, "auth", "token", "-h", host],

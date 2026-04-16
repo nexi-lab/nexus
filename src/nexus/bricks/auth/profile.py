@@ -20,6 +20,7 @@ Architecture (epic #3722, decision 1A):
 
 from __future__ import annotations
 
+import builtins
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -150,6 +151,20 @@ class AuthProfileStore(Protocol):
         """
         ...
 
+    def replace_owned_subset(
+        self,
+        *,
+        upserts: "builtins.list[AuthProfile]",
+        deletes: "builtins.list[str]",
+    ) -> None:
+        """Atomically apply a batch of upserts then deletes.
+
+        Used by the adapter registry to swap an owner's profile set in one
+        transaction so concurrent readers never see a half-applied snapshot
+        (some new rows alongside about-to-be-tombstoned rows).
+        """
+        ...
+
 
 # ---------------------------------------------------------------------------
 # In-memory store — tests and pre-SQLite fallback
@@ -203,3 +218,15 @@ class InMemoryAuthProfileStore:
         stats.cooldown_reason = reason
         if raw_error is not None:
             stats.raw_error = raw_error[:RAW_ERROR_MAX_LEN]
+
+    def replace_owned_subset(
+        self,
+        *,
+        upserts: "builtins.list[AuthProfile]",
+        deletes: "builtins.list[str]",
+    ) -> None:
+        # Single-threaded by contract — applies as a single visible step.
+        for p in upserts:
+            self._profiles[p.id] = p
+        for pid in deletes:
+            self._profiles.pop(pid, None)

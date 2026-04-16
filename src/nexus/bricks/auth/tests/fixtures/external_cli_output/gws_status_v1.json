@@ -1,0 +1,12 @@
+{
+  "accounts": [
+    {
+      "email": "user@example.com",
+      "active": true,
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.send",
+        "https://www.googleapis.com/auth/drive"
+      ]
+    }
+  ]
+}

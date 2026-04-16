@@ -503,3 +503,256 @@ class TestOfflineSafety:
         finally:
             loop.close()
         assert result.error is not None
+
+
+class TestTombstoning:
+    """R3-H3 regression: stale adapter-owned profiles must be deleted on
+    successful resync. Otherwise logout/account-switch leaves ghost rows
+    that auth selection still treats as usable.
+    """
+
+    async def test_resync_removes_vanished_profiles(self) -> None:
+        store = InMemoryAuthProfileStore()
+
+        # Stateful adapter: returns alice on first sync, bob on second.
+        class _SwitchingAdapter(ExternalCliSyncAdapter):
+            adapter_name = "switch"
+            sync_ttl_seconds = 0.1
+            failure_threshold = 3
+            reset_timeout_seconds = 60.0
+
+            def __init__(self) -> None:
+                self.call = 0
+
+            async def detect(self) -> bool:
+                return True
+
+            async def sync(self) -> SyncResult:
+                self.call += 1
+                email = "alice@example.com" if self.call == 1 else "bob@example.com"
+                return SyncResult(
+                    adapter_name=self.adapter_name,
+                    profiles=[
+                        SyncedProfile(
+                            provider="test",
+                            account_identifier=email,
+                            backend_key=f"switch/{email}",
+                            source="switch",
+                        ),
+                    ],
+                )
+
+            async def resolve_credential(self, _bk: str) -> ResolvedCredential:
+                return ResolvedCredential(kind="api_key", api_key="x")
+
+        adapter = _SwitchingAdapter()
+        registry = AdapterRegistry([adapter], store, startup_timeout=3.0)
+
+        # First sync: alice present
+        await registry.startup()
+        ids_after_first = {p.id for p in store.list()}
+        assert "test/alice@example.com" in ids_after_first
+        assert "test/bob@example.com" not in ids_after_first
+
+        # Second sync (force via internal helper): bob present, alice gone
+        await registry._sync_adapter(adapter)
+        ids_after_second = {p.id for p in store.list()}
+        assert "test/bob@example.com" in ids_after_second
+        assert "test/alice@example.com" not in ids_after_second, (
+            "alice should be tombstoned — she vanished from the source CLI"
+        )
+
+    async def test_degraded_sync_does_not_tombstone(self) -> None:
+        """If sync returns error (transient parse error etc), do NOT delete
+        existing rows — that would wipe valid profiles on flaky CLIs."""
+        store = InMemoryAuthProfileStore()
+
+        class _FlippyAdapter(ExternalCliSyncAdapter):
+            adapter_name = "flippy"
+            sync_ttl_seconds = 0.1
+            failure_threshold = 3
+            reset_timeout_seconds = 60.0
+
+            def __init__(self) -> None:
+                self.call = 0
+
+            async def detect(self) -> bool:
+                return True
+
+            async def sync(self) -> SyncResult:
+                self.call += 1
+                if self.call == 1:
+                    return SyncResult(
+                        adapter_name=self.adapter_name,
+                        profiles=[
+                            SyncedProfile(
+                                provider="test",
+                                account_identifier="alice@example.com",
+                                backend_key="flippy/alice@example.com",
+                                source="flippy",
+                            ),
+                        ],
+                    )
+                # Second sync: degraded with no profiles
+                return SyncResult(adapter_name=self.adapter_name, error="parse error", profiles=[])
+
+            async def resolve_credential(self, _bk: str) -> ResolvedCredential:
+                return ResolvedCredential(kind="api_key", api_key="x")
+
+        adapter = _FlippyAdapter()
+        registry = AdapterRegistry([adapter], store, startup_timeout=3.0)
+        await registry.startup()
+        assert any(p.id == "test/alice@example.com" for p in store.list())
+
+        await registry._sync_adapter(adapter)
+        # Alice survives the degraded sync
+        assert any(p.id == "test/alice@example.com" for p in store.list()), (
+            "degraded sync (error != None) must NOT tombstone existing profiles"
+        )
+
+    async def test_tombstone_only_touches_owned_rows(self) -> None:
+        """Adapter A re-syncing must NOT delete adapter B's rows."""
+        store = InMemoryAuthProfileStore()
+
+        # Pre-populate with an adapter-B-owned row
+        from datetime import UTC
+        from datetime import datetime as _dt
+
+        from nexus.bricks.auth.profile import (
+            AuthProfile as _AP,
+        )
+        from nexus.bricks.auth.profile import (
+            ProfileUsageStats as _PS,
+        )
+
+        store.upsert(
+            _AP(
+                id="other/bob@example.com",
+                provider="other",
+                account_identifier="bob@example.com",
+                backend="external-cli",
+                backend_key="other-adapter/bob@example.com",
+                last_synced_at=_dt.now(UTC),
+                sync_ttl_seconds=300,
+                usage_stats=_PS(),
+            )
+        )
+
+        # Adapter A syncs, owns no rows in store yet
+        adapter = _FastAdapter()  # adapter_name="fast", produces fast/fast-acct
+        registry = AdapterRegistry([adapter], store, startup_timeout=3.0)
+        await registry.startup()
+
+        ids = {p.id for p in store.list()}
+        # Both should survive: A added its own row, B's row untouched
+        assert "test/fast-acct" in ids
+        assert "other/bob@example.com" in ids, "A's sync must not delete B's adapter-owned row"
+
+    async def test_failed_atomic_swap_does_not_record_success(self) -> None:
+        """R6-H3 regression: when ``replace_owned_subset`` raises, the
+        registry must NOT stamp ``_last_sync_times`` or record breaker
+        success. Otherwise the next refresh tick skips the retry — the
+        sync silently appears done while the store still holds the
+        pre-sync snapshot.
+        """
+
+        class _FailingStore(InMemoryAuthProfileStore):
+            def replace_owned_subset(self, *, upserts, deletes) -> None:  # noqa: ANN001, ARG002
+                raise RuntimeError("simulated SQLite busy timeout")
+
+        store = _FailingStore()
+        adapter = _FastAdapter()
+        registry = AdapterRegistry([adapter], store, startup_timeout=3.0)
+
+        await registry.startup()
+        # Store apply failed → no last_sync_times entry, breaker counted failure
+        assert "fast" not in registry._last_sync_times, (
+            "must not stamp last_sync_times when store apply failed"
+        )
+        breaker = registry._breakers["fast"]
+        assert breaker.failure_count == 1, "failed store apply must increment breaker.failure_count"
+
+        # _sync_adapter path uses the same gating
+        await registry._sync_adapter(adapter)
+        assert "fast" not in registry._last_sync_times
+        assert breaker.failure_count == 2
+
+    async def test_resync_uses_atomic_replace_owned_subset(self) -> None:
+        """R4-MEDIUM regression: registry must batch upserts+tombstones via
+        ``store.replace_owned_subset`` so concurrent readers never see a
+        half-applied snapshot. Previously the registry called ``upsert`` in a
+        loop then ``delete`` in a second loop — each individually committed —
+        opening a window where a fresh row coexisted with about-to-vanish
+        stale rows.
+        """
+
+        # Custom store that records call order so we can assert atomicity.
+        class _RecordingStore(InMemoryAuthProfileStore):
+            def __init__(self) -> None:
+                super().__init__()
+                self.calls: list[tuple[str, tuple[int, int]]] = []
+
+            def upsert(self, profile) -> None:  # noqa: ANN001
+                self.calls.append(("upsert", (1, 0)))
+                super().upsert(profile)
+
+            def delete(self, pid: str) -> None:
+                self.calls.append(("delete", (0, 1)))
+                super().delete(pid)
+
+            def replace_owned_subset(self, *, upserts, deletes) -> None:  # noqa: ANN001
+                self.calls.append(("replace_owned_subset", (len(upserts), len(deletes))))
+                super().replace_owned_subset(upserts=upserts, deletes=deletes)
+
+        store = _RecordingStore()
+
+        class _SwitchingAdapter(ExternalCliSyncAdapter):
+            adapter_name = "atomic"
+            sync_ttl_seconds = 0.1
+            failure_threshold = 3
+            reset_timeout_seconds = 60.0
+
+            def __init__(self) -> None:
+                self.call = 0
+
+            async def detect(self) -> bool:
+                return True
+
+            async def sync(self) -> SyncResult:
+                self.call += 1
+                email = "alice@example.com" if self.call == 1 else "bob@example.com"
+                return SyncResult(
+                    adapter_name=self.adapter_name,
+                    profiles=[
+                        SyncedProfile(
+                            provider="test",
+                            account_identifier=email,
+                            backend_key=f"atomic/{email}",
+                            source="atomic",
+                        ),
+                    ],
+                )
+
+            async def resolve_credential(self, _bk: str) -> ResolvedCredential:
+                return ResolvedCredential(kind="api_key", api_key="x")
+
+        adapter = _SwitchingAdapter()
+        registry = AdapterRegistry([adapter], store, startup_timeout=3.0)
+
+        # First sync writes alice — exactly one batched call, no per-row writes.
+        await registry.startup()
+        first_calls = [c[0] for c in store.calls]
+        assert first_calls == ["replace_owned_subset"], (
+            f"first sync must use atomic batch, got {first_calls}"
+        )
+
+        # Second sync: bob in, alice tombstoned — still one atomic call.
+        store.calls.clear()
+        await registry._sync_adapter(adapter)
+        second_calls = list(store.calls)
+        assert len(second_calls) == 1, (
+            f"second sync must use exactly one atomic call, got {second_calls}"
+        )
+        assert second_calls[0][0] == "replace_owned_subset"
+        # 1 upsert (bob), 1 delete (alice)
+        assert second_calls[0][1] == (1, 1)

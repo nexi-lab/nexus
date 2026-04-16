@@ -38,7 +38,11 @@ async def _fake_probe_native_ok(  # noqa: ANN001
     }
 
 
-async def _fake_native_gws(*, user_email=None):  # noqa: ANN001, ARG001
+def _fake_native_gws(*args, **kwargs):  # noqa: ANN001, ARG001, ANN002, ANN003
+    # Phase 3 (#3740): replaces async _detect_google_workspace_cli_native.
+    # Signature accepts any args/kwargs so the same stub serves both the
+    # zero-arg _gws_native_from_profile_store and the service/user_email
+    # wrapper _oauth_native_from_profile_store.
     return {
         "source": "native:gws_cli",
         "email": "alice@example.com",
@@ -226,7 +230,7 @@ def test_list_summaries_prefers_native_gws_when_stored_oauth_expired(
         }
     ]
     service = UnifiedAuthService(oauth_service=oauth, secret_store=secret_store)
-    monkeypatch.setattr(service, "_detect_google_workspace_cli_native", _fake_native_gws)
+    monkeypatch.setattr(service, "_gws_native_for_email", _fake_native_gws)
     monkeypatch.setattr(service, "_probe_google_workspace_targets", _fake_probe_native_ok)
 
     summaries = asyncio.run(service.list_summaries())
@@ -252,7 +256,7 @@ def test_test_service_prefers_native_gws_when_stored_oauth_expired(
         }
     ]
     service = UnifiedAuthService(oauth_service=oauth, secret_store=secret_store)
-    monkeypatch.setattr(service, "_detect_google_workspace_cli_native", _fake_native_gws)
+    monkeypatch.setattr(service, "_gws_native_for_email", _fake_native_gws)
     monkeypatch.setattr(service, "_probe_google_workspace_targets", _fake_probe_native_ok)
 
     result = asyncio.run(service.test_service("gws", user_email="alice@example.com"))
@@ -276,7 +280,7 @@ def test_test_service_gws_reports_target_failures(
         }
     ]
     service = UnifiedAuthService(oauth_service=oauth, secret_store=secret_store)
-    monkeypatch.setattr(service, "_detect_google_workspace_cli_native", _fake_native_gws)
+    monkeypatch.setattr(service, "_gws_native_for_email", _fake_native_gws)
 
     async def _fake_probe_chat_fails(
         targets, *, native=None, user_email=None, access_token=None, source=None
@@ -315,7 +319,7 @@ def test_list_summaries_marks_gws_error_when_some_targets_fail(
         }
     ]
     service = UnifiedAuthService(oauth_service=oauth, secret_store=secret_store)
-    monkeypatch.setattr(service, "_detect_google_workspace_cli_native", _fake_native_gws)
+    monkeypatch.setattr(service, "_gws_native_for_email", _fake_native_gws)
 
     async def _fake_probe_chat_scopes(
         targets, *, native=None, user_email=None, access_token=None, source=None

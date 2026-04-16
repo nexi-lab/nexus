@@ -62,6 +62,36 @@ class TestCRUD:
     def test_delete_nonexistent(self, sqlite_store: SqliteAuthProfileStore) -> None:
         sqlite_store.delete("nope")  # should not raise
 
+    def test_replace_owned_subset_atomic(self, sqlite_store: SqliteAuthProfileStore) -> None:
+        """R4-MEDIUM: ``replace_owned_subset`` applies upserts + deletes in
+        one SQL transaction. Concurrent readers must see either pre or
+        post state, never the half-applied middle (e.g. fresh row +
+        about-to-tombstone stale row coexisting)."""
+        # Pre-populate with two rows owned by adapter-X.
+        sqlite_store.upsert(make_profile("test/old1", provider="test"))
+        sqlite_store.upsert(make_profile("test/old2", provider="test"))
+        assert {p.id for p in sqlite_store.list()} == {"test/old1", "test/old2"}
+
+        # Atomic swap: keep old1, replace old2 with new3.
+        new3 = make_profile("test/new3", provider="test")
+        sqlite_store.replace_owned_subset(
+            upserts=[new3],
+            deletes=["test/old2"],
+        )
+
+        ids = {p.id for p in sqlite_store.list()}
+        assert ids == {"test/old1", "test/new3"}
+        # Verify deleted row truly gone (not just absent from cache).
+        assert sqlite_store.get("test/old2") is None
+        # Verify upsert reachable via direct get (cache freshness).
+        assert sqlite_store.get("test/new3") is not None
+
+    def test_replace_owned_subset_empty_is_noop(self, sqlite_store: SqliteAuthProfileStore) -> None:
+        """No upserts and no deletes → no-op, no transaction."""
+        sqlite_store.upsert(make_profile("test/keep", provider="test"))
+        sqlite_store.replace_owned_subset(upserts=[], deletes=[])
+        assert sqlite_store.get("test/keep") is not None
+
     def test_list_all(self, sqlite_store: SqliteAuthProfileStore) -> None:
         sqlite_store.upsert(make_profile("a", provider="openai"))
         sqlite_store.upsert(make_profile("b", provider="anthropic"))

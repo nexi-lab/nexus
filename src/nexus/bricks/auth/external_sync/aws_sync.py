@@ -91,3 +91,38 @@ class AwsCliSyncAdapter(FileAdapter):
             backend_key,
             f"AWS profile '{profile_name}' not found in config files",
         )
+
+    def resolve_credential_sync(self, backend_key: str) -> ResolvedCredential:
+        """Synchronous resolve — re-reads config files (same logic as async)."""
+        _, profile_name = backend_key.split("/", 1)
+
+        for path in self.paths():
+            try:
+                content = path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+
+            parser = configparser.ConfigParser()
+            parser.read_string(content)
+
+            for section in [profile_name, f"profile {profile_name}"]:
+                if parser.has_section(section) and parser.has_option(section, "aws_access_key_id"):
+                    return ResolvedCredential(
+                        kind="api_key",
+                        api_key=parser.get(section, "aws_access_key_id"),
+                        metadata={
+                            "secret_access_key": parser.get(
+                                section, "aws_secret_access_key", fallback=""
+                            ),
+                            "session_token": parser.get(section, "aws_session_token", fallback=""),
+                            "region": parser.get(section, "region", fallback=""),
+                        },
+                    )
+
+        from nexus.bricks.auth.credential_backend import CredentialResolutionError
+
+        raise CredentialResolutionError(
+            "external-cli",
+            backend_key,
+            f"AWS profile '{profile_name}' not found in config files",
+        )

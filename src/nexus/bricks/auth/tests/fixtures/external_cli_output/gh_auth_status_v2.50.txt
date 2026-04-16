@@ -1,0 +1,12 @@
+github.com
+  ✓ Logged in to github.com account testuser (oauth_token)
+  - Active account: true
+  - Git operations for github.com configured to use https protocol.
+  - Token: gho_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx50
+  - Token scopes: 'gist', 'read:org', 'repo', 'workflow'
+enterprise.corp.com
+  ✓ Logged in to enterprise.corp.com account corpuser (oauth_token)
+  - Active account: true
+  - Git operations for enterprise.corp.com configured to use https protocol.
+  - Token: gho_zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz50
+  - Token scopes: 'repo', 'read:org'

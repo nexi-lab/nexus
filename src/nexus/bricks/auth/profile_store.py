@@ -15,6 +15,7 @@ check_same_thread=False, row_factory=sqlite3.Row).
 
 from __future__ import annotations
 
+import builtins
 import logging
 import sqlite3
 import threading
@@ -274,6 +275,44 @@ class SqliteAuthProfileStore:
             self._conn.commit()
             self._cache.pop(profile_id, None)
             self._dirty.discard(profile_id)
+
+    def replace_owned_subset(
+        self,
+        *,
+        upserts: "builtins.list[AuthProfile]",
+        deletes: "builtins.list[str]",
+    ) -> None:
+        """Apply upserts + deletes in a single SQLite transaction.
+
+        Concurrent readers see either the pre-state or post-state — never
+        the half-applied middle (R4-MEDIUM #3740). With WAL journal mode
+        readers do not block, but they always observe the last committed
+        snapshot, so wrapping the whole batch in one BEGIN/COMMIT prevents
+        the brief window where new rows coexist with stale to-be-tombstoned
+        rows.
+        """
+        if not upserts and not deletes:
+            return
+        with self._lock:
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+                for p in upserts:
+                    self._conn.execute(_UPSERT, _profile_to_tuple(p))
+                for pid in deletes:
+                    self._conn.execute("DELETE FROM auth_profiles WHERE id = ?", (pid,))
+                self._conn.commit()
+            except sqlite3.Error:
+                self._conn.rollback()
+                raise
+            # Refresh cache after the transaction so readers via get() also
+            # see the new state. Evict deletes; replace upserts.
+            for p in upserts:
+                self._cache.pop(p.id, None)
+                self._dirty.discard(p.id)
+                self._cache_put(p)
+            for pid in deletes:
+                self._cache.pop(pid, None)
+                self._dirty.discard(pid)
 
     def mark_success(self, profile_id: str) -> None:
         """Buffer a success stat in the LRU cache (dirty-bit, no immediate write).

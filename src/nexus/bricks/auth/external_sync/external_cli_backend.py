@@ -40,6 +40,16 @@ class ExternalCliBackend:
             )
         return await adapter.resolve_credential(backend_key)
 
+    def resolve_sync(self, backend_key: str) -> ResolvedCredential:
+        """Synchronous variant of resolve() for sync calling contexts."""
+        adapter_name, _ = self._parse_key(backend_key)
+        adapter = self._registry.get_adapter(adapter_name)
+        if adapter is None:
+            raise CredentialResolutionError(
+                self._NAME, backend_key, f"no adapter registered for '{adapter_name}'"
+            )
+        return adapter.resolve_credential_sync(backend_key)
+
     async def health_check(self, backend_key: str) -> BackendHealth:
         """Non-destructive: try resolve, report healthy/unhealthy."""
         now = datetime.now(UTC)

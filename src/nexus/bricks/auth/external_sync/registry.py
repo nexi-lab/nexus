@@ -161,13 +161,17 @@ class AdapterRegistry:
                     result = task.result()
                     # Always upsert discovered profiles, even when degraded
                     # (e.g. one file parsed OK, another failed). Partial
-                    # discovery is better than losing all profiles.
+                    # discovery is better than losing all profiles. Only
+                    # stamp last_sync_times + record breaker success when
+                    # the store apply actually succeeded (R6-H3) — else
+                    # the next refresh tick won't re-attempt the swap.
+                    applied = True
                     if result.profiles:
-                        self._upsert_sync_results(result)
-                        self._last_sync_times[name] = time.monotonic()
-                    if result.error is not None:
+                        applied = self._upsert_sync_results(result)
+                    if not applied or result.error is not None:
                         breaker.record_failure()
                     else:
+                        self._last_sync_times[name] = time.monotonic()
                         breaker.record_success()
             else:
                 if not task.done():
@@ -210,7 +214,13 @@ class AdapterRegistry:
     # ------------------------------------------------------------------
 
     async def _sync_adapter(self, adapter: ExternalCliSyncAdapter) -> SyncResult:
-        """Sync one adapter, update breaker and store."""
+        """Sync one adapter, update breaker and store.
+
+        ``_last_sync_times`` and breaker success are gated on the actual
+        store apply succeeding (R6-H3). Without this, a failed atomic
+        swap would silently mark the sync done and the next refresh tick
+        would skip re-attempting it.
+        """
         name = adapter.adapter_name
         breaker = self._breakers[name]
         try:
@@ -218,43 +228,103 @@ class AdapterRegistry:
         except Exception as exc:
             result = SyncResult(adapter_name=name, error=str(exc))
 
-        # Always upsert discovered profiles even when degraded
+        applied = True
         if result.profiles:
-            self._upsert_sync_results(result)
-            self._last_sync_times[name] = time.monotonic()
-        if result.error is not None:
+            applied = self._upsert_sync_results(result)
+        if not applied or result.error is not None:
             breaker.record_failure()
         else:
+            self._last_sync_times[name] = time.monotonic()
             breaker.record_success()
 
         return result
 
-    def _upsert_sync_results(self, result: SyncResult) -> None:
-        """Map SyncedProfile -> AuthProfile and upsert into the store.
+    def _upsert_sync_results(self, result: SyncResult) -> bool:
+        """Map SyncedProfile -> AuthProfile and apply atomically.
+
+        Returns True on a successful store apply (or true no-op), False
+        when ``replace_owned_subset`` raised. Callers gate
+        ``_last_sync_times`` and breaker success on this result so a
+        failed swap is retried on the next refresh tick instead of
+        being mistaken for a successful sync (R6-H3).
 
         - backend = "external-cli"
         - backend_key = sp.backend_key (already formatted by the adapter)
         - Preserve existing usage_stats if profile already in store
         - Use ProfileUsageStats() for new profiles
+
+        **Atomic swap (Phase 3, #3740 Codex round 4):** upserts and
+        tombstones go through ``store.replace_owned_subset()`` so concurrent
+        readers see either the pre-sync snapshot or the post-sync snapshot,
+        never a mix. The previous implementation committed each upsert and
+        delete individually, opening a window where a reader could observe
+        a fresh row alongside an about-to-be-tombstoned stale row.
+
+        **Tombstoning (Codex round 3):** after writing the fresh profile
+        set, delete any rows previously owned by *this adapter* that are
+        not in the new set. We only delete rows whose ``backend_key``
+        matches ``{adapter_name}/...`` — never touch other adapters' rows
+        or rows with backend != "external-cli".
         """
         now = datetime.now(UTC)
+        adapter = self._adapters.get(result.adapter_name)
+        sync_ttl = int(adapter.sync_ttl_seconds) if adapter else 300
+
+        adapter_prefix = f"{result.adapter_name}/"
+        fresh_ids: set[str] = set()
+        upserts: list[AuthProfile] = []
+
         for sp in result.profiles:
             profile_id = f"{sp.provider}/{sp.account_identifier}"
+            fresh_ids.add(profile_id)
             existing = self._store.get(profile_id)
             usage_stats = existing.usage_stats if existing is not None else ProfileUsageStats()
 
-            # Look up the adapter to get its sync_ttl_seconds
-            adapter = self._adapters.get(result.adapter_name)
-            sync_ttl = int(adapter.sync_ttl_seconds) if adapter else 300
-
-            profile = AuthProfile(
-                id=profile_id,
-                provider=sp.provider,
-                account_identifier=sp.account_identifier,
-                backend="external-cli",
-                backend_key=sp.backend_key,
-                last_synced_at=now,
-                sync_ttl_seconds=sync_ttl,
-                usage_stats=usage_stats,
+            upserts.append(
+                AuthProfile(
+                    id=profile_id,
+                    provider=sp.provider,
+                    account_identifier=sp.account_identifier,
+                    backend="external-cli",
+                    backend_key=sp.backend_key,
+                    last_synced_at=now,
+                    sync_ttl_seconds=sync_ttl,
+                    usage_stats=usage_stats,
+                )
             )
-            self._store.upsert(profile)
+
+        # Compute tombstones only on a clean sync — a transient parse error
+        # shouldn't wipe valid history.
+        deletes: list[str] = []
+        if result.error is None:
+            try:
+                deletes = [
+                    p.id
+                    for p in self._store.list()
+                    if p.backend == "external-cli"
+                    and p.backend_key.startswith(adapter_prefix)
+                    and p.id not in fresh_ids
+                ]
+            except Exception:
+                logger.debug("Tombstone scan failed for %s", result.adapter_name, exc_info=True)
+                deletes = []
+
+        if not upserts and not deletes:
+            return True
+
+        # No fallback to per-row writes (R5-M1): the per-row path is the
+        # exact torn-snapshot window R4 was meant to remove. If
+        # replace_owned_subset fails (e.g. SQLite busy timeout), surface
+        # the error and let the next refresh tick retry atomically — a
+        # missed refresh is preferable to publishing a half-applied state.
+        try:
+            self._store.replace_owned_subset(upserts=upserts, deletes=deletes)
+        except Exception:
+            logger.warning(
+                "Atomic replace failed for %s — store left at pre-sync snapshot; "
+                "will retry on next refresh tick",
+                result.adapter_name,
+                exc_info=True,
+            )
+            return False
+        return True

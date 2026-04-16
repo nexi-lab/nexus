@@ -246,7 +246,24 @@ class ProviderRegistry(BaseRegistry[ParseProvider]):
         except ImportError as e:
             logger.debug("LlamaParse provider not available: %s", e)
 
-        # Always register MarkItDown as fallback
+        # Try to register pdf-inspector provider (default local PDF parser)
+        try:
+            from nexus.bricks.parsers.providers.pdf_inspector_provider import (
+                PdfInspectorProvider,
+            )
+
+            config = config_map.get(
+                "pdf-inspector",
+                ProviderConfig(name="pdf-inspector", priority=20),
+            )
+            pdf_inspector_provider = PdfInspectorProvider(config)
+            if pdf_inspector_provider.is_available():
+                self.register(pdf_inspector_provider)
+                registered += 1
+        except ImportError as e:
+            logger.debug("pdf-inspector provider not available: %s", e)
+
+        # Try to register MarkItDown (optional fallback for non-PDF formats)
         try:
             from nexus.bricks.parsers.providers.markitdown_provider import MarkItDownProvider
 
@@ -256,7 +273,7 @@ class ProviderRegistry(BaseRegistry[ParseProvider]):
                 self.register(markitdown_provider)
                 registered += 1
         except Exception as e:
-            logger.warning("MarkItDown provider not available: %s", e)
+            logger.debug("MarkItDown provider not available: %s", e)
 
         logger.info("Auto-discovered %d parse providers", registered)
         return registered

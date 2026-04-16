@@ -1610,28 +1610,33 @@ class NexusFS(  # type: ignore[misc]
         perm_start = time.time()
         allowed_set: set[str]
         try:
-            from nexus.contracts.exceptions import PermissionDeniedError
-            from nexus.contracts.types import OperationContext
-            from nexus.contracts.vfs_hooks import StatHookContext as _SHC
-
             ctx = self._resolve_cred(context)
-            assert isinstance(ctx, OperationContext), "Context must be OperationContext"
-            allowed: list[str] = []
-            for p in validated_paths:
-                try:
-                    self._kernel.dispatch_pre_hooks(
-                        "stat", _SHC(path=p, context=ctx, permission="READ")
-                    )
-                    allowed.append(p)
-                except PermissionDeniedError:
-                    pass
-            allowed_set = set(allowed)
+
+            # Fast path: no stat hooks registered → all paths allowed
+            if self._kernel.hook_count("stat") == 0:
+                allowed_set = set(validated_paths)
+            else:
+                from nexus.contracts.exceptions import PermissionDeniedError
+                from nexus.contracts.types import OperationContext
+                from nexus.contracts.vfs_hooks import StatHookContext as _SHC
+
+                assert isinstance(ctx, OperationContext), "Context must be OperationContext"
+                allowed: list[str] = []
+                for p in validated_paths:
+                    try:
+                        self._kernel.dispatch_pre_hooks(
+                            "stat", _SHC(path=p, context=ctx, permission="READ")
+                        )
+                        allowed.append(p)
+                    except PermissionDeniedError:
+                        pass
+                allowed_set = set(allowed)
         except Exception as e:
             logger.error("[READ-BULK] Permission check failed: %s", e)
             if not skip_errors:
                 raise
-                # If skip_errors, assume no files are allowed
-                allowed_set = set()
+            # If skip_errors, assume no files are allowed
+            allowed_set = set()
 
         perm_elapsed = time.time() - perm_start
         logger.info(

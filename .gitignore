@@ -124,6 +124,13 @@ test-fix-data/
 *-examples-workspace/
 *-server-data/
 my-data/
+# Ad-hoc data_dir names used by developers running local stacks.  Anything
+# ending in -data under the repo root (e.g. nexus-bench-data/, foo-data/) is
+# assumed to be a runtime volume holding admin keys, raft state, and CAS.
+*-data/
+# Runtime state + credentials that can land anywhere `data_dir:` points to.
+.admin-api-key
+.state.json
 
 # Nexus plugins (development)
 nexus-plugin-*/

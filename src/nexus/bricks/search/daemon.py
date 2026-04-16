@@ -1268,6 +1268,10 @@ class SearchDaemon:
             return [[] for _ in queries]
 
         results: list[list[Any]] = await backend_batch(queries, zone_id=effective_zone_id)
+        # Issue #3773: attach admin-configured path contexts per inner list.
+        if self._path_context_cache is not None:
+            for inner in results:
+                await self._attach_path_contexts(inner)
         return results
 
     async def index_documents(

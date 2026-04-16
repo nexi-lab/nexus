@@ -105,4 +105,9 @@ async def graph_enhanced_search(
     results: list[BaseSearchResult] = await graph_search_fn(
         query, zone_id=effective_zone_id, limit=limit, path_filter=path_filter
     )
+    # Issue #3773: attach admin-configured path contexts (same hook as the
+    # non-graph search branch uses).
+    attach = getattr(search_daemon, "_attach_path_contexts", None)
+    if attach is not None:
+        await attach(results)
     return results

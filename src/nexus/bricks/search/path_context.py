@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import builtins
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import text
@@ -41,7 +41,7 @@ class PathContextStore:
 
     async def upsert(self, zone_id: str, path_prefix: str, description: str) -> None:
         """Insert or replace a context row. updated_at refreshed on replace."""
-        now = datetime.utcnow()
+        now = datetime.now(UTC).replace(tzinfo=None)
         async with self._async_session_factory() as session:
             if self._db_type == "postgresql":
                 await session.execute(
@@ -166,11 +166,7 @@ class PathContextCache:
         self._locks: dict[str, asyncio.Lock] = {}
 
     def _lock_for(self, zone_id: str) -> asyncio.Lock:
-        lock = self._locks.get(zone_id)
-        if lock is None:
-            lock = asyncio.Lock()
-            self._locks[zone_id] = lock
-        return lock
+        return self._locks.setdefault(zone_id, asyncio.Lock())
 
     async def refresh_if_stale(self, zone_id: str) -> None:
         db_stamp = await self._store.max_updated_at(zone_id)

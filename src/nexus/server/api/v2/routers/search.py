@@ -504,16 +504,19 @@ async def search_query_batch(
         filter_ms_total += filter_ms
         trimmed = filtered[:orig_limit]
 
-        formatted = [
-            {
+        formatted: list[dict[str, Any]] = []
+        for r in trimmed:
+            entry: dict[str, Any] = {
                 "path": r.path,
                 "chunk_text": r.chunk_text,
                 "score": round(r.score, 4),
                 "keyword_score": round(r.keyword_score, 4) if r.keyword_score is not None else None,
                 "vector_score": round(r.vector_score, 4) if r.vector_score is not None else None,
             }
-            for r in trimmed
-        ]
+            ctx = getattr(r, "context", None)
+            if ctx is not None:
+                entry["context"] = ctx
+            formatted.append(entry)
         response_queries.append(
             {
                 "query": q_spec.get("q", ""),

@@ -75,6 +75,60 @@ class TestAttachContextToResults:
         assert results[2].context is None
 
 
+class TestGraphSearchContextAttachment:
+    @pytest.mark.asyncio
+    async def test_graph_enhanced_search_attaches_context(self, cache: PathContextCache) -> None:
+        """graph_enhanced_search must attach context like the non-graph branch."""
+        from types import SimpleNamespace
+
+        from nexus.bricks.search.graph_search_service import graph_enhanced_search
+        from nexus.bricks.search.results import BaseSearchResult
+
+        async def _fake_graph_search(query, *, zone_id, limit, path_filter):
+            return [
+                BaseSearchResult(
+                    path="src/nexus/bricks/search/fusion.py",
+                    chunk_text="",
+                    score=0.9,
+                    zone_id=zone_id,
+                ),
+                BaseSearchResult(
+                    path="docs/README.md",
+                    chunk_text="",
+                    score=0.8,
+                    zone_id=zone_id,
+                ),
+            ]
+
+        # Fake daemon: backend exposing graph_search, _attach_path_contexts bound
+        # to a local SearchDaemon-style helper powered by the cache.
+        backend = SimpleNamespace(graph_search=_fake_graph_search)
+
+        async def _attach(results):
+            zones = {(r.zone_id or "root") for r in results}
+            for zone in zones:
+                await cache.refresh_if_stale(zone)
+            for r in results:
+                r.context = cache.lookup_cached(r.zone_id, r.path)
+
+        daemon = SimpleNamespace(_backend=backend, _attach_path_contexts=_attach)
+
+        results = await graph_enhanced_search(
+            "q",
+            "hybrid",
+            10,
+            None,
+            0.5,
+            "auto",
+            record_store=None,
+            async_session_factory=None,
+            search_daemon=daemon,
+            zone_id="root",
+        )
+        assert results[0].context == "Hybrid search brick"
+        assert results[1].context == "Project documentation"
+
+
 class TestSerializerEmitsContext:
     def test_context_field_emitted_when_set(self) -> None:
         from nexus.server.api.v2.routers.search import _serialize_search_result

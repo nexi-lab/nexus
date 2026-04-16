@@ -37,6 +37,10 @@ def ensure_external_sync() -> None:
         import asyncio
 
         aws_mod = importlib.import_module("nexus.bricks.auth.external_sync.aws_sync")
+        gcloud_mod = importlib.import_module("nexus.bricks.auth.external_sync.gcloud_sync")
+        gh_mod = importlib.import_module("nexus.bricks.auth.external_sync.gh_sync")
+        gws_mod = importlib.import_module("nexus.bricks.auth.external_sync.gws_sync")
+        codex_mod = importlib.import_module("nexus.bricks.auth.external_sync.codex_sync")
         reg_mod = importlib.import_module("nexus.bricks.auth.external_sync.registry")
         store_mod = importlib.import_module("nexus.bricks.auth.profile_store")
         from nexus.fs._paths import persistent_dir
@@ -49,7 +53,13 @@ def ensure_external_sync() -> None:
         store = store_mod.SqliteAuthProfileStore(db_path)
         try:
             registry = reg_mod.AdapterRegistry(
-                adapters=[aws_mod.AwsCliSyncAdapter()],
+                adapters=[
+                    aws_mod.AwsCliSyncAdapter(),
+                    gcloud_mod.GcloudSyncAdapter(),
+                    gh_mod.GhCliSyncAdapter(),
+                    gws_mod.GwsCliSyncAdapter(),
+                    codex_mod.CodexSyncAdapter(),
+                ],
                 profile_store=store,
                 startup_timeout=3.0,
             )
@@ -155,17 +165,66 @@ def select_profile(provider: str, *, account: str | None = None) -> Any:
         return None
 
 
+def resolve_token_for_provider(provider: str, *, account: str | None = None) -> str | None:
+    """Select a profile for a provider and resolve its credential to a token.
+
+    One-shot helper for sync contexts that need an access token or API key
+    without plumbing a long-lived ``CredentialPoolRegistry`` through the app.
+    Used by ``PathCLIBackend._resolve_from_external_cli`` (Phase 3, #3740).
+
+    Args:
+        provider: Unified provider name (e.g. ``"google"``, ``"github"``).
+        account: Optional account identifier to filter by (user email,
+            profile name). When omitted, uses the pool's default selection.
+
+    Returns:
+        A bearer access_token or api_key string, or ``None`` if no usable
+        profile exists, no external-cli adapter can resolve it, or any step
+        fails. Never raises.
+    """
+    profile = select_profile(provider, account=account)
+    if profile is None or not getattr(profile, "backend_key", None):
+        return None
+
+    cred = resolve_external_credential(profile.backend_key)
+    if cred is None:
+        return None
+
+    token = getattr(cred, "access_token", None) or getattr(cred, "api_key", None)
+    return str(token) if token else None
+
+
 def resolve_external_credential(backend_key: str) -> Any:
-    """Resolve a credential via AwsCliSyncAdapter. Returns None on failure."""
+    """Resolve a credential by routing to the right adapter. Returns None on failure.
+
+    Adapter selected from the ``{adapter_name}/...`` prefix of the backend_key:
+    ``aws-cli``, ``gcloud``, ``gh-cli``, ``gws-cli``, ``codex``.
+    """
     try:
         import asyncio
 
         aws_mod = importlib.import_module("nexus.bricks.auth.external_sync.aws_sync")
+        gcloud_mod = importlib.import_module("nexus.bricks.auth.external_sync.gcloud_sync")
+        gh_mod = importlib.import_module("nexus.bricks.auth.external_sync.gh_sync")
+        gws_mod = importlib.import_module("nexus.bricks.auth.external_sync.gws_sync")
+        codex_mod = importlib.import_module("nexus.bricks.auth.external_sync.codex_sync")
     except (ImportError, ModuleNotFoundError):
         return None
 
+    adapter_name = backend_key.split("/", 1)[0] if "/" in backend_key else ""
+    adapter_map = {
+        "aws-cli": aws_mod.AwsCliSyncAdapter,
+        "gcloud": gcloud_mod.GcloudSyncAdapter,
+        "gh-cli": gh_mod.GhCliSyncAdapter,
+        "gws-cli": gws_mod.GwsCliSyncAdapter,
+        "codex": codex_mod.CodexSyncAdapter,
+    }
+    adapter_cls = adapter_map.get(adapter_name)
+    if adapter_cls is None:
+        return None
+
     try:
-        adapter = aws_mod.AwsCliSyncAdapter()
+        adapter = adapter_cls()
         coro = adapter.resolve_credential(backend_key)
         try:
             asyncio.get_running_loop()

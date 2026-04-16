@@ -48,6 +48,15 @@ class GcloudSyncAdapter(FileAdapter):
         return []
 
     def _parse_adc(self, content: str) -> list[SyncedProfile]:
+        """Parse the ADC JSON.
+
+        service_account: produces a profile keyed on client_email.
+        authorized_user: returns [] — the ADC carries no user identity, so
+            account discovery comes from the ``properties`` file instead.
+            This avoids the phantom ``gcloud/unknown`` profile that older
+            code emitted. _resolve_impl still reads ADC to get the actual
+            credential once properties has named the account.
+        """
         data = json.loads(content)
         cred_type = data.get("type", "")
 
@@ -64,16 +73,7 @@ class GcloudSyncAdapter(FileAdapter):
                 )
             ]
 
-        if cred_type == "authorized_user":
-            return [
-                SyncedProfile(
-                    provider="gcs",
-                    account_identifier="unknown",
-                    backend_key="gcloud/unknown",
-                    source="gcloud",
-                )
-            ]
-
+        # authorized_user and any unknown types: no profile from ADC alone.
         return []
 
     def _parse_properties(self, content: str) -> list[SyncedProfile]:

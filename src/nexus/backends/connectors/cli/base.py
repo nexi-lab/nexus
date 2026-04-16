@@ -53,8 +53,6 @@ from nexus.core.object_store import WriteResult
 
 if TYPE_CHECKING:
     from nexus.backends.base.backend import HandlerStatusResponse
-    from nexus.bricks.auth.credential_pool import CredentialPoolRegistry
-    from nexus.bricks.auth.external_sync.external_cli_backend import ExternalCliBackend
     from nexus.contracts.types import OperationContext
 
 logger = logging.getLogger(__name__)
@@ -106,8 +104,9 @@ class PathCLIBackend(
     """External CLI auth source, e.g., 'gws-cli', 'gh-cli', 'gcloud'.
 
     When set, _get_user_token() first tries to resolve a credential through
-    the CredentialPoolRegistry + ExternalCliBackend (Phase 3, #3740), and
-    falls back to TokenManager only if that path yields no token.
+    the unified profile store (via ``_external_sync_boot.resolve_token_for_provider``),
+    falling back to TokenManager only if no matching profile exists.
+    Phase 3, #3740.
     """
 
     # Auth is ALWAYS via environment variables (never CLI flags).
@@ -123,8 +122,6 @@ class PathCLIBackend(
         self,
         config: CLIConnectorConfig | None = None,
         token_manager_db: str | None = None,
-        credential_pool_registry: "CredentialPoolRegistry | None" = None,
-        external_cli_backend: "ExternalCliBackend | None" = None,
         **kwargs: Any,
     ) -> None:
         # Fall back to class-level _DEFAULT_CONFIG for subclasses created
@@ -135,11 +132,6 @@ class PathCLIBackend(
         self._config = config
         self._token_manager_db = token_manager_db
         self._token_manager: Any = None
-        # Phase 3 (#3740): external-CLI credential resolution.
-        # When AUTH_SOURCE is set AND both of these are provided,
-        # _get_user_token() tries the external-CLI path first.
-        self._credential_pool_registry = credential_pool_registry
-        self._external_cli_backend = external_cli_backend
 
         # Initialize TokenManager from database URL if provided.
         # Follows the same pattern as OAuthConnectorMixin._init_oauth().
@@ -258,22 +250,18 @@ class PathCLIBackend(
     def _get_user_token(self, context: "OperationContext | None" = None) -> str | None:
         """Resolve an auth token via external-CLI first, TokenManager as fallback.
 
-        Phase 1 (new, gws_* / gh_* / gcloud connectors): if AUTH_SOURCE is set
-        and the external-CLI dependencies are wired, call
-        CredentialPool.select_sync() + ExternalCliBackend.resolve_sync().
+        Phase 1 (Phase 3 of #3722, issue #3740): if AUTH_SOURCE is set, try
+        ``_external_sync_boot.resolve_token_for_provider`` which selects a
+        profile from the unified store and routes through the matching adapter.
 
         Phase 2 (existing): TokenManager.get_credentials() scoped by user+zone.
 
         Returns None if neither path yields a token (allows CLI to use
         its own auth, e.g., `gh auth login`).
         """
-        # Phase 1: external-CLI credential (Phase 3, #3740)
-        if (
-            self.AUTH_SOURCE
-            and self._credential_pool_registry is not None
-            and self._external_cli_backend is not None
-        ):
-            token = self._resolve_from_external_cli()
+        # Phase 1: external-CLI credential via unified profile store (#3740)
+        if self.AUTH_SOURCE:
+            token = self._resolve_from_external_cli(context)
             if token:
                 return token
 
@@ -305,23 +293,36 @@ class PathCLIBackend(
 
         return None
 
-    def _resolve_from_external_cli(self) -> str | None:
-        """Try to resolve a token from the external-CLI credential pool.
+    def _resolve_from_external_cli(self, context: "OperationContext | None" = None) -> str | None:
+        """Try to resolve a token via the unified profile store.
 
-        Phase 3, #3740. The backend_key on the selected AuthProfile already
-        encodes the adapter to route through (e.g., 'gws-cli/user@example.com').
-        Returns None on any failure — _get_user_token() falls back to
+        Uses ``_external_sync_boot.resolve_token_for_provider`` — same
+        process-wide pattern as aws S3 credential routing (no long-lived
+        registry objects to inject).  When ``context.user_id`` is set it
+        scopes selection to that account, avoiding cross-user credential
+        bleed in multi-tenant deployments.
+
+        Returns None on any failure; ``_get_user_token`` falls back to
         TokenManager in that case.
         """
         provider = "google"  # default
         if self._config and self._config.auth:
             provider = self._config.auth.provider
 
+        account: str | None = None
+        if context is not None:
+            user_id = getattr(context, "user_id", None)
+            if user_id:
+                account = str(user_id)
+
         try:
-            pool = self._credential_pool_registry.get(provider)
-            profile = pool.select_sync()
-            cred = self._external_cli_backend.resolve_sync(profile.backend_key)
-            return cred.access_token or cred.api_key
+            from nexus.fs._external_sync_boot import (
+                ensure_external_sync,
+                resolve_token_for_provider,
+            )
+
+            ensure_external_sync()
+            return resolve_token_for_provider(provider, account=account)
         except Exception:
             logger.debug("External CLI credential resolution failed", exc_info=True)
             return None

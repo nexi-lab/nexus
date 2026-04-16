@@ -160,8 +160,10 @@ class TestGhResolveCredential:
         shutil.copy(_HOSTS_V250, config_dir / "hosts.yml")
         monkeypatch.setenv("GH_CONFIG_DIR", str(config_dir))
 
-        adapter = GhCliSyncAdapter()
-        cred = await adapter.resolve_credential("gh-cli/github.com/testuser")
+        # Force file-fallback path so tests don't depend on the host's gh state.
+        with patch("nexus.bricks.auth.external_sync.gh_sync.shutil.which", return_value=None):
+            adapter = GhCliSyncAdapter()
+            cred = await adapter.resolve_credential("gh-cli/github.com/testuser")
 
         assert cred.kind == "bearer_token"
         assert cred.access_token == "gho_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx50"
@@ -174,9 +176,11 @@ class TestGhResolveCredential:
         shutil.copy(_HOSTS_V250, config_dir / "hosts.yml")
         monkeypatch.setenv("GH_CONFIG_DIR", str(config_dir))
 
-        adapter = GhCliSyncAdapter()
-        with pytest.raises(CredentialResolutionError):
-            await adapter.resolve_credential("gh-cli/github.com/nobody")
+        # Force file-fallback path and verify the missing-user error surfaces.
+        with patch("nexus.bricks.auth.external_sync.gh_sync.shutil.which", return_value=None):
+            adapter = GhCliSyncAdapter()
+            with pytest.raises(CredentialResolutionError):
+                await adapter.resolve_credential("gh-cli/github.com/nobody")
 
     def test_resolve_sync_from_hosts_file(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -186,7 +190,75 @@ class TestGhResolveCredential:
         shutil.copy(_HOSTS_V240, config_dir / "hosts.yml")
         monkeypatch.setenv("GH_CONFIG_DIR", str(config_dir))
 
-        adapter = GhCliSyncAdapter()
-        cred = adapter.resolve_credential_sync("gh-cli/github.com/testuser")
+        # Force the file-fallback path (no binary).
+        with patch("nexus.bricks.auth.external_sync.gh_sync.shutil.which", return_value=None):
+            adapter = GhCliSyncAdapter()
+            cred = adapter.resolve_credential_sync("gh-cli/github.com/testuser")
 
         assert cred.access_token == "gho_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx40"
+
+    def test_resolve_subprocess_for_keyring_backed_tokens(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When gh binary is present, use `gh auth token` so keyring tokens work.
+
+        Fix for review finding I1: file-only resolution fails for users whose
+        tokens are in the OS keyring (default on macOS). Subprocess path must
+        be tried first when the binary is available.
+        """
+        # hosts.yml missing — simulates keyring-backed install where tokens
+        # are NOT in the config file.
+        monkeypatch.setenv("GH_CONFIG_DIR", str(tmp_path / "empty-gh"))
+
+        with (
+            patch(
+                "nexus.bricks.auth.external_sync.gh_sync.shutil.which",
+                return_value="/usr/bin/gh",
+            ),
+            patch("nexus.bricks.auth.external_sync.gh_sync.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = type(
+                "CompletedProc",
+                (),
+                {"returncode": 0, "stdout": "gho_from_keyring_12345", "stderr": ""},
+            )()
+            adapter = GhCliSyncAdapter()
+            cred = adapter.resolve_credential_sync("gh-cli/github.com/testuser")
+
+        assert cred.kind == "bearer_token"
+        assert cred.access_token == "gho_from_keyring_12345"
+        # Verify the call shape: prefers the multi-user -u flag.
+        args = mock_run.call_args[0][0]
+        assert args[0:4] == ["/usr/bin/gh", "auth", "token", "-h"]
+        assert "testuser" in args
+
+    def test_resolve_subprocess_retries_without_u_flag_on_failure(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Old gh (< 2.40) doesn't accept -u; retry without it."""
+        monkeypatch.setenv("GH_CONFIG_DIR", str(tmp_path / "empty-gh"))
+
+        call_count = {"n": 0}
+
+        def _fake_run(args, **_kwargs):  # noqa: ANN001, ANN003
+            call_count["n"] += 1
+            if "-u" in args:
+                # First call: unknown flag
+                return type("P", (), {"returncode": 1, "stdout": "", "stderr": "unknown flag"})()
+            return type("P", (), {"returncode": 0, "stdout": "gho_legacy_token", "stderr": ""})()
+
+        with (
+            patch(
+                "nexus.bricks.auth.external_sync.gh_sync.shutil.which",
+                return_value="/usr/bin/gh",
+            ),
+            patch(
+                "nexus.bricks.auth.external_sync.gh_sync.subprocess.run",
+                side_effect=_fake_run,
+            ),
+        ):
+            adapter = GhCliSyncAdapter()
+            cred = adapter.resolve_credential_sync("gh-cli/github.com/testuser")
+
+        assert cred.access_token == "gho_legacy_token"
+        assert call_count["n"] == 2  # first -u attempt, then retry without

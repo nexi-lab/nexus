@@ -61,6 +61,7 @@ class GwsCliSyncAdapter(SubprocessAdapter):
                 error=f"{self.binary_name}: binary not found on PATH",
             )
 
+        proc: asyncio.subprocess.Process | None = None
         try:
             proc = await asyncio.create_subprocess_exec(
                 binary_path,
@@ -74,14 +75,25 @@ class GwsCliSyncAdapter(SubprocessAdapter):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            stdout_bytes, _ = await asyncio.wait_for(proc.communicate(), timeout=5.0)
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=5.0)
         except TimeoutError:
+            # Same zombie-avoidance pattern as SubprocessAdapter._run_once.
+            if proc is not None and proc.returncode is None:
+                try:
+                    proc.kill()
+                    await proc.wait()
+                except ProcessLookupError:
+                    pass
             return SyncResult(adapter_name=self.adapter_name, error="gws: timeout")
         except FileNotFoundError:
             return SyncResult(adapter_name=self.adapter_name, error="gws: binary not found")
 
         if proc.returncode != 0:
-            return SyncResult(adapter_name=self.adapter_name, error="gws: legacy probe failed")
+            stderr = stderr_bytes.decode("utf-8", errors="replace").strip()
+            detail = stderr or f"exit code {proc.returncode}"
+            return SyncResult(
+                adapter_name=self.adapter_name, error=f"gws: legacy probe failed: {detail}"
+            )
 
         stdout = stdout_bytes.decode("utf-8", errors="replace").strip()
         if not stdout:

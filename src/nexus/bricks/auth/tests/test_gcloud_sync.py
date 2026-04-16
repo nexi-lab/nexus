@@ -22,12 +22,11 @@ def adapter() -> GcloudSyncAdapter:
 
 
 class TestGcloudParseAdc:
-    def test_parse_authorized_user_returns_one_profile(self, adapter: GcloudSyncAdapter) -> None:
+    def test_parse_authorized_user_returns_empty(self, adapter: GcloudSyncAdapter) -> None:
+        """ADC authorized_user carries no email — account discovery comes from properties."""
         content = _ADC_V456.read_text(encoding="utf-8")
         profiles = adapter.parse_file(_ADC_V456, content)
-        assert len(profiles) == 1
-        assert profiles[0].provider == "gcs"
-        assert profiles[0].source == "gcloud"
+        assert profiles == []
 
     def test_parse_service_account_extracts_email(self, adapter: GcloudSyncAdapter) -> None:
         content = _ADC_SA.read_text(encoding="utf-8")
@@ -96,6 +95,46 @@ class TestGcloudSync:
         assert len(result.profiles) >= 1
         emails = {p.account_identifier for p in result.profiles}
         assert "my-sa@my-project-456.iam.gserviceaccount.com" in emails
+
+    async def test_sync_authorized_user_with_properties_stitches_account(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """ADC authorized_user alone is not enough; properties file supplies the email.
+
+        Verifies the fix for the pre-merge review finding C4 — ADC must not
+        emit a phantom ``gcloud/unknown`` profile. The account comes entirely
+        from the properties file.
+        """
+        adc = tmp_path / "application_default_credentials.json"
+        props = tmp_path / "properties"
+        shutil.copy(_ADC_V456, adc)  # authorized_user
+        shutil.copy(_PROPS_V456, props)  # [core] account=user@example.com
+        monkeypatch.setenv("CLOUDSDK_CONFIG", str(tmp_path))
+
+        adapter = GcloudSyncAdapter()
+        result = await adapter.sync()
+
+        assert result.error is None
+        assert len(result.profiles) == 1
+        profile = result.profiles[0]
+        assert profile.account_identifier == "user@example.com"
+        assert profile.backend_key == "gcloud/user@example.com"
+        # No phantom profile
+        assert not any(p.account_identifier == "unknown" for p in result.profiles)
+
+    async def test_sync_authorized_user_without_properties_returns_empty(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """ADC authorized_user with no properties file → degraded (no profiles)."""
+        adc = tmp_path / "application_default_credentials.json"
+        shutil.copy(_ADC_V456, adc)
+        monkeypatch.setenv("CLOUDSDK_CONFIG", str(tmp_path))
+
+        adapter = GcloudSyncAdapter()
+        result = await adapter.sync()
+
+        # No properties file → no email → no profile at all.
+        assert result.profiles == []
 
     async def test_sync_deduplicates_by_backend_key(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

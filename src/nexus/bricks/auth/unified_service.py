@@ -751,19 +751,15 @@ class UnifiedAuthService:
         was a hardcoded subprocess probe. The adapter framework
         (GwsCliSyncAdapter + AdapterRegistry) now keeps google profiles fresh
         in the store — we just read them here.
+
+        Reads from ``self._profile_store`` when wired (tests pass one in);
+        otherwise falls back to ``_external_sync_boot.list_profiles`` which
+        opens the production SQLite store, reads, and closes.  This keeps
+        every production constructor — cli/commands/auth_cli.py,
+        cli/commands/doctor.py, fs/_tui/__init__.py, fs/_auth_cli.py —
+        working without plumbing a long-lived store reference.
         """
-        if self._profile_store is None:
-            return None
-
-        try:
-            gws_profiles = [
-                p
-                for p in self._profile_store.list(provider="google")
-                if p.backend == "external-cli" and p.backend_key.startswith("gws-cli/")
-            ]
-        except Exception:
-            return None
-
+        gws_profiles = self._list_gws_profiles()
         if not gws_profiles:
             return None
 
@@ -773,6 +769,39 @@ class UnifiedAuthService:
             "email": email,
             "message": f"Local gws CLI profile available for {email}.",
         }
+
+    def _list_gws_profiles(self) -> list:
+        """Fetch gws-cli-synced profiles from the injected store or the boot helper."""
+        if self._profile_store is not None:
+            try:
+                return [
+                    p
+                    for p in self._profile_store.list(provider="google")
+                    if p.backend == "external-cli" and p.backend_key.startswith("gws-cli/")
+                ]
+            except Exception:
+                return []
+
+        # No injected store — use the one-shot helper that reads the
+        # persistent SQLite store populated by _external_sync_boot.
+        try:
+            from nexus.fs._external_sync_boot import (
+                ensure_external_sync,
+                list_profiles,
+            )
+
+            ensure_external_sync()
+            all_profiles = list_profiles() or []
+        except Exception:
+            return []
+
+        return [
+            p
+            for p in all_profiles
+            if getattr(p, "provider", None) == "google"
+            and getattr(p, "backend", None) == "external-cli"
+            and getattr(p, "backend_key", "").startswith("gws-cli/")
+        ]
 
     def _oauth_native_from_profile_store(
         self,

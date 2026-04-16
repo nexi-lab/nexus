@@ -5,39 +5,25 @@ from __future__ import annotations
 import asyncio
 import os
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
-from nexus.bricks.auth.credential_backend import ResolvedCredential
 from nexus.bricks.auth.credential_pool import CredentialPoolRegistry
-from nexus.bricks.auth.external_sync.external_cli_backend import ExternalCliBackend
 from nexus.bricks.auth.profile import AuthProfile, InMemoryAuthProfileStore, ProfileUsageStats
 
 
 class TestPathCLIBackendAuthSource:
-    """Test two-phase token resolution via AUTH_SOURCE."""
+    """Two-phase token resolution: external-CLI path via ``_external_sync_boot``.
+
+    Each test patches ``resolve_token_for_provider`` at the import site inside
+    ``PathCLIBackend._resolve_from_external_cli`` — that's the contract
+    between the connector and the unified profile store.
+    """
 
     def test_external_cli_takes_priority_over_token_manager(self) -> None:
-        """When AUTH_SOURCE is set and external credential exists, use it."""
-        store = InMemoryAuthProfileStore()
-        store.upsert(
-            AuthProfile(
-                id="google/user@example.com",
-                provider="google",
-                account_identifier="user@example.com",
-                backend="external-cli",
-                backend_key="gws-cli/user@example.com",
-                usage_stats=ProfileUsageStats(),
-            )
-        )
-        pool_registry = CredentialPoolRegistry(store=store)
-
-        mock_backend = MagicMock(spec=ExternalCliBackend)
-        mock_backend.resolve_sync.return_value = ResolvedCredential(
-            kind="bearer_token", access_token="external-token-123"
-        )
-
+        """AUTH_SOURCE set + helper returns a token → that token is used."""
         from nexus.backends.connectors.cli.base import PathCLIBackend
 
         class _TestConnector(PathCLIBackend):
@@ -45,21 +31,22 @@ class TestPathCLIBackendAuthSource:
             CLI_SERVICE = "gmail"
             AUTH_SOURCE = "gws-cli"
 
-        connector = _TestConnector(
-            credential_pool_registry=pool_registry,
-            external_cli_backend=mock_backend,
-        )
+        connector = _TestConnector()
 
-        token = connector._get_user_token(context=None)
+        with (
+            patch(
+                "nexus.fs._external_sync_boot.resolve_token_for_provider",
+                return_value="external-token-123",
+            ) as mock_resolve,
+            patch("nexus.fs._external_sync_boot.ensure_external_sync"),
+        ):
+            token = connector._get_user_token(context=None)
+
         assert token == "external-token-123"
-        mock_backend.resolve_sync.assert_called_once_with("gws-cli/user@example.com")
+        mock_resolve.assert_called_once_with("google", account=None)
 
-    def test_falls_back_to_token_manager_when_no_external_profiles(self) -> None:
-        """When no external profiles, fall back to TokenManager (here: no TM → None)."""
-        store = InMemoryAuthProfileStore()  # empty
-        pool_registry = CredentialPoolRegistry(store=store)
-        mock_backend = MagicMock(spec=ExternalCliBackend)
-
+    def test_passes_user_email_as_account_for_multi_user(self) -> None:
+        """When context.user_id is set, selection is scoped to that account."""
         from nexus.backends.connectors.cli.base import PathCLIBackend
 
         class _TestConnector(PathCLIBackend):
@@ -67,31 +54,45 @@ class TestPathCLIBackendAuthSource:
             CLI_SERVICE = "gmail"
             AUTH_SOURCE = "gws-cli"
 
-        connector = _TestConnector(
-            credential_pool_registry=pool_registry,
-            external_cli_backend=mock_backend,
-        )
+        connector = _TestConnector()
+        ctx = SimpleNamespace(user_id="alice@example.com", zone_id=None)
 
-        # No TokenManager either → returns None
-        token = connector._get_user_token(context=None)
+        with (
+            patch(
+                "nexus.fs._external_sync_boot.resolve_token_for_provider",
+                return_value="alice-token",
+            ) as mock_resolve,
+            patch("nexus.fs._external_sync_boot.ensure_external_sync"),
+        ):
+            token = connector._get_user_token(context=ctx)
+
+        assert token == "alice-token"
+        mock_resolve.assert_called_once_with("google", account="alice@example.com")
+
+    def test_falls_back_to_none_when_no_external_profile_and_no_tm(self) -> None:
+        """No external profile and no TokenManager → returns None."""
+        from nexus.backends.connectors.cli.base import PathCLIBackend
+
+        class _TestConnector(PathCLIBackend):
+            CLI_NAME = "gws"
+            CLI_SERVICE = "gmail"
+            AUTH_SOURCE = "gws-cli"
+
+        connector = _TestConnector()
+
+        with (
+            patch(
+                "nexus.fs._external_sync_boot.resolve_token_for_provider",
+                return_value=None,
+            ),
+            patch("nexus.fs._external_sync_boot.ensure_external_sync"),
+        ):
+            token = connector._get_user_token(context=None)
+
         assert token is None
 
     def test_no_auth_source_skips_external_cli(self) -> None:
-        """When AUTH_SOURCE is None, don't try external CLI."""
-        store = InMemoryAuthProfileStore()
-        store.upsert(
-            AuthProfile(
-                id="google/user@example.com",
-                provider="google",
-                account_identifier="user@example.com",
-                backend="external-cli",
-                backend_key="gws-cli/user@example.com",
-                usage_stats=ProfileUsageStats(),
-            )
-        )
-        pool_registry = CredentialPoolRegistry(store=store)
-        mock_backend = MagicMock(spec=ExternalCliBackend)
-
+        """AUTH_SOURCE=None → helper is never called."""
         from nexus.backends.connectors.cli.base import PathCLIBackend
 
         class _TestConnector(PathCLIBackend):
@@ -99,14 +100,109 @@ class TestPathCLIBackendAuthSource:
             CLI_SERVICE = "gmail"
             # AUTH_SOURCE not set — default None
 
-        connector = _TestConnector(
-            credential_pool_registry=pool_registry,
-            external_cli_backend=mock_backend,
+        connector = _TestConnector()
+
+        with patch(
+            "nexus.fs._external_sync_boot.resolve_token_for_provider",
+        ) as mock_resolve:
+            token = connector._get_user_token(context=None)
+
+        assert token is None
+        mock_resolve.assert_not_called()
+
+    def test_resolver_exception_falls_through_to_token_manager(self) -> None:
+        """If the external helper raises, _get_user_token must swallow and fall through."""
+        from nexus.backends.connectors.cli.base import PathCLIBackend
+
+        class _TestConnector(PathCLIBackend):
+            CLI_NAME = "gws"
+            CLI_SERVICE = "gmail"
+            AUTH_SOURCE = "gws-cli"
+
+        connector = _TestConnector()
+
+        with patch(
+            "nexus.fs._external_sync_boot.resolve_token_for_provider",
+            side_effect=RuntimeError("boom"),
+        ):
+            # No TokenManager configured → returns None rather than propagating
+            token = connector._get_user_token(context=None)
+
+        assert token is None
+
+
+class TestUnifiedAuthServiceWithoutProfileStore:
+    """Reproduces the production wiring: UnifiedAuthService with no profile_store.
+
+    All 4 production constructor sites (auth_cli.py, doctor.py, _tui/__init__.py,
+    _auth_cli.py) instantiate ``UnifiedAuthService(oauth_service=...)`` with no
+    profile_store arg. _gws_native_from_profile_store must still work via the
+    _external_sync_boot fallback.
+    """
+
+    def test_reads_profiles_via_boot_helper_when_no_store_injected(self) -> None:
+        from nexus.bricks.auth.unified_service import UnifiedAuthService
+
+        service = UnifiedAuthService()  # no profile_store, no oauth_service
+
+        fake_profile = SimpleNamespace(
+            provider="google",
+            backend="external-cli",
+            backend_key="gws-cli/bob@example.com",
+            account_identifier="bob@example.com",
         )
 
-        token = connector._get_user_token(context=None)
-        assert token is None  # No TokenManager, AUTH_SOURCE path skipped
-        mock_backend.resolve_sync.assert_not_called()
+        with (
+            patch(
+                "nexus.fs._external_sync_boot.list_profiles",
+                return_value=[fake_profile],
+            ),
+            patch("nexus.fs._external_sync_boot.ensure_external_sync"),
+        ):
+            native = service._gws_native_from_profile_store()
+
+        assert native is not None
+        assert native["source"] == "native:gws_cli"
+        assert native["email"] == "bob@example.com"
+
+    def test_returns_none_when_helper_has_no_matching_profiles(self) -> None:
+        from nexus.bricks.auth.unified_service import UnifiedAuthService
+
+        service = UnifiedAuthService()
+        # list_profiles returns non-gws profiles only
+        other_profile = SimpleNamespace(
+            provider="s3",
+            backend="external-cli",
+            backend_key="aws-cli/default",
+            account_identifier="default",
+        )
+
+        with (
+            patch(
+                "nexus.fs._external_sync_boot.list_profiles",
+                return_value=[other_profile],
+            ),
+            patch("nexus.fs._external_sync_boot.ensure_external_sync"),
+        ):
+            native = service._gws_native_from_profile_store()
+
+        assert native is None
+
+    def test_returns_none_on_helper_exception(self) -> None:
+        from nexus.bricks.auth.unified_service import UnifiedAuthService
+
+        service = UnifiedAuthService()
+
+        with (
+            patch(
+                "nexus.fs._external_sync_boot.list_profiles",
+                side_effect=RuntimeError("boom"),
+            ),
+            patch("nexus.fs._external_sync_boot.ensure_external_sync"),
+        ):
+            native = service._gws_native_from_profile_store()
+
+        assert native is None
 
 
 class TestConcurrentSelect:

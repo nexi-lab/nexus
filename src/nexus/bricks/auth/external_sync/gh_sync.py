@@ -12,6 +12,7 @@ import logging
 import os
 import re
 import shutil
+import subprocess
 from pathlib import Path
 
 import yaml
@@ -59,18 +60,26 @@ class GhCliSyncAdapter(ExternalCliSyncAdapter):
         return self._sync_file()
 
     async def _sync_subprocess(self) -> SyncResult:
-        """Run gh auth status --show-token and parse output."""
+        """Run gh auth status and parse output."""
+        proc: asyncio.subprocess.Process | None = None
         try:
             proc = await asyncio.create_subprocess_exec(
                 "gh",
                 "auth",
                 "status",
-                "--show-token",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
             stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=5.0)
         except TimeoutError:
+            # Kill the child so the runtime reaps it — otherwise a repeated
+            # timeout path leaks zombies on every TTL-triggered refresh.
+            if proc is not None and proc.returncode is None:
+                try:
+                    proc.kill()
+                    await proc.wait()
+                except ProcessLookupError:
+                    pass
             return SyncResult(adapter_name=self.adapter_name, error="gh: timeout after 5s")
         except FileNotFoundError:
             return SyncResult(adapter_name=self.adapter_name, error="gh: binary not found")
@@ -196,7 +205,17 @@ class GhCliSyncAdapter(ExternalCliSyncAdapter):
         return self._resolve_impl(backend_key)
 
     def _resolve_impl(self, backend_key: str) -> ResolvedCredential:
-        """Resolve token from hosts.yml (sync-safe file read)."""
+        """Resolve token for a gh-cli profile.
+
+        Dual-mode: when the ``gh`` binary is available, prefer
+        ``gh auth token -h <host> -u <user>`` — this is the only way to
+        retrieve the token when it's stored in the OS keyring (default
+        on macOS and increasingly common on Linux with libsecret).
+
+        Falls back to parsing ``hosts.yml`` when the binary is missing
+        or the subprocess call fails — useful in CI where only the config
+        file is present.
+        """
         parts = backend_key.split("/", 2)
         if len(parts) < 3:
             raise CredentialResolutionError(
@@ -206,6 +225,53 @@ class GhCliSyncAdapter(ExternalCliSyncAdapter):
             )
         _, host, username = parts
 
+        # Subprocess path first (keyring-safe).
+        binary_path = shutil.which("gh")
+        if binary_path is not None:
+            token = self._resolve_via_subprocess(binary_path, host, username)
+            if token:
+                return ResolvedCredential(kind="bearer_token", access_token=token)
+
+        # File fallback.
+        return self._resolve_via_file(backend_key, host, username)
+
+    def _resolve_via_subprocess(self, binary_path: str, host: str, username: str) -> str | None:
+        """Call ``gh auth token -h <host> -u <user>`` and return its stdout.
+
+        Returns None (not raises) on any failure — caller falls back to file.
+        Note: ``-u`` is accepted in gh >= 2.40 when multiple users exist per host.
+        """
+        try:
+            proc = subprocess.run(
+                [binary_path, "auth", "token", "-h", host, "-u", username],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+        except (subprocess.TimeoutExpired, OSError):
+            return None
+
+        if proc.returncode != 0:
+            # Retry without -u for single-user v2.40 installs.
+            try:
+                proc = subprocess.run(
+                    [binary_path, "auth", "token", "-h", host],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=False,
+                )
+            except (subprocess.TimeoutExpired, OSError):
+                return None
+            if proc.returncode != 0:
+                return None
+
+        token = proc.stdout.strip()
+        return token or None
+
+    def _resolve_via_file(self, backend_key: str, host: str, username: str) -> ResolvedCredential:
+        """Parse ~/.config/gh/hosts.yml for the token — works even without the binary."""
         hosts_path = self._hosts_path()
         try:
             content = hosts_path.read_text(encoding="utf-8")

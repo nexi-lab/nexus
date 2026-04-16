@@ -467,8 +467,10 @@ class TestSlimNexusFSLifecycle:
             is_admin=True,
         )
 
-        # Mount via the driver coordinator (F2 MountTable migration).
-        kernel._driver_coordinator.mount("/local", backend)
+        # Mount via kernel sys_setattr(DT_MOUNT) (F4 Rust-ification).
+        from nexus.contracts.metadata import DT_MOUNT
+
+        kernel.sys_setattr("/local", entry_type=DT_MOUNT, backend=backend)
         metastore.put(_make_mount_entry("/local", backend.name))
 
         fs = SlimNexusFS(kernel)
@@ -501,8 +503,10 @@ class TestSlimNexusFSLifecycle:
             is_admin=True,
         )
 
-        # Mount via the driver coordinator (F2 MountTable migration).
-        kernel._driver_coordinator.mount("/local", backend)
+        # Mount via kernel sys_setattr(DT_MOUNT) (F4 Rust-ification).
+        from nexus.contracts.metadata import DT_MOUNT
+
+        kernel.sys_setattr("/local", entry_type=DT_MOUNT, backend=backend)
         metastore.put(_make_mount_entry("/local", backend.name))
 
         with SlimNexusFS(kernel) as fs:

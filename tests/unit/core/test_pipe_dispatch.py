@@ -40,7 +40,6 @@ def _add_mount(router: PathRouter, mount_point: str, backend, zone_id: str = "ro
         readonly=False,
         admin_only=False,
         io_profile="balanced",
-        stream_backend_factory=None,
         zone_id=zone_id,
     )
 

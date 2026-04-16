@@ -698,7 +698,9 @@ class TestDistributedLocks:
         )
         assert "error" not in info, f"sys_stat(include_lock) failed: {info}"
         info_data = info.get("result", info)
-        lock_data_check = info_data.get("lock")
+        # lock data may be nested under "metadata" (sys_stat wraps in metadata dict)
+        stat_meta = info_data.get("metadata", info_data)
+        lock_data_check = stat_meta.get("lock")
         assert lock_data_check is not None, f"Expected lock info present: {info_data}"
         assert len(lock_data_check.get("holders", [])) > 0, f"Expected holders: {lock_data_check}"
 

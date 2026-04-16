@@ -2295,17 +2295,15 @@ class NexusFS(  # type: ignore[misc]
         if not return_metadata:
             return content
 
-        # Direct metastore lookup — sys_read already validated, routed, and checked permissions.
-        # Avoids redundant sys_stat pipeline (validate → route → hooks → metastore).
-        # Same pattern as read_bulk.
-        meta = self.metadata.get(self._validate_path(path))
+        # Compose with sys_stat for metadata
+        meta_dict = self.sys_stat(path, context=context)
         result: dict[str, Any] = {"content": content}
-        if meta:
+        if meta_dict:
             result.update(
                 {
-                    "etag": meta.etag,
-                    "version": meta.version,
-                    "modified_at": meta.modified_at.isoformat() if meta.modified_at else None,
+                    "etag": meta_dict.get("etag"),
+                    "version": meta_dict.get("version"),
+                    "modified_at": meta_dict.get("modified_at"),
                     "size": len(content),
                 }
             )

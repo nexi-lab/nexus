@@ -147,3 +147,27 @@ class TestNexusFSFileReader:
         assert await reader.read_text("/notes.txt") == "plain text"
         parse_fn.assert_not_called()
         nx.metadata.get_file_metadata.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_read_text_strips_nul_bytes_from_parsed_output(self) -> None:
+        # PDF parsers can emit embedded NUL from stream artifacts; Postgres
+        # rejects them in text columns and the indexer write transaction would
+        # be rolled back otherwise (SQLSTATE 22021).
+        nx = MagicMock()
+        nx.sys_read = MagicMock(return_value=b"%PDF-1.4")
+        nx.metadata.get_file_metadata = MagicMock(return_value=None)
+        parse_fn = MagicMock(return_value=b"Clean\x00 Dirty\x00\x00Text")
+        reader = _NexusFSFileReader(nx, parse_fn=parse_fn)
+
+        result = await reader.read_text("/doc.pdf")
+        assert "\x00" not in result
+        assert result == "Clean DirtyText"
+
+    @pytest.mark.asyncio
+    async def test_read_text_strips_nul_bytes_from_raw_fallback(self) -> None:
+        nx = MagicMock()
+        nx.sys_read = MagicMock(return_value=b"raw\x00bytes")
+        reader = _NexusFSFileReader(nx, parse_fn=None)
+
+        # Non-parseable extension → raw decode path must also strip NULs.
+        assert await reader.read_text("/notes.txt") == "rawbytes"

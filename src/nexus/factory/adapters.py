@@ -1,13 +1,27 @@
 """Factory adapters — NexusFSFileReader, DaemonSkeletonBM25, WorkflowLifecycleAdapter."""
 
+import logging
 from collections.abc import Callable
 from typing import Any
 
 from nexus.lib.virtual_views import PARSEABLE_EXTENSIONS
 
+logger = logging.getLogger(__name__)
+
 # =========================================================================
 # Issue #1520: NexusFS → FileReaderProtocol adapter
 # =========================================================================
+
+
+def _sanitize_for_index(text: str) -> str:
+    """Strip NUL bytes so Postgres text columns accept the string.
+
+    PDF parsers can emit embedded NUL (0x00) from stream artifacts.  Postgres
+    rejects those in ``TEXT``/``VARCHAR`` values (SQLSTATE 22021), and search
+    indexing writes through SQLAlchemy text columns, so a single NUL anywhere
+    in a parsed document would roll back the whole write transaction.
+    """
+    return text.replace("\x00", "") if "\x00" in text else text
 
 
 class _NexusFSFileReader:
@@ -58,11 +72,11 @@ class _NexusFSFileReader:
         if any(path.endswith(ext) for ext in PARSEABLE_EXTENSIONS):
             parsed = self._get_parsed_text(path, raw_bytes)
             if parsed is not None:
-                return parsed
+                return _sanitize_for_index(parsed)
 
         if isinstance(content_raw, bytes):
-            return content_raw.decode("utf-8", errors="ignore")
-        return str(content_raw)
+            return _sanitize_for_index(content_raw.decode("utf-8", errors="ignore"))
+        return _sanitize_for_index(str(content_raw))
 
     def _get_parsed_text(self, path: str, raw: bytes) -> str | None:
         """Return cached or freshly-parsed markdown for a parseable binary.
@@ -83,14 +97,22 @@ class _NexusFSFileReader:
         # 2) Synchronous parse via injected parse_fn. parse_fn is the same
         #    callable used by the VFS virtual-view resolver.
         if self._parse_fn is None:
+            logger.warning(
+                "read_text: no parse_fn wired for parseable binary %s — "
+                "indexing will receive raw bytes",
+                path,
+            )
             return None
         try:
             parsed_bytes = self._parse_fn(raw, path)
         except Exception:
+            logger.warning("read_text: parse_fn raised for %s", path, exc_info=True)
             return None
         if parsed_bytes is None:
+            logger.warning("read_text: parse_fn returned None for %s", path)
             return None
         text = parsed_bytes.decode("utf-8", errors="ignore")
+        logger.info("read_text: parsed %s → %d chars markdown", path, len(text))
 
         # 3) Populate the metastore cache so subsequent read_text / virtual-view
         #    reads are free.

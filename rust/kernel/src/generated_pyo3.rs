@@ -829,6 +829,7 @@ pub struct PySysReadResult {
     pub post_hook_needed: bool,
     pub content_hash: Option<String>,
     pub entry_type: u8,
+    pub is_external: bool,
 }
 
 // ── PySysWriteResult ────────────────────────────────────────────
@@ -899,6 +900,8 @@ pub struct PyRustRouteResult {
     pub readonly: bool,
     #[pyo3(get)]
     pub io_profile: String,
+    #[pyo3(get)]
+    pub is_external: bool,
 }
 
 impl From<RustRouteResult> for PyRustRouteResult {
@@ -908,6 +911,7 @@ impl From<RustRouteResult> for PyRustRouteResult {
             backend_path: r.backend_path,
             readonly: r.readonly,
             io_profile: r.io_profile,
+            is_external: r.is_external,
         }
     }
 }
@@ -1122,7 +1126,7 @@ impl PyKernel {
 
     // ── Router proxy methods ───────────────────────────────────────────
 
-    #[pyo3(signature = (mount_point, zone_id, readonly, admin_only, io_profile, backend_name="", local_root=None, fsync=false, py_backend=None, backend_type="cas", follow_symlinks=true, grpc_addr=None, openai_base_url=None, openai_api_key=None, openai_model=None, s3_bucket=None, s3_prefix=None, aws_region=None, aws_access_key=None, aws_secret_key=None, s3_endpoint=None, gcs_bucket=None, gcs_prefix=None, access_token=None, root_folder_id=None, bot_token=None, default_channel=None, metastore_path=None))]
+    #[pyo3(signature = (mount_point, zone_id, readonly, admin_only, io_profile, backend_name="", local_root=None, fsync=false, py_backend=None, backend_type="cas", follow_symlinks=true, grpc_addr=None, openai_base_url=None, openai_api_key=None, openai_model=None, s3_bucket=None, s3_prefix=None, aws_region=None, aws_access_key=None, aws_secret_key=None, s3_endpoint=None, gcs_bucket=None, gcs_prefix=None, access_token=None, root_folder_id=None, bot_token=None, default_channel=None, metastore_path=None, is_external=false))]
     #[allow(clippy::too_many_arguments)]
     fn add_mount(
         &self,
@@ -1154,6 +1158,7 @@ impl PyKernel {
         bot_token: Option<&str>,
         default_channel: Option<&str>,
         metastore_path: Option<&str>,
+        is_external: bool,
     ) -> PyResult<()> {
         // Backend resolution: grpc_addr -> GrpcObjectStoreAdapter (zero GIL)
         //                     local_root -> CasLocalBackend/PathLocalBackend/LocalConnectorBackend
@@ -1298,6 +1303,7 @@ impl PyKernel {
                 backend_name,
                 backend,
                 metastore_path,
+                is_external,
             )
             .map_err(Into::into)
     }
@@ -1666,6 +1672,7 @@ impl PyKernel {
             post_hook_needed: result.post_hook_needed,
             content_hash: result.content_hash,
             entry_type: result.entry_type,
+            is_external: result.is_external,
         })
     }
 
@@ -1935,6 +1942,7 @@ impl PyKernel {
                 post_hook_needed: r.post_hook_needed,
                 content_hash: r.content_hash,
                 entry_type: r.entry_type,
+                is_external: r.is_external,
             })
             .collect())
     }

@@ -295,6 +295,7 @@ class PyRustRouteResult:
     backend_path: str
     readonly: bool
     io_profile: str
+    is_external: bool
 
 class PyOperationContext:
     def __init__(
@@ -374,6 +375,7 @@ class PyKernel:
         bot_token: str | None,
         default_channel: str | None,
         metastore_path: str | None,
+        is_external: bool,
     ) -> None: ...
     def remove_mount(self, mount_point: str, zone_id: str) -> bool: ...
     def route(self, path: str, zone_id: str, is_admin: bool, check_write: bool) -> Any: ...

@@ -14,10 +14,17 @@ from __future__ import annotations
 
 import importlib
 import logging
+import threading
 import time
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# Serialize the check-and-set inside ensure_external_sync so two threads
+# arriving on the cold-cache path don't both run a fresh bootstrap and
+# contend on SQLite (R7-M2 #3740). The lock only guards the state-update
+# protocol; the actual sync work runs without holding it.
+_sync_lock = threading.Lock()
 
 # Sync state tracking (Phase 3, #3740):
 #   - _sync_last_ok_at: monotonic() at last successful startup. After
@@ -56,66 +63,91 @@ def ensure_external_sync() -> None:
 
     now = time.monotonic()
 
-    # Recent successful sync — still fresh, short-circuit.
-    if _sync_last_ok_at is not None and now - _sync_last_ok_at < _SYNC_REFRESH_INTERVAL_S:
-        return
+    # Serialize the gate so two threads on the cold path don't both run
+    # a fresh bootstrap (R7-M2). One thread does the work; the other
+    # short-circuits on the freshly-set state when it acquires the lock.
+    with _sync_lock:
+        # Recent successful sync — still fresh, short-circuit.
+        if _sync_last_ok_at is not None and now - _sync_last_ok_at < _SYNC_REFRESH_INTERVAL_S:
+            return
 
-    # Previous attempt failed; don't hammer the CLI on every request.
-    if _sync_last_attempt_at is not None and now - _sync_last_attempt_at < _MIN_RETRY_INTERVAL_S:
-        return
+        # Previous attempt failed; don't hammer the CLI on every request.
+        if (
+            _sync_last_attempt_at is not None
+            and now - _sync_last_attempt_at < _MIN_RETRY_INTERVAL_S
+        ):
+            return
 
-    _sync_last_attempt_at = now
+        _sync_last_attempt_at = now
 
-    try:
-        import asyncio
-
-        aws_mod = importlib.import_module("nexus.bricks.auth.external_sync.aws_sync")
-        gcloud_mod = importlib.import_module("nexus.bricks.auth.external_sync.gcloud_sync")
-        gh_mod = importlib.import_module("nexus.bricks.auth.external_sync.gh_sync")
-        gws_mod = importlib.import_module("nexus.bricks.auth.external_sync.gws_sync")
-        codex_mod = importlib.import_module("nexus.bricks.auth.external_sync.codex_sync")
-        reg_mod = importlib.import_module("nexus.bricks.auth.external_sync.registry")
-        store_mod = importlib.import_module("nexus.bricks.auth.profile_store")
-        from nexus.fs._paths import persistent_dir
-    except (ImportError, ModuleNotFoundError):
-        # Slim wheel — external_sync not available. Treat as permanent so we
-        # don't retry every minute; the modules can't appear without a
-        # reinstall that'll restart the process anyway.
-        _sync_last_ok_at = now
-        return
-
-    try:
-        db_path = persistent_dir() / "auth_profiles.db"
-        store = store_mod.SqliteAuthProfileStore(db_path)
         try:
-            registry = reg_mod.AdapterRegistry(
-                adapters=[
-                    aws_mod.AwsCliSyncAdapter(),
-                    gcloud_mod.GcloudSyncAdapter(),
-                    gh_mod.GhCliSyncAdapter(),
-                    gws_mod.GwsCliSyncAdapter(),
-                    codex_mod.CodexSyncAdapter(),
-                ],
-                profile_store=store,
-                startup_timeout=3.0,
-            )
-            coro = registry.startup()
-            try:
-                asyncio.get_running_loop()
-                import concurrent.futures
+            import asyncio
 
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                    pool.submit(asyncio.run, coro).result(timeout=5.0)
-            except RuntimeError:
-                asyncio.run(coro)
-        finally:
-            store.close()
-        # Only mark success after the startup coroutine completes. If we
-        # hit the `except Exception` below, _sync_last_ok_at stays None
-        # and the next call (after the retry window) will try again.
-        _sync_last_ok_at = now
-    except Exception:
-        logger.debug("External CLI sync failed during bootstrap", exc_info=True)
+            aws_mod = importlib.import_module("nexus.bricks.auth.external_sync.aws_sync")
+            gcloud_mod = importlib.import_module("nexus.bricks.auth.external_sync.gcloud_sync")
+            gh_mod = importlib.import_module("nexus.bricks.auth.external_sync.gh_sync")
+            gws_mod = importlib.import_module("nexus.bricks.auth.external_sync.gws_sync")
+            codex_mod = importlib.import_module("nexus.bricks.auth.external_sync.codex_sync")
+            reg_mod = importlib.import_module("nexus.bricks.auth.external_sync.registry")
+            store_mod = importlib.import_module("nexus.bricks.auth.profile_store")
+            from nexus.fs._paths import persistent_dir
+        except (ImportError, ModuleNotFoundError):
+            # Slim wheel — external_sync not available. Treat as permanent so we
+            # don't retry every minute; the modules can't appear without a
+            # reinstall that'll restart the process anyway.
+            _sync_last_ok_at = now
+            return
+
+        try:
+            db_path = persistent_dir() / "auth_profiles.db"
+            store = store_mod.SqliteAuthProfileStore(db_path)
+            results: dict[str, Any] = {}
+            try:
+                registry = reg_mod.AdapterRegistry(
+                    adapters=[
+                        aws_mod.AwsCliSyncAdapter(),
+                        gcloud_mod.GcloudSyncAdapter(),
+                        gh_mod.GhCliSyncAdapter(),
+                        gws_mod.GwsCliSyncAdapter(),
+                        codex_mod.CodexSyncAdapter(),
+                    ],
+                    profile_store=store,
+                    startup_timeout=3.0,
+                )
+                coro = registry.startup()
+                try:
+                    asyncio.get_running_loop()
+                    import concurrent.futures
+
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                        results = pool.submit(asyncio.run, coro).result(timeout=5.0) or {}
+                except RuntimeError:
+                    results = asyncio.run(coro) or {}
+            finally:
+                store.close()
+
+            # Stamp ok_at when there's at least one true success OR every
+            # adapter is simply absent (no CLIs installed → nothing to
+            # do, no point hammering retries) (R7-M1). Only treat the
+            # "every adapter errored" case as a transient failure worth
+            # retrying after _MIN_RETRY_INTERVAL_S.
+            any_success = any(
+                getattr(r, "error", None) is None and getattr(r, "profiles", None)
+                for r in results.values()
+            )
+            any_transient_error = any(
+                getattr(r, "error", None) is not None and getattr(r, "error", "") != "not detected"
+                for r in results.values()
+            )
+            if any_success or not any_transient_error:
+                _sync_last_ok_at = now
+            else:
+                logger.debug(
+                    "External CLI sync had only transient errors; will retry "
+                    "after _MIN_RETRY_INTERVAL_S"
+                )
+        except Exception:
+            logger.debug("External CLI sync failed during bootstrap", exc_info=True)
 
 
 def list_profiles() -> list | None:

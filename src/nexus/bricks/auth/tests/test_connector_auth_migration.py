@@ -228,6 +228,73 @@ class TestEnsureExternalSyncRetries:
         boot.ensure_external_sync()
         assert call_count["startup"] == 2, "after success, further calls must short-circuit"
 
+    def test_only_transient_errors_does_not_mark_success(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """R7-M1 regression: when registry.startup() returns SyncResults
+        whose only outcome is errors (e.g. broken CLIs), bootstrap must
+        NOT mark _sync_last_ok_at — the next call (after the retry window)
+        should attempt again. Previously the bootstrap ran startup(), got
+        all-error results, and stamped success — locking in the empty
+        store for 5 minutes."""
+        import nexus.fs._external_sync_boot as boot
+        from nexus.bricks.auth.external_sync.base import SyncResult
+
+        monkeypatch.setattr(boot, "_sync_last_ok_at", None)
+        monkeypatch.setattr(boot, "_sync_last_attempt_at", None)
+        monkeypatch.setattr(boot, "_MIN_RETRY_INTERVAL_S", 0.0)
+
+        class _AllErrorsRegistry:
+            def __init__(self, **_kwargs) -> None:  # noqa: ANN003
+                pass
+
+            async def startup(self) -> dict:
+                return {
+                    "aws-cli": SyncResult(adapter_name="aws-cli", error="auth failed"),
+                    "gcloud": SyncResult(adapter_name="gcloud", error="config corrupt"),
+                }
+
+        from nexus.bricks.auth.external_sync import registry as registry_mod
+
+        monkeypatch.setattr(registry_mod, "AdapterRegistry", _AllErrorsRegistry)
+
+        boot.ensure_external_sync()
+        assert boot._sync_last_ok_at is None, (
+            "all-transient-errors must NOT mark sync successful — "
+            "next call should retry instead of waiting full refresh window"
+        )
+
+    def test_all_not_detected_marks_success(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """R7-M1 corollary: when no CLIs are installed (every adapter
+        returns 'not detected'), there's no transient error to retry —
+        marking success avoids hammering retries every 60 seconds."""
+        import nexus.fs._external_sync_boot as boot
+        from nexus.bricks.auth.external_sync.base import SyncResult
+
+        monkeypatch.setattr(boot, "_sync_last_ok_at", None)
+        monkeypatch.setattr(boot, "_sync_last_attempt_at", None)
+        monkeypatch.setattr(boot, "_MIN_RETRY_INTERVAL_S", 0.0)
+
+        class _AllNotDetectedRegistry:
+            def __init__(self, **_kwargs) -> None:  # noqa: ANN003
+                pass
+
+            async def startup(self) -> dict:
+                return {
+                    "aws-cli": SyncResult(adapter_name="aws-cli", error="not detected"),
+                    "gcloud": SyncResult(adapter_name="gcloud", error="not detected"),
+                }
+
+        from nexus.bricks.auth.external_sync import registry as registry_mod
+
+        monkeypatch.setattr(registry_mod, "AdapterRegistry", _AllNotDetectedRegistry)
+
+        boot.ensure_external_sync()
+        assert boot._sync_last_ok_at is not None, (
+            "all-not-detected must mark sync successful — no point retrying "
+            "when no CLIs are installed"
+        )
+
     def test_success_short_circuits_subsequent_calls(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import time
 

@@ -79,32 +79,41 @@ class SubprocessAdapter(ExternalCliSyncAdapter):
     async def _run_once(self, binary_path: str) -> SyncResult:
         """Single subprocess execution with timeout."""
         args = self.get_status_args()
+        proc: asyncio.subprocess.Process | None = None
         try:
-            proc = await asyncio.create_subprocess_exec(
-                binary_path,
-                *args,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                proc.communicate(),
-                timeout=self._subprocess_timeout,
-            )
-        except TimeoutError:
             try:
-                proc.kill()
-                await proc.wait()
-            except ProcessLookupError:
-                pass
-            return SyncResult(
-                adapter_name=self.adapter_name,
-                error=f"{self.binary_name}: timeout after {self._subprocess_timeout}s",
-            )
-        except FileNotFoundError:
-            return SyncResult(
-                adapter_name=self.adapter_name,
-                error=f"{self.binary_name}: binary not found",
-            )
+                proc = await asyncio.create_subprocess_exec(
+                    binary_path,
+                    *args,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                    proc.communicate(),
+                    timeout=self._subprocess_timeout,
+                )
+            except TimeoutError:
+                # _kill_proc handled in finally
+                return SyncResult(
+                    adapter_name=self.adapter_name,
+                    error=f"{self.binary_name}: timeout after {self._subprocess_timeout}s",
+                )
+            except FileNotFoundError:
+                return SyncResult(
+                    adapter_name=self.adapter_name,
+                    error=f"{self.binary_name}: binary not found",
+                )
+        finally:
+            # Reap orphaned subprocess on TimeoutError, CancelledError
+            # (e.g. registry global timeout cancels the wrapping task), or
+            # any other exception path. Without this, a hung gh/gws auth
+            # status leaks zombie children on every retry (R9-M1 #3740).
+            if proc is not None and proc.returncode is None:
+                try:
+                    proc.kill()
+                    await proc.wait()
+                except (ProcessLookupError, asyncio.CancelledError):
+                    pass
 
         stdout = stdout_bytes.decode("utf-8", errors="replace")
         stderr = stderr_bytes.decode("utf-8", errors="replace")

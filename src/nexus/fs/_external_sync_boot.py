@@ -23,8 +23,14 @@ logger = logging.getLogger(__name__)
 # Serialize the check-and-set inside ensure_external_sync so two threads
 # arriving on the cold-cache path don't both run a fresh bootstrap and
 # contend on SQLite (R7-M2 #3740). The lock only guards the state-update
-# protocol; the actual sync work runs without holding it.
+# protocol; the actual sync work runs OUTSIDE the lock so a slow CLI
+# (gh/gws auth status taking seconds) doesn't block every other request
+# that happens to call ensure_external_sync — it just short-circuits on
+# the in-progress flag (R9-H1).
 _sync_lock = threading.Lock()
+# True between "thread claimed bootstrap" and "thread published the result".
+# Other threads see this and short-circuit instead of starting a duplicate.
+_sync_in_progress = False
 
 # Sync state tracking (Phase 3, #3740):
 #   - _sync_last_ok_at: monotonic() at last successful startup. After
@@ -59,13 +65,14 @@ def ensure_external_sync() -> None:
     so ``gws auth login/switch`` after process start was invisible until
     restart. Now long-lived servers pick up credential rotations within 5 min.
     """
-    global _sync_last_ok_at, _sync_last_attempt_at  # noqa: PLW0603
+    global _sync_last_ok_at, _sync_last_attempt_at, _sync_in_progress  # noqa: PLW0603
 
     now = time.monotonic()
 
-    # Serialize the gate so two threads on the cold path don't both run
-    # a fresh bootstrap (R7-M2). One thread does the work; the other
-    # short-circuits on the freshly-set state when it acquires the lock.
+    # Phase 1: claim the bootstrap or short-circuit. Only the gate runs
+    # under the lock so concurrent request-path callers never block on
+    # a slow CLI (R9-H1). The in-progress flag prevents duplicate
+    # bootstraps when two threads arrive on the cold path simultaneously.
     with _sync_lock:
         # Recent successful sync — still fresh, short-circuit.
         if _sync_last_ok_at is not None and now - _sync_last_ok_at < _SYNC_REFRESH_INTERVAL_S:
@@ -78,8 +85,17 @@ def ensure_external_sync() -> None:
         ):
             return
 
-        _sync_last_attempt_at = now
+        # Another thread is already syncing — let it finish.
+        if _sync_in_progress:
+            return
 
+        _sync_last_attempt_at = now
+        _sync_in_progress = True
+
+    # Phase 2: do the actual work without holding the lock. Always clear
+    # _sync_in_progress in finally so a crash here doesn't permanently
+    # pin out subsequent callers.
+    try:
         try:
             import asyncio
 
@@ -95,13 +111,14 @@ def ensure_external_sync() -> None:
             # Slim wheel — external_sync not available. Treat as permanent so we
             # don't retry every minute; the modules can't appear without a
             # reinstall that'll restart the process anyway.
-            _sync_last_ok_at = now
+            with _sync_lock:
+                _sync_last_ok_at = now
             return
 
+        results: dict[str, Any] = {}
         try:
             db_path = persistent_dir() / "auth_profiles.db"
             store = store_mod.SqliteAuthProfileStore(db_path)
-            results: dict[str, Any] = {}
             try:
                 registry = reg_mod.AdapterRegistry(
                     adapters=[
@@ -125,21 +142,19 @@ def ensure_external_sync() -> None:
                     results = asyncio.run(coro) or {}
             finally:
                 store.close()
+        except Exception:
+            logger.debug("External CLI sync failed during bootstrap", exc_info=True)
+            return
 
-            # Stamp ok_at when there's at least one true success OR
-            # every adapter is simply absent (no CLIs installed → nothing
-            # to do, no point hammering retries) (R7-M1, refined R8-M1).
-            # A clean run that returns zero profiles AND zero errors is
-            # NOT treated as success: the user may be mid-login and a
-            # newly-added profile would otherwise be invisible until the
-            # full _SYNC_REFRESH_INTERVAL_S elapsed. Retry sooner instead.
-            any_success = any(
-                getattr(r, "error", None) is None and getattr(r, "profiles", None)
-                for r in results.values()
-            )
-            all_not_detected = bool(results) and all(
-                getattr(r, "error", None) == "not detected" for r in results.values()
-            )
+        # Phase 3: publish the result under the lock.
+        any_success = any(
+            getattr(r, "error", None) is None and getattr(r, "profiles", None)
+            for r in results.values()
+        )
+        all_not_detected = bool(results) and all(
+            getattr(r, "error", None) == "not detected" for r in results.values()
+        )
+        with _sync_lock:
             if any_success or all_not_detected or not results:
                 _sync_last_ok_at = now
             else:
@@ -147,8 +162,9 @@ def ensure_external_sync() -> None:
                     "External CLI sync produced no usable profiles; will retry "
                     "after _MIN_RETRY_INTERVAL_S to pick up post-login state"
                 )
-        except Exception:
-            logger.debug("External CLI sync failed during bootstrap", exc_info=True)
+    finally:
+        with _sync_lock:
+            _sync_in_progress = False
 
 
 def list_profiles() -> list | None:

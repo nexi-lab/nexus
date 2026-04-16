@@ -71,27 +71,30 @@ class GhCliSyncAdapter(ExternalCliSyncAdapter):
         """
         proc: asyncio.subprocess.Process | None = None
         try:
-            proc = await asyncio.create_subprocess_exec(
-                "gh",
-                "auth",
-                "status",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=5.0)
-        except TimeoutError:
-            # Kill the child so the runtime reaps it — otherwise a repeated
-            # timeout path leaks zombies on every TTL-triggered refresh.
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "gh",
+                    "auth",
+                    "status",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=5.0)
+            except TimeoutError:
+                # Fall back to hosts.yml rather than reporting empty success.
+                return self._sync_file_with_reason("gh: timeout after 5s")
+            except FileNotFoundError:
+                return self._sync_file_with_reason("gh: binary not found")
+        finally:
+            # Reap orphaned subprocess on timeout, CancelledError, or any
+            # other exception — registry's global startup timeout cancels
+            # this task without our cleanup running otherwise (R9-M1).
             if proc is not None and proc.returncode is None:
                 try:
                     proc.kill()
                     await proc.wait()
-                except ProcessLookupError:
+                except (ProcessLookupError, asyncio.CancelledError):
                     pass
-            # Fall back to hosts.yml rather than reporting empty success.
-            return self._sync_file_with_reason("gh: timeout after 5s")
-        except FileNotFoundError:
-            return self._sync_file_with_reason("gh: binary not found")
 
         # gh auth status output split varies by version + stream targeting:
         #   - older gh: status lines on stderr, --show-token tokens on stdout

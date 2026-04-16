@@ -63,30 +63,33 @@ class GwsCliSyncAdapter(SubprocessAdapter):
 
         proc: asyncio.subprocess.Process | None = None
         try:
-            proc = await asyncio.create_subprocess_exec(
-                binary_path,
-                "gmail",
-                "users",
-                "getProfile",
-                "--params",
-                '{"userId":"me"}',
-                "--format",
-                "json",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=5.0)
-        except TimeoutError:
-            # Same zombie-avoidance pattern as SubprocessAdapter._run_once.
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    binary_path,
+                    "gmail",
+                    "users",
+                    "getProfile",
+                    "--params",
+                    '{"userId":"me"}',
+                    "--format",
+                    "json",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=5.0)
+            except TimeoutError:
+                return SyncResult(adapter_name=self.adapter_name, error="gws: timeout")
+            except FileNotFoundError:
+                return SyncResult(adapter_name=self.adapter_name, error="gws: binary not found")
+        finally:
+            # Reap on timeout, CancelledError (registry global timeout),
+            # or any other failure path (R9-M1).
             if proc is not None and proc.returncode is None:
                 try:
                     proc.kill()
                     await proc.wait()
-                except ProcessLookupError:
+                except (ProcessLookupError, asyncio.CancelledError):
                     pass
-            return SyncResult(adapter_name=self.adapter_name, error="gws: timeout")
-        except FileNotFoundError:
-            return SyncResult(adapter_name=self.adapter_name, error="gws: binary not found")
 
         if proc.returncode != 0:
             stderr = stderr_bytes.decode("utf-8", errors="replace").strip()

@@ -28,11 +28,6 @@ def create_backend(spec: Any) -> Any:
         ImportError: If the backend's optional dependency is not installed.
         BackendNotFoundError: If the backend resource doesn't exist.
     """
-    from nexus.fs._credentials import discover_credentials
-
-    # Discover credentials (raises CloudCredentialError if missing)
-    discover_credentials(spec.scheme)
-
     if spec.scheme == "s3":
         try:
             from nexus.backends.storage.path_s3 import PathS3Backend
@@ -40,12 +35,28 @@ def create_backend(spec: Any) -> Any:
             raise ImportError(
                 "boto3 is required for S3 backends. Install with: pip install nexus-fs[s3]"
             ) from None
+
+        # Phase 2: ensure external-CLI sync has run (populates auth list).
+        # S3 credential resolution always uses boto3's native provider chain
+        # (which handles SSO/STS refresh, instance metadata, etc.). The profile
+        # store is for discovery/listing in `auth list`, not for credential
+        # injection at mount time.
+        from nexus.fs._external_sync_boot import ensure_external_sync
+
+        ensure_external_sync()
+
+        from nexus.fs._credentials import discover_credentials
+
+        discover_credentials(spec.scheme)
         return PathS3Backend(
             bucket_name=spec.authority,
             prefix=spec.path.lstrip("/") if spec.path else "",
         )
 
     elif spec.scheme == "gcs":
+        from nexus.fs._credentials import discover_credentials
+
+        discover_credentials(spec.scheme)
         try:
             from nexus.backends.storage.cas_gcs import CASGCSBackend
         except ImportError:

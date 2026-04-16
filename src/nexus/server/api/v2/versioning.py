@@ -343,6 +343,19 @@ def build_v2_registry(
         )
     except ImportError as e:
         logger.warning("Failed to import Access Manifests routes: %s", e)
+
+    # ---- Path Contexts router (Issue #3773) ----
+    try:
+        from nexus.server.api.v2.routers.path_contexts import (
+            router as path_contexts_router,
+        )
+
+        registry.add(
+            RouterEntry(router=path_contexts_router, name="path_contexts", endpoint_count=3)
+        )
+    except ImportError as e:
+        logger.warning("Failed to import Path Contexts routes: %s", e)
+
     # ---- Search router (Issue #2056 — ported from v1) ----
     try:
         from nexus.server.api.v2.routers.search import router as search_router

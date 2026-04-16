@@ -112,6 +112,32 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
         # CacheBrick is available from startup_permissions
         _cache_brick = getattr(app.state, "cache_brick", None)
 
+        # Issue #3773: path context store + cache
+        path_context_store = None
+        path_context_cache = None
+        if _async_sf is not None:
+            try:
+                from nexus.bricks.search.path_context import (
+                    PathContextCache,
+                    PathContextStore,
+                )
+
+                _db_type = (
+                    "postgresql"
+                    if (svc.database_url or "").startswith(("postgres", "postgresql"))
+                    else "sqlite"
+                )
+                path_context_store = PathContextStore(
+                    async_session_factory=_async_sf,
+                    db_type=_db_type,
+                )
+                path_context_cache = PathContextCache(store=path_context_store)
+            except Exception:  # pragma: no cover — non-fatal wiring failure
+                logger.exception("Failed to initialize path context store/cache")
+        app.state.path_context_store = path_context_store
+        app.state.path_context_cache = path_context_cache
+
+        # path_context_cache wired into SearchDaemon in Task 10
         app.state.search_daemon = SearchDaemon(
             config,
             async_session_factory=_async_sf,

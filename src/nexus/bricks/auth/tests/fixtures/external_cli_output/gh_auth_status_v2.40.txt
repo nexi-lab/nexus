@@ -1,0 +1,5 @@
+github.com
+  ✓ Logged in to github.com as testuser (oauth_token)
+  ✓ Git operations for github.com configured to use https protocol.
+  ✓ Token: gho_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx40
+  ✓ Token scopes: gist, read:org, repo, workflow

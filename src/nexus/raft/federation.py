@@ -239,10 +239,17 @@ class NexusFederation:
             from nexus.core.metastore import RustMetastoreProxy
 
             metadata_store = RustMetastoreProxy(kernel)
-            # Root zone ZoneMetastore is now installed via DLC.mount()
-            # which passes py_zone_handle to kernel.add_mount(). The
-            # kernel handles ZoneMetastore creation + lock manager
-            # upgrade internally. No separate attach call needed here.
+            # Root mount "/" uses the kernel's global redb metastore
+            # (local, not Raft-replicated). Only explicitly mounted
+            # federation zones (e.g. /corp/ → zone "corp") get per-mount
+            # Raft-backed ZoneMetastores via _mount_via_kernel().
+
+            # Set node gRPC VFS address so sys_write encodes origin in
+            # backend_name (e.g. "cas-local@nexus-1:2028"). Enables
+            # on-demand remote content fetch on follower nodes.
+            # Use hostname + gRPC port (not Raft port).
+            _grpc_port = os.environ.get("NEXUS_GRPC_PORT", "2028")
+            kernel.set_self_address(f"{hostname}:{_grpc_port}")
         else:
             metadata_store = _root_store
 

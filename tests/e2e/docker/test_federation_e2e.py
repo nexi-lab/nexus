@@ -610,18 +610,22 @@ class TestCrossNodeReplication:
         )
 
     def test_metadata_visible_on_follower(self, cluster, api_key):
-        """Write on node-1, list on node-2 -- metadata should be visible."""
+        """Write on node-1, list on node-2 -- metadata should be visible.
+
+        Uses a federation zone (/corp/eng/) so metadata is Raft-replicated.
+        Root zone (/) uses local redb — not replicated by design.
+        """
         uid = _uid()
         grpc1 = cluster["grpc1"]
         grpc2 = cluster["grpc2"]
 
-        path = f"/workspace/repl-meta-{uid}.txt"
+        path = f"/corp/eng/repl-meta-{uid}.txt"
         w = _grpc_call(grpc1, "write", {"path": path, "content": f"meta-{uid}"}, api_key=api_key)
         assert "error" not in w
 
         _wait_replicated(
             grpc2,
-            "/workspace/",
+            "/corp/eng/",
             path,
             api_key,
             msg="Metadata not replicated to follower",
@@ -877,10 +881,11 @@ class TestLeaderFailover:
         grpc1 = cluster["grpc1"]
         grpc2 = cluster["grpc2"]
 
-        # Write a file in each zone before failover
+        # Write a file in each federation zone before failover.
+        # Root zone (/) uses local redb — not Raft-replicated by design,
+        # so only federation zones are tested for cross-node replication.
         zone_files: dict[str, tuple[str, str, str]] = {}
         for zone, prefix, parent in [
-            ("root", "/workspace/", "/workspace/"),
             ("corp", "/corp/", "/corp/"),
             ("corp-eng", "/corp/eng/", "/corp/eng/"),
             ("corp-sales", "/corp/sales/", "/corp/sales/"),

@@ -2451,10 +2451,8 @@ impl Kernel {
                 .map_err(|e| KernelError::IOError(format!("ReadBlob: {e}")))?
                 .into_inner();
             if resp.is_error {
-                return Err(KernelError::IOError(format!(
-                    "ReadBlob error: {} bytes",
-                    resp.error_payload.len()
-                )));
+                let msg = String::from_utf8_lossy(&resp.error_payload);
+                return Err(KernelError::IOError(format!("ReadBlob error: {msg}")));
             }
             Ok::<Vec<u8>, KernelError>(resp.content)
         })?;
@@ -3517,12 +3515,16 @@ impl Kernel {
             match zp_cur.rfind('/') {
                 Some(0) | None => break,
                 Some(zpos) => {
+                    // Suffix removed by this iter = current zp_cur tail length.
+                    // Must be computed against current zp_cur, not original
+                    // zone_path.len() — iter N already trimmed earlier suffixes
+                    // from gp_cur, so using zone_path.len() double-counts.
+                    let suffix_len = zp_cur.len() - zpos;
                     zp_cur = &zone_path[..zpos];
                     if zp_cur.is_empty() || zp_cur == "/" {
                         break;
                     }
-                    // Advance global path by the same number of chars from end
-                    let gpos = gp_cur.len() - (zone_path.len() - zpos);
+                    let gpos = gp_cur.len() - suffix_len;
                     gp_cur = &path[..gpos];
                     let exists = self
                         .with_metastore(mount_point, |ms| ms.exists(zp_cur).unwrap_or(true))

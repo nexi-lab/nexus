@@ -601,13 +601,33 @@ def _load_from_environment() -> NexusConfig:
             }
         )
 
-    # Always add MarkItDown as fallback (no API key needed)
-    parse_providers.append(
-        {
-            "name": "markitdown",
-            "priority": 10,
-        }
-    )
+    # pdf-inspector: fast local PDF parser (Rust + PyO3), no API key needed
+    try:
+        import pdf_inspector  # noqa: F401
+
+        if pdf_inspector is not None:
+            parse_providers.append(
+                {
+                    "name": "pdf-inspector",
+                    "priority": 20,
+                }
+            )
+    except ImportError:
+        pass
+
+    # markitdown: optional fallback for non-PDF formats (Office/HTML/EPUB/...)
+    try:
+        from markitdown import MarkItDown  # noqa: F401
+
+        if MarkItDown is not None:
+            parse_providers.append(
+                {
+                    "name": "markitdown",
+                    "priority": 10,
+                }
+            )
+    except ImportError:
+        pass
 
     if parse_providers:
         env_config["parse_providers"] = parse_providers

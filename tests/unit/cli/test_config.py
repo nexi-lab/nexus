@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import stat
+import sys
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,7 @@ from nexus.cli.config import (
     save_cli_config,
     set_setting,
 )
+from nexus.config import _load_from_environment
 from tests.unit.cli.conftest import make_config
 
 # ---------------------------------------------------------------------------
@@ -408,3 +410,40 @@ class TestCoerceValue:
     def test_non_string_passthrough(self) -> None:
         assert _coerce_value(42) == 42
         assert _coerce_value(True) is True
+
+
+# ---------------------------------------------------------------------------
+# _load_from_environment — conditional provider registration
+# ---------------------------------------------------------------------------
+
+
+def test_load_from_environment_registers_pdf_inspector_when_available(monkeypatch):
+    pytest.importorskip("pdf_inspector")
+    monkeypatch.delenv("UNSTRUCTURED_API_KEY", raising=False)
+    monkeypatch.delenv("LLAMA_CLOUD_API_KEY", raising=False)
+
+    config = _load_from_environment()
+    names = [p["name"] for p in config.parse_providers]
+    assert "pdf-inspector" in names
+    pdf = next(p for p in config.parse_providers if p["name"] == "pdf-inspector")
+    assert pdf["priority"] == 20
+
+
+def test_load_from_environment_skips_pdf_inspector_when_unavailable(monkeypatch):
+    monkeypatch.delenv("UNSTRUCTURED_API_KEY", raising=False)
+    monkeypatch.delenv("LLAMA_CLOUD_API_KEY", raising=False)
+    monkeypatch.setitem(sys.modules, "pdf_inspector", None)
+
+    config = _load_from_environment()
+    names = [p["name"] for p in (config.parse_providers or [])]
+    assert "pdf-inspector" not in names
+
+
+def test_load_from_environment_skips_markitdown_when_unavailable(monkeypatch):
+    monkeypatch.delenv("UNSTRUCTURED_API_KEY", raising=False)
+    monkeypatch.delenv("LLAMA_CLOUD_API_KEY", raising=False)
+    monkeypatch.setitem(sys.modules, "markitdown", None)
+
+    config = _load_from_environment()
+    names = [p["name"] for p in (config.parse_providers or [])]
+    assert "markitdown" not in names

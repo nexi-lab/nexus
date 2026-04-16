@@ -196,7 +196,7 @@ class NexusConfig(BaseModel):
     )
 
     # Parse provider configurations (v0.8.0)
-    # Supports multiple providers: unstructured, llamaparse, markitdown
+    # Supports multiple providers: unstructured, llamaparse, pdf-inspector, markitdown
     # Priority determines selection order (higher = preferred)
     # API keys can be set via environment variables or in config
     parse_providers: list[dict[str, Any]] | None = Field(
@@ -204,7 +204,7 @@ class NexusConfig(BaseModel):
         description=(
             "Parse provider configurations. Each dict can contain: "
             "name (required), enabled, priority, api_key, api_url, supported_formats. "
-            "Providers: unstructured (API), llamaparse (API), markitdown (local fallback)"
+            "Providers: unstructured (API), llamaparse (API), pdf-inspector (local PDF, default), markitdown (local fallback for non-PDF, optional)"
         ),
     )
 

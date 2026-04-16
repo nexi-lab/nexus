@@ -279,6 +279,37 @@ class TestIndexDocument:
 
         assert result == 0
 
+    @pytest.mark.asyncio
+    async def test_index_document_does_not_latch_failed_parse_for_pdf(self) -> None:
+        """Parseable binary with empty content (parser down) must NOT advance
+        indexed_content_hash — otherwise the hash-match fast path on the
+        next run skips the file forever and we get a silent search hole.
+        """
+        file_model = _mock_file_model(
+            path_id="pid-pdf",
+            content_hash="abc-pdf",
+            indexed_content_hash=None,
+            virtual_path="/doc.pdf",
+        )
+        pipeline = _mock_pipeline()
+
+        # Empty content simulates read_text() failing closed for a PDF
+        # when parse_fn is missing or raised.
+        service, _, session, _ = _build_service(
+            pipeline=pipeline,
+            file_model=file_model,
+            content="",
+        )
+
+        result = await service.index_document("/doc.pdf")
+
+        assert result == 0
+        # Critical: pipeline must NOT be invoked and hash must NOT advance.
+        pipeline.index_document.assert_not_called()
+        assert file_model.indexed_content_hash is None
+        assert file_model.last_indexed_at is None
+        session.commit.assert_not_called()
+
 
 class TestIndexDirectory:
     @pytest.mark.asyncio

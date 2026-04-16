@@ -619,18 +619,23 @@ async def handle_semantic_search_index(
         except Exception as _walk_err:
             _log.debug("semantic_search_index: virtual .readme/ walk skipped: %s", _walk_err)
 
-        # Read content and build documents for txtai
+        # Read content via _NexusFSFileReader so parseable binaries (.pdf,
+        # .docx, .xlsx, …) go through parse_fn + NUL sanitization instead of
+        # being indexed as raw utf-8 garbage.  Without this the RPC index
+        # path silently bypasses the entire parse-aware read layer the
+        # daemon's refresh loop relies on.
+        from nexus.factory._semantic_search import _resolve_parse_fn
+        from nexus.factory.adapters import _NexusFSFileReader
+
+        _reader = _NexusFSFileReader(nexus_fs, parse_fn=_resolve_parse_fn(nexus_fs))
+
         documents: list[dict[str, Any]] = []
         read_errors = 0
         total_chunks = 0
         for file_path in paths_to_index:
             try:
-                content = nexus_fs.sys_read(file_path, context=context)
-                if isinstance(content, bytes):
-                    content_str = content.decode("utf-8", errors="replace")
-                else:
-                    content_str = content
-                if content_str.strip():
+                content_str = await _reader.read_text(file_path)
+                if content_str and content_str.strip():
                     doc_id = f"{zone_id}:{file_path}" if zone_id != "root" else file_path
                     documents.append({"id": doc_id, "text": content_str, "path": file_path})
             except Exception as read_err:

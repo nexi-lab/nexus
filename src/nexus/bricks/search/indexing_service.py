@@ -20,6 +20,8 @@ from typing import Any
 
 from sqlalchemy import delete, func, select
 
+from nexus.lib.virtual_views import PARSEABLE_EXTENSIONS
+
 # Removed: txtai handles this (Issue #2663)
 # from nexus.bricks.search.embeddings import EmbeddingProvider
 # from nexus.bricks.search.vector_db import VectorDatabase
@@ -157,6 +159,21 @@ class IndexingService:
 
         # --- Step 2: Read document content ---------------------------------
         content = await self._read_content(path)
+
+        # Parseable binaries (.pdf, .docx, .xlsx, …) surface an empty string
+        # from the reader when parse_fn is missing, raises, or returns None.
+        # Advancing ``indexed_content_hash`` in that case would latch the
+        # failure: the next reindex sees the hash match and skips the file
+        # forever, creating a silent search hole.  Leave the tracking fields
+        # untouched so the next tick retries parsing.
+        parseable = path.lower().endswith(tuple(PARSEABLE_EXTENSIONS))
+        if parseable and not (content and content.strip()):
+            logger.warning(
+                "[INDEXING-SVC] Empty content for parseable binary %s — "
+                "skipping index tick, will retry next run",
+                path,
+            )
+            return 0
 
         # --- Step 3: Delegate to pipeline (atomic delete+insert) -----------
         # The pipeline's _bulk_insert handles DELETE old chunks + INSERT new

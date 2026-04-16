@@ -217,3 +217,21 @@ class TestNexusFSFileReader:
 
         # Non-parseable extension → raw decode path must also strip NULs.
         assert await reader.read_text("/notes.txt") == "rawbytes"
+
+    def test_get_searchable_text_sanitizes_poisoned_cache(self) -> None:
+        # IndexingService._read_content prefers get_searchable_text over
+        # read_text; a poisoned metastore entry (written by
+        # ContentParserEngine or pre-sanitizer adapter versions) must be
+        # scrubbed on the way out or the Postgres write still rolls back.
+        nx = MagicMock()
+        nx.metadata.get_searchable_text = MagicMock(return_value="hello\x00world")
+        reader = _NexusFSFileReader(nx)
+
+        assert reader.get_searchable_text("/doc.pdf") == "helloworld"
+
+    def test_get_searchable_text_passes_through_none(self) -> None:
+        nx = MagicMock()
+        nx.metadata.get_searchable_text = MagicMock(return_value=None)
+        reader = _NexusFSFileReader(nx)
+
+        assert reader.get_searchable_text("/missing.pdf") is None

@@ -138,8 +138,16 @@ class _NexusFSFileReader:
         return text
 
     def get_searchable_text(self, path: str) -> str | None:
+        # Sanitize on read — older cache entries (written before the adapter's
+        # write-path sanitizer existed, or by ContentParserEngine which still
+        # stores ``result.text`` verbatim) can carry embedded NULs.  The
+        # indexing pipeline reads this fast path before falling back to
+        # ``read_text``, so without scrubbing here a poisoned cache entry
+        # rolls back the Postgres write transaction.
         result: str | None = self._nx.metadata.get_searchable_text(path)
-        return result
+        if result is None:
+            return None
+        return _sanitize_for_index(result if isinstance(result, str) else str(result))
 
     async def list_files(self, path: str, recursive: bool = True) -> list[Any]:
         # Read with admin context so the search daemon can index all files

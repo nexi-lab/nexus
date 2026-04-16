@@ -77,3 +77,73 @@ class TestNexusFSFileReader:
         reader = _NexusFSFileReader(nx)
         result = await reader.list_files("/")
         assert len(result) >= 2
+
+    # ------------------------------------------------------------------
+    # PR #3789: parse_fn decoding for parseable binaries (Issue #3757).
+    # Search indexing reads via read_text; without parse_fn, PDFs index as
+    # utf-8 garbage.
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_read_text_uses_cached_parsed_text_for_pdf(self) -> None:
+        nx = MagicMock()
+        nx.sys_read = MagicMock(return_value=b"%PDF-1.4 binary-bytes")
+        nx.metadata.get_file_metadata = MagicMock(return_value="cached markdown")
+        # parse_fn must NOT be invoked when metastore has the cache.
+        parse_fn = MagicMock()
+        reader = _NexusFSFileReader(nx, parse_fn=parse_fn)
+
+        assert await reader.read_text("/doc.pdf") == "cached markdown"
+        parse_fn.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_read_text_invokes_parse_fn_when_no_cache(self) -> None:
+        nx = MagicMock()
+        nx.sys_read = MagicMock(return_value=b"%PDF-1.4 binary-bytes")
+        nx.metadata.get_file_metadata = MagicMock(return_value=None)
+        nx.metadata.set_file_metadata = MagicMock()
+        parse_fn = MagicMock(return_value=b"# Title\n\nBody text.")
+        reader = _NexusFSFileReader(nx, parse_fn=parse_fn)
+
+        result = await reader.read_text("/doc.pdf")
+        assert result == "# Title\n\nBody text."
+        parse_fn.assert_called_once_with(b"%PDF-1.4 binary-bytes", "/doc.pdf")
+        # Parsed text should be written back to the metastore cache.
+        cache_calls = [
+            c for c in nx.metadata.set_file_metadata.call_args_list if c.args[1] == "parsed_text"
+        ]
+        assert len(cache_calls) == 1
+        assert cache_calls[0].args[2] == "# Title\n\nBody text."
+
+    @pytest.mark.asyncio
+    async def test_read_text_falls_back_to_raw_when_parse_returns_none(self) -> None:
+        nx = MagicMock()
+        nx.sys_read = MagicMock(return_value=b"%PDF-1.4 unparseable")
+        nx.metadata.get_file_metadata = MagicMock(return_value=None)
+        parse_fn = MagicMock(return_value=None)
+        reader = _NexusFSFileReader(nx, parse_fn=parse_fn)
+
+        # errors="ignore" means we get best-effort garbage — acceptable
+        # fallback; the point is read_text must not crash.
+        result = await reader.read_text("/doc.pdf")
+        assert isinstance(result, str)
+
+    @pytest.mark.asyncio
+    async def test_read_text_no_parse_fn_falls_back_to_raw_for_pdf(self) -> None:
+        nx = MagicMock()
+        nx.sys_read = MagicMock(return_value=b"hello")
+        nx.metadata.get_file_metadata = MagicMock(return_value=None)
+        reader = _NexusFSFileReader(nx, parse_fn=None)
+
+        assert await reader.read_text("/doc.pdf") == "hello"
+
+    @pytest.mark.asyncio
+    async def test_read_text_non_parseable_extension_skips_parse_fn(self) -> None:
+        nx = MagicMock()
+        nx.sys_read = MagicMock(return_value=b"plain text")
+        parse_fn = MagicMock()
+        reader = _NexusFSFileReader(nx, parse_fn=parse_fn)
+
+        assert await reader.read_text("/notes.txt") == "plain text"
+        parse_fn.assert_not_called()
+        nx.metadata.get_file_metadata.assert_not_called()

@@ -1,6 +1,9 @@
 """Factory adapters — NexusFSFileReader, DaemonSkeletonBM25, WorkflowLifecycleAdapter."""
 
+from collections.abc import Callable
 from typing import Any
+
+from nexus.lib.virtual_views import PARSEABLE_EXTENSIONS
 
 # =========================================================================
 # Issue #1520: NexusFS → FileReaderProtocol adapter
@@ -22,8 +25,13 @@ class _NexusFSFileReader:
         content = reader.read_text("/path/to/file.py")
     """
 
-    def __init__(self, nx: Any) -> None:
+    def __init__(
+        self,
+        nx: Any,
+        parse_fn: Callable[[bytes, str], bytes | None] | None = None,
+    ) -> None:
         self._nx = nx
+        self._parse_fn = parse_fn
 
     async def read_text(self, path: str) -> str:
         # Read with admin context so the search daemon can index all files
@@ -37,9 +45,64 @@ class _NexusFSFileReader:
             is_system=True,
         )
         content_raw = self._nx.sys_read(path, context=admin_ctx)
+        raw_bytes = (
+            content_raw
+            if isinstance(content_raw, bytes)
+            else str(content_raw).encode("utf-8", errors="ignore")
+        )
+
+        # Parseable binaries (.pdf/.docx/.xlsx/…) — decode via parse_fn so the
+        # search index gets real text, not utf-8 garbage from raw bytes.  The
+        # metastore parsed_text cache, populated by ContentParserEngine /
+        # AutoParseWriteHook, is checked first to avoid re-parsing.
+        if any(path.endswith(ext) for ext in PARSEABLE_EXTENSIONS):
+            parsed = self._get_parsed_text(path, raw_bytes)
+            if parsed is not None:
+                return parsed
+
         if isinstance(content_raw, bytes):
             return content_raw.decode("utf-8", errors="ignore")
         return str(content_raw)
+
+    def _get_parsed_text(self, path: str, raw: bytes) -> str | None:
+        """Return cached or freshly-parsed markdown for a parseable binary.
+
+        Returns None when no parser is wired or parsing fails; caller falls
+        back to raw-byte decoding so search still sees *something*.
+        """
+        # 1) Metastore cache (shared with VirtualViewResolver / ContentParserEngine).
+        try:
+            cached = self._nx.metadata.get_file_metadata(path, "parsed_text")
+            if cached:
+                return (
+                    cached if isinstance(cached, str) else cached.decode("utf-8", errors="ignore")
+                )
+        except Exception:
+            pass
+
+        # 2) Synchronous parse via injected parse_fn. parse_fn is the same
+        #    callable used by the VFS virtual-view resolver.
+        if self._parse_fn is None:
+            return None
+        try:
+            parsed_bytes = self._parse_fn(raw, path)
+        except Exception:
+            return None
+        if parsed_bytes is None:
+            return None
+        text = parsed_bytes.decode("utf-8", errors="ignore")
+
+        # 3) Populate the metastore cache so subsequent read_text / virtual-view
+        #    reads are free.
+        try:
+            from datetime import UTC, datetime
+
+            self._nx.metadata.set_file_metadata(path, "parsed_text", text)
+            self._nx.metadata.set_file_metadata(path, "parsed_at", datetime.now(UTC).isoformat())
+        except Exception:
+            pass  # best-effort — search result correctness doesn't need the cache.
+
+        return text
 
     def get_searchable_text(self, path: str) -> str | None:
         result: str | None = self._nx.metadata.get_searchable_text(path)

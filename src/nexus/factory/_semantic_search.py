@@ -130,7 +130,11 @@ async def create_semantic_search_components(
         from nexus.bricks.search.indexing_service import IndexingService
         from nexus.factory.adapters import _NexusFSFileReader
 
-        _file_reader = _NexusFSFileReader(nx)
+        # parse_fn is registered at boot (see factory/_lifecycle.py ~L92).
+        # Passing it here lets read_text decode parseable binaries (.pdf,
+        # .docx, .xlsx, …) so search indexes real text, not utf-8 garbage.
+        _parse_fn = nx.service("parse_fn") if hasattr(nx, "service") else None
+        _file_reader = _NexusFSFileReader(nx, parse_fn=_parse_fn)
         indexing_service = IndexingService(
             pipeline=pipeline,
             file_reader=_file_reader,

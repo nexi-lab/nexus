@@ -72,12 +72,15 @@ def _virtual_path_id(path: str) -> str:
 
 
 # Binary extensions excluded from directory indexing.
+#
+# Parseable binaries (.pdf, .docx, .xlsx, …) intentionally stay indexable: the
+# file-reader adapter (``_NexusFSFileReader.read_text``) decodes them through
+# the parsers brick so index_directory sees markdown text instead of raw bytes.
 _BINARY_EXTENSIONS: tuple[str, ...] = (
     ".png",
     ".jpg",
     ".jpeg",
     ".gif",
-    ".pdf",
     ".zip",
     ".tar",
     ".gz",

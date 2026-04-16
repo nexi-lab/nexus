@@ -158,22 +158,24 @@ class MountTable:
                 "py_backend": backend,
                 "metastore_path": str(_ms_path) if _ms_path else None,
             }
+            # Best-effort per mount — a single bad metastore path or backend
+            # must not disable the kernel globally (develop behavior).
             # is_external added in Task 2 (Issue #3710); guard for older kernels.
-            try:
-                kernel.add_mount(
-                    mount_point,
-                    zone_id,
-                    entry.readonly,
-                    entry.admin_only,
-                    entry.io_profile,
-                    _backend_name,
-                    _local_root,
-                    True,
-                    is_external=entry.is_external,
-                    **_bk_kwargs,
-                )
-            except TypeError:
-                with contextlib.suppress(Exception):
+            with contextlib.suppress(Exception):
+                try:
+                    kernel.add_mount(
+                        mount_point,
+                        zone_id,
+                        entry.readonly,
+                        entry.admin_only,
+                        entry.io_profile,
+                        _backend_name,
+                        _local_root,
+                        True,
+                        is_external=entry.is_external,
+                        **_bk_kwargs,
+                    )
+                except TypeError:
                     kernel.add_mount(
                         mount_point,
                         zone_id,

@@ -996,6 +996,7 @@ class NexusFS(  # type: ignore[misc]
 
         # ── All other FS types → Rust kernel sys_setattr ─────────────
         capacity = attrs.get("capacity", 65_536)
+        io_profile = attrs.get("io_profile", "memory")
         mime_type = attrs.get("mime_type")
         modified_at_ms = attrs.get("modified_at_ms")
         zone_id = attrs.get("zone_id", ROOT_ZONE_ID)
@@ -1004,9 +1005,12 @@ class NexusFS(  # type: ignore[misc]
             path,
             entry_type,
             zone_id=zone_id,
+            io_profile=io_profile,
             capacity=capacity,
             mime_type=mime_type,
             modified_at_ms=modified_at_ms,
+            read_fd=attrs.get("read_fd"),
+            write_fd=attrs.get("write_fd"),
         )
 
         return result

@@ -68,6 +68,8 @@ mod shm_stream;
 mod simd;
 #[cfg(feature = "connectors")]
 mod slack_backend;
+#[cfg(unix)]
+mod stdio_pipe;
 mod stream;
 mod stream_manager;
 mod stream_observer;

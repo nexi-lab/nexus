@@ -106,7 +106,7 @@ refcount drain → unhook old → replace → rehook new.
 
 | Pattern | Kernel `__init__` | Factory `_do_link()` | Example |
 |---------|-------------------|---------------------|---------|
-| **Kernel owns** | Creates instance | — | VFSLockManager, LockManager (advisory), KernelDispatch, PipeManager, StreamManager, FileWatcher, ServiceRegistry, DriverLifecycleCoordinator |
+| **Kernel owns** | Creates instance | — | LockManager (I/O + advisory), KernelDispatch, PipeManager, StreamManager, FileWatcher, ServiceRegistry, DriverLifecycleCoordinator |
 | **Kernel knows** (sentinel) | `self._x = None` | Injects real value; `None` = graceful degrade | `_token_manager`, `_sandbox_manager`, `_coordination_client`, `_event_client` |
 
 "Kernel knows" follows the Linux LSM pattern: kernel declares a default (None),
@@ -390,26 +390,30 @@ with them indirectly through syscalls. See §2.2 for per-syscall usage.
 
 | Primitive | Package | Linux Analogue | Role |
 |-----------|---------|---------------|------|
-| **VFSRouter** | `core.router` | VFS `lookup_slow()` | `route(path, zone_id)` → `RouteResult`. Zone-canonical LPM (~30ns Rust / ~300ns Python). In-memory mount table keyed by `/{zone_id}/{mount_point}` |
-| **VFSLockManager** | `core.lock_fast` | per-inode `i_rwsem` | Per-path RW lock with hierarchy-aware conflict detection. Details in §4.1 |
-| **LockManager (advisory)** | `lib.distributed_lock` | `flock(2)` | Advisory locks via `sys_lock`/`sys_unlock` (acquire+extend / release+force). Zone-agnostic (receives canonical paths from router). Local: VFSSemaphore. Federation: RaftLockManager. Details in §4.4 |
+| **VFSRouter** | `core.router` + `rust/kernel/src/mount_table.rs` | VFS `lookup_slow()` | `route(path, zone_id)` → `RouteResult`. Zone-canonical LPM (~30ns Rust). In-memory mount table keyed by `/{zone_id}/{mount_point}` |
+| **LockManager** | `rust/kernel/src/lock_manager.rs` | `i_rwsem` + `flock(2)` | I/O lock + advisory lock in one Rust struct. I/O: per-path condvar-based RW lock (§4.1). Advisory: `sys_lock`/`sys_unlock` with TTL (§4.4). Local: VFSSemaphore. Federation: auto-upgrade via `upgrade_to_distributed()` at mount time |
 | **Dispatch (Rust Kernel + DispatchMixin)** | `core.nexus_fs_dispatch` + `rust/kernel/src/dispatch.rs` | `security_hook_heads` + `fsnotify` | Three-phase VFS dispatch (§2.4) + driver lifecycle hooks (MOUNT/UNMOUNT). Rust Kernel owns PathTrie + HookRegistry + ObserverRegistry (pure Rust, zero Py\<PyAny\>). DispatchMixin provides Python-side registration API. Empty = zero overhead |
-| **PipeManager + StreamManager** | `core.pipe_manager` + `core.stream_manager` | `pipe(2)` + append-only log | VFS named IPC. DT_PIPE: destructive FIFO (MemoryPipeBackend). DT_STREAM: non-destructive offset reads (pluggable StreamBackend). Details in §4.2 |
+| **PipeManager + StreamManager** | `rust/kernel/src/pipe_manager.rs` + `rust/kernel/src/stream_manager.rs` | `pipe(2)` + append-only log | VFS named IPC. DT_PIPE: destructive FIFO (MemoryPipeBackend / SharedMemoryPipeBackend). DT_STREAM: non-destructive offset reads. Details in §4.2 |
 | **FileWatcher + FileEvent** | `core.file_watcher` + `core.file_events` | `inotify(7)` + `fsnotify_event` | File change notification + immutable mutation records. Local OBSERVE waiters + optional RemoteWatchProtocol. Details in §4.3 |
 | **ServiceRegistry** | `core.service_registry` | `init/main.c` + `module.c` | Kernel-owned symbol table + lifecycle orchestration (enlist/swap/shutdown). PersistentService + duck-typed hook_spec() |
-| **DriverLifecycleCoordinator** | `core.driver_lifecycle_coordinator` | `register_filesystem` + `kern_mount` | Driver mount lifecycle: routing table + VFS hook registration + mount/unmount KernelDispatch notification |
+| **DriverLifecycleCoordinator** | `rust/kernel/src/dlc.rs` + `core.driver_lifecycle_coordinator` | `register_filesystem` + `kern_mount` | Rust DLC: routing table + metastore + dcache + lock manager upgrade. Python DLC: backend refs (`_PyMountInfo`) + event dispatch |
 
-### 4.1 VFSLockManager — Per-Path RW Lock
+### 4.1 Unified LockManager — I/O Lock + Advisory Lock
 
-| Property | Value |
-|----------|-------|
-| Modes | `"read"` (shared) / `"write"` (exclusive) |
-| Hierarchy awareness | Ancestor/descendant conflict detection |
-| Latency | ~200ns (Rust PyO3) / ~500ns–1μs (Python fallback) |
-| Scope | In-memory, process-scoped (crash → released), metadata-invisible |
-| Lock release timing | Released BEFORE observers (like Linux inotify after i_rwsem) |
+Rust `LockManager` (`rust/kernel/src/lock_manager.rs`) unifies both lock
+concerns in one struct. I/O lock (condvar-based, per-path RW) and advisory
+lock (TTL-based, user-facing) share one code path.
 
-**Advisory locks** are a separate concern — see `lock-architecture.md` §4.
+| Property | I/O Lock | Advisory Lock |
+|----------|----------|---------------|
+| Modes | `read` (shared) / `write` (exclusive) | exclusive (mutex), TTL-based |
+| Latency | ~200ns (Rust condvar) | ~5μs local / ~5-10ms Raft |
+| Scope | Process-scoped, crash → released | TTL-based, expire → released |
+| Visibility | Kernel-internal (sys_read/write) | User-facing (sys_lock/sys_unlock) |
+| Storage | In-memory only | redb `sm_locks` table (metastore) |
+
+See `lock-architecture.md` for full design. See `federation-memo.md` for
+distributed lock upgrade path.
 
 ### 4.2 IPC Primitives — Named Pipes & Streams
 
@@ -436,29 +440,19 @@ Two-layer architecture for both: VFS metadata (inode) in MetastoreABC, data
   surface as mkpipe). Per-stream lock for concurrent writers. Reads are
   non-destructive — multiple readers maintain independent byte offsets (fan-out).
 - **StreamBackend protocol** — pluggable backing store for DT_STREAM data.
-  Mount configuration determines which backend is used when creating a stream
-  under that mount (like Linux filesystem type determines pipe implementation).
+  ``io_profile`` determines which backend is used at creation time.
   Implementations: ``MemoryStreamBackend`` (in-memory, default),
-  ``RemoteStreamBackend`` (federation gRPC proxy),
-  ``WALStreamBackend`` (durable, EC WAL-backed for cross-node at-least-once),
-  ``SHMStreamBackend`` (mmap shared memory, cross-process, ~1-5μs),
-  ``StdioStreamBackend`` (OS subprocess pipe adapter for agent I/O).
-- **Mount-determined backend** — ``_MountEntry.stream_backend_factory`` is baked
-  at mount time. ``sys_setattr(entry_type=DT_STREAM)`` checks the enclosing
-  mount's factory; if set, creates a custom backend instead of default memory.
+  ``SharedMemoryStreamBackend`` (mmap shared memory, cross-process, ~1-5μs).
 
 **io_profile — Backend Selection via sys_setattr:**
 
 ``sys_setattr(path, entry_type=DT_PIPE|DT_STREAM, io_profile=...)`` selects the
-backend implementation at creation time:
-
-| io_profile | DT_PIPE Backend | DT_STREAM Backend |
-|---|---|---|
-| ``"memory"`` (default) | MemoryPipeBackend (~0.5μs) | MemoryStreamBackend (~0.5μs) |
-| ``"shared_memory"`` | SharedMemoryPipeBackend (mmap, ~1-5μs) | SharedMemoryStreamBackend (mmap, ~1-5μs) |
-
-``"shared_memory"`` enables cross-process IPC via mmap'd shared memory.
-Mount-level ``stream_backend_factory`` takes precedence over io_profile for DT_STREAM.
+backend implementation at creation time. ``io_profile`` defaults to ``"memory"``
+(in-process ring buffer); ``"shared_memory"`` creates mmap-based cross-process
+IPC. Rust kernel creates the backend, registers it in PipeManager/StreamManager,
+and returns SHM metadata (``shm_path``, ``data_rd_fd``, ``space_rd_fd``) to
+Python for asyncio integration. sys_read/sys_write go through Rust PipeManager
+regardless of io_profile — zero Python state.
 
 See `federation-memo.md` §7j for design rationale.
 
@@ -472,21 +466,18 @@ See `federation-memo.md` §7j for design rationale.
 | FileWatcher (kernel-knows) | Optional `RemoteWatchProtocol` for distributed watch, set via `set_remote_watcher()` |
 | Emission point | Always AFTER lock release |
 
-### 4.4 LockManager — Kernel Advisory Lock
+### 4.4 LockManager — Advisory Lock
 
 | Property | Value |
 |----------|-------|
 | Linux analogue | `flock(2)` / `fcntl(F_SETLK)` |
-| Package | `lib.distributed_lock` (LocalLockManager, RaftLockManager) |
+| Package | `rust/kernel/src/lock_manager.rs` |
 | Storage | `sm_locks` redb table (separate from FileMetadata) |
-| Lifecycle | Kernel-owned: LocalLockManager constructed in `__init__`; federation upgrades to RaftLockManager via `_upgrade_lock_manager()` |
+| Lifecycle | Kernel-owned: Rust `LockManager` constructed in `Kernel::new()`; federation upgrades via `upgrade_to_distributed()` at DLC mount time |
 
-Same pattern as FileWatcher: kernel-owned local + kernel-knows remote.
-
-- **Local**: `LocalLockManager` wraps `VFSSemaphore` — exclusive (mutex), shared (RW), counting (semaphore)
-- **Remote**: `RaftLockManager` wraps `RaftMetadataStore.acquire_lock()` — strong consistency via Raft consensus
+- **Local**: `VFSSemaphore` (Rust) — exclusive (mutex), shared (RW), counting (semaphore)
+- **Distributed**: `upgrade_to_distributed(ZoneConsensus, Handle)` — advisory locks replicated via Raft
 - **Syscalls**: `sys_lock` (try-acquire, Tier 1), `sys_unlock` (release, Tier 1), `lock()` (blocking wait, Tier 2)
-- **Upgrade**: `_upgrade_lock_manager()` called by factory at link time when federation is available
 
 ---
 

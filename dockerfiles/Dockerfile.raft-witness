@@ -28,16 +28,12 @@ COPY Cargo.toml Cargo.lock ./
 # Copy proto files (build.rs expects ../../proto relative to rust/raft/)
 COPY proto/ ./proto/
 
-# Copy Rust source — raft is the build target + real transport crate
-# (raft re-exports transport::{TlsConfig, NodeAddress, ...}, so it can't be
-# stubbed). Other workspace members are stubbed since raft doesn't depend on
-# them at build time.
+# Copy Rust source — raft is the build target, transport + contracts are real deps.
 COPY rust/raft/ ./rust/raft/
 COPY rust/transport/ ./rust/transport/
+COPY rust/contracts/ ./rust/contracts/
 # Stub out workspace members raft does not depend on at build time.
-# F2 C8 removed the ``kernel`` workspace dep on raft, so kernel no longer
-# needs a feature-matched stub here — plain empty package is enough.
-RUN for d in contracts library kernel services tasks; do \
+RUN for d in library kernel services tasks; do \
         mkdir -p rust/$d/src && \
         printf '[package]\nname = "%s"\nversion = "0.1.0"\nedition = "2021"\n' "$d" > rust/$d/Cargo.toml && \
         echo '' > rust/$d/src/lib.rs; \

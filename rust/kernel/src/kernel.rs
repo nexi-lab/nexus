@@ -1126,6 +1126,9 @@ impl Kernel {
         zone_id: &str,
         // -- DT_PIPE/DT_STREAM params (entry_type == 3, 4) --
         capacity: usize,
+        // -- DT_PIPE stdio params (io_profile == "stdio") --
+        read_fd: Option<i32>,
+        write_fd: Option<i32>,
         // -- UPDATE params (entry_type == 0) --
         mime_type: Option<&str>,
         modified_at_ms: Option<i64>,
@@ -1159,7 +1162,7 @@ impl Kernel {
             }
             3 => {
                 // DT_PIPE — create or idempotent-open
-                self.setattr_pipe(path, capacity, io_profile)
+                self.setattr_pipe(path, capacity, io_profile, read_fd, write_fd)
             }
             4 => {
                 // DT_STREAM — create or idempotent-open
@@ -1184,11 +1187,15 @@ impl Kernel {
     /// `io_profile`:
     /// - `"memory"` (default) → MemoryPipeBackend
     /// - `"shared_memory"` → SharedMemoryPipeBackend (mmap, cross-process)
+    /// - `"stdio"` → StdioPipeBackend (subprocess fd, newline-framed)
+    #[allow(unused_variables)]
     fn setattr_pipe(
         &self,
         path: &str,
         capacity: usize,
         io_profile: &str,
+        read_fd: Option<i32>,
+        write_fd: Option<i32>,
     ) -> Result<SysSetAttrResult, KernelError> {
         // Idempotent open: if DT_PIPE already exists, re-create buffer if lost
         if let Some(meta) = self.metastore_get(path).ok().flatten() {
@@ -1220,11 +1227,9 @@ impl Kernel {
             {
                 let (backend, shm, dfd, sfd) =
                     crate::shm_pipe::SharedMemoryPipeBackend::create_native(capacity)?;
-                // Register SHM backend in PipeManager (replaces default)
                 self.pipe_manager
                     .register(path, Arc::new(backend))
                     .map_err(pipe_mgr_err)?;
-                // Write metastore + dcache (same as create_pipe but skip PipeManager create)
                 self.write_pipe_inode(path, capacity);
                 (Some(shm), Some(dfd), Some(sfd))
             }
@@ -1233,6 +1238,22 @@ impl Kernel {
                 return Err(KernelError::IOError(
                     "shared_memory pipes require unix".into(),
                 ));
+            }
+        } else if io_profile == "stdio" {
+            #[cfg(unix)]
+            {
+                let rfd = read_fd.unwrap_or(-1);
+                let wfd = write_fd.unwrap_or(-1);
+                let backend = crate::stdio_pipe::StdioPipeBackend::new(rfd, wfd);
+                self.pipe_manager
+                    .register(path, Arc::new(backend))
+                    .map_err(pipe_mgr_err)?;
+                self.write_pipe_inode(path, capacity);
+                (None, None, None)
+            }
+            #[cfg(not(unix))]
+            {
+                return Err(KernelError::IOError("stdio pipes require unix".into()));
             }
         } else {
             self.create_pipe(path, capacity)?;

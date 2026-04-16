@@ -235,23 +235,42 @@ class AcpService:
                 env=env,
             )
 
-            # Wrap in StdioPipeBackend (kernel PipeBackend) — all three fds
+            # Register DT_PIPEs in kernel — Rust StdioPipeBackend wraps raw fds.
+            # Python StdioPipeBackend kept for AcpConnection async I/O (readline).
             stdin_pipe = StdioPipeBackend(reader=None, writer=proc.stdin)
             stdout_pipe = StdioPipeBackend(reader=proc.stdout, writer=None)
             stderr_pipe = StdioPipeBackend(reader=proc.stderr, writer=None)
 
-            # Register DT_PIPEs in VFS (graceful degradation)
             if self._nexus_fs is not None:
                 try:
                     from nexus.contracts.metadata import DT_PIPE
 
                     _nx: Any = self._nexus_fs
-                    for fd_path in (fd0_path, fd1_path, fd2_path):
-                        _nx.sys_setattr(fd_path, entry_type=DT_PIPE)
+
+                    def _fd_from_transport(transport: Any) -> int:
+                        """Extract raw fd from asyncio transport."""
+                        pipe = transport.get_extra_info("pipe")
+                        return pipe.fileno() if pipe is not None else -1
+
+                    # stdin: write-only (parent → child)
+                    stdin_wfd = _fd_from_transport(proc.stdin.transport) if proc.stdin else -1
+                    # stdout/stderr: read-only (child → parent)
+                    stdout_rfd = _fd_from_transport(proc.stdout._transport) if proc.stdout else -1
+                    stderr_rfd = _fd_from_transport(proc.stderr._transport) if proc.stderr else -1
+
+                    _nx.sys_setattr(
+                        fd0_path, entry_type=DT_PIPE, io_profile="stdio", write_fd=stdin_wfd
+                    )
+                    _nx.sys_setattr(
+                        fd1_path, entry_type=DT_PIPE, io_profile="stdio", read_fd=stdout_rfd
+                    )
+                    _nx.sys_setattr(
+                        fd2_path, entry_type=DT_PIPE, io_profile="stdio", read_fd=stderr_rfd
+                    )
                 except Exception as exc:
                     logger.debug("DT_PIPE registration failed (degraded): %s", exc)
 
-            # AcpConnection with PipeBackend (no more spawn())
+            # AcpConnection with PipeBackend (async I/O via readline)
             conn = AcpConnection(
                 stdin_pipe=stdin_pipe,
                 stdout_pipe=stdout_pipe,

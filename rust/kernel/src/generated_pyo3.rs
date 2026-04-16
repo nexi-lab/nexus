@@ -1447,7 +1447,7 @@ impl PyKernel {
 
     // ── sys_setattr — unified mount/attr syscall ─────────────────────
 
-    #[pyo3(signature = (path, entry_type, backend_name="", local_root=None, fsync=false, py_backend=None, backend_type="cas", follow_symlinks=true, grpc_addr=None, openai_base_url=None, openai_api_key=None, openai_model=None, s3_bucket=None, s3_prefix=None, aws_region=None, aws_access_key=None, aws_secret_key=None, s3_endpoint=None, gcs_bucket=None, gcs_prefix=None, access_token=None, root_folder_id=None, bot_token=None, default_channel=None, metastore_path=None, py_zone_handle=None, readonly=false, admin_only=false, io_profile="balanced", zone_id="root", capacity=65536, mime_type=None, modified_at_ms=None))]
+    #[pyo3(signature = (path, entry_type, backend_name="", local_root=None, fsync=false, py_backend=None, backend_type="cas", follow_symlinks=true, grpc_addr=None, openai_base_url=None, openai_api_key=None, openai_model=None, s3_bucket=None, s3_prefix=None, aws_region=None, aws_access_key=None, aws_secret_key=None, s3_endpoint=None, gcs_bucket=None, gcs_prefix=None, access_token=None, root_folder_id=None, bot_token=None, default_channel=None, metastore_path=None, py_zone_handle=None, readonly=false, admin_only=false, io_profile="balanced", zone_id="root", capacity=65536, mime_type=None, modified_at_ms=None, read_fd=None, write_fd=None))]
     #[allow(clippy::too_many_arguments)]
     fn sys_setattr<'py>(
         &self,
@@ -1485,6 +1485,8 @@ impl PyKernel {
         capacity: usize,
         mime_type: Option<&str>,
         modified_at_ms: Option<i64>,
+        read_fd: Option<i32>,
+        write_fd: Option<i32>,
     ) -> PyResult<Py<PyAny>> {
         // Backend resolution (moved from old add_mount)
         let backend: Option<Box<dyn ObjectStore>> = if backend_type == "openai" {
@@ -1656,6 +1658,8 @@ impl PyKernel {
                 io_profile,
                 zone_id,
                 capacity,
+                read_fd,
+                write_fd,
                 mime_type,
                 modified_at_ms,
             )

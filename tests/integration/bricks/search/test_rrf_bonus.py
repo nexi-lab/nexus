@@ -8,6 +8,9 @@ across multi-source / query-expanded fusion.
 from nexus.bricks.search.fusion import (
     RRF_TOP1_BONUS,
     RRF_TOP3_BONUS,
+    FusionConfig,
+    FusionMethod,
+    fuse_results,
     rrf_fusion,
     rrf_multi_fusion,
     rrf_weighted_fusion,
@@ -134,4 +137,29 @@ class TestRrfMultiBonus:
         ]
         results = rrf_multi_fusion(lists, k=60, limit=10, id_key=None, top_rank_bonus=False)
         expected = 2 * (1.0 / 61)
+        assert abs(results[0]["score"] - expected) < 1e-9
+
+
+class TestFuseResultsConfigFlag:
+    def test_fuse_results_passes_top_rank_bonus_false(self) -> None:
+        kw = [{"path": "a.txt", "chunk_index": 0, "score": 1.0}]
+        vec = [{"path": "a.txt", "chunk_index": 0, "score": 1.0}]
+        config = FusionConfig(method=FusionMethod.RRF, top_rank_bonus=False)
+        results = fuse_results(kw, vec, config=config, limit=10, id_key=None)
+        expected = 2 * (1.0 / 61)
+        assert abs(results[0]["score"] - expected) < 1e-9
+
+    def test_fuse_results_default_applies_bonus(self) -> None:
+        kw = [{"path": "a.txt", "chunk_index": 0, "score": 1.0}]
+        vec = [{"path": "a.txt", "chunk_index": 0, "score": 1.0}]
+        results = fuse_results(kw, vec, config=None, limit=10, id_key=None)
+        expected = 2 * (1.0 / 61) + RRF_TOP1_BONUS
+        assert abs(results[0]["score"] - expected) < 1e-9
+
+    def test_fuse_results_weighted_respects_flag(self) -> None:
+        kw = [{"path": "a.txt", "chunk_index": 0, "score": 1.0}]
+        vec = [{"path": "a.txt", "chunk_index": 0, "score": 1.0}]
+        config = FusionConfig(method=FusionMethod.RRF_WEIGHTED, top_rank_bonus=False)
+        results = fuse_results(kw, vec, config=config, limit=10, id_key=None)
+        expected = 0.5 * (1.0 / 61) + 0.5 * (1.0 / 61)
         assert abs(results[0]["score"] - expected) < 1e-9

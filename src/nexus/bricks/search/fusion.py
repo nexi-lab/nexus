@@ -437,6 +437,7 @@ def fuse_results(
             k=config.rrf_k,
             limit=limit,
             id_key=id_key,
+            top_rank_bonus=config.top_rank_bonus,
         )
     elif config.method == FusionMethod.WEIGHTED:
         return weighted_fusion(
@@ -455,6 +456,7 @@ def fuse_results(
             k=config.rrf_k,
             limit=limit,
             id_key=id_key,
+            top_rank_bonus=config.top_rank_bonus,
         )
     else:
         raise ValueError(f"Unknown fusion method: {config.method}")

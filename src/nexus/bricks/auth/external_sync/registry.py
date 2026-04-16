@@ -296,23 +296,17 @@ class AdapterRegistry:
         if not upserts and not deletes:
             return
 
+        # No fallback to per-row writes (R5-M1): the per-row path is the
+        # exact torn-snapshot window R4 was meant to remove. If
+        # replace_owned_subset fails (e.g. SQLite busy timeout), surface
+        # the error and let the next refresh tick retry atomically — a
+        # missed refresh is preferable to publishing a half-applied state.
         try:
             self._store.replace_owned_subset(upserts=upserts, deletes=deletes)
         except Exception:
-            logger.debug(
-                "Atomic replace failed for %s; falling back to per-row writes",
+            logger.warning(
+                "Atomic replace failed for %s — store left at pre-sync snapshot; "
+                "will retry on next refresh tick",
                 result.adapter_name,
                 exc_info=True,
             )
-            # Best-effort fallback so a store that lacks atomic batch (or
-            # an old in-memory mock) still gets the new state.
-            for p in upserts:
-                try:
-                    self._store.upsert(p)
-                except Exception:
-                    logger.debug("Upsert fallback failed for %s", p.id, exc_info=True)
-            for pid in deletes:
-                try:
-                    self._store.delete(pid)
-                except Exception:
-                    logger.debug("Delete fallback failed for %s", pid, exc_info=True)

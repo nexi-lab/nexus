@@ -122,6 +122,9 @@ class SheetsConnector(PathCLIBackend):
 
     def list_dir(self, path: str = "/", context: "OperationContext | None" = None) -> list[str]:
         """List spreadsheets by querying Drive metadata and filtering by mime type."""
+        from nexus.backends.connectors.cli.base import ScopedAuthRequiredError
+        from nexus.contracts.exceptions import BackendError
+
         normalized = path.strip("/")
         if normalized:
             return []
@@ -136,7 +139,10 @@ class SheetsConnector(PathCLIBackend):
         ]
         token = self._get_user_token(context)
         auth_env = self._build_auth_env(token) if token else None
-        result = self._execute_cli(args, context=context, env=auth_env)
+        try:
+            result = self._execute_cli(args, context=context, env=auth_env)
+        except ScopedAuthRequiredError as exc:
+            raise BackendError(str(exc), backend=self.name, path=path) from exc
         result = self._error_mapper.classify_result(result)
         if not result.ok:
             return []
@@ -224,18 +230,20 @@ class DocsConnector(PathCLIBackend):
         ]
         token = self._get_user_token(context)
         auth_env = self._build_auth_env(token) if token else None
-        result = self._execute_cli(args, context=context, env=auth_env)
+        from nexus.backends.connectors.cli.base import ScopedAuthRequiredError
+        from nexus.contracts.exceptions import BackendError
+
+        try:
+            result = self._execute_cli(args, context=context, env=auth_env)
+        except ScopedAuthRequiredError as exc:
+            raise BackendError(str(exc), backend=self.name, path="/") from exc
         result = self._error_mapper.classify_result(result)
         if not result.ok:
-            from nexus.contracts.exceptions import BackendError
-
             raise BackendError(result.summary(), backend=self.name, path="/")
 
         try:
             data = json.loads(result.stdout)
         except Exception as exc:
-            from nexus.contracts.exceptions import BackendError
-
             raise BackendError(
                 f"Failed to parse gws docs listing: {exc}", backend=self.name
             ) from exc
@@ -340,7 +348,12 @@ class DocsConnector(PathCLIBackend):
         ]
         token = self._get_user_token(context)
         auth_env = self._build_auth_env(token) if token else None
-        result = self._execute_cli(args, context=context, env=auth_env)
+        from nexus.backends.connectors.cli.base import ScopedAuthRequiredError
+
+        try:
+            result = self._execute_cli(args, context=context, env=auth_env)
+        except ScopedAuthRequiredError as exc:
+            raise BackendError(str(exc), backend=self.name, path=backend_path) from exc
         result = self._error_mapper.classify_result(result)
         if not result.ok:
             raise BackendError(result.summary(), backend=self.name, path=backend_path)
@@ -397,11 +410,15 @@ class ChatConnector(PathCLIBackend):
         args = ["gws", "chat", "spaces", "list"]
         token = self._get_user_token(context)
         auth_env = self._build_auth_env(token) if token else None
-        result = self._execute_cli(args, context=context, env=auth_env)
+        from nexus.backends.connectors.cli.base import ScopedAuthRequiredError
+        from nexus.contracts.exceptions import BackendError
+
+        try:
+            result = self._execute_cli(args, context=context, env=auth_env)
+        except ScopedAuthRequiredError as exc:
+            raise BackendError(str(exc), backend=self.name, path=path) from exc
         result = self._error_mapper.classify_result(result)
         if not result.ok:
-            from nexus.contracts.exceptions import BackendError
-
             summary = result.summary()
             combined = f"{result.stderr}\n{result.stdout}".lower()
             if "insufficient authentication scopes" in combined:
@@ -496,7 +513,13 @@ class DriveConnector(PathCLIBackend):
         args = ["gws", "drive", "files", "list"]
         token = self._get_user_token(context)
         auth_env = self._build_auth_env(token) if token else None
-        result = self._execute_cli(args, context=context, env=auth_env)
+        from nexus.backends.connectors.cli.base import ScopedAuthRequiredError
+        from nexus.contracts.exceptions import BackendError
+
+        try:
+            result = self._execute_cli(args, context=context, env=auth_env)
+        except ScopedAuthRequiredError as exc:
+            raise BackendError(str(exc), backend=self.name, path=path) from exc
         result = self._error_mapper.classify_result(result)
         if not result.ok:
             return []
@@ -770,17 +793,31 @@ class GmailConnector(PathCLIBackend):
         if label == "INBOX" and len(parts) == 1:
             return None
 
-        # Determine the query label for +triage.
+        # Determine the query label for +triage. Include the category label
+        # explicitly so the 500-message cap surfaces the same messages
+        # ``list_dir`` returned (R5-M2). Without this, the cap takes the
+        # newest 500 INBOX-overall and post-filters by category, dropping
+        # category-specific files that ``list_dir`` exposed.
         query_label = label
         category_filter: str | None = None
+        category_label_id: str | None = None
+        label_ids: list[str] = [label]
         if label == "INBOX" and len(parts) >= 2:
             category_filter = parts[1]
+            for gmail_label, folder in _GMAIL_CATEGORIES.items():
+                if folder == category_filter:
+                    category_label_id = gmail_label
+                    label_ids.append(gmail_label)
+                    break
 
         from nexus.backends.connectors.cli.base import ScopedAuthRequiredError
         from nexus.contracts.exceptions import BackendError
 
-        # Fetch triage metadata in one call.
+        # Fetch triage metadata in one call. Add the category label to the
+        # search query when present so triage results match the listing.
         query = f"label:{query_label}"
+        if category_label_id:
+            query = f"{query} label:{category_label_id}"
         try:
             r = self._execute_cli(
                 [
@@ -834,11 +871,11 @@ class GmailConnector(PathCLIBackend):
             }
             id_to_meta[msg_id] = meta
 
-        # Now map from list_dir filenames to metadata.
-        # _paginated_message_list is cached so this reuses the list_dir round trip
-        # when both are called in sequence for the same path.
+        # Now map from list_dir filenames to metadata. Pass the same
+        # label_ids list_dir uses so the cached pair set matches the
+        # triage result set (R5-M2).
         try:
-            pairs = self._paginated_message_list([label], context=context)
+            pairs = self._paginated_message_list(label_ids, context=context)
         except ScopedAuthRequiredError as exc:
             raise BackendError(str(exc), backend=self.name, path=path) from exc
         if not pairs:
@@ -1309,8 +1346,14 @@ class CalendarConnector(PathCLIBackend):
 
         Returns a dict like ``{"primary": "My Calendar",
         "family@group.calendar.google.com": "Family"}``.
+
+        Lets ``ScopedAuthRequiredError`` propagate so callers can wrap it
+        in ``BackendError`` (R5-H2). Other exceptions are swallowed — they
+        represent transient CLI/parse failures, not auth-policy violations.
         """
         import re
+
+        from nexus.backends.connectors.cli.base import ScopedAuthRequiredError
 
         # Tolerate missing attribute (e.g., __new__ without __init__).
         if not hasattr(self, "_calendar_names"):
@@ -1323,6 +1366,9 @@ class CalendarConnector(PathCLIBackend):
                 ["gws", "calendar", "calendarList", "list", "--format", "yaml"],
                 context=context,
             )
+        except ScopedAuthRequiredError:
+            # Auth violation must surface — don't pretend it was a clean result.
+            raise
         except Exception:
             return self._calendar_names
         if not result.ok:
@@ -1338,7 +1384,15 @@ class CalendarConnector(PathCLIBackend):
         return self._calendar_names
 
     def _calendar_display_name(self, cal_id: str, context: Any = None) -> str:
-        """Return a human-readable folder name for a calendar ID."""
+        """Return a human-readable folder name for a calendar ID.
+
+        On a cold cache with no context (e.g. sync service rendering a
+        display path), return the raw calendar ID rather than triggering
+        an unscoped CLI lookup against the host's default profile (R5-H2).
+        """
+        cached = getattr(self, "_calendar_names", None) or {}
+        if not cached and context is None:
+            return cal_id
         names = self._fetch_calendar_names(context=context)
         name = names.get(cal_id, cal_id)
         return sanitize_filename(name, max_len=60) if name != cal_id else cal_id
@@ -1347,8 +1401,13 @@ class CalendarConnector(PathCLIBackend):
         """Resolve a display folder name back to a calendar ID.
 
         Handles both raw calendar IDs (``primary``, ``user@gmail.com``)
-        and sanitized display names (``My-Calendar``).
+        and sanitized display names (``My-Calendar``). On cold cache with
+        no context, treats ``folder_name`` as a literal calendar ID rather
+        than triggering an unscoped lookup (R5-H2).
         """
+        cached = getattr(self, "_calendar_names", None) or {}
+        if not cached and context is None:
+            return folder_name
         names = self._fetch_calendar_names(context=context)
         # Direct match on calendar ID.
         if folder_name in names:

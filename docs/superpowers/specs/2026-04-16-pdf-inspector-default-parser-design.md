@@ -21,7 +21,8 @@ Move `markitdown[all]` from core to optional dependencies. Add `pdf-inspector` (
 - Smart OCR routing (issue item #5) — provider only surfaces `pages_needing_ocr` in metadata; no cross-provider orchestration is introduced here.
 - Explicit changes to `PARSEABLE_EXTENSIONS` or `auto_parse` defaults — item #3 is satisfied implicitly by removing markitdown from core deps and letting `is_available()` gate non-PDF formats.
 - Removing `MarkItDownProvider` / `MarkItDownParser` code — both stay in the tree as opt-in providers for Office/HTML/EPUB formats.
-- Adding a brick-level `PdfInspectorParser` — only the provider layer is added. The existing `ParserBrick` dispatches to providers via the registry.
+
+> **Correction (2026-04-16, post-review):** An earlier draft of this spec listed "no brick-level `PdfInspectorParser`" as a non-goal on the premise that `ParsersBrick.create_parse_fn` dispatches through `ProviderRegistry`. That premise was wrong — `create_parse_fn` consults only `ParserRegistry` (extension-keyed, containing `Parser` adapters). Without a brick-level PDF parser, the auto-parse-on-write pipeline silently drops PDFs on a default install. The final implementation therefore adds `PdfInspectorParser` as a thin adapter over `PdfInspectorProvider`, registered in `ParsersBrick.__init__` ahead of `MarkItDownParser`.
 
 ## Architecture
 
@@ -153,12 +154,16 @@ Verify `_load_from_environment()` emits `pdf-inspector` entry iff `pdf_inspector
 | File | Change |
 |---|---|
 | `pyproject.toml` | move markitdown → optional, add pdf-inspector to core |
-| `src/nexus/bricks/parsers/providers/pdf_inspector_provider.py` | new file |
-| `src/nexus/bricks/parsers/providers/__init__.py` | export new provider |
-| `src/nexus/bricks/parsers/providers/registry.py` | register new provider |
+| `src/nexus/bricks/parsers/providers/pdf_inspector_provider.py` | new — ParseProvider impl |
+| `src/nexus/bricks/parsers/pdf_inspector_parser.py` | new — Parser adapter (delegates to provider); registered in `ParsersBrick` |
+| `src/nexus/bricks/parsers/brick.py` | register `PdfInspectorParser` in `ParsersBrick.__init__` ahead of `MarkItDownParser` |
+| `src/nexus/bricks/parsers/providers/__init__.py` | docstring update |
+| `src/nexus/bricks/parsers/providers/registry.py` | auto-discover pdf-inspector |
 | `src/nexus/config.py` | conditional provider registration; docstring updates |
-| `tests/parsers/providers/test_pdf_inspector_provider.py` | new file |
-| `tests/parsers/test_registry.py` (or equivalent) | extend |
+| `tests/unit/bricks/parsers/providers/test_pdf_inspector_provider.py` | new file |
+| `tests/unit/bricks/parsers/providers/test_provider_registry.py` | new file |
+| `tests/unit/bricks/parsers/test_pdf_inspector_parser.py` | new file (incl. `create_parse_fn` regression) |
+| `tests/unit/cli/test_config.py` | new tests for `_load_from_environment` |
 | `CHANGELOG.md` (or release notes) | migration note |
 
 ## Open questions

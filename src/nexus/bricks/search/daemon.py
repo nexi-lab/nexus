@@ -60,6 +60,7 @@ if TYPE_CHECKING:
     from nexus.bricks.search.chunking import EntropyAwareChunker
     from nexus.bricks.search.index_scope import IndexScope
     from nexus.bricks.search.indexing import IndexingPipeline
+    from nexus.bricks.search.path_context import PathContextCache
 
 logger = logging.getLogger(__name__)
 
@@ -178,6 +179,7 @@ class SearchDaemon:
         zoekt_client: Any | None = None,
         cache_brick: Any | None = None,
         settings_store: Any | None = None,
+        path_context_cache: "PathContextCache | None" = None,
     ):
         """Initialize the search daemon.
 
@@ -189,12 +191,16 @@ class SearchDaemon:
             cache_brick: Injected CacheBrick for embedding cache health checks.
             settings_store: Optional SystemSettingsStoreProtocol for durable
                 consumer checkpoints.
+            path_context_cache: Optional PathContextCache for attaching admin-
+                configured path descriptions onto every ``SearchResult``
+                returned by :meth:`search` (Issue #3773).
         """
         self.config = config or DaemonConfig()
         self.stats = DaemonStats()
         self._zoekt_client = zoekt_client
         self._cache_brick = cache_brick
         self._settings_store = settings_store
+        self._path_context_cache = path_context_cache
 
         # Search components (initialized on startup)
         self._bm25s_index: BM25SIndex | None = None
@@ -1103,6 +1109,19 @@ class SearchDaemon:
     # Search Methods
     # =========================================================================
 
+    async def _attach_path_contexts(self, results: list[SearchResult]) -> None:
+        """Attach admin-configured path context descriptions to search results.
+
+        Issue #3773: When a ``PathContextCache`` is wired in, look up the
+        longest-prefix context for each result and populate
+        ``SearchResult.context`` in-place. No-op when the cache is absent or
+        the result list is empty.
+        """
+        if self._path_context_cache is None or not results:
+            return
+        for r in results:
+            r.context = await self._path_context_cache.lookup(r.zone_id, r.path)
+
     async def search(
         self,
         query: str,
@@ -1145,6 +1164,7 @@ class SearchDaemon:
                     latency_ms = (time.perf_counter() - start) * 1000
                     self._track_latency(latency_ms)
                     self.last_search_timing["backend_ms"] = latency_ms
+                    await self._attach_path_contexts(zoekt_results)
                     return zoekt_results
 
             # Delegate to txtai backend for all search types (Issue #2663)
@@ -1187,6 +1207,7 @@ class SearchDaemon:
 
                     latency_ms = (time.perf_counter() - start) * 1000
                     self._track_latency(latency_ms)
+                    await self._attach_path_contexts(results)
                     return results
                 # txtai returned empty — fall through to legacy search
 
@@ -1209,6 +1230,7 @@ class SearchDaemon:
             latency_ms = (time.perf_counter() - start) * 1000
             self._track_latency(latency_ms)
 
+            await self._attach_path_contexts(results)
             return results
 
         except TimeoutError:

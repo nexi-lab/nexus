@@ -137,13 +137,13 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
         app.state.path_context_store = path_context_store
         app.state.path_context_cache = path_context_cache
 
-        # path_context_cache wired into SearchDaemon in Task 10
         app.state.search_daemon = SearchDaemon(
             config,
             async_session_factory=_async_sf,
             zoekt_client=_zoekt_client,
             cache_brick=_cache_brick,
             settings_store=_settings_store,
+            path_context_cache=path_context_cache,  # Issue #3773
         )
 
         # Embeddings are now handled by txtai backend (Issue #2663).

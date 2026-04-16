@@ -1,0 +1,75 @@
+"""End-to-end: path contexts are attached to SearchResult instances (Issue #3773)."""
+
+from __future__ import annotations
+
+import pytest
+import pytest_asyncio
+from sqlalchemy.ext.asyncio import (
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
+
+from nexus.bricks.search.path_context import PathContextCache, PathContextStore
+from nexus.bricks.search.results import BaseSearchResult
+
+CREATE_TABLE_SQL = """
+CREATE TABLE path_contexts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    zone_id TEXT NOT NULL DEFAULT 'root',
+    path_prefix TEXT NOT NULL,
+    description TEXT NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(zone_id, path_prefix)
+)
+"""
+
+
+@pytest_asyncio.fixture
+async def cache():
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", future=True)
+    async with engine.begin() as conn:
+        await conn.exec_driver_sql(CREATE_TABLE_SQL)
+    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    store = PathContextStore(async_session_factory=factory, db_type="sqlite")
+    await store.upsert("root", "src/nexus/bricks/search", "Hybrid search brick")
+    await store.upsert("root", "docs", "Project documentation")
+    yield PathContextCache(store=store)
+    await engine.dispose()
+
+
+class TestBaseSearchResultContextField:
+    def test_default_context_is_none(self) -> None:
+        r = BaseSearchResult(path="x", chunk_text="y", score=0.5)
+        assert r.context is None
+
+
+class TestAttachContextToResults:
+    @pytest.mark.asyncio
+    async def test_attach_via_cache(self, cache: PathContextCache) -> None:
+        results = [
+            BaseSearchResult(
+                path="src/nexus/bricks/search/fusion.py",
+                chunk_text="",
+                score=0.9,
+                zone_id="root",
+            ),
+            BaseSearchResult(
+                path="docs/README.md",
+                chunk_text="",
+                score=0.8,
+                zone_id="root",
+            ),
+            BaseSearchResult(
+                path="scripts/noop.py",
+                chunk_text="",
+                score=0.7,
+                zone_id="root",
+            ),
+        ]
+        for r in results:
+            r.context = await cache.lookup(r.zone_id, r.path)
+        assert results[0].context == "Hybrid search brick"
+        assert results[1].context == "Project documentation"
+        assert results[2].context is None

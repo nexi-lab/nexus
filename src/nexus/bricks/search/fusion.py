@@ -20,6 +20,11 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
+# Issue #3773: Top-rank bonus preserves high-confidence matches
+# against dilution from query expansion and multi-source fusion.
+RRF_TOP1_BONUS = 0.05
+RRF_TOP3_BONUS = 0.02
+
 
 class FusionMethod(StrEnum):
     """Fusion method for combining keyword and vector search results."""
@@ -46,6 +51,7 @@ class FusionConfig:
     rrf_k: int = 60
     normalize_scores: bool = True
     over_fetch_factor: float = 3.0
+    top_rank_bonus: bool = True  # Issue #3773: boost docs ranked #1-3 in any list
 
 
 def normalize_scores_minmax(scores: list[float]) -> list[float]:
@@ -115,15 +121,14 @@ def rrf_fusion(
     k: int = 60,
     limit: int = 10,
     id_key: str | None = "chunk_id",
+    top_rank_bonus: bool = True,
 ) -> list[dict[str, Any]]:
     """Combine results using Reciprocal Rank Fusion.
 
-    RRF score = sum(1 / (k + rank)) for each result list
-
-    RRF is robust because it:
-    - Doesn't require score normalization
-    - Works well when scoring scales differ between search methods
-    - Is stable across different query types
+    RRF score = sum(1 / (k + rank)) for each result list, plus an optional
+    top-rank bonus (Issue #3773): +0.05 for docs ranked #1 in any list and
+    +0.02 for docs ranked #2-3. The bonus preserves high-confidence matches
+    against dilution from query expansion and multi-source fusion.
 
     Args:
         keyword_results: Results from keyword search (ranked by BM25)
@@ -131,11 +136,13 @@ def rrf_fusion(
         k: RRF constant (default: 60, per original paper)
         limit: Maximum results to return
         id_key: Key for identifying unique results, or None for path:chunk_index
+        top_rank_bonus: Apply top-rank bonus (Issue #3773). Default True.
 
     Returns:
         Combined results ranked by RRF score
     """
     rrf_scores: dict[str, dict[str, Any]] = {}
+    best_rank: dict[str, int] = {}
 
     # Add keyword results
     for rank, raw_result in enumerate(keyword_results, start=1):
@@ -145,6 +152,7 @@ def rrf_fusion(
             rrf_scores[key] = {"result": result.copy(), "rrf_score": 0.0}
         rrf_scores[key]["rrf_score"] += 1.0 / (k + rank)
         rrf_scores[key]["result"]["keyword_score"] = result.get("score", 0.0)
+        best_rank[key] = min(best_rank.get(key, rank), rank)
 
     # Add vector results
     for rank, raw_result in enumerate(vector_results, start=1):
@@ -154,6 +162,16 @@ def rrf_fusion(
             rrf_scores[key] = {"result": result.copy(), "rrf_score": 0.0}
         rrf_scores[key]["rrf_score"] += 1.0 / (k + rank)
         rrf_scores[key]["result"]["vector_score"] = result.get("score", 0.0)
+        best_rank[key] = min(best_rank.get(key, rank), rank)
+
+    # Issue #3773: apply top-rank bonus before final sort
+    if top_rank_bonus:
+        for key, entry in rrf_scores.items():
+            br = best_rank.get(key, 999)
+            if br == 1:
+                entry["rrf_score"] += RRF_TOP1_BONUS
+            elif br <= 3:
+                entry["rrf_score"] += RRF_TOP3_BONUS
 
     # Sort by RRF score
     sorted_results = sorted(

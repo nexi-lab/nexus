@@ -14,6 +14,7 @@ _FIXTURE_DIR = Path(__file__).parent / "fixtures" / "external_cli_output"
 _ADC_V456 = _FIXTURE_DIR / "gcloud_adc_v456.json"
 _ADC_SA = _FIXTURE_DIR / "gcloud_adc_service_account.json"
 _PROPS_V456 = _FIXTURE_DIR / "gcloud_properties_v456.ini"
+_CONFIG_DEFAULT = _FIXTURE_DIR / "gcloud_config_default.ini"
 
 
 @pytest.fixture()
@@ -67,17 +68,19 @@ class TestGcloudPaths:
     ) -> None:
         monkeypatch.delenv("CLOUDSDK_CONFIG", raising=False)
         paths = adapter.paths()
-        assert len(paths) == 2
+        # ADC first, then active_config's per-configuration file (if present),
+        # then legacy flat properties. The exact count depends on whether the
+        # host has active_config — we only assert the anchors.
         assert "application_default_credentials.json" in str(paths[0])
-        assert "properties" in str(paths[1])
+        assert any("properties" in str(p) or "configurations" in str(p) for p in paths[1:])
 
     def test_cloudsdk_config_override(
-        self, adapter: GcloudSyncAdapter, monkeypatch: pytest.MonkeyPatch
+        self, adapter: GcloudSyncAdapter, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        monkeypatch.setenv("CLOUDSDK_CONFIG", "/custom/gcloud")
+        monkeypatch.setenv("CLOUDSDK_CONFIG", str(tmp_path))
         paths = adapter.paths()
-        assert paths[0] == Path("/custom/gcloud/application_default_credentials.json")
-        assert paths[1] == Path("/custom/gcloud/properties")
+        assert paths[0] == tmp_path / "application_default_credentials.json"
+        assert paths[-1] == tmp_path / "properties"
 
 
 class TestGcloudSync:
@@ -121,6 +124,30 @@ class TestGcloudSync:
         assert profile.backend_key == "gcloud/user@example.com"
         # No phantom profile
         assert not any(p.account_identifier == "unknown" for p in result.profiles)
+
+    async def test_sync_reads_active_configuration_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Real gcloud uses ``configurations/config_<name>`` plus ``active_config``.
+
+        Regression test: the adapter must read the active configuration's
+        properties file, not just the legacy flat ``properties``.
+        """
+        adc = tmp_path / "application_default_credentials.json"
+        shutil.copy(_ADC_V456, adc)
+
+        configs = tmp_path / "configurations"
+        configs.mkdir()
+        shutil.copy(_CONFIG_DEFAULT, configs / "config_default")
+        (tmp_path / "active_config").write_text("default", encoding="utf-8")
+        monkeypatch.setenv("CLOUDSDK_CONFIG", str(tmp_path))
+
+        adapter = GcloudSyncAdapter()
+        result = await adapter.sync()
+
+        assert result.error is None
+        emails = {p.account_identifier for p in result.profiles}
+        assert "real.user@example.com" in emails
 
     async def test_sync_authorized_user_without_properties_returns_empty(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

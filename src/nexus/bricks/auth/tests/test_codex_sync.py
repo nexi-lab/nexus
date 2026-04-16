@@ -14,6 +14,8 @@ from nexus.bricks.auth.external_sync.codex_sync import CodexSyncAdapter
 _FIXTURE_DIR = Path(__file__).parent / "fixtures" / "external_cli_output"
 _CREDS_V1 = _FIXTURE_DIR / "codex_credentials_v1.json"
 _CREDS_EMPTY = _FIXTURE_DIR / "codex_credentials_empty.json"
+_AUTH_CHATGPT = _FIXTURE_DIR / "codex_auth_chatgpt.json"
+_AUTH_APIKEY = _FIXTURE_DIR / "codex_auth_apikey.json"
 
 
 @pytest.fixture()
@@ -49,6 +51,24 @@ class TestCodexParse:
         with pytest.raises(_json.JSONDecodeError):
             adapter.parse_file(Path("bad.json"), "{not json")
 
+    def test_parse_auth_chatgpt_uses_account_id(self, adapter: CodexSyncAdapter) -> None:
+        """Current Codex CLI writes auth.json with tokens.account_id."""
+        content = _AUTH_CHATGPT.read_text(encoding="utf-8")
+        profiles = adapter.parse_file(_AUTH_CHATGPT, content)
+
+        assert len(profiles) == 1
+        assert profiles[0].account_identifier == "52d072f2-4fc4-42e3-a870-a79c5d82e1c9"
+        assert profiles[0].backend_key.startswith("codex/")
+
+    def test_parse_auth_apikey_uses_auth_mode(self, adapter: CodexSyncAdapter) -> None:
+        """API-key mode has OPENAI_API_KEY + auth_mode but no tokens.account_id."""
+        content = _AUTH_APIKEY.read_text(encoding="utf-8")
+        profiles = adapter.parse_file(_AUTH_APIKEY, content)
+
+        assert len(profiles) == 1
+        # Identifier falls through to auth_mode when there's no account_id.
+        assert profiles[0].account_identifier == "apikey"
+
 
 class TestCodexPaths:
     def test_defaults_to_home_codex(
@@ -56,14 +76,17 @@ class TestCodexPaths:
     ) -> None:
         monkeypatch.delenv("CODEX_CONFIG_DIR", raising=False)
         paths = adapter.paths()
-        assert len(paths) == 2
-        assert "credentials.json" in str(paths[0])
-        assert "config.json" in str(paths[1])
+        names = [p.name for p in paths]
+        # auth.json preferred (current Codex CLI layout), credentials.json
+        # + config.json retained for older installs.
+        assert names[0] == "auth.json"
+        assert "credentials.json" in names
+        assert "config.json" in names
 
     def test_env_override(self, adapter: CodexSyncAdapter, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("CODEX_CONFIG_DIR", "/custom/codex")
         paths = adapter.paths()
-        assert paths[0] == Path("/custom/codex/credentials.json")
+        assert paths[0] == Path("/custom/codex/auth.json")
 
 
 class TestCodexSync:
@@ -161,3 +184,30 @@ class TestCodexResolveCredential:
         adapter = CodexSyncAdapter()
         cred = adapter.resolve_credential_sync("codex/default")
         assert cred.kind == "api_key"
+
+    async def test_resolve_auth_chatgpt_returns_access_token(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Real Codex chatgpt auth.json → bearer_token from tokens.access_token."""
+        auth_file = tmp_path / "auth.json"
+        shutil.copy(_AUTH_CHATGPT, auth_file)
+        monkeypatch.setenv("CODEX_CONFIG_DIR", str(tmp_path))
+
+        adapter = CodexSyncAdapter()
+        cred = await adapter.resolve_credential("codex/52d072f2-4fc4-42e3-a870-a79c5d82e1c9")
+
+        assert cred.kind == "bearer_token"
+        assert cred.access_token == "eyJhbGciOiJSUzI1NiJ9.test-access-token"
+
+    async def test_resolve_auth_apikey_returns_api_key(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        auth_file = tmp_path / "auth.json"
+        shutil.copy(_AUTH_APIKEY, auth_file)
+        monkeypatch.setenv("CODEX_CONFIG_DIR", str(tmp_path))
+
+        adapter = CodexSyncAdapter()
+        cred = await adapter.resolve_credential("codex/apikey")
+
+        assert cred.kind == "api_key"
+        assert cred.api_key == "sk-codex-real-api-key-example"

@@ -1,0 +1,21 @@
+Using keyring backend: keyring
+{
+  "auth_method": "oauth2",
+  "client_config": "/Users/test/.config/gws/client_secret.json",
+  "client_id": "123-abc.apps.googleusercontent.com",
+  "credential_source": "client_secret.json",
+  "has_refresh_token": true,
+  "keyring_backend": "keyring",
+  "project_id": "my-project",
+  "scope_count": 11,
+  "scopes": [
+    "email",
+    "profile",
+    "https://www.googleapis.com/auth/calendar",
+    "https://www.googleapis.com/auth/drive",
+    "https://www.googleapis.com/auth/gmail.modify"
+  ],
+  "storage": "encrypted",
+  "token_valid": true,
+  "user": "real.user@example.com"
+}

@@ -29,11 +29,28 @@ class GcloudSyncAdapter(FileAdapter):
         return Path(os.environ.get("CLOUDSDK_CONFIG", "~/.config/gcloud")).expanduser()
 
     def paths(self) -> list[Path]:
+        """Return ADC + the active configuration's properties file.
+
+        Real gcloud uses a per-configuration layout (``configurations/config_<name>``)
+        with ``active_config`` naming the current one. We also return the legacy
+        flat ``properties`` path for older installs.
+        """
         base = self._config_dir()
-        return [
-            base / "application_default_credentials.json",
-            base / "properties",
-        ]
+        paths: list[Path] = [base / "application_default_credentials.json"]
+
+        # Prefer the active configuration's properties file.
+        active_config_marker = base / "active_config"
+        try:
+            if active_config_marker.is_file():
+                active = active_config_marker.read_text(encoding="utf-8").strip()
+                if active:
+                    paths.append(base / "configurations" / f"config_{active}")
+        except OSError:
+            pass
+
+        # Legacy flat layout — still read it if the new layout didn't land a path.
+        paths.append(base / "properties")
+        return paths
 
     def parse_file(self, _path: Path, content: str) -> list[SyncedProfile]:
         if not content.strip():

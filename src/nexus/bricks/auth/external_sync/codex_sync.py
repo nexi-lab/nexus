@@ -29,11 +29,19 @@ class CodexSyncAdapter(FileAdapter):
     def paths(self) -> list[Path]:
         base = self._config_dir()
         return [
-            base / "credentials.json",
-            base / "config.json",
+            base / "auth.json",  # Current Codex CLI layout (OPENAI_API_KEY + tokens)
+            base / "credentials.json",  # Multi-profile layout for older installs
+            base / "config.json",  # Additional fallback
         ]
 
-    def parse_file(self, _path: Path, content: str) -> list[SyncedProfile]:
+    def parse_file(self, path: Path, content: str) -> list[SyncedProfile]:
+        """Parse a codex credential file.
+
+        ``auth.json`` is a single-account file with ``OPENAI_API_KEY`` +
+        ``tokens`` (chatgpt mode) or ``OPENAI_API_KEY`` alone (api-key mode).
+        ``credentials.json`` / ``config.json`` may contain a profile-keyed
+        dict of ``{name: {api_key|token|tokens, ...}}``.
+        """
         if not content.strip():
             return []
 
@@ -41,11 +49,26 @@ class CodexSyncAdapter(FileAdapter):
         if not isinstance(data, dict):
             return []
 
+        # Single-account auth.json shape.
+        if path.name == "auth.json" or self._looks_single_account(data):
+            identifier = self._identify_single_account(data)
+            if identifier is None:
+                return []
+            return [
+                SyncedProfile(
+                    provider="codex",
+                    account_identifier=identifier,
+                    backend_key=f"codex/{identifier}",
+                    source="codex",
+                )
+            ]
+
+        # Multi-profile shape: {profile_name: {api_key|token|tokens}}
         profiles: list[SyncedProfile] = []
         for name, entry in data.items():
             if not isinstance(entry, dict):
                 continue
-            if not (entry.get("api_key") or entry.get("token")):
+            if not self._entry_has_credential(entry):
                 continue
             profiles.append(
                 SyncedProfile(
@@ -55,8 +78,43 @@ class CodexSyncAdapter(FileAdapter):
                     source="codex",
                 )
             )
-
         return profiles
+
+    @staticmethod
+    def _looks_single_account(data: dict) -> bool:
+        """True if the top-level dict itself carries credential fields."""
+        return bool(
+            data.get("OPENAI_API_KEY")
+            or data.get("api_key")
+            or data.get("token")
+            or isinstance(data.get("tokens"), dict)
+        )
+
+    @staticmethod
+    def _identify_single_account(data: dict) -> str | None:
+        """Return a stable identifier for a single-account credential file.
+
+        Prefers ``tokens.account_id``; falls back to ``auth_mode`` so
+        "chatgpt" / "apikey" distinctly route. Returns None if we can't
+        name the account at all.
+        """
+        tokens = data.get("tokens")
+        if isinstance(tokens, dict):
+            account_id = str(tokens.get("account_id", "")).strip()
+            if account_id:
+                return account_id
+        mode = str(data.get("auth_mode", "")).strip()
+        if mode:
+            return mode
+        if data.get("OPENAI_API_KEY") or data.get("api_key"):
+            return "default"
+        return None
+
+    @staticmethod
+    def _entry_has_credential(entry: dict) -> bool:
+        return bool(
+            entry.get("api_key") or entry.get("token") or isinstance(entry.get("tokens"), dict)
+        )
 
     async def resolve_credential(self, backend_key: str) -> ResolvedCredential:
         return self._resolve_impl(backend_key)
@@ -65,7 +123,12 @@ class CodexSyncAdapter(FileAdapter):
         return self._resolve_impl(backend_key)
 
     def _resolve_impl(self, backend_key: str) -> ResolvedCredential:
-        """Re-read credential file and extract one profile's credential."""
+        """Re-read credential file and extract one profile's credential.
+
+        Tries single-account ``auth.json`` shape first (OPENAI_API_KEY +
+        tokens), then multi-profile dicts. Returns the first credential
+        material found matching ``profile_name``.
+        """
         _, profile_name = backend_key.split("/", 1)
 
         for path in self.paths():
@@ -78,25 +141,75 @@ class CodexSyncAdapter(FileAdapter):
             if not isinstance(data, dict):
                 continue
 
+            # Single-account shape.
+            if path.name == "auth.json" or self._looks_single_account(data):
+                identifier = self._identify_single_account(data)
+                if identifier != profile_name:
+                    continue
+                return self._credential_from_single(data)
+
+            # Multi-profile shape.
             entry = data.get(profile_name)
             if not isinstance(entry, dict):
                 continue
-
-            if entry.get("api_key"):
-                return ResolvedCredential(
-                    kind="api_key",
-                    api_key=entry["api_key"],
-                    metadata={k: str(v) for k, v in entry.items() if k != "api_key"},
-                )
-            if entry.get("token"):
-                return ResolvedCredential(
-                    kind="bearer_token",
-                    access_token=entry["token"],
-                    metadata={k: str(v) for k, v in entry.items() if k != "token"},
-                )
+            cred = self._credential_from_entry(entry)
+            if cred is not None:
+                return cred
 
         raise CredentialResolutionError(
             "external-cli",
             backend_key,
             f"Codex profile '{profile_name}' not found in config files",
         )
+
+    @staticmethod
+    def _credential_from_single(data: dict) -> ResolvedCredential:
+        """Build a ResolvedCredential from a single-account auth.json."""
+        # chatgpt mode: tokens.access_token is the bearer token.
+        tokens = data.get("tokens")
+        if isinstance(tokens, dict) and tokens.get("access_token"):
+            return ResolvedCredential(
+                kind="bearer_token",
+                access_token=str(tokens["access_token"]),
+                metadata={
+                    k: str(v) for k, v in tokens.items() if k != "access_token" and v is not None
+                },
+            )
+        # api-key mode: OPENAI_API_KEY at top level.
+        api_key = data.get("OPENAI_API_KEY") or data.get("api_key")
+        if api_key:
+            return ResolvedCredential(
+                kind="api_key",
+                api_key=str(api_key),
+                metadata={"auth_mode": str(data.get("auth_mode", "apikey"))},
+            )
+        # Last resort: top-level token.
+        token = data.get("token")
+        if token:
+            return ResolvedCredential(kind="bearer_token", access_token=str(token))
+        raise CredentialResolutionError(
+            "external-cli", "codex", "auth.json has no credential material"
+        )
+
+    @staticmethod
+    def _credential_from_entry(entry: dict) -> ResolvedCredential | None:
+        """Build a ResolvedCredential from a multi-profile entry."""
+        if entry.get("api_key"):
+            return ResolvedCredential(
+                kind="api_key",
+                api_key=str(entry["api_key"]),
+                metadata={k: str(v) for k, v in entry.items() if k != "api_key"},
+            )
+        if entry.get("token"):
+            return ResolvedCredential(
+                kind="bearer_token",
+                access_token=str(entry["token"]),
+                metadata={k: str(v) for k, v in entry.items() if k != "token"},
+            )
+        tokens = entry.get("tokens")
+        if isinstance(tokens, dict) and tokens.get("access_token"):
+            return ResolvedCredential(
+                kind="bearer_token",
+                access_token=str(tokens["access_token"]),
+            )
+        return None

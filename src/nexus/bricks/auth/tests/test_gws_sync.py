@@ -13,6 +13,7 @@ from nexus.bricks.auth.profile import AuthProfileFailureReason
 _FIXTURE_DIR = Path(__file__).parent / "fixtures" / "external_cli_output"
 _STATUS_V1 = _FIXTURE_DIR / "gws_status_v1.json"
 _STATUS_V2 = _FIXTURE_DIR / "gws_status_v2.json"
+_STATUS_REAL = _FIXTURE_DIR / "gws_status_real.json"
 
 
 @pytest.fixture()
@@ -45,6 +46,20 @@ class TestGwsParseOutput:
     def test_parse_empty_returns_empty(self, adapter: GwsCliSyncAdapter) -> None:
         profiles = adapter.parse_output("{}", "")
         assert profiles == []
+
+    def test_parse_real_single_account_with_keyring_preamble(
+        self, adapter: GwsCliSyncAdapter
+    ) -> None:
+        """Real ``gws auth status --format=json`` prints a ``Using keyring backend:``
+        preamble before the JSON blob and emits a single-account object with a
+        ``user`` field. Both must be handled.
+        """
+        content = _STATUS_REAL.read_text(encoding="utf-8")
+        profiles = adapter.parse_output(content, "")
+
+        assert len(profiles) == 1
+        assert profiles[0].account_identifier == "real.user@example.com"
+        assert profiles[0].backend_key == "gws-cli/real.user@example.com"
 
     def test_parse_malformed_raises(self, adapter: GwsCliSyncAdapter) -> None:
         import json as _json

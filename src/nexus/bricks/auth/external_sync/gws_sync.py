@@ -123,31 +123,53 @@ class GwsCliSyncAdapter(SubprocessAdapter):
         )
 
     def parse_output(self, stdout: str, _stderr: str) -> list[SyncedProfile]:
+        """Parse ``gws auth status --format=json`` output.
+
+        Real gws CLI prints non-JSON preamble lines like
+        ``Using keyring backend: keyring`` before the JSON blob, so we
+        strip everything before the first ``{``. The current surface is a
+        single-account object with a ``user`` field; a future multi-account
+        ``accounts: [...]`` schema is also supported.
+        """
         if not stdout.strip():
             return []
 
-        data = json.loads(stdout)
-        accounts = data.get("accounts", [])
-        if not isinstance(accounts, list):
+        start = stdout.find("{")
+        payload = stdout[start:] if start >= 0 else stdout
+        data = json.loads(payload)
+
+        if not isinstance(data, dict):
             return []
 
         profiles: list[SyncedProfile] = []
-        for acct in accounts:
-            if not isinstance(acct, dict):
-                continue
-            email = acct.get("email", "").strip()
-            if not email:
-                continue
-            profiles.append(
-                SyncedProfile(
-                    provider="google",
-                    account_identifier=email,
-                    backend_key=f"gws-cli/{email}",
-                    source="gws-cli",
-                )
-            )
+
+        # Future/multi-account shape: {"accounts": [{"email": "..."}]}
+        accounts = data.get("accounts")
+        if isinstance(accounts, list):
+            for acct in accounts:
+                if not isinstance(acct, dict):
+                    continue
+                email = str(acct.get("email", "")).strip()
+                if email:
+                    profiles.append(self._profile_for_email(email))
+            if profiles:
+                return profiles
+
+        # Current single-account shape: {"user": "...", ...}
+        user = str(data.get("user", "")).strip()
+        if user:
+            profiles.append(self._profile_for_email(user))
 
         return profiles
+
+    @staticmethod
+    def _profile_for_email(email: str) -> SyncedProfile:
+        return SyncedProfile(
+            provider="google",
+            account_identifier=email,
+            backend_key=f"gws-cli/{email}",
+            source="gws-cli",
+        )
 
     async def resolve_credential(self, backend_key: str) -> ResolvedCredential:
         return self._resolve_impl(backend_key)

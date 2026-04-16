@@ -1481,12 +1481,16 @@ class NexusFS(  # type: ignore[misc]
             # (e.g. legacy callers of nexus.fs.mount() or version-skewed kernels without
             # the is_external param — see mount_table TypeError fallback). Try Python
             # router as last resort to detect ExternalRouteResult before giving up.
+            from nexus.contracts.exceptions import AccessDeniedError
             from nexus.core.router import ExternalRouteResult
 
             try:
                 _fb_route = self.router.route(
                     path, is_admin=_is_admin, check_write=False, zone_id=self._zone_id
                 )
+            except AccessDeniedError:
+                # Auth failures must propagate — don't mask as not-found.
+                raise
             except Exception:
                 _fb_route = None
             if (

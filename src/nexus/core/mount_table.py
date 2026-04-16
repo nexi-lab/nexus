@@ -238,6 +238,9 @@ class MountTable:
         # Also wire into Kernel router (Issue #1868) so sys_read/sys_stat
         # fast path sees live mounts.  Pass py_backend= when no local_root
         # so Rust wraps Python backend via PyObjectStoreAdapter.
+        # Atomic: if kernel add_mount fails, roll back Python _entries to
+        # avoid split-brain state where Python routing sees the mount but
+        # kernel does not.
         if self._kernel is not None:
             _ms = self._entries[canonical].metastore
             _ms_path = getattr(_ms, "_redb_path", None) if _ms else None
@@ -247,21 +250,21 @@ class MountTable:
             }
             # is_external added in Task 2 (Issue #3710); guard for older kernels.
             try:
-                self._kernel.add_mount(
-                    mount_point,
-                    zone_id,
-                    readonly,
-                    admin_only,
-                    io_profile,
-                    _backend_name,
-                    _local_root,
-                    True,
-                    is_external=is_external,
-                    **_kwargs,
-                )
-            except TypeError:
-                # Kernel binary predates is_external — fall back without it.
-                with contextlib.suppress(Exception):
+                try:
+                    self._kernel.add_mount(
+                        mount_point,
+                        zone_id,
+                        readonly,
+                        admin_only,
+                        io_profile,
+                        _backend_name,
+                        _local_root,
+                        True,
+                        is_external=is_external,
+                        **_kwargs,
+                    )
+                except TypeError:
+                    # Kernel binary predates is_external — fall back without it.
                     self._kernel.add_mount(
                         mount_point,
                         zone_id,
@@ -273,6 +276,13 @@ class MountTable:
                         True,
                         **_kwargs,
                     )
+            except Exception:
+                # Roll back Python-side registration on kernel failure.
+                self._entries.pop(canonical, None)
+                if self._rust is not None:
+                    with contextlib.suppress(Exception):
+                        self._rust.remove_mount(mount_point, zone_id)
+                raise
 
     def remove(self, mount_point: str, zone_id: str = ROOT_ZONE_ID) -> bool:
         """Remove a mount entry. Called by coordinator.unmount().

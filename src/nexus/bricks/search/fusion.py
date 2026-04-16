@@ -342,11 +342,13 @@ def rrf_multi_fusion(
     k: int = 60,
     limit: int = 10,
     id_key: str | None = "chunk_id",
+    top_rank_bonus: bool = True,
 ) -> list[dict[str, Any]]:
     """N-way Reciprocal Rank Fusion for combining 3+ retrieval sources.
 
     Generalizes RRF from 2-way to N-way for pipelines that combine
-    keyword + dense + SPLADE (or any number of retrievers).
+    keyword + dense + SPLADE (or any number of retrievers). Applies the
+    top-rank bonus (Issue #3773) using the best rank across all sources.
 
     Args:
         result_lists: List of (source_name, results) tuples.
@@ -354,11 +356,13 @@ def rrf_multi_fusion(
         k: RRF constant (default: 60)
         limit: Maximum results to return
         id_key: Key for identifying unique results, or None for path:chunk_index
+        top_rank_bonus: Apply top-rank bonus (Issue #3773). Default True.
 
     Returns:
         Combined results ranked by RRF score
     """
     rrf_scores: dict[str, dict[str, Any]] = {}
+    best_rank: dict[str, int] = {}
 
     for source_name, results in result_lists:
         score_key = f"{source_name}_score"
@@ -369,15 +373,22 @@ def rrf_multi_fusion(
                 rrf_scores[key] = {"result": result.copy(), "rrf_score": 0.0}
             rrf_scores[key]["rrf_score"] += 1.0 / (k + rank)
             rrf_scores[key]["result"][score_key] = result.get("score", 0.0)
+            best_rank[key] = min(best_rank.get(key, rank), rank)
 
-    # Sort by RRF score
+    if top_rank_bonus:
+        for key, entry in rrf_scores.items():
+            br = best_rank.get(key, 999)
+            if br == 1:
+                entry["rrf_score"] += RRF_TOP1_BONUS
+            elif br <= 3:
+                entry["rrf_score"] += RRF_TOP3_BONUS
+
     sorted_results = sorted(
         rrf_scores.values(),
         key=lambda x: x["rrf_score"],
         reverse=True,
     )[:limit]
 
-    # Update final scores
     for item in sorted_results:
         item["result"]["score"] = item["rrf_score"]
 

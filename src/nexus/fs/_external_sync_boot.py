@@ -14,24 +14,49 @@ from __future__ import annotations
 
 import importlib
 import logging
+import time
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
-_sync_done = False
+# Sync state tracking (Phase 3, #3740):
+#   - _sync_last_ok_at: monotonic() at last successful startup; suppresses
+#     redundant syncs during the same process life.
+#   - _sync_last_attempt_at: monotonic() at last attempt (success OR failure);
+#     rate-limits retries so a broken CLI doesn't get hammered.
+#   - _MIN_RETRY_INTERVAL_S: how long to wait after a failed attempt before
+#     trying again. Gives the user time to `gws auth login` or fix the broken
+#     config without restarting the process.
+_sync_last_ok_at: float | None = None
+_sync_last_attempt_at: float | None = None
+_MIN_RETRY_INTERVAL_S = 60.0
 
 
 def ensure_external_sync() -> None:
-    """Run external-CLI adapter sync once, populating the profile store.
+    """Run external-CLI adapter sync, populating the profile store.
 
-    No-op after the first successful (or failed) call. All errors are
-    swallowed — callers fall back to their existing behavior when the
-    store is empty.
+    First call runs sync inline. Subsequent calls are no-ops until either:
+      - The previous attempt succeeded (profiles were written), OR
+      - It has been at least ``_MIN_RETRY_INTERVAL_S`` since the last failure
+
+    The old implementation marked sync-done *before* running, so a first
+    call that raced with `gws auth login` permanently pinned the process
+    to an empty view of the store. That's fixed: a failure just rate-limits
+    retries, it doesn't lock them out.
     """
-    global _sync_done  # noqa: PLW0603
-    if _sync_done:
+    global _sync_last_ok_at, _sync_last_attempt_at  # noqa: PLW0603
+
+    now = time.monotonic()
+
+    # Already synced successfully this process — stay idempotent.
+    if _sync_last_ok_at is not None:
         return
-    _sync_done = True
+
+    # Previous attempt failed; don't hammer the CLI on every request.
+    if _sync_last_attempt_at is not None and now - _sync_last_attempt_at < _MIN_RETRY_INTERVAL_S:
+        return
+
+    _sync_last_attempt_at = now
 
     try:
         import asyncio
@@ -45,7 +70,10 @@ def ensure_external_sync() -> None:
         store_mod = importlib.import_module("nexus.bricks.auth.profile_store")
         from nexus.fs._paths import persistent_dir
     except (ImportError, ModuleNotFoundError):
-        # Slim wheel — external_sync not available. Silent no-op.
+        # Slim wheel — external_sync not available. Treat as permanent so we
+        # don't retry every minute; the modules can't appear without a
+        # reinstall that'll restart the process anyway.
+        _sync_last_ok_at = now
         return
 
     try:
@@ -74,6 +102,10 @@ def ensure_external_sync() -> None:
                 asyncio.run(coro)
         finally:
             store.close()
+        # Only mark success after the startup coroutine completes. If we
+        # hit the `except Exception` below, _sync_last_ok_at stays None
+        # and the next call (after the retry window) will try again.
+        _sync_last_ok_at = now
     except Exception:
         logger.debug("External CLI sync failed during bootstrap", exc_info=True)
 

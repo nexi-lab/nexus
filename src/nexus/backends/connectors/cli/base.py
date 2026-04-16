@@ -250,7 +250,8 @@ class PathCLIBackend(
     def _get_user_token(self, context: "OperationContext | None" = None) -> str | None:
         """Resolve an auth token via external-CLI first, TokenManager as fallback.
 
-        Phase 1 (Phase 3 of #3722, issue #3740): if AUTH_SOURCE is set, try
+        Phase 1 (Phase 3 of #3722, issue #3740): if AUTH_SOURCE is set *and*
+        the request is not zone-scoped, try
         ``_external_sync_boot.resolve_token_for_provider`` which selects a
         profile from the unified store and routes through the matching adapter.
 
@@ -258,9 +259,18 @@ class PathCLIBackend(
 
         Returns None if neither path yields a token (allows CLI to use
         its own auth, e.g., `gh auth login`).
+
+        **Zone-scope safety:** the external-CLI profile store is host-global
+        — it has no concept of zones yet. Using it to satisfy a zone-scoped
+        request would leak the host's active CLI identity into a zone that
+        expected an isolated credential. Until the profile store becomes
+        zone-aware (sister epic: PostgresAuthProfileStore), Phase 1 is
+        skipped whenever ``context.zone_id`` is set to anything other than
+        the root zone sentinel.
         """
-        # Phase 1: external-CLI credential via unified profile store (#3740)
-        if self.AUTH_SOURCE:
+        # Phase 1: external-CLI credential via unified profile store (#3740).
+        # Gated on root-or-unscoped zone to preserve zone-scoped token safety.
+        if self.AUTH_SOURCE and self._is_zone_safe_for_external_cli(context):
             token = self._resolve_from_external_cli(context)
             if token:
                 return token
@@ -292,6 +302,27 @@ class PathCLIBackend(
             logger.debug("Token resolution failed for %s", context.user_id, exc_info=True)
 
         return None
+
+    @staticmethod
+    def _is_zone_safe_for_external_cli(context: "OperationContext | None") -> bool:
+        """Return True when it's safe to consult the host-global external-CLI store.
+
+        External-CLI profiles are host-global (machine-local CLI logins shared
+        across the whole process). Zone-scoped requests require a credential
+        that was explicitly provisioned for that zone — mixing the two would
+        leak the machine's CLI identity into a zone that expected isolation.
+
+        We treat *no zone set* and *explicit root zone* as safe; any other
+        zone value falls through to TokenManager, which has zone-aware lookup.
+        """
+        if context is None:
+            return True
+        zone_id = getattr(context, "zone_id", None)
+        if not zone_id:
+            return True
+        from nexus.contracts.constants import ROOT_ZONE_ID
+
+        return str(zone_id) == ROOT_ZONE_ID
 
     def _resolve_from_external_cli(self, context: "OperationContext | None" = None) -> str | None:
         """Try to resolve a token via the unified profile store.

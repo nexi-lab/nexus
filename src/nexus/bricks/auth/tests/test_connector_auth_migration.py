@@ -131,6 +131,194 @@ class TestPathCLIBackendAuthSource:
         assert token is None
 
 
+class TestEnsureExternalSyncRetries:
+    """Regression: previously `_sync_done = True` was set BEFORE work, so a
+    first-call failure (e.g., pre-login race) permanently pinned the process
+    to an empty store. Now failure rate-limits retries instead of locking them
+    out, and post-login sync works without a restart."""
+
+    def test_first_call_failure_allows_retry_after_window(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """First-attempt failure must not permanently pin the process.
+
+        Force ``AdapterRegistry.startup()`` to raise on the first call; the
+        outer try/except Exception swallows it and leaves ``_sync_last_ok_at``
+        None. A second call (after the retry window) should actually retry
+        instead of short-circuiting — the key property broken by the old
+        ``_sync_done = True`` before-work bug.
+        """
+        import nexus.fs._external_sync_boot as boot
+
+        monkeypatch.setattr(boot, "_sync_last_ok_at", None)
+        monkeypatch.setattr(boot, "_sync_last_attempt_at", None)
+        monkeypatch.setattr(boot, "_MIN_RETRY_INTERVAL_S", 0.0)
+
+        call_count = {"startup": 0}
+
+        class _ExplodingRegistry:
+            def __init__(self, **_kwargs) -> None:  # noqa: ANN003
+                pass
+
+            async def startup(self) -> dict:
+                call_count["startup"] += 1
+                if call_count["startup"] == 1:
+                    raise RuntimeError("transient sync failure (e.g. pre-login race)")
+                return {}
+
+        # Replace AdapterRegistry at the module the boot code imports from.
+        from nexus.bricks.auth.external_sync import registry as registry_mod
+
+        monkeypatch.setattr(registry_mod, "AdapterRegistry", _ExplodingRegistry)
+
+        # First call: startup() raises → outer except swallows → state stays None.
+        boot.ensure_external_sync()
+        assert call_count["startup"] == 1
+        assert boot._sync_last_ok_at is None, "first-call failure must NOT mark sync successful"
+
+        # Second call (within retry window=0): should actually retry.
+        boot.ensure_external_sync()
+        assert call_count["startup"] == 2, (
+            "second call must retry after failure, not be permanently blocked — "
+            "this was the Codex-reported bug before the fix"
+        )
+        # This time startup returns normally → state flips to success.
+        assert boot._sync_last_ok_at is not None
+
+        # Third call: now short-circuits (already succeeded).
+        boot.ensure_external_sync()
+        assert call_count["startup"] == 2, "after success, further calls must short-circuit"
+
+    def test_success_short_circuits_subsequent_calls(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import time
+
+        import nexus.fs._external_sync_boot as boot
+
+        monkeypatch.setattr(boot, "_sync_last_ok_at", time.monotonic())
+        monkeypatch.setattr(boot, "_sync_last_attempt_at", time.monotonic())
+
+        # Should be an immediate no-op — no imports, no sleeps.
+        called = {"imports": 0}
+        real_import = boot.importlib.import_module
+
+        def _counting_import(name: str):  # noqa: ANN001
+            called["imports"] += 1
+            return real_import(name)
+
+        monkeypatch.setattr(boot.importlib, "import_module", _counting_import)
+
+        boot.ensure_external_sync()
+        boot.ensure_external_sync()
+        boot.ensure_external_sync()
+        assert called["imports"] == 0
+
+
+class TestUnifiedAuthMultiAccount:
+    """Regression: previously `_gws_native_from_profile_store` always took
+    `gws_profiles[0]`, so second+ gws accounts were invisible to `auth list` /
+    `auth test`. Now the full list is searched when user_email is given."""
+
+    def test_oauth_native_finds_non_first_email(self) -> None:
+        from nexus.bricks.auth.profile import AuthProfile, InMemoryAuthProfileStore
+        from nexus.bricks.auth.unified_service import UnifiedAuthService
+
+        store = InMemoryAuthProfileStore()
+        store.upsert(
+            AuthProfile(
+                id="google/bob@example.com",
+                provider="google",
+                account_identifier="bob@example.com",
+                backend="external-cli",
+                backend_key="gws-cli/bob@example.com",
+                usage_stats=ProfileUsageStats(),
+            )
+        )
+        store.upsert(
+            AuthProfile(
+                id="google/alice@example.com",
+                provider="google",
+                account_identifier="alice@example.com",
+                backend="external-cli",
+                backend_key="gws-cli/alice@example.com",
+                usage_stats=ProfileUsageStats(),
+            )
+        )
+        service = UnifiedAuthService(profile_store=store)
+
+        # Alice is the SECOND profile written — previously this returned None
+        # because only `gws_profiles[0]` (bob) was considered.
+        native = service._oauth_native_from_profile_store("gws", user_email="alice@example.com")
+        assert native is not None
+        assert native["email"] == "alice@example.com"
+
+    def test_oauth_native_returns_none_for_missing_email(self) -> None:
+        from nexus.bricks.auth.profile import AuthProfile, InMemoryAuthProfileStore
+        from nexus.bricks.auth.unified_service import UnifiedAuthService
+
+        store = InMemoryAuthProfileStore()
+        store.upsert(
+            AuthProfile(
+                id="google/bob@example.com",
+                provider="google",
+                account_identifier="bob@example.com",
+                backend="external-cli",
+                backend_key="gws-cli/bob@example.com",
+                usage_stats=ProfileUsageStats(),
+            )
+        )
+        service = UnifiedAuthService(profile_store=store)
+
+        native = service._oauth_native_from_profile_store("gws", user_email="carol@example.com")
+        assert native is None
+
+
+class TestZoneScopedRequestsSkipExternalCli:
+    """Regression: external-CLI store is host-global; zone-scoped requests
+    must go to TokenManager, not the host's CLI login."""
+
+    def test_non_root_zone_skips_external_cli(self) -> None:
+        from nexus.backends.connectors.cli.base import PathCLIBackend
+
+        class _TestConnector(PathCLIBackend):
+            CLI_NAME = "gws"
+            CLI_SERVICE = "gmail"
+            AUTH_SOURCE = "gws-cli"
+
+        connector = _TestConnector()
+        ctx = SimpleNamespace(user_id="alice@example.com", zone_id="tenant-a")
+
+        with patch(
+            "nexus.fs._external_sync_boot.resolve_token_for_provider",
+            return_value="should-not-be-used",
+        ) as mock_resolve:
+            token = connector._get_user_token(context=ctx)
+
+        assert token is None  # TokenManager path (which is empty) took over
+        mock_resolve.assert_not_called()
+
+    def test_root_zone_uses_external_cli(self) -> None:
+        from nexus.backends.connectors.cli.base import PathCLIBackend
+
+        class _TestConnector(PathCLIBackend):
+            CLI_NAME = "gws"
+            CLI_SERVICE = "gmail"
+            AUTH_SOURCE = "gws-cli"
+
+        connector = _TestConnector()
+        ctx = SimpleNamespace(user_id="alice@example.com", zone_id="root")
+
+        with (
+            patch(
+                "nexus.fs._external_sync_boot.resolve_token_for_provider",
+                return_value="ok-token",
+            ),
+            patch("nexus.fs._external_sync_boot.ensure_external_sync"),
+        ):
+            token = connector._get_user_token(context=ctx)
+
+        assert token == "ok-token"
+
+
 class TestUnifiedAuthServiceWithoutProfileStore:
     """Reproduces the production wiring: UnifiedAuthService with no profile_store.
 

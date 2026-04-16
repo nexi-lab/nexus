@@ -143,11 +143,17 @@ class GwsCliSyncAdapter(SubprocessAdapter):
 
         profiles: list[SyncedProfile] = []
 
-        # Future/multi-account shape: {"accounts": [{"email": "..."}]}
+        # Future/multi-account shape: {"accounts": [{"email": "...", "active": true}]}
+        #
+        # Only emit the active account. Bare ``gws auth token`` returns the
+        # active account's token regardless of which profile the caller
+        # asked for — emitting non-active profiles here would create
+        # resolvable-looking backend_keys that can't actually be resolved
+        # without an account-switch primitive we don't control.
         accounts = data.get("accounts")
         if isinstance(accounts, list):
             for acct in accounts:
-                if not isinstance(acct, dict):
+                if not isinstance(acct, dict) or not acct.get("active"):
                     continue
                 email = str(acct.get("email", "")).strip()
                 if email:
@@ -178,13 +184,51 @@ class GwsCliSyncAdapter(SubprocessAdapter):
         return self._resolve_impl(backend_key)
 
     def _resolve_impl(self, backend_key: str) -> ResolvedCredential:
-        """Run gws auth token to get a fresh access token (sync subprocess)."""
+        """Resolve a token for the specific account encoded in ``backend_key``.
+
+        **Cross-user safety:** ``gws auth token`` always returns the token
+        for the CLI's currently active account, not a specified one. If the
+        user has multiple gws accounts (or switches accounts between sync
+        and resolve), bare ``gws auth token`` can return the wrong identity's
+        token — real cross-user credential bleed.
+
+        This implementation verifies the active account matches the requested
+        one before returning. Fails closed on mismatch rather than returning
+        a silently-wrong credential.
+        """
+        # Parse the email the caller asked for.
+        parts = backend_key.split("/", 1)
+        if len(parts) < 2:
+            raise CredentialResolutionError(
+                "external-cli", backend_key, "expected 'gws-cli/<email>' backend_key"
+            )
+        requested_email = parts[1].strip()
+
         binary_path = shutil.which(self.binary_name)
         if binary_path is None:
             raise CredentialResolutionError(
                 "external-cli",
                 backend_key,
                 f"{self.binary_name}: binary not found on PATH",
+            )
+
+        # Verify the CLI's active account matches the requested one BEFORE
+        # pulling a token — otherwise we'd hand back whichever account gws
+        # happens to be logged into right now.
+        active_email = self._get_active_account_email(binary_path)
+        if active_email is None:
+            raise CredentialResolutionError(
+                "external-cli",
+                backend_key,
+                "gws: cannot determine active account (run: gws auth login)",
+            )
+        if active_email != requested_email:
+            raise CredentialResolutionError(
+                "external-cli",
+                backend_key,
+                f"gws active account is {active_email!r}, not {requested_email!r}. "
+                f"Run: gws auth switch {requested_email} (if your gws CLI supports it) "
+                f"or re-login as that account",
             )
 
         try:
@@ -207,8 +251,11 @@ class GwsCliSyncAdapter(SubprocessAdapter):
             )
 
         try:
-            data = json.loads(proc.stdout)
-            access_token = data.get("access_token", "").strip()
+            # Strip non-JSON preamble (e.g., "Using keyring backend: keyring").
+            start = proc.stdout.find("{")
+            payload = proc.stdout[start:] if start >= 0 else proc.stdout
+            data = json.loads(payload)
+            access_token = str(data.get("access_token", "")).strip()
         except (json.JSONDecodeError, AttributeError) as exc:
             raise CredentialResolutionError(
                 "external-cli", backend_key, f"gws auth token: parse error: {exc}"
@@ -220,3 +267,51 @@ class GwsCliSyncAdapter(SubprocessAdapter):
             )
 
         return ResolvedCredential(kind="bearer_token", access_token=access_token)
+
+    @staticmethod
+    def _get_active_account_email(binary_path: str) -> str | None:
+        """Return the gws CLI's currently active account email, or None.
+
+        Runs ``gws auth status --format=json`` and reads the ``user`` field
+        (real gws shape as of April 2026). Safe for keyring preamble lines.
+        """
+        try:
+            proc = subprocess.run(
+                [binary_path, "auth", "status", "--format=json"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+        except (subprocess.TimeoutExpired, OSError):
+            return None
+
+        if proc.returncode != 0:
+            return None
+
+        try:
+            start = proc.stdout.find("{")
+            if start < 0:
+                return None
+            data = json.loads(proc.stdout[start:])
+        except (json.JSONDecodeError, AttributeError):
+            return None
+
+        if not isinstance(data, dict):
+            return None
+
+        # Current single-account shape.
+        user = str(data.get("user", "")).strip()
+        if user:
+            return user
+
+        # Future multi-account shape: accounts[active=true].email
+        accounts = data.get("accounts")
+        if isinstance(accounts, list):
+            for acct in accounts:
+                if isinstance(acct, dict) and acct.get("active"):
+                    email = str(acct.get("email", "")).strip()
+                    if email:
+                        return email
+
+        return None

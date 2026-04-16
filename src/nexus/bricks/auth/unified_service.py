@@ -759,11 +759,33 @@ class UnifiedAuthService:
         cli/commands/doctor.py, fs/_tui/__init__.py, fs/_auth_cli.py —
         working without plumbing a long-lived store reference.
         """
+        return self._gws_native_for_email(user_email=None)
+
+    def _gws_native_for_email(self, *, user_email: str | None) -> dict[str, str] | None:
+        """Return a gws-cli-synced native record, optionally filtered by email.
+
+        If ``user_email`` is provided, searches the full profile list for a
+        matching account_identifier — not just index 0. This matters when the
+        user has multiple gws accounts synced; previously only the first
+        profile was considered, causing ``auth list``/``auth test`` to falsely
+        report "no native gws auth" for any account other than the first
+        written to the store.
+        """
         gws_profiles = self._list_gws_profiles()
         if not gws_profiles:
             return None
 
-        email = gws_profiles[0].account_identifier
+        if user_email:
+            match = next(
+                (p for p in gws_profiles if p.account_identifier == user_email),
+                None,
+            )
+            if match is None:
+                return None
+            email = match.account_identifier
+        else:
+            email = gws_profiles[0].account_identifier
+
         return {
             "source": "native:gws_cli",
             "email": email,
@@ -809,15 +831,16 @@ class UnifiedAuthService:
         *,
         user_email: str | None = None,
     ) -> dict[str, str] | None:
-        """OAuth-specific wrapper: filter by service + optional user email."""
+        """OAuth-specific wrapper: filter by service + optional user email.
+
+        When ``user_email`` is supplied, searches the full gws profile list
+        (not just index 0) so multi-account installs work correctly.
+        """
         if service not in _GOOGLE_OAUTH_SERVICES:
             return None
-        native = self._gws_native_from_profile_store()
-        if native is None:
-            return None
-        if user_email and user_email != native.get("email"):
-            return None
-        return native
+        # _gws_native_for_email already filters by user_email when given, so
+        # no redundant check needed here.
+        return self._gws_native_for_email(user_email=user_email)
 
     def _google_targets_for_service(
         self,

@@ -110,9 +110,8 @@ def _serialize_search_result(result: Any) -> dict[str, Any]:
     the graph and non-graph branches of ``search_query``. Preserves the
     pre-refactor field ordering, rounding, and None semantics.
 
-    ``splade_score`` and ``reranker_score`` are emitted whenever the
-    underlying result has them as attributes. Results that predate those
-    fields (e.g. bare ``BaseSearchResult``) get ``None``.
+    Issue #3773: emits ``context`` when the result carries a non-None value
+    (omits the key otherwise to keep responses compact).
     """
     out: dict[str, Any] = {
         "path": result.path,
@@ -128,6 +127,9 @@ def _serialize_search_result(result: Any) -> dict[str, Any]:
     out["splade_score"] = round(splade, 4) if splade is not None else None
     reranker = getattr(result, "reranker_score", None)
     out["reranker_score"] = round(reranker, 4) if reranker is not None else None
+    context = getattr(result, "context", None)
+    if context is not None:
+        out["context"] = context
     return out
 
 

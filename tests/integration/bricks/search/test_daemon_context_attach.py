@@ -73,3 +73,25 @@ class TestAttachContextToResults:
         assert results[0].context == "Hybrid search brick"
         assert results[1].context == "Project documentation"
         assert results[2].context is None
+
+
+class TestSerializerEmitsContext:
+    def test_context_field_emitted_when_set(self) -> None:
+        from nexus.server.api.v2.routers.search import _serialize_search_result
+
+        r = BaseSearchResult(
+            path="src/nexus/bricks/search/fusion.py",
+            chunk_text="body",
+            score=0.9,
+            zone_id="root",
+        )
+        r.context = "Hybrid search brick"
+        out = _serialize_search_result(r)
+        assert out.get("context") == "Hybrid search brick"
+
+    def test_context_field_omitted_when_none(self) -> None:
+        from nexus.server.api.v2.routers.search import _serialize_search_result
+
+        r = BaseSearchResult(path="x", chunk_text="y", score=0.5)
+        out = _serialize_search_result(r)
+        assert "context" not in out

@@ -93,23 +93,28 @@ class GhCliSyncAdapter(ExternalCliSyncAdapter):
         except FileNotFoundError:
             return self._sync_file_with_reason("gh: binary not found")
 
-        # gh auth status prints to stderr in older versions, stdout in newer.
-        output = stdout_bytes.decode("utf-8", errors="replace")
+        # gh auth status output split varies by version + stream targeting:
+        #   - older gh: status lines on stderr, --show-token tokens on stdout
+        #   - newer gh: status lines on stdout
+        #   - keyring-backed installs: mixed (login info on stderr, errors stdout)
+        # Parse the COMBINED stream so we don't miss accounts that landed on
+        # the "wrong" side. The earlier "prefer stdout, fall back to stderr"
+        # pattern dropped logins on mixed-stream installs.
+        stdout = stdout_bytes.decode("utf-8", errors="replace")
         stderr = stderr_bytes.decode("utf-8", errors="replace")
-        if not output.strip():
-            output = stderr
+        combined = (stdout + "\n" + stderr).strip()
 
         # Non-zero exit: not logged in, keyring unavailable, etc. Surface the
         # failure via the file-fallback rather than reporting zero profiles.
         if proc.returncode != 0:
-            detail = stderr.strip() or output.strip() or f"exit code {proc.returncode}"
+            detail = stderr.strip() or stdout.strip() or f"exit code {proc.returncode}"
             return self._sync_file_with_reason(f"gh auth status: {detail}")
 
-        if not output.strip():
+        if not combined:
             return self._sync_file_with_reason("gh auth status returned empty output")
 
         try:
-            profiles = self.parse_status_output(output)
+            profiles = self.parse_status_output(combined)
         except Exception as exc:
             return self._sync_file_with_reason(f"gh: parse error: {exc}")
 

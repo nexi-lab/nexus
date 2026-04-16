@@ -261,24 +261,18 @@ class PathCLIBackend(
     def _get_user_token(self, context: "OperationContext | None" = None) -> str | None:
         """Resolve an auth token via external-CLI first, TokenManager as fallback.
 
+        Returns ``str | None`` (legacy contract preserved). The actual
+        fail-closed enforcement for AUTH_SOURCE connectors lives in
+        ``_execute_cli`` so that *every* CLI invocation is gated regardless
+        of which call site forgot to inject auth — including the gws Gmail
+        and Calendar paths that bypass this method entirely.
+
         Phase 1 (Phase 3 of #3722, issue #3740): if AUTH_SOURCE is set *and*
         the request is not zone-scoped, try
         ``_external_sync_boot.resolve_token_for_provider`` which selects a
         profile from the unified store and routes through the matching adapter.
 
         Phase 2 (existing): TokenManager.get_credentials() scoped by user+zone.
-
-        **Fail-closed contract when AUTH_SOURCE is set:** if no zone/account
-        scoped credential resolves, this method raises
-        ``ScopedAuthRequiredError`` rather than returning ``None``. Returning
-        ``None`` would let the CLI fall back to whatever login is active on
-        the host — a silent cross-tenant / cross-user privilege leak. This
-        fail-closed behavior replaces the ambient-auth fallback for any
-        connector that declares ``AUTH_SOURCE``.
-
-        Connectors *without* ``AUTH_SOURCE`` (legacy TokenManager-only flow)
-        retain the original ``return None → CLI falls back to its own auth``
-        behavior.
 
         **Zone-scope safety:** the external-CLI profile store is host-global
         — it has no concept of zones. A zone-scoped request that can't be
@@ -310,27 +304,6 @@ class PathCLIBackend(
             except Exception:
                 logger.debug("Token resolution failed for %s", context.user_id, exc_info=True)
 
-        # Fail closed for AUTH_SOURCE connectors — do NOT let the CLI fall
-        # back to host-global auth (which would bypass zone/account scoping).
-        if self.AUTH_SOURCE:
-            zone_info = ""
-            user_info = ""
-            if context is not None:
-                zone_id = getattr(context, "zone_id", None)
-                user_id = getattr(context, "user_id", None)
-                if zone_id:
-                    zone_info = f" zone={zone_id!r}"
-                if user_id:
-                    user_info = f" user={user_id!r}"
-            raise ScopedAuthRequiredError(
-                f"{self.CLI_NAME}: no scoped credential available for "
-                f"provider={provider!r}{zone_info}{user_info}. "
-                f"Refusing to fall back to host-global CLI auth — that would "
-                f"leak the workstation's active login into a scoped request."
-            )
-
-        # Legacy path (connectors without AUTH_SOURCE): return None so the
-        # CLI can use its own auth chain. This preserves pre-Phase-3 behavior.
         return None
 
     def _resolve_provider(self) -> str:
@@ -479,7 +452,11 @@ class PathCLIBackend(
         # Create checkpoint for reversible operations
         checkpoint = self.create_checkpoint(operation)
 
-        # Get auth token
+        # Get auth token (returns str | None). _execute_cli enforces
+        # fail-closed; we just convert ScopedAuthRequiredError into
+        # BackendError at this public boundary.
+        from nexus.contracts.exceptions import BackendError
+
         token = self._get_user_token(context)
 
         # Build CLI command
@@ -497,8 +474,14 @@ class PathCLIBackend(
         if token:
             auth_env = self._build_auth_env(token)
 
-        # Execute with payload on stdin and auth via env/flag
-        result = self._execute_cli(cli_args, stdin=payload_yaml, context=context, env=auth_env)
+        # Execute with payload on stdin and auth via env/flag.
+        # _execute_cli's defense-in-depth path can also raise
+        # ScopedAuthRequiredError when the caller forgot to inject env;
+        # convert that to BackendError too.
+        try:
+            result = self._execute_cli(cli_args, stdin=payload_yaml, context=context, env=auth_env)
+        except ScopedAuthRequiredError as exc:
+            raise BackendError(str(exc), backend=self.name) from exc
 
         # Classify errors
         result = self._error_mapper.classify_result(result)
@@ -626,6 +609,16 @@ class PathCLIBackend(
 
         Returns:
             CLIResult with status, stdout, stderr, exit code.
+
+        **Defense-in-depth auth enforcement (Phase 3, #3740):**
+        For connectors with ``AUTH_SOURCE`` set, this method enforces
+        scoped auth even when callers forget to inject ``env`` themselves.
+        Several existing call sites (gws Gmail/Calendar read paths) call
+        ``_execute_cli`` directly without going through ``_get_user_token``
+        / ``_build_auth_env``. Without this enforcement, those calls would
+        run under the host's active CLI login — bypassing the scoped-auth
+        contract. We resolve the token here and inject it (or raise
+        ``ScopedAuthRequiredError`` per the fail-closed contract).
         """
         import os
         import shutil
@@ -637,6 +630,39 @@ class PathCLIBackend(
                 status=CLIResultStatus.NOT_INSTALLED,
                 command=args,
             )
+
+        # Defense-in-depth: AUTH_SOURCE connectors must always have
+        # scoped auth injected. If caller didn't already supply env with
+        # the auth token, resolve it here. Raises ScopedAuthRequiredError
+        # if no scoped credential is available — refuses to fall back to
+        # host-global CLI auth that would leak tenant/user identity.
+        #
+        # We don't enforce this in tests that monkeypatch _execute_cli
+        # directly (those tests provide their own subprocess stand-ins
+        # and never reach this method). The enforcement is for production
+        # call sites that reach the real subprocess path.
+        if self.AUTH_SOURCE and not env:
+            token = self._get_user_token(context)
+            if token:
+                env = self._build_auth_env(token)
+            else:
+                zone_info = ""
+                user_info = ""
+                if context is not None:
+                    zone_id = getattr(context, "zone_id", None)
+                    user_id = getattr(context, "user_id", None)
+                    if zone_id:
+                        zone_info = f" zone={zone_id!r}"
+                    if user_id:
+                        user_info = f" user={user_id!r}"
+                provider = self._resolve_provider()
+                raise ScopedAuthRequiredError(
+                    f"{self.CLI_NAME}: no scoped credential available for "
+                    f"provider={provider!r}{zone_info}{user_info}. "
+                    f"Refusing to fall back to host-global CLI auth — "
+                    f"that would leak the workstation's active login "
+                    f"into a scoped request."
+                )
 
         cli_binary = args[0]
         if shutil.which(cli_binary) is None:
@@ -741,10 +767,18 @@ class PathCLIBackend(
         args.append(self._config.read.get_command)
         args.append(context.backend_path)
 
-        # Auth via env vars only (never stdin -- tokens visible in /proc on some OS)
+        # Auth via env vars only (never stdin -- tokens visible in /proc on some OS).
+        # _execute_cli enforces fail-closed for AUTH_SOURCE connectors;
+        # convert ScopedAuthRequiredError into BackendError at this public
+        # boundary so callers see the documented exception class.
+        from nexus.contracts.exceptions import BackendError
+
         token = self._get_user_token(context)
         auth_env = self._build_auth_env(token) if token else None
-        result = self._execute_cli(args, context=context, env=auth_env)
+        try:
+            result = self._execute_cli(args, context=context, env=auth_env)
+        except ScopedAuthRequiredError as exc:
+            raise BackendError(str(exc), backend=self.name) from exc
 
         if result.ok:
             return result.stdout.encode("utf-8")
@@ -769,10 +803,17 @@ class PathCLIBackend(
         if path and path != "/":
             args.append(path)
 
-        # Auth via env vars only (consistent with write path)
+        # Auth via env vars only. _execute_cli enforces fail-closed for
+        # AUTH_SOURCE connectors; convert ScopedAuthRequiredError into
+        # BackendError at this public boundary.
+        from nexus.contracts.exceptions import BackendError
+
         token = self._get_user_token(context)
         auth_env = self._build_auth_env(token) if token else None
-        result = self._execute_cli(args, context=context, env=auth_env)
+        try:
+            result = self._execute_cli(args, context=context, env=auth_env)
+        except ScopedAuthRequiredError as exc:
+            raise BackendError(str(exc), backend=self.name) from exc
 
         if not result.ok:
             return []

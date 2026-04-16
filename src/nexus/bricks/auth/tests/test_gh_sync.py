@@ -70,6 +70,20 @@ class TestGhParseAuthStatus:
         assert profiles[0].account_identifier == "testuser"
         assert profiles[0].backend_key == "gh-cli/github.com/testuser"
 
+    def test_sync_combines_stdout_and_stderr_streams(self, adapter: GhCliSyncAdapter) -> None:
+        """R3-H2 regression: gh emits status lines on stderr in some
+        configurations (older versions, keyring-backed installs). Parser
+        must inspect the combined stream so logins on the "wrong" side
+        aren't dropped — which would force the file-fallback path and
+        misdetect valid logins as missing.
+        """
+        # Simulate stderr-side login lines with empty stdout (real gh < 2.40).
+        stderr_only = _STATUS_V240.read_text(encoding="utf-8")
+        combined = ("\n" + stderr_only).strip()  # leading blank stdout
+        profiles = adapter.parse_status_output(combined)
+        assert len(profiles) == 1
+        assert profiles[0].account_identifier == "testuser"
+
     def test_parse_v250_multiple_hosts(self, adapter: GhCliSyncAdapter) -> None:
         content = _STATUS_V250.read_text(encoding="utf-8")
         profiles = adapter.parse_status_output(content)

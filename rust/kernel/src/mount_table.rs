@@ -402,6 +402,21 @@ impl MountTable {
             .ok()
     }
 
+    /// Copy a file via the mount's backend (PAS server-side copy).
+    pub fn copy_file(
+        &self,
+        canonical_key: &str,
+        src_backend_path: &str,
+        dst_backend_path: &str,
+    ) -> Option<crate::backend::WriteResult> {
+        let entry = self.entries.get(canonical_key)?;
+        entry
+            .backend
+            .as_ref()?
+            .copy_file(src_backend_path, dst_backend_path)
+            .ok()
+    }
+
     /// Create a directory via the mount's backend.
     pub fn mkdir(
         &self,

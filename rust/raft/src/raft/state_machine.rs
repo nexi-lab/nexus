@@ -116,6 +116,12 @@ pub enum Command {
         delta: i64,
     },
 
+    /// Force-release ALL holders on a lock (admin override).
+    ForceReleaseLock {
+        /// Resource path.
+        path: String,
+    },
+
     /// No-op command (used for leader election confirmation).
     Noop,
 }
@@ -883,6 +889,16 @@ impl FullStateMachine {
         Ok(CommandResult::Success)
     }
 
+    fn apply_force_release_lock(&self, path: &str) -> Result<CommandResult> {
+        match self.locks.get(path.as_bytes())? {
+            Some(_) => {
+                self.locks.delete(path.as_bytes())?;
+                Ok(CommandResult::Success)
+            }
+            None => Ok(CommandResult::Error("Lock not found".to_string())),
+        }
+    }
+
     /// Apply ExtendLock command.
     ///
     /// `now` is the wall-clock timestamp from the replicated command, ensuring
@@ -1027,6 +1043,7 @@ impl FullStateMachine {
                 *now_secs,
             ),
             Command::ReleaseLock { path, lock_id } => self.apply_release_lock(path, lock_id),
+            Command::ForceReleaseLock { path } => self.apply_force_release_lock(path),
             Command::ExtendLock {
                 path,
                 lock_id,
@@ -1222,6 +1239,21 @@ impl FullStateMachine {
                 }
 
                 Ok(CommandResult::Success)
+            }
+
+            Command::ForceReleaseLock { path } => {
+                let mut table = txn
+                    .open_table(locks_def)
+                    .map_err(|e| super::RaftError::Storage(format!("open locks: {e}")))?;
+                let existed = table
+                    .remove(path.as_bytes())
+                    .map_err(|e| super::RaftError::Storage(format!("remove lock: {e}")))?
+                    .is_some();
+                if existed {
+                    Ok(CommandResult::Success)
+                } else {
+                    Ok(CommandResult::Error("Lock not found".to_string()))
+                }
             }
 
             Command::ExtendLock {

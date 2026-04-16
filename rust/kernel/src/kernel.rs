@@ -16,7 +16,7 @@
 use crate::dcache::{CachedEntry, DCache, DT_DIR, DT_PIPE, DT_REG, DT_STREAM};
 use crate::dispatch::{FileEvent, FileEventType, MutationObserver, Trie};
 use crate::file_watch::FileWatcher;
-use crate::lock::{LockMode, VFSLockManagerInner};
+use crate::lock_manager::{LockManager, LockMode};
 use crate::metastore::RedbMetastore;
 use crate::mount_table::{
     canonicalize_mount_path as canonicalize, MountTable, RouteError, RustRouteResult,
@@ -202,6 +202,22 @@ pub struct SysRmdirResult {
     pub children_deleted: usize,
 }
 
+/// Result of sys_copy(): concrete type for copy operation.
+pub struct SysCopyResult {
+    /// True if Rust completed the full operation.
+    pub hit: bool,
+    /// True if post-hooks should be fired by the async wrapper.
+    pub post_hook_needed: bool,
+    /// Destination path.
+    pub dst_path: String,
+    /// Content hash (etag) of the destination file.
+    pub etag: Option<String>,
+    /// Destination file size.
+    pub size: u64,
+    /// Metadata version of the destination file.
+    pub version: u32,
+}
+
 // ── DcacheStats ──────────────────────────────────────────────────────
 
 /// DCache statistics — pure Rust struct returned by dcache_stats().
@@ -230,6 +246,7 @@ pub struct StatResult {
     pub zone_id: Option<String>,
     pub created_at_ms: Option<i64>,
     pub modified_at_ms: Option<i64>,
+    pub lock: Option<crate::lock_manager::KernelLockInfo>,
 }
 
 // ── KernelObserverRegistry — pure Rust observer dispatch ────────────────
@@ -385,7 +402,7 @@ impl ZoneRevisionEntry {
 /// Rust kernel — owns all core state directly.
 ///
 /// Created empty via `Kernel::new()`, then wired by wrapper:
-///   - `set_vfs_lock(lock)` — share VFS lock.
+///   - `set_lock_manager(lm)` — share unified lock manager.
 ///   - `add_mount(...)` — register mount points.
 ///   - `dcache_put(...)` — populate dentry cache.
 ///   - `trie_register(...)` — register path resolvers.
@@ -398,8 +415,8 @@ pub struct Kernel {
     mount_table: MountTable,
     // PathTrie (owned)
     trie: Trie,
-    // VFS Lock (Arc-shared with VFSLockManager for blocking acquire)
-    vfs_lock: Option<Arc<VFSLockManagerInner>>,
+    // Unified lock manager: I/O lock + advisory lock + optional Raft.
+    lock_manager: Arc<LockManager>,
     // Metastore (Box<dyn Metastore>)
     metastore: Option<Box<dyn crate::metastore::Metastore>>,
     // VFS lock timeout for blocking acquire (ms)
@@ -472,7 +489,7 @@ impl Kernel {
             dcache: DCache::new(),
             mount_table: MountTable::new(),
             trie: Trie::new(),
-            vfs_lock: None,
+            lock_manager: Arc::new(LockManager::new()),
             // Bare kernels boot with an in-memory metastore so tests,
             // quickstarts and minimal-mode boots have a working SSOT
             // without explicit wiring. `set_metastore_path` swaps it
@@ -503,12 +520,7 @@ impl Kernel {
         // at boot time to avoid issues in lightweight test contexts.
     }
 
-    // ── VFS Lock wiring ────────────────────────────────────────────────
-
-    /// Wire VFS lock manager (shares Arc with VFSLockManager).
-    pub fn set_vfs_lock(&mut self, inner: Arc<VFSLockManagerInner>) {
-        self.vfs_lock = Some(inner);
-    }
+    // ── Lock Manager wiring ──────────────────────────────────────────
 
     /// Set VFS lock timeout in milliseconds (default 5000).
     pub fn set_vfs_lock_timeout(&mut self, timeout_ms: u64) {
@@ -776,110 +788,83 @@ impl Kernel {
         }
     }
 
-    // ── Advisory lock pillar (F4 C4 + C4.1) ───────────────────
-    //
-    // Three Tier-1 syscalls for write operations + one
-    // metastore-proxy read helper for listing. All four fan out
-    // through `with_routed_metastore` so federation (per-zone
-    // `ZoneMetastore`, reads via ReadIndex per F4 C3.6) and
-    // standalone (`MemoryMetastore` / `RedbMetastore`) share one
-    // entry point.
-    //
-    // Contract (matches etcd / Consul default):
-    //   * sys_lock / sys_unlock / sys_lock_extend — Strong
-    //     Consistency (raft propose on federation, local atomic
-    //     op on standalone).
-    //   * metastore_list_locks — linearizable read (raft
-    //     ReadIndex on federation, local read on standalone).
-    //
-    // No dedicated `sys_lock_list` syscall (C4.1 revert): the
-    // Python convention for listing locks is
-    // `sys_readdir("/__sys__/locks/")` — a virtual namespace like
-    // Linux `/proc/locks`. Python's `NexusFS.sys_readdir`
-    // intercepts the prefix at the top and (post-F4) calls
-    // `metastore_list_locks` through the PyKernel / proxy layer.
-    // That matches `_lock_manager.list_locks()` structurally and
-    // preserves the user-facing API exactly.
-    //
-    // No "get one lock" syscall either: the only historical
-    // caller was `sys_stat(include_lock=True)`, which F4 deletes.
-    // Consumers that need per-path lock info use
-    // `sys_readdir("/__sys__/locks/some/path/")` (prefix filter
-    // at the listing level). `sys_stat` does not embed a lock
-    // field — paying a ReadIndex round-trip per FUSE getattr is
-    // unacceptable.
+    // ── Advisory lock primitive (§4.4) ──────────────────────────
 
-    /// Acquire a lock on `path`. Returns `true` if the caller
-    /// became or already was a holder, `false` on conflict.
+    /// Acquire or extend an advisory lock.
+    ///
+    /// `lock_id` empty → try-acquire (returns `Some(new_uuid)` or
+    /// `None` on conflict). `lock_id` non-empty → extend TTL
+    /// (returns `Some(lock_id)` or `None` if holder not found).
     #[allow(clippy::too_many_arguments)]
     pub fn sys_lock(
         &self,
         path: &str,
         lock_id: &str,
-        mode: crate::metastore::KernelLockMode,
+        mode: crate::lock_manager::KernelLockMode,
         max_holders: u32,
         ttl_secs: u64,
         holder_info: &str,
-    ) -> Result<bool, KernelError> {
-        match self.with_routed_metastore(path, |ms| {
-            ms.acquire_lock(path, lock_id, mode, max_holders, ttl_secs, holder_info)
-        }) {
-            Some(result) => {
-                result.map_err(|e| KernelError::IOError(format!("sys_lock({path}): {e:?}")))
-            }
-            None => Err(KernelError::IOError("no metastore wired".into())),
+    ) -> Result<Option<String>, KernelError> {
+        if lock_id.is_empty() {
+            let generated_id = uuid::Uuid::new_v4().to_string();
+            let acquired = self
+                .lock_manager
+                .acquire_lock(
+                    path,
+                    &generated_id,
+                    mode,
+                    max_holders,
+                    ttl_secs,
+                    holder_info,
+                )
+                .map_err(|e| KernelError::IOError(format!("sys_lock({path}): {e}")))?;
+            Ok(if acquired { Some(generated_id) } else { None })
+        } else {
+            let extended = self
+                .lock_manager
+                .extend_lock(path, lock_id, ttl_secs)
+                .map_err(|e| KernelError::IOError(format!("sys_lock({path}): {e}")))?;
+            Ok(if extended {
+                Some(lock_id.to_string())
+            } else {
+                None
+            })
         }
     }
 
-    /// Release a specific holder.
-    pub fn sys_unlock(&self, path: &str, lock_id: &str) -> Result<bool, KernelError> {
-        match self.with_routed_metastore(path, |ms| ms.release_lock(path, lock_id)) {
-            Some(result) => {
-                result.map_err(|e| KernelError::IOError(format!("sys_unlock({path}): {e:?}")))
-            }
-            None => Err(KernelError::IOError("no metastore wired".into())),
+    /// Release a specific holder, or force-release all holders.
+    pub fn sys_unlock(&self, path: &str, lock_id: &str, force: bool) -> Result<bool, KernelError> {
+        if force {
+            self.lock_manager
+                .force_release_lock(path)
+                .map_err(|e| KernelError::IOError(format!("sys_unlock({path}): {e}")))
+        } else {
+            self.lock_manager
+                .release_lock(path, lock_id)
+                .map_err(|e| KernelError::IOError(format!("sys_unlock({path}): {e}")))
         }
     }
 
-    /// Extend a holder's TTL.
-    pub fn sys_lock_extend(
-        &self,
-        path: &str,
-        lock_id: &str,
-        ttl_secs: u64,
-    ) -> Result<bool, KernelError> {
-        match self.with_routed_metastore(path, |ms| ms.extend_lock(path, lock_id, ttl_secs)) {
-            Some(result) => {
-                result.map_err(|e| KernelError::IOError(format!("sys_lock_extend({path}): {e:?}")))
-            }
-            None => Err(KernelError::IOError("no metastore wired".into())),
-        }
-    }
-
-    /// Linearizable enumeration of locks under `prefix`, as a
-    /// metastore-proxy read helper. Called by the Python-side
-    /// `NexusFS.sys_readdir` intercept for `/__sys__/locks/` so
-    /// user code keeps using the existing `sys_readdir`
-    /// convention — this method is implementation plumbing, not a
-    /// separate user-facing syscall. Lives in the `metastore_*`
-    /// family alongside `metastore_get` / `metastore_list` /
-    /// `metastore_list_paginated` because locks are stored in the
-    /// same redb table family (F4 C3 `LOCKS_TABLE`) as file
-    /// metadata.
+    /// Enumerate locks under `prefix`, capped at `limit`.
     pub fn metastore_list_locks(
         &self,
         prefix: &str,
         limit: usize,
-    ) -> Result<Vec<crate::metastore::KernelLockInfo>, KernelError> {
-        // Empty / root prefix fan-outs still hit the global
-        // metastore, matching `metastore_list` routing.
-        let route_path = if prefix.is_empty() { "/" } else { prefix };
-        match self.with_routed_metastore(route_path, |ms| ms.list_locks(prefix, limit)) {
-            Some(result) => result.map_err(|e| {
-                KernelError::IOError(format!("metastore_list_locks({prefix}): {e:?}"))
-            }),
-            None => Err(KernelError::IOError("no metastore wired".into())),
-        }
+    ) -> Result<Vec<crate::lock_manager::KernelLockInfo>, KernelError> {
+        self.lock_manager
+            .list_locks(prefix, limit)
+            .map_err(|e| KernelError::IOError(format!("metastore_list_locks({prefix}): {e}")))
+    }
+
+    /// Upgrade lock manager to distributed mode (federation DI).
+    /// Sets Raft backend for advisory lock operations; I/O locks stay local.
+    #[allow(dead_code)]
+    pub fn upgrade_lock_manager(
+        &self,
+        node: nexus_raft::prelude::ZoneConsensus<nexus_raft::prelude::FullStateMachine>,
+        runtime: tokio::runtime::Handle,
+    ) {
+        self.lock_manager.upgrade_to_distributed(node, runtime);
     }
 
     // ── DCache proxy methods ───────────────────────────────────────────
@@ -1862,15 +1847,10 @@ impl Kernel {
         };
 
         // 4. VFS lock (blocking acquire — wrapper releases GIL before calling this)
-        let lock_handle = if let Some(ref lm) = self.vfs_lock {
-            let timeout = self.vfs_lock_timeout_ms;
-            lm.blocking_acquire(path, LockMode::Read, timeout)
-        } else {
-            0
-        };
-
-        // Lock timeout -> miss (unsafe to read without lock)
-        if self.vfs_lock.is_some() && lock_handle == 0 {
+        let lock_handle =
+            self.lock_manager
+                .blocking_acquire(path, LockMode::Read, self.vfs_lock_timeout_ms);
+        if lock_handle == 0 {
             return miss();
         }
 
@@ -1880,11 +1860,7 @@ impl Kernel {
                 .read_content(&route.mount_point, content_id, &route.backend_path, ctx);
 
         // 6. Release VFS lock (always, even on miss)
-        if lock_handle > 0 {
-            if let Some(ref lm) = self.vfs_lock {
-                lm.do_release(lock_handle);
-            }
-        }
+        self.lock_manager.do_release(lock_handle);
 
         // 7. Return result
         match content {
@@ -2005,15 +1981,10 @@ impl Kernel {
         }
 
         // 4. VFS lock (blocking write lock)
-        let lock_handle = if let Some(ref lm) = self.vfs_lock {
-            let timeout = self.vfs_lock_timeout_ms;
-            lm.blocking_acquire(path, LockMode::Write, timeout)
-        } else {
-            0
-        };
-
-        // Lock timeout -> miss (unsafe to write without lock)
-        if self.vfs_lock.is_some() && lock_handle == 0 {
+        let lock_handle =
+            self.lock_manager
+                .blocking_acquire(path, LockMode::Write, self.vfs_lock_timeout_ms);
+        if lock_handle == 0 {
             return miss();
         }
 
@@ -2108,11 +2079,7 @@ impl Kernel {
         };
 
         // 7. Release VFS lock (always, even on miss)
-        if lock_handle > 0 {
-            if let Some(ref lm) = self.vfs_lock {
-                lm.do_release(lock_handle);
-            }
-        }
+        self.lock_manager.do_release(lock_handle);
 
         result
     }
@@ -2177,6 +2144,8 @@ impl Kernel {
             })
             .to_string();
 
+        let lock = self.lock_manager.get_lock_info(path).ok().flatten();
+
         Some(StatResult {
             path: path.to_string(),
             backend_name: entry.backend_name,
@@ -2195,6 +2164,7 @@ impl Kernel {
             zone_id: entry.zone_id,
             created_at_ms: entry.created_at_ms,
             modified_at_ms: entry.modified_at_ms,
+            lock,
         })
     }
 
@@ -2275,21 +2245,43 @@ impl Kernel {
             None => return miss(0),
         };
 
-        // 4. DT_DIR/DT_MOUNT/DT_PIPE/DT_STREAM → Python fallback
+        // 4. Entry-type dispatch
         match entry.entry_type {
-            DT_DIR | DT_PIPE | DT_STREAM => return miss(entry.entry_type),
+            DT_PIPE => {
+                // Destroy pipe buffer + metastore/dcache cleanup (Rust-native)
+                let _ = self.destroy_pipe(path);
+                return Ok(SysUnlinkResult {
+                    hit: true,
+                    entry_type: DT_PIPE,
+                    post_hook_needed: self.delete_hook_count.load(Ordering::Relaxed) > 0,
+                    path: path.to_string(),
+                    etag: entry.etag,
+                    size: entry.size,
+                });
+            }
+            DT_STREAM => {
+                // Destroy stream buffer + metastore/dcache cleanup (Rust-native)
+                let _ = self.destroy_stream(path);
+                return Ok(SysUnlinkResult {
+                    hit: true,
+                    entry_type: DT_STREAM,
+                    post_hook_needed: self.delete_hook_count.load(Ordering::Relaxed) > 0,
+                    path: path.to_string(),
+                    etag: entry.etag,
+                    size: entry.size,
+                });
+            }
+            DT_DIR => return miss(entry.entry_type),
             // DT_MOUNT (2) and DT_EXTERNAL_STORAGE (5) → Python handles unmount
             2 | 5 => return miss(entry.entry_type),
             _ => {}
         }
 
-        // 5. VFS write lock
-        let lock_handle = if let Some(ref lm) = self.vfs_lock {
-            lm.blocking_acquire(path, LockMode::Write, self.vfs_lock_timeout_ms)
-        } else {
-            0
-        };
-        if self.vfs_lock.is_some() && lock_handle == 0 {
+        // 5. VFS write lock (DT_REG path)
+        let lock_handle =
+            self.lock_manager
+                .blocking_acquire(path, LockMode::Write, self.vfs_lock_timeout_ms);
+        if lock_handle == 0 {
             return miss(entry.entry_type);
         }
 
@@ -2307,11 +2299,7 @@ impl Kernel {
         self.dcache.evict(path);
 
         // 9. Release VFS lock
-        if lock_handle > 0 {
-            if let Some(ref lm) = self.vfs_lock {
-                lm.do_release(lock_handle);
-            }
-        }
+        self.lock_manager.do_release(lock_handle);
 
         // 10. OBSERVE-phase dispatch (§11 Phase 5): queue FileDelete.
         // Cloned out of `entry` because the SysUnlinkResult below also
@@ -2395,35 +2383,28 @@ impl Kernel {
             (new_path, old_path)
         };
 
-        let lock1 = if let Some(ref lm) = self.vfs_lock {
-            lm.blocking_acquire(first, LockMode::Write, self.vfs_lock_timeout_ms)
-        } else {
-            0
-        };
+        let lock1 =
+            self.lock_manager
+                .blocking_acquire(first, LockMode::Write, self.vfs_lock_timeout_ms);
         let lock2 = if first != second {
-            if let Some(ref lm) = self.vfs_lock {
-                lm.blocking_acquire(second, LockMode::Write, self.vfs_lock_timeout_ms)
-            } else {
-                0
-            }
+            self.lock_manager
+                .blocking_acquire(second, LockMode::Write, self.vfs_lock_timeout_ms)
         } else {
             0
         };
 
-        let release_locks = |lm: &Option<Arc<VFSLockManagerInner>>, h1: u64, h2: u64| {
-            if let Some(ref l) = lm {
-                if h2 > 0 {
-                    l.do_release(h2);
-                }
-                if h1 > 0 {
-                    l.do_release(h1);
-                }
+        let release_locks = |lm: &LockManager, h1: u64, h2: u64| {
+            if h2 > 0 {
+                lm.do_release(h2);
+            }
+            if h1 > 0 {
+                lm.do_release(h1);
             }
         };
 
         // Lock timeout check
-        if self.vfs_lock.is_some() && lock1 == 0 {
-            release_locks(&self.vfs_lock, lock1, lock2);
+        if lock1 == 0 {
+            release_locks(&self.lock_manager, lock1, lock2);
             return miss();
         }
 
@@ -2440,15 +2421,23 @@ impl Kernel {
             (None, Some(e)) => (e.entry_type == DT_DIR, e.entry_type),
             (None, None) => {
                 // Not found in Rust metastore/dcache — let Python handle under VFS lock
-                release_locks(&self.vfs_lock, lock1, lock2);
+                release_locks(&self.lock_manager, lock1, lock2);
                 return miss();
             }
         };
 
-        // DT_MOUNT/DT_PIPE/DT_STREAM → Python fallback
+        // DT_PIPE/DT_STREAM: rename not supported (IPC endpoints are identity-bound)
+        // DT_MOUNT (2) / DT_EXTERNAL_STORAGE (5): Python handles unmount logic
         match entry_type {
-            DT_PIPE | DT_STREAM | 2 | 5 => {
-                release_locks(&self.vfs_lock, lock1, lock2);
+            DT_PIPE | DT_STREAM => {
+                release_locks(&self.lock_manager, lock1, lock2);
+                return Err(KernelError::IOError(format!(
+                    "rename not supported for entry type {} at {}",
+                    entry_type, old_path
+                )));
+            }
+            2 | 5 => {
+                release_locks(&self.lock_manager, lock1, lock2);
                 return Ok(SysRenameResult {
                     hit: false,
                     success: false,
@@ -2467,7 +2456,7 @@ impl Kernel {
             })
             .unwrap_or(false);
         if new_exists {
-            release_locks(&self.vfs_lock, lock1, lock2);
+            release_locks(&self.lock_manager, lock1, lock2);
             return miss();
         }
 
@@ -2501,7 +2490,7 @@ impl Kernel {
         }
 
         // 10. Release sorted locks
-        release_locks(&self.vfs_lock, lock1, lock2);
+        release_locks(&self.lock_manager, lock1, lock2);
 
         // 11. OBSERVE-phase dispatch (§11 Phase 5): queue FileRename.
         // Convention (mirrors Python FileEvent for renames): primary
@@ -2517,6 +2506,286 @@ impl Kernel {
             post_hook_needed: self.rename_hook_count.load(Ordering::Relaxed) > 0,
             is_directory,
         })
+    }
+
+    // ── sys_copy ───────────────────────────────────────────────────────
+
+    /// Rust syscall: copy file (validate → route → VFS lock → backend copy → metastore → dcache).
+    ///
+    /// Three strategies:
+    ///   1. Same mount, CAS backend → metadata-only copy (content deduplicated by hash).
+    ///   2. Same mount, PAS backend → `backend.copy_file()`, fallback to read+write.
+    ///   3. Cross mount → `read_content()` from src + `write_content()` to dst.
+    ///
+    /// Returns `hit=false` for directories, DT_PIPE/DT_STREAM, or when src not found.
+    pub fn sys_copy(
+        &self,
+        src_path: &str,
+        dst_path: &str,
+        ctx: &OperationContext,
+    ) -> Result<SysCopyResult, KernelError> {
+        let miss = || {
+            Ok(SysCopyResult {
+                hit: false,
+                post_hook_needed: false,
+                dst_path: dst_path.to_string(),
+                etag: None,
+                size: 0,
+                version: 0,
+            })
+        };
+
+        // 1. Validate both paths
+        validate_path_fast(src_path)?;
+        validate_path_fast(dst_path)?;
+
+        // 2. Route both (read access for src, write access for dst)
+        let src_route = match self
+            .mount_table
+            .route(src_path, &ctx.zone_id, ctx.is_admin, false)
+        {
+            Ok(r) => r,
+            Err(_) => return miss(),
+        };
+        let dst_route = match self
+            .mount_table
+            .route(dst_path, &ctx.zone_id, ctx.is_admin, true)
+        {
+            Ok(r) => r,
+            Err(_) => return miss(),
+        };
+
+        // 3. Get source metadata (dcache or metastore)
+        let src_meta = match self.dcache.get_entry(src_path) {
+            Some(e) => e,
+            None => {
+                match self
+                    .with_metastore(&src_route.mount_point, |ms| {
+                        ms.get(src_path).ok().flatten().map(|m| CachedEntry {
+                            backend_name: m.backend_name,
+                            physical_path: m.physical_path,
+                            size: m.size,
+                            etag: m.etag,
+                            version: m.version,
+                            entry_type: m.entry_type,
+                            zone_id: m.zone_id,
+                            mime_type: m.mime_type,
+                            created_at_ms: None,
+                            modified_at_ms: None,
+                        })
+                    })
+                    .flatten()
+                {
+                    Some(e) => e,
+                    None => return miss(),
+                }
+            }
+        };
+
+        // 4. Reject non-regular files
+        match src_meta.entry_type {
+            DT_REG => {}
+            _ => return miss(),
+        }
+
+        // 5. Check destination doesn't already exist
+        let dst_exists = self
+            .with_metastore(&dst_route.mount_point, |ms| {
+                ms.exists(dst_path).unwrap_or(false)
+            })
+            .unwrap_or(false);
+        if dst_exists {
+            return Err(KernelError::IOError(format!(
+                "sys_copy: destination already exists: {dst_path}"
+            )));
+        }
+
+        // 6. VFS lock both paths (sorted, deadlock-free)
+        let (first, second) = if src_path <= dst_path {
+            (src_path, dst_path)
+        } else {
+            (dst_path, src_path)
+        };
+        let lock1 =
+            self.lock_manager
+                .blocking_acquire(first, LockMode::Write, self.vfs_lock_timeout_ms);
+        let lock2 = if first != second {
+            self.lock_manager
+                .blocking_acquire(second, LockMode::Write, self.vfs_lock_timeout_ms)
+        } else {
+            0
+        };
+
+        let release_locks = |lm: &LockManager, h1: u64, h2: u64| {
+            if h2 > 0 {
+                lm.do_release(h2);
+            }
+            if h1 > 0 {
+                lm.do_release(h1);
+            }
+        };
+
+        if lock1 == 0 {
+            release_locks(&self.lock_manager, lock1, lock2);
+            return miss();
+        }
+
+        // 7. Copy content (strategy depends on same-mount vs cross-mount)
+        let same_mount = src_route.mount_point == dst_route.mount_point;
+
+        let copy_result: Result<(String, u64), KernelError> = if same_mount {
+            // Try server-side copy first (PAS backends)
+            match self.mount_table.copy_file(
+                &src_route.mount_point,
+                &src_route.backend_path,
+                &dst_route.backend_path,
+            ) {
+                Some(wr) => Ok((wr.content_id, wr.size)),
+                None => {
+                    // CAS backend or copy_file not supported — metadata-only copy
+                    // (content deduplicated by hash, just create new metastore entry)
+                    let etag = src_meta.etag.clone().unwrap_or_default();
+                    if !etag.is_empty() {
+                        // CAS: same content_id, just new path
+                        Ok((etag, src_meta.size))
+                    } else {
+                        // Fallback: read + write
+                        self.copy_via_read_write(&src_route, &dst_route, &src_meta, ctx)
+                    }
+                }
+            }
+        } else {
+            // Cross-mount: read from src backend, write to dst backend
+            self.copy_via_read_write(&src_route, &dst_route, &src_meta, ctx)
+        };
+
+        let (content_id, size) = match copy_result {
+            Ok(r) => r,
+            Err(e) => {
+                release_locks(&self.lock_manager, lock1, lock2);
+                return Err(e);
+            }
+        };
+
+        // 8. Build destination metadata and persist
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        let backend_display_name = self
+            .mount_table
+            .get_canonical(&dst_route.mount_point)
+            .map(|e| e.backend_name.clone())
+            .unwrap_or_else(|| dst_route.io_profile.clone());
+
+        let new_version = 1u32;
+        self.with_metastore(&dst_route.mount_point, |ms| {
+            let meta = crate::metastore::FileMetadata {
+                path: dst_path.to_string(),
+                backend_name: backend_display_name.clone(),
+                physical_path: content_id.clone(),
+                size,
+                etag: Some(content_id.clone()),
+                version: new_version,
+                entry_type: DT_REG,
+                zone_id: Some(ctx.zone_id.clone()),
+                mime_type: src_meta.mime_type.clone(),
+                created_at_ms: Some(now_ms),
+                modified_at_ms: Some(now_ms),
+            };
+            let _ = ms.put(dst_path, meta);
+        });
+
+        // 9. Update dcache
+        self.dcache.put(
+            dst_path,
+            CachedEntry {
+                backend_name: backend_display_name,
+                physical_path: content_id.clone(),
+                size,
+                etag: Some(content_id.clone()),
+                version: new_version,
+                entry_type: DT_REG,
+                zone_id: Some(ctx.zone_id.clone()),
+                mime_type: src_meta.mime_type.clone(),
+                created_at_ms: Some(now_ms),
+                modified_at_ms: Some(now_ms),
+            },
+        );
+
+        // 10. Release VFS locks
+        release_locks(&self.lock_manager, lock1, lock2);
+
+        Ok(SysCopyResult {
+            hit: true,
+            post_hook_needed: self.copy_hook_count.load(Ordering::Relaxed) > 0,
+            dst_path: dst_path.to_string(),
+            etag: Some(content_id),
+            size,
+            version: new_version,
+        })
+    }
+
+    /// Internal: copy content via read_content + write_content (cross-mount or fallback).
+    fn copy_via_read_write(
+        &self,
+        src_route: &crate::mount_table::RustRouteResult,
+        dst_route: &crate::mount_table::RustRouteResult,
+        src_meta: &CachedEntry,
+        ctx: &OperationContext,
+    ) -> Result<(String, u64), KernelError> {
+        let content_id = src_meta
+            .etag
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .or_else(|| {
+                let pp = src_meta.physical_path.as_str();
+                if pp.is_empty() {
+                    None
+                } else {
+                    Some(pp)
+                }
+            });
+        let content_id = match content_id {
+            Some(id) => id,
+            None => {
+                return Err(KernelError::IOError(
+                    "sys_copy: source has no content_id".into(),
+                ))
+            }
+        };
+
+        let content = self
+            .mount_table
+            .read_content(
+                &src_route.mount_point,
+                content_id,
+                &src_route.backend_path,
+                ctx,
+            )
+            .ok_or_else(|| {
+                KernelError::IOError(format!(
+                    "sys_copy: failed to read source content at {}",
+                    src_route.backend_path
+                ))
+            })?;
+
+        let wr = self
+            .mount_table
+            .write_content(
+                &dst_route.mount_point,
+                &content,
+                &dst_route.backend_path,
+                ctx,
+            )
+            .ok_or_else(|| {
+                KernelError::IOError(format!(
+                    "sys_copy: failed to write destination at {}",
+                    dst_route.backend_path
+                ))
+            })?;
+
+        Ok((wr.content_id, wr.size))
     }
 
     // ── sys_mkdir ──────────────────────────────────────────────────────
@@ -2835,20 +3104,18 @@ impl Kernel {
 
         // 3. Sorted VFS lock acquisition for all paths
         let mut lock_handles: Vec<u64> = vec![0; items.len()];
-        if self.vfs_lock.is_some() {
+        {
             // Sort indices by path to avoid deadlock
             let mut indices: Vec<usize> = (0..items.len()).collect();
             indices.sort_by(|a, b| items[*a].0.cmp(&items[*b].0));
 
             for idx in indices {
                 if routes[idx].is_some() {
-                    if let Some(ref lm) = self.vfs_lock {
-                        lock_handles[idx] = lm.blocking_acquire(
-                            &items[idx].0,
-                            LockMode::Write,
-                            self.vfs_lock_timeout_ms,
-                        );
-                    }
+                    lock_handles[idx] = self.lock_manager.blocking_acquire(
+                        &items[idx].0,
+                        LockMode::Write,
+                        self.vfs_lock_timeout_ms,
+                    );
                 }
             }
         }
@@ -2873,7 +3140,7 @@ impl Kernel {
             };
 
             // Lock timeout check
-            if self.vfs_lock.is_some() && lock_handles[i] == 0 {
+            if lock_handles[i] == 0 {
                 results.push(SysWriteResult {
                     hit: false,
                     content_id: None,
@@ -2977,11 +3244,9 @@ impl Kernel {
         }
 
         // 5. Release all VFS locks
-        if let Some(ref lm) = self.vfs_lock {
-            for handle in &lock_handles {
-                if *handle > 0 {
-                    lm.do_release(*handle);
-                }
+        for handle in &lock_handles {
+            if *handle > 0 {
+                self.lock_manager.do_release(*handle);
             }
         }
 

@@ -178,14 +178,18 @@ impl PipeManager {
         path: &str,
         timeout_ms: u64,
     ) -> Result<Vec<u8>, PipeManagerError> {
-        let buf = self
-            .buffers
-            .get(path)
-            .ok_or_else(|| PipeManagerError::NotFound(path.to_string()))?;
-        let notify = self
-            .notify
-            .get(path)
-            .ok_or_else(|| PipeManagerError::NotFound(path.to_string()))?;
+        let buf = Arc::clone(
+            self.buffers
+                .get(path)
+                .ok_or_else(|| PipeManagerError::NotFound(path.to_string()))?
+                .value(),
+        );
+        let notify = Arc::clone(
+            self.notify
+                .get(path)
+                .ok_or_else(|| PipeManagerError::NotFound(path.to_string()))?
+                .value(),
+        );
 
         // Fast path: try nowait first. Same lost-wakeup discipline as
         // `write_nowait` — take notify.mutex before notify_one. (Today

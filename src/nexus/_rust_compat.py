@@ -200,7 +200,6 @@ PathTrie = _get("PathTrie")
 BloomFilter = _get("BloomFilter")
 SharedMemoryPipeBackend = _get("SharedMemoryPipeBackend")
 SharedMemoryStreamBackend = _get("SharedMemoryStreamBackend")
-VFSLockManager = _get("VFSLockManager")
 VFSSemaphore = _get("VFSSemaphore")
 VolumeEngine = _get("VolumeEngine")
 

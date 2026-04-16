@@ -1,33 +1,27 @@
 """LockMixin — Advisory locking syscalls (POSIX flock equivalent).
 
 Tier 1: sys_lock (acquire + extend), sys_unlock (release + force)
-Tier 2: lock_acquire (dict wrapper for RPC)
 
-lock_info → sys_stat(include_lock=True)
 lock_list → sys_readdir("/__sys__/locks/")
 
-Delegates to kernel AdvisoryLockManager (local or Raft-backed).
+Delegates to Rust kernel (PyKernel.sys_lock / sys_unlock).
 """
 
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING
 
 from nexus.lib.rpc_decorator import rpc_expose
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
-    from nexus.lib.distributed_lock import AdvisoryLockManager
 
 logger = logging.getLogger(__name__)
 
 
 class LockMixin:
-    """Advisory locking: sys_lock / sys_unlock + Tier 2 helpers."""
-
-    # Provided by NexusFS.__init__
-    _lock_manager: "AdvisoryLockManager"
+    """Advisory locking: sys_lock / sys_unlock."""
 
     def _validate_path(self, path: str, allow_root: bool = False) -> str:  # noqa: ARG002
         return path  # overridden by NexusFS
@@ -55,20 +49,12 @@ class LockMixin:
         Returns lock_id on success, None on failure.
         """
         path = self._validate_path(path)
-        _mode: Literal["exclusive", "shared"] = "exclusive" if mode == "exclusive" else "shared"
-
-        if lock_id is not None:
-            # Extend existing lock TTL (heartbeat)
-            result = self._lock_manager.extend(lock_id, path, ttl=ttl)
-            return lock_id if result.success else None
-
-        # Try-acquire new lock
-        return self._lock_manager.acquire(
+        return self._kernel.sys_lock(
             path,
-            mode=_mode,
-            ttl=ttl,
+            lock_id=lock_id or "",
+            mode=mode,
             max_holders=max_holders,
-            timeout=0,  # try-once, no blocking
+            ttl_secs=int(ttl),
         )
 
     @rpc_expose(description="Release advisory lock (normal or force)")
@@ -90,30 +76,9 @@ class LockMixin:
         Returns True if released.
         """
         path = self._validate_path(path)
-        if force:
-            return self._lock_manager.force_release(path)
-        if not lock_id:
+        if not force and not lock_id:
             raise ValueError("lock_id is required for non-force release")
-        return self._lock_manager.release(lock_id, path)
-
-    # ── Tier 2: RPC-safe wrappers over Tier 1 ───────────────────
-
-    @rpc_expose(description="Acquire advisory lock (blocking with timeout)")
-    def lock_acquire(
-        self,
-        path: str,
-        mode: str = "exclusive",
-        ttl: float = 30.0,
-        max_holders: int = 1,
-        *,
-        context: "OperationContext | None" = None,
-    ) -> dict[str, Any]:
-        """Tier 2: wraps sys_lock with dict return for gRPC Call RPC.
-
-        sys_lock returns raw str|None which gRPC encoder can't serialize.
-        """
-        lock_id = self.sys_lock(path, mode=mode, ttl=ttl, max_holders=max_holders, context=context)
-        return {"acquired": lock_id is not None, "lock_id": lock_id}
+        return self._kernel.sys_unlock(path, lock_id=lock_id or "", force=force)
 
     # ── Distributed lock helpers (sync bridge for write(lock=True)) ──
 
@@ -123,13 +88,10 @@ class LockMixin:
         timeout: float,
         context: "OperationContext | None",  # noqa: ARG002
     ) -> str | None:
-        """Acquire advisory lock synchronously via kernel _lock_manager.
-
-        Directly calls the (now sync) _lock_manager.acquire().
-        """
+        """Acquire advisory lock synchronously via kernel sys_lock."""
         from nexus.contracts.exceptions import LockTimeout
 
-        lock_id = self._lock_manager.acquire(path=path, timeout=timeout)
+        lock_id = self.sys_lock(path, ttl=timeout)
 
         if lock_id is None:
             raise LockTimeout(path=path, timeout=timeout)
@@ -142,11 +104,11 @@ class LockMixin:
         path: str,
         context: "OperationContext | None",  # noqa: ARG002
     ) -> None:
-        """Release advisory lock synchronously via kernel _lock_manager."""
+        """Release advisory lock synchronously via kernel sys_unlock."""
         if not lock_id:
             return
 
         try:
-            self._lock_manager.release(lock_id, path)
+            self.sys_unlock(path, lock_id=lock_id)
         except Exception as e:
             logger.error(f"Failed to release lock {lock_id} for {path}: {e}")

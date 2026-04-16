@@ -467,6 +467,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires Python interpreter (run via pytest or maturin develop)"]
     fn test_top_k_simsimd_failure_returns_zero() {
         // SimSIMD failures use unwrap_or(0.0) for backward compatibility.
         // Callers always get exactly min(k, n) results.
@@ -544,6 +545,7 @@ mod tests {
     // -- Integration: top_k_similar_f32 uses the generic --------------------
 
     #[test]
+    #[ignore = "requires Python interpreter (run via pytest or maturin develop)"]
     fn test_top_k_similar_f32_basic() {
         // Normalized vectors for meaningful cosine similarity.
         let query = vec![1.0f32, 0.0, 0.0];
@@ -568,6 +570,7 @@ mod tests {
     // -- Integration: top_k_similar_i8 uses the generic ---------------------
 
     #[test]
+    #[ignore = "requires Python interpreter (run via pytest or maturin develop)"]
     fn test_top_k_similar_i8_basic() {
         let query = vec![100i8, 0, 0];
         let vectors = vec![

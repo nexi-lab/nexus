@@ -29,7 +29,6 @@ use crate::hook_registry::HookRegistry;
 #[cfg(feature = "py-hook-adapters")]
 use crate::hook_registry::InterceptHook;
 use crate::kernel::{Kernel, KernelError, OperationContext};
-use crate::lock::VFSLockManager;
 use crate::metastore::{FileMetadata, MetastoreError};
 use crate::mount_table::{RouteError, RustRouteResult};
 
@@ -532,6 +531,32 @@ impl ObjectStore for PyObjectStoreAdapter {
             Ok(())
         })
     }
+
+    fn copy_file(&self, src_path: &str, dst_path: &str) -> Result<WriteResult, StorageError> {
+        Python::attach(|py| {
+            let obj = self.inner.bind(py);
+            // Check if the Python backend has copy_file (PAS-only method)
+            if !obj.hasattr("copy_file").unwrap_or(false) {
+                return Err(StorageError::NotSupported("copy_file"));
+            }
+            obj.call_method1("copy_file", (src_path, dst_path))
+                .map_err(|e| StorageError::IOError(io::Error::other(e.to_string())))?;
+            // copy_file returns None in Python; compute result from destination
+            let size = obj
+                .call_method1("get_size_by_path", (dst_path,))
+                .and_then(|v| v.extract::<u64>())
+                .unwrap_or(0);
+            let version = obj
+                .call_method1("get_version_by_path", (dst_path,))
+                .and_then(|v| v.extract::<String>())
+                .unwrap_or_default();
+            Ok(WriteResult {
+                content_id: version.clone(),
+                version,
+                size,
+            })
+        })
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -950,6 +975,19 @@ pub struct PySysRmdirResult {
     pub children_deleted: usize,
 }
 
+// ── PySysCopyResult ─────────────────────────────────────────────
+
+/// Python-facing SysCopyResult.
+#[pyclass(name = "SysCopyResult", get_all)]
+pub struct PySysCopyResult {
+    pub hit: bool,
+    pub post_hook_needed: bool,
+    pub dst_path: String,
+    pub etag: Option<String>,
+    pub size: u64,
+    pub version: u32,
+}
+
 // ── PyRustRouteResult ───────────────────────────────────────────
 
 /// Python-facing RustRouteResult.
@@ -1005,7 +1043,7 @@ impl PyKernel {
     pub fn install_mount_metastore(
         &self,
         canonical_key: String,
-        ms: std::sync::Arc<dyn crate::metastore::Metastore>,
+        ms: Arc<dyn crate::metastore::Metastore>,
     ) {
         self.inner.install_mount_metastore(canonical_key, ms);
     }
@@ -1030,11 +1068,7 @@ impl PyKernel {
         }
     }
 
-    // ── VFS Lock wiring ────────────────────────────────────────────────
-
-    fn set_vfs_lock(&mut self, vfs_lock: &VFSLockManager) {
-        self.inner.set_vfs_lock(Arc::clone(&vfs_lock.inner));
-    }
+    // ── Lock Manager wiring ──────────────────────────────────────────
 
     fn set_vfs_lock_timeout(&mut self, timeout_ms: u64) {
         self.inner.set_vfs_lock_timeout(timeout_ms);
@@ -1246,9 +1280,9 @@ impl PyKernel {
         Ok(dict.into())
     }
 
-    // ── Advisory lock syscalls (F4 C4) ──────────────────────────────
+    // ── Advisory lock syscalls (F4 C5) ──────────────────────────────
 
-    #[pyo3(signature = (path, lock_id, mode, max_holders=1, ttl_secs=60, holder_info=""))]
+    #[pyo3(signature = (path, lock_id="", mode="exclusive", max_holders=1, ttl_secs=60, holder_info=""))]
     #[allow(clippy::too_many_arguments)]
     fn sys_lock(
         &self,
@@ -1258,10 +1292,10 @@ impl PyKernel {
         max_holders: u32,
         ttl_secs: u64,
         holder_info: &str,
-    ) -> PyResult<bool> {
+    ) -> PyResult<Option<String>> {
         let parsed_mode = match mode.to_ascii_lowercase().as_str() {
-            "exclusive" => crate::metastore::KernelLockMode::Exclusive,
-            "shared" => crate::metastore::KernelLockMode::Shared,
+            "exclusive" => crate::lock_manager::KernelLockMode::Exclusive,
+            "shared" => crate::lock_manager::KernelLockMode::Shared,
             other => {
                 return Err(pyo3::exceptions::PyValueError::new_err(format!(
                     "invalid lock mode '{}': expected 'exclusive' or 'shared'",
@@ -1281,13 +1315,10 @@ impl PyKernel {
             .map_err(Into::into)
     }
 
-    fn sys_unlock(&self, path: &str, lock_id: &str) -> PyResult<bool> {
-        self.inner.sys_unlock(path, lock_id).map_err(Into::into)
-    }
-
-    fn sys_lock_extend(&self, path: &str, lock_id: &str, ttl_secs: u64) -> PyResult<bool> {
+    #[pyo3(signature = (path, lock_id="", force=false))]
+    fn sys_unlock(&self, path: &str, lock_id: &str, force: bool) -> PyResult<bool> {
         self.inner
-            .sys_lock_extend(path, lock_id, ttl_secs)
+            .sys_unlock(path, lock_id, force)
             .map_err(Into::into)
     }
 
@@ -2074,6 +2105,32 @@ impl PyKernel {
                 dict.set_item("mode", s.mode)?;
                 dict.set_item("version", s.version)?;
                 dict.set_item("zone_id", s.zone_id.as_deref())?;
+                match &s.lock {
+                    Some(lock) => {
+                        let lock_dict = PyDict::new(py);
+                        let label = if lock.max_holders == 1 {
+                            "mutex"
+                        } else {
+                            "semaphore"
+                        };
+                        lock_dict.set_item("mode", label)?;
+                        lock_dict.set_item("max_holders", lock.max_holders)?;
+                        let holders = pyo3::types::PyList::empty(py);
+                        for h in &lock.holders {
+                            let h_dict = PyDict::new(py);
+                            h_dict.set_item("lock_id", &h.lock_id)?;
+                            h_dict.set_item("holder_info", &h.holder_info)?;
+                            h_dict.set_item("acquired_at", h.acquired_at_secs)?;
+                            h_dict.set_item("expires_at", h.expires_at_secs)?;
+                            holders.append(h_dict)?;
+                        }
+                        lock_dict.set_item("holders", holders)?;
+                        dict.set_item("lock", lock_dict)?;
+                    }
+                    None => {
+                        dict.set_item("lock", py.None())?;
+                    }
+                }
                 Ok(Some(dict))
             }
             None => Ok(None),
@@ -2150,6 +2207,46 @@ impl PyKernel {
             success: result.success,
             post_hook_needed: result.post_hook_needed,
             is_directory: result.is_directory,
+        })
+    }
+
+    // ── sys_copy ──────────────────────────────────────────────────────
+
+    #[pyo3(signature = (src_path, dst_path, ctx))]
+    fn sys_copy(
+        &self,
+        py: Python<'_>,
+        src_path: &str,
+        dst_path: &str,
+        ctx: &PyOperationContext,
+    ) -> PyResult<PySysCopyResult> {
+        // 1. PRE-INTERCEPT hooks (GIL, abort on exception)
+        if self.inner.has_hooks("copy") {
+            let py_ctx = rust_ctx_to_python(py, &ctx.to_rust(), "")
+                .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
+            let hc = get_hook_ctx_cache(py).ok_or_else(|| {
+                pyo3::exceptions::PyRuntimeError::new_err("hook context cache init failed")
+            })?;
+            let chc = hc
+                .copy
+                .bind(py)
+                .call1((src_path, dst_path, py_ctx))?
+                .unbind();
+            self.dispatch_pre_hooks_inner("copy", &chc)?;
+        }
+
+        // 2. Call pure Rust kernel
+        let rust_ctx = ctx.to_rust();
+        let result = py.detach(|| self.inner.sys_copy(src_path, dst_path, &rust_ctx));
+        let result = result.map_err(|e| -> PyErr { e.into() })?;
+
+        Ok(PySysCopyResult {
+            hit: result.hit,
+            post_hook_needed: result.post_hook_needed,
+            dst_path: result.dst_path,
+            etag: result.etag,
+            size: result.size,
+            version: result.version,
         })
     }
 

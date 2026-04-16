@@ -6,7 +6,7 @@ import builtins
 import contextlib
 import logging
 import time
-from collections.abc import Callable, Generator, Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import replace as _dc_replace
 from datetime import UTC, datetime
 from typing import Any, NamedTuple
@@ -157,17 +157,11 @@ class NexusFS(  # type: ignore[misc]
         # ── Kernel-owned primitives (always present, created here) ──────
         # See KERNEL-ARCHITECTURE.md §1 DI patterns table.
 
-        from nexus.core.lock_fast import create_vfs_lock_manager
-
-        self._vfs_lock_manager = create_vfs_lock_manager()
-        logger.info("VFS lock manager initialized (%s)", type(self._vfs_lock_manager).__name__)
-
         from nexus.lib.distributed_lock import LocalLockManager
         from nexus.lib.semaphore import create_vfs_semaphore
 
         self._lock_manager: Any = LocalLockManager(
             create_vfs_semaphore(),
-            vfs_lock_manager=self._vfs_lock_manager,
         )
 
         self._init_dispatch()
@@ -196,9 +190,6 @@ class NexusFS(  # type: ignore[misc]
                 if isinstance(metadata_store, RustMetastoreProxy):
                     self._kernel = metadata_store._rust_kernel
                     metadata_store._kernel = self._kernel
-                    _vfs_rust = getattr(self._vfs_lock_manager, "_rust", None)
-                    if _vfs_rust is not None:
-                        self._kernel.set_vfs_lock(_vfs_rust)
                 else:
                     from nexus_kernel import Kernel as _Kernel
 
@@ -207,9 +198,6 @@ class NexusFS(  # type: ignore[misc]
                     _redb_path = getattr(metadata_store, "_redb_path", None)
                     if _redb_path is not None:
                         self._kernel.set_metastore_path(str(_redb_path))
-                    _vfs_rust = getattr(self._vfs_lock_manager, "_rust", None)
-                    if _vfs_rust is not None:
-                        self._kernel.set_vfs_lock(_vfs_rust)
             except Exception as exc:
                 import logging as _logging
 
@@ -835,10 +823,6 @@ class NexusFS(  # type: ignore[misc]
             if result is None:
                 return None
 
-        if include_lock:
-            lock_info = self._lock_manager.get_lock_info(normalized)
-            result["lock"] = self._format_lock_info(lock_info) if lock_info else None
-
         return result
 
     @staticmethod
@@ -1171,62 +1155,8 @@ class NexusFS(  # type: ignore[misc]
     # VFS I/O Lock — kernel-internal path-level read/write protection
     # =========================================================================
 
-    _VFS_LOCK_TIMEOUT_MS = 5000  # 5s — generous for kernel I/O serialization
-
-    def _vfs_acquire(self, path: str, mode: str) -> int:
-        """Acquire VFS I/O lock, raising LockTimeout on failure.
-
-        Args:
-            path: Virtual path to lock.
-            mode: "read" (shared) or "write" (exclusive).
-
-        Returns:
-            Lock handle (positive int) for release.
-
-        Raises:
-            LockTimeout: If lock cannot be acquired within timeout.
-        """
-        from nexus.lib.lock_order import L1_VFS, assert_can_acquire, mark_acquired
-
-        assert_can_acquire(L1_VFS)
-        handle = self._vfs_lock_manager.acquire(path, mode, timeout_ms=self._VFS_LOCK_TIMEOUT_MS)
-        if handle == 0:
-            from nexus.contracts.exceptions import LockTimeout
-
-            raise LockTimeout(
-                path=path,
-                timeout=self._VFS_LOCK_TIMEOUT_MS / 1000,
-                message=f"VFS {mode} lock timeout on {path}",
-            )
-        mark_acquired(L1_VFS)
-        return handle
-
-    # _backend_read deleted — Rust PyObjectStoreAdapter handles all backends
-    # via OperationContext (Rust-constructed with backend_path from route).
-
-    @contextlib.contextmanager
-    def _vfs_locked(self, path: str, mode: str) -> Generator[int, None, None]:
-        """Context manager for VFS I/O lock — symmetric acquire/release.
-
-        Usage::
-
-            with self._vfs_locked(path, "write"):
-                backend.write_content(...)
-                metadata.put(...)
-            # Event emission AFTER lock release (like Linux inotify after i_rwsem)
-        """
-        handle = self._vfs_acquire(path, mode)
-        try:
-            yield handle
-        finally:
-            self._vfs_lock_manager.release(handle)
-            from nexus.lib.lock_order import L1_VFS, mark_released
-
-            mark_released(L1_VFS)
-
-    # _acquire_lock_sync / _release_lock_sync in nexus_fs_lock.py (LockMixin)
-
-    # _acquire_lock_sync / _release_lock_sync in nexus_fs_lock.py (LockMixin)
+    # VFS I/O locking deleted — Rust kernel LockManager handles all I/O lock
+    # acquire/release internally in sys_read/sys_write/sys_copy/sys_unlink/sys_rename.
 
     @rpc_expose(description="Read file content")
     def sys_read(
@@ -2531,10 +2461,17 @@ class NexusFS(  # type: ignore[misc]
             ...     lambda c: json.dumps({**json.loads(c), "version": 2}).encode()
             ... )
         """
-        with self.locked(path, timeout=timeout, ttl=ttl, context=context) as lock_id:  # noqa: F841
+        lock_id = self.lock(path, timeout=timeout, ttl=ttl, context=context)
+        if lock_id is None:
+            from nexus.contracts.exceptions import LockTimeout
+
+            raise LockTimeout(path=path, timeout=timeout)
+        try:
             content = self.sys_read(path, context=context)
             new_content = update_fn(content)
             return self.write(path, new_content, context=context)
+        finally:
+            self.unlock(lock_id, path, context=context)
 
     @rpc_expose(description="Append content to an existing file or create if it doesn't exist")
     def append(
@@ -3413,20 +3350,20 @@ class NexusFS(  # type: ignore[misc]
         if _unlink_result.hit:
             return {}
 
-        # Python fallback for misses (DT_PIPE/STREAM/MOUNT, route fail, etc.)
-        with self._vfs_locked(path, "write"):
-            route.metastore.delete(path)
+        # Python fallback for misses (DT_MOUNT/DT_EXTERNAL_STORAGE, route fail)
+        # VFS lock handled by Rust kernel; fallback path is for edge cases only.
+        route.metastore.delete(path)
 
-            # PAS backend propagation
-            if hasattr(route.backend, "delete"):
-                try:
-                    route.backend.delete(route.backend_path, context=context)
-                except Exception as _be:
-                    logger.warning(
-                        "Backend file delete %s failed (metadata already deleted): %s",
-                        route.backend_path,
-                        _be,
-                    )
+        # PAS backend propagation
+        if hasattr(route.backend, "delete"):
+            try:
+                route.backend.delete(route.backend_path, context=context)
+            except Exception as _be:
+                logger.warning(
+                    "Backend file delete %s failed (metadata already deleted): %s",
+                    route.backend_path,
+                    _be,
+                )
 
         return {}
 
@@ -3616,86 +3553,67 @@ class NexusFS(  # type: ignore[misc]
                 )
             return {}
 
-        # Python always does full metastore rename under VFS lock
-        # (Rust kernel has the capability for FUSE/gRPC bypass, but Python
-        # wrapper continues to use route.metastore for authoritative metadata)
-        _first, _second = sorted([old_path, new_path])
-        _h1 = self._vfs_acquire(_first, "write")
-        try:
-            _h2 = self._vfs_acquire(_second, "write") if _first != _second else 0
+        # Python fallback for DT_MOUNT/DT_EXTERNAL_STORAGE rename.
+        # VFS lock handled by Rust kernel; fallback is for edge cases only.
+        is_implicit_dir = not old_route.metastore.exists(
+            old_path
+        ) and self.metadata.is_implicit_directory(old_path)
+        if not old_route.metastore.exists(old_path) and not is_implicit_dir:
+            raise NexusFileNotFoundError(old_path)
+
+        meta = old_route.metastore.get(old_path)
+        is_directory = is_implicit_dir or (meta and meta.mime_type == "inode/directory")
+
+        # Check destination — use backend.file_exists() for PAS backends
+        if new_route.metastore.exists(new_path):
+            if force:
+                self.sys_unlink(new_path, recursive=True, context=context)
+            elif hasattr(new_route.backend, "file_exists"):
+                if new_route.backend.file_exists(new_route.backend_path):
+                    raise FileExistsError(f"Destination path already exists: {new_path}")
+                logger.warning(
+                    "Cleaning up stale metadata for %s (file not in backend storage)",
+                    new_path,
+                )
+                new_route.metastore.delete(new_path)
+            else:
+                raise FileExistsError(f"Destination path already exists: {new_path}")
+
+        # Metadata rename (put-first for crash safety)
+        from dataclasses import replace as _replace
+
+        _old_meta = old_route.metastore.get(old_path)
+        if _old_meta is not None:
+            _new_meta = _replace(_old_meta, path=new_path)
+            new_route.metastore.put(_new_meta)
+            old_route.metastore.delete(old_path)
+        elif not is_directory:
+            raise NexusFileNotFoundError(old_path)
+
+        # Rename children (directories)
+        if is_directory:
+            _prefix = old_path.rstrip("/") + "/"
+            for child in old_route.metastore.list(_prefix, recursive=True):
+                _child_new = new_path + child.path[len(old_path) :]
+                _child_new_meta = _replace(child, path=_child_new)
+                new_route.metastore.put(_child_new_meta)
+                old_route.metastore.delete(child.path)
+
+        # PAS backend propagation
+        if hasattr(old_route.backend, "rename"):
             try:
-                # Authoritative checks (under lock, TOCTOU-safe)
-                is_implicit_dir = not old_route.metastore.exists(
-                    old_path
-                ) and self.metadata.is_implicit_directory(old_path)
-                if not old_route.metastore.exists(old_path) and not is_implicit_dir:
-                    raise NexusFileNotFoundError(old_path)
-
-                meta = old_route.metastore.get(old_path)
-                is_directory = is_implicit_dir or (meta and meta.mime_type == "inode/directory")
-
-                # Check destination — use backend.file_exists() for PAS backends
-                if new_route.metastore.exists(new_path):
-                    if force:
-                        # force=True: delete destination so rename can proceed
-                        self.sys_unlink(new_path, recursive=True, context=context)
-                    elif hasattr(new_route.backend, "file_exists"):
-                        if new_route.backend.file_exists(new_route.backend_path):
-                            raise FileExistsError(f"Destination path already exists: {new_path}")
-                        logger.warning(
-                            "Cleaning up stale metadata for %s (file not in backend storage)",
-                            new_path,
-                        )
-                        new_route.metastore.delete(new_path)
-                    else:
-                        raise FileExistsError(f"Destination path already exists: {new_path}")
-
-                # Metadata rename (put-first for crash safety)
-                from dataclasses import replace as _replace
-
-                _old_meta = old_route.metastore.get(old_path)
-                if _old_meta is not None:
-                    _new_meta = _replace(_old_meta, path=new_path)
-                    new_route.metastore.put(_new_meta)
-                    old_route.metastore.delete(old_path)
-                elif not is_directory:
-                    raise NexusFileNotFoundError(old_path)
-
-                # Rename children (directories)
-                if is_directory:
-                    _prefix = old_path.rstrip("/") + "/"
-                    for child in old_route.metastore.list(_prefix, recursive=True):
-                        _child_new = new_path + child.path[len(old_path) :]
-                        _child_new_meta = _replace(child, path=_child_new)
-                        new_route.metastore.put(_child_new_meta)
-                        old_route.metastore.delete(child.path)
-
-                # PAS backend propagation
-                if hasattr(old_route.backend, "rename"):
-                    try:
-                        old_route.backend.rename(
-                            old_route.backend_path,
-                            new_route.backend_path,
-                            context=context,
-                        )
-                    except Exception as _be:
-                        logger.warning(
-                            "Backend rename %s → %s failed (metadata already updated): %s",
-                            old_route.backend_path,
-                            new_route.backend_path,
-                            _be,
-                        )
-            finally:
-                if _h2:
-                    self._vfs_lock_manager.release(_h2)
-                    from nexus.lib.lock_order import L1_VFS, mark_released
-
-                    mark_released(L1_VFS)
-        finally:
-            self._vfs_lock_manager.release(_h1)
-            from nexus.lib.lock_order import L1_VFS, mark_released
-
-            mark_released(L1_VFS)
+                old_route.backend.rename(
+                    old_route.backend_path,
+                    new_route.backend_path,
+                    context=context,
+                )
+            except Exception as _be:
+                logger.warning(
+                    "Backend rename %s → %s failed (metadata already updated): %s",
+                    old_route.backend_path,
+                    new_route.backend_path,
+                    _be,
+                )
 
         # OBSERVE: Rust kernel fires FileRename when hit=true (§11 Phase 5).
         # Only Python fires for the fallback path.
@@ -3861,7 +3779,7 @@ class NexusFS(  # type: ignore[misc]
                 "modified_at": virtual_write_result.get("modified_at"),
             }
 
-        # Fast-fail (unlocked — re-checked under lock)
+        # Fast-fail
         if not src_route.metastore.exists(src_path) and not self.metadata.is_implicit_directory(
             src_path
         ):
@@ -3873,184 +3791,49 @@ class NexusFS(  # type: ignore[misc]
         if src_meta.mime_type == "inode/directory":
             raise IsADirectoryError(f"Cannot copy a directory: {src_path}")
 
-        # PRE-INTERCEPT (unlocked — hooks may be slow)
-        from nexus.contracts.vfs_hooks import CopyHookContext
+        # PRE-INTERCEPT hooks dispatched by Rust kernel via sys_copy
+        _rust_ctx = self._build_rust_ctx(context, is_admin)
+        _copy_result = self._kernel.sys_copy(src_path, dst_path, _rust_ctx)
 
-        _copy_ctx = CopyHookContext(
-            src_path=src_path,
-            dst_path=dst_path,
-            context=context,
-            zone_id=zone_id,
-            agent_id=agent_id,
-            metadata=src_meta,
-        )
-        self._kernel.dispatch_pre_hooks("copy", _copy_ctx)
+        # POST-INTERCEPT hooks
+        if _copy_result.post_hook_needed:
+            from nexus.contracts.vfs_hooks import CopyHookContext
 
-        # VFS I/O Lock: exclusive write on dst, shared read on src
-        _first, _second = sorted([src_path, dst_path])
-        _h1 = self._vfs_acquire(_first, "write")
-        try:
-            _h2 = self._vfs_acquire(_second, "write") if _first != _second else 0
-            try:
-                # Authoritative checks under lock
-                src_meta = src_route.metastore.get(src_path)
-                if src_meta is None:
-                    raise NexusFileNotFoundError(src_path)
+            _copy_ctx = CopyHookContext(
+                src_path=src_path,
+                dst_path=dst_path,
+                context=context,
+                zone_id=zone_id,
+                agent_id=agent_id,
+                metadata=src_meta,
+            )
+            self._kernel.dispatch_post_hooks("copy", _copy_ctx)
 
-                if dst_route.metastore.exists(dst_path):
-                    raise FileExistsError(f"Destination path already exists: {dst_path}")
+        if _copy_result.hit:
+            return {
+                "src_path": src_path,
+                "dst_path": dst_path,
+                "size": _copy_result.size,
+                "etag": _copy_result.etag,
+                "version": _copy_result.version,
+            }
 
-                same_backend = src_route.backend is dst_route.backend
+        # Python fallback — Rust sys_copy returned miss (should be rare)
+        logger.debug("sys_copy miss for %s → %s, falling back to Python", src_path, dst_path)
+        if dst_route.metastore.exists(dst_path):
+            raise FileExistsError(f"Destination path already exists: {dst_path}")
 
-                if same_backend and hasattr(src_route.backend, "copy_file"):
-                    # Path-addressing backend — native server-side copy
-                    src_route.backend.copy_file(
-                        src_route.backend_path,
-                        dst_route.backend_path,
-                        context=context,
-                    )
-                    # Get the destination blob's actual size/version
-                    # (NOT the source's — versioned backends assign new IDs).
-                    dst_size = src_route.backend.get_size_by_path(dst_route.backend_path)
-                    dst_version: str | None = None
-                    if hasattr(src_route.backend, "get_version_by_path"):
-                        dst_version = src_route.backend.get_version_by_path(dst_route.backend_path)
-
-                    from dataclasses import replace as _replace
-
-                    dst_meta = _replace(
-                        src_meta,
-                        path=dst_path,
-                        physical_path=dst_route.backend_path,
-                        etag=dst_version or src_meta.etag,
-                        size=dst_size,
-                    )
-                    dst_route.metastore.put(dst_meta)
-                    result = {
-                        "path": dst_path,
-                        "size": dst_size,
-                        "etag": dst_version or dst_meta.etag,
-                        "version": dst_meta.version,
-                    }
-
-                elif same_backend and not hasattr(src_route.backend, "copy_file"):
-                    # CAS backend — metadata-only copy (content is deduplicated)
-                    from dataclasses import replace as _replace
-
-                    dst_meta = _replace(src_meta, path=dst_path)
-                    dst_route.metastore.put(dst_meta)
-                    result = {
-                        "path": dst_path,
-                        "size": dst_meta.size or 0,
-                        "etag": dst_meta.etag,
-                        "version": dst_meta.version,
-                    }
-
-                else:
-                    # Cross-backend copy
-                    src_can_stream = hasattr(src_route.backend, "stream_file")
-                    dst_can_stream = hasattr(dst_route.backend, "write_file_chunked")
-
-                    if src_can_stream and dst_can_stream:
-                        # Streaming copy — no size limit, ~8 MB memory
-                        chunks = src_route.backend.stream_file(src_route.backend_path)
-                        dst_route.backend.write_file_chunked(
-                            dst_route.backend_path,
-                            chunks,
-                            content_type=src_meta.mime_type or "",
-                        )
-                        # Use source size (streaming doesn't return size);
-                        # get destination version if the backend is versioned.
-                        dst_version_id: str | None = None
-                        if hasattr(dst_route.backend, "get_version_by_path"):
-                            dst_version_id = dst_route.backend.get_version_by_path(
-                                dst_route.backend_path
-                            )
-
-                        from dataclasses import replace as _replace
-
-                        dst_meta = _replace(
-                            src_meta,
-                            path=dst_path,
-                            physical_path=dst_route.backend_path,
-                            etag=dst_version_id or src_meta.etag,
-                        )
-                        dst_route.metastore.put(dst_meta)
-                        result = {
-                            "path": dst_path,
-                            "size": dst_meta.size or 0,
-                            "etag": dst_version_id or dst_meta.etag,
-                            "version": dst_meta.version,
-                        }
-                    else:
-                        # Fallback — read from backend directly (we already
-                        # hold VFS locks, so must NOT call sys_read/write
-                        # which would try to re-acquire locks → deadlock).
-                        from nexus.contracts.constants import NEXUS_FS_MAX_INMEMORY_SIZE
-
-                        src_size = src_meta.size or 0
-                        if src_size > NEXUS_FS_MAX_INMEMORY_SIZE:
-                            size_gb = src_size / (1024**3)
-                            raise ValueError(
-                                f"Cross-backend copy too large ({size_gb:.1f} GB > "
-                                f"{NEXUS_FS_MAX_INMEMORY_SIZE / (1024**3):.0f} GB limit). "
-                                f"Move the file to the same backend first."
-                            )
-                        # Build a context with backend_path for the source read
-                        from dataclasses import replace as _ctx_replace
-
-                        src_ctx = (
-                            _ctx_replace(
-                                context,
-                                backend_path=src_route.backend_path,
-                                mount_path=src_route.mount_point,
-                            )
-                            if context
-                            else context
-                        )
-                        content = self._driver_coordinator.resolve_backend(
-                            src_meta.backend_name
-                        ).read_content(
-                            src_meta.physical_path or src_route.backend_path,
-                            context=src_ctx,
-                        )
-                        # Supply content_id=backend_path so path-addressed
-                        # backends know where to write the blob.
-                        write_result = dst_route.backend.write_content(
-                            content,
-                            content_id=dst_route.backend_path,
-                            context=context,
-                        )
-                        from dataclasses import replace as _replace
-
-                        dst_meta = _replace(
-                            src_meta,
-                            path=dst_path,
-                            physical_path=write_result.content_id or dst_route.backend_path,
-                        )
-                        dst_route.metastore.put(dst_meta)
-                        result = {
-                            "path": dst_path,
-                            "size": dst_meta.size or 0,
-                            "etag": write_result.content_id or dst_meta.etag,
-                            "version": dst_meta.version,
-                        }
-
-            finally:
-                if _h2:
-                    self._vfs_lock_manager.release(_h2)
-                    from nexus.lib.lock_order import L1_VFS, mark_released
-
-                    mark_released(L1_VFS)
-        finally:
-            self._vfs_lock_manager.release(_h1)
-            from nexus.lib.lock_order import L1_VFS, mark_released
-
-            mark_released(L1_VFS)
-
-        self._kernel.dispatch_post_hooks("copy", _copy_ctx)
-
-        return result
+        # Read source content and write to destination (no VFS lock needed —
+        # Rust kernel handles I/O locking internally via sys_read/sys_write).
+        src_content = self.sys_read(src_path, context=context)
+        write_result = self.write(dst_path, src_content, context=context)
+        return {
+            "src_path": src_path,
+            "dst_path": dst_path,
+            "size": len(src_content),
+            "etag": write_result.get("etag"),
+            "version": write_result.get("version"),
+        }
 
     @rpc_expose(description="Get file metadata without reading content")
     def stat(self, path: str, context: OperationContext | None = None) -> dict[str, Any]:
@@ -4965,11 +4748,15 @@ class NexusFS(  # type: ignore[misc]
         cursor: str | None = None,
     ) -> builtins.list[str] | builtins.list[dict[str, Any]] | Any:
         # ── /__sys__/locks/ virtual namespace (like /proc/locks) ──
-        if path.rstrip("/") == "/__sys__/locks":
-            locks = self._lock_manager.list_locks()
+        sys_locks_prefix = "/__sys__/locks"
+        stripped = path.rstrip("/")
+        if stripped == sys_locks_prefix or stripped.startswith(sys_locks_prefix + "/"):
+            prefix = stripped[len(sys_locks_prefix) :]
+            lock_limit = limit or 1024
+            locks = self._kernel.metastore_list_locks(prefix, lock_limit)
             if details:
-                return [self._format_lock_info(lk) for lk in locks]
-            return [lk.path for lk in locks]
+                return locks
+            return [lk["path"] for lk in locks]
 
         # ── External connector mount listing (S3, GCS, etc.) ──
         # Only intercept ExternalRouteResult — these are mounts with
@@ -5550,39 +5337,6 @@ class NexusFS(  # type: ignore[misc]
     def unlock(self, lock_id: str, path: str, *, context: "OperationContext | None" = None) -> bool:
         """Release lock (Tier 2 alias for sys_unlock)."""
         return self.sys_unlock(path, lock_id, context=context)
-
-    @contextlib.contextmanager
-    def locked(
-        self,
-        path: str,
-        mode: str = "exclusive",
-        timeout: float = 30.0,
-        ttl: float = 30.0,
-        max_holders: int = 1,
-        *,
-        context: "OperationContext | None" = None,
-    ) -> "Generator[str, None, None]":
-        """Context manager for advisory lock (Tier 2).
-
-        Acquires lock via lock() (blocking wait), yields lock_id,
-        releases on exit. Raises LockTimeout on failure.
-        """
-        from nexus.contracts.exceptions import LockTimeout
-
-        lock_id = self.lock(
-            path,
-            mode=mode,
-            timeout=timeout,
-            ttl=ttl,
-            max_holders=max_holders,
-            context=context,
-        )
-        if lock_id is None:
-            raise LockTimeout(path=path, timeout=timeout)
-        try:
-            yield lock_id
-        finally:
-            self.unlock(lock_id, path, context=context)
 
     # ── Tier 2: glob/grep (moved from ABC) ────────────────────────
 

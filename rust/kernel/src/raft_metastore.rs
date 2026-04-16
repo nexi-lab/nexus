@@ -23,17 +23,11 @@
 
 use std::sync::Arc;
 
-use nexus_raft::prelude::{
-    Command, CommandResult, FullStateMachine, LockInfo as RaftLockInfo, LockMode as RaftLockMode,
-    ZoneConsensus,
-};
+use nexus_raft::prelude::{Command, FullStateMachine, ZoneConsensus};
 use nexus_raft::transport::proto::nexus::core::FileMetadata as ProtoFileMetadata;
 use prost::Message;
 
-use crate::metastore::{
-    FileMetadata as KernelFileMetadata, KernelHolderInfo, KernelLockInfo, KernelLockMode,
-    Metastore, MetastoreError,
-};
+use crate::metastore::{FileMetadata as KernelFileMetadata, Metastore, MetastoreError};
 
 /// ``kernel::Metastore`` impl backed by a single ``ZoneConsensus``.
 pub struct ZoneMetastore {
@@ -85,38 +79,6 @@ fn proto_to_kernel(bytes: &[u8]) -> Result<KernelFileMetadata, MetastoreError> {
         created_at_ms: None,
         modified_at_ms: None,
     })
-}
-
-fn kernel_mode_to_raft(m: KernelLockMode) -> RaftLockMode {
-    match m {
-        KernelLockMode::Exclusive => RaftLockMode::Exclusive,
-        KernelLockMode::Shared => RaftLockMode::Shared,
-    }
-}
-
-fn raft_mode_to_kernel(m: RaftLockMode) -> KernelLockMode {
-    match m {
-        RaftLockMode::Exclusive => KernelLockMode::Exclusive,
-        RaftLockMode::Shared => KernelLockMode::Shared,
-    }
-}
-
-fn raft_lock_to_kernel(lock: RaftLockInfo) -> KernelLockInfo {
-    KernelLockInfo {
-        path: lock.path,
-        max_holders: lock.max_holders,
-        holders: lock
-            .holders
-            .into_iter()
-            .map(|h| KernelHolderInfo {
-                lock_id: h.lock_id,
-                holder_info: h.holder_info,
-                mode: raft_mode_to_kernel(h.mode),
-                acquired_at_secs: h.acquired_at,
-                expires_at_secs: h.expires_at,
-            })
-            .collect(),
-    }
 }
 
 fn kernel_to_proto(meta: &KernelFileMetadata) -> Vec<u8> {
@@ -206,124 +168,5 @@ impl Metastore for ZoneMetastore {
 
     fn exists(&self, path: &str) -> Result<bool, MetastoreError> {
         self.get(path).map(|m| m.is_some())
-    }
-
-    // ── Advisory locks (F4 C3) ────────────────────────────────
-    //
-    // Writes go through the raft state machine (`propose`). Reads
-    // hit the local replica via `with_state_machine`. Conflict
-    // rules live in `state_machine.rs` — this forwarder only
-    // translates between the kernel-native types and the raft
-    // types.
-
-    fn acquire_lock(
-        &self,
-        path: &str,
-        lock_id: &str,
-        mode: KernelLockMode,
-        max_holders: u32,
-        ttl_secs: u64,
-        holder_info: &str,
-    ) -> Result<bool, MetastoreError> {
-        let cmd = Command::AcquireLock {
-            path: path.to_string(),
-            lock_id: lock_id.to_string(),
-            max_holders,
-            // Raft `ttl_secs` is u32 — clamp defensively. Python
-            // callers top out in the minutes/hours range so this
-            // is a no-op in practice.
-            ttl_secs: ttl_secs.min(u32::MAX as u64) as u32,
-            holder_info: holder_info.to_string(),
-            mode: kernel_mode_to_raft(mode),
-            now_secs: FullStateMachine::now(),
-        };
-        let result = self.runtime.block_on(self.node.propose(cmd)).map_err(|e| {
-            MetastoreError::IOError(format!("ZoneMetastore.acquire_lock({path}): {e}"))
-        })?;
-        match result {
-            CommandResult::LockResult(state) => Ok(state.acquired),
-            CommandResult::Error(e) => Err(MetastoreError::IOError(format!(
-                "ZoneMetastore.acquire_lock({path}) rejected: {e}"
-            ))),
-            _ => Err(MetastoreError::IOError(
-                "ZoneMetastore.acquire_lock: unexpected result type".into(),
-            )),
-        }
-    }
-
-    fn release_lock(&self, path: &str, lock_id: &str) -> Result<bool, MetastoreError> {
-        let cmd = Command::ReleaseLock {
-            path: path.to_string(),
-            lock_id: lock_id.to_string(),
-        };
-        let result = self.runtime.block_on(self.node.propose(cmd)).map_err(|e| {
-            MetastoreError::IOError(format!("ZoneMetastore.release_lock({path}): {e}"))
-        })?;
-        Ok(matches!(result, CommandResult::Success))
-    }
-
-    fn extend_lock(
-        &self,
-        path: &str,
-        lock_id: &str,
-        ttl_secs: u64,
-    ) -> Result<bool, MetastoreError> {
-        let cmd = Command::ExtendLock {
-            path: path.to_string(),
-            lock_id: lock_id.to_string(),
-            new_ttl_secs: ttl_secs.min(u32::MAX as u64) as u32,
-            now_secs: FullStateMachine::now(),
-        };
-        let result = self.runtime.block_on(self.node.propose(cmd)).map_err(|e| {
-            MetastoreError::IOError(format!("ZoneMetastore.extend_lock({path}): {e}"))
-        })?;
-        Ok(matches!(result, CommandResult::Success))
-    }
-
-    fn get_lock(&self, path: &str) -> Result<Option<KernelLockInfo>, MetastoreError> {
-        // F4 C3.6: linearizable read via raft ReadIndex.
-        // Matches etcd/Consul/TiKV "reads are linearizable by
-        // default" contract. On the hot path `sys_stat` this would
-        // be too expensive, so `sys_stat` does not include lock
-        // info — callers that want lock state call `lock_get`
-        // explicitly and pay the ~0.5ms heartbeat round-trip.
-        let key = path.to_string();
-        let fut = self
-            .node
-            .read_linearizable(move |sm: &FullStateMachine| sm.get_lock(&key));
-        let lock_opt = self
-            .runtime
-            .block_on(fut)
-            .map_err(|e| {
-                MetastoreError::IOError(format!("ZoneMetastore.get_lock({path}) read_index: {e}"))
-            })?
-            .map_err(|e| {
-                MetastoreError::IOError(format!("ZoneMetastore.get_lock({path}): {e:?}"))
-            })?;
-        Ok(lock_opt.map(raft_lock_to_kernel))
-    }
-
-    fn list_locks(
-        &self,
-        prefix: &str,
-        limit: usize,
-    ) -> Result<Vec<KernelLockInfo>, MetastoreError> {
-        // F4 C3.6: linearizable read via ReadIndex (see get_lock).
-        let key = prefix.to_string();
-        let fut = self
-            .node
-            .read_linearizable(move |sm: &FullStateMachine| sm.list_locks(&key, limit));
-        let locks = self
-            .runtime
-            .block_on(fut)
-            .map_err(|e| {
-                MetastoreError::IOError(format!(
-                    "ZoneMetastore.list_locks({prefix}) read_index: {e}"
-                ))
-            })?
-            .map_err(|e| {
-                MetastoreError::IOError(format!("ZoneMetastore.list_locks({prefix}): {e:?}"))
-            })?;
-        Ok(locks.into_iter().map(raft_lock_to_kernel).collect())
     }
 }

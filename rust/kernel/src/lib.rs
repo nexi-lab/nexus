@@ -33,7 +33,7 @@ mod hash;
 mod hook_registry;
 mod io;
 mod kernel;
-mod lock;
+pub mod lock_manager;
 pub mod metastore;
 // Mount table (kernel SSOT for mount entries — backend + per-mount
 // metastore + access flags). Mirrors Python `nexus.core.mount_table`.
@@ -158,7 +158,8 @@ fn nexus_kernel(m: &Bound<PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(trigram::invalidate_trigram_cache, m)?)?;
     // Classes
     m.add_class::<bloom::BloomFilter>()?;
-    m.add_class::<lock::VFSLockManager>()?;
+    // VFSLockManager deleted — I/O lock is now internal to LockManager,
+    // accessed through Kernel syscalls (sys_read/sys_write/sys_copy).
     // MemoryPipeBackend/MemoryStreamBackend are kernel-internal only (no #[pyclass]).
     // Python accesses IPC buffers through kernel.create_pipe/create_stream.
     #[cfg(unix)]

@@ -140,6 +140,19 @@ pub trait ObjectStore: Send + Sync {
         let _ = (old_path, new_path);
         Err(StorageError::NotSupported("rename"))
     }
+
+    /// Server-side copy (PAS backends — reference-mode).
+    ///
+    /// Copies the physical file at `src_path` to `dst_path` within the same
+    /// backend storage. CAS backends return `NotSupported` — CAS copy is
+    /// metadata-only (content is deduplicated by hash), handled at the kernel
+    /// layer without touching the backend.
+    ///
+    /// Returns `WriteResult` with the destination's content_id and size.
+    fn copy_file(&self, src_path: &str, dst_path: &str) -> Result<WriteResult, StorageError> {
+        let _ = (src_path, dst_path);
+        Err(StorageError::NotSupported("copy_file"))
+    }
 }
 
 /// CAS + Local transport backend (Rust equivalent of Python CASLocalBackend).
@@ -341,6 +354,22 @@ impl ObjectStore for PathLocalBackend {
         }
         fs::rename(&old, &new).map_err(StorageError::IOError)
     }
+
+    fn copy_file(&self, src_path: &str, dst_path: &str) -> Result<WriteResult, StorageError> {
+        let src = self.resolve_path(src_path)?;
+        let dst = self.resolve_path(dst_path)?;
+        if let Some(parent) = dst.parent() {
+            fs::create_dir_all(parent).map_err(StorageError::IOError)?;
+        }
+        let size = fs::copy(&src, &dst).map_err(StorageError::IOError)?;
+        let content = fs::read(&dst).map_err(StorageError::IOError)?;
+        let hash = library::hash::hash_content(&content);
+        Ok(WriteResult {
+            content_id: hash.clone(),
+            version: hash,
+            size,
+        })
+    }
 }
 
 // ── LocalConnectorBackend ──────────────────────────────────────────
@@ -517,6 +546,22 @@ impl ObjectStore for LocalConnectorBackend {
             fs::create_dir_all(parent).map_err(StorageError::IOError)?;
         }
         fs::rename(&old, &new).map_err(StorageError::IOError)
+    }
+
+    fn copy_file(&self, src_path: &str, dst_path: &str) -> Result<WriteResult, StorageError> {
+        let src = self.resolve_path(src_path)?;
+        let dst = self.resolve_path(dst_path)?;
+        if let Some(parent) = dst.parent() {
+            fs::create_dir_all(parent).map_err(StorageError::IOError)?;
+        }
+        let size = fs::copy(&src, &dst).map_err(StorageError::IOError)?;
+        let content = fs::read(&dst).map_err(StorageError::IOError)?;
+        let hash = library::hash::hash_content(&content);
+        Ok(WriteResult {
+            content_id: hash.clone(),
+            version: hash,
+            size,
+        })
     }
 }
 

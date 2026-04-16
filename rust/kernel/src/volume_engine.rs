@@ -2862,8 +2862,8 @@ mod tests {
             total_bytes: AtomicU64::new(0),
             volume_paths: RwLock::new(HashMap::new()),
             is_open: AtomicBool::new(true),
-            target_volume_size_override: 512, // Small volumes for testing
-            compaction_bytes_per_cycle: 0,    // No byte limit for tests
+            target_volume_size_override: 4096, // Large enough for all 10 entries in one volume
+            compaction_bytes_per_cycle: 0,     // No byte limit for tests
             compaction_sparsity_threshold: 0.3,
             pending_index: Mutex::new(Vec::new()),
             index_batch_size: 256,

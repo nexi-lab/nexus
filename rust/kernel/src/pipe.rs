@@ -514,26 +514,19 @@ mod tests {
 
     #[test]
     fn test_sentinel_edge_cases() {
-        // Test wrapping when exactly 4 bytes (header-only) remain at tail
+        // user_capacity=128, ring_cap=256.
+        // Push+pop one at a time to advance head/tail without
+        // exceeding user_capacity.
         let core = make(128);
-        // ring_cap = 256
-        // We need to position tail so that only a few bytes remain
 
-        // Fill with exact-size messages to position tail near end
-        // 60-byte payload = 64-byte frame. 256/64 = 4 frames fit exactly.
-        // Push 3 and pop 3 → head and tail at 192.
-        // Push 1 more → tail at 256 = 0 (wraps perfectly, no sentinel needed)
-        // But if we push a 60-byte msg when tail is at 192 and 64 bytes remain, it fits.
-        // Let's try: push 3×60, pop all, then push another to force near-boundary.
-
+        // 60-byte payload → 64-byte frame (4-byte header).
+        // Push+pop 3× to advance head=tail to 192.
         for _ in 0..3 {
             push(&core, &[0xFF; 60]);
-        }
-        for _ in 0..3 {
             pop(&core);
         }
-        // head=tail=192, 64 bytes remaining to end
-        // Push 56-byte payload (60-byte frame) — fits in 64 bytes
+        // head=tail=192, 64 bytes remaining to ring end.
+        // Push 56-byte payload (60-byte frame) — fits in 64 bytes.
         push(&core, &[0xAA; 56]);
         // tail now at 252. Only 4 bytes left (exactly HEADER_SIZE).
         // Next push must sentinel+wrap.

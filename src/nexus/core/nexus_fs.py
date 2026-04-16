@@ -246,8 +246,12 @@ class NexusFS(  # type: ignore[misc]
                     # Note: set_metastore_path MUST happen BEFORE bind_kernel so that
                     # backfilled mounts inherit the metastore.
                     _redb_path = getattr(metadata_store, "_redb_path", None)
-                    if _redb_path is not None:
-                        self._kernel.set_metastore_path(str(_redb_path))
+                    # Guard against MagicMock: its auto-generated ``__fspath__``
+                    # satisfies ``isinstance(os.PathLike)`` so accept only plain
+                    # str. Real metastores never set ``_redb_path`` as an attr —
+                    # this guard keeps test MagicMocks from reaching Rust.
+                    if isinstance(_redb_path, str):
+                        self._kernel.set_metastore_path(_redb_path)
                     self._mount_table.bind_kernel(self._kernel)
                     _vfs_rust = getattr(self._vfs_lock_manager, "_rust", None)
                     if _vfs_rust is not None:

@@ -14,7 +14,6 @@ Issue #3584.
 from __future__ import annotations
 
 import contextlib
-import os
 import posixpath
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -78,16 +77,16 @@ def _safe_metastore_path(ms: Any) -> str | None:
 
     Rust Kernel.add_mount(metastore_path=...) tries to open the path — if the
     metastore is a MagicMock, getattr returns another MagicMock that str()s to
-    ``<MagicMock ...>`` and causes an IOError. Return None for non-str/PathLike.
+    ``<MagicMock ...>`` and causes an IOError. Return None unless the value is a
+    plain str. (MagicMock auto-implements ``__fspath__`` so it passes
+    ``isinstance(os.PathLike)`` — don't rely on that check.)
     """
     if ms is None:
         return None
     value = getattr(ms, "_redb_path", None)
-    if value is None:
-        return None
-    if not isinstance(value, (str, os.PathLike)):
-        return None
-    return str(value)
+    if isinstance(value, str):
+        return value
+    return None
 
 
 # ---------------------------------------------------------------------------

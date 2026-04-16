@@ -51,8 +51,8 @@ class PdfInspectorProvider(ParseProvider):
         try:
             import pdf_inspector  # noqa: F401
 
-            return pdf_inspector is not None
-        except Exception:
+            return True
+        except ImportError:
             logger.debug("pdf_inspector not available, PdfInspectorProvider unavailable")
             return False
 

@@ -605,13 +605,7 @@ def _load_from_environment() -> NexusConfig:
     try:
         import pdf_inspector  # noqa: F401
 
-        if pdf_inspector is not None:
-            parse_providers.append(
-                {
-                    "name": "pdf-inspector",
-                    "priority": 20,
-                }
-            )
+        parse_providers.append({"name": "pdf-inspector", "priority": 20})
     except ImportError:
         pass
 
@@ -619,13 +613,7 @@ def _load_from_environment() -> NexusConfig:
     try:
         from markitdown import MarkItDown  # noqa: F401
 
-        if MarkItDown is not None:
-            parse_providers.append(
-                {
-                    "name": "markitdown",
-                    "priority": 10,
-                }
-            )
+        parse_providers.append({"name": "markitdown", "priority": 10})
     except ImportError:
         pass
 

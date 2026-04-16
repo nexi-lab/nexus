@@ -158,3 +158,23 @@ class TestPathContextCacheLookup:
         assert await cache.lookup("root", "src/x.py") == "first"
         await store.delete("root", "src")
         assert await cache.lookup("root", "src/x.py") is None
+
+
+class TestPathContextCacheBatchLookup:
+    @pytest.mark.asyncio
+    async def test_lookup_cached_does_not_hit_db(
+        self, store: PathContextStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """lookup_cached is pure in-memory; it must NOT call store methods."""
+        await store.upsert("root", "src", "src desc")
+        cache = PathContextCache(store=store)
+        await cache.refresh_if_stale("root")
+
+        # Replace the store's max_updated_at with a trap — any call fails.
+        async def trap(zone_id: str) -> None:
+            raise AssertionError("lookup_cached must not invoke max_updated_at")
+
+        monkeypatch.setattr(store, "max_updated_at", trap)
+
+        assert cache.lookup_cached("root", "src/x.py") == "src desc"
+        assert cache.lookup_cached("root", "no/match") is None

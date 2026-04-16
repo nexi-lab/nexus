@@ -187,12 +187,14 @@ class PathContextCache:
             records.sort(key=lambda r: len(r.path_prefix), reverse=True)
             self._entries[zone_id] = (db_stamp, records)
 
-    async def lookup(self, zone_id: str | None, path: str) -> str | None:
-        """Return the longest-matching description for ``path`` in ``zone_id``,
-        or None when no prefix matches.
+    def lookup_cached(self, zone_id: str | None, path: str) -> str | None:
+        """Pure in-memory longest-prefix lookup. Assumes the caller has already
+        awaited ``refresh_if_stale(effective_zone)`` when freshness matters.
+
+        Returns the longest-matching description for ``path`` in ``zone_id``,
+        or None when no prefix matches or the zone has no cached entries.
         """
         effective_zone = zone_id or ROOT_ZONE_ID
-        await self.refresh_if_stale(effective_zone)
         cached = self._entries.get(effective_zone)
         if cached is None:
             return None
@@ -204,3 +206,11 @@ class PathContextCache:
             if path == prefix or path.startswith(prefix + "/"):
                 return record.description
         return None
+
+    async def lookup(self, zone_id: str | None, path: str) -> str | None:
+        """Async convenience: refresh then read. Prefer ``refresh_if_stale`` +
+        ``lookup_cached`` when looking up many paths in the same zone.
+        """
+        effective_zone = zone_id or ROOT_ZONE_ID
+        await self.refresh_if_stale(effective_zone)
+        return self.lookup_cached(zone_id, path)

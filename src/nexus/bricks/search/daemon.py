@@ -1115,12 +1115,18 @@ class SearchDaemon:
         Issue #3773: When a ``PathContextCache`` is wired in, look up the
         longest-prefix context for each result and populate
         ``SearchResult.context`` in-place. No-op when the cache is absent or
-        the result list is empty.
+        the result list is empty. Refreshes per-zone cache at most once per
+        batch, then performs pure in-memory lookups (Issue #3773 review).
         """
         if self._path_context_cache is None or not results:
             return
+        from nexus.contracts.constants import ROOT_ZONE_ID
+
+        zones = {(r.zone_id or ROOT_ZONE_ID) for r in results}
+        for zone in zones:
+            await self._path_context_cache.refresh_if_stale(zone)
         for r in results:
-            r.context = await self._path_context_cache.lookup(r.zone_id, r.path)
+            r.context = self._path_context_cache.lookup_cached(r.zone_id, r.path)
 
     async def search(
         self,

@@ -38,14 +38,20 @@ export GLIBC_TUNABLES="${GLIBC_TUNABLES:-glibc.rtld.optional_static_tls=16384}"
 #   OMP_NUM_THREADS=1              — single-threaded OpenMP (avoids
 #                                    libgomp/libiomp5 runtime conflict)
 #   MKL_ENABLE_INSTRUCTIONS=SSE4_2 — clamp Intel MKL to SSE4.2 (no AVX*)
+#   ATEN_CPU_CAPABILITY=default    — disable PyTorch ATen SIMD kernels
+#                                    (covers the path MKL_ENABLE_INSTRUCTIONS
+#                                    misses — e.g. sentence-transformers
+#                                    forward passes via torch native ops)
 #
 # Users running on known-good modern CPUs can override at `docker run` time:
 #   docker run -e FAISS_OPT_LEVEL=avx2 -e OMP_NUM_THREADS=4 \
-#              -e MKL_ENABLE_INSTRUCTIONS=AVX512 ...
+#              -e MKL_ENABLE_INSTRUCTIONS=AVX512 \
+#              -e ATEN_CPU_CAPABILITY=avx512 ...
 # ---------------------------------------------------------------------------
 export FAISS_OPT_LEVEL="${FAISS_OPT_LEVEL:-generic}"
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
 export MKL_ENABLE_INSTRUCTIONS="${MKL_ENABLE_INSTRUCTIONS:-SSE4_2}"
+export ATEN_CPU_CAPABILITY="${ATEN_CPU_CAPABILITY:-default}"
 
 # ---------------------------------------------------------------------------
 # LD_PRELOAD fallback (CPU-only)

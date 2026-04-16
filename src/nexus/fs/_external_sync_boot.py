@@ -126,25 +126,26 @@ def ensure_external_sync() -> None:
             finally:
                 store.close()
 
-            # Stamp ok_at when there's at least one true success OR every
-            # adapter is simply absent (no CLIs installed → nothing to
-            # do, no point hammering retries) (R7-M1). Only treat the
-            # "every adapter errored" case as a transient failure worth
-            # retrying after _MIN_RETRY_INTERVAL_S.
+            # Stamp ok_at when there's at least one true success OR
+            # every adapter is simply absent (no CLIs installed → nothing
+            # to do, no point hammering retries) (R7-M1, refined R8-M1).
+            # A clean run that returns zero profiles AND zero errors is
+            # NOT treated as success: the user may be mid-login and a
+            # newly-added profile would otherwise be invisible until the
+            # full _SYNC_REFRESH_INTERVAL_S elapsed. Retry sooner instead.
             any_success = any(
                 getattr(r, "error", None) is None and getattr(r, "profiles", None)
                 for r in results.values()
             )
-            any_transient_error = any(
-                getattr(r, "error", None) is not None and getattr(r, "error", "") != "not detected"
-                for r in results.values()
+            all_not_detected = bool(results) and all(
+                getattr(r, "error", None) == "not detected" for r in results.values()
             )
-            if any_success or not any_transient_error:
+            if any_success or all_not_detected or not results:
                 _sync_last_ok_at = now
             else:
                 logger.debug(
-                    "External CLI sync had only transient errors; will retry "
-                    "after _MIN_RETRY_INTERVAL_S"
+                    "External CLI sync produced no usable profiles; will retry "
+                    "after _MIN_RETRY_INTERVAL_S to pick up post-login state"
                 )
         except Exception:
             logger.debug("External CLI sync failed during bootstrap", exc_info=True)

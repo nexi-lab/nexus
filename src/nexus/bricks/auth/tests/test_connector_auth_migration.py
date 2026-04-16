@@ -264,6 +264,42 @@ class TestEnsureExternalSyncRetries:
             "next call should retry instead of waiting full refresh window"
         )
 
+    def test_zero_profile_zero_error_does_not_mark_success(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """R8-M1 regression: a clean sync that returns zero profiles AND
+        zero errors (e.g. aws-cli installed but credentials file empty)
+        must NOT be treated as success. The user may be mid-login and a
+        newly-added profile would otherwise be invisible until the full
+        5-minute refresh window elapsed."""
+        import nexus.fs._external_sync_boot as boot
+        from nexus.bricks.auth.external_sync.base import SyncResult
+
+        monkeypatch.setattr(boot, "_sync_last_ok_at", None)
+        monkeypatch.setattr(boot, "_sync_last_attempt_at", None)
+        monkeypatch.setattr(boot, "_MIN_RETRY_INTERVAL_S", 0.0)
+
+        class _EmptyButCleanRegistry:
+            def __init__(self, **_kwargs) -> None:  # noqa: ANN003
+                pass
+
+            async def startup(self) -> dict:
+                # Adapters detected and ran cleanly but found no profiles.
+                return {
+                    "aws-cli": SyncResult(adapter_name="aws-cli", profiles=[]),
+                    "gcloud": SyncResult(adapter_name="gcloud", profiles=[]),
+                }
+
+        from nexus.bricks.auth.external_sync import registry as registry_mod
+
+        monkeypatch.setattr(registry_mod, "AdapterRegistry", _EmptyButCleanRegistry)
+
+        boot.ensure_external_sync()
+        assert boot._sync_last_ok_at is None, (
+            "zero-profile + zero-error must NOT mark sync successful — "
+            "user may be mid-login, retry should pick up new profiles"
+        )
+
     def test_all_not_detected_marks_success(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """R7-M1 corollary: when no CLIs are installed (every adapter
         returns 'not detected'), there's no transient error to retry —

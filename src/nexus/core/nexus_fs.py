@@ -940,8 +940,9 @@ class NexusFS(  # type: ignore[misc]
             )
             return {"path": path, "registered": True, "service": name}
 
-        path = self._validate_path(path)
         entry_type = attrs.get("entry_type", 0)
+        # DT_MOUNT allows root "/" (root mount); other types don't.
+        path = self._validate_path(path, allow_root=(entry_type == DT_MOUNT))
 
         # ── DT_MOUNT: resolve backend params for Rust kernel ─────────
         if entry_type == DT_MOUNT:

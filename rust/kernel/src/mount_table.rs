@@ -473,6 +473,30 @@ pub fn extract_zone_from_canonical(canonical: &str) -> (String, String) {
     }
 }
 
+/// Convert a zone-relative path back to a global (user-facing) path using
+/// the zone-canonical mount point.
+///
+/// Inverse of the zone-key transformation performed by
+/// [`Kernel::zone_key`](crate::kernel::Kernel::zone_key): given the
+/// canonical mount point and a zone-relative metastore key, reconstruct
+/// the global path a user would pass to a syscall.
+///
+/// Examples:
+/// - `("/root/corp", "/eng/foo.txt")` → `"/corp/eng/foo.txt"`
+/// - `("/root", "/workspace/file.txt")` → `"/workspace/file.txt"`
+/// - `("", "/workspace/file.txt")` → `"/workspace/file.txt"` (no-mount fallback)
+pub fn zone_to_global(mount_point: &str, zone_path: &str) -> String {
+    if mount_point.is_empty() {
+        return zone_path.to_string();
+    }
+    let (_, user_mp) = extract_zone_from_canonical(mount_point);
+    if user_mp == "/" {
+        zone_path.to_string()
+    } else {
+        format!("{}{}", user_mp, zone_path)
+    }
+}
+
 /// Strip a mount-point prefix from a canonical path to get the
 /// backend-relative path (without leading slash).
 fn strip_mount_prefix(path: &str, mount_point: &str) -> String {
@@ -649,5 +673,62 @@ mod tests {
 
         assert!(table.remove("/data", "root"));
         assert!(!table.has("/data", "root"));
+    }
+
+    // ── zone_to_global tests ─────────────────────────────────────────
+
+    #[test]
+    fn zone_to_global_root_mount() {
+        // Root zone at "/" → zone-relative = global (no-op)
+        assert_eq!(
+            zone_to_global("/root", "/workspace/file.txt"),
+            "/workspace/file.txt"
+        );
+        assert_eq!(zone_to_global("/root", "/"), "/");
+    }
+
+    #[test]
+    fn zone_to_global_non_root_mount() {
+        // Mount at "/corp" in root zone → zone-relative "/eng/foo.txt" → global "/corp/eng/foo.txt"
+        assert_eq!(
+            zone_to_global("/root/corp", "/eng/foo.txt"),
+            "/corp/eng/foo.txt"
+        );
+        assert_eq!(zone_to_global("/root/corp", "/"), "/corp/");
+    }
+
+    #[test]
+    fn zone_to_global_nested_mount() {
+        // Nested mount at "/corp/eng" → zone-relative "/readme.md" → global "/corp/eng/readme.md"
+        assert_eq!(
+            zone_to_global("/root/corp/eng", "/readme.md"),
+            "/corp/eng/readme.md"
+        );
+    }
+
+    #[test]
+    fn zone_to_global_empty_mount_fallback() {
+        // No-mount fallback (empty mount_point) → pass-through
+        assert_eq!(
+            zone_to_global("", "/workspace/file.txt"),
+            "/workspace/file.txt"
+        );
+    }
+
+    #[test]
+    fn zone_to_global_round_trip() {
+        // canonicalize → route → zone_key → zone_to_global should recover original
+        let table = MountTable::new();
+        table.add("/corp", "root", entry(false, false, "balanced"));
+
+        let global = "/corp/eng/foo.txt";
+        let route = table.route(global, "root", true, false).unwrap();
+        let zone_path = if route.backend_path.is_empty() {
+            "/".to_string()
+        } else {
+            format!("/{}", route.backend_path)
+        };
+        let recovered = zone_to_global(&route.mount_point, &zone_path);
+        assert_eq!(recovered, global);
     }
 }

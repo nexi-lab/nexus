@@ -1477,6 +1477,55 @@ class NexusFS(  # type: ignore[misc]
             return bytes(_data)
 
         if not result.hit:
+            # Compatibility fallback: external mounts may not be flagged via is_external
+            # (e.g. legacy callers of nexus.fs.mount() or version-skewed kernels without
+            # the is_external param — see mount_table TypeError fallback). Try Python
+            # router as last resort to detect ExternalRouteResult before giving up.
+            from nexus.core.router import ExternalRouteResult
+
+            try:
+                _fb_route = self.router.route(
+                    path, is_admin=_is_admin, check_write=False, zone_id=self._zone_id
+                )
+            except Exception:
+                _fb_route = None
+            if (
+                isinstance(_fb_route, ExternalRouteResult)
+                and getattr(_fb_route, "backend", None) is not None
+            ):
+                _fb_backend = _fb_route.backend
+                _fb_backend_path = getattr(_fb_route, "backend_path", "") or ""
+                _fb_mount_point = getattr(_fb_route, "mount_point", "") or ""
+                _ctx = (
+                    _dc_replace(
+                        context,
+                        backend_path=_fb_backend_path,
+                        virtual_path=path,
+                        mount_path=_fb_mount_point,
+                    )
+                    if context
+                    else OperationContext(
+                        user_id="anonymous",
+                        groups=[],
+                        backend_path=_fb_backend_path,
+                        virtual_path=path,
+                        mount_path=_fb_mount_point,
+                    )
+                )
+                from nexus.backends.connectors.schema_generator import (
+                    dispatch_virtual_readme_read,
+                )
+
+                _virtual_data = dispatch_virtual_readme_read(
+                    _fb_backend, _fb_mount_point, _fb_backend_path, context=_ctx
+                )
+                if _virtual_data is not None:
+                    data = _virtual_data
+                else:
+                    data = _fb_backend.read_content(_fb_backend_path, context=_ctx)
+                if offset or count is not None:
+                    data = data[offset : offset + count] if count is not None else data[offset:]
+                return data
             raise NexusFileNotFoundError(path)
         data = result.data or b""
 
@@ -2440,15 +2489,9 @@ class NexusFS(  # type: ignore[misc]
         # Virtual .readme/ paths are read-only (Issue #3728).
         self._reject_if_virtual_readme(path, context, op="write")
 
-        # Get existing metadata — lazy when no write hooks (avoids wasted metastore query on new files)
+        # Get existing metadata for permission check and update detection (single query)
         now = datetime.now(UTC)
-        if _meta is not None:
-            meta = _meta
-        elif self._kernel.hook_count("write") > 0:
-            # Hooks need old_metadata for permission check (owner fast-path vs parent check)
-            meta = route.metastore.get(path)
-        else:
-            meta = None
+        meta = _meta if _meta is not None else route.metastore.get(path)
 
         # PRE-INTERCEPT: pre-write hooks (Issue #899)
         # Hook handles existing-file (owner fast-path) vs new-file (parent check)

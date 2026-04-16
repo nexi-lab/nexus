@@ -92,8 +92,9 @@ dependencies = [
     "dotenv>=0.9.9",
     # MCP Server (v0.7.0)
     "fastmcp>=2.0.0", # Model Context Protocol server
-    # Document parsing (Python 3.13 only - not yet compatible with 3.14)
-    "markitdown[all]>=0.1.0; python_version < '3.14'",
+    # PDF parsing (default local provider; ~2-3 MB Rust ext, zero Python deps).
+    # cp312 wheels only as of 0.1.1; loosen the version_info guard when upstream ships cp313+.
+    "pdf-inspector>=0.1.1; python_version == '3.12'",
     # Fast JSON serialization (2-3x faster than stdlib json)
     "orjson>=3.10.0",
     # Roaring Bitmaps for Tiger Cache (Issue #682)
@@ -137,6 +138,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+markitdown = [
+    # Office/HTML/EPUB/audio parsing fallback. ~200 MB transitive deps
+    # (pandas, numpy, lxml, onnxruntime, pdfminer, python-pptx, mammoth, openpyxl, ...).
+    # Install with: pip install nexus[markitdown]
+    "markitdown[all]>=0.1.0; python_version < '3.14'",
+]
+
 performance = [
     # BLAKE3 hashing fallback when Rust extension unavailable (Issue #582)
     # Local embeddings without API (fast ONNX inference)

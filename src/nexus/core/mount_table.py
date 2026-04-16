@@ -72,6 +72,23 @@ def extract_zone_id(canonical_path: str) -> tuple[str, str]:
     return zone_id, relative
 
 
+def _safe_metastore_path(ms: Any) -> str | None:
+    """Extract _redb_path from a metastore, guarding against mocks/invalid values.
+
+    Rust Kernel.add_mount(metastore_path=...) tries to open the path — if the
+    metastore is a MagicMock, getattr returns another MagicMock that str()s to
+    ``<MagicMock ...>`` and causes an IOError. Return None unless the value is a
+    plain str. (MagicMock auto-implements ``__fspath__`` so it passes
+    ``isinstance(os.PathLike)`` — don't rely on that check.)
+    """
+    if ms is None:
+        return None
+    value = getattr(ms, "_redb_path", None)
+    if isinstance(value, str):
+        return value
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Mount entry
 # ---------------------------------------------------------------------------
@@ -93,6 +110,7 @@ class MountEntry:
     admin_only: bool
     io_profile: str
     stream_backend_factory: Any = None
+    is_external: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -151,21 +169,40 @@ class MountTable:
                 backend
             ).__name__.startswith("CAS")
             _local_root = str(getattr(backend, "root_path", None)) if _is_cas_local else None
-            _ms = entry.metastore
-            _ms_path = getattr(_ms, "_redb_path", None) if _ms else None
+            _ms_path = _safe_metastore_path(entry.metastore)
+            _bk_kwargs: dict = {
+                "py_backend": backend,
+                "metastore_path": _ms_path,
+            }
+            # Best-effort per mount — a single bad metastore path or backend
+            # must not disable the kernel globally (develop behavior).
+            # is_external added in Task 2 (Issue #3710); guard for older kernels.
             with contextlib.suppress(Exception):
-                kernel.add_mount(
-                    mount_point,
-                    zone_id,
-                    entry.readonly,
-                    entry.admin_only,
-                    entry.io_profile,
-                    _backend_name,
-                    _local_root,
-                    True,
-                    py_backend=backend,
-                    metastore_path=str(_ms_path) if _ms_path else None,
-                )
+                try:
+                    kernel.add_mount(
+                        mount_point,
+                        zone_id,
+                        entry.readonly,
+                        entry.admin_only,
+                        entry.io_profile,
+                        _backend_name,
+                        _local_root,
+                        True,
+                        is_external=entry.is_external,
+                        **_bk_kwargs,
+                    )
+                except TypeError:
+                    kernel.add_mount(
+                        mount_point,
+                        zone_id,
+                        entry.readonly,
+                        entry.admin_only,
+                        entry.io_profile,
+                        _backend_name,
+                        _local_root,
+                        True,
+                        **_bk_kwargs,
+                    )
 
     # -- Write operations (called by coordinator) ---------------------------
 
@@ -180,10 +217,15 @@ class MountTable:
         io_profile: str = "balanced",
         stream_backend_factory: Any = None,
         zone_id: str = ROOT_ZONE_ID,
+        is_external: bool = False,
     ) -> None:
         """Add a mount entry. Called by coordinator.mount()."""
         mount_point = normalize_path(mount_point)
         canonical = canonicalize_path(mount_point, zone_id)
+        # Save prior state for atomic rollback on kernel failure (covers
+        # remount-over-existing case, not just fresh-add).
+        _prior_entry = self._entries.get(canonical)
+        _prior_in_rust = _prior_entry is not None  # assume rust mirrors entries
         self._entries[canonical] = MountEntry(
             backend=backend,
             metastore=metastore or self._default_metastore,
@@ -191,6 +233,7 @@ class MountTable:
             admin_only=admin_only,
             io_profile=io_profile,
             stream_backend_factory=stream_backend_factory,
+            is_external=is_external,
         )
         _backend_name = backend.name
         if not isinstance(_backend_name, str):
@@ -203,25 +246,66 @@ class MountTable:
             backend
         ).__name__.startswith("CAS")
         _local_root = str(getattr(backend, "root_path", None)) if _is_cas_local else None
-        if self._rust is not None:
-            self._rust.add_mount(
-                mount_point,
-                zone_id,
-                readonly,
-                admin_only,
-                io_profile,
-                _backend_name,
-                _local_root,
-                True,  # fsync
-            )
-        # Also wire into Kernel router (Issue #1868) so sys_read/sys_stat
-        # fast path sees live mounts.  Pass py_backend= when no local_root
-        # so Rust wraps Python backend via PyObjectStoreAdapter.
+
+        # Transactional: try kernel first; only update _rust after kernel
+        # succeeds. If either fails, restore full prior state (entries + rust).
+        def _rollback() -> None:
+            if _prior_entry is not None:
+                self._entries[canonical] = _prior_entry
+            else:
+                self._entries.pop(canonical, None)
+            # Remove any new _rust entry we added; old _rust state for
+            # remounts remains intact because we haven't touched it yet.
+            if self._rust is not None and not _prior_in_rust:
+                with contextlib.suppress(Exception):
+                    self._rust.remove_mount(mount_point, zone_id)
+
+        # Wire into Kernel router (Issue #1868) so sys_read/sys_stat fast
+        # path sees live mounts. Pass py_backend= when no local_root so
+        # Rust wraps Python backend via PyObjectStoreAdapter.
         if self._kernel is not None:
-            with contextlib.suppress(Exception):
-                _ms = self._entries[canonical].metastore
-                _ms_path = getattr(_ms, "_redb_path", None) if _ms else None
-                self._kernel.add_mount(
+            _ms_path = _safe_metastore_path(self._entries[canonical].metastore)
+            _kwargs: dict = {
+                "py_backend": backend,
+                "metastore_path": _ms_path,
+            }
+            # is_external added in Task 2 (Issue #3710); guard for older kernels.
+            try:
+                try:
+                    self._kernel.add_mount(
+                        mount_point,
+                        zone_id,
+                        readonly,
+                        admin_only,
+                        io_profile,
+                        _backend_name,
+                        _local_root,
+                        True,
+                        is_external=is_external,
+                        **_kwargs,
+                    )
+                except TypeError:
+                    # Kernel binary predates is_external — fall back without it.
+                    self._kernel.add_mount(
+                        mount_point,
+                        zone_id,
+                        readonly,
+                        admin_only,
+                        io_profile,
+                        _backend_name,
+                        _local_root,
+                        True,
+                        **_kwargs,
+                    )
+            except Exception:
+                _rollback()
+                raise
+
+        # Kernel succeeded (or was None) — now update _rust LPM table. Do
+        # this after kernel so a kernel failure doesn't leave _rust stale.
+        if self._rust is not None:
+            try:
+                self._rust.add_mount(
                     mount_point,
                     zone_id,
                     readonly,
@@ -229,10 +313,15 @@ class MountTable:
                     io_profile,
                     _backend_name,
                     _local_root,
-                    True,
-                    py_backend=backend,
-                    metastore_path=str(_ms_path) if _ms_path else None,
+                    True,  # fsync
                 )
+            except Exception:
+                # _rust failed — undo kernel add_mount and restore entries.
+                if self._kernel is not None:
+                    with contextlib.suppress(Exception):
+                        self._kernel.remove_mount(mount_point, zone_id)
+                _rollback()
+                raise
 
     def remove(self, mount_point: str, zone_id: str = ROOT_ZONE_ID) -> bool:
         """Remove a mount entry. Called by coordinator.unmount().

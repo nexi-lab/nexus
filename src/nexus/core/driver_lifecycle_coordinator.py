@@ -121,6 +121,7 @@ class DriverLifecycleCoordinator:
         readonly: bool = False,
         admin_only: bool = False,
         io_profile: str = "balanced",
+        is_external: bool = False,
     ) -> None:
         """Mount a backend with full lifecycle: routing + hooks + notification."""
         self._mount_table.add(
@@ -130,6 +131,7 @@ class DriverLifecycleCoordinator:
             readonly=readonly,
             admin_only=admin_only,
             io_profile=io_profile,
+            is_external=is_external,
         )
         self._register_backend_hooks(mount_point, backend)
         self._dispatch.dispatch_event("mount", mount_point)

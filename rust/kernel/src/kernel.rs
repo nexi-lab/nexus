@@ -137,6 +137,8 @@ pub struct SysReadResult {
     /// DT_PIPE(3)/DT_STREAM(4) when hit=false — tells wrapper to dispatch IPC.
     /// 0 = normal miss (not found or no backend).
     pub entry_type: u8,
+    /// True when the routed mount is an external connector — Python must handle.
+    pub is_external: bool,
 }
 
 /// Result of sys_write(): concrete type instead of Option<str>.
@@ -727,6 +729,7 @@ impl Kernel {
         backend_name: &str,
         backend: Option<Box<dyn crate::backend::ObjectStore>>,
         metastore_path: Option<&str>,
+        is_external: bool,
     ) -> Result<(), KernelError> {
         // Open per-mount metastore if path provided (federation mode)
         if let Some(ms_path) = metastore_path {
@@ -744,6 +747,7 @@ impl Kernel {
                 io_profile,
                 backend_name,
                 backend,
+                is_external,
             )
             .map_err(KernelError::from)
     }
@@ -804,6 +808,7 @@ impl Kernel {
             backend_name,
             backend,
             metastore_path,
+            false,
         )?;
 
         // 2. Create DT_MOUNT metadata entry (best-effort)
@@ -1410,6 +1415,7 @@ impl Kernel {
                 post_hook_needed: false,
                 content_hash: None,
                 entry_type: 0,
+                is_external: false,
             })
         };
 
@@ -1443,6 +1449,18 @@ impl Kernel {
             Ok(r) => r,
             Err(_) => return miss(),
         };
+
+        // 2b. External mount — signal Python to handle via connector backend
+        if route.is_external {
+            return Ok(SysReadResult {
+                hit: false,
+                data: None,
+                post_hook_needed: false,
+                content_hash: None,
+                entry_type: 0,
+                is_external: true,
+            });
+        }
 
         // 3. DCache lookup — on miss, fallback to metastore (cold path)
         let entry = match self.dcache.get_entry(path) {
@@ -1485,6 +1503,7 @@ impl Kernel {
                             post_hook_needed: false,
                             content_hash: None,
                             entry_type: DT_PIPE,
+                            is_external: false,
                         });
                     }
                     Err(crate::pipe::PipeError::Empty) => {
@@ -1495,6 +1514,7 @@ impl Kernel {
                             post_hook_needed: false,
                             content_hash: None,
                             entry_type: DT_PIPE,
+                            is_external: false,
                         });
                     }
                     Err(crate::pipe::PipeError::ClosedEmpty) => {
@@ -1510,6 +1530,7 @@ impl Kernel {
                 post_hook_needed: false,
                 content_hash: None,
                 entry_type: DT_PIPE,
+                is_external: false,
             });
         }
 
@@ -1523,6 +1544,7 @@ impl Kernel {
                 post_hook_needed: false,
                 content_hash: None,
                 entry_type: DT_STREAM,
+                is_external: false,
             });
         }
 
@@ -1574,6 +1596,7 @@ impl Kernel {
                 post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
                 content_hash: entry.etag,
                 entry_type: DT_REG,
+                is_external: false,
             }),
             None => miss(),
         }
@@ -2661,6 +2684,7 @@ impl Kernel {
                     post_hook_needed: false,
                     content_hash: None,
                     entry_type: 0,
+                    is_external: false,
                 })
             })
             .collect();

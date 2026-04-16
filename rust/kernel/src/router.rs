@@ -24,6 +24,7 @@ pub(crate) struct MountEntry {
     #[allow(dead_code)]
     pub(crate) backend_name: String,
     pub(crate) backend: Option<Box<dyn ObjectStore>>,
+    pub(crate) is_external: bool,
 }
 
 #[derive(Debug)]
@@ -43,6 +44,7 @@ pub struct RustRouteResult {
     pub backend_path: String,
     pub readonly: bool,
     pub io_profile: String,
+    pub is_external: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -92,6 +94,7 @@ impl PathRouter {
                     backend_path: strip_mount_prefix(&canonical, current),
                     readonly: entry.readonly,
                     io_profile: entry.io_profile.clone(),
+                    is_external: entry.is_external,
                 });
             }
 
@@ -220,6 +223,7 @@ impl PathRouter {
         io_profile: &str,
         backend_name: &str,
         backend: Option<Box<dyn ObjectStore>>,
+        is_external: bool,
     ) -> Result<(), std::io::Error> {
         let canonical = canonicalize(mount_point, zone_id);
         self.mounts.write().insert(
@@ -230,6 +234,7 @@ impl PathRouter {
                 io_profile: io_profile.to_string(),
                 backend_name: backend_name.to_string(),
                 backend,
+                is_external,
             },
         );
         Ok(())
@@ -352,10 +357,10 @@ mod tests {
     fn test_route_basic() {
         let router = PathRouter::new();
         router
-            .add_mount("/", "root", false, false, "balanced", "", None)
+            .add_mount("/", "root", false, false, "balanced", "", None, false)
             .unwrap();
         router
-            .add_mount("/workspace", "root", false, false, "fast", "", None)
+            .add_mount("/workspace", "root", false, false, "fast", "", None, false)
             .unwrap();
 
         let result = router
@@ -370,7 +375,7 @@ mod tests {
     fn test_route_root_fallback() {
         let router = PathRouter::new();
         router
-            .add_mount("/", "root", false, false, "balanced", "", None)
+            .add_mount("/", "root", false, false, "balanced", "", None, false)
             .unwrap();
 
         let result = router
@@ -384,7 +389,7 @@ mod tests {
     fn test_route_readonly() {
         let router = PathRouter::new();
         router
-            .add_mount("/system", "root", true, false, "balanced", "", None)
+            .add_mount("/system", "root", true, false, "balanced", "", None, false)
             .unwrap();
 
         let err = router
@@ -397,7 +402,7 @@ mod tests {
     fn test_route_admin_only() {
         let router = PathRouter::new();
         router
-            .add_mount("/admin", "root", false, true, "balanced", "", None)
+            .add_mount("/admin", "root", false, true, "balanced", "", None, false)
             .unwrap();
 
         let err = router
@@ -415,10 +420,19 @@ mod tests {
     fn test_cross_zone() {
         let router = PathRouter::new();
         router
-            .add_mount("/", "root", false, false, "balanced", "", None)
+            .add_mount("/", "root", false, false, "balanced", "", None, false)
             .unwrap();
         router
-            .add_mount("/shared", "zone-beta", false, false, "balanced", "", None)
+            .add_mount(
+                "/shared",
+                "zone-beta",
+                false,
+                false,
+                "balanced",
+                "",
+                None,
+                false,
+            )
             .unwrap();
 
         let result = router
@@ -436,7 +450,9 @@ mod tests {
     fn test_mount_management() {
         let router = PathRouter::new();
         router
-            .add_mount("/data", "root", false, false, "balanced", "local", None)
+            .add_mount(
+                "/data", "root", false, false, "balanced", "local", None, false,
+            )
             .unwrap();
         assert!(router.has_mount("/data", "root"));
         assert!(!router.has_mount("/data", "other"));

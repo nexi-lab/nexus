@@ -7,6 +7,7 @@ search result via longest-prefix match. In-memory cache is in this module too.
 
 from __future__ import annotations
 
+import asyncio
 import builtins
 from dataclasses import dataclass
 from datetime import datetime
@@ -14,7 +15,7 @@ from typing import Any
 
 from sqlalchemy import text
 
-from nexus.contracts.constants import ROOT_ZONE_ID  # noqa: F401  (re-exported for callers)
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 
 @dataclass(frozen=True)
@@ -149,15 +150,57 @@ def _coerce_datetime(value: Any) -> datetime:
     raise TypeError(f"Unexpected datetime-like value from DB: {value!r}")
 
 
-# Issue #3773: PathContextCache is defined in Task 7. This placeholder keeps
-# imports stable so tests for the cache can be added in Task 7 without
-# re-editing import sites.
-class PathContextCache:  # Placeholder — full implementation in Task 7.
+class PathContextCache:
+    """In-memory cache of path contexts keyed by zone, with longest-prefix lookup.
+
+    - Per-zone ``asyncio.Lock`` serializes refreshes.
+    - Each lookup cheaply checks ``store.max_updated_at(zone_id)`` and reloads
+      when the cached stamp is stale.
+    - Records are kept sorted by ``len(path_prefix)`` DESC so the first
+      slash-boundary match is the longest prefix.
+    """
+
     def __init__(self, *, store: PathContextStore) -> None:
         self._store = store
+        self._entries: dict[str, tuple[datetime | None, builtins.list[PathContextRecord]]] = {}
+        self._locks: dict[str, asyncio.Lock] = {}
+
+    def _lock_for(self, zone_id: str) -> asyncio.Lock:
+        lock = self._locks.get(zone_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._locks[zone_id] = lock
+        return lock
 
     async def refresh_if_stale(self, zone_id: str) -> None:
-        raise NotImplementedError("PathContextCache is wired up in Task 7.")
+        db_stamp = await self._store.max_updated_at(zone_id)
+        cached = self._entries.get(zone_id)
+        if cached is not None and cached[0] == db_stamp:
+            return
+        async with self._lock_for(zone_id):
+            # Re-check after lock acquisition — another task may have refreshed.
+            db_stamp = await self._store.max_updated_at(zone_id)
+            cached = self._entries.get(zone_id)
+            if cached is not None and cached[0] == db_stamp:
+                return
+            records = await self._store.load_all_for_zone(zone_id)
+            records.sort(key=lambda r: len(r.path_prefix), reverse=True)
+            self._entries[zone_id] = (db_stamp, records)
 
     async def lookup(self, zone_id: str | None, path: str) -> str | None:
-        raise NotImplementedError("PathContextCache is wired up in Task 7.")
+        """Return the longest-matching description for ``path`` in ``zone_id``,
+        or None when no prefix matches.
+        """
+        effective_zone = zone_id or ROOT_ZONE_ID
+        await self.refresh_if_stale(effective_zone)
+        cached = self._entries.get(effective_zone)
+        if cached is None:
+            return None
+        _, records = cached
+        for record in records:
+            prefix = record.path_prefix
+            if prefix == "":
+                return record.description
+            if path == prefix or path.startswith(prefix + "/"):
+                return record.description
+        return None

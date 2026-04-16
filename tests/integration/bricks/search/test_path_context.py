@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from nexus.bricks.search.path_context import (
+    PathContextCache,
     PathContextStore,
 )
 
@@ -96,3 +97,64 @@ class TestPathContextStoreUpsert:
         stamp2 = await store.max_updated_at("root")
         assert stamp2 is not None
         assert stamp2 >= stamp1
+
+
+class TestPathContextCacheLookup:
+    @pytest.mark.asyncio
+    async def test_longest_prefix_wins(self, store: PathContextStore) -> None:
+        await store.upsert("root", "src", "top-level src")
+        await store.upsert("root", "src/nexus/bricks/search", "search brick")
+        cache = PathContextCache(store=store)
+        desc = await cache.lookup("root", "src/nexus/bricks/search/fusion.py")
+        assert desc == "search brick"
+
+    @pytest.mark.asyncio
+    async def test_empty_prefix_matches_any(self, store: PathContextStore) -> None:
+        await store.upsert("root", "", "zone root fallback")
+        cache = PathContextCache(store=store)
+        assert await cache.lookup("root", "anything/x.py") == "zone root fallback"
+
+    @pytest.mark.asyncio
+    async def test_slash_boundary_enforced(self, store: PathContextStore) -> None:
+        """'src' must NOT match 'srcfoo/x.py' — only slash-bounded match."""
+        await store.upsert("root", "src", "src only")
+        cache = PathContextCache(store=store)
+        assert await cache.lookup("root", "srcfoo/x.py") is None
+        assert await cache.lookup("root", "src/x.py") == "src only"
+        assert await cache.lookup("root", "src") == "src only"
+
+    @pytest.mark.asyncio
+    async def test_no_match_returns_none(self, store: PathContextStore) -> None:
+        cache = PathContextCache(store=store)
+        assert await cache.lookup("root", "anything/x.py") is None
+
+    @pytest.mark.asyncio
+    async def test_zone_none_coerces_to_root(self, store: PathContextStore) -> None:
+        await store.upsert("root", "src", "root src")
+        cache = PathContextCache(store=store)
+        assert await cache.lookup(None, "src/x.py") == "root src"
+
+    @pytest.mark.asyncio
+    async def test_zones_isolated_in_cache(self, store: PathContextStore) -> None:
+        await store.upsert("root", "src", "root src")
+        await store.upsert("other", "src", "other src")
+        cache = PathContextCache(store=store)
+        assert await cache.lookup("root", "src/x.py") == "root src"
+        assert await cache.lookup("other", "src/x.py") == "other src"
+
+    @pytest.mark.asyncio
+    async def test_refresh_after_write(self, store: PathContextStore) -> None:
+        cache = PathContextCache(store=store)
+        assert await cache.lookup("root", "src/x.py") is None
+        await store.upsert("root", "src", "first desc")
+        assert await cache.lookup("root", "src/x.py") == "first desc"
+        await store.upsert("root", "src", "second desc")
+        assert await cache.lookup("root", "src/x.py") == "second desc"
+
+    @pytest.mark.asyncio
+    async def test_refresh_after_delete(self, store: PathContextStore) -> None:
+        await store.upsert("root", "src", "first")
+        cache = PathContextCache(store=store)
+        assert await cache.lookup("root", "src/x.py") == "first"
+        await store.delete("root", "src")
+        assert await cache.lookup("root", "src/x.py") is None

@@ -31,7 +31,6 @@ from nexus.core.config import (
 from nexus.core.hash_fast import hash_content
 from nexus.core.metastore import MetastoreABC
 from nexus.core.nexus_fs_dispatch import DispatchMixin
-from nexus.core.nexus_fs_lock import LockMixin
 from nexus.core.nexus_fs_watch import WatchMixin
 from nexus.core.path_utils import validate_path
 from nexus.core.router import PathRouter
@@ -62,7 +61,6 @@ class _WriteContentResult(NamedTuple):
 
 class NexusFS(  # type: ignore[misc]
     DispatchMixin,
-    LockMixin,
     WatchMixin,
 ):
     """
@@ -157,12 +155,7 @@ class NexusFS(  # type: ignore[misc]
         # ── Kernel-owned primitives (always present, created here) ──────
         # See KERNEL-ARCHITECTURE.md §1 DI patterns table.
 
-        from nexus.lib.distributed_lock import LocalLockManager
-        from nexus.lib.semaphore import create_vfs_semaphore
-
-        self._lock_manager: Any = LocalLockManager(
-            create_vfs_semaphore(),
-        )
+        # Advisory locks handled by Rust kernel LockManager (sys_lock / sys_unlock).
 
         self._init_dispatch()
 
@@ -341,19 +334,6 @@ class NexusFS(  # type: ignore[misc]
     def swap_service(self, name: str, new_instance: Any, **kwargs: Any) -> None:
         """Hot-swap a service — all quadrants supported (#1452)."""
         self._service_registry.swap_service(name, new_instance, **kwargs)
-
-    def _upgrade_lock_manager(self, lock_manager: Any) -> None:
-        """Hot-swap LocalLockManager → RaftLockManager at link time.
-
-        Kernel owns the hook point,
-        federation injects the distributed implementation.
-        """
-        logger.info(
-            "Lock manager upgraded: %s → %s",
-            type(self._lock_manager).__name__,
-            type(lock_manager).__name__,
-        )
-        self._lock_manager = lock_manager
 
     @property
     def namespace_manager(self) -> Any | None:
@@ -741,7 +721,84 @@ class NexusFS(  # type: ignore[misc]
         except (InvalidPathError, NexusFileNotFoundError):
             return False
 
-    # Lock methods in nexus_fs_lock.py (LockMixin)
+    # ── Advisory lock syscalls (POSIX flock equivalent) ─────────────
+
+    @rpc_expose(description="Acquire or extend advisory lock on a path")
+    def sys_lock(
+        self,
+        path: str,
+        mode: str = "exclusive",
+        ttl: float = 30.0,
+        max_holders: int = 1,
+        lock_id: str | None = None,
+        *,
+        context: OperationContext | None = None,  # noqa: ARG002
+    ) -> str | None:
+        """Acquire or extend advisory lock (POSIX fcntl(F_SETLK)).
+
+        When lock_id is None: try-acquire a new lock.
+        When lock_id is provided: extend TTL of an existing lock (heartbeat).
+
+        Returns lock_id on success, None on failure.
+        """
+        path = self._validate_path(path)
+        return self._kernel.sys_lock(
+            path,
+            lock_id=lock_id or "",
+            mode=mode,
+            max_holders=max_holders,
+            ttl_secs=int(ttl),
+        )
+
+    @rpc_expose(description="Release advisory lock (normal or force)")
+    def sys_unlock(
+        self,
+        path: str,
+        lock_id: str | None = None,
+        force: bool = False,
+        *,
+        context: OperationContext | None = None,  # noqa: ARG002
+    ) -> bool:
+        """Release advisory lock.
+
+        When force=False (default): release lock by lock_id (requires lock_id).
+        When force=True: force-release ALL holders (admin operation, ignores lock_id).
+
+        Returns True if released.
+        """
+        path = self._validate_path(path)
+        if not force and not lock_id:
+            raise ValueError("lock_id is required for non-force release")
+        return self._kernel.sys_unlock(path, lock_id=lock_id or "", force=force)
+
+    def _acquire_lock_sync(
+        self,
+        path: str,
+        timeout: float,
+        context: OperationContext | None = None,  # noqa: ARG002
+    ) -> str | None:
+        """Acquire advisory lock synchronously via kernel sys_lock."""
+        from nexus.contracts.exceptions import LockTimeout
+
+        lock_id = self.sys_lock(path, ttl=timeout)
+        if lock_id is None:
+            raise LockTimeout(path=path, timeout=timeout)
+        return lock_id
+
+    def _release_lock_sync(
+        self,
+        lock_id: str,
+        path: str,
+        context: OperationContext | None = None,  # noqa: ARG002
+    ) -> None:
+        """Release advisory lock synchronously via kernel sys_unlock."""
+        if not lock_id:
+            return
+        try:
+            self.sys_unlock(path, lock_id=lock_id)
+        except Exception as e:
+            logger.error(f"Failed to release lock {lock_id} for {path}: {e}")
+
     # sys_watch is in nexus_fs_watch.py (WatchMixin)
 
     @rpc_expose(description="Get available namespaces")
@@ -3756,17 +3813,6 @@ class NexusFS(  # type: ignore[misc]
 
             # Destination-exists fast-fail (round 6 finding #15 — the
             # probe covers both metastore and backend).
-            #
-            # Round 9 finding #21: we do NOT wrap this in
-            # ``_vfs_locked(dst_path)`` because the follow-up
-            # ``self.write(dst_path, ...)`` takes the same path-level
-            # write lock internally, and the lock manager is not
-            # re-entrant — nesting the acquisition would deadlock
-            # until the 5-second timeout.  The residual TOCTOU
-            # window between this check and ``write()``'s own
-            # acquisition is bounded by ``write()``'s last-writer-
-            # wins overwrite semantics — the same behavior every
-            # other caller of ``write()`` already tolerates.
             _check_dst_exists()
             virtual_write_result = self.write(dst_path, _virtual_src_bytes, context=context)
             self._kernel.dispatch_post_hooks("copy", _virtual_copy_ctx)

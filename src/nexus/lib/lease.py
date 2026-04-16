@@ -8,18 +8,12 @@ Implements ``LeaseManagerProtocol`` with:
 - Revocation callback registry with concurrent execution + per-callback timeout
 - Lazy expiry on access + periodic background sweep for abandoned leases
 - Single ``asyncio.Lock`` — sufficient for in-memory state (no I/O under lock)
-- Blocking acquire with exponential backoff (matches distributed_lock pattern)
+- Blocking acquire with exponential backoff
 
 Architecture:
     - ``LocalLeaseManager``: Single-process mode (this file)
     - ``LeaseManagerProtocol``: ``contracts/protocols/lease.py``
     - Service owner: ``services/lifecycle/lease_service.py``
-
-Note: TTL/holder tracking is structurally similar to ``lib/distributed_lock.py``
-and ``lib/semaphore.py``.  The three have different conflict semantics (locks are
-exclusive-only, semaphores are counting, leases are read/write) so a shared
-abstraction would add complexity without value.  See Issue #3407 architecture
-review, decision #7C.
 
 References:
     - DFUSE paper: https://arxiv.org/abs/2503.18191
@@ -105,7 +99,7 @@ def _is_compatible(existing: LeaseState, requested: LeaseState) -> bool:
 # Local in-memory lease manager
 # =============================================================================
 
-# Retry / backoff constants (match distributed_lock.py pattern)
+# Retry / backoff constants
 _BASE_RETRY_INTERVAL = 0.05  # 50ms base retry interval
 _MAX_RETRY_INTERVAL = 1.0  # 1s maximum retry interval
 _BACKOFF_MULTIPLIER = 2.0  # exponential backoff multiplier

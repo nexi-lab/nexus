@@ -1,7 +1,7 @@
 """Distributed locks REST API router.
 
-Exposes the kernel's LockManager via REST endpoints for the TUI.
-Uses in-memory lock state (mirrors what the kernel LockManager tracks).
+Exposes the kernel's advisory lock syscalls (sys_lock / sys_unlock /
+metastore_list_locks) via REST endpoints for the TUI.
 
 Issue #3250: TUI Locks tab.
 """
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/locks", tags=["locks"])
 
-# In-memory lock store (mirrors kernel LockManager state)
+# In-memory lock store (fallback when kernel not available)
 _locks: dict[str, dict[str, Any]] = {}
 
 
@@ -33,12 +33,9 @@ class ExtendRequest(BaseModel):
     ttl: int = 60
 
 
-def _get_lock_manager(request: Request) -> Any:
-    """Try to get the kernel's LockManager."""
-    nx = getattr(request.app.state, "nexus_fs", None)
-    if nx and hasattr(nx, "_lock_manager"):
-        return nx._lock_manager
-    return None
+def _get_nexus_fs(request: Request) -> Any:
+    """Get the NexusFS instance from app state."""
+    return getattr(request.app.state, "nexus_fs", None)
 
 
 def _normalize_mode(mode: str) -> str:
@@ -123,22 +120,29 @@ def _mgr_extend(mgr: Any, lock_id: str, resource: str, ttl: int) -> Any:
 @router.get("")
 async def list_locks(request: Request) -> dict[str, Any]:
     """List all active locks."""
-    # Try kernel LockManager first
-    mgr = _get_lock_manager(request)
-    if mgr and hasattr(mgr, "list_locks"):
+    nx = _get_nexus_fs(request)
+    if nx and hasattr(nx, "_kernel") and nx._kernel is not None:
         try:
-            try:
-                kernel_locks = mgr.list_locks(pattern="", limit=1000)
-            except TypeError:
-                kernel_locks = mgr.list_locks()
-            locks = [_lock_to_response(lock) for lock in (kernel_locks or [])]
+            kernel_locks = nx._kernel.metastore_list_locks("/", 1000)
+            locks = [
+                {
+                    "lock_id": holder.get("lock_id", ""),
+                    "resource": lock_info.get("path", ""),
+                    "mode": holder.get("mode", "exclusive"),
+                    "max_holders": lock_info.get("max_holders", 1),
+                    "holder_info": holder.get("holder_info", ""),
+                    "acquired_at": holder.get("acquired_at_secs", 0),
+                    "expires_at": holder.get("expires_at_secs", 0),
+                }
+                for lock_info in kernel_locks
+                for holder in lock_info.get("holders", [])
+            ]
             return {"locks": locks, "count": len(locks)}
         except Exception as e:
             logger.debug("Kernel lock list failed: %s", e)
 
     # Fallback: in-memory store
     now = time.time()
-    # Clean expired locks
     expired = [k for k, v in _locks.items() if v["expires_at"] < now]
     for k in expired:
         del _locks[k]
@@ -154,27 +158,14 @@ async def acquire_lock(
     request: Request,
 ) -> dict[str, Any]:
     """Acquire a lock on a resource path."""
-    mgr = _get_lock_manager(request)
-    if mgr and hasattr(mgr, "acquire"):
+    nx = _get_nexus_fs(request)
+    if nx and hasattr(nx, "sys_lock"):
         try:
-            mode = _normalize_mode(body.mode)
-            lock_id = mgr.acquire(resource, mode=mode, ttl=float(body.ttl_seconds))
-            if lock_id is None:
-                raise HTTPException(status_code=409, detail=f"Resource already locked: {resource}")
-
-            # Keep mirror state for compatibility/fallback paths.
-            now = time.time()
-            _locks[resource] = {
-                "lock_id": str(lock_id),
-                "resource": resource,
-                "mode": "mutex" if mode == "exclusive" else "shared",
-                "max_holders": 1,
-                "holder_info": "kernel",
-                "acquired_at": now,
-                "expires_at": now + body.ttl_seconds,
-                "fence_token": 0,
-            }
-            return {"status": "acquired", "lock_id": str(lock_id), "resource": resource}
+            mode = "exclusive" if body.mode == "mutex" else body.mode
+            lock_id = nx.sys_lock(resource, mode=mode, ttl=body.ttl_seconds)
+            if lock_id:
+                return {"status": "acquired", "lock_id": lock_id, "resource": resource}
+            raise HTTPException(status_code=409, detail=f"Resource already locked: {resource}")
         except HTTPException:
             raise
         except Exception as e:
@@ -194,7 +185,6 @@ async def acquire_lock(
         "holder_info": "admin",
         "acquired_at": now,
         "expires_at": now + body.ttl_seconds,
-        "fence_token": int(now * 1000) % 1000000,
     }
     _locks[resource] = lock
     return {"status": "acquired", **lock}
@@ -207,12 +197,10 @@ async def release_lock(
     request: Request,
 ) -> None:
     """Release a lock."""
-    mgr = _get_lock_manager(request)
-    if mgr and hasattr(mgr, "release"):
+    nx = _get_nexus_fs(request)
+    if nx and hasattr(nx, "sys_unlock"):
         try:
-            released = _mgr_release(mgr, lock_id, resource)
-            if not released:
-                raise HTTPException(status_code=404, detail=f"Lock not found: {resource}")
+            nx.sys_unlock(resource, lock_id=lock_id)
             _locks.pop(resource, None)
             return
         except HTTPException:
@@ -234,19 +222,13 @@ async def extend_lock(
     request: Request,
 ) -> dict[str, Any]:
     """Extend a lock's TTL."""
-    mgr = _get_lock_manager(request)
-    if mgr and hasattr(mgr, "extend"):
+    nx = _get_nexus_fs(request)
+    if nx and hasattr(nx, "sys_lock"):
         try:
-            result = _mgr_extend(mgr, body.lock_id, resource, body.ttl)
-            success = bool(getattr(result, "success", result))
-            if not success:
-                raise HTTPException(status_code=404, detail=f"Lock not found: {resource}")
-
-            if resource in _locks:
-                _locks[resource]["expires_at"] = time.time() + body.ttl
-            return {"status": "extended", "resource": resource}
-        except HTTPException:
-            raise
+            # sys_lock with existing lock_id = extend TTL
+            result = nx.sys_lock(resource, lock_id=body.lock_id, ttl=body.ttl)
+            if result:
+                return {"status": "extended", "resource": resource}
         except Exception as e:
             logger.debug("Kernel lock extend failed: %s", e)
 

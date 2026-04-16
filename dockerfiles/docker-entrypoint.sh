@@ -21,17 +21,31 @@ set -o pipefail
 export GLIBC_TUNABLES="${GLIBC_TUNABLES:-glibc.rtld.optional_static_tls=16384}"
 
 # ---------------------------------------------------------------------------
-# ARM64 mitigations (Issue #3125)
-#   FAISS_OPT_LEVEL=generic  — prevent faiss SVE auto-detection crash in
-#                               Docker where CPU feature flags may be masked.
-#   OMP_NUM_THREADS=1        — avoid OpenMP runtime conflict between faiss-cpu
-#                               and PyTorch on ARM (libiomp5 vs libomp).
-# Users can still override by setting the variable before starting the container.
+# Conservative SIMD defaults (all platforms) — Issue #3125 + faiss/torch SIGILL
+#
+# faiss-cpu and PyTorch's MKL kernels emit AVX/AVX2/AVX-512 instructions that
+# are not always executable on the underlying CPU:
+#   * ARM64 in Docker: faiss SVE auto-detection crashes when CPU feature flags
+#     are masked by the runtime.
+#   * x86_64 on virtualized / shared / older hardware (e.g. GitHub Actions
+#     runners, some QEMU VMs, older Xeons): "Successfully loaded faiss with
+#     AVX2 support" then SIGILL on first SIMD op; or torch's mkl_vml_kernel_*
+#     SIGILL with AVX-512 (faiss #426/#885/#896, pytorch #175436/#68349,
+#     sentence-transformers #1120).
+#
+# Defaults below trade peak vector-search throughput for portability:
+#   FAISS_OPT_LEVEL=generic        — faiss loads non-SIMD .so
+#   OMP_NUM_THREADS=1              — single-threaded OpenMP (avoids
+#                                    libgomp/libiomp5 runtime conflict)
+#   MKL_ENABLE_INSTRUCTIONS=SSE4_2 — clamp Intel MKL to SSE4.2 (no AVX*)
+#
+# Users running on known-good modern CPUs can override at `docker run` time:
+#   docker run -e FAISS_OPT_LEVEL=avx2 -e OMP_NUM_THREADS=4 \
+#              -e MKL_ENABLE_INSTRUCTIONS=AVX512 ...
 # ---------------------------------------------------------------------------
-if [ "$(uname -m)" = "aarch64" ]; then
-    export FAISS_OPT_LEVEL="${FAISS_OPT_LEVEL:-generic}"
-    export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
-fi
+export FAISS_OPT_LEVEL="${FAISS_OPT_LEVEL:-generic}"
+export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
+export MKL_ENABLE_INSTRUCTIONS="${MKL_ENABLE_INSTRUCTIONS:-SSE4_2}"
 
 # ---------------------------------------------------------------------------
 # LD_PRELOAD fallback (CPU-only)

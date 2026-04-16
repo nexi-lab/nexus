@@ -230,22 +230,23 @@ class MountTable:
             backend
         ).__name__.startswith("CAS")
         _local_root = str(getattr(backend, "root_path", None)) if _is_cas_local else None
-        if self._rust is not None:
-            self._rust.add_mount(
-                mount_point,
-                zone_id,
-                readonly,
-                admin_only,
-                io_profile,
-                _backend_name,
-                _local_root,
-                True,  # fsync
-            )
-        # Also wire into Kernel router (Issue #1868) so sys_read/sys_stat
-        # fast path sees live mounts.  Pass py_backend= when no local_root
-        # so Rust wraps Python backend via PyObjectStoreAdapter.
-        # Atomic: if kernel add_mount fails, roll back Python _entries
-        # (restore prior entry if this was a remount) to avoid split-brain.
+
+        # Transactional: try kernel first; only update _rust after kernel
+        # succeeds. If either fails, restore full prior state (entries + rust).
+        def _rollback() -> None:
+            if _prior_entry is not None:
+                self._entries[canonical] = _prior_entry
+            else:
+                self._entries.pop(canonical, None)
+            # Remove any new _rust entry we added; old _rust state for
+            # remounts remains intact because we haven't touched it yet.
+            if self._rust is not None and not _prior_in_rust:
+                with contextlib.suppress(Exception):
+                    self._rust.remove_mount(mount_point, zone_id)
+
+        # Wire into Kernel router (Issue #1868) so sys_read/sys_stat fast
+        # path sees live mounts. Pass py_backend= when no local_root so
+        # Rust wraps Python backend via PyObjectStoreAdapter.
         if self._kernel is not None:
             _ms = self._entries[canonical].metastore
             _ms_path = getattr(_ms, "_redb_path", None) if _ms else None
@@ -282,14 +283,29 @@ class MountTable:
                         **_kwargs,
                     )
             except Exception:
-                # Roll back Python-side registration on kernel failure.
-                if _prior_entry is not None:
-                    self._entries[canonical] = _prior_entry
-                else:
-                    self._entries.pop(canonical, None)
-                if self._rust is not None and not _prior_in_rust:
+                _rollback()
+                raise
+
+        # Kernel succeeded (or was None) — now update _rust LPM table. Do
+        # this after kernel so a kernel failure doesn't leave _rust stale.
+        if self._rust is not None:
+            try:
+                self._rust.add_mount(
+                    mount_point,
+                    zone_id,
+                    readonly,
+                    admin_only,
+                    io_profile,
+                    _backend_name,
+                    _local_root,
+                    True,  # fsync
+                )
+            except Exception:
+                # _rust failed — undo kernel add_mount and restore entries.
+                if self._kernel is not None:
                     with contextlib.suppress(Exception):
-                        self._rust.remove_mount(mount_point, zone_id)
+                        self._kernel.remove_mount(mount_point, zone_id)
+                _rollback()
                 raise
 
     def remove(self, mount_point: str, zone_id: str = ROOT_ZONE_ID) -> bool:

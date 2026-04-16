@@ -1634,10 +1634,28 @@ class NexusFS(  # type: ignore[misc]
                             results[path] = content
                         continue
                     if not result.hit:
-                        if skip_errors:
-                            results[path] = None
-                            continue
-                        raise NexusFileNotFoundError(path)
+                        # Legacy/version-skew fallback: unflagged external
+                        # mount. Delegate to sys_read which has the full
+                        # compatibility fallback.
+                        try:
+                            content = self.sys_read(path, context=context)
+                        except NexusFileNotFoundError:
+                            if skip_errors:
+                                results[path] = None
+                                continue
+                            raise
+                        if return_metadata:
+                            meta = self.metadata.get(vpath)
+                            results[path] = {
+                                "content": content,
+                                "etag": meta.etag if meta else None,
+                                "version": meta.version if meta else 0,
+                                "modified_at": meta.modified_at if meta else None,
+                                "size": len(content),
+                            }
+                        else:
+                            results[path] = content
+                        continue
                     content = result.data or b""
                     if return_metadata:
                         meta = self.metadata.get(vpath)
@@ -1756,6 +1774,14 @@ class NexusFS(  # type: ignore[misc]
                     # route through the same dispatch helper that the
                     # async ``sys_read`` uses before declaring "not found".
                     content = self._try_virtual_readme_bytes(path, context)
+                    # Legacy/version-skew fallback: unflagged external mount
+                    # won't set is_external. Delegate to sys_read which has
+                    # the full compatibility fallback (matches single-read).
+                    if content is None:
+                        try:
+                            content = self.sys_read(path, context=context)
+                        except NexusFileNotFoundError:
+                            content = None
                 if content is None:
                     if skip_errors:
                         results[path] = None

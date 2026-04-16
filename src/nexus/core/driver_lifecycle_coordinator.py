@@ -32,7 +32,6 @@ from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.core.path_utils import canonicalize_path, extract_zone_id, normalize_path
 
 if TYPE_CHECKING:
-    from nexus.core.metastore import MetastoreABC
     from nexus.core.object_store import ObjectStoreABC
     from nexus.remote.rpc_transport import RPCTransportPool
 
@@ -162,58 +161,6 @@ class DriverLifecycleCoordinator:
         )
         self._mounts[canonical] = info
         self._dispatch.dispatch_event("mount", normalized)
-
-    def mount(
-        self,
-        mount_point: str,
-        backend: "ObjectStoreABC",
-        *,
-        metastore: "MetastoreABC | None" = None,
-        readonly: bool = False,
-        admin_only: bool = False,
-        io_profile: str = "balanced",
-        zone_id: str = ROOT_ZONE_ID,
-    ) -> None:
-        """Mount a backend — delegates to NexusFS.sys_setattr(DT_MOUNT).
-
-        Legacy callers that haven't migrated to ``sys_setattr`` yet go
-        through this shim. It calls the Rust kernel directly, then stores
-        Python bookkeeping.
-        """
-        normalized = normalize_path(mount_point)
-        _backend_name = backend.name if isinstance(backend.name, str) else str(backend.name)
-        _is_cas_local = getattr(backend, "has_root_path", False) and type(
-            backend
-        ).__name__.startswith("CAS")
-        _local_root = str(getattr(backend, "root_path", None)) if _is_cas_local else None
-        _ms_path = getattr(metastore, "_redb_path", None) if metastore is not None else None
-        _zone_handle = getattr(metastore, "_engine", None) if metastore is not None else None
-
-        if self._kernel is not None:
-            with contextlib.suppress(Exception):
-                self._kernel.sys_setattr(
-                    normalized,
-                    2,  # DT_MOUNT
-                    _backend_name,
-                    local_root=_local_root,
-                    fsync=True,
-                    py_backend=backend,
-                    readonly=readonly,
-                    admin_only=admin_only,
-                    io_profile=io_profile,
-                    zone_id=zone_id,
-                    metastore_path=str(_ms_path) if _ms_path else None,
-                    py_zone_handle=_zone_handle,
-                )
-
-        self._store_mount_info(
-            mount_point,
-            backend,
-            readonly=readonly,
-            admin_only=admin_only,
-            io_profile=io_profile,
-            zone_id=zone_id,
-        )
 
     def unmount(self, mount_point: str, zone_id: str = ROOT_ZONE_ID) -> bool:
         """Unmount: notify + Rust DLC unmount + remove Python bookkeeping.

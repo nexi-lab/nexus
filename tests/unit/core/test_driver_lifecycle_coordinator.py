@@ -99,17 +99,17 @@ def _make_coordinator() -> tuple[MagicMock, _TestDispatch, DriverLifecycleCoordi
 
 
 # ---------------------------------------------------------------------------
-# mount()
+# _store_mount_info() (formerly mount() — shim deleted in R7c)
 # ---------------------------------------------------------------------------
 
 
 class TestMount:
     def test_mount_records_py_mount_info(self) -> None:
-        """F2: ``mount()`` writes a ``_PyMountInfo`` into ``coord._mounts``."""
-        kernel, _, coord = _make_coordinator()
+        """_store_mount_info writes a ``_PyMountInfo`` into ``coord._mounts``."""
+        _, _, coord = _make_coordinator()
         backend = _FakeBackend()
 
-        coord.mount("/data", backend, readonly=True, io_profile="throughput")
+        coord._store_mount_info("/data", backend, readonly=True, io_profile="throughput")
 
         canonical = canonicalize_path("/data", "root")
         assert canonical in coord._mounts
@@ -119,14 +119,11 @@ class TestMount:
         assert info.admin_only is False
         assert info.io_profile == "throughput"
 
-        # Rust-side ``add_mount`` should have been invoked on the kernel.
-        kernel.add_mount.assert_called_once()
-
     def test_mount_registers_hook_spec_observers(self) -> None:
         _, dispatch, coord = _make_coordinator()
         backend = _BackendWithHookSpec()
 
-        coord.mount("/data", backend)
+        coord._store_mount_info("/data", backend)
 
         # register_observe is now a no-op (Python observers deleted).
         # Service-registered observer count is always 0.
@@ -144,17 +141,16 @@ class TestMount:
         backend = _BackendWithHookSpec()
 
         with patch.object(dispatch, "dispatch_event") as mock_dispatch:
-            coord.mount("/data", backend)
+            coord._store_mount_info("/data", backend)
             mock_dispatch.assert_called_once_with("mount", "/data")
 
     def test_mount_no_hook_spec_still_routes(self) -> None:
-        kernel, dispatch, coord = _make_coordinator()
+        _, dispatch, coord = _make_coordinator()
         backend = _FakeBackend()
 
-        coord.mount("/plain", backend)
+        coord._store_mount_info("/plain", backend)
 
         assert canonicalize_path("/plain", "root") in coord._mounts
-        kernel.add_mount.assert_called_once()
         assert dispatch.observer_count == 0
 
 
@@ -168,7 +164,7 @@ class TestUnmount:
         _, dispatch, coord = _make_coordinator()
         backend = _BackendWithHookSpec()
 
-        coord.mount("/data", backend)
+        coord._store_mount_info("/data", backend)
         # register_observe is now a no-op — observer_count always 0
         assert dispatch.observer_count == 0
 
@@ -189,7 +185,7 @@ class TestUnmount:
         _, dispatch, coord = _make_coordinator()
         backend = _BackendWithHookSpec()
 
-        coord.mount("/data", backend)
+        coord._store_mount_info("/data", backend)
 
         with patch.object(dispatch, "dispatch_event") as mock_dispatch:
             coord.unmount("/data")
@@ -205,7 +201,7 @@ class TestUnmount:
         _, dispatch, coord = _make_coordinator()
         backend = _FakeBackend()
 
-        coord.mount("/data", backend)
+        coord._store_mount_info("/data", backend)
 
         # Force dispatch_event to raise
         dispatch.dispatch_event = MagicMock(side_effect=RuntimeError("boom"))
@@ -232,7 +228,7 @@ class TestCASWiringFix:
         backend.name = "cas-local"
         backend.hook_spec.return_value = HookSpec(observers=(mount_obs,))
 
-        coord.mount("/", backend)
+        coord._store_mount_info("/", backend)
 
         # register_observe is now a no-op — observer_count always 0
         assert dispatch.observer_count == 0

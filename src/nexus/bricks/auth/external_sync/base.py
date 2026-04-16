@@ -14,10 +14,8 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from nexus.bricks.auth.credential_backend import ResolvedCredential
+from nexus.bricks.auth.credential_backend import ResolvedCredential
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,3 +70,14 @@ class ExternalCliSyncAdapter(ABC):
         (file or subprocess) and extracts the actual secret for one profile.
         """
         ...
+
+    def resolve_credential_sync(self, backend_key: str) -> ResolvedCredential:
+        """Synchronous variant of resolve_credential().
+
+        Default: raises NotImplementedError. Adapters that support sync
+        resolution (FileAdapter subclasses, SubprocessAdapter with
+        subprocess.run) override this.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement resolve_credential_sync"
+        )

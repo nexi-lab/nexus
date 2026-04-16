@@ -94,6 +94,7 @@ class SheetsConnector(PathCLIBackend):
     SKILL_NAME = "sheets"
     CLI_NAME = "gws"
     CLI_SERVICE = "sheets"
+    AUTH_SOURCE = "gws-cli"
 
     SCHEMAS: dict[str, type] = {
         "append_rows": AppendRowsSchema,
@@ -179,6 +180,7 @@ class DocsConnector(PathCLIBackend):
     SKILL_NAME = "docs"
     CLI_NAME = "gws"
     CLI_SERVICE = "docs"
+    AUTH_SOURCE = "gws-cli"
 
     SCHEMAS: dict[str, type] = {
         "insert_text": InsertTextSchema,
@@ -362,6 +364,7 @@ class ChatConnector(PathCLIBackend):
     SKILL_NAME = "chat"
     CLI_NAME = "gws"
     CLI_SERVICE = "chat"
+    AUTH_SOURCE = "gws-cli"
 
     SCHEMAS: dict[str, type] = {
         "send_message": SendMessageSchema,
@@ -450,6 +453,7 @@ class DriveConnector(PathCLIBackend):
     SKILL_NAME = "drive"
     CLI_NAME = "gws"
     CLI_SERVICE = "drive"
+    AUTH_SOURCE = "gws-cli"
 
     SCHEMAS: dict[str, type] = {
         "upload_file": UploadFileSchema,
@@ -571,6 +575,7 @@ class GmailConnector(PathCLIBackend):
     SKILL_NAME = "gmail"
     CLI_NAME = "gws"
     CLI_SERVICE = "gmail"
+    AUTH_SOURCE = "gws-cli"
 
     SCHEMAS: dict[str, type] = {
         "send_email": SendEmailSchema,
@@ -1225,6 +1230,7 @@ class CalendarConnector(PathCLIBackend):
     SKILL_NAME = "gcalendar"
     CLI_NAME = "gws"
     CLI_SERVICE = "calendar"
+    AUTH_SOURCE = "gws-cli"
 
     DIRECTORY_STRUCTURE = """\
 /mnt/calendar/

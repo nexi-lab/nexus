@@ -1481,18 +1481,20 @@ class NexusFS(  # type: ignore[misc]
             # (e.g. legacy callers of nexus.fs.mount() or version-skewed kernels without
             # the is_external param — see mount_table TypeError fallback). Try Python
             # router as last resort to detect ExternalRouteResult before giving up.
-            from nexus.contracts.exceptions import AccessDeniedError
+            from nexus.contracts.exceptions import (
+                PathNotMountedError,
+            )
             from nexus.core.router import ExternalRouteResult
 
             try:
                 _fb_route = self.router.route(
                     path, is_admin=_is_admin, check_write=False, zone_id=self._zone_id
                 )
-            except AccessDeniedError:
-                # Auth failures must propagate — don't mask as not-found.
-                raise
-            except Exception:
+            except PathNotMountedError:
+                # Genuinely no mount → not-found is correct.
                 _fb_route = None
+            # AccessDeniedError and other exceptions (metastore I/O, corrupted
+            # mount metadata) must propagate, not be masked as not-found.
             if (
                 isinstance(_fb_route, ExternalRouteResult)
                 and getattr(_fb_route, "backend", None) is not None
@@ -1615,6 +1617,22 @@ class NexusFS(  # type: ignore[misc]
                 try:
                     vpath = self._validate_path(path)
                     result = self._kernel.sys_read(vpath, _rust_ctx)
+                    # External mount — delegate to sys_read which handles
+                    # connector dispatch via Python router.
+                    if getattr(result, "is_external", False):
+                        content = self.sys_read(path, context=context)
+                        if return_metadata:
+                            meta = self.metadata.get(vpath)
+                            results[path] = {
+                                "content": content,
+                                "etag": meta.etag if meta else None,
+                                "version": meta.version if meta else 0,
+                                "modified_at": meta.modified_at if meta else None,
+                                "size": len(content),
+                            }
+                        else:
+                            results[path] = content
+                        continue
                     if not result.hit:
                         if skip_errors:
                             results[path] = None
@@ -1726,7 +1744,11 @@ class NexusFS(  # type: ignore[misc]
             try:
                 result = self._kernel.sys_read(path, _rust_ctx)
                 content = None
-                if result.hit:
+                if getattr(result, "is_external", False):
+                    # External mount — delegate to sys_read which handles
+                    # connector dispatch via Python router.
+                    content = self.sys_read(path, context=context)
+                elif result.hit:
                     content = result.data or b""
                 else:
                     # Rust fast path missed.  Virtual ``.readme/`` paths

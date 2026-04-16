@@ -1420,13 +1420,12 @@ class CalendarConnector(PathCLIBackend):
         """Resolve a display folder name back to a calendar ID.
 
         Handles both raw calendar IDs (``primary``, ``user@gmail.com``)
-        and sanitized display names (``My-Calendar``). On cold cache with
-        no context, treats ``folder_name`` as a literal calendar ID rather
-        than triggering an unscoped lookup (R5-H2).
+        and sanitized display names (``My-Calendar``). Triggers a
+        calendarList fetch on cold cache — this is the request path
+        (list_dir / read_content / list_dir_metadata), which always has
+        a caller-provided context in production. The display-path render
+        case is handled separately in ``_calendar_display_name``.
         """
-        cached = getattr(self, "_calendar_names", None) or {}
-        if not cached and context is None:
-            return folder_name
         names = self._fetch_calendar_names(context=context)
         # Direct match on calendar ID.
         if folder_name in names:

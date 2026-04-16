@@ -185,7 +185,11 @@ class GhCliSyncAdapter(ExternalCliSyncAdapter):
                         profiles.append(
                             SyncedProfile(
                                 provider="github",
-                                account_identifier=username,
+                                # Host-qualified to disambiguate same username
+                                # across github.com vs enterprise hosts. Without
+                                # this, registry profile_id (provider/account)
+                                # collides and one host overwrites the other.
+                                account_identifier=f"{host}/{username}",
                                 backend_key=f"gh-cli/{host}/{username}",
                                 source="gh-cli",
                             )
@@ -195,7 +199,7 @@ class GhCliSyncAdapter(ExternalCliSyncAdapter):
                 profiles.append(
                     SyncedProfile(
                         provider="github",
-                        account_identifier=host_data["user"],
+                        account_identifier=f"{host}/{host_data['user']}",
                         backend_key=f"gh-cli/{host}/{host_data['user']}",
                         source="gh-cli",
                     )
@@ -225,7 +229,8 @@ class GhCliSyncAdapter(ExternalCliSyncAdapter):
                 profiles.append(
                     SyncedProfile(
                         provider="github",
-                        account_identifier=username,
+                        # Host-qualified — see parse_hosts_file note.
+                        account_identifier=f"{current_host}/{username}",
                         backend_key=f"gh-cli/{current_host}/{username}",
                         source="gh-cli",
                     )

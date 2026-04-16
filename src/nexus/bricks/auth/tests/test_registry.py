@@ -647,3 +647,83 @@ class TestTombstoning:
         # Both should survive: A added its own row, B's row untouched
         assert "test/fast-acct" in ids
         assert "other/bob@example.com" in ids, "A's sync must not delete B's adapter-owned row"
+
+    async def test_resync_uses_atomic_replace_owned_subset(self) -> None:
+        """R4-MEDIUM regression: registry must batch upserts+tombstones via
+        ``store.replace_owned_subset`` so concurrent readers never see a
+        half-applied snapshot. Previously the registry called ``upsert`` in a
+        loop then ``delete`` in a second loop — each individually committed —
+        opening a window where a fresh row coexisted with about-to-vanish
+        stale rows.
+        """
+
+        # Custom store that records call order so we can assert atomicity.
+        class _RecordingStore(InMemoryAuthProfileStore):
+            def __init__(self) -> None:
+                super().__init__()
+                self.calls: list[tuple[str, tuple[int, int]]] = []
+
+            def upsert(self, profile) -> None:  # noqa: ANN001
+                self.calls.append(("upsert", (1, 0)))
+                super().upsert(profile)
+
+            def delete(self, pid: str) -> None:
+                self.calls.append(("delete", (0, 1)))
+                super().delete(pid)
+
+            def replace_owned_subset(self, *, upserts, deletes) -> None:  # noqa: ANN001
+                self.calls.append(("replace_owned_subset", (len(upserts), len(deletes))))
+                super().replace_owned_subset(upserts=upserts, deletes=deletes)
+
+        store = _RecordingStore()
+
+        class _SwitchingAdapter(ExternalCliSyncAdapter):
+            adapter_name = "atomic"
+            sync_ttl_seconds = 0.1
+            failure_threshold = 3
+            reset_timeout_seconds = 60.0
+
+            def __init__(self) -> None:
+                self.call = 0
+
+            async def detect(self) -> bool:
+                return True
+
+            async def sync(self) -> SyncResult:
+                self.call += 1
+                email = "alice@example.com" if self.call == 1 else "bob@example.com"
+                return SyncResult(
+                    adapter_name=self.adapter_name,
+                    profiles=[
+                        SyncedProfile(
+                            provider="test",
+                            account_identifier=email,
+                            backend_key=f"atomic/{email}",
+                            source="atomic",
+                        ),
+                    ],
+                )
+
+            async def resolve_credential(self, _bk: str) -> ResolvedCredential:
+                return ResolvedCredential(kind="api_key", api_key="x")
+
+        adapter = _SwitchingAdapter()
+        registry = AdapterRegistry([adapter], store, startup_timeout=3.0)
+
+        # First sync writes alice — exactly one batched call, no per-row writes.
+        await registry.startup()
+        first_calls = [c[0] for c in store.calls]
+        assert first_calls == ["replace_owned_subset"], (
+            f"first sync must use atomic batch, got {first_calls}"
+        )
+
+        # Second sync: bob in, alice tombstoned — still one atomic call.
+        store.calls.clear()
+        await registry._sync_adapter(adapter)
+        second_calls = list(store.calls)
+        assert len(second_calls) == 1, (
+            f"second sync must use exactly one atomic call, got {second_calls}"
+        )
+        assert second_calls[0][0] == "replace_owned_subset"
+        # 1 upsert (bob), 1 delete (alice)
+        assert second_calls[0][1] == (1, 1)

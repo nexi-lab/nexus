@@ -230,30 +230,33 @@ class AdapterRegistry:
         return result
 
     def _upsert_sync_results(self, result: SyncResult) -> None:
-        """Map SyncedProfile -> AuthProfile and upsert into the store.
+        """Map SyncedProfile -> AuthProfile and apply atomically.
 
         - backend = "external-cli"
         - backend_key = sp.backend_key (already formatted by the adapter)
         - Preserve existing usage_stats if profile already in store
         - Use ProfileUsageStats() for new profiles
 
-        **Tombstoning (Phase 3, #3740 Codex round 3):** after writing the
-        fresh profile set, delete any rows previously owned by *this adapter*
-        that are not in the new set. Without this, a logout / account switch
-        leaves ghost profiles that auth selection still treats as usable —
-        ``auth list`` advertises auth that no longer exists, and
-        ``_get_user_token`` can pick a dead row until resolution fails.
+        **Atomic swap (Phase 3, #3740 Codex round 4):** upserts and
+        tombstones go through ``store.replace_owned_subset()`` so concurrent
+        readers see either the pre-sync snapshot or the post-sync snapshot,
+        never a mix. The previous implementation committed each upsert and
+        delete individually, opening a window where a reader could observe
+        a fresh row alongside an about-to-be-tombstoned stale row.
 
-        We only delete rows whose ``backend_key`` matches ``{adapter_name}/...``
-        — never touch other adapters' rows or rows with backend != "external-cli".
+        **Tombstoning (Codex round 3):** after writing the fresh profile
+        set, delete any rows previously owned by *this adapter* that are
+        not in the new set. We only delete rows whose ``backend_key``
+        matches ``{adapter_name}/...`` — never touch other adapters' rows
+        or rows with backend != "external-cli".
         """
         now = datetime.now(UTC)
         adapter = self._adapters.get(result.adapter_name)
         sync_ttl = int(adapter.sync_ttl_seconds) if adapter else 300
 
-        # Track new profile IDs so we can delete stale ones.
-        fresh_ids: set[str] = set()
         adapter_prefix = f"{result.adapter_name}/"
+        fresh_ids: set[str] = set()
+        upserts: list[AuthProfile] = []
 
         for sp in result.profiles:
             profile_id = f"{sp.provider}/{sp.account_identifier}"
@@ -261,43 +264,55 @@ class AdapterRegistry:
             existing = self._store.get(profile_id)
             usage_stats = existing.usage_stats if existing is not None else ProfileUsageStats()
 
-            profile = AuthProfile(
-                id=profile_id,
-                provider=sp.provider,
-                account_identifier=sp.account_identifier,
-                backend="external-cli",
-                backend_key=sp.backend_key,
-                last_synced_at=now,
-                sync_ttl_seconds=sync_ttl,
-                usage_stats=usage_stats,
+            upserts.append(
+                AuthProfile(
+                    id=profile_id,
+                    provider=sp.provider,
+                    account_identifier=sp.account_identifier,
+                    backend="external-cli",
+                    backend_key=sp.backend_key,
+                    last_synced_at=now,
+                    sync_ttl_seconds=sync_ttl,
+                    usage_stats=usage_stats,
+                )
             )
-            self._store.upsert(profile)
 
-        # Tombstone stale rows: previously owned by this adapter, not in
-        # the fresh set. Skip if the sync degraded (partial profiles) — a
-        # transient parse error shouldn't wipe valid history.
-        if result.error is not None:
+        # Compute tombstones only on a clean sync — a transient parse error
+        # shouldn't wipe valid history.
+        deletes: list[str] = []
+        if result.error is None:
+            try:
+                deletes = [
+                    p.id
+                    for p in self._store.list()
+                    if p.backend == "external-cli"
+                    and p.backend_key.startswith(adapter_prefix)
+                    and p.id not in fresh_ids
+                ]
+            except Exception:
+                logger.debug("Tombstone scan failed for %s", result.adapter_name, exc_info=True)
+                deletes = []
+
+        if not upserts and not deletes:
             return
 
         try:
-            stale = [
-                p
-                for p in self._store.list()
-                if p.backend == "external-cli"
-                and p.backend_key.startswith(adapter_prefix)
-                and p.id not in fresh_ids
-            ]
+            self._store.replace_owned_subset(upserts=upserts, deletes=deletes)
         except Exception:
-            logger.debug("Tombstone scan failed for %s", result.adapter_name, exc_info=True)
-            return
-
-        for p in stale:
-            try:
-                self._store.delete(p.id)
-                logger.debug(
-                    "Tombstoned stale external-cli profile %s (adapter=%s)",
-                    p.id,
-                    result.adapter_name,
-                )
-            except Exception:
-                logger.debug("Failed to delete stale profile %s", p.id, exc_info=True)
+            logger.debug(
+                "Atomic replace failed for %s; falling back to per-row writes",
+                result.adapter_name,
+                exc_info=True,
+            )
+            # Best-effort fallback so a store that lacks atomic batch (or
+            # an old in-memory mock) still gets the new state.
+            for p in upserts:
+                try:
+                    self._store.upsert(p)
+                except Exception:
+                    logger.debug("Upsert fallback failed for %s", p.id, exc_info=True)
+            for pid in deletes:
+                try:
+                    self._store.delete(pid)
+                except Exception:
+                    logger.debug("Delete fallback failed for %s", pid, exc_info=True)

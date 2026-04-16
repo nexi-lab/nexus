@@ -55,7 +55,9 @@ class TestPathCLIBackendAuthSource:
             AUTH_SOURCE = "gws-cli"
 
         connector = _TestConnector()
-        ctx = SimpleNamespace(user_id="alice@example.com", zone_id=None)
+        from nexus.contracts.types import OperationContext
+
+        ctx = OperationContext(user_id="alice@example.com", groups=[])
 
         with (
             patch(
@@ -442,7 +444,9 @@ class TestZoneScopedRequestsSkipExternalCli:
             AUTH_SOURCE = "gws-cli"
 
         connector = _TestConnector()
-        ctx = SimpleNamespace(user_id="alice@example.com", zone_id="tenant-a")
+        from nexus.contracts.types import OperationContext
+
+        ctx = OperationContext(user_id="alice@example.com", zone_id="tenant-a", groups=[])
 
         with patch(
             "nexus.fs._external_sync_boot.resolve_token_for_provider",
@@ -466,7 +470,9 @@ class TestZoneScopedRequestsSkipExternalCli:
             AUTH_SOURCE = "gws-cli"
 
         connector = _TestConnector()
-        ctx = SimpleNamespace(user_id="alice@example.com", zone_id="tenant-a")
+        from nexus.contracts.types import OperationContext
+
+        ctx = OperationContext(user_id="alice@example.com", zone_id="tenant-a", groups=[])
 
         with (
             patch(
@@ -490,7 +496,9 @@ class TestZoneScopedRequestsSkipExternalCli:
             AUTH_SOURCE = "gws-cli"
 
         connector = _TestConnector()
-        ctx = SimpleNamespace(user_id="alice@example.com", zone_id="root")
+        from nexus.contracts.types import OperationContext
+
+        ctx = OperationContext(user_id="alice@example.com", zone_id="root", groups=[])
 
         with (
             patch(

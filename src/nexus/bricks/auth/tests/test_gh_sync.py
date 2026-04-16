@@ -31,7 +31,9 @@ class TestGhParseHosts:
         profiles = adapter.parse_hosts_file(content)
 
         assert len(profiles) == 1
-        assert profiles[0].account_identifier == "testuser"
+        # Host-qualified to disambiguate same-username accounts on
+        # github.com vs enterprise hosts (R4-H2).
+        assert profiles[0].account_identifier == "github.com/testuser"
         assert profiles[0].backend_key == "gh-cli/github.com/testuser"
         assert profiles[0].provider == "github"
         assert profiles[0].source == "gh-cli"
@@ -41,18 +43,42 @@ class TestGhParseHosts:
         profiles = adapter.parse_hosts_file(content)
 
         names = {p.account_identifier for p in profiles}
-        assert "testuser" in names
-        assert "workuser" in names
-        assert "corpuser" in names
+        assert "github.com/testuser" in names
+        assert "github.com/workuser" in names
+        assert "enterprise.corp.com/corpuser" in names
         assert len(profiles) == 3
 
     def test_parse_v250_enterprise_host(self, adapter: GhCliSyncAdapter) -> None:
         content = _HOSTS_V250.read_text(encoding="utf-8")
         profiles = adapter.parse_hosts_file(content)
 
-        corp = [p for p in profiles if p.account_identifier == "corpuser"]
+        corp = [p for p in profiles if p.account_identifier == "enterprise.corp.com/corpuser"]
         assert len(corp) == 1
         assert corp[0].backend_key == "gh-cli/enterprise.corp.com/corpuser"
+
+    def test_same_username_different_hosts_do_not_collide(self, adapter: GhCliSyncAdapter) -> None:
+        """R4-H2 regression: a user with the same name on github.com AND an
+        enterprise host must yield two distinct profiles. Previously
+        account_identifier was just the username, so the registry's
+        ``profile_id = provider/account_identifier`` collapsed them."""
+        content = """\
+github.com:
+  users:
+    alice:
+      oauth_token: gho_one
+enterprise.example.com:
+  users:
+    alice:
+      oauth_token: gho_two
+"""
+        profiles = adapter.parse_hosts_file(content)
+        ids = {p.account_identifier for p in profiles}
+        assert ids == {"github.com/alice", "enterprise.example.com/alice"}
+        keys = {p.backend_key for p in profiles}
+        assert keys == {
+            "gh-cli/github.com/alice",
+            "gh-cli/enterprise.example.com/alice",
+        }
 
     def test_parse_empty_returns_empty(self, adapter: GhCliSyncAdapter) -> None:
         profiles = adapter.parse_hosts_file("")
@@ -67,7 +93,7 @@ class TestGhParseAuthStatus:
         profiles = adapter.parse_status_output(content)
 
         assert len(profiles) == 1
-        assert profiles[0].account_identifier == "testuser"
+        assert profiles[0].account_identifier == "github.com/testuser"
         assert profiles[0].backend_key == "gh-cli/github.com/testuser"
 
     def test_sync_combines_stdout_and_stderr_streams(self, adapter: GhCliSyncAdapter) -> None:
@@ -82,7 +108,7 @@ class TestGhParseAuthStatus:
         combined = ("\n" + stderr_only).strip()  # leading blank stdout
         profiles = adapter.parse_status_output(combined)
         assert len(profiles) == 1
-        assert profiles[0].account_identifier == "testuser"
+        assert profiles[0].account_identifier == "github.com/testuser"
 
     def test_parse_v250_multiple_hosts(self, adapter: GhCliSyncAdapter) -> None:
         content = _STATUS_V250.read_text(encoding="utf-8")
@@ -90,8 +116,8 @@ class TestGhParseAuthStatus:
 
         assert len(profiles) == 2
         names = {p.account_identifier for p in profiles}
-        assert "testuser" in names
-        assert "corpuser" in names
+        assert any(n.endswith("/testuser") for n in names)
+        assert any(n.endswith("/corpuser") for n in names)
 
 
 class TestGhPaths:

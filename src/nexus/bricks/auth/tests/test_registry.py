@@ -648,6 +648,35 @@ class TestTombstoning:
         assert "test/fast-acct" in ids
         assert "other/bob@example.com" in ids, "A's sync must not delete B's adapter-owned row"
 
+    async def test_failed_atomic_swap_does_not_record_success(self) -> None:
+        """R6-H3 regression: when ``replace_owned_subset`` raises, the
+        registry must NOT stamp ``_last_sync_times`` or record breaker
+        success. Otherwise the next refresh tick skips the retry — the
+        sync silently appears done while the store still holds the
+        pre-sync snapshot.
+        """
+
+        class _FailingStore(InMemoryAuthProfileStore):
+            def replace_owned_subset(self, *, upserts, deletes) -> None:  # noqa: ANN001, ARG002
+                raise RuntimeError("simulated SQLite busy timeout")
+
+        store = _FailingStore()
+        adapter = _FastAdapter()
+        registry = AdapterRegistry([adapter], store, startup_timeout=3.0)
+
+        await registry.startup()
+        # Store apply failed → no last_sync_times entry, breaker counted failure
+        assert "fast" not in registry._last_sync_times, (
+            "must not stamp last_sync_times when store apply failed"
+        )
+        breaker = registry._breakers["fast"]
+        assert breaker.failure_count == 1, "failed store apply must increment breaker.failure_count"
+
+        # _sync_adapter path uses the same gating
+        await registry._sync_adapter(adapter)
+        assert "fast" not in registry._last_sync_times
+        assert breaker.failure_count == 2
+
     async def test_resync_uses_atomic_replace_owned_subset(self) -> None:
         """R4-MEDIUM regression: registry must batch upserts+tombstones via
         ``store.replace_owned_subset`` so concurrent readers never see a

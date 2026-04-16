@@ -161,13 +161,17 @@ class AdapterRegistry:
                     result = task.result()
                     # Always upsert discovered profiles, even when degraded
                     # (e.g. one file parsed OK, another failed). Partial
-                    # discovery is better than losing all profiles.
+                    # discovery is better than losing all profiles. Only
+                    # stamp last_sync_times + record breaker success when
+                    # the store apply actually succeeded (R6-H3) — else
+                    # the next refresh tick won't re-attempt the swap.
+                    applied = True
                     if result.profiles:
-                        self._upsert_sync_results(result)
-                        self._last_sync_times[name] = time.monotonic()
-                    if result.error is not None:
+                        applied = self._upsert_sync_results(result)
+                    if not applied or result.error is not None:
                         breaker.record_failure()
                     else:
+                        self._last_sync_times[name] = time.monotonic()
                         breaker.record_success()
             else:
                 if not task.done():
@@ -210,7 +214,13 @@ class AdapterRegistry:
     # ------------------------------------------------------------------
 
     async def _sync_adapter(self, adapter: ExternalCliSyncAdapter) -> SyncResult:
-        """Sync one adapter, update breaker and store."""
+        """Sync one adapter, update breaker and store.
+
+        ``_last_sync_times`` and breaker success are gated on the actual
+        store apply succeeding (R6-H3). Without this, a failed atomic
+        swap would silently mark the sync done and the next refresh tick
+        would skip re-attempting it.
+        """
         name = adapter.adapter_name
         breaker = self._breakers[name]
         try:
@@ -218,19 +228,25 @@ class AdapterRegistry:
         except Exception as exc:
             result = SyncResult(adapter_name=name, error=str(exc))
 
-        # Always upsert discovered profiles even when degraded
+        applied = True
         if result.profiles:
-            self._upsert_sync_results(result)
-            self._last_sync_times[name] = time.monotonic()
-        if result.error is not None:
+            applied = self._upsert_sync_results(result)
+        if not applied or result.error is not None:
             breaker.record_failure()
         else:
+            self._last_sync_times[name] = time.monotonic()
             breaker.record_success()
 
         return result
 
-    def _upsert_sync_results(self, result: SyncResult) -> None:
+    def _upsert_sync_results(self, result: SyncResult) -> bool:
         """Map SyncedProfile -> AuthProfile and apply atomically.
+
+        Returns True on a successful store apply (or true no-op), False
+        when ``replace_owned_subset`` raised. Callers gate
+        ``_last_sync_times`` and breaker success on this result so a
+        failed swap is retried on the next refresh tick instead of
+        being mistaken for a successful sync (R6-H3).
 
         - backend = "external-cli"
         - backend_key = sp.backend_key (already formatted by the adapter)
@@ -294,7 +310,7 @@ class AdapterRegistry:
                 deletes = []
 
         if not upserts and not deletes:
-            return
+            return True
 
         # No fallback to per-row writes (R5-M1): the per-row path is the
         # exact torn-snapshot window R4 was meant to remove. If
@@ -310,3 +326,5 @@ class AdapterRegistry:
                 result.adapter_name,
                 exc_info=True,
             )
+            return False
+        return True

@@ -1011,22 +1011,32 @@ class GmailConnector(PathCLIBackend):
     # --- Read/sync operations ---
 
     def get_history_id(self, context: Any = None) -> str | None:
-        """Get current Gmail historyId for delta sync."""
+        """Get current Gmail historyId for delta sync.
+
+        Wraps ``ScopedAuthRequiredError`` in ``BackendError`` so callers
+        like ``get_file_info`` honor the backend error contract (R6-M1).
+        """
         import json as _json
 
-        r = self._execute_cli(
-            [
-                "gws",
-                "gmail",
-                "users",
-                "getProfile",
-                "--params",
-                '{"userId":"me"}',
-                "--format",
-                "json",
-            ],
-            context=context,
-        )
+        from nexus.backends.connectors.cli.base import ScopedAuthRequiredError
+        from nexus.contracts.exceptions import BackendError
+
+        try:
+            r = self._execute_cli(
+                [
+                    "gws",
+                    "gmail",
+                    "users",
+                    "getProfile",
+                    "--params",
+                    '{"userId":"me"}',
+                    "--format",
+                    "json",
+                ],
+                context=context,
+            )
+        except ScopedAuthRequiredError as exc:
+            raise BackendError(str(exc), backend=self.name, path="/") from exc
         if r.ok:
             try:
                 # Skip "Using keyring backend" line
@@ -1046,29 +1056,38 @@ class GmailConnector(PathCLIBackend):
 
         Returns (added_ids, deleted_ids, new_history_id).
         Uses Gmail history.list API for true delta sync.
+
+        Wraps ``ScopedAuthRequiredError`` in ``BackendError`` so internal
+        sync callers honor the backend error contract (R6-M1).
         """
         import json as _json
 
-        r = self._execute_cli(
-            [
-                "gws",
-                "gmail",
-                "users",
-                "history",
-                "list",
-                "--params",
-                _json.dumps(
-                    {
-                        "userId": "me",
-                        "startHistoryId": since_history_id,
-                        "maxResults": 500,
-                    }
-                ),
-                "--format",
-                "json",
-            ],
-            context=context,
-        )
+        from nexus.backends.connectors.cli.base import ScopedAuthRequiredError
+        from nexus.contracts.exceptions import BackendError
+
+        try:
+            r = self._execute_cli(
+                [
+                    "gws",
+                    "gmail",
+                    "users",
+                    "history",
+                    "list",
+                    "--params",
+                    _json.dumps(
+                        {
+                            "userId": "me",
+                            "startHistoryId": since_history_id,
+                            "maxResults": 500,
+                        }
+                    ),
+                    "--format",
+                    "json",
+                ],
+                context=context,
+            )
+        except ScopedAuthRequiredError as exc:
+            raise BackendError(str(exc), backend=self.name, path="/") from exc
         if not r.ok:
             return [], [], None
 
@@ -1481,6 +1500,9 @@ class CalendarConnector(PathCLIBackend):
         import json as _json
         import re
 
+        from nexus.backends.connectors.cli.base import ScopedAuthRequiredError
+        from nexus.contracts.exceptions import BackendError
+
         path = path.strip("/")
 
         # Root listing — no per-file metadata.
@@ -1488,8 +1510,13 @@ class CalendarConnector(PathCLIBackend):
             return None
 
         parts = path.split("/")
-        # Resolve human-readable folder name back to calendar ID.
-        cal_id = self._resolve_calendar_id(parts[0], context=context)
+        # Resolve human-readable folder name back to calendar ID. The
+        # cold-cache path can call calendarList — wrap so a scoped-auth
+        # failure surfaces as BackendError, not bare RuntimeError (R6-H1).
+        try:
+            cal_id = self._resolve_calendar_id(parts[0], context=context)
+        except ScopedAuthRequiredError as exc:
+            raise BackendError(str(exc), backend=self.name, path=path) from exc
         month_filter = parts[1] if len(parts) >= 2 else None
 
         # Fetch events from API (mirrors list_dir pagination logic).
@@ -1520,9 +1547,6 @@ class CalendarConnector(PathCLIBackend):
             page_params = {**base_params, "maxResults": min(self.MAX_LIST_RESULTS, remaining)}
             if page_token:
                 page_params["pageToken"] = page_token
-
-            from nexus.backends.connectors.cli.base import ScopedAuthRequiredError
-            from nexus.contracts.exceptions import BackendError
 
             try:
                 result = self._execute_cli(

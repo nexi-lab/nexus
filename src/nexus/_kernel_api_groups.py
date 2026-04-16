@@ -127,6 +127,7 @@ KERNEL_REQUIRED_METHODS: frozenset[str] = frozenset(
         "route",
         "set_hook_count",
         "set_metastore_path",
+        "set_self_address",
         "set_vfs_lock_timeout",
         "stream_collect_all",
         "stream_read_at",

@@ -29,7 +29,6 @@ mod gdrive_backend;
 mod glob;
 #[cfg(feature = "connectors")]
 mod gmail_backend;
-mod grpc_backend;
 mod hash;
 mod hook_registry;
 mod io;

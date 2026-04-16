@@ -912,7 +912,6 @@ impl PyOperationContext {
 /// Python-facing SysReadResult (data is PyBytes, not Vec<u8>).
 #[pyclass(name = "SysReadResult", get_all)]
 pub struct PySysReadResult {
-    pub hit: bool,
     pub data: Option<Py<PyBytes>>,
     pub post_hook_needed: bool,
     pub content_hash: Option<String>,
@@ -1056,6 +1055,11 @@ impl PyKernel {
 
     fn set_vfs_lock_timeout(&mut self, timeout_ms: u64) {
         self.inner.set_vfs_lock_timeout(timeout_ms);
+    }
+
+    /// Set node advertise address for origin-aware metadata.
+    fn set_self_address(&self, addr: &str) {
+        self.inner.set_self_address(addr);
     }
 
     // ── Metastore wiring ──────────────────────────────────────────────
@@ -1447,7 +1451,7 @@ impl PyKernel {
 
     // ── sys_setattr — unified mount/attr syscall ─────────────────────
 
-    #[pyo3(signature = (path, entry_type, backend_name="", local_root=None, fsync=false, py_backend=None, backend_type="cas", follow_symlinks=true, grpc_addr=None, openai_base_url=None, openai_api_key=None, openai_model=None, s3_bucket=None, s3_prefix=None, aws_region=None, aws_access_key=None, aws_secret_key=None, s3_endpoint=None, gcs_bucket=None, gcs_prefix=None, access_token=None, root_folder_id=None, bot_token=None, default_channel=None, metastore_path=None, py_zone_handle=None, readonly=false, admin_only=false, io_profile="balanced", zone_id="root", capacity=65536, mime_type=None, modified_at_ms=None, read_fd=None, write_fd=None))]
+    #[pyo3(signature = (path, entry_type, backend_name="", local_root=None, fsync=false, py_backend=None, backend_type="cas", follow_symlinks=true, openai_base_url=None, openai_api_key=None, openai_model=None, s3_bucket=None, s3_prefix=None, aws_region=None, aws_access_key=None, aws_secret_key=None, s3_endpoint=None, gcs_bucket=None, gcs_prefix=None, access_token=None, root_folder_id=None, bot_token=None, default_channel=None, metastore_path=None, py_zone_handle=None, readonly=false, admin_only=false, io_profile="balanced", zone_id="root", capacity=65536, mime_type=None, modified_at_ms=None, read_fd=None, write_fd=None))]
     #[allow(clippy::too_many_arguments)]
     fn sys_setattr<'py>(
         &self,
@@ -1460,7 +1464,6 @@ impl PyKernel {
         py_backend: Option<Py<PyAny>>,
         backend_type: &str,
         follow_symlinks: bool,
-        grpc_addr: Option<&str>,
         openai_base_url: Option<&str>,
         openai_api_key: Option<&str>,
         openai_model: Option<&str>,
@@ -1591,13 +1594,6 @@ impl PyKernel {
                     "connectors feature not enabled",
                 ));
             }
-        } else if backend_type == "grpc" {
-            let addr = grpc_addr.ok_or_else(|| {
-                pyo3::exceptions::PyValueError::new_err("grpc backend requires grpc_addr")
-            })?;
-            let b = crate::grpc_backend::GrpcObjectStoreAdapter::new(addr, backend_name)
-                .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
-            Some(Box::new(b))
         } else if let Some(root) = local_root {
             if backend_type == "local_connector" {
                 let b = LocalConnectorBackend::new(Path::new(root), follow_symlinks, fsync)
@@ -2057,7 +2053,6 @@ impl PyKernel {
 
         // 3. Convert Vec<u8> -> PyBytes
         Ok(PySysReadResult {
-            hit: result.hit,
             data: result.data.map(|d| PyBytes::new(py, &d).into()),
             post_hook_needed: result.post_hook_needed,
             content_hash: result.content_hash,
@@ -2393,7 +2388,6 @@ impl PyKernel {
         Ok(results
             .into_iter()
             .map(|r| PySysReadResult {
-                hit: r.hit,
                 data: r.data.map(|d| PyBytes::new(py, &d).into()),
                 post_hook_needed: r.post_hook_needed,
                 content_hash: r.content_hash,

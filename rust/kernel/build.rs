@@ -1,10 +1,7 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Compile object_store.proto → Rust types + gRPC client/server stubs
+    // Compile vfs.proto → client for inter-node ReadBlob (federation remote fetch).
     tonic_build::configure()
-        .build_server(false) // Only client needed in Rust kernel
-        .compile_protos(
-            &["../../proto/nexus/storage/object_store.proto"],
-            &["../../proto"],
-        )?;
+        .build_server(false)
+        .compile_protos(&["../../proto/nexus/grpc/vfs/vfs.proto"], &["../../proto"])?;
     Ok(())
 }

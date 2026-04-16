@@ -147,13 +147,12 @@ impl ReplicationScanner {
             }
 
             // Try reading from source
-            let source_result = kernel.sys_read(&entry.path, &ctx);
-            let content = match source_result {
-                Ok(r) if r.hit => match r.data {
+            let content = match kernel.sys_read(&entry.path, &ctx) {
+                Ok(r) => match r.data {
                     Some(data) => data,
                     None => continue,
                 },
-                _ => continue,
+                Err(_) => continue,
             };
 
             // Write to the mapped target path.

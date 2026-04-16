@@ -1075,6 +1075,11 @@ class NexusFS(  # type: ignore[misc]
 
     # VFS I/O locking deleted — Rust kernel LockManager handles all I/O lock
     # acquire/release internally in sys_read/sys_write/sys_copy/sys_unlink/sys_rename.
+    #
+    # Federation remote content fetch is now handled inside Rust `sys_read`
+    # (see `Kernel::try_remote_fetch` in rust/kernel/src/kernel.rs): when
+    # metadata exists but the local CAS blob doesn't, Rust parses the origin
+    # from `backend_name` and pulls the blob via VFS `ReadBlob` RPC.
 
     @rpc_expose(description="Read file content")
     def sys_read(
@@ -1112,66 +1117,16 @@ class NexusFS(  # type: ignore[misc]
         )
 
         # ── KERNEL (Rust — pre-hooks + route + backend read) ──
-        # Rust routes internally and returns is_external=true for external mounts.
+        # DT_REG: Rust returns data on success or raises NexusFileNotFoundError
+        # (federation remote fetch handled internally via try_remote_fetch).
+        # DT_PIPE / DT_STREAM: entry_type signals IPC dispatch below.
         _rust_ctx = self._build_rust_ctx(context, _is_admin)
         result = self._kernel.sys_read(path, _rust_ctx)
 
-        # External mount — Rust detected is_external, delegate to Python connector
-        if getattr(result, "is_external", False):
-            from nexus.core.router import ExternalRouteResult
-
-            _route = self.router.route(
-                path, is_admin=_is_admin, check_write=False, zone_id=self._zone_id
-            )
-            _route_backend = getattr(_route, "backend", None)
-            _route_backend_path = getattr(_route, "backend_path", "") or ""
-            _route_mount_point = getattr(_route, "mount_point", "") or ""
-            if isinstance(_route, ExternalRouteResult) and _route_backend is not None:
-                _ctx = (
-                    _dc_replace(
-                        context,
-                        backend_path=_route_backend_path,
-                        virtual_path=path,
-                        mount_path=_route_mount_point,
-                    )
-                    if context
-                    else OperationContext(
-                        user_id="anonymous",
-                        groups=[],
-                        backend_path=_route_backend_path,
-                        virtual_path=path,
-                        mount_path=_route_mount_point,
-                    )
-                )
-                try:
-                    # Virtual .readme/ overlay check (Issue #3728).  If the path
-                    # is under a skill backend's .readme/ directory, serve from
-                    # the generated tree instead of calling the real backend.
-                    from nexus.backends.connectors.schema_generator import (
-                        dispatch_virtual_readme_read,
-                    )
-
-                    _virtual_data = dispatch_virtual_readme_read(
-                        _route_backend,
-                        _route_mount_point,
-                        _route_backend_path,
-                        context=_ctx,
-                    )
-                    if _virtual_data is not None:
-                        data = _virtual_data
-                    else:
-                        data = _route_backend.read_content(_route_backend_path, context=_ctx)
-                    if offset or count is not None:
-                        data = data[offset : offset + count] if count is not None else data[offset:]
-                    return data
-                except Exception:
-                    if isinstance(_route, ExternalRouteResult):
-                        raise
-
-        # DT_PIPE: Rust returns hit=true if data popped, hit=false if empty
+        # DT_PIPE: result.data is the popped frame when available; None = empty.
         if result.entry_type == 3:  # DT_PIPE
-            if result.hit:
-                data = result.data or b""
+            if result.data is not None:
+                data = result.data
                 if offset or count is not None:
                     data = data[offset : offset + count] if count is not None else data[offset:]
                 return data
@@ -1195,68 +1150,7 @@ class NexusFS(  # type: ignore[misc]
             _data, _next = self._kernel.stream_read_at_blocking(path, offset, 30000)
             return bytes(_data)
 
-        if not result.hit:
-            # Compatibility fallback: external mounts may not be flagged via is_external
-            # (e.g. legacy callers of nexus.fs.mount() or version-skewed kernels without
-            # the is_external param — see mount_table TypeError fallback). Try Python
-            # router as last resort to detect ExternalRouteResult before giving up.
-            from nexus.contracts.exceptions import (
-                PathNotMountedError,
-            )
-            from nexus.core.router import ExternalRouteResult
-
-            try:
-                _fb_route = self.router.route(
-                    path, is_admin=_is_admin, check_write=False, zone_id=self._zone_id
-                )
-            except PathNotMountedError:
-                # Genuinely no mount → not-found is correct.
-                _fb_route = None
-            # AccessDeniedError and other exceptions (metastore I/O, corrupted
-            # mount metadata) must propagate, not be masked as not-found.
-            if (
-                isinstance(_fb_route, ExternalRouteResult)
-                and getattr(_fb_route, "backend", None) is not None
-            ):
-                _fb_backend = _fb_route.backend
-                _fb_backend_path = getattr(_fb_route, "backend_path", "") or ""
-                _fb_mount_point = getattr(_fb_route, "mount_point", "") or ""
-                _ctx = (
-                    _dc_replace(
-                        context,
-                        backend_path=_fb_backend_path,
-                        virtual_path=path,
-                        mount_path=_fb_mount_point,
-                    )
-                    if context
-                    else OperationContext(
-                        user_id="anonymous",
-                        groups=[],
-                        backend_path=_fb_backend_path,
-                        virtual_path=path,
-                        mount_path=_fb_mount_point,
-                    )
-                )
-                from nexus.backends.connectors.schema_generator import (
-                    dispatch_virtual_readme_read,
-                )
-
-                _virtual_data = dispatch_virtual_readme_read(
-                    _fb_backend, _fb_mount_point, _fb_backend_path, context=_ctx
-                )
-                if _virtual_data is not None:
-                    data = _virtual_data
-                else:
-                    data = _fb_backend.read_content(_fb_backend_path, context=_ctx)
-                if offset or count is not None:
-                    data = data[offset : offset + count] if count is not None else data[offset:]
-                return data
-            # Normal (non-external) RouteResult at this point means the Rust
-            # kernel has no dcache/metastore entry for this path. We cannot
-            # safely call backend.read_content without the real content_id
-            # from metadata — CAS backends need the blob hash, remote/connector
-            # backends need a full OperationContext. Surface not-found.
-            raise NexusFileNotFoundError(path)
+        # DT_REG: Rust guarantees data is set on success.
         data = result.data or b""
 
         if offset or count is not None:
@@ -1336,45 +1230,6 @@ class NexusFS(  # type: ignore[misc]
                 try:
                     vpath = self._validate_path(path)
                     result = self._kernel.sys_read(vpath, _rust_ctx)
-                    # External mount — delegate to sys_read which handles
-                    # connector dispatch via Python router.
-                    if getattr(result, "is_external", False):
-                        content = self.sys_read(path, context=context)
-                        if return_metadata:
-                            meta = self.metadata.get(vpath)
-                            results[path] = {
-                                "content": content,
-                                "etag": meta.etag if meta else None,
-                                "version": meta.version if meta else 0,
-                                "modified_at": meta.modified_at if meta else None,
-                                "size": len(content),
-                            }
-                        else:
-                            results[path] = content
-                        continue
-                    if not result.hit:
-                        # Legacy/version-skew fallback: unflagged external
-                        # mount. Delegate to sys_read which has the full
-                        # compatibility fallback.
-                        try:
-                            content = self.sys_read(path, context=context)
-                        except NexusFileNotFoundError:
-                            if skip_errors:
-                                results[path] = None
-                                continue
-                            raise
-                        if return_metadata:
-                            meta = self.metadata.get(vpath)
-                            results[path] = {
-                                "content": content,
-                                "etag": meta.etag if meta else None,
-                                "version": meta.version if meta else 0,
-                                "modified_at": meta.modified_at if meta else None,
-                                "size": len(content),
-                            }
-                        else:
-                            results[path] = content
-                        continue
                     content = result.data or b""
                     if return_metadata:
                         meta = self.metadata.get(vpath)
@@ -1479,28 +1334,16 @@ class NexusFS(  # type: ignore[misc]
 
         for path in allowed_set:
             try:
-                result = self._kernel.sys_read(path, _rust_ctx)
-                bulk_content: bytes | None
-                if getattr(result, "is_external", False):
-                    # External mount — delegate to sys_read which handles
-                    # connector dispatch via Python router.
-                    bulk_content = self.sys_read(path, context=context)
-                elif result.hit:
+                bulk_content: bytes | None = None
+                try:
+                    result = self._kernel.sys_read(path, _rust_ctx)
                     bulk_content = result.data or b""
-                else:
+                except NexusFileNotFoundError:
                     # Rust fast path missed.  Virtual ``.readme/`` paths
                     # (Issue #3728) are not in the metastore, so we
                     # route through the same dispatch helper that the
                     # async ``sys_read`` uses before declaring "not found".
                     bulk_content = self._try_virtual_readme_bytes(path, context)
-                    # Legacy/version-skew fallback: unflagged external mount
-                    # won't set is_external. Delegate to sys_read which has
-                    # the full compatibility fallback (matches single-read).
-                    if bulk_content is None:
-                        try:
-                            bulk_content = self.sys_read(path, context=context)
-                        except NexusFileNotFoundError:
-                            bulk_content = None
                 if bulk_content is None:
                     if skip_errors:
                         results[path] = None
@@ -1511,14 +1354,14 @@ class NexusFS(  # type: ignore[misc]
                     assert batch_meta is not None
                     meta = batch_meta.get(path)
                     results[path] = {
-                        "content": content,
+                        "content": bulk_content,
                         "etag": meta.etag if meta else None,
                         "version": meta.version if meta else 0,
                         "modified_at": meta.modified_at if meta else None,
-                        "size": len(content),
+                        "size": len(bulk_content),
                     }
                 else:
-                    results[path] = content
+                    results[path] = bulk_content
             except NexusFileNotFoundError:
                 if skip_errors:
                     results[path] = None
@@ -2993,11 +2836,11 @@ class NexusFS(  # type: ignore[misc]
             r = next(allowed_iter)
             meta = batch_meta.get(path)
 
-            if not r.hit:
-                # Finding #2 — _read_batch returns hit=False not only for missing CAS
+            if r.data is None:
+                # Finding #2 — _read_batch returns data=None not only for missing CAS
                 # files but also for: DT_PIPE / DT_STREAM entries, backend read errors,
                 # lock timeouts, route misses, and external connector paths.  A bare
-                # hit=False must not be treated as "file not found" for all of these.
+                # data=None must not be treated as "file not found" for all of these.
                 #
                 # Delegate to the full single-file read() path, which correctly handles:
                 #   • virtual resolver paths (resolve_read)

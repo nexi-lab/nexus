@@ -331,6 +331,53 @@ class TestEnsureExternalSyncRetries:
             "when no CLIs are installed"
         )
 
+    def test_concurrent_caller_waits_on_in_progress_flag(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """R10-H1 regression: when ``_sync_in_progress`` is True, a
+        second caller must WAIT on ``_sync_cv`` until the worker
+        publishes results — not short-circuit and return immediately.
+        Otherwise the caller reads the still-stale store on the very
+        next line.
+        """
+        import threading
+        import time
+
+        import nexus.fs._external_sync_boot as boot
+
+        # Simulate "Thread A is mid-bootstrap" by manually flipping
+        # the in-progress flag. _sync_last_attempt_at is None so Thread B
+        # passes the rate-limit gate and reaches the in_progress check.
+        monkeypatch.setattr(boot, "_sync_last_ok_at", None)
+        monkeypatch.setattr(boot, "_sync_last_attempt_at", None)
+        monkeypatch.setattr(boot, "_MIN_RETRY_INTERVAL_S", 0.0)
+        monkeypatch.setattr(boot, "_sync_in_progress", True)
+
+        b_returned = threading.Event()
+
+        def _b() -> None:
+            boot.ensure_external_sync()
+            b_returned.set()
+
+        thread_b = threading.Thread(target=_b)
+        thread_b.start()
+
+        # Thread B should be blocked in cv.wait — must NOT have returned yet.
+        # Give it a moment to actually enter the wait.
+        time.sleep(0.2)
+        assert not b_returned.is_set(), (
+            "Thread B must wait while _sync_in_progress=True, not return early"
+        )
+
+        # Worker finishes: clears in_progress + sets ok_at + notify_all.
+        with boot._sync_cv:
+            boot._sync_in_progress = False
+            boot._sync_last_ok_at = time.monotonic()
+            boot._sync_cv.notify_all()
+
+        # Thread B should wake up and observe the published state.
+        assert b_returned.wait(timeout=5.0), "Thread B did not return after worker published"
+
     def test_success_short_circuits_subsequent_calls(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import time
 

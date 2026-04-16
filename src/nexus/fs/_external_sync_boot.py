@@ -20,16 +20,14 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Serialize the check-and-set inside ensure_external_sync so two threads
-# arriving on the cold-cache path don't both run a fresh bootstrap and
-# contend on SQLite (R7-M2 #3740). The lock only guards the state-update
-# protocol; the actual sync work runs OUTSIDE the lock so a slow CLI
-# (gh/gws auth status taking seconds) doesn't block every other request
-# that happens to call ensure_external_sync — it just short-circuits on
-# the in-progress flag (R9-H1).
-_sync_lock = threading.Lock()
-# True between "thread claimed bootstrap" and "thread published the result".
-# Other threads see this and short-circuit instead of starting a duplicate.
+# Coordination for the cold-path bootstrap. One thread claims the work;
+# concurrent callers WAIT for it via the condition variable instead of
+# returning early — otherwise they'd read the still-stale store before
+# the worker publishes results (R10-H1 #3740). Only the gate runs under
+# the lock; the async sync work itself runs OUTSIDE so a slow CLI does
+# not pin out the lock (R9-H1).
+_sync_cv = threading.Condition()
+# True between "thread claimed bootstrap" and "thread published result".
 _sync_in_progress = False
 
 # Sync state tracking (Phase 3, #3740):
@@ -69,28 +67,40 @@ def ensure_external_sync() -> None:
 
     now = time.monotonic()
 
-    # Phase 1: claim the bootstrap or short-circuit. Only the gate runs
-    # under the lock so concurrent request-path callers never block on
-    # a slow CLI (R9-H1). The in-progress flag prevents duplicate
-    # bootstraps when two threads arrive on the cold path simultaneously.
-    with _sync_lock:
-        # Recent successful sync — still fresh, short-circuit.
-        if _sync_last_ok_at is not None and now - _sync_last_ok_at < _SYNC_REFRESH_INTERVAL_S:
-            return
+    # Phase 1: short-circuit if state is fresh, OR wait for an in-progress
+    # bootstrap to publish results, OR claim the bootstrap. Concurrent
+    # callers must NOT return before the worker publishes — otherwise
+    # they'd read the still-stale store on the very next line (R10-H1).
+    # Only the gate runs under the condition lock; the async work itself
+    # runs OUTSIDE so a slow CLI doesn't pin out the lock (R9-H1).
+    with _sync_cv:
+        while True:
+            # Recent successful sync — still fresh, short-circuit.
+            if _sync_last_ok_at is not None and now - _sync_last_ok_at < _SYNC_REFRESH_INTERVAL_S:
+                return
 
-        # Previous attempt failed; don't hammer the CLI on every request.
-        if (
-            _sync_last_attempt_at is not None
-            and now - _sync_last_attempt_at < _MIN_RETRY_INTERVAL_S
-        ):
-            return
+            # Previous attempt failed; don't hammer the CLI on every request.
+            if (
+                _sync_last_attempt_at is not None
+                and now - _sync_last_attempt_at < _MIN_RETRY_INTERVAL_S
+            ):
+                return
 
-        # Another thread is already syncing — let it finish.
-        if _sync_in_progress:
-            return
+            # Another thread is currently syncing — wait for it. After
+            # wakeup, re-check freshness in case the worker succeeded.
+            if _sync_in_progress:
+                # Cap the wait at startup_timeout + cushion so a wedged
+                # worker can't pin us forever; we'll fall through and
+                # short-circuit on attempt-rate-limit if state is stale.
+                _sync_cv.wait(timeout=10.0)
+                # Reload "now" — we may have slept a non-trivial amount.
+                now = time.monotonic()
+                continue
 
-        _sync_last_attempt_at = now
-        _sync_in_progress = True
+            # We get to do the work.
+            _sync_last_attempt_at = now
+            _sync_in_progress = True
+            break
 
     # Phase 2: do the actual work without holding the lock. Always clear
     # _sync_in_progress in finally so a crash here doesn't permanently
@@ -111,7 +121,7 @@ def ensure_external_sync() -> None:
             # Slim wheel — external_sync not available. Treat as permanent so we
             # don't retry every minute; the modules can't appear without a
             # reinstall that'll restart the process anyway.
-            with _sync_lock:
+            with _sync_cv:
                 _sync_last_ok_at = now
             return
 
@@ -154,7 +164,7 @@ def ensure_external_sync() -> None:
         all_not_detected = bool(results) and all(
             getattr(r, "error", None) == "not detected" for r in results.values()
         )
-        with _sync_lock:
+        with _sync_cv:
             if any_success or all_not_detected or not results:
                 _sync_last_ok_at = now
             else:
@@ -163,8 +173,11 @@ def ensure_external_sync() -> None:
                     "after _MIN_RETRY_INTERVAL_S to pick up post-login state"
                 )
     finally:
-        with _sync_lock:
+        # Always clear in_progress and wake waiters even on crash, so a
+        # single failure can't permanently pin out the process.
+        with _sync_cv:
             _sync_in_progress = False
+            _sync_cv.notify_all()
 
 
 def list_profiles() -> list | None:

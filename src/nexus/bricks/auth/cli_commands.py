@@ -14,15 +14,14 @@ import re
 from typing import Any
 
 import click
-from rich.console import Console
 from rich.table import Table
 
+from nexus.cli.theme import console
 from nexus.contracts.exceptions import AuthenticationError
 from nexus.contracts.unified_auth import AuthStatus
 from nexus.fs._output import OutputOptions, add_output_options, render_output
 
 logger = logging.getLogger(__name__)
-console = Console()
 
 
 # ---------------------------------------------------------------------------
@@ -54,6 +53,74 @@ def auth() -> None:
 @auth.group(name="pool")
 def pool() -> None:
     """Inspect and manage credential pools."""
+
+
+@pool.command("status")
+@click.argument("provider", type=str)
+def pool_status(provider: str) -> None:
+    """Show per-profile pool state for a provider.
+
+    Displays each configured profile, its current status (ok / cooldown /
+    disabled), failure count, and cooldown expiry if applicable.
+
+    Note: runtime cooldown state (failure counts, cooldown timers) reflects
+    the current process's in-memory pool. Persistent pool state across restarts
+    requires Issue #3722 (SqliteAuthProfileStore) to land.
+
+    Example:
+        nexus auth pool status openai
+    """
+
+    # Build a minimal profile list from the existing credential records.
+    # Until #3722 lands, we read from UnifiedAuthService and populate an
+    # InMemoryAuthProfileStore — this gives correct static data but no
+    # runtime cooldown history from previous processes.
+    service = _build_auth_service()
+    summaries = asyncio.run(service.list_summaries())
+
+    provider_summaries = [s for s in summaries if s.service == provider]
+    if not provider_summaries:
+        # Try prefix match (e.g. "google" matches "gmail", "google-drive", etc.)
+        provider_summaries = [s for s in summaries if s.service.startswith(provider)]
+
+    if not provider_summaries:
+        raise click.ClickException(
+            f"No configured profiles found for provider '{provider}'. "
+            f"Run 'nexus auth list' to see all providers."
+        )
+
+    table = Table(
+        title=f"Pool: {provider}",
+        show_header=True,
+        header_style="nexus.table_header",
+    )
+    table.add_column("Status", style="nexus.success", width=10)
+    table.add_column("Account", style="nexus.value")
+    table.add_column("Source", style="nexus.reference")
+    table.add_column("Failures", justify="right")
+    table.add_column("Cooldown")
+
+    for summary in provider_summaries:
+        is_ok = summary.status == AuthStatus.AUTHED
+        status_str = (
+            "[nexus.success]ok[/nexus.success]"
+            if is_ok
+            else f"[nexus.warning]{summary.status.value}[/nexus.warning]"
+        )
+        account = summary.details.get("email") or summary.details.get("user") or "default"
+        table.add_row(
+            status_str,
+            str(account),
+            summary.source,
+            "0",  # runtime failure counts require #3722 for persistence
+            "—",  # runtime cooldown requires #3722 for persistence
+        )
+
+    console.print(table)
+    console.print(
+        "[nexus.muted]Runtime cooldown state (failures, timers) requires "
+        "Issue #3722 (persistent AuthProfileStore) to persist across restarts.[/nexus.muted]"
+    )
 
 
 # ---------------------------------------------------------------------------

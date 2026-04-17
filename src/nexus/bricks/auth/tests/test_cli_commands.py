@@ -83,3 +83,12 @@ def test_doctor_runs_without_error(monkeypatch, tmp_path: Path) -> None:
 
     result = CliRunner().invoke(auth, ["doctor"])
     assert result.exit_code in (0, 1)
+
+
+def test_pool_status_runs(monkeypatch, tmp_path: Path) -> None:
+    service = build_unified_service_for_tests(tmp_path)
+    monkeypatch.setattr("nexus.bricks.auth.cli_commands._build_auth_service", lambda: service)
+
+    result = CliRunner().invoke(auth, ["pool", "status", "s3"])
+    # With no configured pool, exit 0 and a sensible message is expected.
+    assert result.exit_code == 0

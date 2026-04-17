@@ -73,6 +73,16 @@ pub trait ObjectStore: Send + Sync {
     /// Backend identifier (e.g. "local", "gcs", "s3").
     fn name(&self) -> &str;
 
+    /// Downcast to `&CASEngine` for CAS-specific operations. Default
+    /// returns `None` for non-CAS backends (PAS, external connectors).
+    /// Only `CasLocalBackend` overrides. Used by the `PyKernel::cas_*`
+    /// surface so Python delegators can reach the CAS API without every
+    /// backend carrying CAS-shaped noise.
+    #[allow(private_interfaces)]
+    fn as_cas(&self) -> Option<&CASEngine> {
+        None
+    }
+
     /// Write content to storage and return a `WriteResult`.
     ///
     /// - `content_id`: Target address for the content.
@@ -185,6 +195,11 @@ impl CasLocalBackend {
 impl ObjectStore for CasLocalBackend {
     fn name(&self) -> &str {
         "local"
+    }
+
+    #[allow(private_interfaces)]
+    fn as_cas(&self) -> Option<&CASEngine> {
+        Some(&self.0)
     }
 
     fn read_content(

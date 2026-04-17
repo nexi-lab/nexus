@@ -1471,6 +1471,145 @@ impl PyKernel {
         self.inner.dcache_len()
     }
 
+    // ── R10c: direct CAS surface — PyKernel delegators ───────────────
+    //
+    // Thin wrappers around Kernel::cas_* that release the GIL for the
+    // storage work. Each method mirrors a Python CASAddressingEngine
+    // hot-path call so the Python delegator can collapse to `return
+    // self._kernel.cas_*(...)`. Error conversion reuses the KernelError
+    // → PyErr pipeline so NotFound surfaces as NexusFileNotFoundError
+    // and I/O surfaces as BackendError, both with mount + op breadcrumbs.
+
+    #[pyo3(signature = (mount_point, zone_id, content, *, ttl_seconds=None))]
+    fn cas_write<'py>(
+        &self,
+        py: Python<'py>,
+        mount_point: &str,
+        zone_id: &str,
+        content: Vec<u8>,
+        ttl_seconds: Option<u64>,
+    ) -> PyResult<(String, bool)> {
+        py.detach(|| {
+            self.inner
+                .cas_write(mount_point, zone_id, &content, ttl_seconds)
+        })
+        .map_err(Into::into)
+    }
+
+    #[pyo3(signature = (mount_point, zone_id, content_hash, *, origins=None))]
+    fn cas_read<'py>(
+        &self,
+        py: Python<'py>,
+        mount_point: &str,
+        zone_id: &str,
+        content_hash: &str,
+        origins: Option<Vec<String>>,
+    ) -> PyResult<Py<PyBytes>> {
+        let origins_vec = origins.unwrap_or_default();
+        let bytes = py
+            .detach(|| {
+                self.inner
+                    .cas_read(mount_point, zone_id, content_hash, &origins_vec)
+            })
+            .map_err::<PyErr, _>(Into::into)?;
+        Ok(PyBytes::new(py, &bytes).unbind())
+    }
+
+    #[pyo3(signature = (mount_point, zone_id, content_hash, start, end, *, origins=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn cas_read_range<'py>(
+        &self,
+        py: Python<'py>,
+        mount_point: &str,
+        zone_id: &str,
+        content_hash: &str,
+        start: u64,
+        end: u64,
+        origins: Option<Vec<String>>,
+    ) -> PyResult<Py<PyBytes>> {
+        let origins_vec = origins.unwrap_or_default();
+        let bytes = py
+            .detach(|| {
+                self.inner.cas_read_range(
+                    mount_point,
+                    zone_id,
+                    content_hash,
+                    start,
+                    end,
+                    &origins_vec,
+                )
+            })
+            .map_err::<PyErr, _>(Into::into)?;
+        Ok(PyBytes::new(py, &bytes).unbind())
+    }
+
+    fn cas_delete<'py>(
+        &self,
+        py: Python<'py>,
+        mount_point: &str,
+        zone_id: &str,
+        content_hash: &str,
+    ) -> PyResult<()> {
+        py.detach(|| self.inner.cas_delete(mount_point, zone_id, content_hash))
+            .map_err(Into::into)
+    }
+
+    fn cas_exists<'py>(
+        &self,
+        py: Python<'py>,
+        mount_point: &str,
+        zone_id: &str,
+        content_hash: &str,
+    ) -> PyResult<bool> {
+        py.detach(|| self.inner.cas_exists(mount_point, zone_id, content_hash))
+            .map_err(Into::into)
+    }
+
+    fn cas_size<'py>(
+        &self,
+        py: Python<'py>,
+        mount_point: &str,
+        zone_id: &str,
+        content_hash: &str,
+    ) -> PyResult<u64> {
+        py.detach(|| self.inner.cas_size(mount_point, zone_id, content_hash))
+            .map_err(Into::into)
+    }
+
+    fn cas_is_chunked<'py>(
+        &self,
+        py: Python<'py>,
+        mount_point: &str,
+        zone_id: &str,
+        content_hash: &str,
+    ) -> PyResult<bool> {
+        py.detach(|| {
+            self.inner
+                .cas_is_chunked(mount_point, zone_id, content_hash)
+        })
+        .map_err(Into::into)
+    }
+
+    #[pyo3(signature = (mount_point, zone_id, old_hash, buf, offset, *, origins=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn cas_write_partial<'py>(
+        &self,
+        py: Python<'py>,
+        mount_point: &str,
+        zone_id: &str,
+        old_hash: &str,
+        buf: Vec<u8>,
+        offset: u64,
+        origins: Option<Vec<String>>,
+    ) -> PyResult<String> {
+        let origins_vec = origins.unwrap_or_default();
+        py.detach(|| {
+            self.inner
+                .cas_write_partial(mount_point, zone_id, old_hash, &buf, offset, &origins_vec)
+        })
+        .map_err(Into::into)
+    }
+
     // ── sys_setattr — unified mount/attr syscall ─────────────────────
 
     #[pyo3(signature = (path, entry_type, backend_name="", local_root=None, fsync=false, py_backend=None, backend_type="cas", follow_symlinks=true, openai_base_url=None, openai_api_key=None, openai_model=None, s3_bucket=None, s3_prefix=None, aws_region=None, aws_access_key=None, aws_secret_key=None, s3_endpoint=None, gcs_bucket=None, gcs_prefix=None, access_token=None, root_folder_id=None, bot_token=None, default_channel=None, metastore_path=None, py_zone_handle=None, readonly=false, admin_only=false, io_profile="balanced", zone_id="root", is_external=false, capacity=65536, mime_type=None, modified_at_ms=None, read_fd=None, write_fd=None))]

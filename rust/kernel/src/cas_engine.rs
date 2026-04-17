@@ -353,6 +353,53 @@ impl CASEngine {
         self.write_chunked_partial_with_origins(old_manifest_hash, buf, offset, &[])
     }
 
+    /// Partial write dispatcher — chooses the chunked or non-chunked path
+    /// based on whether `old_hash` has a `.meta` sidecar. Mirrors Python
+    /// `CASAddressingEngine._write_at_offset` which branches the same way.
+    ///
+    /// Chunked (has manifest): delegates to `write_chunked_partial_with_origins`
+    /// which re-chunks only the affected byte range.
+    ///
+    /// Non-chunked (single blob): read-modify-write the whole blob in Rust
+    /// — splice `buf` at `offset`, resize if the splice extends past end,
+    /// zero-fill any gap if `offset > old.len()`, then write the new full
+    /// blob. Returns the new CAS hash.
+    pub fn write_partial(
+        &self,
+        old_hash: &str,
+        buf: &[u8],
+        offset: u64,
+        origins: &[String],
+    ) -> Result<String, CASError> {
+        if self.is_chunked(old_hash) {
+            return self.write_chunked_partial_with_origins(old_hash, buf, offset, origins);
+        }
+        // Non-chunked RMW — read old blob (local-only; non-chunked cross-node
+        // fetch is handled by `try_remote_fetch` at a different layer).
+        let old = self
+            .transport
+            .read_blob(old_hash)
+            .map_err(|e| match e.kind() {
+                io::ErrorKind::NotFound => CASError::NotFound(old_hash.to_string()),
+                _ => CASError::IOError(e),
+            })?;
+        let off = offset as usize;
+        let end = off.saturating_add(buf.len());
+        let new_len = std::cmp::max(old.len(), end);
+        let mut new_blob = vec![0u8; new_len];
+        // Preserve prefix [0, min(off, old.len()))
+        let prefix_len = std::cmp::min(off, old.len());
+        new_blob[..prefix_len].copy_from_slice(&old[..prefix_len]);
+        // Zero-fill gap when offset > old.len() is automatic via vec![0u8; ..]
+        // Splice buf
+        new_blob[off..end].copy_from_slice(buf);
+        // Preserve suffix from old starting at `end`
+        if end < old.len() {
+            new_blob[end..old.len()].copy_from_slice(&old[end..]);
+        }
+        self.write_content(&new_blob)
+    }
+
     /// Partial write into chunked content: splice `buf` at `offset`, rewriting
     /// only the affected chunks. Unaffected chunks are reused. Returns the new
     /// manifest hash. Requires an injected `ChunkingStrategy` that supports
@@ -894,6 +941,53 @@ mod tests {
             .unwrap();
         assert_eq!(slice.len(), 4);
         assert!(engine.transport().exists(&first_chunk_hash));
+    }
+
+    #[test]
+    fn test_write_partial_non_chunked_rmw() {
+        let (_tmp, engine) = setup();
+        let old = b"hello world this is the original blob";
+        let old_hash = engine.write_content(old).unwrap();
+        assert!(!engine.is_chunked(&old_hash));
+
+        // Splice "RUST" at offset 6, overwriting "world"[..4].
+        let new_hash = engine.write_partial(&old_hash, b"RUST", 6, &[]).unwrap();
+        assert_ne!(new_hash, old_hash);
+        let new_bytes = engine.read_content(&new_hash).unwrap();
+        let mut expected = old.to_vec();
+        expected[6..10].copy_from_slice(b"RUST");
+        assert_eq!(new_bytes, expected);
+    }
+
+    #[test]
+    fn test_write_partial_non_chunked_extends_beyond_end() {
+        let (_tmp, engine) = setup();
+        let old = b"short";
+        let old_hash = engine.write_content(old).unwrap();
+        // Write past end with a gap: offset 10, buf "tail" → bytes 5..10 zero-filled.
+        let new_hash = engine.write_partial(&old_hash, b"tail", 10, &[]).unwrap();
+        let new_bytes = engine.read_content(&new_hash).unwrap();
+        let mut expected = vec![0u8; 14];
+        expected[..5].copy_from_slice(b"short");
+        expected[10..14].copy_from_slice(b"tail");
+        assert_eq!(new_bytes, expected);
+    }
+
+    #[test]
+    fn test_write_partial_chunked_dispatch() {
+        // Chunked content → should dispatch to write_chunked_partial.
+        let (_tmp, engine) = setup();
+        let mut content: Vec<u8> = Vec::with_capacity(17 * 1024 * 1024);
+        for i in 0..content.capacity() {
+            content.push((i as u8).wrapping_mul(17));
+        }
+        let manifest_hash = engine.write_content(&content).unwrap();
+        assert!(engine.is_chunked(&manifest_hash));
+        let new_hash = engine
+            .write_partial(&manifest_hash, b"xyz", 1_000_000, &[])
+            .unwrap();
+        assert_ne!(new_hash, manifest_hash);
+        assert!(engine.is_chunked(&new_hash));
     }
 
     #[test]

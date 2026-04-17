@@ -9,7 +9,7 @@
 #   docker run --rm -p 2026:2026 -p 2126:2126 nexus-minimal:latest
 
 # ── Builder stage ────────────────────────────────────────────────────
-FROM python:3.13-slim AS builder
+FROM python:3.14-slim AS builder
 
 # ---------- System dependencies ----------
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -50,7 +50,7 @@ RUN maturin build --release --features full \
 WORKDIR /build
 
 # ── Runtime stage ────────────────────────────────────────────────────
-FROM python:3.13-slim
+FROM python:3.14-slim
 
 LABEL org.opencontainers.image.title="Nexus Minimal Server"
 LABEL org.opencontainers.image.description="Lightweight standalone Nexus server (storage only)"

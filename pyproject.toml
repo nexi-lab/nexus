@@ -90,26 +90,11 @@ dependencies = [
     "dotenv>=0.9.9",
     # MCP Server (v0.7.0)
     "fastmcp>=2.0.0", # Model Context Protocol server
-    # PDF parsing.  Two parsers with different Python-version support matrices
-    # — at least one must install cleanly on every supported interpreter so
-    # PDFs still reach the search index without a manual setup step.
-    #
-    #   * pdf-inspector (preferred local provider; ~2-3 MB Rust ext, zero
-    #     Python deps).  Upstream 0.1.1 only ships cp312 wheels; on 3.13/3.14
-    #     pip falls back to sdist and needs Rust + PYO3_USE_ABI3_FORWARD_-
-    #     COMPATIBILITY=1, neither available in normal installs.  Docker
-    #     sets the env var and still installs it across 3.12-3.14.
-    #   * markitdown (fallback, ~200 MB transitive deps).  Ships wheels on
-    #     3.12-3.13; the 3.14 sdist is not yet compatible.  The parser
-    #     registry picks whichever is available at priority order, so on
-    #     3.13 markitdown keeps PDFs indexable even though pdf-inspector
-    #     is absent.
-    #
-    # Python 3.14 users currently have neither parser by default.  Install
-    # the ``markitdown`` extra or set up pdf-inspector with Rust until
-    # upstream ships 3.14 wheels.
-    "pdf-inspector>=0.1.1; python_version == '3.12'",
-    "markitdown[all]>=0.1.0; python_version == '3.13'",
+    # Default local PDF parser (Rust + PyO3, ~2-3 MB, zero Python deps).
+    # On Python 3.14 without a cp314 wheel, pip builds from sdist and needs
+    # Rust plus ``PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1`` (both present in
+    # the Nexus Docker image and typical dev setups).
+    "pdf-inspector>=0.1.1",
     # Fast JSON serialization (2-3x faster than stdlib json)
     "orjson>=3.10.0",
     # Roaring Bitmaps for Tiger Cache (Issue #682)

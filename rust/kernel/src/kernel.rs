@@ -2377,7 +2377,7 @@ impl Kernel {
             // Local backend miss + metadata exists → federation path:
             // try the origin encoded in backend_name. Otherwise it's a
             // genuine miss.
-            None => self.try_remote_fetch(path, &entry),
+            None => self.try_remote_fetch(path, &entry, &route.mount_point, ctx),
         }
     }
 
@@ -2397,6 +2397,8 @@ impl Kernel {
         &self,
         path: &str,
         entry: &CachedEntry,
+        mount_point: &str,
+        ctx: &OperationContext,
     ) -> Result<SysReadResult, KernelError> {
         let not_found = || KernelError::FileNotFound(path.to_string());
 
@@ -2435,6 +2437,7 @@ impl Kernel {
             .build()
             .map_err(|e| KernelError::IOError(format!("tokio runtime: {e}")))?;
 
+        let request_hash = content_hash.clone();
         let data = runtime.block_on(async move {
             let client_cfg = transport::ClientConfig::default();
             let channel = transport::create_channel(&endpoint, &client_cfg)
@@ -2444,7 +2447,7 @@ impl Kernel {
                 vfs_proto::nexus_vfs_service_client::NexusVfsServiceClient::new(channel);
             let resp = client
                 .read_blob(tonic::Request::new(vfs_proto::ReadBlobRequest {
-                    content_hash,
+                    content_hash: request_hash,
                     auth_token: String::new(),
                 }))
                 .await
@@ -2456,6 +2459,14 @@ impl Kernel {
             }
             Ok::<Vec<u8>, KernelError>(resp.content)
         })?;
+
+        // Cache the remote-fetched blob into the local mount backend so
+        // subsequent reads hit locally. Critical for failover: once the
+        // origin goes down, re-fetch would fail but the blob must still
+        // be readable. write_content is idempotent for CAS backends.
+        let _ = self
+            .mount_table
+            .write_content(mount_point, &data, &content_hash, ctx);
 
         Ok(SysReadResult {
             data: Some(data),

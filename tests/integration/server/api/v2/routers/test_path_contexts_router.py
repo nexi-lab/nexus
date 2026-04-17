@@ -132,6 +132,15 @@ class TestPathContextRouter:
         )
         assert r.status_code == 422 or r.status_code == 400
 
+    def test_put_rejects_double_slash(self, client: TestClient) -> None:
+        """Round-6 review: ``src//bricks`` stored verbatim would silently
+        never match any real path, violating principle of least surprise."""
+        r = client.put(
+            "/api/v2/path-contexts/",
+            json={"zone_id": "root", "path_prefix": "src//bricks", "description": "x"},
+        )
+        assert r.status_code == 422 or r.status_code == 400
+
     def test_non_admin_cannot_write(self, test_app: FastAPI) -> None:
         from fastapi import HTTPException
 

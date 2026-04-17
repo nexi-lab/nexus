@@ -1449,22 +1449,37 @@ class SearchDaemon:
             )
             cache = None
         if cache is not None:
+            # Round-6 review: refresh failure must not drop an otherwise-usable
+            # stale snapshot — matches the fail-soft contract in
+            # ``_attach_path_contexts``. Snapshot AFTER the refresh's try so a
+            # transient DB error still yields the last successfully-loaded
+            # records instead of silently erasing context for the whole batch.
             try:
                 await cache.refresh_if_stale(effective_zone_id)
-                records = cache.snapshot_zone(effective_zone_id)
-                if records is not None:
-                    from nexus.bricks.search.path_context import lookup_in_records
-
-                    for inner in results:
-                        for r in inner:
-                            r.context = lookup_in_records(records, r.path)
             except Exception as exc:
                 self.stats.path_context_attach_failures += 1
                 logger.warning(
-                    "path context attach failed (total=%d): %s",
+                    "path context refresh failed for zone=%r (total=%d): %s",
+                    effective_zone_id,
                     self.stats.path_context_attach_failures,
                     exc,
                 )
+            records = cache.snapshot_zone(effective_zone_id)
+            if records is not None:
+                from nexus.bricks.search.path_context import lookup_in_records
+
+                for inner in results:
+                    for r in inner:
+                        try:
+                            r.context = lookup_in_records(records, r.path)
+                        except Exception as exc:
+                            self.stats.path_context_attach_failures += 1
+                            logger.warning(
+                                "path context lookup failed for path=%r (total=%d): %s",
+                                r.path,
+                                self.stats.path_context_attach_failures,
+                                exc,
+                            )
         return results
 
     async def index_documents(

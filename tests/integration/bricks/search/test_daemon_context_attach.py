@@ -175,6 +175,47 @@ class TestAttachStaleFallbackOnRefreshError:
         assert daemon.stats.path_context_attach_failures == 1
 
 
+class TestBatchSearchStaleFallback:
+    """Round-6 review: batch_search must respect the same fail-soft contract
+    as ``_attach_path_contexts`` — a transient refresh error should still
+    serve the last-known snapshot for the batch instead of erasing
+    context for every inner result list.
+    """
+
+    @pytest.mark.asyncio
+    async def test_batch_search_serves_stale_snapshot_on_refresh_error(
+        self, cache: PathContextCache
+    ) -> None:
+        from nexus.bricks.search.path_context import lookup_in_records
+
+        # Prime the cache: this simulates a prior batch having loaded the
+        # zone successfully.
+        await cache.refresh_if_stale("root")
+        records_before = cache.snapshot_zone("root")
+        assert records_before is not None
+
+        # Force a refresh failure on the next attempt.
+        async def boom(zone_id: str) -> tuple[int, object]:
+            raise RuntimeError("simulated DB brownout")
+
+        object.__setattr__(cache._store, "zone_fingerprint", boom)
+
+        # Emulate the batch_search attach block (daemon.py) — refresh inside
+        # its own try, then snapshot OUTSIDE so stale records still serve
+        # this batch.
+        failures = 0
+        try:
+            await cache.refresh_if_stale("root")
+        except Exception:
+            failures += 1
+        records = cache.snapshot_zone("root")
+        assert records is not None
+        assert failures == 1
+
+        hit = lookup_in_records(records, "src/nexus/bricks/search/fusion.py")
+        assert hit == "Hybrid search brick"
+
+
 class TestBatchSearchZoneAttachment:
     """Round-4 gap: no test covered batch_search's path-context attach on
     a non-root zone. Mirror the attach logic here to guarantee the

@@ -34,9 +34,13 @@ router = APIRouter(prefix="/api/v2/path-contexts", tags=["path_contexts"])
 
 
 def _normalize_prefix(raw: str) -> str:
-    """Canonical form: no leading/trailing slashes, no '..' traversal.
+    """Canonical form: no leading/trailing slashes, no '..' traversal,
+    no empty segments.
 
-    Raises ValueError on traversal attempts.
+    Raises ValueError on traversal attempts or double-slash segments. The
+    empty-segment check (Round-6 review) prevents admin input like
+    ``src//bricks`` from being stored verbatim — real paths never contain
+    double slashes, so such a rule would silently never match anything.
     """
     value = raw.strip()
     while value.startswith("/"):
@@ -47,6 +51,10 @@ def _normalize_prefix(raw: str) -> str:
     for segment in parts:
         if segment == ".." or segment == ".":
             raise ValueError(f"path_prefix must not contain '.' or '..' segments (got {raw!r})")
+        if segment == "":
+            raise ValueError(
+                f"path_prefix must not contain empty segments (double slash in {raw!r})"
+            )
     return value
 
 

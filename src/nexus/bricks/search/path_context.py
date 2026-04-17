@@ -153,6 +153,17 @@ class PathContextStore:
         the max unchanged, so a cache keyed on that value alone keeps
         serving the deleted entry. Including ``COUNT(*)`` makes the
         freshness token detect row removals as well.
+
+        Known limitation (Round-6 review): if a server-side clock steps
+        backward between writes, a fresh UPDATE could land with
+        ``updated_at`` ≤ the current zone MAX and the fingerprint would
+        not change — caches would keep serving the old description until
+        another row is added/deleted or the zone is evicted from the
+        LRU. Postgres/SQLite don't enforce monotonic ``updated_at``. In
+        practice, deployments running NTP slew (not step) with
+        non-migratable VMs don't hit this; operators of migratable
+        workloads should prefer restarting the daemon on clock-stepping
+        events.
         """
         async with self._async_session_factory() as session:
             row = (

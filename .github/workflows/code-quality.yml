@@ -13,6 +13,9 @@ on:
       - 'scripts/codegen_kernel_abi.py'
       - 'stubs/**/*.pyi'
 
+env:
+  PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
+
 permissions:
   contents: read
   pull-requests: write

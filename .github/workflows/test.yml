@@ -7,6 +7,9 @@ on:
     branches: [main, develop]
   merge_group:
 
+env:
+  PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true

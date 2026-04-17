@@ -24,6 +24,7 @@ defaults:
 
 env:
   DISABLE_MKDOCS_2_WARNING: "true"
+  PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
 
 jobs:
   check:

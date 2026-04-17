@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main, develop]
 
+env:
+  PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
+
 permissions:
   contents: write
   pull-requests: write

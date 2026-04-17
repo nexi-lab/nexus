@@ -126,15 +126,15 @@ def test_parser_error() -> None:
     assert error.path is None
 
     # With parser
-    error = ParserError("Parsing failed", parser="MarkItDown")
-    assert "[MarkItDown]" in str(error)
-    assert error.parser == "MarkItDown"
+    error = ParserError("Parsing failed", parser="PdfInspector")
+    assert "[PdfInspector]" in str(error)
+    assert error.parser == "PdfInspector"
 
     # With parser and path
-    error = ParserError("Parsing failed", path="/test/file.pdf", parser="MarkItDown")
-    assert "[MarkItDown]" in str(error)
+    error = ParserError("Parsing failed", path="/test/file.pdf", parser="PdfInspector")
+    assert "[PdfInspector]" in str(error)
     assert "/test/file.pdf" in str(error)
-    assert error.parser == "MarkItDown"
+    assert error.parser == "PdfInspector"
     assert error.path == "/test/file.pdf"
 
 

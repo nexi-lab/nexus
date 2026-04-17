@@ -37,7 +37,7 @@ def test_auto_discover_skips_pdf_inspector_when_import_fails(monkeypatch):
     assert "pdf-inspector" not in names
 
 
-def test_auto_discover_pdf_inspector_outranks_markitdown_for_pdf(monkeypatch):
+def test_auto_discover_pdf_inspector_registered_for_pdf(monkeypatch):
     pytest.importorskip("pdf_inspector")
     monkeypatch.delenv("UNSTRUCTURED_API_KEY", raising=False)
     monkeypatch.delenv("LLAMA_CLOUD_API_KEY", raising=False)

@@ -269,5 +269,7 @@ class TestPathContextCacheLRU:
         await cache.refresh_if_stale("z3")
         # z1 was oldest -> evicted. z2 and z3 remain.
         assert set(cache._entries.keys()) == {"z2", "z3"}
-        # Lock for evicted zone also dropped.
-        assert "z1" not in cache._locks
+        # Locks are intentionally kept alive across eviction — see Round-3
+        # review feedback. Re-accessing z1 creates a fresh entry using the
+        # same Lock object, preserving mutual-exclusion identity.
+        assert "z1" in cache._locks

@@ -65,9 +65,20 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
         from nexus.bricks.search.daemon import DaemonConfig, SearchDaemon
 
         txtai_model, txtai_vectors = _resolve_txtai_runtime_config()
+        _path_ctx_max_zones_env = os.environ.get("NEXUS_PATH_CONTEXT_MAX_ZONES")
+        _path_ctx_max_zones = 2048
+        if _path_ctx_max_zones_env:
+            try:
+                _path_ctx_max_zones = max(1, int(_path_ctx_max_zones_env))
+            except ValueError:
+                logger.warning(
+                    "Invalid NEXUS_PATH_CONTEXT_MAX_ZONES=%r — falling back to 2048",
+                    _path_ctx_max_zones_env,
+                )
         config = DaemonConfig(
             database_url=svc.database_url,
             query_timeout_seconds=float(os.environ.get("NEXUS_QUERY_TIMEOUT", "10.0")),
+            path_context_max_zones=_path_ctx_max_zones,
             # txtai backend config (Issue #2663)
             txtai_model=txtai_model,
             txtai_vectors=txtai_vectors,
@@ -131,7 +142,10 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
                     async_session_factory=_async_sf,
                     db_type=_db_type,
                 )
-                path_context_cache = PathContextCache(store=path_context_store)
+                path_context_cache = PathContextCache(
+                    store=path_context_store,
+                    max_zones=config.path_context_max_zones,
+                )
             except Exception:  # pragma: no cover — non-fatal wiring failure
                 logger.exception("Failed to initialize path context store/cache")
         app.state.path_context_store = path_context_store

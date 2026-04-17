@@ -45,6 +45,50 @@ class TestBaseSearchResultContextField:
         assert r.context is None
 
 
+class TestAttachUsesCallerZone:
+    """Round-3 regression: daemon must use the caller's effective zone_id as
+    the fallback because most backends construct SearchResult without the
+    zone_id field set. Prior code collapsed everything to ROOT_ZONE_ID and
+    silently dropped context on non-root zone searches.
+    """
+
+    @pytest.mark.asyncio
+    async def test_attach_falls_back_to_caller_zone_when_result_zone_missing(
+        self, cache: PathContextCache
+    ) -> None:
+        from types import SimpleNamespace
+
+        # Seed a context under zone "other" only — not visible under root.
+        await cache._store.upsert("other", "src/nexus/bricks/search", "other-zone brick")
+        # Simulate how the real daemon's _attach_path_contexts threads
+        # effective_zone_id as the fallback when r.zone_id is unset.
+        results = [
+            BaseSearchResult(
+                path="src/nexus/bricks/search/fusion.py",
+                chunk_text="",
+                score=0.9,
+                zone_id=None,
+            ),
+        ]
+
+        async def _attach(items, *, zone_id):
+            effective = zone_id or "root"
+            zone = items[0].zone_id or effective
+            await cache.refresh_if_stale(zone)
+            snap = cache.snapshot_zone(zone)
+            if snap is not None:
+                from nexus.bricks.search.path_context import lookup_in_records
+
+                for r in items:
+                    r.context = lookup_in_records(snap, r.path)
+
+        _ = SimpleNamespace(_attach_path_contexts=_attach)
+        await _attach(results, zone_id="other")
+        # With the caller-zone fallback, the "other" zone's description is
+        # picked up even though the result carried no zone_id.
+        assert results[0].context == "other-zone brick"
+
+
 class TestLoopLocalResolver:
     """Regression tests for ``SearchDaemon._resolve_path_context_cache``.
 

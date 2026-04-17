@@ -158,6 +158,11 @@ class DaemonConfig:
     # only matters when ANOTHER worker mutated scope.
     scope_refresh_seconds: float = 5.0
 
+    # Path-context cache bound (Issue #3773 review). Multi-tenant deployments
+    # with thousands of active zones can outgrow the default LRU cap; expose
+    # as config so operators can tune without a code change.
+    path_context_max_zones: int = 2048
+
 
 class SearchDaemon:
     """Long-running search service with pre-warmed indexes.
@@ -1187,12 +1192,17 @@ class SearchDaemon:
         engine = create_async_engine(db_url, future=True)
         factory = async_sessionmaker(engine, expire_on_commit=False)
         store = PathContextStore(async_session_factory=factory, db_type=db_type)
-        cache = PathContextCache(store=store)
+        cache = PathContextCache(store=store, max_zones=self.config.path_context_max_zones)
         self._path_context_cache_by_loop[loop] = cache
         self._path_context_engines_by_loop[loop] = engine
         return cache
 
-    async def _attach_path_contexts(self, results: list[SearchResult]) -> None:
+    async def _attach_path_contexts(
+        self,
+        results: list[SearchResult],
+        *,
+        zone_id: str | None = None,
+    ) -> None:
         """Attach admin-configured path context descriptions to search results.
 
         Issue #3773: When a ``PathContextCache`` is wired in, look up the
@@ -1200,6 +1210,13 @@ class SearchDaemon:
         ``SearchResult.context`` in-place. No-op when the cache is absent or
         the result list is empty. Refreshes per-zone cache at most once per
         batch, then performs pure in-memory lookups (Issue #3773 review).
+
+        ``zone_id`` is the effective zone scope of the caller's search.
+        Many backend paths (txtai, legacy BM25) construct ``SearchResult``
+        without populating ``result.zone_id``, so we cannot rely on the
+        per-result field. Use the caller-supplied ``zone_id`` as the
+        authoritative fallback, otherwise non-root zone searches silently
+        attach root-zone contexts (Round-3 review regression).
 
         Fails soft: if the cache lookup raises (e.g. asyncpg loop mismatch),
         logs a warning and leaves ``context`` unset rather than breaking
@@ -1222,12 +1239,34 @@ class SearchDaemon:
         if cache is None:
             return
 
-        zones = {(r.zone_id or ROOT_ZONE_ID) for r in results}
+        # Prefer the caller's effective zone over per-result zone_id because
+        # most backends don't populate it; fall back to r.zone_id then to
+        # ROOT_ZONE_ID if both are absent.
+        effective_zone = zone_id or ROOT_ZONE_ID
+
+        def _zone_for(r: SearchResult) -> str:
+            return r.zone_id or effective_zone
+
+        zones = {_zone_for(r) for r in results}
         try:
+            # Refresh + synchronously snapshot each zone's records list
+            # (between awaits a concurrent request could evict this zone
+            # from the LRU). snapshot_zone is sync so the grab happens
+            # before the next refresh's await point.
+            snapshots: dict[str, list[Any]] = {}
             for zone in zones:
                 await cache.refresh_if_stale(zone)
+                snap = cache.snapshot_zone(zone)
+                if snap is not None:
+                    snapshots[zone] = snap
+            from nexus.bricks.search.path_context import lookup_in_records
+
             for r in results:
-                r.context = cache.lookup_cached(r.zone_id, r.path)
+                zone = _zone_for(r)
+                records = snapshots.get(zone)
+                if records is None:
+                    continue
+                r.context = lookup_in_records(records, r.path)
         except Exception as exc:
             self.stats.path_context_attach_failures += 1
             logger.warning(
@@ -1278,7 +1317,7 @@ class SearchDaemon:
                     latency_ms = (time.perf_counter() - start) * 1000
                     self._track_latency(latency_ms)
                     self.last_search_timing["backend_ms"] = latency_ms
-                    await self._attach_path_contexts(zoekt_results)
+                    await self._attach_path_contexts(zoekt_results, zone_id=effective_zone_id)
                     return zoekt_results
 
             # Delegate to txtai backend for all search types (Issue #2663)
@@ -1321,7 +1360,7 @@ class SearchDaemon:
 
                     latency_ms = (time.perf_counter() - start) * 1000
                     self._track_latency(latency_ms)
-                    await self._attach_path_contexts(results)
+                    await self._attach_path_contexts(results, zone_id=effective_zone_id)
                     return results
                 # txtai returned empty — fall through to legacy search
 
@@ -1344,7 +1383,7 @@ class SearchDaemon:
             latency_ms = (time.perf_counter() - start) * 1000
             self._track_latency(latency_ms)
 
-            await self._attach_path_contexts(results)
+            await self._attach_path_contexts(results, zone_id=effective_zone_id)
             return results
 
         except TimeoutError:
@@ -1376,12 +1415,12 @@ class SearchDaemon:
             return [[] for _ in queries]
 
         results: list[list[Any]] = await backend_batch(queries, zone_id=effective_zone_id)
-        # Issue #3773: attach admin-configured path contexts. Resolve the
-        # cache via the same lazy loop-local path as single-query search so
-        # deployments using ``create_app(database_url=...)`` (no startup
-        # injection) aren't silently missing context on batch responses.
-        # Refresh once per unique zone across the whole batch, then do
-        # pure in-memory lookups per result.
+        # Issue #3773: attach admin-configured path contexts. The whole batch
+        # is single-zone by design (``zone_id=effective_zone_id`` above), so
+        # refresh once against that zone and do pure in-memory lookups on
+        # every inner result against the snapshot — backends return
+        # ``BaseSearchResult`` without ``zone_id`` set, so we must use the
+        # caller's scope instead of ``r.zone_id`` (Round-3 review).
         try:
             cache = await self._resolve_path_context_cache()
         except Exception as exc:
@@ -1393,16 +1432,15 @@ class SearchDaemon:
             )
             cache = None
         if cache is not None:
-            zones: set[str] = set()
-            for inner in results:
-                for r in inner:
-                    zones.add(getattr(r, "zone_id", None) or ROOT_ZONE_ID)
             try:
-                for zone in zones:
-                    await cache.refresh_if_stale(zone)
-                for inner in results:
-                    for r in inner:
-                        r.context = cache.lookup_cached(r.zone_id, r.path)
+                await cache.refresh_if_stale(effective_zone_id)
+                records = cache.snapshot_zone(effective_zone_id)
+                if records is not None:
+                    from nexus.bricks.search.path_context import lookup_in_records
+
+                    for inner in results:
+                        for r in inner:
+                            r.context = lookup_in_records(records, r.path)
             except Exception as exc:
                 self.stats.path_context_attach_failures += 1
                 logger.warning(

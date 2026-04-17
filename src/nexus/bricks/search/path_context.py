@@ -170,6 +170,23 @@ class PathContextStore:
         return await self.list(zone_id=zone_id)
 
 
+def lookup_in_records(records: builtins.list[PathContextRecord], path: str) -> str | None:
+    """Longest-prefix lookup against a pre-sorted records list.
+
+    Records must be sorted by ``len(path_prefix)`` DESC so the first
+    slash-boundary match is the longest prefix. Shared by
+    :meth:`PathContextCache.lookup_cached` and daemon snapshot paths so
+    both code paths use the same matching logic.
+    """
+    for record in records:
+        prefix = record.path_prefix
+        if prefix == "":
+            return record.description
+        if path == prefix or path.startswith(prefix + "/"):
+            return record.description
+    return None
+
+
 def _coerce_datetime(value: Any) -> datetime:
     """SQLite + aiosqlite can return datetimes as ISO strings; normalize to datetime."""
     if isinstance(value, datetime):
@@ -222,25 +239,32 @@ class PathContextCache:
         db_fp = await self._store.zone_fingerprint(zone_id)
         cached = self._entries.get(zone_id)
         if cached is not None and cached[0] == db_fp:
+            # LRU touch on hit: hot-but-unchanged zones must promote recency
+            # too, otherwise they'd drift to the oldest slot and get evicted
+            # behind merely-written zones (Round-3 review).
+            self._entries.move_to_end(zone_id)
             return
         async with self._lock_for(zone_id):
             # Re-check after lock acquisition — another task may have refreshed.
             db_fp = await self._store.zone_fingerprint(zone_id)
             cached = self._entries.get(zone_id)
             if cached is not None and cached[0] == db_fp:
+                self._entries.move_to_end(zone_id)
                 return
             records = await self._store.load_all_for_zone(zone_id)
             records.sort(key=lambda r: len(r.path_prefix), reverse=True)
             self._entries[zone_id] = (db_fp, records)
             self._entries.move_to_end(zone_id)
-            # LRU-bound: evict the oldest zones when we exceed the cap. The
-            # zone we just inserted is at the newest end and safe. Other
-            # zones' locks can be dropped along with their entries — any
-            # concurrent refresh task for an evicted zone still holds its
-            # own lock reference and will just finish and rebuild.
+            # LRU-bound: evict the oldest *records* when we exceed the cap.
+            # Locks are intentionally NOT evicted: dropping a lock while a
+            # concurrent task holds it, then re-creating a fresh lock on the
+            # next refresh of the same zone, would let two refreshes run
+            # concurrently under different Lock objects and race on
+            # ``_entries[zone]`` (Round-3 review: stale-write regression).
+            # Per-zone Locks are tiny (~56 B each) and bounded by zone
+            # count — cheap enough to keep alive.
             while len(self._entries) > self._max_zones:
-                evicted_zone, _ = self._entries.popitem(last=False)
-                self._locks.pop(evicted_zone, None)
+                self._entries.popitem(last=False)
 
     def lookup_cached(self, zone_id: str | None, path: str) -> str | None:
         """Pure in-memory longest-prefix lookup. Assumes the caller has already
@@ -254,13 +278,19 @@ class PathContextCache:
         if cached is None:
             return None
         _, records = cached
-        for record in records:
-            prefix = record.path_prefix
-            if prefix == "":
-                return record.description
-            if path == prefix or path.startswith(prefix + "/"):
-                return record.description
-        return None
+        return lookup_in_records(records, path)
+
+    def snapshot_zone(self, zone_id: str | None) -> builtins.list[PathContextRecord] | None:
+        """Return the currently-cached, prefix-length-sorted records list for
+        ``zone_id``, or ``None`` if the zone isn't cached. Synchronous — a
+        caller that grabs this immediately after ``refresh_if_stale`` is
+        guaranteed a stable snapshot even if a concurrent request later
+        evicts the zone from the LRU (Round-3 review regression)."""
+        effective_zone = zone_id or ROOT_ZONE_ID
+        cached = self._entries.get(effective_zone)
+        if cached is None:
+            return None
+        return cached[1]
 
     async def lookup(self, zone_id: str | None, path: str) -> str | None:
         """Async convenience: refresh then read. Prefer ``refresh_if_stale`` +

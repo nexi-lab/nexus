@@ -805,11 +805,19 @@ class SearchDaemon:
         self._async_engine = None
         self._async_session = None
 
-        # Dispose loop-local path-context engines we created lazily
-        # (Issue #3773 review feedback — avoid pooled-connection leak).
-        for engine in list(self._path_context_engines_by_loop.values()):
-            with contextlib.suppress(Exception):
-                await engine.dispose()
+        # Dispose loop-local path-context engines we created lazily. Only
+        # engines whose origin loop is the current running loop can actually
+        # be disposed from here — asyncpg pools for a different (or dead)
+        # loop must be released on their own loop, which we cannot reach
+        # from shutdown. Dropping the references is still correct: the dead
+        # loop's socket fds are reclaimed when it's garbage-collected.
+        # Suppress the expected cross-loop error on dispose rather than
+        # letting it surface as a shutdown warning.
+        running_loop = asyncio.get_running_loop()
+        for loop_key, engine in list(self._path_context_engines_by_loop.items()):
+            if loop_key is running_loop and not loop_key.is_closed():
+                with contextlib.suppress(Exception):
+                    await engine.dispose()
         self._path_context_engines_by_loop.clear()
         self._path_context_cache_by_loop.clear()
 
@@ -1364,10 +1372,40 @@ class SearchDaemon:
             return [[] for _ in queries]
 
         results: list[list[Any]] = await backend_batch(queries, zone_id=effective_zone_id)
-        # Issue #3773: attach admin-configured path contexts per inner list.
-        if self._path_context_cache is not None:
+        # Issue #3773: attach admin-configured path contexts. Resolve the
+        # cache via the same lazy loop-local path as single-query search so
+        # deployments using ``create_app(database_url=...)`` (no startup
+        # injection) aren't silently missing context on batch responses.
+        # Refresh once per unique zone across the whole batch, then do
+        # pure in-memory lookups per result.
+        try:
+            cache = await self._resolve_path_context_cache()
+        except Exception as exc:
+            self.stats.path_context_resolve_failures += 1
+            logger.warning(
+                "path context cache resolution failed (total=%d): %s",
+                self.stats.path_context_resolve_failures,
+                exc,
+            )
+            cache = None
+        if cache is not None:
+            zones: set[str] = set()
             for inner in results:
-                await self._attach_path_contexts(inner)
+                for r in inner:
+                    zones.add(getattr(r, "zone_id", None) or ROOT_ZONE_ID)
+            try:
+                for zone in zones:
+                    await cache.refresh_if_stale(zone)
+                for inner in results:
+                    for r in inner:
+                        r.context = cache.lookup_cached(r.zone_id, r.path)
+            except Exception as exc:
+                self.stats.path_context_attach_failures += 1
+                logger.warning(
+                    "path context attach failed (total=%d): %s",
+                    self.stats.path_context_attach_failures,
+                    exc,
+                )
         return results
 
     async def index_documents(

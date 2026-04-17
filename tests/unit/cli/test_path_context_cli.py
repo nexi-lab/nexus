@@ -104,29 +104,25 @@ class TestPathContextList:
 class TestPathContextDelete:
     def test_delete_success(self) -> None:
         runner = CliRunner(env=_ENV)
-        fake = _patched_client()
-        resp = MagicMock(status_code=200)
-        resp.raise_for_status = MagicMock()
-        with (
-            patch("nexus.cli.api_client.get_api_client_from_options", return_value=fake),
-            patch("httpx.delete", return_value=resp) as delete_mock,
-        ):
+        fake = _patched_client(delete={"status": "deleted"})
+        with patch("nexus.cli.api_client.get_api_client_from_options", return_value=fake):
             result = runner.invoke(path_context, ["delete", "src", "--remote-url", MOCK_URL])
         assert result.exit_code == 0, result.output
         assert "deleted" in result.output
-        assert delete_mock.call_args.kwargs["params"] == {
-            "zone_id": "root",
-            "path_prefix": "src",
-        }
+        fake.delete.assert_called_once_with(
+            "/api/v2/path-contexts/",
+            params={"zone_id": "root", "path_prefix": "src"},
+        )
 
     def test_delete_404_exits_nonzero(self) -> None:
+        import httpx
+
         runner = CliRunner(env=_ENV)
         fake = _patched_client()
         resp = MagicMock(status_code=404)
-        with (
-            patch("nexus.cli.api_client.get_api_client_from_options", return_value=fake),
-            patch("httpx.delete", return_value=resp),
-        ):
+        err = httpx.HTTPStatusError("not found", request=MagicMock(), response=resp)
+        fake.delete = MagicMock(side_effect=err)
+        with patch("nexus.cli.api_client.get_api_client_from_options", return_value=fake):
             result = runner.invoke(path_context, ["delete", "missing", "--remote-url", MOCK_URL])
         assert result.exit_code == 1
         assert "No path context found" in result.output

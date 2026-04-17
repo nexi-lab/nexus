@@ -141,24 +141,18 @@ def path_context_delete(
     profile_name = (ctx.obj or {}).get("profile")
     client = get_api_client_from_options(remote_url, remote_api_key, profile_name=profile_name)
     try:
-        # The server returns a JSON body (`{"status": "deleted", ...}`) on
-        # success; use the generic client by issuing a raw DELETE via httpx
-        # so we can read the response body without relying on a 204 shape.
-        url = f"{client._base_url}/api/v2/path-contexts/"  # noqa: SLF001
-        resp = httpx.delete(
-            url,
-            headers=client._headers(),  # noqa: SLF001
+        client.delete(
+            "/api/v2/path-contexts/",
             params={"zone_id": zone_id, "path_prefix": path_prefix},
-            timeout=client._timeout,  # noqa: SLF001
         )
-        if resp.status_code == 404:
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
             console.print(
                 f"[nexus.warning]No path context found: {zone_id}:{path_prefix}[/nexus.warning]"
             )
-            raise SystemExit(1)
-        resp.raise_for_status()
-    except SystemExit:
-        raise
+            raise SystemExit(1) from e
+        console.print(f"[nexus.error]Error:[/nexus.error] {e}")
+        raise SystemExit(1) from e
     except Exception as e:
         console.print(f"[nexus.error]Error:[/nexus.error] {e}")
         raise SystemExit(1) from e

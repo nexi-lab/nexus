@@ -3,6 +3,13 @@
 Creates the path_contexts table used to attach admin-configured, zone-scoped
 human-readable descriptions to search result paths via longest-prefix match.
 
+Supported dialects: PostgreSQL (production) and SQLite (embedded/tests).
+The ``path_prefix`` column is ``String(1024)``; combined with ``zone_id``
+in the unique constraint, this exceeds MySQL's default utf8mb4 index key
+limit (3072 bytes). MySQL is not a supported backend — running the
+migration there requires either shrinking the columns or adding an index
+prefix.
+
 Revision ID: add_path_contexts_table
 Revises: add_document_skeleton
 Create Date: 2026-04-16

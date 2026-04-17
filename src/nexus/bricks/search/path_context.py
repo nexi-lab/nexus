@@ -136,6 +136,29 @@ class PathContextStore:
             ).scalar()
         return _coerce_datetime(row) if row is not None else None
 
+    async def zone_fingerprint(self, zone_id: str) -> tuple[int, datetime | None]:
+        """Return ``(row_count, max_updated_at)`` for a zone.
+
+        Issue #3773 review: ``max_updated_at`` alone misses row deletions —
+        deleting a row whose ``updated_at`` is below the zone's max leaves
+        the max unchanged, so a cache keyed on that value alone keeps
+        serving the deleted entry. Including ``COUNT(*)`` makes the
+        freshness token detect row removals as well.
+        """
+        async with self._async_session_factory() as session:
+            row = (
+                await session.execute(
+                    text(
+                        "SELECT COUNT(*), MAX(updated_at) FROM path_contexts "
+                        "WHERE zone_id = :zone_id"
+                    ),
+                    {"zone_id": zone_id},
+                )
+            ).one()
+        count = int(row[0] or 0)
+        stamp = _coerce_datetime(row[1]) if row[1] is not None else None
+        return (count, stamp)
+
     async def load_all_for_zone(self, zone_id: str) -> builtins.list[PathContextRecord]:
         """Load every context row for one zone."""
         return await self.list(zone_id=zone_id)
@@ -163,26 +186,32 @@ class PathContextCache:
 
     def __init__(self, *, store: PathContextStore) -> None:
         self._store = store
-        self._entries: dict[str, tuple[datetime | None, builtins.list[PathContextRecord]]] = {}
+        # Freshness token is ``(row_count, max_updated_at)`` — including count
+        # catches deletes that leave the zone's max unchanged (Issue #3773
+        # review feedback).
+        self._entries: dict[
+            str,
+            tuple[tuple[int, datetime | None], builtins.list[PathContextRecord]],
+        ] = {}
         self._locks: dict[str, asyncio.Lock] = {}
 
     def _lock_for(self, zone_id: str) -> asyncio.Lock:
         return self._locks.setdefault(zone_id, asyncio.Lock())
 
     async def refresh_if_stale(self, zone_id: str) -> None:
-        db_stamp = await self._store.max_updated_at(zone_id)
+        db_fp = await self._store.zone_fingerprint(zone_id)
         cached = self._entries.get(zone_id)
-        if cached is not None and cached[0] == db_stamp:
+        if cached is not None and cached[0] == db_fp:
             return
         async with self._lock_for(zone_id):
             # Re-check after lock acquisition — another task may have refreshed.
-            db_stamp = await self._store.max_updated_at(zone_id)
+            db_fp = await self._store.zone_fingerprint(zone_id)
             cached = self._entries.get(zone_id)
-            if cached is not None and cached[0] == db_stamp:
+            if cached is not None and cached[0] == db_fp:
                 return
             records = await self._store.load_all_for_zone(zone_id)
             records.sort(key=lambda r: len(r.path_prefix), reverse=True)
-            self._entries[zone_id] = (db_stamp, records)
+            self._entries[zone_id] = (db_fp, records)
 
     def lookup_cached(self, zone_id: str | None, path: str) -> str | None:
         """Pure in-memory longest-prefix lookup. Assumes the caller has already

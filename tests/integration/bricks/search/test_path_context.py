@@ -188,6 +188,49 @@ class TestPathContextCacheLookup:
         await store.delete("root", "src")
         assert await cache.lookup("root", "src/x.py") is None
 
+    @pytest.mark.asyncio
+    async def test_refresh_after_delete_when_other_rows_remain(self, async_session_factory) -> None:
+        """Issue #3773 review regression: deleting a row below the zone MAX
+        previously left the cache serving the stale entry because the
+        freshness stamp (MAX(updated_at)) did not change. The fingerprint
+        token must also detect row removals.
+        """
+        from sqlalchemy import text
+
+        store = PathContextStore(async_session_factory=async_session_factory, db_type="sqlite")
+
+        # Seed two rows with distinct updated_at stamps and force the MAX onto
+        # the row we intend to KEEP. Raw SQL drives the timestamps so the
+        # test isn't flaky on same-millisecond writes.
+        await store.upsert("root", "docs", "old row")
+        await store.upsert("root", "docs/new", "keep row")
+        async with async_session_factory() as s:
+            await s.execute(
+                text(
+                    "UPDATE path_contexts SET updated_at = '2024-01-01 00:00:00' "
+                    "WHERE path_prefix = 'docs'"
+                )
+            )
+            await s.execute(
+                text(
+                    "UPDATE path_contexts SET updated_at = '2025-06-01 00:00:00' "
+                    "WHERE path_prefix = 'docs/new'"
+                )
+            )
+            await s.commit()
+
+        cache = PathContextCache(store=store)
+        await cache.refresh_if_stale("root")
+        assert cache.lookup_cached("root", "docs/readme.md") == "old row"
+
+        # Delete the OLDER row. MAX(updated_at) does not change because the
+        # newer row still holds the max. Pre-fix, the cache would not
+        # refresh and would keep serving "old row" against the deleted
+        # prefix.
+        await store.delete("root", "docs")
+        assert await cache.lookup("root", "docs/readme.md") is None
+        assert await cache.lookup("root", "docs/new/readme.md") == "keep row"
+
 
 class TestPathContextCacheBatchLookup:
     @pytest.mark.asyncio

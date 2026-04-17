@@ -676,16 +676,23 @@ async def handle_semantic_search_index(
         for file_path in paths_to_index:
             try:
                 raw = nexus_fs.sys_read(file_path, context=context)
+                # Pass the DB-tracked content_hash so the parse cache key
+                # matches what has_successful_parse later compares against
+                # (etag on S3/GCS, BLAKE3 on local CAS — adapter stores
+                # whatever the caller supplies).
+                observed_hash = observed_hash_by_path.get(file_path)
                 content_str, parse_status = _apply_parse_transform_with_status(
-                    nexus_fs, file_path, raw, parse_fn=_parse_fn
+                    nexus_fs,
+                    file_path,
+                    raw,
+                    parse_fn=_parse_fn,
+                    content_hash=observed_hash,
                 )
                 doc_id = f"{zone_id}:{file_path}" if zone_id != "root" else file_path
                 if content_str and content_str.strip():
                     documents.append({"id": doc_id, "text": content_str, "path": file_path})
                 elif is_parseable_path(file_path) and parse_status == "empty":
-                    stale_candidates.append(
-                        (doc_id, file_path, observed_hash_by_path.get(file_path))
-                    )
+                    stale_candidates.append((doc_id, file_path, observed_hash))
             except Exception as read_err:
                 read_errors += 1
                 _log.warning("Skipping %s: %s", file_path, read_err)

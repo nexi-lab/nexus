@@ -31,6 +31,7 @@ def _apply_parse_transform(
     raw: Any,
     *,
     parse_fn: Callable[[bytes, str], bytes | None] | None,
+    content_hash: str | None = None,
 ) -> str:
     """Pure sync transform: raw bytes → parsed-and-sanitized searchable text.
 
@@ -42,8 +43,19 @@ def _apply_parse_transform(
     Fail-closed: for a parseable binary with no working parser or a parse
     error, returns ``""`` so the indexer skips the file instead of
     embedding utf-8 garbage.
+
+    ``content_hash`` is the backend-tracked identity of the current bytes
+    — ``file_paths.content_hash``.  On local CAS backends this is a raw-
+    byte BLAKE3; on S3/GCS it's an etag / version ID.  When provided,
+    the adapter stores it under ``parsed_text_hash`` so downstream probes
+    (``has_successful_parse``) can compare against the same string the
+    indexer passes in.  When ``None``, falls back to a locally computed
+    BLAKE3 of the raw bytes (fine for local backends, but may cause a
+    probe mismatch on versioned backends).
     """
-    text, _status = _apply_parse_transform_with_status(nx, path, raw, parse_fn=parse_fn)
+    text, _status = _apply_parse_transform_with_status(
+        nx, path, raw, parse_fn=parse_fn, content_hash=content_hash
+    )
     return text
 
 
@@ -53,6 +65,7 @@ def _apply_parse_transform_with_status(
     raw: Any,
     *,
     parse_fn: Callable[[bytes, str], bytes | None] | None,
+    content_hash: str | None = None,
 ) -> tuple[str, str]:
     """Variant of :func:`_apply_parse_transform` that also reports status.
 
@@ -70,7 +83,9 @@ def _apply_parse_transform_with_status(
     """
     if is_parseable_path(path):
         raw_bytes = raw if isinstance(raw, bytes) else str(raw).encode("utf-8", errors="ignore")
-        parsed = _get_parsed_text_sync(nx, path, raw_bytes, parse_fn=parse_fn)
+        parsed = _get_parsed_text_sync(
+            nx, path, raw_bytes, parse_fn=parse_fn, content_hash=content_hash
+        )
         if parsed is None:
             return "", "error"
         text = _sanitize_for_index(parsed)
@@ -103,6 +118,7 @@ def _get_parsed_text_sync(
     raw: bytes,
     *,
     parse_fn: Callable[[bytes, str], bytes | None] | None,
+    content_hash: str | None = None,
 ) -> str | None:
     """Sync flavor of ``_NexusFSFileReader._get_parsed_text`` used by RPC path.
 
@@ -125,16 +141,29 @@ def _get_parsed_text_sync(
     # metastore; two zones with different ``/report.pdf`` files, or the same
     # file rewritten with fresh bytes, would otherwise collide on the path
     # key and one would silently serve the other's parsed text.
-    try:
-        raw_hash = _compute_content_hash(raw)
-    except Exception:
-        # Hashing itself never fails in normal operation; but if BLAKE3 is
-        # broken, indexing the file without cache safety is worse than
-        # skipping — fail closed.
-        logger.warning(
-            "parse transform: content-hash computation failed for %s", path, exc_info=True
-        )
-        return None
+    #
+    # Prefer the caller-supplied ``content_hash`` (the backend-tracked
+    # identity of the current bytes — etag on S3/GCS, raw-byte BLAKE3 on
+    # local CAS) so downstream probes like ``has_successful_parse`` can
+    # compare the stored key against the same string the indexer passes
+    # in.  Fall back to a locally computed BLAKE3 when the caller doesn't
+    # know the backend hash; probe parity breaks on versioned backends in
+    # that case, but the cache itself still stays revision-safe.
+    if content_hash:
+        raw_hash = content_hash
+    else:
+        try:
+            raw_hash = _compute_content_hash(raw)
+        except Exception:
+            # Hashing itself never fails in normal operation; but if BLAKE3 is
+            # broken, indexing the file without cache safety is worse than
+            # skipping — fail closed.
+            logger.warning(
+                "parse transform: content-hash computation failed for %s",
+                path,
+                exc_info=True,
+            )
+            return None
 
     try:
         cached = nx.metadata.get_file_metadata(path, "parsed_text")
@@ -217,6 +246,22 @@ class _NexusFSFileReader:
         )
         content_raw = self._nx.sys_read(path, context=admin_ctx)
 
+        # Look up the backend-tracked content_hash (``file_paths.content_hash``)
+        # so the parse cache is keyed with the same string downstream
+        # probes like ``has_successful_parse`` will later compare against.
+        # On local CAS this is a raw-byte BLAKE3; on S3/GCS it's the
+        # backend's etag / version ID.  Best-effort — if the lookup fails
+        # or returns a non-string (typically ``None`` for files without a
+        # tracked hash), ``_apply_parse_transform`` falls back to BLAKE3
+        # of the raw bytes.
+        observed_content_hash: str | None = None
+        try:
+            lookup = self.get_content_hash(path)
+            if isinstance(lookup, str):
+                observed_content_hash = lookup
+        except Exception:
+            observed_content_hash = None
+
         # Offload the parse transform to a worker thread — parse_fn is sync
         # and can block the event loop on large PDFs, pinning unrelated
         # search/RPC traffic while one document parses.
@@ -226,6 +271,7 @@ class _NexusFSFileReader:
             path,
             content_raw,
             parse_fn=self._parse_fn,
+            content_hash=observed_content_hash,
         )
 
     def has_successful_parse(self, path: str, content_hash: str) -> bool:

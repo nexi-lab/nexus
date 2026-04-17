@@ -423,7 +423,7 @@ exclude_lines = [
 
 [tool.mypy]
 # Type checking configuration - Phase 3 will enable full strict mode
-python_version = "3.11"
+python_version = "3.14"
 mypy_path = "stubs"
 exclude = [
     "_pb2(_grpc)?\\.py$",  # Generated gRPC/protobuf stubs
@@ -464,7 +464,7 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = "nexus.storage._metadata_mapper_generated"
-# Proto-generated metadata_pb2 resolves to Any on Python 3.13 mypy
+# Proto-generated metadata_pb2 resolves to Any without a generated stub
 disable_error_code = ["attr-defined"]
 
 [[tool.mypy.overrides]]

@@ -20,7 +20,7 @@ from typing import Any
 
 from sqlalchemy import delete, func, select
 
-from nexus.lib.virtual_views import PARSEABLE_EXTENSIONS
+from nexus.lib.virtual_views import is_parseable_path
 
 # Removed: txtai handles this (Issue #2663)
 # from nexus.bricks.search.embeddings import EmbeddingProvider
@@ -166,13 +166,37 @@ class IndexingService:
         # failure: the next reindex sees the hash match and skips the file
         # forever, creating a silent search hole.  Leave the tracking fields
         # untouched so the next tick retries parsing.
-        parseable = path.lower().endswith(tuple(PARSEABLE_EXTENSIONS))
-        if parseable and not (content and content.strip()):
-            logger.warning(
-                "[INDEXING-SVC] Empty content for parseable binary %s — "
-                "skipping index tick, will retry next run",
-                path,
-            )
+        #
+        # When the file previously had indexed chunks and its content has
+        # changed, we also DELETE the stale chunks — query paths read
+        # ``document_chunks`` directly without gating on
+        # ``indexed_content_hash``, so leaving old rows live would serve
+        # outdated PDF text indefinitely until the parser recovers.
+        if is_parseable_path(path) and not (content and content.strip()):
+            if (
+                current_content_hash is not None
+                and file_model is not None
+                and file_model.indexed_content_hash is not None
+                and file_model.indexed_content_hash != current_content_hash
+            ):
+                with self._get_session() as session:
+                    session.execute(
+                        delete(DocumentChunkModel).where(
+                            DocumentChunkModel.path_id == path_id,
+                        ),
+                    )
+                    session.commit()
+                logger.warning(
+                    "[INDEXING-SVC] Parse failed for changed %s — cleared "
+                    "stale chunks, will retry on next tick",
+                    path,
+                )
+            else:
+                logger.warning(
+                    "[INDEXING-SVC] Empty content for parseable binary %s — "
+                    "skipping index tick, will retry next run",
+                    path,
+                )
             return 0
 
         # --- Step 3: Delegate to pipeline (atomic delete+insert) -----------

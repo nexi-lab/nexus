@@ -5,7 +5,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from nexus.lib.virtual_views import PARSEABLE_EXTENSIONS
+from nexus.lib.virtual_views import is_parseable_path
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +23,87 @@ def _sanitize_for_index(text: str) -> str:
     in a parsed document would roll back the whole write transaction.
     """
     return text.replace("\x00", "") if "\x00" in text else text
+
+
+def _apply_parse_transform(
+    nx: Any,
+    path: str,
+    raw: Any,
+    *,
+    parse_fn: Callable[[bytes, str], bytes | None] | None,
+) -> str:
+    """Pure sync transform: raw bytes → parsed-and-sanitized searchable text.
+
+    Shared by ``_NexusFSFileReader.read_text`` (daemon refresh path) and
+    ``handle_semantic_search_index`` (RPC path).  The caller owns the read
+    — including the ``OperationContext`` / ReBAC scope — so this function
+    never touches the filesystem itself.
+
+    Fail-closed: for a parseable binary with no working parser or a parse
+    error, returns ``""`` so the indexer skips the file instead of
+    embedding utf-8 garbage.
+    """
+    if is_parseable_path(path):
+        raw_bytes = raw if isinstance(raw, bytes) else str(raw).encode("utf-8", errors="ignore")
+        parsed = _get_parsed_text_sync(nx, path, raw_bytes, parse_fn=parse_fn)
+        return _sanitize_for_index(parsed) if parsed is not None else ""
+
+    if isinstance(raw, bytes):
+        return _sanitize_for_index(raw.decode("utf-8", errors="ignore"))
+    return _sanitize_for_index(str(raw))
+
+
+def _get_parsed_text_sync(
+    nx: Any,
+    path: str,
+    raw: bytes,
+    *,
+    parse_fn: Callable[[bytes, str], bytes | None] | None,
+) -> str | None:
+    """Sync flavor of ``_NexusFSFileReader._get_parsed_text`` used by RPC path.
+
+    ``parse_fn`` already runs in a worker thread under the ParsersBrick
+    wrapper when an event loop is active, so blocking inside the RPC
+    handler for one document at a time is acceptable; we don't need a
+    second ``asyncio.to_thread`` hop here.
+    """
+    try:
+        cached = nx.metadata.get_file_metadata(path, "parsed_text")
+        if cached:
+            cached_str = (
+                cached if isinstance(cached, str) else cached.decode("utf-8", errors="ignore")
+            )
+            return _sanitize_for_index(cached_str)
+    except Exception:
+        pass
+
+    if parse_fn is None:
+        logger.warning(
+            "parse transform: no parse_fn wired for parseable binary %s — "
+            "skipping instead of indexing raw bytes",
+            path,
+        )
+        return None
+    try:
+        parsed_bytes = parse_fn(raw, path)
+    except Exception:
+        logger.warning("parse transform: parse_fn raised for %s", path, exc_info=True)
+        return None
+    if parsed_bytes is None:
+        logger.warning("parse transform: parse_fn returned None for %s", path)
+        return None
+    text = _sanitize_for_index(parsed_bytes.decode("utf-8", errors="ignore"))
+    logger.info("parse transform: parsed %s → %d chars markdown", path, len(text))
+
+    try:
+        from datetime import UTC, datetime
+
+        nx.metadata.set_file_metadata(path, "parsed_text", text)
+        nx.metadata.set_file_metadata(path, "parsed_at", datetime.now(UTC).isoformat())
+    except Exception:
+        pass
+
+    return text
 
 
 class _NexusFSFileReader:
@@ -60,82 +141,17 @@ class _NexusFSFileReader:
             is_system=True,
         )
         content_raw = self._nx.sys_read(path, context=admin_ctx)
-        raw_bytes = (
-            content_raw
-            if isinstance(content_raw, bytes)
-            else str(content_raw).encode("utf-8", errors="ignore")
+
+        # Offload the parse transform to a worker thread — parse_fn is sync
+        # and can block the event loop on large PDFs, pinning unrelated
+        # search/RPC traffic while one document parses.
+        return await asyncio.to_thread(
+            _apply_parse_transform,
+            self._nx,
+            path,
+            content_raw,
+            parse_fn=self._parse_fn,
         )
-
-        # Parseable binaries (.pdf/.docx/.xlsx/…) — decode via parse_fn so the
-        # search index gets real text, not utf-8 garbage from raw bytes.  The
-        # metastore parsed_text cache, populated by ContentParserEngine /
-        # AutoParseWriteHook, is checked first to avoid re-parsing.
-        #
-        # Fail-closed: if the parser is missing or errors out, we return an
-        # empty string instead of the raw-byte decoding.  Shipping utf-8 soup
-        # into the embedding pipeline wastes API budget and pollutes results;
-        # an empty content makes the daemon skip indexing and fall through to
-        # its content_cache probe.
-        if any(path.endswith(ext) for ext in PARSEABLE_EXTENSIONS):
-            parsed = await self._get_parsed_text(path, raw_bytes)
-            return _sanitize_for_index(parsed) if parsed is not None else ""
-
-        if isinstance(content_raw, bytes):
-            return _sanitize_for_index(content_raw.decode("utf-8", errors="ignore"))
-        return _sanitize_for_index(str(content_raw))
-
-    async def _get_parsed_text(self, path: str, raw: bytes) -> str | None:
-        """Return cached or freshly-parsed markdown for a parseable binary.
-
-        Returns None when no parser is wired or parsing fails — caller maps
-        this to an empty ``read_text`` result so the indexing pipeline skips
-        the file instead of embedding raw bytes.
-        """
-        # 1) Metastore cache (shared with VirtualViewResolver / ContentParserEngine).
-        #    Defense in depth: sanitize on read in case an older entry was cached
-        #    before the write-path sanitizer existed.
-        try:
-            cached = self._nx.metadata.get_file_metadata(path, "parsed_text")
-            if cached:
-                cached_str = (
-                    cached if isinstance(cached, str) else cached.decode("utf-8", errors="ignore")
-                )
-                return _sanitize_for_index(cached_str)
-        except Exception:
-            pass
-
-        # 2) Synchronous parse via injected parse_fn.  The callable is sync, so
-        #    run it in a worker thread — otherwise a slow PDF blocks the event
-        #    loop and pins unrelated search/RPC traffic while it parses.
-        if self._parse_fn is None:
-            logger.warning(
-                "read_text: no parse_fn wired for parseable binary %s — "
-                "skipping instead of indexing raw bytes",
-                path,
-            )
-            return None
-        try:
-            parsed_bytes = await asyncio.to_thread(self._parse_fn, raw, path)
-        except Exception:
-            logger.warning("read_text: parse_fn raised for %s", path, exc_info=True)
-            return None
-        if parsed_bytes is None:
-            logger.warning("read_text: parse_fn returned None for %s", path)
-            return None
-        text = _sanitize_for_index(parsed_bytes.decode("utf-8", errors="ignore"))
-        logger.info("read_text: parsed %s → %d chars markdown", path, len(text))
-
-        # 3) Populate the metastore cache with the sanitized text so subsequent
-        #    reads (virtual view resolver, next index refresh) never see NULs.
-        try:
-            from datetime import UTC, datetime
-
-            self._nx.metadata.set_file_metadata(path, "parsed_text", text)
-            self._nx.metadata.set_file_metadata(path, "parsed_at", datetime.now(UTC).isoformat())
-        except Exception:
-            pass  # best-effort — search result correctness doesn't need the cache.
-
-        return text
 
     def get_searchable_text(self, path: str) -> str | None:
         # Sanitize on read — older cache entries (written before the adapter's

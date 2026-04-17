@@ -235,3 +235,21 @@ class TestNexusFSFileReader:
         reader = _NexusFSFileReader(nx)
 
         assert reader.get_searchable_text("/missing.pdf") is None
+
+    @pytest.mark.asyncio
+    async def test_read_text_handles_mixed_case_extensions(self) -> None:
+        # Real filenames arrive in mixed case — Report.PDF / Deck.Docx —
+        # and must still flow through parse_fn.  A case-sensitive check
+        # used to bypass parsing and index raw-byte soup for these files.
+        nx = MagicMock()
+        nx.sys_read = MagicMock(return_value=b"%PDF-1.4 bytes")
+        nx.metadata.get_file_metadata = MagicMock(return_value=None)
+        nx.metadata.set_file_metadata = MagicMock()
+        parse_fn = MagicMock(return_value=b"parsed markdown")
+        reader = _NexusFSFileReader(nx, parse_fn=parse_fn)
+
+        for path in ("/Report.PDF", "/Deck.Docx", "/Sheet.XLSX"):
+            parse_fn.reset_mock()
+            result = await reader.read_text(path)
+            assert result == "parsed markdown", f"failed for {path}"
+            parse_fn.assert_called_once()

@@ -50,6 +50,18 @@ PARSEABLE_EXTENSIONS = {
 }
 
 
+def is_parseable_path(path: str) -> bool:
+    """Case-insensitive membership test against ``PARSEABLE_EXTENSIONS``.
+
+    Real filenames arrive with mixed casing (``Report.PDF``, ``Deck.Docx``);
+    naïve ``path.endswith(".pdf")`` misses them, which means the parse-aware
+    indexer silently falls back to raw-byte decoding.  Use this helper
+    everywhere parseable detection matters.
+    """
+    lower = path.lower()
+    return any(lower.endswith(ext) for ext in PARSEABLE_EXTENSIONS)
+
+
 def parse_virtual_path(path: str, check_fn: Callable[[str], Any]) -> tuple[str, str | None, Any]:
     """Parse virtual path to extract original path, view type, and check result.
 

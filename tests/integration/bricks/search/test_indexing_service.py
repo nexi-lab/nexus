@@ -310,6 +310,70 @@ class TestIndexDocument:
         assert file_model.last_indexed_at is None
         session.commit.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_index_document_clears_stale_chunks_when_parse_fails_on_changed_pdf(
+        self,
+    ) -> None:
+        """If a PDF previously had chunks indexed and its content has since
+        changed, but the parser now fails, leaving the old chunks live would
+        keep outdated text searchable.  Verify we delete them instead.
+        """
+        file_model = _mock_file_model(
+            path_id="pid-pdf-changed",
+            content_hash="new-hash",
+            indexed_content_hash="old-hash",  # was previously indexed with different content
+            virtual_path="/changed.pdf",
+        )
+        pipeline = _mock_pipeline()
+        service, _, session, _ = _build_service(
+            pipeline=pipeline,
+            file_model=file_model,
+            content="",
+        )
+
+        result = await service.index_document("/changed.pdf")
+
+        assert result == 0
+        # Pipeline must not run (nothing to index).
+        pipeline.index_document.assert_not_called()
+        # But a DELETE against document_chunks must have been issued.
+        delete_calls = [
+            call
+            for call in session.execute.call_args_list
+            if "delete" in str(call).lower() or "DELETE" in str(call)
+        ]
+        assert delete_calls, "expected a DELETE on stale document_chunks"
+        # Tracking fields must still remain untouched so the next tick retries.
+        assert file_model.indexed_content_hash == "old-hash"
+        assert file_model.last_indexed_at is None
+
+    @pytest.mark.asyncio
+    async def test_index_document_handles_mixed_case_pdf_extension(self) -> None:
+        """Mixed-case extensions (``/Report.PDF``) must route through the
+        parseable branch so fail-closed behavior covers them.  Without the
+        case-insensitive helper, they slip through and get latched as
+        empty-content text files.
+        """
+        file_model = _mock_file_model(
+            path_id="pid-pdf-upper",
+            content_hash="abc",
+            indexed_content_hash=None,
+            virtual_path="/Report.PDF",
+        )
+        pipeline = _mock_pipeline()
+        service, _, session, _ = _build_service(
+            pipeline=pipeline,
+            file_model=file_model,
+            content="",  # parse failed
+        )
+
+        result = await service.index_document("/Report.PDF")
+
+        assert result == 0
+        pipeline.index_document.assert_not_called()
+        assert file_model.indexed_content_hash is None
+        session.commit.assert_not_called()
+
 
 class TestIndexDirectory:
     @pytest.mark.asyncio

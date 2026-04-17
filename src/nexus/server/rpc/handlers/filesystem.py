@@ -619,22 +619,25 @@ async def handle_semantic_search_index(
         except Exception as _walk_err:
             _log.debug("semantic_search_index: virtual .readme/ walk skipped: %s", _walk_err)
 
-        # Read content via _NexusFSFileReader so parseable binaries (.pdf,
-        # .docx, .xlsx, …) go through parse_fn + NUL sanitization instead of
-        # being indexed as raw utf-8 garbage.  Without this the RPC index
-        # path silently bypasses the entire parse-aware read layer the
-        # daemon's refresh loop relies on.
+        # Read with the caller's context (preserves ReBAC + zone scoping),
+        # then apply the same parse-aware transform the daemon refresh path
+        # uses so parseable binaries (.pdf/.docx/.xlsx/…) are indexed as
+        # parsed markdown rather than raw utf-8 garbage.  We do this as a
+        # pure transform rather than calling ``_NexusFSFileReader.read_text``
+        # because the reader constructs an admin context internally and
+        # would bypass the caller's permission scope.
         from nexus.factory._semantic_search import _resolve_parse_fn
-        from nexus.factory.adapters import _NexusFSFileReader
+        from nexus.factory.adapters import _apply_parse_transform
 
-        _reader = _NexusFSFileReader(nexus_fs, parse_fn=_resolve_parse_fn(nexus_fs))
+        _parse_fn = _resolve_parse_fn(nexus_fs)
 
         documents: list[dict[str, Any]] = []
         read_errors = 0
         total_chunks = 0
         for file_path in paths_to_index:
             try:
-                content_str = await _reader.read_text(file_path)
+                raw = nexus_fs.sys_read(file_path, context=context)
+                content_str = _apply_parse_transform(nexus_fs, file_path, raw, parse_fn=_parse_fn)
                 if content_str and content_str.strip():
                     doc_id = f"{zone_id}:{file_path}" if zone_id != "root" else file_path
                     documents.append({"id": doc_id, "text": content_str, "path": file_path})

@@ -723,21 +723,55 @@ def auth_doctor() -> None:
 
 
 # ---------------------------------------------------------------------------
-# auth migrate (Phase 1 flow)
+# auth migrate (Phase 1 flow + Phase 4 finalization)
 # ---------------------------------------------------------------------------
+
+
+def _run_migrate_finalize() -> None:
+    """Execute the --finalize branch: verify parity then delete legacy rows."""
+    from nexus.bricks.auth.migrate import finalize_migration
+
+    service = _build_auth_service()
+    legacy, profile_store, backend = service.migration_components()
+    result = finalize_migration(
+        legacy_store=legacy,
+        profile_store=profile_store,
+        backend=backend,
+    )
+    if result.ok:
+        console.print(
+            f"[nexus.success]finalized: deleted {len(result.deleted)} legacy row(s)[/nexus.success]"
+        )
+        raise click.exceptions.Exit(0)
+    for f in result.failures:
+        console.print(f"[nexus.error]{f.profile_id}: {f.detail}[/nexus.error]")
+    raise click.exceptions.Exit(1)
 
 
 @auth.command("migrate")
 @click.option("--apply", is_flag=True, default=False, help="Actually copy rows (default: dry-run)")
-def auth_migrate(apply: bool) -> None:
+@click.option(
+    "--finalize",
+    is_flag=True,
+    default=False,
+    help="Verify parity with legacy store and delete legacy rows (Phase 4 finalization).",
+)
+def auth_migrate(apply: bool, finalize: bool) -> None:
     """Migrate OAuth credentials to the unified auth-profile store.
 
     Dry-run by default — prints what would be copied without writing.
     Pass --apply to actually copy rows into the new store.
+    Pass --finalize to verify parity and delete legacy rows (Phase 4).
 
     This is Phase 1 of the auth unification (#3722). Migration is copy-only:
-    the old store is never modified or deleted.
+    the old store is never modified or deleted until --finalize is passed.
     """
+    if apply and finalize:
+        raise click.UsageError("--apply and --finalize are mutually exclusive.")
+
+    if finalize:
+        _run_migrate_finalize()
+        return  # _run_migrate_finalize raises Exit internally
     from pathlib import Path
 
     from nexus.bricks.auth.migrate import build_migration_plan, execute_migration

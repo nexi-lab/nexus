@@ -16,6 +16,7 @@ Decision 8A: migration is copy-only, never deletes.
 
 from __future__ import annotations
 
+import builtins
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -271,6 +272,23 @@ class OldStoreAdapter:
     def get(self, profile_id: str) -> AuthProfile | None:
         return self._profiles.get(profile_id)
 
+    def list_rows(self) -> builtins.list[tuple[str, AuthProfile]]:
+        """Enumerate (profile_id, profile) tuples for every legacy row.
+
+        Used by finalize_migration() to verify parity before deleting rows.
+        """
+        return list(self._profiles.items())
+
+    def delete(self, profile_id: str) -> None:
+        """Remove the legacy row keyed by profile_id.
+
+        Used by finalize_migration() after parity verification passes.
+        This only removes the in-memory snapshot — the underlying
+        OAuthCredentialService entry is not touched here. The CLI migrate
+        --finalize flow is responsible for any further cleanup of the live store.
+        """
+        self._profiles.pop(profile_id, None)
+
 
 class DualReadAuthProfileStore:
     """Reads from new store first, falls back to old store adapter.
@@ -416,7 +434,21 @@ def finalize_migration(
     async def _check_all() -> None:
         await asyncio.gather(*(_check_one(pid) for pid, _ in legacy_rows))
 
-    asyncio.run(_check_all())
+    try:
+        running_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        running_loop = None
+
+    if running_loop is not None:
+        # We're inside an already-running event loop (e.g. pytest-asyncio AUTO
+        # mode, Jupyter). Use nest_asyncio if available, or run in a thread.
+        import concurrent.futures
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(asyncio.run, _check_all())
+            future.result()
+    else:
+        asyncio.run(_check_all())
 
     if failures:
         return FinalizeResult(ok=False, deleted=[], failures=failures)

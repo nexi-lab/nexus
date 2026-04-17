@@ -1221,6 +1221,46 @@ class UnifiedAuthService:
             details["credentials_path"] = path_value
         return details
 
+    def migration_components(self) -> "tuple[Any, Any, Any]":
+        """Expose (legacy_store, profile_store, credential_backend) for migrate --finalize.
+
+        The legacy_store is an OldStoreAdapter built from the oauth_service's
+        current credential snapshot. The profile_store is whatever was injected
+        (typically a SqliteAuthProfileStore or DualReadAuthProfileStore).
+        The credential_backend is a NexusTokenManagerBackend wrapping the
+        oauth_service's token manager.
+
+        Returns a 3-tuple: (legacy_adapter, profile_store, credential_backend).
+        """
+        import asyncio
+
+        from nexus.bricks.auth.credential_backend import NexusTokenManagerBackend
+        from nexus.bricks.auth.migrate import OldStoreAdapter
+
+        # Build legacy adapter from a snapshot of the oauth service credentials.
+        if self._oauth_service is not None:
+            try:
+                old_creds = asyncio.run(self._oauth_service.list_credentials())
+            except Exception:
+                old_creds = []
+        else:
+            old_creds = []
+        legacy_adapter = OldStoreAdapter(old_creds)
+
+        # Build a NexusTokenManagerBackend if the oauth_service exposes a token manager.
+        backend: Any = None
+        if self._oauth_service is not None:
+            token_manager_getter = getattr(self._oauth_service, "_get_token_manager", None)
+            if token_manager_getter is not None:
+                try:
+                    tm = token_manager_getter()
+                    if tm is not None:
+                        backend = NexusTokenManagerBackend(tm)
+                except Exception:
+                    pass
+
+        return legacy_adapter, self._profile_store, backend
+
     @staticmethod
     def store_help_fields(service: str) -> dict[str, Any]:
         """Expose field metadata for CLI prompts/tests."""

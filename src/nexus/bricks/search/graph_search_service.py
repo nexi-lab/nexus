@@ -105,9 +105,12 @@ async def graph_enhanced_search(
     results: list[BaseSearchResult] = await graph_search_fn(
         query, zone_id=effective_zone_id, limit=limit, path_filter=path_filter
     )
-    # Issue #3773: attach admin-configured path contexts (same hook as the
-    # non-graph search branch uses).
+    # Issue #3773: attach admin-configured path contexts. Pass the caller's
+    # effective zone so the daemon can fall back to it when the backend
+    # returned ``BaseSearchResult`` without ``zone_id`` set — otherwise
+    # non-root-zone graph searches would silently collapse to root and
+    # attach the wrong (or no) descriptions (Round-4 review).
     attach = getattr(search_daemon, "_attach_path_contexts", None)
     if attach is not None:
-        await attach(results)
+        await attach(results, zone_id=effective_zone_id)
     return results

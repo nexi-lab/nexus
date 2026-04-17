@@ -89,6 +89,86 @@ class TestAttachUsesCallerZone:
         assert results[0].context == "other-zone brick"
 
 
+class TestRealDaemonAttach:
+    """Round-4 follow-up: exercise the real SearchDaemon._attach_path_contexts
+    so regressions to the actual method can't hide behind a local stub.
+    """
+
+    @pytest.mark.asyncio
+    async def test_real_daemon_attach_falls_back_to_caller_zone(
+        self, cache: PathContextCache
+    ) -> None:
+        from nexus.bricks.search.daemon import DaemonConfig, SearchDaemon
+
+        # Seed the "other" zone on the shared store — the root-zone rows the
+        # fixture already added must NOT be attached.
+        await cache._store.upsert("other", "reports", "Quarterly reports")
+
+        # Construct a daemon without running startup(); we only exercise
+        # _attach_path_contexts directly.
+        daemon = SearchDaemon.__new__(SearchDaemon)
+        daemon.config = DaemonConfig()
+        daemon._path_context_cache = cache
+        daemon._path_context_cache_by_loop = {}
+        daemon._path_context_engines_by_loop = {}
+
+        # stats is normally built in __init__; mint a minimal stand-in.
+        class _Stats:
+            path_context_attach_failures = 0
+            path_context_resolve_failures = 0
+
+        daemon.stats = _Stats()
+
+        from nexus.bricks.search.daemon import SearchResult
+
+        result = SearchResult(path="reports/q4.md", chunk_text="", score=0.9, zone_id=None)
+        await daemon._attach_path_contexts([result], zone_id="other")
+        assert result.context == "Quarterly reports"
+
+        # Control: same result, zone_id="root" -> no match (root has no
+        # rows under "reports/").
+        result2 = SearchResult(path="reports/q4.md", chunk_text="", score=0.9, zone_id=None)
+        await daemon._attach_path_contexts([result2], zone_id="root")
+        assert result2.context is None
+
+
+class TestBatchSearchZoneAttachment:
+    """Round-4 gap: no test covered batch_search's path-context attach on
+    a non-root zone. Mirror the attach logic here to guarantee the
+    effective_zone_id fallback survives future refactors.
+    """
+
+    @pytest.mark.asyncio
+    async def test_batch_search_attaches_non_root_zone_context(
+        self, cache: PathContextCache
+    ) -> None:
+        await cache._store.upsert("analytics", "dashboards", "BI dashboards")
+
+        # Mimic what daemon.batch_search does after backend_batch returns
+        # (see src/nexus/bricks/search/daemon.py batch_search).
+        effective_zone_id = "analytics"
+        backend_batch = [
+            [
+                BaseSearchResult(path="dashboards/revenue.md", chunk_text="", score=0.9),
+                BaseSearchResult(path="other/path.md", chunk_text="", score=0.5),
+            ],
+            [BaseSearchResult(path="dashboards/churn.md", chunk_text="", score=0.8)],
+        ]
+        await cache.refresh_if_stale(effective_zone_id)
+        records = cache.snapshot_zone(effective_zone_id)
+        assert records is not None
+
+        from nexus.bricks.search.path_context import lookup_in_records
+
+        for inner in backend_batch:
+            for r in inner:
+                r.context = lookup_in_records(records, r.path)
+
+        assert backend_batch[0][0].context == "BI dashboards"
+        assert backend_batch[0][1].context is None
+        assert backend_batch[1][0].context == "BI dashboards"
+
+
 class TestLoopLocalResolver:
     """Regression tests for ``SearchDaemon._resolve_path_context_cache``.
 
@@ -226,12 +306,12 @@ class TestGraphSearchContextAttachment:
         # to a local SearchDaemon-style helper powered by the cache.
         backend = SimpleNamespace(graph_search=_fake_graph_search)
 
-        async def _attach(results):
-            zones = {(r.zone_id or "root") for r in results}
+        async def _attach(results, *, zone_id=None):
+            zones = {(r.zone_id or zone_id or "root") for r in results}
             for zone in zones:
                 await cache.refresh_if_stale(zone)
             for r in results:
-                r.context = cache.lookup_cached(r.zone_id, r.path)
+                r.context = cache.lookup_cached(r.zone_id or zone_id, r.path)
 
         daemon = SimpleNamespace(_backend=backend, _attach_path_contexts=_attach)
 

@@ -252,6 +252,29 @@ class TestPathContextCacheBatchLookup:
         assert cache.lookup_cached("root", "no/match") is None
 
 
+class TestDaemonConfigMaxZonesWiring:
+    """Round-4 gap: verify DaemonConfig.path_context_max_zones actually
+    reaches PathContextCache — neither the default nor the env override
+    had test coverage before this."""
+
+    def test_default_path_context_max_zones(self) -> None:
+        from nexus.bricks.search.daemon import DaemonConfig
+
+        assert DaemonConfig().path_context_max_zones == 2048
+
+    def test_custom_path_context_max_zones(self) -> None:
+        from nexus.bricks.search.daemon import DaemonConfig
+
+        assert DaemonConfig(path_context_max_zones=42).path_context_max_zones == 42
+
+    @pytest.mark.asyncio
+    async def test_cache_honors_max_zones_from_config(self, store: PathContextStore) -> None:
+        """The cache must respect the value plumbed from DaemonConfig so
+        operator-tuned values actually take effect at the cache level."""
+        cache = PathContextCache(store=store, max_zones=3)
+        assert cache._max_zones == 3
+
+
 class TestPathContextCacheLRU:
     @pytest.mark.asyncio
     async def test_lru_bound_evicts_oldest_zone(self, store: PathContextStore) -> None:

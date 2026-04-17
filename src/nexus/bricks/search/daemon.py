@@ -1248,32 +1248,44 @@ class SearchDaemon:
             return r.zone_id or effective_zone
 
         zones = {_zone_for(r) for r in results}
-        try:
-            # Refresh + synchronously snapshot each zone's records list
-            # (between awaits a concurrent request could evict this zone
-            # from the LRU). snapshot_zone is sync so the grab happens
-            # before the next refresh's await point.
-            snapshots: dict[str, list[Any]] = {}
-            for zone in zones:
+        # Refresh + synchronously snapshot each zone's records list (between
+        # awaits a concurrent request could evict this zone from the LRU).
+        # snapshot_zone is sync so the grab happens before the next refresh's
+        # await point. Isolate per-zone failures: one zone raising shouldn't
+        # drop context for every other zone in the same batch (Round-4 review).
+        snapshots: dict[str, list[Any]] = {}
+        for zone in zones:
+            try:
                 await cache.refresh_if_stale(zone)
                 snap = cache.snapshot_zone(zone)
                 if snap is not None:
                     snapshots[zone] = snap
-            from nexus.bricks.search.path_context import lookup_in_records
+            except Exception as exc:
+                self.stats.path_context_attach_failures += 1
+                logger.warning(
+                    "path context refresh failed for zone=%r (total=%d): %s",
+                    zone,
+                    self.stats.path_context_attach_failures,
+                    exc,
+                )
 
-            for r in results:
-                zone = _zone_for(r)
-                records = snapshots.get(zone)
-                if records is None:
-                    continue
+        from nexus.bricks.search.path_context import lookup_in_records
+
+        for r in results:
+            zone = _zone_for(r)
+            records = snapshots.get(zone)
+            if records is None:
+                continue
+            try:
                 r.context = lookup_in_records(records, r.path)
-        except Exception as exc:
-            self.stats.path_context_attach_failures += 1
-            logger.warning(
-                "path context attach failed (total=%d): %s",
-                self.stats.path_context_attach_failures,
-                exc,
-            )
+            except Exception as exc:
+                self.stats.path_context_attach_failures += 1
+                logger.warning(
+                    "path context lookup failed for path=%r (total=%d): %s",
+                    r.path,
+                    self.stats.path_context_attach_failures,
+                    exc,
+                )
 
     async def search(
         self,

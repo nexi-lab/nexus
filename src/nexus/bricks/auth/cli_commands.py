@@ -397,7 +397,234 @@ def test_auth(
         raise SystemExit(1)
 
 
-# Subcommands wired in later Phase-4 tasks (connect, disconnect,
+# ---------------------------------------------------------------------------
+# Helpers for auth connect
+# (ported from nexus.fs._auth_cli — fs version is the superset)
+# ---------------------------------------------------------------------------
+
+_SERVICE_AUTH_TYPES: dict[str, tuple[str, ...]] = {
+    "s3": ("native", "secret"),
+    "gcs": ("native", "secret"),
+    "gws": ("oauth",),
+    "google-drive": ("oauth",),
+    "gmail": ("oauth",),
+    "google-calendar": ("oauth",),
+    "slack": ("oauth",),
+    "x": ("oauth",),
+}
+
+_SERVICE_HELP: dict[str, dict[str, tuple[str, ...] | str]] = {
+    "s3": {
+        "recommended": "native",
+        "native_steps": (
+            "Run `aws configure`, set `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`, or ensure your AWS profile works.",
+            "Use `nexus auth connect s3 native` to tell Nexus to prefer the AWS provider chain.",
+            "Run `nexus auth test s3` to verify the provider chain resolves.",
+        ),
+        "secret_steps": (
+            "Gather `access_key_id` and `secret_access_key`.",
+            "Run `nexus auth connect s3 secret` and enter the prompts, or pass `--set access_key_id=... --set secret_access_key=...`.",
+            "Run `nexus auth test s3` to verify the stored credential shape.",
+        ),
+    },
+    "gcs": {
+        "recommended": "native",
+        "native_steps": (
+            "Run `gcloud auth application-default login` or set `GOOGLE_APPLICATION_CREDENTIALS`.",
+            "Use `nexus auth connect gcs native` to tell Nexus to prefer ADC/native credentials.",
+            "Run `nexus auth test gcs` to verify the provider chain resolves.",
+        ),
+        "secret_steps": (
+            "Prepare a service-account JSON file or access token.",
+            "Run `nexus auth connect gcs secret` and provide `credentials_path` or `access_token`.",
+            "Run `nexus auth test gcs` to verify the stored credential shape.",
+        ),
+    },
+    "gws": {
+        "recommended": "oauth",
+        "oauth_steps": (
+            "Set `NEXUS_OAUTH_GOOGLE_CLIENT_ID` and `NEXUS_OAUTH_GOOGLE_CLIENT_SECRET`.",
+            "Run `nexus auth connect gws oauth --user-email you@example.com`.",
+            "Follow the browser/code flow, then run `nexus auth test gws --user-email you@example.com`.",
+        ),
+    },
+    "google-drive": {
+        "recommended": "oauth",
+        "oauth_steps": (
+            "Set `NEXUS_OAUTH_GOOGLE_CLIENT_ID` and `NEXUS_OAUTH_GOOGLE_CLIENT_SECRET`.",
+            "Run `nexus auth connect google-drive oauth --user-email you@example.com`.",
+            "Follow the browser/code flow, then run `nexus auth test google-drive --user-email you@example.com`.",
+        ),
+    },
+    "gmail": {
+        "recommended": "oauth",
+        "oauth_steps": (
+            "Set `NEXUS_OAUTH_GOOGLE_CLIENT_ID` and `NEXUS_OAUTH_GOOGLE_CLIENT_SECRET`.",
+            "Run `nexus auth connect gmail oauth --user-email you@example.com`.",
+            "Follow the browser/code flow, then run `nexus auth test gmail --user-email you@example.com`.",
+        ),
+    },
+    "google-calendar": {
+        "recommended": "oauth",
+        "oauth_steps": (
+            "Set `NEXUS_OAUTH_GOOGLE_CLIENT_ID` and `NEXUS_OAUTH_GOOGLE_CLIENT_SECRET`.",
+            "Run `nexus auth connect google-calendar oauth --user-email you@example.com`.",
+            "Follow the browser/code flow, then run `nexus auth test google-calendar --user-email you@example.com`.",
+        ),
+    },
+    "x": {
+        "recommended": "oauth",
+        "oauth_steps": (
+            "Set `NEXUS_OAUTH_X_CLIENT_ID` and optionally `NEXUS_OAUTH_X_CLIENT_SECRET`.",
+            "Run `nexus auth connect x oauth --user-email you@example.com`.",
+            "Follow the browser/code flow, then run `nexus auth test x --user-email you@example.com`.",
+        ),
+    },
+}
+
+
+def _parse_key_values(items: tuple[str, ...]) -> dict[str, str]:
+    parsed: dict[str, str] = {}
+    for item in items:
+        if "=" not in item:
+            raise click.ClickException(f"Expected KEY=VALUE, got: {item}")
+        key, value = item.split("=", 1)
+        parsed[key.strip()] = value
+    return parsed
+
+
+def _choose_auth_type(service_name: str) -> str:
+    supported = _SERVICE_AUTH_TYPES.get(service_name)
+    if not supported:
+        raise click.ClickException(f"Unknown auth service '{service_name}'.")
+    if len(supported) == 1:
+        return supported[0]
+    default = str(_SERVICE_HELP.get(service_name, {}).get("recommended", supported[0]))
+    console.print(f"[bold]Choose auth mode for {service_name}[/bold]")
+    for mode in supported:
+        suffix = " (recommended)" if mode == default else ""
+        console.print(f"  - {mode}{suffix}")
+    choice = click.prompt(
+        "Auth type",
+        type=click.Choice(list(supported), case_sensitive=False),
+        default=default,
+        show_choices=False,
+    )
+    return str(choice).lower()
+
+
+def _print_steps(service_name: str, auth_type: str) -> None:
+    guide = _SERVICE_HELP.get(service_name, {})
+    steps = guide.get(f"{auth_type}_steps")
+    if not steps:
+        return
+    console.print(f"[bold]Setup steps for {service_name} ({auth_type})[/bold]")
+    for idx, step in enumerate(steps, start=1):
+        console.print(f"{idx}. {step}")
+    console.print("")
+
+
+def _resolve_user_email(user_email: str | None) -> str:
+    return user_email or str(click.prompt("user_email"))
+
+
+def _prompt_for_secret_values(
+    service: Any,
+    service_name: str,
+    pairs: tuple[str, ...],
+) -> dict[str, str]:
+    values = _parse_key_values(pairs)
+    if values:
+        return values
+    spec = service.store_help_fields(service_name)
+    prompt_fields = list(spec["required_fields"])
+    if service_name == "gcs" and not prompt_fields:
+        prompt_fields = ["credentials_path"]
+    values = {}
+    for field in prompt_fields:
+        hide = "secret" in field or "token" in field or "key" in field
+        values[field] = click.prompt(field, hide_input=hide)
+    return values
+
+
+def _print_connect_success(
+    service_name: str,
+    kind: Any,
+    store_path: str,
+    fields: list[str] | None = None,
+    *,
+    source: str = "stored",
+) -> None:
+    console.print(f"[green]ok[/green] {service_name}: {source} {kind.value} auth is configured")
+    console.print(f"[dim]Secret store: {store_path}[/dim]")
+    if fields:
+        console.print(f"[dim]Fields: {', '.join(fields)}[/dim]")
+    console.print(f"[dim]Next: nexus auth test {service_name}[/dim]")
+
+
+# ---------------------------------------------------------------------------
+# auth connect
+# ---------------------------------------------------------------------------
+
+
+@auth.command("connect")
+@click.argument("service_name", type=str)
+@click.argument(
+    "auth_type",
+    required=False,
+    type=click.Choice(["oauth", "secret", "native"], case_sensitive=False),
+)
+@click.option("--set", "pairs", multiple=True, help="Secret field as KEY=VALUE. Repeat as needed.")
+@click.option("--user-email", type=str, default=None, help="OAuth account email.")
+def connect_auth(
+    service_name: str,
+    auth_type: str | None,
+    pairs: tuple[str, ...],
+    user_email: str | None,
+) -> None:
+    """Connect a service using OAuth, stored secrets, or native fallback."""
+    auth_type = auth_type.lower() if auth_type else _choose_auth_type(service_name)
+    service = _build_auth_service()
+    _print_steps(service_name, auth_type)
+
+    try:
+        if auth_type == "oauth":
+            user_email = _resolve_user_email(user_email)
+            if service_name in {"gws", "google-drive", "gmail", "google-calendar"}:
+                _oauth_support = importlib.import_module("nexus.fs._oauth_support")
+                _oauth_support.run_google_oauth_setup(
+                    user_email=user_email, service_name=service_name
+                )
+                return
+            if service_name == "x":
+                _oauth_support = importlib.import_module("nexus.fs._oauth_support")
+                _oauth_support.run_x_oauth_setup(user_email=user_email)
+                return
+            raise click.ClickException(f"OAuth connect is not implemented for '{service_name}'.")
+
+        if auth_type == "native":
+            record = service.connect_native(service_name)
+            _print_connect_success(
+                service_name,
+                record.kind,
+                str(service.secret_store_path),
+                source="native fallback",
+            )
+            return
+
+        values = _prompt_for_secret_values(service, service_name, pairs)
+        record = service.connect_secret(service_name, values)
+        _print_connect_success(
+            service_name,
+            record.kind,
+            str(service.secret_store_path),
+            sorted(record.data),
+        )
+    except AuthenticationError as exc:
+        _raise_authentication_error(exc)
+
+
+# Subcommands wired in later Phase-4 tasks (disconnect,
 # doctor, migrate). Order preserves registration for parity testing.
 
 

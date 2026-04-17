@@ -53,3 +53,12 @@ def test_test_command_accepts_target_option(monkeypatch, tmp_path: Path) -> None
     # gmail auth is configured — that's fine; we're only asserting --target
     # is a valid option).
     assert "No such option" not in result.output
+
+
+def test_connect_s3_guides_and_stores_native(monkeypatch, tmp_path: Path) -> None:
+    service = build_unified_service_for_tests(tmp_path)
+    monkeypatch.setattr("nexus.bricks.auth.cli_commands._build_auth_service", lambda: service)
+
+    result = CliRunner().invoke(auth, ["connect", "s3"], input="native\n")
+    assert result.exit_code == 0
+    assert "s3" in result.output.lower()

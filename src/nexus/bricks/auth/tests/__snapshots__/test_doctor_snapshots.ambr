@@ -1,0 +1,93 @@
+# serializer version: 1
+# name: test_doctor_output_snapshot[all_ok]
+  '''
+  exit_code=0
+  [nexus-oauth] openai/team: ok — access token valid 54m
+  [aws-cli] s3/default: ok — via AWS_PROFILE=default
+
+  '''
+# ---
+# name: test_doctor_output_snapshot[clock_skew]
+  '''
+  exit_code=1
+  [nexus-oauth] openai/team: error — token nbf in the future; clock skew ~180s —
+  System clock is skewed — token validation fails. Sync system time (NTP) and
+  retry: `sudo ntpdate -u time.apple.com` (macOS) or `sudo chronyc -a makestep`
+  (Linux).
+
+  '''
+# ---
+# name: test_doctor_output_snapshot[cooldown]
+  '''
+  exit_code=1
+  [aws-cli] s3/work-prod: error — rate_limit from 2026-04-10T10:14:22Z, expires in
+  43m — Rate-limited by upstream. Cooldown will expire automatically; if
+  persistent, check `nexus auth pool status` for multi-account failover options.
+
+  '''
+# ---
+# name: test_doctor_output_snapshot[mfa_required]
+  '''
+  exit_code=1
+  [nexus-oauth] github/you: error — MFA challenge unmet — MFA challenge required.
+  Run `nexus auth connect <service>` interactively to complete MFA.
+
+  '''
+# ---
+# name: test_doctor_output_snapshot[mixed]
+  '''
+  exit_code=1
+  [nexus-oauth] openai/team: ok — access token valid 54m
+  [aws-cli] s3/work-prod: error — rate_limit from 2026-04-10T10:14:22Z, expires in
+  43m — Rate-limited by upstream. Cooldown will expire automatically; if
+  persistent, check `nexus auth pool status` for multi-account failover options.
+  [nexus-oauth] gmail/other@example.com: error — session_expired — Gmail session
+  expired. Run `nexus-fs auth connect gmail oauth --user-email <email>` to refresh
+  the session.
+
+  '''
+# ---
+# name: test_doctor_output_snapshot[proxy_or_tls]
+  '''
+  exit_code=1
+  [nexus-oauth] openai/team: error — SSLError: certificate verify failed — Network
+  or TLS issue reaching upstream. Check HTTPS_PROXY / SSL_CERT_FILE env vars.
+
+  '''
+# ---
+# name: test_doctor_output_snapshot[scope_insufficient]
+  '''
+  exit_code=1
+  [nexus-oauth] gmail/you@example.com: error — scope_insufficient — Gmail scopes
+  insufficient. Run `nexus-fs auth connect gmail oauth --user-email <email>` and
+  approve all requested access.
+
+  '''
+# ---
+# name: test_doctor_output_snapshot[session_expired]
+  '''
+  exit_code=1
+  [nexus-oauth] gmail/other@example.com: error — session_expired — Gmail session
+  expired. Run `nexus-fs auth connect gmail oauth --user-email <email>` to refresh
+  the session.
+
+  '''
+# ---
+# name: test_doctor_output_snapshot[upstream_cli_missing_gcs]
+  '''
+  exit_code=1
+  [gcloud] gcs/my-project: error — gcloud CLI not installed — gcloud CLI not
+  found. Install from https://cloud.google.com/sdk/docs/install then run `gcloud
+  auth application-default login`.
+
+  '''
+# ---
+# name: test_doctor_output_snapshot[upstream_cli_missing_s3]
+  '''
+  exit_code=1
+  [aws-cli] s3/default: error — aws CLI not installed — aws CLI not found. Install
+  with `brew install awscli` or see
+  https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html.
+
+  '''
+# ---

@@ -82,10 +82,17 @@ def _grpc_call(
     from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc
     from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
 
+    # Raise client-side message caps to match the server's 64 MB limit so
+    # large-content writes (e.g. chunked-read tests) aren't rejected at the
+    # client boundary. Default gRPC limits are 4 MB.
+    channel_options = [
+        ("grpc.max_send_message_length", 64 * 1024 * 1024),
+        ("grpc.max_receive_message_length", 64 * 1024 * 1024),
+    ]
     current = target
     result: dict = {}
     for _ in range(3):
-        channel = grpc.insecure_channel(current)
+        channel = grpc.insecure_channel(current, options=channel_options)
         try:
             stub = vfs_pb2_grpc.NexusVFSServiceStub(channel)
             req = vfs_pb2.CallRequest(
@@ -1164,15 +1171,13 @@ class TestScatterGatherChunkedRead:
         grpc2 = cluster["grpc2"]
 
         # 17 MiB > CDC threshold (16 MiB) guarantees a chunked manifest.
+        # Use varied content (not constant bytes) so FastCDC produces
+        # multiple chunks rather than collapsing to one fingerprint.
         path = f"/corp/eng/sg-chunked-{uid}.bin"
-        size = 17 * 1024 * 1024
-        content = "x" * size
-        # Sprinkle boundary markers so FastCDC produces variable chunks.
-        chunks = [content[i : i + 4096] for i in range(0, size, 4096)]
-        for i in range(len(chunks)):
-            if i % 37 == 0:
-                chunks[i] = f"<boundary-{uid}-{i}>" + chunks[i][20:]
-        content = "".join(chunks)[:size]
+        target_size = 17 * 1024 * 1024
+        chunk_filler = f"nexus-sg-{uid}-chunk-content-block-varied-payload-marker-"
+        content = (chunk_filler * (target_size // len(chunk_filler) + 1))[:target_size]
+        size = len(content)
 
         w = _grpc_call(
             grpc1, "write", {"path": path, "content": content}, api_key=api_key, timeout=60
@@ -1789,11 +1794,12 @@ class TestCrossZoneDailyWorkflow:
         grpc1 = cluster["grpc1"]
         grpc2 = cluster["grpc2"]
 
-        # /corp/eng/ and /family/work/eng/ both resolve to the `corp`
-        # zone via the crosslink mount. The same file has two URLs.
+        # /corp/ and /family/work/ both resolve to the `corp` zone root
+        # (single-hop crosslink set up in TestMountTopology). A file
+        # written at one URL must be visible at the other.
         file_name = f"crosslink-{uid}.txt"
-        work_path = f"/corp/eng/{file_name}"
-        family_view = f"/family/work/eng/{file_name}"
+        work_path = f"/corp/{file_name}"
+        family_view = f"/family/work/{file_name}"
 
         # Step 1 — create at work path.
         initial = f"created-at-work-{uid}"

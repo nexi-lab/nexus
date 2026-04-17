@@ -946,9 +946,41 @@ class TestLeaderFailover:
                 new_files.append((path, content))
 
         finally:
-            # Restart node-1
+            # Restart node-1 — split Docker-level start from health-check
+            # wait so we can tell WHICH phase stalls if the test ever
+            # times out again (R11 hypothesis).
+            t_start = time.time()
             node1_container.start()
-            _wait_healthy([cluster["node1"]], timeout=30)
+            try:
+                node1_container.wait(condition="running", timeout=30)
+            except Exception as exc:  # diagnostic path
+                logs = b""
+                try:
+                    logs = node1_container.logs(tail=200, stderr=True)
+                except Exception:
+                    pass
+                pytest.fail(
+                    "node-1 container.wait(running) did not complete within 30s "
+                    f"(elapsed={time.time() - t_start:.1f}s): {exc}\n"
+                    f"--- docker logs (tail 200) ---\n{(logs or b'').decode(errors='replace')}"
+                )
+            t_running = time.time()
+            try:
+                _wait_healthy([cluster["node1"]], timeout=60)
+            except BaseException as exc:
+                # Capture docker logs on failure so next CI run has
+                # clear diagnosis — slow-start vs healthcheck-bug.
+                logs = b""
+                try:
+                    logs = node1_container.logs(since=int(t_running) - 1, tail=400, stderr=True)
+                except Exception:
+                    pass
+                pytest.fail(
+                    "node-1 _wait_healthy did not complete within 60s "
+                    f"(running->healthy elapsed={time.time() - t_running:.1f}s): {exc}\n"
+                    f"--- docker logs since restart (tail 400) ---\n"
+                    f"{(logs or b'').decode(errors='replace')}"
+                )
 
         # Node-1 catches up via Raft log replay from node-2 leader.
         # 20s is generous — Raft catch-up should complete in < 5s.
@@ -1942,8 +1974,39 @@ class TestFullFailoverRecovery:
                 api_key=api_key,
             )
         finally:
+            # Split start + wait(running) + _wait_healthy so timeouts
+            # surface actionable diagnostics (see TestLeaderFailover for
+            # the same pattern + R11 debug notes).
+            t_start = time.time()
             node1.start()
-            _wait_healthy([cluster["node1"]], timeout=30)
+            try:
+                node1.wait(condition="running", timeout=30)
+            except Exception as exc:
+                logs = b""
+                try:
+                    logs = node1.logs(tail=200, stderr=True)
+                except Exception:
+                    pass
+                pytest.fail(
+                    "node-1 wait(running) timed out "
+                    f"(elapsed={time.time() - t_start:.1f}s): {exc}\n"
+                    f"--- docker logs (tail 200) ---\n{(logs or b'').decode(errors='replace')}"
+                )
+            t_running = time.time()
+            try:
+                _wait_healthy([cluster["node1"]], timeout=60)
+            except BaseException as exc:
+                logs = b""
+                try:
+                    logs = node1.logs(since=int(t_running) - 1, tail=400, stderr=True)
+                except Exception:
+                    pass
+                pytest.fail(
+                    "node-1 _wait_healthy timed out "
+                    f"(running->healthy elapsed={time.time() - t_running:.1f}s): {exc}\n"
+                    f"--- docker logs since restart (tail 400) ---\n"
+                    f"{(logs or b'').decode(errors='replace')}"
+                )
 
         deadline = time.time() + 30
         s = r2 = r3 = {}

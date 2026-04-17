@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from nexus.bricks.auth.migrate import FinalizeResult, finalize_migration
+from nexus.bricks.auth.migrate import FinalizeResult, OldStoreAdapter, finalize_migration
 
 
 class _FakeLegacyStore:
@@ -98,3 +98,57 @@ def test_finalize_unhappy_health_check_failure_aborts_without_delete():
     assert not result.ok
     assert result.failures
     assert legacy.deleted == []
+
+
+# ---------------------------------------------------------------------------
+# OldStoreAdapter.delete() persists to the real credential store (#3741)
+# ---------------------------------------------------------------------------
+
+
+class _FakeOAuthService:
+    """Minimal stub for OAuthCredentialService used in finalize tests."""
+
+    def __init__(self):
+        self.deleted_calls: list[dict] = []
+
+    async def delete_credentials(
+        self,
+        provider: str,
+        user_email: str,
+        zone_id: str | None = None,
+    ) -> bool:
+        self.deleted_calls.append(
+            {"provider": provider, "user_email": user_email, "zone_id": zone_id}
+        )
+        return True
+
+
+def test_old_store_adapter_delete_calls_oauth_service():
+    """OldStoreAdapter.delete() with an oauth_service calls delete_credentials (#3741)."""
+    fake_service = _FakeOAuthService()
+    creds = [{"provider": "openai", "user_email": "alice@example.com", "zone_id": "root"}]
+    adapter = OldStoreAdapter(creds, oauth_service=fake_service)
+
+    assert "openai/alice@example.com" in {pid for pid, _ in adapter.list_rows()}
+
+    adapter.delete("openai/alice@example.com")
+
+    # In-memory snapshot was cleared.
+    assert adapter.list_rows() == []
+
+    # Real credential service was invoked.
+    assert len(fake_service.deleted_calls) == 1
+    call = fake_service.deleted_calls[0]
+    assert call["provider"] == "openai"
+    assert call["user_email"] == "alice@example.com"
+
+
+def test_old_store_adapter_delete_without_oauth_service_only_clears_snapshot():
+    """OldStoreAdapter.delete() without oauth_service only removes the in-memory row."""
+    creds = [{"provider": "openai", "user_email": "bob@example.com"}]
+    adapter = OldStoreAdapter(creds)  # no oauth_service
+
+    adapter.delete("openai/bob@example.com")
+
+    # In-memory snapshot was cleared — no error raised.
+    assert adapter.list_rows() == []

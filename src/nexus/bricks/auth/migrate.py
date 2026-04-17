@@ -233,12 +233,22 @@ class OldStoreAdapter:
     IMPORTANT: This is a point-in-time snapshot, not a live read-through.
     Credentials added/revoked in the old store after construction are not
     visible until the adapter is reconstructed. This is acceptable for the
-    migration CLI (runs once) and short-lived dual-read windows. Phase 2
-    (#3739) should replace this with a live adapter backed by the actual
-    OAuthCredentialService if dual-read is used in long-running processes.
+    migration CLI (runs once).
+
+    Pass ``oauth_service`` to make delete() persist to the real credential
+    store (marking rows as revoked) rather than only removing the in-memory
+    snapshot — required for Phase 4 finalization (#3741).
     """
 
-    def __init__(self, old_credentials: list[dict[str, Any]]) -> None:
+    def __init__(
+        self,
+        old_credentials: list[dict[str, Any]],
+        *,
+        oauth_service: Any | None = None,
+    ) -> None:
+        self._oauth_service = oauth_service
+        # Keep raw credential metadata for zone-aware delete.
+        self._raw: dict[str, dict[str, Any]] = {}
         self._profiles: dict[str, AuthProfile] = {}
         for cred in old_credentials:
             provider = cred.get("provider", "")
@@ -255,6 +265,7 @@ class OldStoreAdapter:
                 user_email,
                 zone_id if zone_id and zone_id != "root" else None,
             )
+            self._raw[profile_id] = cred
             self._profiles[profile_id] = AuthProfile(
                 id=profile_id,
                 provider=provider,
@@ -283,11 +294,43 @@ class OldStoreAdapter:
         """Remove the legacy row keyed by profile_id.
 
         Used by finalize_migration() after parity verification passes.
-        This only removes the in-memory snapshot — the underlying
-        OAuthCredentialService entry is not touched here. The CLI migrate
-        --finalize flow is responsible for any further cleanup of the live store.
+        When an oauth_service was supplied at construction, this also calls
+        OAuthCredentialService.delete_credentials() to mark the row as revoked
+        in the underlying token store, ensuring the legacy DB row is not just
+        removed from the in-memory snapshot (#3741).
         """
+        cred = self._raw.pop(profile_id, None)
         self._profiles.pop(profile_id, None)
+
+        if self._oauth_service is not None and cred is not None:
+            import asyncio
+
+            provider = cred.get("provider", "")
+            user_email = cred.get("user_email", "")
+            zone_id = cred.get("zone_id") or None
+            if provider and user_email:
+                try:
+                    asyncio.run(
+                        self._oauth_service.delete_credentials(
+                            provider=provider,
+                            user_email=user_email,
+                            zone_id=zone_id,
+                        )
+                    )
+                except RuntimeError:
+                    # Already inside a running event loop (e.g. pytest-asyncio).
+                    # Fall back to a thread to avoid "cannot run nested" error.
+                    import concurrent.futures
+
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                        pool.submit(
+                            asyncio.run,
+                            self._oauth_service.delete_credentials(
+                                provider=provider,
+                                user_email=user_email,
+                                zone_id=zone_id,
+                            ),
+                        ).result()
 
 
 class DualReadAuthProfileStore:

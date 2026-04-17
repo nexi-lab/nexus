@@ -316,6 +316,53 @@ class OAuthCredentialService:
             logger.error(f"Failed to revoke credential: {e}")
             raise ValueError(f"Failed to revoke credential: {e}") from e
 
+    async def delete_credentials(
+        self,
+        provider: str,
+        user_email: str,
+        zone_id: str | None = None,
+    ) -> bool:
+        """Mark the legacy credential as revoked in the token store.
+
+        Called by OldStoreAdapter.delete() during `auth migrate --finalize`
+        (#3741) to persist deletion to the underlying database rather than
+        only removing the in-memory snapshot.
+
+        Uses revoke (soft-delete) because the token manager has no hard-delete
+        path; revoked rows are filtered from all live reads automatically.
+
+        Returns True if the credential was found and revoked, False if absent.
+        """
+        from nexus.contracts.constants import ROOT_ZONE_ID
+
+        token_manager = self._get_token_manager()
+        if token_manager is None:
+            return False
+
+        effective_zone = zone_id if zone_id and zone_id != "root" else ROOT_ZONE_ID
+        try:
+            success = await token_manager.revoke_credential(
+                provider=provider,
+                user_email=user_email,
+                zone_id=effective_zone,
+            )
+            if success:
+                logger.info(
+                    "delete_credentials: revoked legacy credential %s/%s (zone=%s) (#3741)",
+                    provider,
+                    user_email,
+                    effective_zone,
+                )
+            return bool(success)
+        except Exception as exc:
+            logger.warning(
+                "delete_credentials: failed to revoke %s/%s: %s (#3741)",
+                provider,
+                user_email,
+                exc,
+            )
+            return False
+
     @rpc_expose(name="oauth_test_credential", description="Test OAuth credential validity")
     async def test_credential(
         self,

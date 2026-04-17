@@ -260,10 +260,8 @@ class UnifiedAuthService:
     ) -> None:
         self._oauth_service = oauth_service
         self._secret_store = secret_store or FileSecretCredentialStore()
-        # Unified auth-profile store (Phase 1, #3738). When provided, reads
-        # go through this store first (typically a DualReadAuthProfileStore
-        # that wraps the new SqliteAuthProfileStore + old store adapter).
-        # Writes and CLI commands still use the old stores until Phase 4.
+        # Unified auth-profile store (Phase 4, #3741). Profile store is now
+        # the sole read path — the dual-read fallback (Phase 1) has been removed.
         self._profile_store = profile_store
 
     @property
@@ -1225,8 +1223,8 @@ class UnifiedAuthService:
         """Expose (legacy_store, profile_store, credential_backend) for migrate --finalize.
 
         The legacy_store is an OldStoreAdapter built from the oauth_service's
-        current credential snapshot. The profile_store is whatever was injected
-        (typically a SqliteAuthProfileStore or DualReadAuthProfileStore).
+        current credential snapshot. The profile_store is the injected
+        SqliteAuthProfileStore (sole read path since Phase 4, #3741).
         The credential_backend is a NexusTokenManagerBackend wrapping the
         oauth_service's token manager.
 
@@ -1238,6 +1236,7 @@ class UnifiedAuthService:
         from nexus.bricks.auth.migrate import OldStoreAdapter
 
         # Build legacy adapter from a snapshot of the oauth service credentials.
+        # Pass oauth_service so delete() can persist revocation to the real store (#3741).
         if self._oauth_service is not None:
             try:
                 old_creds = asyncio.run(self._oauth_service.list_credentials())
@@ -1245,7 +1244,7 @@ class UnifiedAuthService:
                 old_creds = []
         else:
             old_creds = []
-        legacy_adapter = OldStoreAdapter(old_creds)
+        legacy_adapter = OldStoreAdapter(old_creds, oauth_service=self._oauth_service)
 
         # Build a NexusTokenManagerBackend if the oauth_service exposes a token manager.
         backend: Any = None

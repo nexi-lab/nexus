@@ -1,159 +1,116 @@
-"""Tests for nexus-fs auth list dual-read cutover."""
+"""Tests for auth list command — Phase 4 profile store is authoritative (#3741).
+
+The dual-read path (_try_profile_store_list fallback) was removed in Phase 4.
+These tests verify that `nexus auth list` reads exclusively from
+UnifiedAuthService.list_summaries(), with no profile-store overlay.
+"""
 
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from click.testing import CliRunner
 
-from nexus.bricks.auth.profile import (
-    AuthProfile,
-    AuthProfileFailureReason,
-    ProfileUsageStats,
-)
+from nexus.contracts.unified_auth import AuthStatus, AuthSummary, CredentialKind
 
 
-def _make_store_profiles() -> list[AuthProfile]:
-    """Return 3 test profiles for the new profile-store path."""
-    now = datetime.now(UTC)
+def _make_summaries() -> list[AuthSummary]:
+    """Return test AuthSummary objects covering common provider types."""
     return [
-        AuthProfile(
-            id="s3/default",
-            provider="s3",
-            account_identifier="default",
-            backend="external-cli",
-            backend_key="aws/default",
-            last_synced_at=now - timedelta(seconds=30),
-            usage_stats=ProfileUsageStats(
-                last_used_at=now - timedelta(minutes=14),
-                success_count=42,
-                failure_count=0,
-            ),
+        AuthSummary(
+            service="s3",
+            status=AuthStatus.AUTHED,
+            source="native",
+            kind=CredentialKind.NATIVE,
+            message="ok",
+            details={},
         ),
-        AuthProfile(
-            id="s3/work-prod",
-            provider="s3",
-            account_identifier="work-prod",
-            backend="external-cli",
-            backend_key="aws/work-prod",
-            last_synced_at=now - timedelta(seconds=30),
-            usage_stats=ProfileUsageStats(
-                last_used_at=now - timedelta(minutes=60),
-                success_count=10,
-                failure_count=3,
-                cooldown_until=now + timedelta(minutes=43),
-                cooldown_reason=AuthProfileFailureReason.RATE_LIMIT,
-            ),
-        ),
-        AuthProfile(
-            id="openai/team",
-            provider="openai",
-            account_identifier="team",
-            backend="nexus-token-manager",
-            backend_key="openai/team",
-            last_synced_at=now - timedelta(seconds=30),
-            usage_stats=ProfileUsageStats(
-                last_used_at=now - timedelta(minutes=2),
-                success_count=100,
-                failure_count=1,
-            ),
+        AuthSummary(
+            service="openai",
+            status=AuthStatus.AUTHED,
+            source="env",
+            kind=CredentialKind.SECRET,
+            message="OPENAI_API_KEY set",
+            details={},
         ),
     ]
 
 
 class TestAuthListNewTable:
-    """Tests for the new profile-store table display."""
+    """Tests for the auth list table display (Phase 4 — no profile-store overlay)."""
 
-    def test_new_table_shows_source_column(self) -> None:
+    def test_list_shows_provider_column(self) -> None:
         from nexus.fs._auth_cli import auth
 
         mock_svc = MagicMock()
-        mock_svc.list_summaries = AsyncMock(return_value=[])
+        mock_svc.list_summaries = AsyncMock(return_value=_make_summaries())
         runner = CliRunner(env={"NEXUS_NO_AUTO_JSON": "1"})
-        with (
-            patch(
-                "nexus.bricks.auth.cli_commands._try_profile_store_list",
-                return_value=_make_store_profiles(),
-            ),
-            patch("nexus.bricks.auth.cli_commands._build_auth_service", return_value=mock_svc),
-        ):
+        with patch("nexus.bricks.auth.cli_commands._build_auth_service", return_value=mock_svc):
+            result = runner.invoke(auth, ["list"])
+
+        assert result.exit_code == 0, result.output
+        assert "s3" in result.output
+        assert "openai" in result.output
+
+    def test_list_shows_source_column(self) -> None:
+        from nexus.fs._auth_cli import auth
+
+        mock_svc = MagicMock()
+        mock_svc.list_summaries = AsyncMock(return_value=_make_summaries())
+        runner = CliRunner(env={"NEXUS_NO_AUTO_JSON": "1"})
+        with patch("nexus.bricks.auth.cli_commands._build_auth_service", return_value=mock_svc):
             result = runner.invoke(auth, ["list"])
 
         assert result.exit_code == 0, result.output
         assert "Source" in result.output
-        assert "external" in result.output
-
-    def test_new_table_shows_cooldown_status(self) -> None:
-        from nexus.fs._auth_cli import auth
-
-        mock_svc = MagicMock()
-        mock_svc.list_summaries = AsyncMock(return_value=[])
-        runner = CliRunner(env={"NEXUS_NO_AUTO_JSON": "1"})
-        with (
-            patch(
-                "nexus.bricks.auth.cli_commands._try_profile_store_list",
-                return_value=_make_store_profiles(),
-            ),
-            patch("nexus.bricks.auth.cli_commands._build_auth_service", return_value=mock_svc),
-        ):
-            result = runner.invoke(auth, ["list"])
-
-        assert result.exit_code == 0, result.output
-        assert "cooldown" in result.output
-        assert "rate_limit" in result.output
+        assert "native" in result.output
 
 
 class TestAuthListFallback:
-    """Tests for fallback to the old UnifiedAuthService path."""
+    """Tests for graceful degradation when list_summaries() raises."""
 
-    def test_falls_back_when_store_returns_none(self) -> None:
+    def test_degraded_output_on_auth_service_error(self) -> None:
         from nexus.fs._auth_cli import auth
 
         mock_service = MagicMock()
-        mock_service.list_summaries = AsyncMock(return_value=[])
-        mock_service.secret_store_path = "/tmp/fake"
+        mock_service.list_summaries = AsyncMock(side_effect=RuntimeError("db unavailable"))
 
         runner = CliRunner(env={"NEXUS_NO_AUTO_JSON": "1"})
-        with (
-            patch("nexus.bricks.auth.cli_commands._try_profile_store_list", return_value=None),
-            patch("nexus.bricks.auth.cli_commands._build_auth_service", return_value=mock_service),
-        ):
+        with patch("nexus.bricks.auth.cli_commands._build_auth_service", return_value=mock_service):
             result = runner.invoke(auth, ["list"])
 
+        # Should not crash — degraded row is shown instead.
         assert result.exit_code == 0, result.output
-        mock_service.list_summaries.assert_called_once()
+        assert "degraded" in result.output or "error" in result.output
+
+    def test_no_profile_store_function_in_module(self) -> None:
+        """_try_profile_store_list must not exist after Phase 4 removal (#3741)."""
+        from nexus.bricks.auth import cli_commands
+
+        assert not hasattr(cli_commands, "_try_profile_store_list"), (
+            "_try_profile_store_list was Phase 1 dual-read helper — must be deleted in Phase 4 (#3741)"
+        )
 
 
 class TestAuthListJsonOutput:
-    """Tests for JSON output from the new profile-store path."""
+    """Tests for JSON output from the auth list command."""
 
-    def test_json_output_new_format(self) -> None:
+    def test_json_output_format(self) -> None:
         from nexus.fs._auth_cli import auth
 
         runner = CliRunner()
         mock_svc = MagicMock()
-        mock_svc.list_summaries = AsyncMock(return_value=[])
-        with (
-            patch(
-                "nexus.bricks.auth.cli_commands._try_profile_store_list",
-                return_value=_make_store_profiles(),
-            ),
-            patch("nexus.bricks.auth.cli_commands._build_auth_service", return_value=mock_svc),
-        ):
+        mock_svc.list_summaries = AsyncMock(return_value=_make_summaries())
+        with patch("nexus.bricks.auth.cli_commands._build_auth_service", return_value=mock_svc):
             result = runner.invoke(auth, ["list", "--json"])
 
         assert result.exit_code == 0, result.output
         parsed = json.loads(result.output)
         items = parsed["data"]
-        assert len(items) == 3
-        # Check first item fields
+        assert len(items) == 2
+        # Verify expected fields are present
         assert items[0]["provider"] == "s3"
-        assert items[0]["account"] == "default"
-        assert items[0]["source"] == "external"
-        assert items[0]["status"] == "ok"
-        # Check cooldown item
-        assert "cooldown" in items[1]["status"]
-        # Check nexus-token-manager item
-        assert items[2]["source"] == "nexus"
+        assert items[0]["source"] == "native"
+        assert items[1]["provider"] == "openai"
+        assert items[1]["source"] == "env"

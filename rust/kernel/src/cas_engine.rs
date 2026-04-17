@@ -144,20 +144,21 @@ impl CASEngine {
     }
 
     /// Write content and return its BLAKE3 hash (single blob) or the manifest
-    /// hash (chunked). CDC composition: if a `ChunkWriter` is injected and it
-    /// says the content should be chunked, we split into CDC chunks, write
-    /// the manifest + `.meta` sidecar, and return the manifest hash. Single
-    /// blobs pass through `transport.write_blob` unchanged.
-    ///
-    /// CAS dedup: if the resulting blob already exists, the write is skipped
-    /// (implemented inside the transport).
+    /// hash (chunked). Legacy convenience — drops the `is_new` bit.
     pub fn write_content(&self, content: &[u8]) -> Result<String, CASError> {
+        self.write_content_tracked(content).map(|(h, _)| h)
+    }
+
+    /// Like `write_content` but also reports whether the top-level blob/
+    /// manifest hash was actually written (`true`) or hit CAS dedup (`false`).
+    /// Surfaces the bit Python's on_write_callback (Zoekt reindex) relies on.
+    pub fn write_content_tracked(&self, content: &[u8]) -> Result<(String, bool), CASError> {
         if let Some(strategy) = &self.chunking_strategy {
             if strategy.should_chunk(content) {
                 return strategy.write_chunked(content, &self.transport);
             }
         }
-        Ok(self.transport.write_blob(content)?)
+        Ok(self.transport.write_blob_tracked(content)?)
     }
 
     /// Check if content exists by hash.
@@ -517,6 +518,7 @@ impl CASEngine {
             String::new(),
             &self.transport,
         )
+        .map(|(hash, _is_new)| hash)
     }
 }
 

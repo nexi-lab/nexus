@@ -247,11 +247,16 @@ pub(crate) fn default_chunk_assembler() -> Arc<dyn ChunkAssembler> {
 pub(crate) trait ChunkingStrategy: Send + Sync {
     fn should_chunk(&self, content: &[u8]) -> bool;
 
+    /// Chunked write. Returns `(manifest_hash, is_new)` where `is_new`
+    /// tracks whether the **top-level manifest hash** was freshly written
+    /// (`true`) or already existed (`false`). Individual chunk dedup hits
+    /// inside the manifest do not affect this bit — they are normal CAS
+    /// deduplication, invisible to the caller.
     fn write_chunked(
         &self,
         content: &[u8],
         transport: &LocalCASTransport,
-    ) -> Result<String, CASError>;
+    ) -> Result<(String, bool), CASError>;
 
     /// Split `content` into chunks without touching storage.
     /// Returned tuples are `(offset, bytes)`; "offset" means "input byte
@@ -285,7 +290,7 @@ pub(crate) fn finalize_manifest(
     total_size: usize,
     full_content_hash: String,
     transport: &LocalCASTransport,
-) -> Result<String, CASError> {
+) -> Result<(String, bool), CASError> {
     let avg_chunk_size = if chunk_count > 0 {
         total_size / chunk_count
     } else {
@@ -303,8 +308,8 @@ pub(crate) fn finalize_manifest(
     let manifest_bytes =
         serde_json::to_vec(&manifest).map_err(|e| CASError::IOError(std::io::Error::other(e)))?;
 
-    let manifest_hash = transport
-        .write_blob(&manifest_bytes)
+    let (manifest_hash, is_new) = transport
+        .write_blob_tracked(&manifest_bytes)
         .map_err(CASError::IOError)?;
 
     // `.meta` sidecar — lets Python `CDCEngine.is_chunked(hash)` recognise
@@ -321,7 +326,7 @@ pub(crate) fn finalize_manifest(
         .write_meta(&manifest_hash, &sidecar_bytes)
         .map_err(CASError::IOError)?;
 
-    Ok(manifest_hash)
+    Ok((manifest_hash, is_new))
 }
 
 // ---------------------------------------------------------------------------
@@ -348,7 +353,7 @@ impl ChunkingStrategy for FastCDCStrategy {
         &self,
         content: &[u8],
         transport: &LocalCASTransport,
-    ) -> Result<String, CASError> {
+    ) -> Result<(String, bool), CASError> {
         let total_size = content.len();
 
         // FastCDC content-defined chunking. Walks `content`, emitting
@@ -441,7 +446,7 @@ impl ChunkingStrategy for MessageBoundaryStrategy {
         &self,
         content: &[u8],
         transport: &LocalCASTransport,
-    ) -> Result<String, CASError> {
+    ) -> Result<(String, bool), CASError> {
         let total_size = content.len();
         let full_content_hash = library::hash::hash_content(content);
 

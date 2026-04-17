@@ -187,13 +187,21 @@ impl LocalCASTransport {
     /// Corresponds to Python `CASAddressingEngine.write_content()` (hash) +
     /// `LocalTransport.store()` (I/O).
     pub fn write_blob(&self, content: &[u8]) -> io::Result<String> {
+        self.write_blob_tracked(content).map(|(h, _)| h)
+    }
+
+    /// Same as `write_blob` but also reports whether the write actually
+    /// touched disk (`true`) or hit CAS dedup (`false`). Used by
+    /// `CASEngine::write_content_tracked` to drive the `is_new` bit that
+    /// Python's on_write_callback (e.g. Zoekt reindex) keys off.
+    pub fn write_blob_tracked(&self, content: &[u8]) -> io::Result<(String, bool)> {
         let hash = library::hash::hash_content(content);
         let key = blob_key(&hash);
         let path = self.resolve(&key);
 
         // CAS dedup: if blob already exists, skip write
         if path.exists() {
-            return Ok(hash);
+            return Ok((hash, false));
         }
 
         self.ensure_parent(&path)?;
@@ -215,6 +223,8 @@ impl LocalCASTransport {
                 }
             }
         }
+
+        Ok((hash, true))
     }
 
     /// Write a pre-hashed blob (caller already knows the content hash).

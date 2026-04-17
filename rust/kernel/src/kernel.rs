@@ -1701,16 +1701,19 @@ impl Kernel {
         // Route first to get zone-relative key
         let (mount_point, zone_path) = self.resolve_metastore_key(path, zone_id);
 
-        // Idempotent: if DT_DIR already exists, no-op
+        // Idempotent: if DT_DIR (or DT_MOUNT, which is directory-like since
+        // a mount point IS a directory) already exists, no-op. This matches
+        // ``mkdir(exist_ok=True)`` semantics — a mount creates the directory
+        // slot, so a follow-up mkdir on the same path shouldn't fail.
         let existing = self
             .with_metastore(&mount_point, |ms| ms.get(&zone_path).ok().flatten())
             .flatten();
         if let Some(meta) = existing {
-            if meta.entry_type == DT_DIR {
+            if meta.entry_type == DT_DIR || meta.entry_type == DT_MOUNT {
                 return Ok(SysSetAttrResult {
                     path: path.to_string(),
                     created: false,
-                    entry_type: DT_DIR as i32,
+                    entry_type: meta.entry_type as i32,
                     backend_name: None,
                     capacity: None,
                     updated: Vec::new(),

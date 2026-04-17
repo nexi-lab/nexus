@@ -21,6 +21,7 @@ from pathlib import Path
 import pytest
 
 from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.contracts.metadata import DT_MOUNT  # noqa: E402
 from nexus.contracts.types import OperationContext
 from nexus.core.config import PermissionConfig
 from nexus.core.nexus_fs import NexusFS
@@ -56,7 +57,7 @@ def slim_fs(tmp_path: Path):
     )
 
     # Mount via coordinator (registers in backend pool + routing table + hooks)
-    kernel._driver_coordinator.mount("/local", backend)
+    kernel.sys_setattr("/local", entry_type=DT_MOUNT, backend=backend)
 
     # Create DT_MOUNT entry so stat("/local") works
     metastore.put(_make_mount_entry("/local", backend.name))
@@ -109,8 +110,8 @@ def dual_fs(tmp_path: Path):
     )
 
     # Mount via coordinator (registers in backend pool + routing table + hooks)
-    kernel._driver_coordinator.mount("/a", backend_a)
-    kernel._driver_coordinator.mount("/b", backend_b)
+    kernel.sys_setattr("/a", entry_type=DT_MOUNT, backend=backend_a)
+    kernel.sys_setattr("/b", entry_type=DT_MOUNT, backend=backend_b)
 
     # Create DT_MOUNT entries
     for mp, be in [("/a", backend_a), ("/b", backend_b)]:

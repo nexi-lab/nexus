@@ -26,6 +26,7 @@ gcs_storage = pytest.importorskip(
 )
 
 from nexus.contracts.constants import ROOT_ZONE_ID  # noqa: E402
+from nexus.contracts.metadata import DT_MOUNT  # noqa: E402
 from nexus.contracts.types import OperationContext  # noqa: E402
 from nexus.core.config import PermissionConfig  # noqa: E402
 from nexus.core.nexus_fs import NexusFS  # noqa: E402
@@ -141,7 +142,7 @@ def _build_gcs_fs(tmp_path: Path) -> tuple[SlimNexusFS, str]:
     )
 
     # Mount via coordinator (registers in backend pool + routing table + hooks)
-    kernel._driver_coordinator.mount(mount_point, backend)
+    kernel.sys_setattr(mount_point, entry_type=DT_MOUNT, backend=backend)
 
     # Create DT_MOUNT entry
     metastore.put(_make_mount_entry(mount_point, backend.name))

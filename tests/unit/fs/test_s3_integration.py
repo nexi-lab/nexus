@@ -17,6 +17,7 @@ import boto3
 from moto import mock_aws
 
 from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.contracts.metadata import DT_MOUNT  # noqa: E402
 from nexus.contracts.types import OperationContext
 from nexus.core.config import PermissionConfig
 from nexus.core.nexus_fs import NexusFS
@@ -57,7 +58,7 @@ def s3_fs(tmp_path: Path):
             zone_id=ROOT_ZONE_ID,
             is_admin=True,
         )
-        kernel._driver_coordinator.mount(mount_point, backend)
+        kernel.sys_setattr(mount_point, entry_type=DT_MOUNT, backend=backend)
         metastore.put(_make_mount_entry(mount_point, backend.name))
 
         yield SlimNexusFS(kernel), mount_point

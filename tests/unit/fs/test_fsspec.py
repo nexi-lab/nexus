@@ -17,6 +17,7 @@ import pytest
 # Skip entire module if fsspec is not installed (optional dependency).
 pytest.importorskip("fsspec")
 
+from nexus.contracts.metadata import DT_MOUNT  # noqa: E402
 from nexus.fs._fsspec import (  # noqa: E402
     _SUPPORTED_MODES,
     MAX_CAT_FILE_SIZE,
@@ -755,7 +756,7 @@ class TestFsspecIntegration:
             zone_id=ROOT_ZONE_ID,
             is_admin=True,
         )
-        kernel._driver_coordinator.mount("/local", backend)
+        kernel.sys_setattr("/local", entry_type=DT_MOUNT, backend=backend)
         metastore.put(_make_mount_entry("/local", backend.name))
 
         facade = SlimNexusFS(kernel)

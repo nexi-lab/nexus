@@ -54,6 +54,7 @@ class _PyMountInfo:
     admin_only: bool
     io_profile: str
     zone_id: str
+    is_external: bool = False
 
 
 class DriverLifecycleCoordinator:
@@ -142,6 +143,7 @@ class DriverLifecycleCoordinator:
         admin_only: bool = False,
         io_profile: str = "balanced",
         zone_id: str = ROOT_ZONE_ID,
+        is_external: bool = False,
     ) -> None:
         """Store Python-side mount info + dispatch mount event.
 
@@ -158,6 +160,7 @@ class DriverLifecycleCoordinator:
             admin_only=admin_only,
             io_profile=io_profile,
             zone_id=zone_id,
+            is_external=is_external,
         )
         self._mounts[canonical] = info
         self._dispatch.dispatch_event("mount", normalized)

@@ -385,6 +385,7 @@ class Kernel:
         admin_only: bool,
         io_profile: str,
         zone_id: str,
+        is_external: bool,
         capacity: int,
         mime_type: str | None,
         modified_at_ms: int | None,

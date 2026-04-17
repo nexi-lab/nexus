@@ -197,15 +197,18 @@ class TestSyscallOverhead:
     def mounted_dispatch(self, tmp_path):
         """Dispatch with CAS backend mounted at /bench."""
         d = _BenchDispatch()
-        d._kernel.add_mount(
-            mount_point="/bench",
-            zone_id="root",
-            readonly=False,
-            admin_only=False,
-            io_profile="local",
+        # F4 Rust-ification: mount via sys_setattr(DT_MOUNT) instead of legacy add_mount.
+        d._kernel.sys_setattr(
+            path="/bench",
+            entry_type=2,  # DT_MOUNT
             backend_name="local",
             local_root=str(tmp_path / "cas"),
             fsync=False,
+            backend_type="cas",
+            readonly=False,
+            admin_only=False,
+            io_profile="local",
+            zone_id="root",
         )
         return d
 

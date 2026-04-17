@@ -1451,7 +1451,7 @@ impl PyKernel {
 
     // ── sys_setattr — unified mount/attr syscall ─────────────────────
 
-    #[pyo3(signature = (path, entry_type, backend_name="", local_root=None, fsync=false, py_backend=None, backend_type="cas", follow_symlinks=true, openai_base_url=None, openai_api_key=None, openai_model=None, s3_bucket=None, s3_prefix=None, aws_region=None, aws_access_key=None, aws_secret_key=None, s3_endpoint=None, gcs_bucket=None, gcs_prefix=None, access_token=None, root_folder_id=None, bot_token=None, default_channel=None, metastore_path=None, py_zone_handle=None, readonly=false, admin_only=false, io_profile="balanced", zone_id="root", capacity=65536, mime_type=None, modified_at_ms=None, read_fd=None, write_fd=None))]
+    #[pyo3(signature = (path, entry_type, backend_name="", local_root=None, fsync=false, py_backend=None, backend_type="cas", follow_symlinks=true, openai_base_url=None, openai_api_key=None, openai_model=None, s3_bucket=None, s3_prefix=None, aws_region=None, aws_access_key=None, aws_secret_key=None, s3_endpoint=None, gcs_bucket=None, gcs_prefix=None, access_token=None, root_folder_id=None, bot_token=None, default_channel=None, metastore_path=None, py_zone_handle=None, readonly=false, admin_only=false, io_profile="balanced", zone_id="root", is_external=false, capacity=65536, mime_type=None, modified_at_ms=None, read_fd=None, write_fd=None))]
     #[allow(clippy::too_many_arguments)]
     fn sys_setattr<'py>(
         &self,
@@ -1485,6 +1485,7 @@ impl PyKernel {
         admin_only: bool,
         io_profile: &str,
         zone_id: &str,
+        is_external: bool,
         capacity: usize,
         mime_type: Option<&str>,
         modified_at_ms: Option<i64>,
@@ -1653,6 +1654,7 @@ impl PyKernel {
                 admin_only,
                 io_profile,
                 zone_id,
+                is_external,
                 capacity,
                 read_fd,
                 write_fd,

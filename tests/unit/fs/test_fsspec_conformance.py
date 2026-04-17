@@ -15,6 +15,7 @@ from fsspec.tests import abstract  # noqa: E402
 
 from nexus.backends.storage.cas_local import CASLocalBackend  # noqa: E402
 from nexus.contracts.constants import ROOT_ZONE_ID  # noqa: E402
+from nexus.contracts.metadata import DT_MOUNT  # noqa: E402
 from nexus.contracts.types import OperationContext  # noqa: E402
 from nexus.core.config import PermissionConfig  # noqa: E402
 from nexus.core.nexus_fs import NexusFS  # noqa: E402
@@ -143,7 +144,7 @@ class NexusFsFixtures(abstract.AbstractFixtures):
             metadata_store=metastore,
             permissions=PermissionConfig(enforce=False),
         )
-        kernel._driver_coordinator.mount("/local", backend)
+        kernel.sys_setattr("/local", entry_type=DT_MOUNT, backend=backend)
         metastore.put(_make_mount_entry("/local", backend.name))
         kernel._init_cred = OperationContext(
             user_id="test",

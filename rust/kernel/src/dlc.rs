@@ -72,6 +72,7 @@ impl DriverLifecycleCoordinator {
             nexus_raft::prelude::ZoneConsensus<nexus_raft::prelude::FullStateMachine>,
             tokio::runtime::Handle,
         )>,
+        is_external: bool,
     ) -> Result<(), KernelError> {
         // 1. Routing table + per-mount metastore + lock manager upgrade
         kernel.add_mount(
@@ -84,6 +85,7 @@ impl DriverLifecycleCoordinator {
             backend,
             metastore,
             raft_backend,
+            is_external,
         )?;
 
         // 2. Write DT_MOUNT metadata entry (best-effort) — zone-relative key.

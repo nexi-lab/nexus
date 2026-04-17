@@ -153,6 +153,8 @@ pub struct SysReadResult {
     pub content_hash: Option<String>,
     /// DT_REG(1), DT_PIPE(3), DT_STREAM(4).
     pub entry_type: u8,
+    /// True when the routed mount is an external connector — Python must handle.
+    pub is_external: bool,
 }
 
 /// Result of sys_write(): concrete type instead of Option<str>.
@@ -1115,6 +1117,7 @@ impl Kernel {
             nexus_raft::prelude::ZoneConsensus<nexus_raft::prelude::FullStateMachine>,
             tokio::runtime::Handle,
         )>,
+        is_external: bool,
     ) -> Result<(), KernelError> {
         self.mount_table.add_mount(
             mount_point,
@@ -1124,6 +1127,7 @@ impl Kernel {
             io_profile,
             backend_name,
             backend,
+            is_external,
         );
         // Install per-mount metastore if provided. Must come AFTER the
         // entry is inserted so `install_metastore` finds it.
@@ -1227,6 +1231,8 @@ impl Kernel {
         admin_only: bool,
         io_profile: &str,
         zone_id: &str,
+        // -- DT_MOUNT is_external flag (entry_type == 2) --
+        is_external: bool,
         // -- DT_PIPE/DT_STREAM params (entry_type == 3, 4) --
         capacity: usize,
         // -- DT_PIPE stdio params (io_profile == "stdio") --
@@ -1250,6 +1256,7 @@ impl Kernel {
                     backend,
                     metastore,
                     raft_backend,
+                    is_external,
                 )?;
                 Ok(SysSetAttrResult {
                     path: path.to_string(),
@@ -2257,6 +2264,17 @@ impl Kernel {
             Err(_) => return Err(not_found()),
         };
 
+        // 2b. External mount — signal Python to handle via connector backend
+        if route.is_external {
+            return Ok(SysReadResult {
+                data: None,
+                post_hook_needed: false,
+                content_hash: None,
+                entry_type: 0,
+                is_external: true,
+            });
+        }
+
         // 3. DCache lookup — on miss, fallback to metastore (cold path)
         let zone_path = Self::zone_key(&route.backend_path);
         let entry = match self.dcache.get_entry(path) {
@@ -2297,6 +2315,7 @@ impl Kernel {
                             post_hook_needed: false,
                             content_hash: None,
                             entry_type: DT_PIPE,
+                            is_external: false,
                         });
                     }
                     Err(crate::pipe::PipeError::Empty) => {
@@ -2306,6 +2325,7 @@ impl Kernel {
                             post_hook_needed: false,
                             content_hash: None,
                             entry_type: DT_PIPE,
+                            is_external: false,
                         });
                     }
                     Err(crate::pipe::PipeError::ClosedEmpty) => {
@@ -2320,6 +2340,7 @@ impl Kernel {
                 post_hook_needed: false,
                 content_hash: None,
                 entry_type: DT_PIPE,
+                is_external: false,
             });
         }
 
@@ -2330,6 +2351,7 @@ impl Kernel {
                 post_hook_needed: false,
                 content_hash: None,
                 entry_type: DT_STREAM,
+                is_external: false,
             });
         }
 
@@ -2373,6 +2395,7 @@ impl Kernel {
                 post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
                 content_hash: entry.etag.clone(),
                 entry_type: DT_REG,
+                is_external: false,
             }),
             // Local backend miss + metadata exists → federation path:
             // try the origin encoded in backend_name. Otherwise it's a
@@ -2473,6 +2496,7 @@ impl Kernel {
             post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
             content_hash: entry.etag.clone(),
             entry_type: DT_REG,
+            is_external: false,
         })
     }
 
@@ -3905,6 +3929,7 @@ impl Kernel {
                     post_hook_needed: false,
                     content_hash: None,
                     entry_type: 0,
+                    is_external: false,
                 })
             })
             .collect();
@@ -4332,7 +4357,8 @@ mod tests {
             None,  // raft_backend
             false, // readonly
             false, // admin_only
-            "memory", "root", 65536, // capacity
+            "memory", "root", false, // is_external
+            65536, // capacity
             None,  // read_fd
             None,  // write_fd
             None,  // mime_type
@@ -4430,6 +4456,7 @@ mod tests {
                 false,
                 "memory",
                 "root",
+                false,
                 65536,
                 None,
                 None,
@@ -4480,6 +4507,7 @@ mod tests {
             None,
             Some(ms.clone()),
             None,
+            false,
         )
         .unwrap();
 
@@ -4496,6 +4524,7 @@ mod tests {
                 false,
                 "balanced",
                 "root",
+                false,
                 0,
                 None,
                 None,
@@ -4535,6 +4564,7 @@ mod tests {
             None,
             Some(corp_ms.clone()),
             None,
+            false,
         )
         .unwrap();
         // Mount "/family/work" with the SAME corp metastore (crosslink)
@@ -4548,6 +4578,7 @@ mod tests {
             None,
             Some(corp_ms.clone()),
             None,
+            false,
         )
         .unwrap();
 
@@ -4562,6 +4593,7 @@ mod tests {
             None,
             None,
             None,
+            false,
         )
         .unwrap();
 
@@ -4578,6 +4610,7 @@ mod tests {
                 false,
                 "balanced",
                 "root",
+                false,
                 0,
                 None,
                 None,
@@ -4618,6 +4651,7 @@ mod tests {
             None,
             Some(ms.clone()),
             None,
+            false,
         )
         .unwrap();
 
@@ -4633,6 +4667,7 @@ mod tests {
             false,
             "balanced",
             "root",
+            false,
             0,
             None,
             None,

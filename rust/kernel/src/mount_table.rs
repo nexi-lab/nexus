@@ -64,6 +64,10 @@ pub struct MountEntry {
 
     /// Cosmetic name reported by introspection / logs.
     pub backend_name: String,
+
+    /// True when this mount is an external connector whose reads/writes
+    /// must be handled by Python (no Rust fast path available).
+    pub is_external: bool,
 }
 
 impl MountEntry {
@@ -84,7 +88,14 @@ impl MountEntry {
             admin_only,
             io_profile: io_profile.into(),
             backend_name: backend_name.into(),
+            is_external: false,
         }
+    }
+
+    /// Builder-style external-flag setter.
+    pub fn with_is_external(mut self, is_external: bool) -> Self {
+        self.is_external = is_external;
+        self
     }
 
     /// Builder-style metastore setter. Used when the metastore is known at
@@ -126,6 +137,9 @@ pub struct RouteResult {
     pub backend_path: String,
     pub readonly: bool,
     pub io_profile: String,
+    /// True when the routed mount is an external connector — Python must
+    /// dispatch the operation through a Python-side backend adapter.
+    pub is_external: bool,
 }
 
 /// Legacy alias so kernel/generated code using the pre-migration type name
@@ -188,11 +202,13 @@ impl MountTable {
         io_profile: &str,
         backend_name: &str,
         backend: Option<Box<dyn ObjectStore>>,
+        is_external: bool,
     ) {
         self.add(
             mount_point,
             zone_id,
-            MountEntry::new(backend, readonly, admin_only, io_profile, backend_name),
+            MountEntry::new(backend, readonly, admin_only, io_profile, backend_name)
+                .with_is_external(is_external),
         );
     }
 
@@ -314,6 +330,7 @@ impl MountTable {
                 let backend_path = strip_mount_prefix(&canonical, current);
                 let readonly = entry.readonly;
                 let io_profile = entry.io_profile.clone();
+                let is_external = entry.is_external;
                 drop(entry);
 
                 return Ok(RouteResult {
@@ -321,6 +338,7 @@ impl MountTable {
                     backend_path,
                     readonly,
                     io_profile,
+                    is_external,
                 });
             }
 

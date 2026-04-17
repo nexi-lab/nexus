@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.contracts.metadata import DT_MOUNT  # noqa: E402
 from nexus.contracts.types import OperationContext
 from nexus.core.config import PermissionConfig
 from nexus.core.nexus_fs import NexusFS
@@ -46,7 +47,7 @@ def _build_fs(tmp_path: Path) -> SlimNexusFS:
     )
 
     # Mount via coordinator (registers in backend pool + routing table + hooks)
-    kernel._driver_coordinator.mount("/local", backend)
+    kernel.sys_setattr("/local", entry_type=DT_MOUNT, backend=backend)
     metastore.put(_make_mount_entry("/local", backend.name))
 
     return SlimNexusFS(kernel)

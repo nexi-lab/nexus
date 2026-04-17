@@ -1157,6 +1157,15 @@ class SearchDaemon:
         from nexus.bricks.search.path_context import PathContextCache, PathContextStore
 
         loop = asyncio.get_running_loop()
+        # Round-7 review: prune closed-loop entries to bound memory on
+        # long-running servers where request loops can come and go (worker
+        # recycling, anyio loop churn). Entries for dead loops can't be
+        # disposed from here anyway — shutdown can only reach the current
+        # loop's engine — so dropping their refs is the correct cleanup.
+        stale = [lk for lk in self._path_context_cache_by_loop if lk.is_closed()]
+        for lk in stale:
+            self._path_context_cache_by_loop.pop(lk, None)
+            self._path_context_engines_by_loop.pop(lk, None)
         existing = self._path_context_cache_by_loop.get(loop)
         if existing is not None:
             return existing
@@ -1270,7 +1279,21 @@ class SearchDaemon:
                     self.stats.path_context_attach_failures,
                     exc,
                 )
-            snap = cache.snapshot_zone(zone)
+            # Round-7 review: snapshot_zone is a dict access but the fail-soft
+            # contract says ONE zone raising must not propagate out of this
+            # method. Wrap it too so a rare concurrent-mutation RuntimeError
+            # is caught and counted, not raised.
+            try:
+                snap = cache.snapshot_zone(zone)
+            except Exception as exc:
+                self.stats.path_context_attach_failures += 1
+                logger.warning(
+                    "path context snapshot failed for zone=%r (total=%d): %s",
+                    zone,
+                    self.stats.path_context_attach_failures,
+                    exc,
+                )
+                snap = None
             if snap is not None:
                 snapshots[zone] = snap
 
@@ -1464,7 +1487,19 @@ class SearchDaemon:
                     self.stats.path_context_attach_failures,
                     exc,
                 )
-            records = cache.snapshot_zone(effective_zone_id)
+            # Round-7 review: wrap snapshot_zone too so the fail-soft contract
+            # holds even if a concurrent LRU mutation races the dict access.
+            try:
+                records = cache.snapshot_zone(effective_zone_id)
+            except Exception as exc:
+                self.stats.path_context_attach_failures += 1
+                logger.warning(
+                    "path context snapshot failed for zone=%r (total=%d): %s",
+                    effective_zone_id,
+                    self.stats.path_context_attach_failures,
+                    exc,
+                )
+                records = None
             if records is not None:
                 from nexus.bricks.search.path_context import lookup_in_records
 

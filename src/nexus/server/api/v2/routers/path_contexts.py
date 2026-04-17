@@ -104,6 +104,18 @@ async def _get_store(request: Request) -> PathContextStore:
         cached = {}
         request.app.state._path_context_store_by_loop = cached
 
+    # Round-7 review: prune closed-loop entries so the per-loop dicts can't
+    # grow unbounded on long-running servers that cycle through request
+    # loops (worker recycling, anyio loop churn).
+    engines_for_prune: dict[Any, Any] | None = getattr(
+        request.app.state, "_path_context_engines_by_loop", None
+    )
+    stale = [lk for lk in cached if lk.is_closed()]
+    for lk in stale:
+        cached.pop(lk, None)
+        if engines_for_prune is not None:
+            engines_for_prune.pop(lk, None)
+
     existing = cached.get(loop)
     if existing is not None:
         return existing

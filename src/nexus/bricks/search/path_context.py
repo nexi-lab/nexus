@@ -112,7 +112,13 @@ class PathContextStore:
             return (result.rowcount or 0) > 0
 
     async def list(self, zone_id: str | None = None) -> builtins.list[PathContextRecord]:
-        """List contexts. When zone_id is None, returns rows for all zones."""
+        """List contexts. When zone_id is None, returns rows for all zones.
+
+        Round-7 review: pin Postgres to the binary ``"C"`` collation so
+        CLI output matches SQLite's default BINARY order — otherwise
+        admins see different sort orders across backends (Postgres honours
+        the DB-creation locale, which is typically case/accent-insensitive).
+        """
         query = (
             "SELECT zone_id, path_prefix, description, created_at, updated_at FROM path_contexts"
         )
@@ -120,7 +126,10 @@ class PathContextStore:
         if zone_id is not None:
             query += " WHERE zone_id = :zone_id"
             params["zone_id"] = zone_id
-        query += " ORDER BY zone_id, path_prefix"
+        if self._db_type == "postgresql":
+            query += ' ORDER BY zone_id COLLATE "C", path_prefix COLLATE "C"'
+        else:
+            query += " ORDER BY zone_id, path_prefix"
         async with self._async_session_factory() as session:
             rows = (await session.execute(text(query), params)).all()
         return [

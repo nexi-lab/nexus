@@ -326,9 +326,57 @@ class TestLoopLocalResolver:
         cache_b = asyncio.run(_resolve_once())
         # Distinct caches because each asyncio.run creates a fresh loop.
         assert cache_a is not cache_b
-        # Two loops tracked.
-        assert len(daemon._path_context_cache_by_loop) == 2
-        assert len(daemon._path_context_engines_by_loop) == 2
+        # Round-7 review: _resolve_path_context_cache now prunes entries for
+        # closed loops on every call. After the 2nd asyncio.run(), loop A was
+        # closed before loop B's resolve, so the prune drops A's entry and
+        # the dict holds only B. After both runs exit both loops are closed,
+        # but neither is alive now — prune happens on entry so state freezes
+        # at whatever the 2nd resolve left behind (loop B only).
+        assert len(daemon._path_context_cache_by_loop) == 1
+        assert len(daemon._path_context_engines_by_loop) == 1
+
+
+class TestResolverPrunesClosedLoops:
+    """Round-7 review regression: ``_resolve_path_context_cache`` must drop
+    entries keyed by loops that are already closed, so the per-loop dicts
+    don't accumulate dead refs on long-running servers with worker loop
+    churn."""
+
+    def test_closed_loop_entries_are_pruned(self, tmp_path) -> None:
+        import asyncio
+
+        from nexus.bricks.search.daemon import DaemonConfig, SearchDaemon
+
+        db_file = tmp_path / "ctx3.db"
+        db_url = f"sqlite+aiosqlite:///{db_file}"
+
+        async def _setup() -> None:
+            engine = create_async_engine(db_url, future=True)
+            async with engine.begin() as conn:
+                await conn.exec_driver_sql(CREATE_TABLE_SQL)
+            await engine.dispose()
+
+        asyncio.run(_setup())
+
+        daemon = SearchDaemon.__new__(SearchDaemon)
+        daemon.config = DaemonConfig(database_url=db_url)
+        daemon._path_context_cache = None
+        daemon._path_context_cache_by_loop = {}
+        daemon._path_context_engines_by_loop = {}
+
+        # Simulate a dead loop entry carried over from a recycled worker.
+        dead_loop = asyncio.new_event_loop()
+        dead_loop.close()
+        daemon._path_context_cache_by_loop[dead_loop] = object()
+        daemon._path_context_engines_by_loop[dead_loop] = object()
+        assert dead_loop.is_closed()
+
+        async def _resolve_once():
+            return await daemon._resolve_path_context_cache()
+
+        asyncio.run(_resolve_once())
+        assert dead_loop not in daemon._path_context_cache_by_loop
+        assert dead_loop not in daemon._path_context_engines_by_loop
 
 
 class TestAttachContextToResults:

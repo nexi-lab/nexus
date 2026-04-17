@@ -323,7 +323,6 @@ class TestFsspecErrorPaths:
             with pytest.raises(ValueError, match="Unsupported mode"):
                 nfs._open("/test", mode="ab")
         finally:
-            nfs._runner.close()
             NexusFileSystem.clear_instance_cache()
 
     def test_write_buffer_exceeds_limit(self, mock_nexus_fs):
@@ -337,7 +336,6 @@ class TestFsspecErrorPaths:
                 fs=MagicMock(),
                 path="/big.bin",
                 nexus_fs=mock_nexus_fs,
-                runner=runner,
             )
             chunk = b"x" * (1024 * 1024)  # 1 MB
             with pytest.raises(ValueError, match="Write buffer exceeded"):
@@ -357,7 +355,6 @@ class TestFsspecErrorPaths:
                 fs=MagicMock(),
                 path="/closed.txt",
                 nexus_fs=mock_nexus_fs,
-                runner=runner,
             )
             wf.close()
             with pytest.raises(ValueError, match="closed file"):

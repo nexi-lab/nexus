@@ -25,7 +25,7 @@
 use dashmap::DashMap;
 use std::sync::Arc;
 
-use crate::backend::{ObjectStore, WriteResult};
+use crate::backend::{ObjectStore, StorageError, WriteResult};
 use crate::kernel::OperationContext;
 use crate::metastore::Metastore;
 
@@ -266,6 +266,15 @@ impl MountTable {
         self.entries.contains_key(&canonical)
     }
 
+    /// Borrow every entry mutably. Used by ``Kernel::release_metastores``
+    /// (Issue #3765 Cat-5/6) to drop per-mount ``Arc<dyn Metastore>`` so the
+    /// underlying redb file handles are released on kernel close.
+    pub fn entries_iter_mut(
+        &self,
+    ) -> impl Iterator<Item = dashmap::mapref::multiple::RefMutMulti<'_, String, MountEntry>> {
+        self.entries.iter_mut()
+    }
+
     /// All registered canonical keys (sorted). Cheap copy — mounts are rare.
     pub fn canonical_keys(&self) -> Vec<String> {
         let mut keys: Vec<String> = self.entries.iter().map(|e| e.key().clone()).collect();
@@ -390,13 +399,15 @@ impl MountTable {
         content: &[u8],
         content_id: &str,
         ctx: &OperationContext,
-    ) -> Option<WriteResult> {
-        let entry = self.entries.get(canonical_key)?;
-        entry
-            .backend
-            .as_ref()?
-            .write_content(content, content_id, ctx)
-            .ok()
+    ) -> Result<Option<WriteResult>, StorageError> {
+        let Some(entry) = self.entries.get(canonical_key) else {
+            // Mount not found — caller treats as a hit=false miss.
+            return Ok(None);
+        };
+        let Some(backend) = entry.backend.as_ref() else {
+            return Ok(None);
+        };
+        backend.write_content(content, content_id, ctx).map(Some)
     }
 
     /// Delete a file via the mount's backend.

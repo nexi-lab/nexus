@@ -124,6 +124,7 @@ KERNEL_REQUIRED_METHODS: frozenset[str] = frozenset(
         "readdir",
         "register_hook",
         "register_watch",
+        "release_metastores",
         "route",
         "set_hook_count",
         "set_metastore_path",

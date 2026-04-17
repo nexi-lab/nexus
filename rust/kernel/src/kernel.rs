@@ -13,7 +13,7 @@
 //!
 //! Issue #1868: Phase H — kernel boundary collapse.
 
-use crate::dcache::{CachedEntry, DCache, DT_DIR, DT_PIPE, DT_REG, DT_STREAM};
+use crate::dcache::{CachedEntry, DCache, DT_DIR, DT_MOUNT, DT_PIPE, DT_REG, DT_STREAM};
 use crate::dispatch::{FileEvent, FileEventType, MutationObserver, Trie};
 use crate::file_watch::FileWatcher;
 use crate::lock_manager::{LockManager, LockMode};
@@ -59,6 +59,11 @@ pub enum KernelError {
     StreamNotFound(String),
     WouldBlock(String),
     PermissionDenied(String),
+    /// Backend operation failed (``Backend.write_content`` / ``read_content``
+    /// / ``delete_content`` / ``rename_file``). Propagated as
+    /// ``nexus.contracts.exceptions.BackendError`` on the Python side so
+    /// callers can distinguish storage failures from pure kernel issues.
+    BackendError(String),
 }
 
 impl From<RouteError> for KernelError {
@@ -604,6 +609,20 @@ impl Kernel {
         Ok(())
     }
 
+    /// Drop the global metastore + every per-mount metastore so the
+    /// underlying redb file handles are released. Python ``NexusFS.close``
+    /// calls this so a subsequent kernel can reopen the same redb path
+    /// without the ``"Database already open"`` error (Issue #3765 Cat-5/6
+    /// SQLite-lifecycle regression).
+    pub fn release_metastores(&mut self) {
+        self.metastore = None;
+        // Drop per-mount metastores by clearing their slot on each
+        // MountEntry. We iterate via `iter_mut` to avoid a full rebuild.
+        for mut entry in self.mount_table.entries_iter_mut() {
+            entry.metastore = None;
+        }
+    }
+
     /// Resolve metastore for a syscall: per-mount first, then global fallback.
     ///
     /// In federation mode each mount has its own state machine (Raft-backed
@@ -624,6 +643,26 @@ impl Kernel {
             }
         }
         self.metastore.as_ref().map(|ms| f(ms.as_ref()))
+    }
+
+    /// Variant of ``with_metastore`` that reports whether the returned
+    /// metastore is per-mount or the global fallback. The caller uses this
+    /// to decide whether to store a zone-relative key (per-mount) or a
+    /// full global key (global fallback) — without the distinction, two
+    /// mounts that share the global metastore collide on zone-relative
+    /// paths like `/file.txt` (Issue #3765 Cat-8).
+    pub(crate) fn with_metastore_scoped<F, R>(&self, mount_point: &str, f: F) -> Option<R>
+    where
+        F: FnOnce(&dyn crate::metastore::Metastore, bool) -> R,
+    {
+        if let Some(entry) = self.mount_table.get_canonical(mount_point) {
+            if let Some(ms) = entry.metastore.as_ref() {
+                let ms_arc = Arc::clone(ms);
+                drop(entry);
+                return Some(f(ms_arc.as_ref(), true));
+            }
+        }
+        self.metastore.as_ref().map(|ms| f(ms.as_ref(), false))
     }
 
     // ── Zone-relative metastore key helpers ─────────────────────────────
@@ -676,12 +715,24 @@ impl Kernel {
         path: &str,
     ) -> Result<Option<crate::metastore::FileMetadata>, KernelError> {
         let (mount_point, zone_path) = self.resolve_metastore_key(path, contracts::ROOT_ZONE_ID);
-        match self.with_metastore(&mount_point, |ms| ms.get(&zone_path)) {
-            Some(result) => result
+        let global_path = path.to_string();
+        let mount_point_owned = mount_point.clone();
+        match self.with_metastore_scoped(&mount_point, |ms, is_per_mount| {
+            let key = if is_per_mount {
+                zone_path.as_str()
+            } else {
+                global_path.as_str()
+            };
+            (is_per_mount, ms.get(key))
+        }) {
+            Some((is_per_mount, result)) => result
                 .map(|opt| {
                     opt.map(|mut m| {
                         // Convert zone-relative path back to global for Python callers.
-                        m.path = crate::mount_table::zone_to_global(&mount_point, &m.path);
+                        if is_per_mount {
+                            m.path =
+                                crate::mount_table::zone_to_global(&mount_point_owned, &m.path);
+                        }
                         m
                     })
                 })
@@ -696,8 +747,16 @@ impl Kernel {
         mut metadata: crate::metastore::FileMetadata,
     ) -> Result<(), KernelError> {
         let (mount_point, zone_path) = self.resolve_metastore_key(path, contracts::ROOT_ZONE_ID);
-        metadata.path = zone_path.clone();
-        match self.with_metastore(&mount_point, move |ms| ms.put(&zone_path, metadata)) {
+        let global_path = path.to_string();
+        match self.with_metastore_scoped(&mount_point, move |ms, is_per_mount| {
+            let key = if is_per_mount {
+                zone_path.clone()
+            } else {
+                global_path.clone()
+            };
+            metadata.path = key.clone();
+            ms.put(&key, metadata)
+        }) {
             Some(result) => {
                 result.map_err(|e| KernelError::IOError(format!("metastore_put({path}): {e:?}")))
             }
@@ -707,7 +766,15 @@ impl Kernel {
 
     pub fn metastore_delete(&self, path: &str) -> Result<bool, KernelError> {
         let (mount_point, zone_path) = self.resolve_metastore_key(path, contracts::ROOT_ZONE_ID);
-        match self.with_metastore(&mount_point, |ms| ms.delete(&zone_path)) {
+        let global_path = path.to_string();
+        match self.with_metastore_scoped(&mount_point, |ms, is_per_mount| {
+            let key = if is_per_mount {
+                zone_path.as_str()
+            } else {
+                global_path.as_str()
+            };
+            ms.delete(key)
+        }) {
             Some(result) => {
                 result.map_err(|e| KernelError::IOError(format!("metastore_delete({path}): {e:?}")))
             }
@@ -722,27 +789,118 @@ impl Kernel {
         let route_path = if prefix.is_empty() { "/" } else { prefix };
         let (mount_point, zone_prefix) =
             self.resolve_metastore_key(route_path, contracts::ROOT_ZONE_ID);
-        // For list, use the zone-relative prefix
-        let list_prefix = if prefix.is_empty() { "/" } else { &zone_prefix };
-        match self.with_metastore(&mount_point, |ms| ms.list(list_prefix)) {
-            Some(result) => result
-                .map(|entries| {
-                    entries
-                        .into_iter()
-                        .map(|mut m| {
-                            m.path = crate::mount_table::zone_to_global(&mount_point, &m.path);
-                            m
-                        })
-                        .collect()
-                })
-                .map_err(|e| KernelError::IOError(format!("metastore_list({prefix}): {e:?}"))),
-            None => Err(KernelError::IOError("no metastore wired".into())),
+        let global_prefix = if prefix.is_empty() {
+            "/".to_string()
+        } else {
+            prefix.to_string()
+        };
+        // Per-mount metastore → zone-relative prefix; global fallback →
+        // the caller's original (global) prefix so we don't spuriously match
+        // entries that were stored with full global keys (Cat-8).
+        let mount_point_for_conv = mount_point.clone();
+        let routed_mount = mount_point.clone();
+        let mut results: Vec<crate::metastore::FileMetadata> =
+            match self.with_metastore_scoped(&mount_point, |ms, is_per_mount| {
+                let list_prefix = if is_per_mount {
+                    if prefix.is_empty() {
+                        "/"
+                    } else {
+                        &zone_prefix
+                    }
+                } else {
+                    global_prefix.as_str()
+                };
+                (is_per_mount, ms.list(list_prefix))
+            }) {
+                Some((is_per_mount, inner)) => inner
+                    .map(|entries| {
+                        entries
+                            .into_iter()
+                            .map(|mut m| {
+                                if is_per_mount {
+                                    m.path = crate::mount_table::zone_to_global(
+                                        &mount_point_for_conv,
+                                        &m.path,
+                                    );
+                                }
+                                m
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .map_err(|e| {
+                        KernelError::IOError(format!("metastore_list({prefix}): {e:?}"))
+                    })?,
+                None => return Err(KernelError::IOError("no metastore wired".into())),
+            };
+
+        // F2 C5 follow-up: when the user-facing prefix spans MULTIPLE mounts
+        // (e.g. prefix=`/personal/` with a mount at `/personal/alice`), the
+        // routed metastore above only returns entries rooted on the parent
+        // mount. Merge in each child mount's own per-mount metastore so the
+        // caller sees the full subtree — including the mount roots themselves,
+        // which are stored as zone-relative `/` inside each child metastore.
+        let user_prefix = if prefix.is_empty() {
+            "/".to_string()
+        } else if prefix.ends_with('/') {
+            prefix.to_string()
+        } else {
+            format!("{}/", prefix)
+        };
+        let user_prefix_trim = if user_prefix == "/" {
+            ""
+        } else {
+            user_prefix.trim_end_matches('/')
+        };
+        for canonical in self.mount_table.canonical_keys() {
+            if canonical == routed_mount {
+                continue;
+            }
+            let (_zone, user_mp) = crate::mount_table::extract_zone_from_canonical(&canonical);
+            // Child mount must sit strictly under the list prefix. Root list
+            // (`/`) sees every mount. Non-root prefix `/a` matches `/a/b` but
+            // not `/a` itself (caller already has the DT_MOUNT entry from the
+            // parent metastore, or gets it via a separate sys_stat).
+            let under_prefix = if user_prefix == "/" {
+                user_mp != "/"
+            } else {
+                user_mp.starts_with(&user_prefix)
+                    || user_mp == user_prefix_trim.to_string().as_str()
+            };
+            if !under_prefix {
+                continue;
+            }
+            if let Some(Ok(child_entries)) = self.with_metastore(&canonical, |ms| ms.list("/")) {
+                for mut meta in child_entries {
+                    meta.path = crate::mount_table::zone_to_global(&canonical, &meta.path);
+                    // `zone_to_global(mp, "/")` yields `"<mp>/"` which is the
+                    // mount-root inode — the caller expects the non-slashed
+                    // canonical mount point, so trim the trailing separator
+                    // (but keep root `/` as-is).
+                    if meta.path.len() > 1 && meta.path.ends_with('/') {
+                        meta.path.pop();
+                    }
+                    // Deduplicate — parent metastore may also carry a stub
+                    // DT_DIR entry for the mount point path.
+                    if !results.iter().any(|m| m.path == meta.path) {
+                        results.push(meta);
+                    }
+                }
+            }
         }
+        Ok(results)
     }
 
     pub fn metastore_exists(&self, path: &str) -> Result<bool, KernelError> {
         let (mount_point, zone_path) = self.resolve_metastore_key(path, contracts::ROOT_ZONE_ID);
-        match self.with_metastore(&mount_point, |ms| ms.exists(&zone_path)) {
+        let global_path = path.to_string();
+        match self.with_metastore_scoped(&mount_point, |ms, is_per_mount| {
+            let key = if is_per_mount {
+                zone_path.as_str()
+            } else {
+                global_path.as_str()
+            };
+            ms.exists(key)
+        }) {
             Some(result) => {
                 result.map_err(|e| KernelError::IOError(format!("metastore_exists({path}): {e:?}")))
             }
@@ -2616,9 +2774,23 @@ impl Kernel {
         // 5. Backend write (CasLocal or PyObjectStoreAdapter)
         //    Pass backend_path as content_id (CAS ignores it, PAS uses it as blob path).
         let zone_path = Self::zone_key(&route.backend_path);
-        let write_result =
-            self.mount_table
-                .write_content(&route.mount_point, content, &route.backend_path, ctx);
+        let write_result = match self.mount_table.write_content(
+            &route.mount_point,
+            content,
+            &route.backend_path,
+            ctx,
+        ) {
+            Ok(opt) => opt,
+            Err(storage_err) => {
+                // Storage/backend-level failure (connector wrapper raised a
+                // BackendError, disk full, permission denied, etc.). Release
+                // the VFS lock and surface the error to Python so callers
+                // can react (F2 C4 / Issue #3765 Cat-7 regression — previous
+                // code silently swallowed this via ``.ok()``).
+                self.lock_manager.do_release(lock_handle);
+                return Err(KernelError::BackendError(format!("{storage_err:?}")));
+            }
+        };
 
         // 6. After write -> build metadata + metastore.put + dcache update
         let result = match write_result {
@@ -2646,9 +2818,18 @@ impl Kernel {
                     .as_ref()
                     .and_then(|e| e.created_at_ms)
                     .or(Some(now_ms));
-                self.with_metastore(&route.mount_point, |ms| {
+                // When the mount has its own metastore, use the zone-relative
+                // key. When we fall back to the global metastore (Cat-8 bug
+                // — two un-federated mounts both hitting the single global
+                // store), use the full global path so the keys don't collide.
+                self.with_metastore_scoped(&route.mount_point, |ms, is_per_mount| {
+                    let key = if is_per_mount {
+                        zone_path.clone()
+                    } else {
+                        path.to_string()
+                    };
                     let meta = crate::metastore::FileMetadata {
-                        path: zone_path.clone(),
+                        path: key.clone(),
                         backend_name: backend_display_name.clone(),
                         physical_path: wr.content_id.clone(),
                         size: wr.size,
@@ -2661,7 +2842,7 @@ impl Kernel {
                         modified_at_ms: Some(now_ms),
                     };
                     // Best-effort metastore.put -- error logged but doesn't fail write
-                    let _ = ms.put(&zone_path, meta);
+                    let _ = ms.put(&key, meta);
                 });
 
                 // Update dcache with new metadata
@@ -2761,7 +2942,9 @@ impl Kernel {
             }
         };
 
-        let is_dir = entry.entry_type == DT_DIR;
+        // Treat DT_MOUNT like a directory for VFS callers — a mount point is
+        // the zone-root inode, analogous to a DT_DIR from the user's view.
+        let is_dir = entry.entry_type == DT_DIR || entry.entry_type == DT_MOUNT;
         let mime = entry
             .mime_type
             .as_deref()
@@ -3414,6 +3597,7 @@ impl Kernel {
                 &dst_route.backend_path,
                 ctx,
             )
+            .map_err(|e| KernelError::BackendError(format!("sys_copy: {e:?}")))?
             .ok_or_else(|| {
                 KernelError::IOError(format!(
                     "sys_copy: failed to write destination at {}",
@@ -3805,13 +3989,19 @@ impl Kernel {
                 continue;
             }
 
-            // Backend write
-            let write_result = self.mount_table.write_content(
-                &route.mount_point,
-                content,
-                &route.backend_path,
-                ctx,
-            );
+            // Backend write. ``sys_write_batch`` keeps per-item error
+            // semantics: a failure only taints that item's result, not the
+            // whole batch. We still surface the full error to the caller by
+            // synthesising a backend-error result via ``hit=false`` so the
+            // observer/post-hook path doesn't fire. The per-item error is
+            // logged for observability but not hoisted to ``Result<..>``.
+            // Backend write error (batch variant): collapse to None so the
+            // per-item result surfaces as hit=false (observer + post-hook
+            // path skipped). Caller inspects ``SysWriteResult.hit`` + retries.
+            let write_result = self
+                .mount_table
+                .write_content(&route.mount_point, content, &route.backend_path, ctx)
+                .unwrap_or_default();
 
             match write_result {
                 Some(wr) => {
@@ -3995,12 +4185,25 @@ impl Kernel {
             format!("{}/", zone_parent)
         };
 
-        // Merge dcache children (global paths) with per-mount metastore list
-        // (zone-relative paths converted to global) so federation zones see
-        // entries that haven't been warmed into the dcache (F2 C5).
+        // Merge dcache children (zone-relative basenames; we re-prefix with
+        // the global parent path below) with per-mount metastore list
+        // (zone-relative full paths converted to global) so federation zones
+        // see entries that haven't been warmed into the dcache (F2 C5).
+        //
+        // ``dcache.list_children(prefix)`` strips the common prefix and
+        // returns the remaining *basename* for each immediate child (e.g.
+        // for prefix ``/mnt/`` it returns ``gcs_demo``). To satisfy the
+        // ``sys_readdir`` contract which returns global paths, splice the
+        // parent back on here.
         let mut seen: std::collections::BTreeMap<String, u8> = std::collections::BTreeMap::new();
+        let parent_for_join = if parent_path == "/" {
+            ""
+        } else {
+            parent_path.trim_end_matches('/')
+        };
         for (child, etype) in self.dcache.list_children(&global_prefix) {
-            seen.insert(child, etype);
+            let global = format!("{}/{}", parent_for_join, child);
+            seen.insert(global, etype);
         }
 
         if let Some(ms_children) =

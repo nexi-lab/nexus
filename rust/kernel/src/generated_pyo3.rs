@@ -40,6 +40,7 @@ use crate::mount_table::{RouteError, RustRouteResult};
 struct ExceptionCache {
     invalid_path: Py<PyAny>,
     file_not_found: Py<PyAny>,
+    backend_error: Py<PyAny>,
 }
 
 static EXCEPTION_CACHE: std::sync::OnceLock<Option<ExceptionCache>> = std::sync::OnceLock::new();
@@ -50,9 +51,11 @@ fn get_exception_cache(py: Python<'_>) -> Option<&'static ExceptionCache> {
             let m = py.import("nexus.contracts.exceptions").ok()?;
             let invalid_path = m.getattr("InvalidPathError").ok()?.unbind();
             let file_not_found = m.getattr("NexusFileNotFoundError").ok()?.unbind();
+            let backend_error = m.getattr("BackendError").ok()?.unbind();
             Some(ExceptionCache {
                 invalid_path,
                 file_not_found,
+                backend_error,
             })
         })
         .as_ref()
@@ -146,6 +149,18 @@ impl From<KernelError> for PyErr {
                 pyo3::exceptions::PyRuntimeError::new_err(format!("WouldBlock:{msg}"))
             }
             KernelError::PermissionDenied(msg) => pyo3::exceptions::PyPermissionError::new_err(msg),
+            KernelError::BackendError(msg) => Python::attach(|py| {
+                if let Some(cache) = get_exception_cache(py) {
+                    cache
+                        .backend_error
+                        .bind(py)
+                        .call1((&msg,))
+                        .map(PyErr::from_value)
+                        .unwrap_or_else(|_| pyo3::exceptions::PyIOError::new_err(msg))
+                } else {
+                    pyo3::exceptions::PyIOError::new_err(msg)
+                }
+            }),
         }
     }
 }
@@ -1068,6 +1083,13 @@ impl PyKernel {
     /// Eliminates GIL crossing on every metastore.get/put.
     fn set_metastore_path(&mut self, path: &str) -> PyResult<()> {
         self.inner.set_metastore_path(path).map_err(Into::into)
+    }
+
+    /// Drop global + per-mount redb metastores so a subsequent kernel
+    /// can reopen the same redb path without ``Database already open``.
+    /// Called by Python ``NexusFS.close`` / nested ``ephemeral_mount``.
+    fn release_metastores(&mut self) {
+        self.inner.release_metastores()
     }
 
     // ── Metastore proxy methods (for RustMetastoreProxy) ──────────────

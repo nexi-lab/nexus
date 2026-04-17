@@ -83,7 +83,9 @@ class TestAddMountRollback:
             context=_op_context(),
         )
         assert result == "/mnt/test"
-        service._driver_coordinator.mount.assert_called_once()
+        # R7c: kernel-backed mount path goes through ``nexus_fs.sys_setattr``
+        # (entry_type=DT_MOUNT) instead of the legacy ``DLC.mount()`` facade.
+        service.nexus_fs.sys_setattr.assert_called_once()
         # unmount should NOT be called on success
         service._driver_coordinator.unmount.assert_not_called()
 
@@ -100,8 +102,9 @@ class TestAddMountRollback:
                 context=_op_context(),
             )
 
-        # Coordinator mount was called, then rollback via unmount
-        service._driver_coordinator.mount.assert_called_once()
+        # Kernel mount call via sys_setattr fires first, then rollback via
+        # DLC.unmount() runs in the except branch of add_mount_sync.
+        service.nexus_fs.sys_setattr.assert_called_once()
         service._driver_coordinator.unmount.assert_called_once_with("/mnt/test")
 
     def test_mkdir_failure_is_best_effort_no_rollback(self) -> None:

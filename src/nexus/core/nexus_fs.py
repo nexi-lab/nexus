@@ -2117,6 +2117,20 @@ class NexusFS(  # type: ignore[misc]
         content_hash = result.content_id or ""
         size = result.size if result.hit else len(buf)
         new_version = result.version
+        # The Rust kernel owns the CAS blob write (F2 C4) and does not touch
+        # the Python-side bloom filter on the backend. Surface the new hash to
+        # the Python bloom so backend.content_exists() fast-path doesn't miss
+        # blobs the kernel just persisted (Issue #3706/#3765 regression).
+        if content_hash:
+            try:
+                _route = self.router.route(
+                    path, is_admin=is_admin, check_write=False, zone_id=self._zone_id
+                )
+                _bloom = getattr(getattr(_route, "backend", None), "_bloom", None)
+                if _bloom is not None:
+                    _bloom.add(content_hash)
+            except Exception as _exc:  # pragma: no cover - bloom is best-effort
+                logger.debug("bloom.add after sys_write failed for %s: %s", path, _exc)
         post_metadata = FileMetadata(
             path=path,
             backend_name=_meta.backend_name if _meta else "",
@@ -4994,6 +5008,28 @@ class NexusFS(  # type: ignore[misc]
 
         # Close metadata store
         self.metadata.close()
+
+        # Release Rust-owned redb/SQLite file handles. Without this call the
+        # Rust kernel keeps the metastore Box alive until Python GC runs —
+        # process-lifetime tests that open the same redb path in a second
+        # NexusFS hit ``Database already open. Cannot acquire lock.`` (Issue
+        # #3765 Cat-5/6). ``release_metastores`` is idempotent.
+        if self._kernel is not None:
+            try:
+                _release = getattr(self._kernel, "release_metastores", None)
+                if _release is not None:
+                    _release()
+            except Exception as exc:  # pragma: no cover - best-effort teardown
+                logger.debug("kernel.release_metastores failed: %s", exc)
+            # Drop this kernel from the shared SQLiteMetastore cache so the
+            # next ``SQLiteMetastore(path)`` in this process gets a fresh
+            # kernel with its own metastore wired up (Issue #3765 Cat-5/6).
+            try:
+                from nexus.fs._sqlite_meta import _evict_kernel_cache
+
+                _evict_kernel_cache(self._kernel)
+            except Exception as exc:  # pragma: no cover - best-effort
+                logger.debug("_evict_kernel_cache failed: %s", exc)
 
         # Close record store (Services layer SQL connections)
         if self._record_store is not None:

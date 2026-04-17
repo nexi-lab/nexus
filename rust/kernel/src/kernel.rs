@@ -458,7 +458,7 @@ pub struct Kernel {
     // Mount table — owns backend + per-mount metastore + access flags.
     // Replaces the old `router: PathRouter` + `mount_metastores: DashMap`
     // split; both lookups now go through `MountTable` (F2 C2).
-    mount_table: MountTable,
+    pub(crate) mount_table: MountTable,
     // PathTrie (owned)
     trie: Trie,
     // Unified lock manager: I/O lock + advisory lock + optional Raft.

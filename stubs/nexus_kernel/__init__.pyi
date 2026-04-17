@@ -383,6 +383,9 @@ class Kernel:
         offset: int,
         origins: list[str] | None = None,
     ) -> str: ...
+    def llm_start_streaming(
+        self, mount_point: str, zone_id: str, request_bytes: bytes, stream_path: str
+    ) -> None: ...
     def sys_setattr(
         self,
         path: str,
@@ -396,6 +399,11 @@ class Kernel:
         openai_base_url: str | None,
         openai_api_key: str | None,
         openai_model: str | None,
+        openai_blob_root: str | None,
+        anthropic_base_url: str | None,
+        anthropic_api_key: str | None,
+        anthropic_model: str | None,
+        anthropic_blob_root: str | None,
         s3_bucket: str | None,
         s3_prefix: str | None,
         aws_region: str | None,

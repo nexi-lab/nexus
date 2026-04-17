@@ -12,6 +12,10 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 pub use contracts::ROOT_ZONE_ID;
 
 mod agent_registry;
+#[cfg(feature = "connectors")]
+mod anthropic_backend;
+#[cfg(feature = "connectors")]
+pub mod anthropic_streaming;
 pub mod backend;
 mod bitmap;
 mod bloom;
@@ -49,6 +53,8 @@ pub mod generated_pyo3;
 mod openai_backend;
 #[cfg(feature = "connectors")]
 mod openai_inference;
+#[cfg(feature = "connectors")]
+pub mod openai_streaming;
 mod path_utils;
 mod peer_blob_client;
 mod permission_hook;

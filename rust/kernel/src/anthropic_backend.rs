@@ -1,11 +1,18 @@
-//! OpenAI-compatible connector — CAS-backed HTTP client (R10d-LLM-Port).
+//! Anthropic-native connector — CAS-backed HTTP client (PR-B v12).
 //!
-//! Owns a `CASEngine` wired with `MessageBoundaryStrategy` so every
-//! conversation JSON we persist gets per-message chunk dedup for free. HTTP
-//! runs on a kernel-shared tokio runtime (passed in at construction) so
-//! workers shut down cleanly on kernel drop. The streaming entry point lives
-//! in `openai_streaming.rs` as an `impl` block on this struct — splitting the
-//! SSE state machine away from the storage + config surface.
+//! Mirror of `openai_backend.rs`: owns a `CASEngine` wired with
+//! `MessageBoundaryStrategy` so conversation JSON persists as per-message
+//! chunks for cross-session dedup. HTTP runs on the kernel-shared tokio
+//! runtime. The streaming entry point lives in `anthropic_streaming.rs` as
+//! an `impl` block on this struct so the Messages-API SSE state machine
+//! stays in one file.
+//!
+//! Wire-format differences vs OpenAI live in `anthropic_streaming.rs`:
+//!   - Endpoint `/v1/messages` (not `/chat/completions`).
+//!   - Auth via `x-api-key` + `anthropic-version` (not `Authorization: Bearer`).
+//!   - Request body shape: top-level `system` / `tool_result` content blocks.
+//!   - SSE event-type state machine (`message_start`, `content_block_delta`,
+//!     `message_stop`) instead of OpenAI's per-frame JSON with `[DONE]`.
 
 #![allow(dead_code)]
 
@@ -18,35 +25,27 @@ use crate::cas_engine::CASEngine;
 use crate::cas_transport::LocalCASTransport;
 use crate::kernel::OperationContext;
 
-/// OpenAI-compatible backend — CAS-backed blob storage + HTTP inference.
+/// Anthropic-native backend — CAS-backed blob storage + Messages API HTTP.
 ///
-/// Storage: `CASEngine(LocalCASTransport, MessageBoundaryStrategy)`. Writes
-/// conversation JSON as per-message chunks — two sessions sharing the first
-/// N messages reuse the same N chunk blobs in the spool.
-pub(crate) struct OpenAIBackend {
+/// Storage: `CASEngine(LocalCASTransport, MessageBoundaryStrategy)`. Two
+/// conversations sharing the first N messages reuse the same N chunk blobs
+/// in the spool — identical dedup semantics to `OpenAIBackend`.
+pub(crate) struct AnthropicBackend {
     pub(crate) backend_name: String,
     pub(crate) base_url: String,
     pub(crate) api_key: String,
     pub(crate) default_model: String,
-    /// CAS engine rooted at the per-mount spool dir. `as_cas()` exposes this
-    /// to the `PyKernel::cas_*` surface so Python callers can read/write on
-    /// LLM mounts without the legacy `CASOpenAIBackend` Python wrapper.
     pub(crate) engine: CASEngine,
-    /// Shared reqwest HTTP client — one TCP/H2 pool is reused across every
-    /// chat completion + streaming call on this mount.
     pub(crate) http: reqwest::Client,
-    /// Kernel-owned tokio runtime. Cloned from `Kernel::peer_client.runtime()`
-    /// so scatter-gather fetches and LLM calls share workers instead of each
-    /// backend spawning its own pool.
     pub(crate) runtime: Arc<tokio::runtime::Runtime>,
 }
 
-impl OpenAIBackend {
-    /// Build an OpenAI-compatible backend.
+impl AnthropicBackend {
+    /// Build an Anthropic-native backend.
     ///
-    /// `blob_root` is the spool dir under which CAS blobs are stored — the
-    /// caller (`sys_setattr`) derives this from the kernel root so per-mount
-    /// state is cleanly namespaced and can be removed on unmount.
+    /// `blob_root` — spool dir for per-mount CAS state. `base_url` defaults
+    /// to the public Anthropic Messages API; override for proxies such as
+    /// SudoRouter or local test fixtures.
     pub(crate) fn new(
         name: &str,
         base_url: &str,
@@ -72,7 +71,6 @@ impl OpenAIBackend {
         })
     }
 
-    /// Expose the CASEngine to the `PyKernel::cas_*` surface.
     pub(crate) fn engine(&self) -> &CASEngine {
         &self.engine
     }
@@ -80,7 +78,7 @@ impl OpenAIBackend {
 
 // ── ObjectStore impl — all storage goes through CASEngine ──────────────
 
-impl ObjectStore for OpenAIBackend {
+impl ObjectStore for AnthropicBackend {
     fn name(&self) -> &str {
         &self.backend_name
     }
@@ -148,13 +146,13 @@ mod tests {
         OperationContext::new("test", "root", false, None, false)
     }
 
-    fn build(tmp: &TempDir) -> OpenAIBackend {
+    fn build(tmp: &TempDir) -> AnthropicBackend {
         let rt = crate::peer_blob_client::build_kernel_runtime();
-        OpenAIBackend::new(
-            "openai_compatible",
-            "https://api.openai.com/v1",
-            "sk-test",
-            "gpt-4o",
+        AnthropicBackend::new(
+            "anthropic_native",
+            "https://api.anthropic.com",
+            "sk-ant-test",
+            "claude-sonnet-4-20250514",
             tmp.path(),
             rt,
         )
@@ -165,7 +163,7 @@ mod tests {
     fn test_name() {
         let tmp = TempDir::new().unwrap();
         let b = build(&tmp);
-        assert_eq!(b.name(), "openai_compatible");
+        assert_eq!(b.name(), "anthropic_native");
     }
 
     #[test]
@@ -173,7 +171,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let b = build(&tmp);
         let ctx = test_ctx();
-        let payload = br#"hello llm backend"#;
+        let payload = br#"hello anthropic backend"#;
         let wr = b.write_content(payload, "", &ctx).unwrap();
         assert_eq!(wr.size, payload.len() as u64);
         let back = b.read_content(&wr.content_id, "", &ctx).unwrap();
@@ -181,9 +179,10 @@ mod tests {
     }
 
     #[test]
-    fn test_openai_backend_cas_ops_use_message_boundary() {
+    fn test_anthropic_backend_cas_ops_use_message_boundary() {
         // Two conversations sharing the first two messages must dedup those
-        // chunks — validates that MessageBoundaryStrategy is wired.
+        // chunks — validates MessageBoundaryStrategy is wired (same test
+        // shape as the OpenAIBackend counterpart).
         let tmp = TempDir::new().unwrap();
         let b = build(&tmp);
         let ctx = test_ctx();
@@ -195,12 +194,9 @@ mod tests {
         let wr_b = b.write_content(conv_b, "", &ctx).unwrap();
         assert_ne!(wr_a.content_id, wr_b.content_id);
 
-        // Both must be chunked manifests (MessageBoundary accepts any valid
-        // role-carrying JSON array).
         assert!(b.engine.is_chunked(&wr_a.content_id));
         assert!(b.engine.is_chunked(&wr_b.content_id));
 
-        // Dedup check — the shared prefix chunks exist exactly once.
         let manifest_a_bytes = b.engine.transport().read_blob(&wr_a.content_id).unwrap();
         let manifest_a: serde_json::Value = serde_json::from_slice(&manifest_a_bytes).unwrap();
         let manifest_b_bytes = b.engine.transport().read_blob(&wr_b.content_id).unwrap();
@@ -210,23 +206,9 @@ mod tests {
         let chunks_b = manifest_b["chunks"].as_array().unwrap();
         assert_eq!(chunks_a.len(), 3);
         assert_eq!(chunks_b.len(), 3);
-        // First two chunks (shared prefix) match by hash.
         assert_eq!(chunks_a[0]["chunk_hash"], chunks_b[0]["chunk_hash"]);
         assert_eq!(chunks_a[1]["chunk_hash"], chunks_b[1]["chunk_hash"]);
-        // Third chunk (divergent last message) differs.
         assert_ne!(chunks_a[2]["chunk_hash"], chunks_b[2]["chunk_hash"]);
-    }
-
-    #[test]
-    fn test_delete_chunked_content_sweeps_chunks() {
-        let tmp = TempDir::new().unwrap();
-        let b = build(&tmp);
-        let ctx = test_ctx();
-        let conv = br#"[{"role":"user","content":"hi"},{"role":"assistant","content":"hello"}]"#;
-        let wr = b.write_content(conv, "", &ctx).unwrap();
-        assert!(b.engine.is_chunked(&wr.content_id));
-        b.delete_content(&wr.content_id).unwrap();
-        assert!(!b.engine.content_exists(&wr.content_id));
     }
 
     #[test]

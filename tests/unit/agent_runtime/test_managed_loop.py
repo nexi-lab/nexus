@@ -138,11 +138,10 @@ def _make_vfs_loop(
 
             raise StreamClosedError("stream closed") from None
 
-    # Mock CASOpenAIBackend
-    llm_backend = MagicMock()
-    llm_backend.start_streaming = AsyncMock(
-        return_value={"stream_path": "/zone/llm/.streams/test", "status": "streaming"}
-    )
+    # Mock the Rust-kernel streaming entry point (ManagedAgentLoop now takes
+    # a `llm_start_streaming` async callable; the test just needs it to return
+    # immediately so the stream_read mock can drive the token loop).
+    llm_start_streaming = AsyncMock(return_value=None)
 
     sys_read_mock = AsyncMock(side_effect=mock_sys_read)
     sys_write_mock = AsyncMock(side_effect=mock_sys_write)
@@ -152,7 +151,7 @@ def _make_vfs_loop(
         sys_read=sys_read_mock,
         sys_write=sys_write_mock,
         stream_read=stream_read_mock,
-        llm_backend=llm_backend,
+        llm_start_streaming=llm_start_streaming,
         agent_path="/zone/agents/test-agent",
         llm_path="/zone/llm/openai",
         conv_path="/zone/agents/test-agent/conversation",
@@ -164,7 +163,7 @@ def _make_vfs_loop(
         "sys_read": sys_read_mock,
         "sys_write": sys_write_mock,
         "stream_read": stream_read_mock,
-        "llm_backend": llm_backend,
+        "llm_start_streaming": llm_start_streaming,
         "write_store": write_store,
         "read_store": read_store,
     }
@@ -196,15 +195,15 @@ class TestManagedAgentLoop:
 
     @pytest.mark.asyncio()
     async def test_run_calls_llm_via_streaming_service(self) -> None:
-        """LLM call goes through CASOpenAIBackend.start_streaming()."""
+        """LLM call goes through the Rust llm_start_streaming entry point."""
         loop, mocks = _make_vfs_loop()
         await loop.initialize()
 
         await loop.run("Hi")
 
-        # CASOpenAIBackend.start_streaming was called
-        mocks["llm_backend"].start_streaming.assert_called_once()
-        call_args = mocks["llm_backend"].start_streaming.call_args
+        # llm_start_streaming(request_bytes, stream_path) was called.
+        mocks["llm_start_streaming"].assert_called_once()
+        call_args = mocks["llm_start_streaming"].call_args
         request_bytes = call_args[0][0]
         request = json.loads(request_bytes)
         assert "messages" in request

@@ -109,6 +109,7 @@ KERNEL_REQUIRED_METHODS: frozenset[str] = frozenset(
         "kernel_unmount",
         "list_pipes",
         "list_streams",
+        "llm_start_streaming",
         "match_watches",
         "metastore_batch_get_content_ids",
         "metastore_delete",

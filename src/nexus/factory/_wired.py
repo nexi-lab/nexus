@@ -1,6 +1,5 @@
 """Boot Tier 2b (POST-KERNEL) — services needing NexusFS reference."""
 
-import contextlib
 import logging
 import time
 from collections.abc import Callable
@@ -572,30 +571,6 @@ async def _boot_post_kernel_services(
             logger.debug("[BOOT:WIRED] OperationsService created")
         except Exception as exc:
             logger.debug("[BOOT:WIRED] OperationsService unavailable: %s", exc)
-
-    # Inject StreamManager into LLM backends for DT_STREAM orchestration.
-    try:
-        from nexus.backends.compute.openai_compatible import CASOpenAIBackend
-
-        for _llm_prefix in ("/llm", "/root/llm"):
-            with contextlib.suppress(Exception):
-                _candidate = nx.router.route(_llm_prefix).backend
-                if isinstance(_candidate, CASOpenAIBackend):
-                    _candidate.set_stream_manager(nx)
-                    logger.debug("Injected NexusFS into CASOpenAIBackend at %s", _llm_prefix)
-    except Exception:
-        pass
-    try:
-        from nexus.backends.compute.anthropic_native import CASAnthropicBackend
-
-        for _llm_prefix in ("/llm/anthropic", "/root/llm/anthropic"):
-            with contextlib.suppress(Exception):
-                _candidate = nx.router.route(_llm_prefix).backend
-                if isinstance(_candidate, CASAnthropicBackend):
-                    _candidate.set_stream_manager(nx)
-                    logger.debug("Injected NexusFS into CASAnthropicBackend at %s", _llm_prefix)
-    except Exception:
-        pass
 
     result: dict[str, Any] = {
         "rebac_service": rebac_service,

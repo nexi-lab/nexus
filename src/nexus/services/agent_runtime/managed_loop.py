@@ -19,7 +19,9 @@ Reuses AgentObserver for notification accumulation (shared with
 DI dependencies (kernel syscall callables):
     - sys_read:  NexusFS.sys_read wrapper
     - sys_write: NexusFS.sys_write wrapper
-    - llm_backend: CASOpenAIBackend for LLM streaming + CAS
+    - llm_start_streaming: ``async (request_bytes, stream_path) -> None``
+        — thin wrapper around ``nx.llm_start_streaming(...)`` that dispatches
+        into the Rust SSE → DT_STREAM pipeline on a worker thread.
     - agent_path: VFS path for agent config (SYSTEM.md, tools.json)
     - llm_path: VFS mount path for LLM backend
     - conv_path: VFS path for conversation persistence (CAS)
@@ -38,7 +40,7 @@ import json
 import logging
 import uuid
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from nexus.contracts.exceptions import BackendError
 from nexus.services.agent_runtime.compaction import (
@@ -58,9 +60,6 @@ from nexus.services.agent_runtime.tool_registry import (
     MessageBudgetPolicy,
     ToolRegistry,
 )
-
-if TYPE_CHECKING:
-    from nexus.backends.compute.openai_compatible import CASOpenAIBackend
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +83,7 @@ class ManagedAgentLoop:
 
     Every I/O operation goes through kernel VFS syscalls:
 
-    - LLM calls via ``CASOpenAIBackend`` (DT_STREAM delivery)
+    - LLM calls via Rust ``OpenAIBackend`` (SSE → DT_STREAM pump)
     - Token reads via ``sys_read`` on DT_STREAM (kernel IPC)
     - Conversation via ``sys_write`` to CAS-addressed VFS path
     - Config (system prompt, tools) via ``sys_read`` from VFS
@@ -101,7 +100,7 @@ class ManagedAgentLoop:
         sys_read: SysReadFn,
         sys_write: SysWriteFn,
         stream_read: StreamReadFn,
-        llm_backend: "CASOpenAIBackend",
+        llm_start_streaming: Callable[[bytes, str], Awaitable[None]],
         agent_path: str,
         llm_path: str,
         conv_path: str,
@@ -120,7 +119,7 @@ class ManagedAgentLoop:
         self._sys_read = sys_read
         self._sys_write = sys_write
         self._stream_read = stream_read
-        self._llm_backend = llm_backend
+        self._llm_start_streaming = llm_start_streaming
         self._agent_path = agent_path  # /{zone}/agents/{id}
         self._llm_path = llm_path  # /{zone}/llm/openai
         self._conv_path = conv_path  # /{zone}/agents/{id}/conversation
@@ -212,7 +211,7 @@ class ManagedAgentLoop:
 
         All I/O through VFS:
             1. Append user message → persist conversation (sys_write)
-            2. Start LLM stream (CASOpenAIBackend → DT_STREAM)
+            2. Start LLM stream (Rust llm_start_streaming → DT_STREAM)
             3. Read tokens from DT_STREAM (sys_read / stream_read)
             4. Parse response: tool_calls? → execute via VFS → loop
                                text? → persist result → return
@@ -363,7 +362,7 @@ class ManagedAgentLoop:
         """Call LLM through kernel VFS path.
 
         1. Build request from conversation state
-        2. CASOpenAIBackend.start_streaming() → creates DT_STREAM
+        2. nx.llm_start_streaming() → Rust SSE decode → DT_STREAM pump
         3. Read tokens from DT_STREAM via stream_read (kernel IPC)
         4. Parse final "done" message for session hash + metadata
         """
@@ -376,8 +375,8 @@ class ManagedAgentLoop:
         request_bytes = json.dumps(request, separators=(",", ":")).encode("utf-8")
         stream_path = f"{self._llm_path}/.streams/{self._session_id}-{uuid.uuid4().hex[:8]}"
 
-        # Start LLM streaming via kernel service
-        await self._llm_backend.start_streaming(request_bytes, stream_path)
+        # Start LLM streaming via kernel (Rust nx.llm_start_streaming worker)
+        await self._llm_start_streaming(request_bytes, stream_path)
 
         # Read tokens from DT_STREAM (kernel IPC, non-destructive)
         tokens: list[str] = []
@@ -410,9 +409,9 @@ class ManagedAgentLoop:
         response_text = "".join(tokens)
 
         # Extract tool_calls from the "done" control message metadata.
-        # CASOpenAIBackend.generate_streaming() accumulates incremental
-        # tool_call fragments and includes the complete list in the final
-        # metadata, which _run_stream() forwards in the "done" message.
+        # The Rust OpenAIBackend streaming loop accumulates incremental
+        # tool_call fragments and emits the complete list in the final
+        # "done" control frame.
         tool_calls: list[dict[str, Any]] = (meta or {}).get("tool_calls", [])
 
         return response_text, tool_calls, meta

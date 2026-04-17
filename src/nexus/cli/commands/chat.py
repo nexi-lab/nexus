@@ -118,16 +118,20 @@ async def _run_chat(
 
     try:
         # ── Mount LLM backend ──
-        from nexus.backends.compute.openai_compatible import CASOpenAIBackend
-
-        llm_backend = CASOpenAIBackend(base_url=base_url, api_key=api_key, default_model=model)
-
-        # Inject NexusFS for DT_STREAM orchestration (Rust kernel)
-        llm_backend.set_stream_manager(nx)
-
+        # Pure Rust — the openai_compatible mount is created directly by the
+        # kernel. Rust-side OpenAIBackend owns HTTP, SSE decoding, CAS
+        # persistence and DT_STREAM pump.
         from nexus.contracts.metadata import DT_MOUNT
 
-        nx.sys_setattr("/llm", entry_type=DT_MOUNT, backend=llm_backend)
+        nx.sys_setattr(
+            "/llm",
+            entry_type=DT_MOUNT,
+            backend_type="openai",
+            backend_name="openai_compatible",
+            openai_base_url=base_url,
+            openai_api_key=api_key,
+            openai_model=model,
+        )
 
         # ── Mount external tool directories (Tier B, §1.5) ──
         if tools:
@@ -164,11 +168,19 @@ async def _run_chat(
             data = _nx_stream_read(path, offset=offset)
             return data, offset + len(data)
 
+        # Bridge to Rust kernel: llm_start_streaming runs the full SSE →
+        # DT_STREAM → CAS-persist pipeline in a worker thread so asyncio
+        # can keep pumping the token reader without blocking.
+        async def _llm_start_streaming(request_bytes: bytes, stream_path: str) -> None:
+            await asyncio.to_thread(
+                nx._kernel.llm_start_streaming, "/llm", "root", request_bytes, stream_path
+            )
+
         loop = ManagedAgentLoop(
             sys_read=_async_sys_read,
             sys_write=_async_sys_write,
             stream_read=_stream_read_adapter,
-            llm_backend=llm_backend,
+            llm_start_streaming=_llm_start_streaming,
             agent_path=agent_path,
             llm_path="/llm",
             conv_path=f"{agent_path}/conversation",

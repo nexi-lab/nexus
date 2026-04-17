@@ -923,17 +923,45 @@ class NexusFS(  # type: ignore[misc]
 
         # ── DT_MOUNT: resolve backend params for Rust kernel ─────────
         if entry_type == DT_MOUNT:
+            backend_type = attrs.get("backend_type", "cas")
             backend = attrs.get("backend")
-            if backend is None:
-                raise ValueError(
-                    "sys_setattr(entry_type=DT_MOUNT) requires 'backend' attribute "
-                    "(pre-constructed ObjectStoreABC instance)"
-                )
             readonly = attrs.get("readonly", False)
             admin_only = attrs.get("admin_only", False)
             io_profile = attrs.get("io_profile", "balanced")
             zone_id = attrs.get("zone_id", ROOT_ZONE_ID)
             metastore = attrs.get("metastore")
+
+            # LLM backends — Rust owns the ObjectStore; no Python shim.
+            # `backend_type="openai"` / `"anthropic"` triggers the native
+            # construction path in `PyKernel::sys_setattr` via the typed
+            # kwarg passthrough below.
+            if backend_type in ("openai", "anthropic") and backend is None:
+                _backend_name = attrs.get("backend_name", backend_type)
+                result = self._kernel.sys_setattr(
+                    path,
+                    entry_type,
+                    _backend_name,
+                    backend_type=backend_type,
+                    openai_base_url=attrs.get("openai_base_url"),
+                    openai_api_key=attrs.get("openai_api_key"),
+                    openai_model=attrs.get("openai_model"),
+                    openai_blob_root=attrs.get("openai_blob_root"),
+                    anthropic_base_url=attrs.get("anthropic_base_url"),
+                    anthropic_api_key=attrs.get("anthropic_api_key"),
+                    anthropic_model=attrs.get("anthropic_model"),
+                    anthropic_blob_root=attrs.get("anthropic_blob_root"),
+                    readonly=readonly,
+                    admin_only=admin_only,
+                    io_profile=io_profile,
+                    zone_id=zone_id,
+                )
+                return result
+
+            if backend is None:
+                raise ValueError(
+                    "sys_setattr(entry_type=DT_MOUNT) requires 'backend' attribute "
+                    "(pre-constructed ObjectStoreABC instance)"
+                )
             _backend_name = backend.name if isinstance(backend.name, str) else str(backend.name)
 
             # CAS-local detection — Rust takes ownership of the backend natively.
@@ -4906,9 +4934,10 @@ class NexusFS(  # type: ignore[misc]
     # Tier 2 public sync stream methods (kernel passthroughs)
     # ------------------------------------------------------------------
     # Stream counterparts to the pipe convenience methods above. Used by
-    # LLM streaming backends (CASOpenAIBackend) where a tight token-pump
-    # loop calls ``stream_write_nowait`` per token and ``stream_read_at``
-    # for offset-based replay — async wrapping would just add ping-pong.
+    # LLM streaming backends (Rust OpenAIBackend / AnthropicBackend via
+    # nx.llm_start_streaming) where a tight token-pump loop calls
+    # ``stream_write_nowait`` per token and ``stream_read_at`` for
+    # offset-based replay — async wrapping would just add ping-pong.
 
     def stream_create(self, path: str, capacity: int = 65_536) -> None:
         """Create a DT_STREAM in the kernel registry."""

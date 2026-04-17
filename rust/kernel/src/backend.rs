@@ -83,6 +83,16 @@ pub trait ObjectStore: Send + Sync {
         None
     }
 
+    /// Downcast to a streaming-capable LLM backend. Default returns `None`.
+    /// Only `OpenAIBackend` (and future `AnthropicBackend`) override.
+    /// Consumed by `PyKernel::llm_start_streaming` — any ObjectStore that
+    /// returns `Some` must implement the full SSE → DT_STREAM →
+    /// `CASEngine::write_content_tracked` pipeline.
+    #[cfg(feature = "connectors")]
+    fn as_llm_streaming(&self) -> Option<&dyn crate::openai_streaming::LlmStreamingBackend> {
+        None
+    }
+
     /// Write content to storage and return a `WriteResult`.
     ///
     /// - `content_id`: Target address for the content.

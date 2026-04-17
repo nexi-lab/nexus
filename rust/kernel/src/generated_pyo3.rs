@@ -1610,9 +1610,59 @@ impl PyKernel {
         .map_err(Into::into)
     }
 
+    // ── R10d: LLM streaming entry point (OpenAI / SSE) ───────────────
+    //
+    // Resolves (mount_point, zone_id) → OpenAIBackend via
+    // `ObjectStore::as_llm_streaming()`, then runs the full SSE → DT_STREAM
+    // → CAS-persist pipeline in a GIL-free worker. Caller is expected to
+    // invoke via `asyncio.to_thread(...)` so the event loop is not blocked
+    // for the duration of the completion.
+
+    #[cfg(feature = "connectors")]
+    fn llm_start_streaming<'py>(
+        &self,
+        py: Python<'py>,
+        mount_point: &str,
+        zone_id: &str,
+        request_bytes: Vec<u8>,
+        stream_path: &str,
+    ) -> PyResult<()> {
+        let canonical = crate::mount_table::canonicalize_mount_path(mount_point, zone_id);
+        let entry = self
+            .inner
+            .mount_table
+            .get_canonical(&canonical)
+            .ok_or_else(|| {
+                pyo3::exceptions::PyFileNotFoundError::new_err(format!(
+                    "llm_start_streaming: mount not found: {}@{}",
+                    mount_point, zone_id
+                ))
+            })?;
+        let backend = entry.backend.as_ref().ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err(format!(
+                "llm_start_streaming: mount has no backend: {}",
+                entry.backend_name
+            ))
+        })?;
+        let llm = backend.as_llm_streaming().ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err(format!(
+                "llm_start_streaming: backend {} does not support streaming",
+                entry.backend_name
+            ))
+        })?;
+        let stream_manager = Arc::clone(&self.inner.stream_manager);
+        let stream_path_owned = stream_path.to_string();
+        py.detach(move || {
+            llm.run_streaming(&request_bytes, &stream_path_owned, &stream_manager)
+                .map_err(|e| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!("llm_start_streaming: {}", e))
+                })
+        })
+    }
+
     // ── sys_setattr — unified mount/attr syscall ─────────────────────
 
-    #[pyo3(signature = (path, entry_type, backend_name="", local_root=None, fsync=false, py_backend=None, backend_type="cas", follow_symlinks=true, openai_base_url=None, openai_api_key=None, openai_model=None, s3_bucket=None, s3_prefix=None, aws_region=None, aws_access_key=None, aws_secret_key=None, s3_endpoint=None, gcs_bucket=None, gcs_prefix=None, access_token=None, root_folder_id=None, bot_token=None, default_channel=None, metastore_path=None, py_zone_handle=None, readonly=false, admin_only=false, io_profile="balanced", zone_id="root", is_external=false, capacity=65536, mime_type=None, modified_at_ms=None, read_fd=None, write_fd=None))]
+    #[pyo3(signature = (path, entry_type, backend_name="", local_root=None, fsync=false, py_backend=None, backend_type="cas", follow_symlinks=true, openai_base_url=None, openai_api_key=None, openai_model=None, openai_blob_root=None, anthropic_base_url=None, anthropic_api_key=None, anthropic_model=None, anthropic_blob_root=None, s3_bucket=None, s3_prefix=None, aws_region=None, aws_access_key=None, aws_secret_key=None, s3_endpoint=None, gcs_bucket=None, gcs_prefix=None, access_token=None, root_folder_id=None, bot_token=None, default_channel=None, metastore_path=None, py_zone_handle=None, readonly=false, admin_only=false, io_profile="balanced", zone_id="root", is_external=false, capacity=65536, mime_type=None, modified_at_ms=None, read_fd=None, write_fd=None))]
     #[allow(clippy::too_many_arguments)]
     fn sys_setattr<'py>(
         &self,
@@ -1628,6 +1678,11 @@ impl PyKernel {
         openai_base_url: Option<&str>,
         openai_api_key: Option<&str>,
         openai_model: Option<&str>,
+        openai_blob_root: Option<&str>,
+        anthropic_base_url: Option<&str>,
+        anthropic_api_key: Option<&str>,
+        anthropic_model: Option<&str>,
+        anthropic_blob_root: Option<&str>,
         s3_bucket: Option<&str>,
         s3_prefix: Option<&str>,
         aws_region: Option<&str>,
@@ -1660,8 +1715,55 @@ impl PyKernel {
                 let base = openai_base_url.unwrap_or("https://api.openai.com/v1");
                 let key = openai_api_key.unwrap_or("");
                 let model = openai_model.unwrap_or("gpt-4o");
-                let b = crate::openai_backend::OpenAIBackend::new(backend_name, base, key, model)
-                    .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
+                // Spool dir — caller-supplied, or a per-backend scratch
+                // under std::env::temp_dir (LLM conversations are small; the
+                // real value of durability is cross-request prefix dedup).
+                let blob_root = match openai_blob_root {
+                    Some(p) => std::path::PathBuf::from(p),
+                    None => std::env::temp_dir()
+                        .join("nexus_llm_spool")
+                        .join(backend_name),
+                };
+                let rt = Arc::clone(self.inner.peer_client.runtime());
+                let b = crate::openai_backend::OpenAIBackend::new(
+                    backend_name,
+                    base,
+                    key,
+                    model,
+                    &blob_root,
+                    rt,
+                )
+                .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
+                Some(Box::new(b))
+            }
+            #[cfg(not(feature = "connectors"))]
+            {
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                    "connectors feature not enabled",
+                ));
+            }
+        } else if backend_type == "anthropic" {
+            #[cfg(feature = "connectors")]
+            {
+                let base = anthropic_base_url.unwrap_or("https://api.anthropic.com");
+                let key = anthropic_api_key.unwrap_or("");
+                let model = anthropic_model.unwrap_or("claude-sonnet-4-20250514");
+                let blob_root = match anthropic_blob_root {
+                    Some(p) => std::path::PathBuf::from(p),
+                    None => std::env::temp_dir()
+                        .join("nexus_llm_spool")
+                        .join(backend_name),
+                };
+                let rt = Arc::clone(self.inner.peer_client.runtime());
+                let b = crate::anthropic_backend::AnthropicBackend::new(
+                    backend_name,
+                    base,
+                    key,
+                    model,
+                    &blob_root,
+                    rt,
+                )
+                .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
                 Some(Box::new(b))
             }
             #[cfg(not(feature = "connectors"))]

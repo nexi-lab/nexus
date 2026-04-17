@@ -9,6 +9,15 @@ from nexus.cli.commands.auth_cli import auth as cli_auth
 from nexus.fs._auth_cli import auth as fs_auth
 
 
+def _materialize(group):
+    """fs_auth is a lazy Click group — it loads subcommands from
+    ``nexus.bricks.auth.cli_commands`` on first resolution to keep ``nexus.fs``
+    free of an eager bricks import.  Trigger the load by calling
+    ``list_commands``, then inspect ``.commands`` normally."""
+    group.list_commands(None)
+    return group
+
+
 def test_same_subcommands_registered() -> None:
     """Both entry points expose the same set of subcommands.
 
@@ -17,13 +26,17 @@ def test_same_subcommands_registered() -> None:
     in the slim wheel), but when the full package is installed they share
     identical subcommand references.
     """
-    assert set(cli_auth.commands.keys()) == set(fs_auth.commands.keys())
+    cli = _materialize(cli_auth)
+    fs = _materialize(fs_auth)
+    assert set(cli.commands.keys()) == set(fs.commands.keys())
 
 
 def test_same_subcommand_objects() -> None:
     """Subcommand objects are the literal same references — no handler drift."""
-    for name, cli_cmd in cli_auth.commands.items():
-        assert fs_auth.commands[name] is cli_cmd, (
+    cli = _materialize(cli_auth)
+    fs = _materialize(fs_auth)
+    for name, cli_cmd in cli.commands.items():
+        assert fs.commands[name] is cli_cmd, (
             f"subcommand {name!r} has drifted between nexus auth and nexus-fs auth"
         )
 

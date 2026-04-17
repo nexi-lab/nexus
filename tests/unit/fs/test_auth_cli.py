@@ -216,8 +216,11 @@ def test_fs_auth_cli_loads_in_slim_package_without_bricks(monkeypatch):
         slim_module = importlib.import_module("nexus.fs._auth_cli")
         # Must expose an `auth` Click group so nexus.fs._cli can register it.
         assert slim_module.auth.name == "auth"
-        # No subcommands — bricks is unavailable.
-        assert dict(slim_module.auth.commands) == {}
+        # Trigger the lazy loader (list_commands) — bricks is blocked, so the
+        # group stays empty.  Previously this checked `.commands` directly,
+        # but the group now loads lazily to keep nexus.fs free of an eager
+        # bricks import (see src/nexus/fs/_auth_cli.py).
+        assert slim_module.auth.list_commands(None) == []
     finally:
         sys.meta_path.remove(blocker)
         # Restore prior modules so the full-package tests that follow see a

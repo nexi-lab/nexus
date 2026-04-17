@@ -203,8 +203,20 @@ async def _startup_durable_invalidation(app: "FastAPI", svc: "LifespanServices")
             return
 
         import redis.asyncio as aioredis
+        from redis.asyncio.retry import Retry
+        from redis.backoff import ExponentialBackoff
+        from redis.exceptions import ConnectionError as RedisConnectionError
+        from redis.exceptions import TimeoutError as RedisTimeoutError
 
-        redis_client = aioredis.Redis(connection_pool=connection_pool)
+        # Mirror the retry/backoff policy the sibling DragonflyClient configures
+        # on its own wrapped client (src/nexus/cache/dragonfly.py).  Without this
+        # a transient startup-race timeout against dragonfly bubbles up as a
+        # fatal error during server lifespan init instead of retrying.
+        redis_client = aioredis.Redis(
+            connection_pool=connection_pool,
+            retry=Retry(ExponentialBackoff(), retries=3),
+            retry_on_error=[RedisConnectionError, RedisTimeoutError],
+        )
 
         from nexus.bricks.rebac.cache.durable_stream import DurableInvalidationStream
         from nexus.bricks.rebac.cache.read_fence import ReadFence

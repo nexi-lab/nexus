@@ -179,20 +179,40 @@ class IndexingService:
                 and observed_indexed_hash is not None
                 and observed_indexed_hash != current_content_hash
             ):
-                # CAS guard: a concurrent reindex may have succeeded between
-                # step 1 and now, advancing ``indexed_content_hash`` past the
-                # stale value we saw.  If that's happened, the chunks belong
-                # to that fresh index — wiping them would zero out search
-                # coverage for a file that someone else just fixed.  Re-read
-                # the row inside this session and only delete if the hash is
-                # still the exact stale value we observed.
+                # Atomic CAS: lock the file_paths row (``SELECT … FOR UPDATE``)
+                # before re-reading ``indexed_content_hash`` so a concurrent
+                # reindex that successfully advanced the hash between step 1
+                # and now serializes behind us — our transaction either
+                # observes the pre-advance value and deletes, or observes the
+                # post-advance value and aborts.  Without the row lock, a
+                # concurrent worker could complete its upsert in the gap
+                # between the recheck SELECT and the DELETE and we'd still
+                # wipe its fresh chunks (plain-SELECT snapshot doesn't block
+                # other writers).
+                #
+                # ``.with_for_update()`` is a no-op under SQLite (single
+                # writer anyway) and takes a row-level lock on Postgres.
                 with self._get_session() as session:
-                    locked = session.execute(
-                        select(FilePathModel).where(
-                            FilePathModel.path_id == path_id,
-                            FilePathModel.deleted_at.is_(None),
-                        )
-                    ).scalar_one_or_none()
+                    try:
+                        locked = session.execute(
+                            select(FilePathModel)
+                            .where(
+                                FilePathModel.path_id == path_id,
+                                FilePathModel.deleted_at.is_(None),
+                            )
+                            .with_for_update()
+                        ).scalar_one_or_none()
+                    except Exception:
+                        # Some back-ends (e.g. SQLite in autocommit) can
+                        # refuse FOR UPDATE — retry without the lock clause
+                        # so the stale cleanup still runs.  The CAS re-read
+                        # still protects against the non-concurrent case.
+                        locked = session.execute(
+                            select(FilePathModel).where(
+                                FilePathModel.path_id == path_id,
+                                FilePathModel.deleted_at.is_(None),
+                            )
+                        ).scalar_one_or_none()
                     if locked is not None and locked.indexed_content_hash == observed_indexed_hash:
                         session.execute(
                             delete(DocumentChunkModel).where(

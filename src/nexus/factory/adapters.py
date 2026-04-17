@@ -171,6 +171,17 @@ class _NexusFSFileReader:
         # indexing pipeline reads this fast path before falling back to
         # ``read_text``, so without scrubbing here a poisoned cache entry
         # rolls back the Postgres write transaction.
+        #
+        # Parseable binaries (.pdf/.docx/.xlsx/…) MUST NOT take the fast path:
+        # the metastore entry is keyed by path alone, so without a hash
+        # companion check we can't prove the cached markdown matches the
+        # current bytes.  Cross-zone metadata collisions and rewrite-before-
+        # reindex races could otherwise re-index stale text and then latch
+        # it as "current" when ``IndexingService`` advances
+        # ``indexed_content_hash``.  Fall through to ``read_text`` which
+        # validates the cache against a sha256 of the raw bytes.
+        if is_parseable_path(path):
+            return None
         result: str | None = self._nx.metadata.get_searchable_text(path)
         if result is None:
             return None

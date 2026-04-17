@@ -626,6 +626,8 @@ async def handle_semantic_search_index(
         # pure transform rather than calling ``_NexusFSFileReader.read_text``
         # because the reader constructs an admin context internally and
         # would bypass the caller's permission scope.
+        import hashlib as _hashlib
+
         from nexus.factory._semantic_search import _resolve_parse_fn
         from nexus.factory.adapters import _apply_parse_transform
         from nexus.lib.virtual_views import is_parseable_path
@@ -635,12 +637,15 @@ async def handle_semantic_search_index(
         documents: list[dict[str, Any]] = []
         read_errors = 0
         total_chunks = 0
-        # Track parseable files that produced empty content after parse — they
-        # may have been successfully indexed on a previous tick, so their
-        # stale docs must be purged from the backend to avoid serving
-        # outdated text until the parser recovers (matches the stale-chunk
-        # cleanup IndexingService does for the daemon-refresh path).
-        stale_ids_to_delete: list[str] = []
+        # Track (doc_id, file_path, observed_raw_hash) tuples for parseable
+        # files that produced empty content after parse.  Purging them from
+        # the backend reclaims coverage lost when the parser was broken
+        # on a previous successful index pass, but we only want to purge
+        # when we can prove the file hasn't been rewritten between our
+        # read and the purge — otherwise a concurrent indexer with newer
+        # bytes could have already re-populated the doc, and our delete
+        # would wipe its fresh state.
+        stale_candidates: list[tuple[str, str, str]] = []
         for file_path in paths_to_index:
             try:
                 raw = nexus_fs.sys_read(file_path, context=context)
@@ -649,7 +654,12 @@ async def handle_semantic_search_index(
                 if content_str and content_str.strip():
                     documents.append({"id": doc_id, "text": content_str, "path": file_path})
                 elif is_parseable_path(file_path):
-                    stale_ids_to_delete.append(doc_id)
+                    raw_bytes = (
+                        raw if isinstance(raw, bytes) else str(raw).encode("utf-8", errors="ignore")
+                    )
+                    stale_candidates.append(
+                        (doc_id, file_path, _hashlib.sha256(raw_bytes).hexdigest())
+                    )
             except Exception as read_err:
                 read_errors += 1
                 _log.warning("Skipping %s: %s", file_path, read_err)
@@ -658,12 +668,56 @@ async def handle_semantic_search_index(
             "semantic_search_index: %d documents read (%d errors, %d parse-failed)",
             len(documents),
             read_errors,
-            len(stale_ids_to_delete),
+            len(stale_candidates),
         )
 
-        # Purge stale docs BEFORE upserting fresh ones so the backend view is
-        # monotonic: a caller observing the index between steps never sees
-        # both the outdated and fresh versions live simultaneously.
+        # CAS-guard the purge against concurrent writers.  Re-read
+        # ``file_paths.content_hash`` for every candidate and only delete
+        # docs whose current DB-tracked hash still equals what we saw at
+        # read time.  If the hash has advanced, someone rewrote the file
+        # under us and a concurrent indexer may have already succeeded
+        # against the newer bytes — deleting would wipe that fresh doc.
+        stale_ids_to_delete: list[str] = []
+        if stale_candidates and hasattr(daemon, "_async_session") and daemon._async_session:
+            from sqlalchemy import text as _sa_text
+
+            async with daemon._async_session() as sess:
+                for doc_id, file_path, observed_hash in stale_candidates:
+                    try:
+                        row = (
+                            await sess.execute(
+                                _sa_text(
+                                    "SELECT content_hash FROM file_paths"
+                                    " WHERE virtual_path = :vp AND deleted_at IS NULL"
+                                ),
+                                {"vp": file_path},
+                            )
+                        ).fetchone()
+                    except Exception as cas_err:
+                        _log.warning(
+                            "semantic_search_index: content_hash CAS lookup failed for %s: %s",
+                            file_path,
+                            cas_err,
+                        )
+                        continue
+                    # No row (file deleted) or hash unchanged from what we
+                    # observed — safe to purge.  Hash advanced → skip.
+                    if row is None or row[0] is None or row[0] == observed_hash:
+                        stale_ids_to_delete.append(doc_id)
+                    else:
+                        _log.info(
+                            "semantic_search_index: skipped stale-doc purge for %s — "
+                            "content_hash advanced under us (CAS miss)",
+                            file_path,
+                        )
+        elif stale_candidates:
+            # No DB session on the daemon (fallback/mock path) — fall back
+            # to the pre-CAS behavior so we at least clear obvious stales.
+            stale_ids_to_delete = [doc_id for doc_id, _p, _h in stale_candidates]
+
+        # Purge BEFORE upserting fresh ones so the backend view is monotonic:
+        # a caller observing the index between steps never sees both the
+        # outdated and fresh versions live simultaneously.
         if stale_ids_to_delete:
             try:
                 removed = await daemon.delete_documents(stale_ids_to_delete, zone_id=zone_id)

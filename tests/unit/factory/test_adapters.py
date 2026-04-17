@@ -295,18 +295,36 @@ class TestNexusFSFileReader:
         # read_text; a poisoned metastore entry (written by
         # ContentParserEngine or pre-sanitizer adapter versions) must be
         # scrubbed on the way out or the Postgres write still rolls back.
+        # Non-parseable path — fast path is still allowed there.
         nx = MagicMock()
         nx.metadata.get_searchable_text = MagicMock(return_value="hello\x00world")
         reader = _NexusFSFileReader(nx)
 
-        assert reader.get_searchable_text("/doc.pdf") == "helloworld"
+        assert reader.get_searchable_text("/notes.txt") == "helloworld"
 
     def test_get_searchable_text_passes_through_none(self) -> None:
         nx = MagicMock()
         nx.metadata.get_searchable_text = MagicMock(return_value=None)
         reader = _NexusFSFileReader(nx)
 
-        assert reader.get_searchable_text("/missing.pdf") is None
+        assert reader.get_searchable_text("/missing.txt") is None
+
+    def test_get_searchable_text_bypasses_fast_path_for_parseable_files(self) -> None:
+        # Parseable binaries cannot take the fast path because the metastore
+        # entry is keyed by path alone — no way to prove the cached markdown
+        # matches the current bytes.  The caller (``IndexingService``) must
+        # fall through to ``read_text`` which validates against the raw-bytes
+        # hash; otherwise a cross-zone collision or pre-reindex rewrite can
+        # latch stale markdown against fresh ``indexed_content_hash``.
+        nx = MagicMock()
+        nx.metadata.get_searchable_text = MagicMock(return_value="stale cached markdown")
+        reader = _NexusFSFileReader(nx)
+
+        for path in ("/doc.pdf", "/report.docx", "/sheet.xlsx", "/Slides.PPTX"):
+            assert reader.get_searchable_text(path) is None, f"expected None for {path}"
+        # The metastore should never even be consulted for parseable paths —
+        # we short-circuit before it.
+        nx.metadata.get_searchable_text.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_read_text_handles_mixed_case_extensions(self) -> None:

@@ -279,6 +279,238 @@ class TestIndexDocument:
 
         assert result == 0
 
+    @pytest.mark.asyncio
+    async def test_index_document_does_not_latch_failed_parse_for_pdf(self) -> None:
+        """Parseable binary with empty content (parser down) must NOT advance
+        indexed_content_hash — otherwise the hash-match fast path on the
+        next run skips the file forever and we get a silent search hole.
+        """
+        file_model = _mock_file_model(
+            path_id="pid-pdf",
+            content_hash="abc-pdf",
+            indexed_content_hash=None,
+            virtual_path="/doc.pdf",
+        )
+        pipeline = _mock_pipeline()
+
+        # Empty content simulates read_text() failing closed for a PDF
+        # when parse_fn is missing or raised.
+        service, _, session, _ = _build_service(
+            pipeline=pipeline,
+            file_model=file_model,
+            content="",
+        )
+
+        result = await service.index_document("/doc.pdf")
+
+        assert result == 0
+        # Critical: pipeline must NOT be invoked and hash must NOT advance.
+        pipeline.index_document.assert_not_called()
+        assert file_model.indexed_content_hash is None
+        assert file_model.last_indexed_at is None
+        session.commit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_index_document_clears_stale_chunks_when_parse_fails_on_changed_pdf(
+        self,
+    ) -> None:
+        """If a PDF previously had chunks indexed and its content has since
+        changed, but the parser now fails, leaving the old chunks live would
+        keep outdated text searchable.  Verify we delete them instead.
+        """
+        file_model = _mock_file_model(
+            path_id="pid-pdf-changed",
+            content_hash="new-hash",
+            indexed_content_hash="old-hash",  # was previously indexed with different content
+            virtual_path="/changed.pdf",
+        )
+        pipeline = _mock_pipeline()
+        service, _, session, _ = _build_service(
+            pipeline=pipeline,
+            file_model=file_model,
+            content="",
+        )
+
+        result = await service.index_document("/changed.pdf")
+
+        assert result == 0
+        # Pipeline must not run (nothing to index).
+        pipeline.index_document.assert_not_called()
+        # But a DELETE against document_chunks must have been issued.
+        delete_calls = [
+            call
+            for call in session.execute.call_args_list
+            if "delete" in str(call).lower() or "DELETE" in str(call)
+        ]
+        assert delete_calls, "expected a DELETE on stale document_chunks"
+        # Tracking fields must still remain untouched so the next tick retries.
+        assert file_model.indexed_content_hash == "old-hash"
+        assert file_model.last_indexed_at is None
+
+    @pytest.mark.asyncio
+    async def test_index_document_advances_hash_on_successful_empty_parse(self) -> None:
+        """Image-only / blank PDFs legitimately produce zero searchable text.
+        The indexer must advance ``indexed_content_hash`` with zero chunks in
+        that case — otherwise the file stays perpetually 'unindexed' and we
+        burn CPU reparsing it on every tick.  The adapter probes for this
+        via ``has_successful_parse`` (matching ``parsed_text_hash``).
+
+        It must also DELETE any existing chunks for the path_id, otherwise
+        a non-empty previous revision would keep serving stale text forever
+        (the normal hash-match skip path means this row is never revisited).
+        """
+        file_model = _mock_file_model(
+            path_id="pid-pdf-empty",
+            content_hash="blake3-hash-of-blank-pdf",
+            indexed_content_hash=None,
+            virtual_path="/blank.pdf",
+        )
+        pipeline = _mock_pipeline()
+        service, _, session, file_reader = _build_service(
+            pipeline=pipeline,
+            file_model=file_model,
+            content="",  # empty — parser succeeded but no text extracted
+        )
+        # Adapter reports: yes, this empty is a valid successful parse.
+        file_reader.has_successful_parse = MagicMock(return_value=True)
+
+        result = await service.index_document("/blank.pdf")
+
+        assert result == 0
+        # No pipeline work (nothing to chunk / embed).
+        pipeline.index_document.assert_not_called()
+        # But indexed_content_hash MUST advance so we don't retry forever.
+        assert file_model.indexed_content_hash == "blake3-hash-of-blank-pdf"
+        session.commit.assert_called_once()
+        # DELETE must have been issued so a prior non-empty revision's
+        # chunks don't keep serving stale text.
+        delete_calls = [
+            call
+            for call in session.execute.call_args_list
+            if "delete" in str(call).lower() or "DELETE" in str(call)
+        ]
+        assert delete_calls, "expected DELETE on document_chunks during empty-parse replace"
+        file_reader.has_successful_parse.assert_called_once_with(
+            "/blank.pdf", "blake3-hash-of-blank-pdf"
+        )
+
+    @pytest.mark.asyncio
+    async def test_index_document_retries_on_parse_error_when_hash_unmatched(self) -> None:
+        """Distinct from the successful-empty case: when ``has_successful_parse``
+        returns False (parser broken, file never parsed), the retry path
+        must still fire — don't latch the failure.
+        """
+        file_model = _mock_file_model(
+            path_id="pid-pdf-broken",
+            content_hash="blake3-hash-of-broken-pdf",
+            indexed_content_hash=None,
+            virtual_path="/broken.pdf",
+        )
+        pipeline = _mock_pipeline()
+        service, _, session, file_reader = _build_service(
+            pipeline=pipeline,
+            file_model=file_model,
+            content="",
+        )
+        # No record of a successful parse.
+        file_reader.has_successful_parse = MagicMock(return_value=False)
+
+        result = await service.index_document("/broken.pdf")
+
+        assert result == 0
+        pipeline.index_document.assert_not_called()
+        # Tracking fields stay untouched so the next tick retries.
+        assert file_model.indexed_content_hash is None
+        assert file_model.last_indexed_at is None
+        session.commit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_index_document_skips_stale_delete_when_concurrent_reindex_advanced_hash(
+        self,
+    ) -> None:
+        """A successful concurrent reindex can advance ``indexed_content_hash``
+        between the first session snapshot and the stale-chunk delete session.
+        The CAS guard must NOT delete when the re-read hash differs from the
+        stale value we observed — otherwise we'd wipe freshly-indexed chunks.
+        """
+        # Step-1 snapshot shows (content=new-hash, indexed=old-hash), so
+        # the delete path is entered.  But between step 1 and the delete
+        # session, a concurrent run completes: the row now reads
+        # (content=new-hash, indexed=new-hash).
+        step1_model = _mock_file_model(
+            path_id="pid-pdf-cas",
+            content_hash="new-hash",
+            indexed_content_hash="old-hash",
+            virtual_path="/cas.pdf",
+        )
+        step2_model = _mock_file_model(
+            path_id="pid-pdf-cas",
+            content_hash="new-hash",
+            indexed_content_hash="new-hash",  # fresh index landed
+            virtual_path="/cas.pdf",
+        )
+
+        # First call returns the stale snapshot, second call returns the
+        # post-reindex row.  scalar_one_or_none drives both the step-1
+        # lookup and the CAS re-read.
+        scalar_result_stale = MagicMock()
+        scalar_result_stale.scalar_one_or_none.return_value = step1_model
+        scalar_result_stale.scalar.return_value = 0
+        scalar_result_fresh = MagicMock()
+        scalar_result_fresh.scalar_one_or_none.return_value = step2_model
+        scalar_result_fresh.scalar.return_value = 0
+
+        session = MagicMock()
+        session.execute.side_effect = [scalar_result_stale, scalar_result_fresh]
+        session.get.return_value = step2_model
+        session.commit = MagicMock()
+
+        pipeline = _mock_pipeline()
+        file_reader = _mock_file_reader(session, content="", searchable_text=None)
+        service = IndexingService(
+            pipeline=pipeline,
+            file_reader=file_reader,
+            session_factory=MagicMock(),
+            vector_db=_mock_vector_db(),
+            embedding_provider=None,
+        )
+
+        result = await service.index_document("/cas.pdf")
+
+        assert result == 0
+        pipeline.index_document.assert_not_called()
+        # Critical: no commit (therefore no DELETE) must fire in the CAS-miss
+        # branch.  If the CAS guard failed we'd see exactly one commit for
+        # the stale-chunk delete.
+        session.commit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_index_document_handles_mixed_case_pdf_extension(self) -> None:
+        """Mixed-case extensions (``/Report.PDF``) must route through the
+        parseable branch so fail-closed behavior covers them.  Without the
+        case-insensitive helper, they slip through and get latched as
+        empty-content text files.
+        """
+        file_model = _mock_file_model(
+            path_id="pid-pdf-upper",
+            content_hash="abc",
+            indexed_content_hash=None,
+            virtual_path="/Report.PDF",
+        )
+        pipeline = _mock_pipeline()
+        service, _, session, _ = _build_service(
+            pipeline=pipeline,
+            file_model=file_model,
+            content="",  # parse failed
+        )
+
+        result = await service.index_document("/Report.PDF")
+
+        assert result == 0
+        pipeline.index_document.assert_not_called()
+        assert file_model.indexed_content_hash is None
+        session.commit.assert_not_called()
+
 
 class TestIndexDirectory:
     @pytest.mark.asyncio

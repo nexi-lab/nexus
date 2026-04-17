@@ -14,6 +14,7 @@ from typing import Any
 
 from nexus.bricks.parsers.detection import prepare_content_for_parsing
 from nexus.bricks.parsers.markitdown_parser import MarkItDownParser
+from nexus.bricks.parsers.pdf_inspector_parser import PdfInspectorParser
 from nexus.bricks.parsers.providers.base import ProviderConfig
 from nexus.bricks.parsers.providers.registry import ProviderRegistry
 from nexus.bricks.parsers.registry import ParserRegistry
@@ -47,8 +48,11 @@ class ParsersBrick:
             parsing_config: Optional ParseConfig (or duck-typed equivalent)
                 with ``providers`` and ``auto_parse`` fields.
         """
-        # Parser registry — extension-based selection
+        # Parser registry — extension-based selection.
+        # PdfInspectorParser registered first so it wins priority sort for .pdf.
+        # MarkItDownParser covers non-PDF formats (when markitdown is installed).
         self._parser_registry = ParserRegistry()
+        self._parser_registry.register(PdfInspectorParser())
         self._parser_registry.register(MarkItDownParser())
 
         # Provider registry — API-provider selection
@@ -124,8 +128,14 @@ class ParsersBrick:
                     future = pool.submit(asyncio.run, coro)
                     result = future.result()
 
-            if result and result.text:
-                return result.text.encode("utf-8")
-            return None
+            # Distinguish 'parsed ok but no extractable text' (image-only
+            # PDFs, blank .docx, scanned docs awaiting OCR) from 'parser
+            # broken / format unsupported'.  Returning ``b""`` for the
+            # former lets the indexer advance ``indexed_content_hash``
+            # with zero chunks instead of retrying the parse on every
+            # tick forever; ``None`` still signals a genuine error.
+            if result is None:
+                return None
+            return (result.text or "").encode("utf-8")
 
         return _parse

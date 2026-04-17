@@ -134,7 +134,14 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
         with contextlib.suppress(ImportError, AttributeError):
             from nexus.factory import _NexusFSFileReader
 
-            app.state.search_daemon._file_reader = _NexusFSFileReader(svc.nexus_fs)
+            # Thread parse_fn through so parseable binaries (.pdf, …) are
+            # decoded into markdown text before the index refresh loop reads
+            # them — otherwise the daemon indexes utf-8 garbage.
+            from nexus.factory._semantic_search import _resolve_parse_fn
+
+            _nxfs = svc.nexus_fs
+            _pf = _resolve_parse_fn(_nxfs)
+            app.state.search_daemon._file_reader = _NexusFSFileReader(_nxfs, parse_fn=_pf)
             if getattr(app.state.search_daemon, "_mutation_resolver", None) is not None:
                 app.state.search_daemon._mutation_resolver.set_file_reader(  # noqa: SLF001
                     app.state.search_daemon._file_reader

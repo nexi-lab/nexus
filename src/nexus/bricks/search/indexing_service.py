@@ -20,6 +20,8 @@ from typing import Any
 
 from sqlalchemy import delete, func, select
 
+from nexus.lib.virtual_views import is_parseable_path
+
 # Removed: txtai handles this (Issue #2663)
 # from nexus.bricks.search.embeddings import EmbeddingProvider
 # from nexus.bricks.search.vector_db import VectorDatabase
@@ -72,12 +74,15 @@ def _virtual_path_id(path: str) -> str:
 
 
 # Binary extensions excluded from directory indexing.
+#
+# Parseable binaries (.pdf, .docx, .xlsx, …) intentionally stay indexable: the
+# file-reader adapter (``_NexusFSFileReader.read_text``) decodes them through
+# the parsers brick so index_directory sees markdown text instead of raw bytes.
 _BINARY_EXTENSIONS: tuple[str, ...] = (
     ".png",
     ".jpg",
     ".jpeg",
     ".gif",
-    ".pdf",
     ".zip",
     ".tar",
     ".gz",
@@ -137,11 +142,12 @@ class IndexingService:
 
             path_id: str = file_model.path_id
             current_content_hash: str | None = file_model.content_hash
+            observed_indexed_hash: str | None = file_model.indexed_content_hash
 
             if (
                 not force
                 and current_content_hash is not None
-                and file_model.indexed_content_hash == current_content_hash
+                and observed_indexed_hash == current_content_hash
             ):
                 # Content unchanged -- return existing chunk count.
                 existing = self._count_chunks(session, path_id)
@@ -154,6 +160,155 @@ class IndexingService:
 
         # --- Step 2: Read document content ---------------------------------
         content = await self._read_content(path)
+
+        # Parseable binaries (.pdf, .docx, .xlsx, …) surface an empty string
+        # from the reader in TWO distinct scenarios which need different
+        # handling:
+        #   * parse error — parser missing, raised, or returned ``None``.
+        #     Advancing ``indexed_content_hash`` would latch the failure
+        #     (the next reindex sees the hash match and skips forever),
+        #     so leave tracking fields untouched and retry next tick.
+        #   * successful empty parse — image-only PDF, blank .docx, scanned
+        #     doc awaiting OCR.  The parser legitimately produced zero
+        #     searchable text.  Retrying forever is wasted work and the
+        #     stale-chunk delete would wipe chunks that SHOULD stay gone
+        #     for this revision.  Advance ``indexed_content_hash`` and move
+        #     on — the file is genuinely "no text to index."
+        #
+        # The adapter distinguishes the two by writing ``parsed_text_hash``
+        # only on successful parses (including empty ones).  Ask it via
+        # ``has_successful_parse`` before picking the retry path.
+        if is_parseable_path(path) and not (content and content.strip()):
+            parse_ok = False
+            if current_content_hash is not None:
+                parse_ok_check = getattr(self._file_reader, "has_successful_parse", None)
+                if callable(parse_ok_check):
+                    try:
+                        parse_ok = bool(parse_ok_check(path, current_content_hash))
+                    except Exception:
+                        parse_ok = False
+
+            if parse_ok:
+                # Successful parse, zero text — atomically replace any
+                # prior chunks with nothing: delete stale rows for this
+                # path_id AND advance ``indexed_content_hash`` in the same
+                # transaction.  Without the DELETE, a non-empty previous
+                # revision's chunks would remain live even though the
+                # current content legitimately has no text — search would
+                # keep serving the stale version forever since the normal
+                # hash-match skip path will never revisit this row.
+                #
+                # Use ``SELECT … FOR UPDATE`` on ``file_paths`` so a
+                # concurrent reindex that lands between our step-1 read
+                # and this block serializes behind us (same CAS discipline
+                # as the parse-error stale-chunk branch below).
+                with self._get_session() as session:
+                    try:
+                        locked = session.execute(
+                            select(FilePathModel)
+                            .where(
+                                FilePathModel.path_id == path_id,
+                                FilePathModel.deleted_at.is_(None),
+                            )
+                            .with_for_update()
+                        ).scalar_one_or_none()
+                    except Exception:
+                        locked = session.execute(
+                            select(FilePathModel).where(
+                                FilePathModel.path_id == path_id,
+                                FilePathModel.deleted_at.is_(None),
+                            )
+                        ).scalar_one_or_none()
+                    # CAS: only apply the zero-chunk replacement when the
+                    # row still holds the same indexed_content_hash we
+                    # observed in step 1.  If a concurrent writer has
+                    # already advanced past us, let them win — their
+                    # indexing was more recent than ours.
+                    if locked is not None and locked.indexed_content_hash == observed_indexed_hash:
+                        session.execute(
+                            delete(DocumentChunkModel).where(
+                                DocumentChunkModel.path_id == path_id,
+                            ),
+                        )
+                        locked.indexed_content_hash = current_content_hash
+                        locked.last_indexed_at = datetime.now(UTC)
+                        session.commit()
+                        logger.info(
+                            "[INDEXING-SVC] Successful empty parse for %s — cleared "
+                            "prior chunks and advanced indexed_content_hash",
+                            path,
+                        )
+                    else:
+                        logger.info(
+                            "[INDEXING-SVC] Skipped empty-parse replace for %s — "
+                            "indexed_content_hash advanced under us (CAS miss)",
+                            path,
+                        )
+                return 0
+            if (
+                current_content_hash is not None
+                and observed_indexed_hash is not None
+                and observed_indexed_hash != current_content_hash
+            ):
+                # Atomic CAS: lock the file_paths row (``SELECT … FOR UPDATE``)
+                # before re-reading ``indexed_content_hash`` so a concurrent
+                # reindex that successfully advanced the hash between step 1
+                # and now serializes behind us — our transaction either
+                # observes the pre-advance value and deletes, or observes the
+                # post-advance value and aborts.  Without the row lock, a
+                # concurrent worker could complete its upsert in the gap
+                # between the recheck SELECT and the DELETE and we'd still
+                # wipe its fresh chunks (plain-SELECT snapshot doesn't block
+                # other writers).
+                #
+                # ``.with_for_update()`` is a no-op under SQLite (single
+                # writer anyway) and takes a row-level lock on Postgres.
+                with self._get_session() as session:
+                    try:
+                        locked = session.execute(
+                            select(FilePathModel)
+                            .where(
+                                FilePathModel.path_id == path_id,
+                                FilePathModel.deleted_at.is_(None),
+                            )
+                            .with_for_update()
+                        ).scalar_one_or_none()
+                    except Exception:
+                        # Some back-ends (e.g. SQLite in autocommit) can
+                        # refuse FOR UPDATE — retry without the lock clause
+                        # so the stale cleanup still runs.  The CAS re-read
+                        # still protects against the non-concurrent case.
+                        locked = session.execute(
+                            select(FilePathModel).where(
+                                FilePathModel.path_id == path_id,
+                                FilePathModel.deleted_at.is_(None),
+                            )
+                        ).scalar_one_or_none()
+                    if locked is not None and locked.indexed_content_hash == observed_indexed_hash:
+                        session.execute(
+                            delete(DocumentChunkModel).where(
+                                DocumentChunkModel.path_id == path_id,
+                            ),
+                        )
+                        session.commit()
+                        logger.warning(
+                            "[INDEXING-SVC] Parse failed for changed %s — cleared "
+                            "stale chunks, will retry on next tick",
+                            path,
+                        )
+                    else:
+                        logger.info(
+                            "[INDEXING-SVC] Skipped stale-chunk delete for %s — "
+                            "indexed_content_hash advanced under us (CAS miss)",
+                            path,
+                        )
+            else:
+                logger.warning(
+                    "[INDEXING-SVC] Empty content for parseable binary %s — "
+                    "skipping index tick, will retry next run",
+                    path,
+                )
+            return 0
 
         # --- Step 3: Delegate to pipeline (atomic delete+insert) -----------
         # The pipeline's _bulk_insert handles DELETE old chunks + INSERT new

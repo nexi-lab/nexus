@@ -25,6 +25,25 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _resolve_parse_fn(nx: Any) -> Any:
+    """Extract the bare parse_fn callable from the nx service registry.
+
+    ``nx.service("parse_fn")`` returns a ``ServiceRef`` wrapper; the actual
+    callable lives on ``._service_instance``. Returns None when the service
+    isn't registered (e.g. parsers brick disabled).
+    """
+    if not hasattr(nx, "service"):
+        return None
+    try:
+        ref = nx.service("parse_fn")
+    except Exception:
+        return None
+    if ref is None:
+        return None
+    inst = getattr(ref, "_service_instance", ref)
+    return inst if callable(inst) else None
+
+
 @dataclass(frozen=True)
 class SemanticSearchComponents:
     """All components produced by the semantic search factory."""
@@ -130,7 +149,12 @@ async def create_semantic_search_components(
         from nexus.bricks.search.indexing_service import IndexingService
         from nexus.factory.adapters import _NexusFSFileReader
 
-        _file_reader = _NexusFSFileReader(nx)
+        # parse_fn is registered at boot (see factory/_lifecycle.py ~L92).
+        # Passing it here lets read_text decode parseable binaries (.pdf,
+        # .docx, .xlsx, …) so search indexes real text, not utf-8 garbage.
+        # nx.service() returns a ServiceRef — unwrap to the bare callable.
+        _parse_fn = _resolve_parse_fn(nx)
+        _file_reader = _NexusFSFileReader(nx, parse_fn=_parse_fn)
         indexing_service = IndexingService(
             pipeline=pipeline,
             file_reader=_file_reader,

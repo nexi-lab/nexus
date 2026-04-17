@@ -578,8 +578,16 @@ async def handle_semantic_search_index(
         # RPC may scope paths as /zone/{id}/...; DB stores unscoped virtual_path.
         db_path = unscope_internal_path(path)
 
-        # Query file paths from the daemon's database connection
+        # Query file paths from the daemon's database connection.  Also
+        # grab the ``content_hash`` at selection time so the stale-doc CAS
+        # below can cite the row's then-current hash regardless of what
+        # algorithm the backend used to produce it (raw-byte BLAKE3 for
+        # local CAS, provider version IDs for S3/GCS, …).  Scope the
+        # query with ``zone_id`` — ``file_paths`` is unique on
+        # ``(zone_id, virtual_path)`` and a path-only filter can pull in
+        # another tenant's row.
         paths_to_index: list[str] = []
+        observed_hash_by_path: dict[str, str | None] = {}
         if hasattr(daemon, "_async_session") and daemon._async_session is not None:
             from sqlalchemy import text as sa_text
 
@@ -589,14 +597,29 @@ async def handle_semantic_search_index(
                     like_pattern = db_path.rstrip("/") + "/%"
                     result = await sess.execute(
                         sa_text(
-                            "SELECT virtual_path FROM file_paths"
-                            " WHERE virtual_path LIKE :like OR virtual_path = :exact"
+                            "SELECT virtual_path, content_hash FROM file_paths"
+                            " WHERE (virtual_path LIKE :like OR virtual_path = :exact)"
+                            "   AND zone_id = :zid"
+                            "   AND deleted_at IS NULL"
                         ),
-                        {"like": like_pattern, "exact": db_path},
+                        {"like": like_pattern, "exact": db_path, "zid": zone_id},
                     )
-                    paths_to_index = [r[0] for r in result.fetchall()]
+                    rows = result.fetchall()
+                    paths_to_index = [r[0] for r in rows]
+                    observed_hash_by_path = {r[0]: r[1] for r in rows}
                 else:
+                    result = await sess.execute(
+                        sa_text(
+                            "SELECT content_hash FROM file_paths"
+                            " WHERE virtual_path = :exact"
+                            "   AND zone_id = :zid"
+                            "   AND deleted_at IS NULL"
+                        ),
+                        {"exact": db_path, "zid": zone_id},
+                    )
+                    row = result.fetchone()
                     paths_to_index = [db_path]
+                    observed_hash_by_path = {db_path: row[0] if row else None}
             _log.info(
                 "semantic_search_index: found %d files under %s", len(paths_to_index), db_path
             )
@@ -619,27 +642,141 @@ async def handle_semantic_search_index(
         except Exception as _walk_err:
             _log.debug("semantic_search_index: virtual .readme/ walk skipped: %s", _walk_err)
 
-        # Read content and build documents for txtai
+        # Read with the caller's context (preserves ReBAC + zone scoping),
+        # then apply the same parse-aware transform the daemon refresh path
+        # uses so parseable binaries (.pdf/.docx/.xlsx/…) are indexed as
+        # parsed markdown rather than raw utf-8 garbage.  We do this as a
+        # pure transform rather than calling ``_NexusFSFileReader.read_text``
+        # because the reader constructs an admin context internally and
+        # would bypass the caller's permission scope.
+        from nexus.factory._semantic_search import _resolve_parse_fn
+        from nexus.factory.adapters import _apply_parse_transform_with_status
+        from nexus.lib.virtual_views import is_parseable_path
+
+        _parse_fn = _resolve_parse_fn(nexus_fs)
+
         documents: list[dict[str, Any]] = []
         read_errors = 0
         total_chunks = 0
+        # Track (doc_id, file_path, observed_content_hash) tuples for
+        # parseable files whose parse SUCCEEDED but produced empty text
+        # (image-only PDFs, blank docx, …).  Only these are reliable
+        # stale-doc signals: a parser *error* might be a transient outage,
+        # and wiping the doc would delete healthy content that will come
+        # back on the next tick.  ``_apply_parse_transform_with_status``
+        # tells these apart.
+        #
+        # ``observed_content_hash`` is whatever ``file_paths.content_hash``
+        # held at selection time — BLAKE3 for local CAS backends, provider
+        # version IDs for S3/GCS.  The CAS below compares string equality
+        # against the current row, so the stored shape doesn't matter:
+        # we only need the value not to have changed between our read and
+        # our purge.
+        stale_candidates: list[tuple[str, str, str | None]] = []
         for file_path in paths_to_index:
             try:
-                content = nexus_fs.sys_read(file_path, context=context)
-                if isinstance(content, bytes):
-                    content_str = content.decode("utf-8", errors="replace")
-                else:
-                    content_str = content
-                if content_str.strip():
-                    doc_id = f"{zone_id}:{file_path}" if zone_id != "root" else file_path
+                raw = nexus_fs.sys_read(file_path, context=context)
+                # Pass the DB-tracked content_hash so the parse cache key
+                # matches what has_successful_parse later compares against
+                # (etag on S3/GCS, BLAKE3 on local CAS — adapter stores
+                # whatever the caller supplies).
+                observed_hash = observed_hash_by_path.get(file_path)
+                content_str, parse_status = _apply_parse_transform_with_status(
+                    nexus_fs,
+                    file_path,
+                    raw,
+                    parse_fn=_parse_fn,
+                    content_hash=observed_hash,
+                )
+                doc_id = f"{zone_id}:{file_path}" if zone_id != "root" else file_path
+                if content_str and content_str.strip():
                     documents.append({"id": doc_id, "text": content_str, "path": file_path})
+                elif is_parseable_path(file_path) and parse_status == "empty":
+                    stale_candidates.append((doc_id, file_path, observed_hash))
             except Exception as read_err:
                 read_errors += 1
                 _log.warning("Skipping %s: %s", file_path, read_err)
 
         _log.info(
-            "semantic_search_index: %d documents read (%d errors)", len(documents), read_errors
+            "semantic_search_index: %d documents read (%d errors, %d parse-failed)",
+            len(documents),
+            read_errors,
+            len(stale_candidates),
         )
+
+        # CAS-guard the purge against concurrent writers.  Re-read
+        # ``file_paths.content_hash`` for every candidate and only delete
+        # docs whose current DB-tracked hash still equals what we saw at
+        # read time.  If the hash has advanced, someone rewrote the file
+        # under us and a concurrent indexer may have already succeeded
+        # against the newer bytes — deleting would wipe that fresh doc.
+        #
+        # ``file_paths`` is keyed by ``(zone_id, virtual_path)`` so the
+        # lookup must be zone-scoped; a path-only query could pull another
+        # tenant's row, producing a nondeterministic delete/no-delete
+        # decision for the caller's zone.
+        stale_ids_to_delete: list[str] = []
+        if stale_candidates and hasattr(daemon, "_async_session") and daemon._async_session:
+            from sqlalchemy import text as _sa_text
+
+            async with daemon._async_session() as sess:
+                for doc_id, file_path, observed_hash in stale_candidates:
+                    try:
+                        row = (
+                            await sess.execute(
+                                _sa_text(
+                                    "SELECT content_hash FROM file_paths"
+                                    " WHERE virtual_path = :vp"
+                                    "   AND zone_id = :zid"
+                                    "   AND deleted_at IS NULL"
+                                ),
+                                {"vp": file_path, "zid": zone_id},
+                            )
+                        ).fetchone()
+                    except Exception as cas_err:
+                        _log.warning(
+                            "semantic_search_index: content_hash CAS lookup failed for %s: %s",
+                            file_path,
+                            cas_err,
+                        )
+                        continue
+                    # Safe to purge when:
+                    #   * row is None — the file_paths row was deleted
+                    #     under us, so the old doc is definitively stale.
+                    #   * row[0] == observed_hash — hash unchanged between
+                    #     selection and now, no concurrent writer.
+                    # Otherwise skip — the hash either advanced (concurrent
+                    # writer may have re-indexed) or we never had a hash to
+                    # compare against (permissive delete could wipe healthy
+                    # docs on backends that don't populate content_hash).
+                    if row is None or observed_hash is not None and row[0] == observed_hash:
+                        stale_ids_to_delete.append(doc_id)
+                    else:
+                        _log.info(
+                            "semantic_search_index: skipped stale-doc purge for %s — "
+                            "content_hash advanced or unavailable (CAS miss)",
+                            file_path,
+                        )
+        elif stale_candidates:
+            # No DB session on the daemon (fallback/mock path) — fall back
+            # to the pre-CAS behavior so we at least clear obvious stales.
+            stale_ids_to_delete = [doc_id for doc_id, _p, _h in stale_candidates]
+
+        # Purge BEFORE upserting fresh ones so the backend view is monotonic:
+        # a caller observing the index between steps never sees both the
+        # outdated and fresh versions live simultaneously.
+        if stale_ids_to_delete:
+            try:
+                removed = await daemon.delete_documents(stale_ids_to_delete, zone_id=zone_id)
+                _log.info(
+                    "semantic_search_index: purged %d stale doc(s) for failed parses", removed
+                )
+            except Exception as del_err:
+                _log.warning(
+                    "semantic_search_index: stale doc purge failed (%d ids): %s",
+                    len(stale_ids_to_delete),
+                    del_err,
+                )
 
         # Single upsert to txtai → pgvector (BM25 + dense embeddings + SPLADE)
         results: dict[str, int] = {}

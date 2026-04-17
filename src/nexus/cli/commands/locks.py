@@ -119,7 +119,7 @@ def lock_info(
             console.print(
                 f"  Locked:  {'[nexus.error]Yes[/nexus.error]' if is_locked else '[nexus.success]No[/nexus.success]'}"
             )
-            if is_locked:
+            if is_locked and lock is not None:
                 console.print(f"  Mode:    {lock.get('mode', 'N/A')}")
                 holders = lock.get("holders", [])
                 for h in holders:

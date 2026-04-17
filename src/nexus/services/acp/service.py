@@ -254,9 +254,19 @@ class AcpService:
 
                     # stdin: write-only (parent → child)
                     stdin_wfd = _fd_from_transport(proc.stdin.transport) if proc.stdin else -1
-                    # stdout/stderr: read-only (child → parent)
-                    stdout_rfd = _fd_from_transport(proc.stdout._transport) if proc.stdout else -1
-                    stderr_rfd = _fd_from_transport(proc.stderr._transport) if proc.stderr else -1
+                    # stdout/stderr: read-only (child → parent).
+                    # StreamReader exposes ._transport at runtime; getattr avoids
+                    # mypy's [attr-defined] since the Python typeshed lists it as private.
+                    stdout_rfd = (
+                        _fd_from_transport(getattr(proc.stdout, "_transport", None))
+                        if proc.stdout
+                        else -1
+                    )
+                    stderr_rfd = (
+                        _fd_from_transport(getattr(proc.stderr, "_transport", None))
+                        if proc.stderr
+                        else -1
+                    )
 
                     _nx.sys_setattr(
                         fd0_path, entry_type=DT_PIPE, io_profile="stdio", write_fd=stdin_wfd

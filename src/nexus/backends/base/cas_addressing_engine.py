@@ -13,7 +13,6 @@ Thin subclasses exist for: registration, CONNECTION_ARGS, connector-specific
 features (batch reads, signed URLs, versioning).
 
 Feature DI (optional optimizations):
-    bloom_filter  — Bloom pre-check for fast content_exists() miss
     content_cache — In-memory cache for read_content() hot path
     meta_cache    — LRU cache for _read_meta() hot path (e.g. cachetools.LRUCache)
     on_write_callback — Write notification (e.g. Zoekt reindex)
@@ -110,7 +109,6 @@ class CASAddressingEngine(Backend):
         *,
         backend_name: str | None = None,
         # Feature DI — optional optimizations, all None-safe
-        bloom_filter: Any | None = None,
         content_cache: Any | None = None,
         meta_cache: Any | None = None,
         on_write_callback: Any | None = None,
@@ -119,8 +117,10 @@ class CASAddressingEngine(Backend):
         super().__init__()
         self._transport = transport
         self._backend_name = backend_name or f"cas-{transport.transport_name}"
-        # Feature DI: None means feature disabled (cloud backends pass nothing)
-        self._bloom = bloom_filter  # nexus_kernel.BloomFilter
+        # Feature DI: None means feature disabled (cloud backends pass nothing).
+        # Bloom filter previously lived here; removed in R10f — Rust stat() is
+        # fast enough (5-17μs) that the seeding cost of a Bloom filter doesn't
+        # pay back. Tracked under #3799 if benchmarks later justify.
         self._cache = content_cache  # storage.content_cache.ContentCache
         self._meta_cache: Any | None = meta_cache  # cachetools.LRUCache
         self._meta_cache_hits = 0
@@ -236,9 +236,7 @@ class CASAddressingEngine(Backend):
         if self._cdc is not None and self._cdc.should_chunk(content):
             content_hash = self._cdc.write_chunked(content, context)
 
-            # Feature DI: Bloom filter + content cache
-            if self._bloom is not None:
-                self._bloom.add(content_hash)
+            # Feature DI: content cache (bloom removed in R10f)
             if self._cache is not None:
                 self._cache.put(content_hash, content)
 
@@ -263,11 +261,7 @@ class CASAddressingEngine(Backend):
 
             # No .meta for non-CDC content — ref_count eliminated.
 
-            # Feature DI: Bloom filter
-            if self._bloom is not None:
-                self._bloom.add(content_hash)
-
-            # Feature DI: Content cache
+            # Feature DI: Content cache (bloom removed in R10f)
             if self._cache is not None:
                 self._cache.put(content_hash, content)
 
@@ -313,8 +307,6 @@ class CASAddressingEngine(Backend):
             new_hash = self._cdc.write_chunked_partial(old_content_id, buf, offset, context)
             # Read manifest to get total size
             total_size = self._cdc.get_size(new_hash)
-            if self._bloom is not None:
-                self._bloom.add(new_hash)
             return WriteResult(content_id=new_hash, version=new_hash, size=total_size)
 
         # Single blob → read old, splice, write new (offset=0)
@@ -408,9 +400,8 @@ class CASAddressingEngine(Backend):
     def content_exists(self, content_id: str, context: "OperationContext | None" = None) -> bool:
         content_hash = content_id  # CAS: content_id is a SHA-256 hash
         try:
-            # Bloom filter fast-miss: definitely not present → skip transport I/O
-            if self._bloom is not None and not self._bloom.might_exist(content_hash):
-                return False
+            # Bloom pre-check removed in R10f — Rust stat() is fast enough that
+            # the Bloom seeding cost doesn't pay back.
             key = self._blob_key(content_hash)
             return self._transport.exists(key)
         except Exception:
@@ -539,10 +530,7 @@ class CASAddressingEngine(Backend):
                         os.unlink(tmp_path)
 
             # No .meta for non-CDC streamed content — ref_count eliminated.
-
-            # Feature DI: Bloom filter
-            if self._bloom is not None:
-                self._bloom.add(content_hash)
+            # Bloom filter removed in R10f.
 
             # Feature DI: Write callback
             if self._on_write_callback is not None:

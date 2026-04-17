@@ -1,12 +1,16 @@
 """CAS + Local transport backend — full-featured local storage.
 
 Composes CASAddressingEngine (addressing) + VolumeLocalTransport (I/O) +
-MultipartUpload (resumable uploads) using Feature DI for Bloom filter,
-content cache, VFSSemaphore, and CDCEngine (chunking).
+MultipartUpload (resumable uploads) using Feature DI for content cache,
+VFSSemaphore, and CDCEngine (chunking).
 
     CASLocalBackend = CASAddressingEngine(VolumeLocalTransport)
                     + MultipartUpload     (resumable uploads, ABC)
-                    + Feature DI          (Bloom, cache, VFSSemaphore, CDC)
+                    + Feature DI          (cache, VFSSemaphore, CDC)
+
+Bloom filter was dropped in R10f — Rust stat() is fast enough that the Bloom
+seeding cost on startup doesn't pay back. Tracked under #3799 if benchmarks
+later justify reintroducing it.
 
 VolumeLocalTransport packs CAS blobs into append-only volume files with a
 redb index, reducing inode overhead and enabling batched fsync. Falls back
@@ -47,37 +51,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Default Bloom filter settings (tuned for typical CAS workloads)
-DEFAULT_CAS_BLOOM_CAPACITY = 100_000
-DEFAULT_CAS_BLOOM_FP_RATE = 0.01
-
-
-def _init_bloom_from_transport(
-    transport: VolumeLocalTransport | LocalTransport,
-    capacity: int,
-    fp_rate: float,
-) -> Any:
-    """Initialize Bloom filter, populated from transport.
-
-    Uses transport.list_content_hashes() to seed the Bloom filter — works for
-    both volume-packed storage and file-per-blob storage (Issue #3403).
-    """
-    # RUST_FALLBACK: BloomFilter (optional — stale/absent binary degrades gracefully)
-    from nexus._rust_compat import BloomFilter
-
-    if BloomFilter is None:
-        logger.debug("BloomFilter unavailable (stale or absent nexus_kernel) — skipping Bloom init")
-        return None
-
-    bloom = BloomFilter(capacity, fp_rate)
-    if hasattr(transport, "list_content_hashes"):
-        hashes_ts = transport.list_content_hashes()
-        if hashes_ts:
-            keys = [h for h, _ts in hashes_ts]
-            bloom.add_bulk(keys)
-            logger.info("CAS Bloom filter populated with %d entries", len(keys))
-    return bloom
-
 
 @register_connector(
     "cas_local",
@@ -116,8 +89,6 @@ class CASLocalBackend(CASAddressingEngine, MultipartUpload):
         root_path: str | Path,
         content_cache: Any | None = None,
         batch_read_workers: int = 8,
-        bloom_capacity: int = DEFAULT_CAS_BLOOM_CAPACITY,
-        bloom_fp_rate: float = DEFAULT_CAS_BLOOM_FP_RATE,
         on_write_callback: Any | None = None,
         *,
         use_volume_packing: bool = False,
@@ -146,9 +117,6 @@ class CASLocalBackend(CASAddressingEngine, MultipartUpload):
         else:
             transport = LocalTransport(root_path=self.root_path, fsync=True)
 
-        # Seed Bloom filter from transport (works for both volume and file storage)
-        bloom = _init_bloom_from_transport(transport, bloom_capacity, bloom_fp_rate)
-
         # Feature DI: LRU metadata cache for hot-path _read_meta()
         import cachetools
 
@@ -160,7 +128,6 @@ class CASLocalBackend(CASAddressingEngine, MultipartUpload):
         super().__init__(
             transport,
             backend_name="local",
-            bloom_filter=bloom,
             content_cache=content_cache,
             meta_cache=meta_cache,
             on_write_callback=on_write_callback,

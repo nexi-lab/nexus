@@ -24,8 +24,9 @@ class TestChunkedStorageE2E:
 
         # Verify not chunked
         etag = nexus_fs.get_etag("/test_small.txt")
-        backend = nexus_fs.router.route("/").backend
-        assert not backend._cdc.is_chunked(etag), "Small file should not be chunked"
+        assert not nexus_fs._kernel.cas_is_chunked("/", "root", etag), (
+            "Small file should not be chunked"
+        )
 
     @pytest.mark.asyncio
     async def test_large_file_chunked_write_read(self, nexus_fs) -> None:
@@ -40,8 +41,7 @@ class TestChunkedStorageE2E:
         etag = nexus_fs.get_etag("/test_large.bin")
         assert etag is not None
 
-        backend = nexus_fs.router.route("/").backend
-        assert backend._cdc.is_chunked(etag), "Large file should be chunked"
+        assert nexus_fs._kernel.cas_is_chunked("/", "root", etag), "Large file should be chunked"
 
         # Read back
         read_content = nexus_fs.sys_read("/test_large.bin")
@@ -161,14 +161,12 @@ class TestChunkedStorageBackwardCompatibility:
         nexus_fs.write("/small.txt", small_content)
         nexus_fs.write("/large.bin", large_content)
 
-        backend = nexus_fs.router.route("/").backend
-
         # Verify small not chunked, large chunked
         small_etag = nexus_fs.get_etag("/small.txt")
         large_etag = nexus_fs.get_etag("/large.bin")
 
-        assert not backend._cdc.is_chunked(small_etag)
-        assert backend._cdc.is_chunked(large_etag)
+        assert not nexus_fs._kernel.cas_is_chunked("/", "root", small_etag)
+        assert nexus_fs._kernel.cas_is_chunked("/", "root", large_etag)
 
         # Read both
         assert nexus_fs.sys_read("/small.txt") == small_content
@@ -197,14 +195,13 @@ class TestChunkedStorageBackwardCompatibility:
         nexus_fs.write("/overwrite.bin", small_content)
         etag1 = nexus_fs.get_etag("/overwrite.bin")
 
-        backend = nexus_fs.router.route("/").backend
-        assert not backend._cdc.is_chunked(etag1)
+        assert not nexus_fs._kernel.cas_is_chunked("/", "root", etag1)
 
         # Overwrite with large
         nexus_fs.write("/overwrite.bin", large_content)
         etag2 = nexus_fs.get_etag("/overwrite.bin")
 
-        assert backend._cdc.is_chunked(etag2)
+        assert nexus_fs._kernel.cas_is_chunked("/", "root", etag2)
         assert nexus_fs.sys_read("/overwrite.bin") == large_content
 
     @pytest.mark.asyncio
@@ -217,14 +214,13 @@ class TestChunkedStorageBackwardCompatibility:
         nexus_fs.write("/overwrite2.bin", large_content)
         etag1 = nexus_fs.get_etag("/overwrite2.bin")
 
-        backend = nexus_fs.router.route("/").backend
-        assert backend._cdc.is_chunked(etag1)
+        assert nexus_fs._kernel.cas_is_chunked("/", "root", etag1)
 
         # Overwrite with small
         nexus_fs.write("/overwrite2.bin", small_content)
         etag2 = nexus_fs.get_etag("/overwrite2.bin")
 
-        assert not backend._cdc.is_chunked(etag2)
+        assert not nexus_fs._kernel.cas_is_chunked("/", "root", etag2)
         assert nexus_fs.sys_read("/overwrite2.bin") == small_content
 
 

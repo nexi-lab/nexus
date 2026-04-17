@@ -190,7 +190,7 @@ SCENARIOS: list[tuple[str, list[_StubSummary]]] = [
 ]
 
 
-@pytest.mark.parametrize("name,summaries", SCENARIOS, ids=[s[0] for s in SCENARIOS])
+@pytest.mark.parametrize("_name,summaries", SCENARIOS, ids=[s[0] for s in SCENARIOS])
 @pytest.mark.xdist_group("doctor_snapshots")
 def test_doctor_output_snapshot(monkeypatch, _name, summaries, snapshot):
     service = _StubService(summaries)

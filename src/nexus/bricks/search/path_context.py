@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import builtins
+from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -16,6 +17,11 @@ from typing import Any
 from sqlalchemy import text
 
 from nexus.contracts.constants import ROOT_ZONE_ID
+
+# Default LRU cap on the number of zones PathContextCache retains. A
+# multi-tenant deployment with many short-lived zones could otherwise
+# accumulate per-zone locks + record lists forever (Issue #3773 review).
+_DEFAULT_MAX_ZONES = 2048
 
 
 @dataclass(frozen=True)
@@ -184,19 +190,33 @@ class PathContextCache:
       slash-boundary match is the longest prefix.
     """
 
-    def __init__(self, *, store: PathContextStore) -> None:
+    def __init__(
+        self,
+        *,
+        store: PathContextStore,
+        max_zones: int = _DEFAULT_MAX_ZONES,
+    ) -> None:
         self._store = store
+        self._max_zones = max_zones
         # Freshness token is ``(row_count, max_updated_at)`` — including count
         # catches deletes that leave the zone's max unchanged (Issue #3773
-        # review feedback).
-        self._entries: dict[
+        # review feedback). OrderedDict enables LRU eviction on insertion so
+        # the cache can't grow without bound across many short-lived zones.
+        self._entries: OrderedDict[
             str,
             tuple[tuple[int, datetime | None], builtins.list[PathContextRecord]],
-        ] = {}
+        ] = OrderedDict()
         self._locks: dict[str, asyncio.Lock] = {}
 
     def _lock_for(self, zone_id: str) -> asyncio.Lock:
-        return self._locks.setdefault(zone_id, asyncio.Lock())
+        # ``setdefault(zone_id, asyncio.Lock())`` constructs a Lock on every
+        # call whether or not it ends up used — wasted allocation on hot
+        # search paths. Use get-or-create instead.
+        lock = self._locks.get(zone_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._locks[zone_id] = lock
+        return lock
 
     async def refresh_if_stale(self, zone_id: str) -> None:
         db_fp = await self._store.zone_fingerprint(zone_id)
@@ -212,6 +232,15 @@ class PathContextCache:
             records = await self._store.load_all_for_zone(zone_id)
             records.sort(key=lambda r: len(r.path_prefix), reverse=True)
             self._entries[zone_id] = (db_fp, records)
+            self._entries.move_to_end(zone_id)
+            # LRU-bound: evict the oldest zones when we exceed the cap. The
+            # zone we just inserted is at the newest end and safe. Other
+            # zones' locks can be dropped along with their entries — any
+            # concurrent refresh task for an evicted zone still holds its
+            # own lock reference and will just finish and rebuild.
+            while len(self._entries) > self._max_zones:
+                evicted_zone, _ = self._entries.popitem(last=False)
+                self._locks.pop(evicted_zone, None)
 
     def lookup_cached(self, zone_id: str | None, path: str) -> str | None:
         """Pure in-memory longest-prefix lookup. Assumes the caller has already

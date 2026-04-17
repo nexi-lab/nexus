@@ -250,3 +250,24 @@ class TestPathContextCacheBatchLookup:
 
         assert cache.lookup_cached("root", "src/x.py") == "src desc"
         assert cache.lookup_cached("root", "no/match") is None
+
+
+class TestPathContextCacheLRU:
+    @pytest.mark.asyncio
+    async def test_lru_bound_evicts_oldest_zone(self, store: PathContextStore) -> None:
+        """With max_zones=2, the third distinct zone forces eviction of the
+        oldest — prevents the cache from growing without bound across many
+        short-lived zones (Issue #3773 review)."""
+        await store.upsert("z1", "src", "one")
+        await store.upsert("z2", "src", "two")
+        await store.upsert("z3", "src", "three")
+
+        cache = PathContextCache(store=store, max_zones=2)
+        await cache.refresh_if_stale("z1")
+        await cache.refresh_if_stale("z2")
+        assert set(cache._entries.keys()) == {"z1", "z2"}
+        await cache.refresh_if_stale("z3")
+        # z1 was oldest -> evicted. z2 and z3 remain.
+        assert set(cache._entries.keys()) == {"z2", "z3"}
+        # Lock for evicted zone also dropped.
+        assert "z1" not in cache._locks

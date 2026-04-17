@@ -147,17 +147,25 @@ async def _get_store(request: Request) -> PathContextStore:
 async def dispose_loop_local_engines(app_state: Any) -> None:
     """Dispose engines cached by :func:`_get_store`.
 
-    Called from the app's lifespan shutdown hook so we don't leak pooled
-    asyncpg connections when request loops die off (Issue #3773 review).
+    Only engines whose origin loop is the current running loop can actually
+    be disposed here — asyncpg pools bound to other (possibly dead) loops
+    must be released on their own loop, which we cannot reach from a
+    shutdown hook. Dropping the dict references for those is still correct:
+    the dead loop's socket fds are reclaimed on GC. Mirrors the pattern
+    used by :meth:`SearchDaemon.shutdown` for consistency
+    (Issue #3773 review).
     """
+    import asyncio
     import contextlib
 
     engines: dict[Any, Any] | None = getattr(app_state, "_path_context_engines_by_loop", None)
     if not engines:
         return
-    for engine in list(engines.values()):
-        with contextlib.suppress(Exception):
-            await engine.dispose()
+    running_loop = asyncio.get_running_loop()
+    for loop_key, engine in list(engines.items()):
+        if loop_key is running_loop:
+            with contextlib.suppress(Exception):
+                await engine.dispose()
     engines.clear()
     cached: dict[Any, Any] | None = getattr(app_state, "_path_context_store_by_loop", None)
     if cached is not None:

@@ -815,7 +815,11 @@ class SearchDaemon:
         # letting it surface as a shutdown warning.
         running_loop = asyncio.get_running_loop()
         for loop_key, engine in list(self._path_context_engines_by_loop.items()):
-            if loop_key is running_loop and not loop_key.is_closed():
+            # loop_key is running_loop => this code runs on that loop, so
+            # it is by definition not closed. Other loops cannot be
+            # disposed safely from here; drop the reference and let GC
+            # reclaim their sockets.
+            if loop_key is running_loop:
                 with contextlib.suppress(Exception):
                     await engine.dispose()
         self._path_context_engines_by_loop.clear()

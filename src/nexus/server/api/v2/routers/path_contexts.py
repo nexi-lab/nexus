@@ -74,10 +74,58 @@ class PathContextOut(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _get_store(request: Request) -> PathContextStore:
-    store: PathContextStore | None = getattr(request.app.state, "path_context_store", None)
-    if store is None:
-        raise HTTPException(status_code=503, detail="path context store not configured")
+async def _get_store(request: Request) -> PathContextStore:
+    """Return a PathContextStore bound to the current request's event loop.
+
+    Issue #3773 note: the startup-time store on ``app.state`` is bound to the
+    lifespan loop, which diverges from the request loop under
+    BaseHTTPMiddleware — asyncpg trips ``got result for unknown protocol
+    state`` when used cross-loop. Lazily create a request-loop-native engine
+    on first use and cache it on ``app.state`` keyed by the running loop.
+    """
+    import asyncio
+    import os
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    loop = asyncio.get_running_loop()
+    cached: dict[Any, PathContextStore] | None = getattr(
+        request.app.state, "_path_context_store_by_loop", None
+    )
+    if cached is None:
+        cached = {}
+        request.app.state._path_context_store_by_loop = cached
+
+    existing = cached.get(loop)
+    if existing is not None:
+        return existing
+
+    db_url = os.environ.get("DATABASE_URL") or os.environ.get("NEXUS_DATABASE_URL")
+    if not db_url:
+        store: PathContextStore | None = getattr(request.app.state, "path_context_store", None)
+        if store is None:
+            raise HTTPException(status_code=503, detail="path context store not configured")
+        cached[loop] = store
+        return store
+
+    if db_url.startswith("postgresql://"):
+        db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        db_type = "postgresql"
+    elif db_url.startswith("postgres://"):
+        db_url = db_url.replace("postgres://", "postgresql+asyncpg://", 1)
+        db_type = "postgresql"
+    elif db_url.startswith("sqlite:") and "+aiosqlite" not in db_url:
+        db_url = db_url.replace("sqlite:", "sqlite+aiosqlite:", 1)
+        db_type = "sqlite"
+    elif db_url.startswith("sqlite"):
+        db_type = "sqlite"
+    else:
+        db_type = "sqlite"
+
+    engine = create_async_engine(db_url, future=True)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    store = PathContextStore(async_session_factory=factory, db_type=db_type)
+    cached[loop] = store
     return store
 
 

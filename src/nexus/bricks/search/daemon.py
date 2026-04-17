@@ -201,6 +201,7 @@ class SearchDaemon:
         self._cache_brick = cache_brick
         self._settings_store = settings_store
         self._path_context_cache = path_context_cache
+        self._path_context_cache_by_loop: dict[Any, Any] = {}
 
         # Search components (initialized on startup)
         self._bm25s_index: BM25SIndex | None = None
@@ -1109,6 +1110,51 @@ class SearchDaemon:
     # Search Methods
     # =========================================================================
 
+    async def _resolve_path_context_cache(self) -> Any | None:
+        """Return a PathContextCache bound to the current running loop.
+
+        Issue #3773 note: the startup-time cache is bound to the lifespan
+        loop. Under BaseHTTPMiddleware the request runs on a different loop,
+        and asyncpg raises ``got result for unknown protocol state`` when
+        used cross-loop. Lazily create a request-loop-native cache from
+        ``DATABASE_URL`` and memoize it per loop.
+        """
+        import os
+
+        from nexus.bricks.search.path_context import PathContextCache, PathContextStore
+
+        loop = asyncio.get_running_loop()
+        existing = self._path_context_cache_by_loop.get(loop)
+        if existing is not None:
+            return existing
+
+        db_url = os.environ.get("DATABASE_URL") or os.environ.get("NEXUS_DATABASE_URL")
+        if not db_url:
+            if self._path_context_cache is not None:
+                self._path_context_cache_by_loop[loop] = self._path_context_cache
+            return self._path_context_cache
+
+        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+        if db_url.startswith("postgresql://"):
+            db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+            db_type = "postgresql"
+        elif db_url.startswith("postgres://"):
+            db_url = db_url.replace("postgres://", "postgresql+asyncpg://", 1)
+            db_type = "postgresql"
+        elif db_url.startswith("sqlite:") and "+aiosqlite" not in db_url:
+            db_url = db_url.replace("sqlite:", "sqlite+aiosqlite:", 1)
+            db_type = "sqlite"
+        else:
+            db_type = "sqlite"
+
+        engine = create_async_engine(db_url, future=True)
+        factory = async_sessionmaker(engine, expire_on_commit=False)
+        store = PathContextStore(async_session_factory=factory, db_type=db_type)
+        cache = PathContextCache(store=store)
+        self._path_context_cache_by_loop[loop] = cache
+        return cache
+
     async def _attach_path_contexts(self, results: list[SearchResult]) -> None:
         """Attach admin-configured path context descriptions to search results.
 
@@ -1117,16 +1163,31 @@ class SearchDaemon:
         ``SearchResult.context`` in-place. No-op when the cache is absent or
         the result list is empty. Refreshes per-zone cache at most once per
         batch, then performs pure in-memory lookups (Issue #3773 review).
+
+        Fails soft: if the cache lookup raises (e.g. asyncpg loop mismatch),
+        logs a warning and leaves ``context`` unset rather than breaking
+        the whole search.
         """
-        if self._path_context_cache is None or not results:
+        if not results:
             return
         from nexus.contracts.constants import ROOT_ZONE_ID
 
+        try:
+            cache = await self._resolve_path_context_cache()
+        except Exception as exc:
+            logger.warning("path context cache resolution failed: %s", exc)
+            return
+        if cache is None:
+            return
+
         zones = {(r.zone_id or ROOT_ZONE_ID) for r in results}
-        for zone in zones:
-            await self._path_context_cache.refresh_if_stale(zone)
-        for r in results:
-            r.context = self._path_context_cache.lookup_cached(r.zone_id, r.path)
+        try:
+            for zone in zones:
+                await cache.refresh_if_stale(zone)
+            for r in results:
+                r.context = cache.lookup_cached(r.zone_id, r.path)
+        except Exception as exc:
+            logger.warning("path context attach failed: %s", exc)
 
     async def search(
         self,

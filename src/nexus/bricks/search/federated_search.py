@@ -594,6 +594,11 @@ class FederatedSearchDispatcher:
                 limit=limit,
                 id_key="zone_qualified_path",
             )
+            # Issue #3773 (Round-6 review): rrf_multi_fusion emits dicts built
+            # from __dataclass_fields__ verbatim, so ``context: None`` leaks
+            # into the wire. Normalize here so every federated code path
+            # matches the non-federated router's omit-when-None contract.
+            fused_results = [_strip_none_context(d) for d in fused_results]
         else:
             # Raw score merge-sort: for homogeneous zones (default)
             fused_results = _merge_by_raw_score(zone_result_lists, limit)
@@ -662,10 +667,20 @@ def _merge_by_raw_score(
     )[:limit]
 
 
+def _strip_none_context(d: dict[str, Any]) -> dict[str, Any]:
+    """Match the non-federated router's omit-when-None contract for
+    ``context``. Issue #3773 review (Rounds 5-6): every federated emission
+    path must route through this to avoid ``context: null`` leaking onto
+    the wire and creating a shape-drift between fusion strategies."""
+    if d.get("context") is None:
+        d.pop("context", None)
+    return d
+
+
 def _result_to_dict(result: Any) -> dict[str, Any]:
     """Convert a search result (dataclass or dict) to dict with zone metadata."""
     if isinstance(result, dict):
-        return result
+        return _strip_none_context(result)
     fields = getattr(result, "__dataclass_fields__", None)
     if fields is not None:
         d = {f: getattr(result, f) for f in fields}
@@ -673,7 +688,7 @@ def _result_to_dict(result: Any) -> dict[str, Any]:
         zone_qp = getattr(result, "zone_qualified_path", None)
         if zone_qp is not None:
             d["zone_qualified_path"] = zone_qp
-        return d
+        return _strip_none_context(d)
     return {"value": result}
 
 

@@ -1003,3 +1003,64 @@ class TestRemoteZoneSearch:
         assert len(resp.zones_failed) == 1
         assert resp.zones_failed[0].zone_id == "zone_dead"
         assert resp.results == []
+
+
+class TestResultToDictContextShape:
+    """Issue #3773 Round-5 review: federated dict payload must omit the
+    ``context`` key when unset so the response shape matches the
+    non-federated router (which gates on ``context is not None``).
+    Otherwise strict clients see the field appear/disappear based on the
+    ``federated=true`` flag."""
+
+    def test_result_to_dict_omits_context_when_none(self) -> None:
+        from nexus.bricks.search.federated_search import _result_to_dict
+
+        r = _make_result("a.md", 0.9, zone_id="root")
+        assert r.context is None
+        d = _result_to_dict(r)
+        assert "context" not in d
+
+    def test_result_to_dict_keeps_context_when_set(self) -> None:
+        from nexus.bricks.search.federated_search import _result_to_dict
+
+        r = _make_result("a.md", 0.9, zone_id="root")
+        r.context = "Some description"
+        d = _result_to_dict(r)
+        assert d["context"] == "Some description"
+
+    def test_strip_none_context_also_strips_plain_dicts(self) -> None:
+        """Round-6 review: RRF fusion dicts go through ``_strip_none_context``
+        directly (not via ``_result_to_dict``) because ``rrf_multi_fusion``
+        emits dicts built from ``__dataclass_fields__`` verbatim."""
+        from nexus.bricks.search.federated_search import _strip_none_context
+
+        assert _strip_none_context({"path": "a", "context": None}) == {"path": "a"}
+        assert _strip_none_context({"path": "a", "context": "x"}) == {
+            "path": "a",
+            "context": "x",
+        }
+
+
+class TestFederatedRRFContextShape:
+    """Round-6 review regression: with fusion_strategy=RRF, the dicts
+    produced by ``rrf_multi_fusion`` must not carry ``context: null`` —
+    shape must match the RAW_SCORE path.
+    """
+
+    def test_rrf_multi_fusion_dicts_stripped_of_none_context(self) -> None:
+        from nexus.bricks.search.federated_search import _strip_none_context
+        from nexus.bricks.search.fusion import rrf_multi_fusion
+
+        # Build two zones so rrf_multi_fusion runs (single-zone short-circuits).
+        zone_a = [_make_result("a.md", 0.9, zone_id="zone_a")]
+        zone_b = [_make_result("b.md", 0.8, zone_id="zone_b")]
+
+        raw = rrf_multi_fusion(
+            result_lists=[("zone_a", zone_a), ("zone_b", zone_b)],
+            k=60,
+            limit=10,
+            id_key="zone_qualified_path",
+        )
+        assert any(d.get("context") is None for d in raw)
+        stripped = [_strip_none_context(d) for d in raw]
+        assert all("context" not in d for d in stripped)

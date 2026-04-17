@@ -61,6 +61,8 @@ _REGISTER_COMMANDS: dict[str, tuple[str, ...]] = {
     "aspects": ("aspects",),
     # Issue #3417: Lineage tracking commands
     "lineage": ("lineage",),
+    # Issue #3773: Path context descriptions (admin CRUD)
+    "path_context": ("path-context",),
 }
 
 # Modules that expose a single Click command/group to add via cli.add_command

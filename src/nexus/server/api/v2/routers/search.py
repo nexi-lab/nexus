@@ -110,9 +110,8 @@ def _serialize_search_result(result: Any) -> dict[str, Any]:
     the graph and non-graph branches of ``search_query``. Preserves the
     pre-refactor field ordering, rounding, and None semantics.
 
-    ``splade_score`` and ``reranker_score`` are emitted whenever the
-    underlying result has them as attributes. Results that predate those
-    fields (e.g. bare ``BaseSearchResult``) get ``None``.
+    Issue #3773: emits ``context`` when the result carries a non-None value
+    (omits the key otherwise to keep responses compact).
     """
     out: dict[str, Any] = {
         "path": result.path,
@@ -128,6 +127,9 @@ def _serialize_search_result(result: Any) -> dict[str, Any]:
     out["splade_score"] = round(splade, 4) if splade is not None else None
     reranker = getattr(result, "reranker_score", None)
     out["reranker_score"] = round(reranker, 4) if reranker is not None else None
+    context = getattr(result, "context", None)
+    if context is not None:
+        out["context"] = context
     return out
 
 
@@ -502,16 +504,19 @@ async def search_query_batch(
         filter_ms_total += filter_ms
         trimmed = filtered[:orig_limit]
 
-        formatted = [
-            {
+        formatted: list[dict[str, Any]] = []
+        for r in trimmed:
+            entry: dict[str, Any] = {
                 "path": r.path,
                 "chunk_text": r.chunk_text,
                 "score": round(r.score, 4),
                 "keyword_score": round(r.keyword_score, 4) if r.keyword_score is not None else None,
                 "vector_score": round(r.vector_score, 4) if r.vector_score is not None else None,
             }
-            for r in trimmed
-        ]
+            ctx = getattr(r, "context", None)
+            if ctx is not None:
+                entry["context"] = ctx
+            formatted.append(entry)
         response_queries.append(
             {
                 "query": q_spec.get("q", ""),

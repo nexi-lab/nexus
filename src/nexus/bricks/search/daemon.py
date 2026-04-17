@@ -60,6 +60,7 @@ if TYPE_CHECKING:
     from nexus.bricks.search.chunking import EntropyAwareChunker
     from nexus.bricks.search.index_scope import IndexScope
     from nexus.bricks.search.indexing import IndexingPipeline
+    from nexus.bricks.search.path_context import PathContextCache
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +82,11 @@ class DaemonStats:
     zoekt_available: bool = False
     embedding_cache_connected: bool = False
     mutation_consumers: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Fail-soft counters for path-context attach (Issue #3773): search must
+    # never 500 on a context-lookup bug, but persistent failures should be
+    # visible via /search/stats rather than only in log lines.
+    path_context_attach_failures: int = 0
+    path_context_resolve_failures: int = 0
 
 
 @dataclass
@@ -152,6 +158,11 @@ class DaemonConfig:
     # only matters when ANOTHER worker mutated scope.
     scope_refresh_seconds: float = 5.0
 
+    # Path-context cache bound (Issue #3773 review). Multi-tenant deployments
+    # with thousands of active zones can outgrow the default LRU cap; expose
+    # as config so operators can tune without a code change.
+    path_context_max_zones: int = 2048
+
 
 class SearchDaemon:
     """Long-running search service with pre-warmed indexes.
@@ -178,6 +189,7 @@ class SearchDaemon:
         zoekt_client: Any | None = None,
         cache_brick: Any | None = None,
         settings_store: Any | None = None,
+        path_context_cache: "PathContextCache | None" = None,
     ):
         """Initialize the search daemon.
 
@@ -189,12 +201,20 @@ class SearchDaemon:
             cache_brick: Injected CacheBrick for embedding cache health checks.
             settings_store: Optional SystemSettingsStoreProtocol for durable
                 consumer checkpoints.
+            path_context_cache: Optional PathContextCache for attaching admin-
+                configured path descriptions onto every ``SearchResult``
+                returned by :meth:`search` (Issue #3773).
         """
         self.config = config or DaemonConfig()
         self.stats = DaemonStats()
         self._zoekt_client = zoekt_client
         self._cache_brick = cache_brick
         self._settings_store = settings_store
+        self._path_context_cache = path_context_cache
+        self._path_context_cache_by_loop: dict[Any, Any] = {}
+        # Engines we created for loop-local caches — tracked for disposal
+        # on shutdown so pooled connections don't leak (Issue #3773 review).
+        self._path_context_engines_by_loop: dict[Any, Any] = {}
 
         # Search components (initialized on startup)
         self._bm25s_index: BM25SIndex | None = None
@@ -790,6 +810,26 @@ class SearchDaemon:
         self._async_engine = None
         self._async_session = None
 
+        # Dispose loop-local path-context engines we created lazily. Only
+        # engines whose origin loop is the current running loop can actually
+        # be disposed from here — asyncpg pools for a different (or dead)
+        # loop must be released on their own loop, which we cannot reach
+        # from shutdown. Dropping the references is still correct: the dead
+        # loop's socket fds are reclaimed when it's garbage-collected.
+        # Suppress the expected cross-loop error on dispose rather than
+        # letting it surface as a shutdown warning.
+        running_loop = asyncio.get_running_loop()
+        for loop_key, engine in list(self._path_context_engines_by_loop.items()):
+            # loop_key is running_loop => this code runs on that loop, so
+            # it is by definition not closed. Other loops cannot be
+            # disposed safely from here; drop the reference and let GC
+            # reclaim their sockets.
+            if loop_key is running_loop:
+                with contextlib.suppress(Exception):
+                    await engine.dispose()
+        self._path_context_engines_by_loop.clear()
+        self._path_context_cache_by_loop.clear()
+
         self._initialized = False
         logger.info("SearchDaemon shutdown complete")
 
@@ -1103,6 +1143,185 @@ class SearchDaemon:
     # Search Methods
     # =========================================================================
 
+    async def _resolve_path_context_cache(self) -> Any | None:
+        """Return a PathContextCache bound to the current running loop.
+
+        Issue #3773 note: the startup-time cache is bound to the lifespan
+        loop. Under BaseHTTPMiddleware the request runs on a different loop,
+        and asyncpg raises ``got result for unknown protocol state`` when
+        used cross-loop. Lazily create a request-loop-native cache from
+        ``DATABASE_URL`` and memoize it per loop.
+        """
+        import os
+
+        from nexus.bricks.search.path_context import PathContextCache, PathContextStore
+
+        loop = asyncio.get_running_loop()
+        # Round-7 review: prune closed-loop entries to bound memory on
+        # long-running servers where request loops can come and go (worker
+        # recycling, anyio loop churn). Entries for dead loops can't be
+        # disposed from here anyway — shutdown can only reach the current
+        # loop's engine — so dropping their refs is the correct cleanup.
+        # Round-8 review: tolerate non-loop keys (mocks, test fixtures) — a
+        # missing ``is_closed`` attr is treated as closed so the lookup
+        # never raises AttributeError.
+        stale = [
+            lk
+            for lk in self._path_context_cache_by_loop
+            if not hasattr(lk, "is_closed") or lk.is_closed()
+        ]
+        for lk in stale:
+            self._path_context_cache_by_loop.pop(lk, None)
+            self._path_context_engines_by_loop.pop(lk, None)
+        existing = self._path_context_cache_by_loop.get(loop)
+        if existing is not None:
+            return existing
+
+        # Prefer the explicit DaemonConfig URL (set by `create_app(database_url=...)`
+        # or the startup lifespan), fall back to env vars. Both must be consulted
+        # — env-only lookup misses the `create_app(database_url=...)` code path
+        # (Issue #3773 review feedback).
+        db_url = (
+            self.config.database_url
+            or os.environ.get("DATABASE_URL")
+            or os.environ.get("NEXUS_DATABASE_URL")
+        )
+        if not db_url:
+            if self._path_context_cache is not None:
+                self._path_context_cache_by_loop[loop] = self._path_context_cache
+            return self._path_context_cache
+
+        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+        if db_url.startswith("postgresql://"):
+            db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+            db_type = "postgresql"
+        elif db_url.startswith("postgres://"):
+            db_url = db_url.replace("postgres://", "postgresql+asyncpg://", 1)
+            db_type = "postgresql"
+        elif db_url.startswith("sqlite:") and "+aiosqlite" not in db_url:
+            db_url = db_url.replace("sqlite:", "sqlite+aiosqlite:", 1)
+            db_type = "sqlite"
+        else:
+            db_type = "sqlite"
+
+        engine = create_async_engine(db_url, future=True)
+        factory = async_sessionmaker(engine, expire_on_commit=False)
+        store = PathContextStore(async_session_factory=factory, db_type=db_type)
+        cache = PathContextCache(store=store, max_zones=self.config.path_context_max_zones)
+        self._path_context_cache_by_loop[loop] = cache
+        self._path_context_engines_by_loop[loop] = engine
+        return cache
+
+    async def _attach_path_contexts(
+        self,
+        results: list[SearchResult],
+        *,
+        zone_id: str | None = None,
+    ) -> None:
+        """Attach admin-configured path context descriptions to search results.
+
+        Issue #3773: When a ``PathContextCache`` is wired in, look up the
+        longest-prefix context for each result and populate
+        ``SearchResult.context`` in-place. No-op when the cache is absent or
+        the result list is empty. Refreshes per-zone cache at most once per
+        batch, then performs pure in-memory lookups (Issue #3773 review).
+
+        ``zone_id`` is the effective zone scope of the caller's search.
+        Many backend paths (txtai, legacy BM25) construct ``SearchResult``
+        without populating ``result.zone_id``, so we cannot rely on the
+        per-result field. Use the caller-supplied ``zone_id`` as the
+        authoritative fallback, otherwise non-root zone searches silently
+        attach root-zone contexts (Round-3 review regression).
+
+        Fails soft: if the cache lookup raises (e.g. asyncpg loop mismatch),
+        logs a warning and leaves ``context`` unset rather than breaking
+        the whole search.
+        """
+        if not results:
+            return
+        from nexus.contracts.constants import ROOT_ZONE_ID
+
+        try:
+            cache = await self._resolve_path_context_cache()
+        except Exception as exc:
+            self.stats.path_context_resolve_failures += 1
+            logger.warning(
+                "path context cache resolution failed (total=%d): %s",
+                self.stats.path_context_resolve_failures,
+                exc,
+            )
+            return
+        if cache is None:
+            return
+
+        # Prefer the caller's effective zone over per-result zone_id because
+        # most backends don't populate it; fall back to r.zone_id then to
+        # ROOT_ZONE_ID if both are absent.
+        effective_zone = zone_id or ROOT_ZONE_ID
+
+        def _zone_for(r: SearchResult) -> str:
+            return r.zone_id or effective_zone
+
+        zones = {_zone_for(r) for r in results}
+        # Refresh + synchronously snapshot each zone's records list (between
+        # awaits a concurrent request could evict this zone from the LRU).
+        # snapshot_zone is sync so the grab happens before the next refresh's
+        # await point. Isolate per-zone failures: one zone raising shouldn't
+        # drop context for every other zone in the same batch (Round-4 review).
+        snapshots: dict[str, list[Any]] = {}
+        for zone in zones:
+            try:
+                await cache.refresh_if_stale(zone)
+            except Exception as exc:
+                # Round-5 review: a transient DB error during refresh must not
+                # discard a previously-cached snapshot. Stale context is
+                # strictly better than no context for an LLM consumer, and it
+                # matches the fail-soft contract advertised in the stats
+                # counter's name.
+                self.stats.path_context_attach_failures += 1
+                logger.warning(
+                    "path context refresh failed for zone=%r (total=%d): %s",
+                    zone,
+                    self.stats.path_context_attach_failures,
+                    exc,
+                )
+            # Round-7 review: snapshot_zone is a dict access but the fail-soft
+            # contract says ONE zone raising must not propagate out of this
+            # method. Wrap it too so a rare concurrent-mutation RuntimeError
+            # is caught and counted, not raised.
+            try:
+                snap = cache.snapshot_zone(zone)
+            except Exception as exc:
+                self.stats.path_context_attach_failures += 1
+                logger.warning(
+                    "path context snapshot failed for zone=%r (total=%d): %s",
+                    zone,
+                    self.stats.path_context_attach_failures,
+                    exc,
+                )
+                snap = None
+            if snap is not None:
+                snapshots[zone] = snap
+
+        from nexus.bricks.search.path_context import lookup_in_records
+
+        for r in results:
+            zone = _zone_for(r)
+            records = snapshots.get(zone)
+            if records is None:
+                continue
+            try:
+                r.context = lookup_in_records(records, r.path)
+            except Exception as exc:
+                self.stats.path_context_attach_failures += 1
+                logger.warning(
+                    "path context lookup failed for path=%r (total=%d): %s",
+                    r.path,
+                    self.stats.path_context_attach_failures,
+                    exc,
+                )
+
     async def search(
         self,
         query: str,
@@ -1145,6 +1364,7 @@ class SearchDaemon:
                     latency_ms = (time.perf_counter() - start) * 1000
                     self._track_latency(latency_ms)
                     self.last_search_timing["backend_ms"] = latency_ms
+                    await self._attach_path_contexts(zoekt_results, zone_id=effective_zone_id)
                     return zoekt_results
 
             # Delegate to txtai backend for all search types (Issue #2663)
@@ -1187,6 +1407,7 @@ class SearchDaemon:
 
                     latency_ms = (time.perf_counter() - start) * 1000
                     self._track_latency(latency_ms)
+                    await self._attach_path_contexts(results, zone_id=effective_zone_id)
                     return results
                 # txtai returned empty — fall through to legacy search
 
@@ -1209,6 +1430,7 @@ class SearchDaemon:
             latency_ms = (time.perf_counter() - start) * 1000
             self._track_latency(latency_ms)
 
+            await self._attach_path_contexts(results, zone_id=effective_zone_id)
             return results
 
         except TimeoutError:
@@ -1240,6 +1462,66 @@ class SearchDaemon:
             return [[] for _ in queries]
 
         results: list[list[Any]] = await backend_batch(queries, zone_id=effective_zone_id)
+        # Issue #3773: attach admin-configured path contexts. The whole batch
+        # is single-zone by design (``zone_id=effective_zone_id`` above), so
+        # refresh once against that zone and do pure in-memory lookups on
+        # every inner result against the snapshot — backends return
+        # ``BaseSearchResult`` without ``zone_id`` set, so we must use the
+        # caller's scope instead of ``r.zone_id`` (Round-3 review).
+        try:
+            cache = await self._resolve_path_context_cache()
+        except Exception as exc:
+            self.stats.path_context_resolve_failures += 1
+            logger.warning(
+                "path context cache resolution failed (total=%d): %s",
+                self.stats.path_context_resolve_failures,
+                exc,
+            )
+            cache = None
+        if cache is not None:
+            # Round-6 review: refresh failure must not drop an otherwise-usable
+            # stale snapshot — matches the fail-soft contract in
+            # ``_attach_path_contexts``. Snapshot AFTER the refresh's try so a
+            # transient DB error still yields the last successfully-loaded
+            # records instead of silently erasing context for the whole batch.
+            try:
+                await cache.refresh_if_stale(effective_zone_id)
+            except Exception as exc:
+                self.stats.path_context_attach_failures += 1
+                logger.warning(
+                    "path context refresh failed for zone=%r (total=%d): %s",
+                    effective_zone_id,
+                    self.stats.path_context_attach_failures,
+                    exc,
+                )
+            # Round-7 review: wrap snapshot_zone too so the fail-soft contract
+            # holds even if a concurrent LRU mutation races the dict access.
+            try:
+                records = cache.snapshot_zone(effective_zone_id)
+            except Exception as exc:
+                self.stats.path_context_attach_failures += 1
+                logger.warning(
+                    "path context snapshot failed for zone=%r (total=%d): %s",
+                    effective_zone_id,
+                    self.stats.path_context_attach_failures,
+                    exc,
+                )
+                records = None
+            if records is not None:
+                from nexus.bricks.search.path_context import lookup_in_records
+
+                for inner in results:
+                    for r in inner:
+                        try:
+                            r.context = lookup_in_records(records, r.path)
+                        except Exception as exc:
+                            self.stats.path_context_attach_failures += 1
+                            logger.warning(
+                                "path context lookup failed for path=%r (total=%d): %s",
+                                r.path,
+                                self.stats.path_context_attach_failures,
+                                exc,
+                            )
         return results
 
     async def index_documents(
@@ -2839,6 +3121,11 @@ class SearchDaemon:
             "txtai_reranker": self.config.txtai_reranker,
             "txtai_graph": self.config.txtai_graph,
             "mutation_consumers": self.stats.mutation_consumers,
+            # Issue #3773: path-context attach runs fail-soft so search is
+            # never broken by a context-lookup bug. Expose the counts so
+            # operators can spot persistent failures via /search/stats.
+            "path_context_attach_failures": self.stats.path_context_attach_failures,
+            "path_context_resolve_failures": self.stats.path_context_resolve_failures,
         }
 
     def get_health(self) -> dict[str, Any]:

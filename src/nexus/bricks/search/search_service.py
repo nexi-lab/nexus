@@ -3284,8 +3284,9 @@ class SearchService:
                 path_filter=db_path,
                 zone_id=zone_id,
             )
-            hits = [
-                {
+            hits = []
+            for r in daemon_results:
+                entry: dict[str, Any] = {
                     "path": r.path,
                     "chunk_text": getattr(r, "chunk_text", ""),
                     "score": round(r.score, 4),
@@ -3295,8 +3296,13 @@ class SearchService:
                     "line_start": getattr(r, "line_start", 0) or 0,
                     "line_end": getattr(r, "line_end", 0) or 0,
                 }
-                for r in daemon_results
-            ]
+                # Issue #3773 (Round-6 review): surface admin-configured path
+                # context when the daemon attached one. Omit the key when
+                # unset to match the HTTP router's shape contract.
+                ctx = getattr(r, "context", None)
+                if ctx is not None:
+                    entry["context"] = ctx
+                hits.append(entry)
 
             # Filter by read permission — only return files the caller can access
             if self._permission_enforcer and hits and context is not None:

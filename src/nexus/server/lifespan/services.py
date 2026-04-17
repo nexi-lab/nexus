@@ -105,6 +105,15 @@ async def shutdown_services(app: "FastAPI", svc: "LifespanServices") -> None:
         except Exception as e:
             logger.warning("Error shutting down Search Daemon: %s", e, exc_info=True)
 
+    # Dispose loop-local path-context engines created lazily by the router
+    # (Issue #3773 review — avoid pooled-connection leak on loop churn).
+    try:
+        from nexus.server.api.v2.routers.path_contexts import dispose_loop_local_engines
+
+        await dispose_loop_local_engines(app.state)
+    except Exception as e:
+        logger.debug("dispose_loop_local_engines failed: %s", e)
+
     # Stop DirectoryGrantExpander worker
     if app.state.directory_grant_expander:
         try:

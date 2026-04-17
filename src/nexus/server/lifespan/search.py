@@ -65,9 +65,20 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
         from nexus.bricks.search.daemon import DaemonConfig, SearchDaemon
 
         txtai_model, txtai_vectors = _resolve_txtai_runtime_config()
+        _path_ctx_max_zones_env = os.environ.get("NEXUS_PATH_CONTEXT_MAX_ZONES")
+        _path_ctx_max_zones = 2048
+        if _path_ctx_max_zones_env:
+            try:
+                _path_ctx_max_zones = max(1, int(_path_ctx_max_zones_env))
+            except ValueError:
+                logger.warning(
+                    "Invalid NEXUS_PATH_CONTEXT_MAX_ZONES=%r — falling back to 2048",
+                    _path_ctx_max_zones_env,
+                )
         config = DaemonConfig(
             database_url=svc.database_url,
             query_timeout_seconds=float(os.environ.get("NEXUS_QUERY_TIMEOUT", "10.0")),
+            path_context_max_zones=_path_ctx_max_zones,
             # txtai backend config (Issue #2663)
             txtai_model=txtai_model,
             txtai_vectors=txtai_vectors,
@@ -112,12 +123,46 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
         # CacheBrick is available from startup_permissions
         _cache_brick = getattr(app.state, "cache_brick", None)
 
+        # Issue #3773: path context store + cache
+        path_context_store = None
+        path_context_cache = None
+        if _async_sf is not None:
+            try:
+                from nexus.bricks.search.path_context import (
+                    PathContextCache,
+                    PathContextStore,
+                )
+
+                _db_type = (
+                    "postgresql"
+                    if (svc.database_url or "").startswith(("postgres", "postgresql"))
+                    else "sqlite"
+                )
+                path_context_store = PathContextStore(
+                    async_session_factory=_async_sf,
+                    db_type=_db_type,
+                )
+                path_context_cache = PathContextCache(
+                    store=path_context_store,
+                    max_zones=config.path_context_max_zones,
+                )
+            except Exception:  # pragma: no cover — non-fatal wiring failure
+                logger.exception("Failed to initialize path context store/cache")
+        app.state.path_context_store = path_context_store
+        app.state.path_context_cache = path_context_cache
+        # Expose the database URL for loop-local resolvers that need to rebuild
+        # engines on the request loop (Issue #3773 review feedback): the env
+        # var may not be set when the app is constructed via
+        # ``create_app(database_url=...)``.
+        app.state.database_url = svc.database_url
+
         app.state.search_daemon = SearchDaemon(
             config,
             async_session_factory=_async_sf,
             zoekt_client=_zoekt_client,
             cache_brick=_cache_brick,
             settings_store=_settings_store,
+            path_context_cache=path_context_cache,  # Issue #3773
         )
 
         # Embeddings are now handled by txtai backend (Issue #2663).

@@ -38,6 +38,8 @@ class BaseSearchResult:
     original_score: float | None = None  # Score before attribute boosting
     # Issue #3147: Federated search — zone provenance
     zone_id: str | None = None  # Source zone for cross-zone federated results
+    # Issue #3773: admin-configured path description for LLM consumers
+    context: str | None = None
 
     @property
     def zone_qualified_path(self) -> str | None:

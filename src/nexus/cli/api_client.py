@@ -70,11 +70,21 @@ class NexusApiClient:
         resp.raise_for_status()
         return resp.json()
 
-    def delete(self, path: str) -> None:
-        """DELETE request. No return value (expects 204)."""
+    def delete(self, path: str, params: dict[str, Any] | None = None) -> Any:
+        """DELETE request.
+
+        Returns parsed JSON when the server replies with a body (e.g. 200
+        with ``{"status": "deleted"}``), or ``None`` for bodyless responses
+        (e.g. 204). Raises ``httpx.HTTPStatusError`` on non-2xx responses —
+        callers can inspect ``exc.response.status_code`` to distinguish 404
+        from other failures without reaching into private internals.
+        """
         url = f"{self._base_url}{path}"
-        resp = httpx.delete(url, headers=self._headers(), timeout=self._timeout)
+        resp = httpx.delete(url, headers=self._headers(), params=params, timeout=self._timeout)
         resp.raise_for_status()
+        if resp.status_code == 204 or not resp.content:
+            return None
+        return resp.json()
 
 
 def get_api_client_from_options(

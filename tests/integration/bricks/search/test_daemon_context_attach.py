@@ -132,6 +132,49 @@ class TestRealDaemonAttach:
         assert result2.context is None
 
 
+class TestAttachStaleFallbackOnRefreshError:
+    """Round-5 review: a transient DB failure during ``refresh_if_stale`` must
+    not discard a previously-cached snapshot. The fail-soft contract says
+    stale context beats no context for an LLM consumer."""
+
+    @pytest.mark.asyncio
+    async def test_attach_uses_stale_snapshot_when_refresh_raises(
+        self, cache: PathContextCache
+    ) -> None:
+        from nexus.bricks.search.daemon import DaemonConfig, SearchDaemon, SearchResult
+
+        # Warm the cache with a successful load first so snapshot_zone has
+        # records to fall back to.
+        await cache.refresh_if_stale("root")
+
+        # Force the next refresh to fail via monkeypatch-style assignment;
+        # this is a test-only stub of the store's fingerprint method.
+        async def boom(zone_id: str) -> tuple[int, object]:
+            raise RuntimeError("simulated DB brownout")
+
+        object.__setattr__(cache._store, "zone_fingerprint", boom)
+
+        daemon = SearchDaemon.__new__(SearchDaemon)
+        daemon.config = DaemonConfig()
+        daemon._path_context_cache = cache
+        daemon._path_context_cache_by_loop = {}
+        daemon._path_context_engines_by_loop = {}
+
+        class _Stats:
+            path_context_attach_failures = 0
+            path_context_resolve_failures = 0
+
+        daemon.stats = _Stats()
+
+        result = SearchResult(
+            path="src/nexus/bricks/search/fusion.py", chunk_text="", score=0.9, zone_id=None
+        )
+        await daemon._attach_path_contexts([result], zone_id="root")
+        # Stale snapshot preserved "Hybrid search brick" under root.
+        assert result.context == "Hybrid search brick"
+        assert daemon.stats.path_context_attach_failures == 1
+
+
 class TestBatchSearchZoneAttachment:
     """Round-4 gap: no test covered batch_search's path-context attach on
     a non-root zone. Mirror the attach logic here to guarantee the

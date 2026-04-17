@@ -673,6 +673,11 @@ def _result_to_dict(result: Any) -> dict[str, Any]:
         zone_qp = getattr(result, "zone_qualified_path", None)
         if zone_qp is not None:
             d["zone_qualified_path"] = zone_qp
+        # Issue #3773 (Round-5 review): match the non-federated router shape,
+        # which omits ``context`` when unset. Otherwise strict clients see the
+        # key appear/disappear based on the ``federated=true`` flag.
+        if d.get("context") is None:
+            d.pop("context", None)
         return d
     return {"value": result}
 

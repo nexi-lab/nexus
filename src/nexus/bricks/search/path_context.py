@@ -18,9 +18,12 @@ from sqlalchemy import text
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 
-# Default LRU cap on the number of zones PathContextCache retains. A
-# multi-tenant deployment with many short-lived zones could otherwise
-# accumulate per-zone locks + record lists forever (Issue #3773 review).
+# Default LRU cap on the number of zones PathContextCache retains *records*
+# for. Per-zone asyncio.Lock objects are intentionally NOT evicted so that
+# Lock identity is preserved across refreshes — see ``refresh_if_stale`` for
+# the race this prevents. Locks are ~56 B each; operators with extremely
+# high zone cardinality (millions of short-lived zones) should monitor the
+# _locks dict and drain it out-of-band. (Issue #3773 review feedback.)
 _DEFAULT_MAX_ZONES = 2048
 
 

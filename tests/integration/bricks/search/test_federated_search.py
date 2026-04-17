@@ -1003,3 +1003,27 @@ class TestRemoteZoneSearch:
         assert len(resp.zones_failed) == 1
         assert resp.zones_failed[0].zone_id == "zone_dead"
         assert resp.results == []
+
+
+class TestResultToDictContextShape:
+    """Issue #3773 Round-5 review: federated dict payload must omit the
+    ``context`` key when unset so the response shape matches the
+    non-federated router (which gates on ``context is not None``).
+    Otherwise strict clients see the field appear/disappear based on the
+    ``federated=true`` flag."""
+
+    def test_result_to_dict_omits_context_when_none(self) -> None:
+        from nexus.bricks.search.federated_search import _result_to_dict
+
+        r = _make_result("a.md", 0.9, zone_id="root")
+        assert r.context is None
+        d = _result_to_dict(r)
+        assert "context" not in d
+
+    def test_result_to_dict_keeps_context_when_set(self) -> None:
+        from nexus.bricks.search.federated_search import _result_to_dict
+
+        r = _make_result("a.md", 0.9, zone_id="root")
+        r.context = "Some description"
+        d = _result_to_dict(r)
+        assert d["context"] == "Some description"

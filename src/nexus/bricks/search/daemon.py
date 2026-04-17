@@ -1257,10 +1257,12 @@ class SearchDaemon:
         for zone in zones:
             try:
                 await cache.refresh_if_stale(zone)
-                snap = cache.snapshot_zone(zone)
-                if snap is not None:
-                    snapshots[zone] = snap
             except Exception as exc:
+                # Round-5 review: a transient DB error during refresh must not
+                # discard a previously-cached snapshot. Stale context is
+                # strictly better than no context for an LLM consumer, and it
+                # matches the fail-soft contract advertised in the stats
+                # counter's name.
                 self.stats.path_context_attach_failures += 1
                 logger.warning(
                     "path context refresh failed for zone=%r (total=%d): %s",
@@ -1268,6 +1270,9 @@ class SearchDaemon:
                     self.stats.path_context_attach_failures,
                     exc,
                 )
+            snap = cache.snapshot_zone(zone)
+            if snap is not None:
+                snapshots[zone] = snap
 
         from nexus.bricks.search.path_context import lookup_in_records
 

@@ -4166,18 +4166,23 @@ impl Kernel {
         if validate_path_fast(parent_path).is_err() {
             return Vec::new();
         }
-        let route = match self
-            .mount_table
-            .route(parent_path, zone_id, is_admin, false)
-        {
+        // Callers pass either "/local" or "/local/" — normalize the trailing
+        // slash off before routing so prefix comparisons below don't produce
+        // double slashes (which silently return no children).
+        let normalized = if parent_path != "/" && parent_path.ends_with('/') {
+            parent_path.trim_end_matches('/')
+        } else {
+            parent_path
+        };
+        let route = match self.mount_table.route(normalized, zone_id, is_admin, false) {
             Ok(r) => r,
             Err(_) => return Vec::new(),
         };
 
-        let global_prefix = if parent_path == "/" {
+        let global_prefix = if normalized == "/" {
             "/".to_string()
         } else {
-            format!("{}/", parent_path)
+            format!("{}/", normalized)
         };
 
         // Zone-relative prefix for metastore list (R7: zone-relative keys).

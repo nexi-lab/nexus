@@ -628,26 +628,54 @@ async def handle_semantic_search_index(
         # would bypass the caller's permission scope.
         from nexus.factory._semantic_search import _resolve_parse_fn
         from nexus.factory.adapters import _apply_parse_transform
+        from nexus.lib.virtual_views import is_parseable_path
 
         _parse_fn = _resolve_parse_fn(nexus_fs)
 
         documents: list[dict[str, Any]] = []
         read_errors = 0
         total_chunks = 0
+        # Track parseable files that produced empty content after parse — they
+        # may have been successfully indexed on a previous tick, so their
+        # stale docs must be purged from the backend to avoid serving
+        # outdated text until the parser recovers (matches the stale-chunk
+        # cleanup IndexingService does for the daemon-refresh path).
+        stale_ids_to_delete: list[str] = []
         for file_path in paths_to_index:
             try:
                 raw = nexus_fs.sys_read(file_path, context=context)
                 content_str = _apply_parse_transform(nexus_fs, file_path, raw, parse_fn=_parse_fn)
+                doc_id = f"{zone_id}:{file_path}" if zone_id != "root" else file_path
                 if content_str and content_str.strip():
-                    doc_id = f"{zone_id}:{file_path}" if zone_id != "root" else file_path
                     documents.append({"id": doc_id, "text": content_str, "path": file_path})
+                elif is_parseable_path(file_path):
+                    stale_ids_to_delete.append(doc_id)
             except Exception as read_err:
                 read_errors += 1
                 _log.warning("Skipping %s: %s", file_path, read_err)
 
         _log.info(
-            "semantic_search_index: %d documents read (%d errors)", len(documents), read_errors
+            "semantic_search_index: %d documents read (%d errors, %d parse-failed)",
+            len(documents),
+            read_errors,
+            len(stale_ids_to_delete),
         )
+
+        # Purge stale docs BEFORE upserting fresh ones so the backend view is
+        # monotonic: a caller observing the index between steps never sees
+        # both the outdated and fresh versions live simultaneously.
+        if stale_ids_to_delete:
+            try:
+                removed = await daemon.delete_documents(stale_ids_to_delete, zone_id=zone_id)
+                _log.info(
+                    "semantic_search_index: purged %d stale doc(s) for failed parses", removed
+                )
+            except Exception as del_err:
+                _log.warning(
+                    "semantic_search_index: stale doc purge failed (%d ids): %s",
+                    len(stale_ids_to_delete),
+                    del_err,
+                )
 
         # Single upsert to txtai → pgvector (BM25 + dense embeddings + SPLADE)
         results: dict[str, int] = {}

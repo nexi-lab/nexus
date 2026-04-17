@@ -142,11 +142,12 @@ class IndexingService:
 
             path_id: str = file_model.path_id
             current_content_hash: str | None = file_model.content_hash
+            observed_indexed_hash: str | None = file_model.indexed_content_hash
 
             if (
                 not force
                 and current_content_hash is not None
-                and file_model.indexed_content_hash == current_content_hash
+                and observed_indexed_hash == current_content_hash
             ):
                 # Content unchanged -- return existing chunk count.
                 existing = self._count_chunks(session, path_id)
@@ -175,22 +176,41 @@ class IndexingService:
         if is_parseable_path(path) and not (content and content.strip()):
             if (
                 current_content_hash is not None
-                and file_model is not None
-                and file_model.indexed_content_hash is not None
-                and file_model.indexed_content_hash != current_content_hash
+                and observed_indexed_hash is not None
+                and observed_indexed_hash != current_content_hash
             ):
+                # CAS guard: a concurrent reindex may have succeeded between
+                # step 1 and now, advancing ``indexed_content_hash`` past the
+                # stale value we saw.  If that's happened, the chunks belong
+                # to that fresh index — wiping them would zero out search
+                # coverage for a file that someone else just fixed.  Re-read
+                # the row inside this session and only delete if the hash is
+                # still the exact stale value we observed.
                 with self._get_session() as session:
-                    session.execute(
-                        delete(DocumentChunkModel).where(
-                            DocumentChunkModel.path_id == path_id,
-                        ),
-                    )
-                    session.commit()
-                logger.warning(
-                    "[INDEXING-SVC] Parse failed for changed %s — cleared "
-                    "stale chunks, will retry on next tick",
-                    path,
-                )
+                    locked = session.execute(
+                        select(FilePathModel).where(
+                            FilePathModel.path_id == path_id,
+                            FilePathModel.deleted_at.is_(None),
+                        )
+                    ).scalar_one_or_none()
+                    if locked is not None and locked.indexed_content_hash == observed_indexed_hash:
+                        session.execute(
+                            delete(DocumentChunkModel).where(
+                                DocumentChunkModel.path_id == path_id,
+                            ),
+                        )
+                        session.commit()
+                        logger.warning(
+                            "[INDEXING-SVC] Parse failed for changed %s — cleared "
+                            "stale chunks, will retry on next tick",
+                            path,
+                        )
+                    else:
+                        logger.info(
+                            "[INDEXING-SVC] Skipped stale-chunk delete for %s — "
+                            "indexed_content_hash advanced under us (CAS miss)",
+                            path,
+                        )
             else:
                 logger.warning(
                     "[INDEXING-SVC] Empty content for parseable binary %s — "

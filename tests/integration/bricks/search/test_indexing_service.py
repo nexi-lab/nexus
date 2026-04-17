@@ -348,6 +348,66 @@ class TestIndexDocument:
         assert file_model.last_indexed_at is None
 
     @pytest.mark.asyncio
+    async def test_index_document_skips_stale_delete_when_concurrent_reindex_advanced_hash(
+        self,
+    ) -> None:
+        """A successful concurrent reindex can advance ``indexed_content_hash``
+        between the first session snapshot and the stale-chunk delete session.
+        The CAS guard must NOT delete when the re-read hash differs from the
+        stale value we observed — otherwise we'd wipe freshly-indexed chunks.
+        """
+        # Step-1 snapshot shows (content=new-hash, indexed=old-hash), so
+        # the delete path is entered.  But between step 1 and the delete
+        # session, a concurrent run completes: the row now reads
+        # (content=new-hash, indexed=new-hash).
+        step1_model = _mock_file_model(
+            path_id="pid-pdf-cas",
+            content_hash="new-hash",
+            indexed_content_hash="old-hash",
+            virtual_path="/cas.pdf",
+        )
+        step2_model = _mock_file_model(
+            path_id="pid-pdf-cas",
+            content_hash="new-hash",
+            indexed_content_hash="new-hash",  # fresh index landed
+            virtual_path="/cas.pdf",
+        )
+
+        # First call returns the stale snapshot, second call returns the
+        # post-reindex row.  scalar_one_or_none drives both the step-1
+        # lookup and the CAS re-read.
+        scalar_result_stale = MagicMock()
+        scalar_result_stale.scalar_one_or_none.return_value = step1_model
+        scalar_result_stale.scalar.return_value = 0
+        scalar_result_fresh = MagicMock()
+        scalar_result_fresh.scalar_one_or_none.return_value = step2_model
+        scalar_result_fresh.scalar.return_value = 0
+
+        session = MagicMock()
+        session.execute.side_effect = [scalar_result_stale, scalar_result_fresh]
+        session.get.return_value = step2_model
+        session.commit = MagicMock()
+
+        pipeline = _mock_pipeline()
+        file_reader = _mock_file_reader(session, content="", searchable_text=None)
+        service = IndexingService(
+            pipeline=pipeline,
+            file_reader=file_reader,
+            session_factory=MagicMock(),
+            vector_db=_mock_vector_db(),
+            embedding_provider=None,
+        )
+
+        result = await service.index_document("/cas.pdf")
+
+        assert result == 0
+        pipeline.index_document.assert_not_called()
+        # Critical: no commit (therefore no DELETE) must fire in the CAS-miss
+        # branch.  If the CAS guard failed we'd see exactly one commit for
+        # the stale-chunk delete.
+        session.commit.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_index_document_handles_mixed_case_pdf_extension(self) -> None:
         """Mixed-case extensions (``/Report.PDF``) must route through the
         parseable branch so fail-closed behavior covers them.  Without the

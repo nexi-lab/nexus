@@ -67,9 +67,19 @@ def _get_parsed_text_sync(
     handler for one document at a time is acceptable; we don't need a
     second ``asyncio.to_thread`` hop here.
     """
+    import hashlib
+
+    # Content-hash the raw bytes so the cache entry is zone-aware and
+    # revision-aware.  File metadata is keyed by path alone in the default
+    # metastore; two zones with different ``/report.pdf`` files, or the same
+    # file rewritten with fresh bytes, would otherwise collide on the path
+    # key and one would silently serve the other's parsed text.
+    raw_hash = hashlib.sha256(raw).hexdigest()
+
     try:
         cached = nx.metadata.get_file_metadata(path, "parsed_text")
-        if cached:
+        cached_hash = nx.metadata.get_file_metadata(path, "parsed_text_hash")
+        if cached and cached_hash == raw_hash:
             cached_str = (
                 cached if isinstance(cached, str) else cached.decode("utf-8", errors="ignore")
             )
@@ -99,6 +109,7 @@ def _get_parsed_text_sync(
         from datetime import UTC, datetime
 
         nx.metadata.set_file_metadata(path, "parsed_text", text)
+        nx.metadata.set_file_metadata(path, "parsed_text_hash", raw_hash)
         nx.metadata.set_file_metadata(path, "parsed_at", datetime.now(UTC).isoformat())
     except Exception:
         pass

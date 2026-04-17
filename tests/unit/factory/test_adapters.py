@@ -86,15 +86,76 @@ class TestNexusFSFileReader:
 
     @pytest.mark.asyncio
     async def test_read_text_uses_cached_parsed_text_for_pdf(self) -> None:
+        import hashlib
+
+        raw = b"%PDF-1.4 binary-bytes"
+        raw_hash = hashlib.sha256(raw).hexdigest()
+
         nx = MagicMock()
-        nx.sys_read = MagicMock(return_value=b"%PDF-1.4 binary-bytes")
-        nx.metadata.get_file_metadata = MagicMock(return_value="cached markdown")
+        nx.sys_read = MagicMock(return_value=raw)
+        # Metastore returns cached text AND a matching raw-hash — both must
+        # line up for the cache to be trusted.
+        nx.metadata.get_file_metadata = MagicMock(
+            side_effect=lambda _p, key: {
+                "parsed_text": "cached markdown",
+                "parsed_text_hash": raw_hash,
+            }.get(key)
+        )
         # parse_fn must NOT be invoked when metastore has the cache.
         parse_fn = MagicMock()
         reader = _NexusFSFileReader(nx, parse_fn=parse_fn)
 
         assert await reader.read_text("/doc.pdf") == "cached markdown"
         parse_fn.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_read_text_reparses_when_raw_hash_diverges_from_cache(self) -> None:
+        # Content-hash keyed cache: a cached entry whose ``parsed_text_hash``
+        # does not match the hash of the raw bytes we just read is treated
+        # as stale and ignored.  This protects against cross-zone
+        # contamination (``/report.pdf`` in two different zones sharing
+        # path-keyed metadata) and against a rewrite-before-reindex race
+        # where the cached text belongs to the previous revision.
+        nx = MagicMock()
+        nx.sys_read = MagicMock(return_value=b"%PDF-1.4 FRESH bytes")
+        nx.metadata.get_file_metadata = MagicMock(
+            side_effect=lambda _p, key: {
+                "parsed_text": "STALE cached markdown",
+                "parsed_text_hash": "hash-of-different-bytes",
+            }.get(key)
+        )
+        nx.metadata.set_file_metadata = MagicMock()
+        parse_fn = MagicMock(return_value=b"fresh markdown")
+        reader = _NexusFSFileReader(nx, parse_fn=parse_fn)
+
+        assert await reader.read_text("/doc.pdf") == "fresh markdown"
+        parse_fn.assert_called_once_with(b"%PDF-1.4 FRESH bytes", "/doc.pdf")
+        # The refreshed parse must be cached under BOTH keys so subsequent
+        # reads hit the fast path with the new hash.
+        keys_written = {c.args[1] for c in nx.metadata.set_file_metadata.call_args_list}
+        assert "parsed_text" in keys_written
+        assert "parsed_text_hash" in keys_written
+
+    @pytest.mark.asyncio
+    async def test_read_text_reparses_when_cache_missing_hash_companion(self) -> None:
+        # Legacy cache entries written before the hash key existed have
+        # ``parsed_text`` but no ``parsed_text_hash``.  We must NOT serve
+        # them as-is (we can't prove they match the current bytes); treat
+        # them as stale and re-parse.
+        nx = MagicMock()
+        nx.sys_read = MagicMock(return_value=b"%PDF-1.4 bytes")
+        nx.metadata.get_file_metadata = MagicMock(
+            side_effect=lambda _p, key: {
+                "parsed_text": "legacy cached markdown",
+                # No parsed_text_hash for this path.
+            }.get(key)
+        )
+        nx.metadata.set_file_metadata = MagicMock()
+        parse_fn = MagicMock(return_value=b"fresh markdown")
+        reader = _NexusFSFileReader(nx, parse_fn=parse_fn)
+
+        assert await reader.read_text("/doc.pdf") == "fresh markdown"
+        parse_fn.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_read_text_invokes_parse_fn_when_no_cache(self) -> None:
@@ -197,11 +258,22 @@ class TestNexusFSFileReader:
 
     @pytest.mark.asyncio
     async def test_read_text_sanitizes_poisoned_cache_on_read(self) -> None:
-        # Defense-in-depth: older cache entries (written before sanitization)
-        # must also be scrubbed on the cached-read path.
+        # Defense-in-depth: cache entries written with NULs before the
+        # write-path sanitizer existed must still be scrubbed on the
+        # cached-read path when their hash matches the current raw bytes.
+        import hashlib
+
+        raw = b"%PDF-1.4"
+        raw_hash = hashlib.sha256(raw).hexdigest()
+
         nx = MagicMock()
-        nx.sys_read = MagicMock(return_value=b"%PDF-1.4")
-        nx.metadata.get_file_metadata = MagicMock(return_value="cached\x00 string")
+        nx.sys_read = MagicMock(return_value=raw)
+        nx.metadata.get_file_metadata = MagicMock(
+            side_effect=lambda _p, key: {
+                "parsed_text": "cached\x00 string",
+                "parsed_text_hash": raw_hash,
+            }.get(key)
+        )
         parse_fn = MagicMock()
         reader = _NexusFSFileReader(nx, parse_fn=parse_fn)
 

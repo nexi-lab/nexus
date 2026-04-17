@@ -62,6 +62,35 @@ class TestPathContextStoreUpsert:
         assert records[0].description == "second"
 
     @pytest.mark.asyncio
+    async def test_upsert_preserves_row_id(self, async_session_factory) -> None:
+        """Upsert must do ON CONFLICT DO UPDATE, not DELETE+INSERT (Issue #3773
+        review): row id stays stable so future FKs/audit trails don't break."""
+        from sqlalchemy import text
+
+        store = PathContextStore(async_session_factory=async_session_factory, db_type="sqlite")
+        await store.upsert("root", "src", "first")
+        async with async_session_factory() as s:
+            first_id = (
+                await s.execute(
+                    text(
+                        "SELECT id FROM path_contexts "
+                        "WHERE zone_id = 'root' AND path_prefix = 'src'"
+                    )
+                )
+            ).scalar()
+        await store.upsert("root", "src", "second")
+        async with async_session_factory() as s:
+            second_id = (
+                await s.execute(
+                    text(
+                        "SELECT id FROM path_contexts "
+                        "WHERE zone_id = 'root' AND path_prefix = 'src'"
+                    )
+                )
+            ).scalar()
+        assert first_id == second_id
+
+    @pytest.mark.asyncio
     async def test_delete_returns_true_when_removed(self, store: PathContextStore) -> None:
         await store.upsert("root", "src", "first")
         assert await store.delete("root", "src") is True

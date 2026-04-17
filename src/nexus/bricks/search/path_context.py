@@ -64,19 +64,20 @@ class PathContextStore:
                     },
                 )
             else:
-                # SQLite: preserve created_at on replace via COALESCE lookup.
+                # SQLite 3.24+ supports ON CONFLICT DO UPDATE with the same
+                # semantics as Postgres — preserves `id` and `created_at`,
+                # bumps `updated_at`. Avoids the `INSERT OR REPLACE` approach
+                # which would churn `id` and break any future FK to this row.
                 await session.execute(
                     text(
                         """
-                        INSERT OR REPLACE INTO path_contexts
+                        INSERT INTO path_contexts
                             (zone_id, path_prefix, description, created_at, updated_at)
                         VALUES
-                            (:zone_id, :path_prefix, :description,
-                             COALESCE(
-                                (SELECT created_at FROM path_contexts
-                                 WHERE zone_id = :zone_id AND path_prefix = :path_prefix),
-                                :now),
-                             :now)
+                            (:zone_id, :path_prefix, :description, :now, :now)
+                        ON CONFLICT (zone_id, path_prefix) DO UPDATE
+                        SET description = excluded.description,
+                            updated_at  = excluded.updated_at
                         """
                     ),
                     {

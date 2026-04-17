@@ -82,6 +82,11 @@ class DaemonStats:
     zoekt_available: bool = False
     embedding_cache_connected: bool = False
     mutation_consumers: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Fail-soft counters for path-context attach (Issue #3773): search must
+    # never 500 on a context-lookup bug, but persistent failures should be
+    # visible via /search/stats rather than only in log lines.
+    path_context_attach_failures: int = 0
+    path_context_resolve_failures: int = 0
 
 
 @dataclass
@@ -202,6 +207,9 @@ class SearchDaemon:
         self._settings_store = settings_store
         self._path_context_cache = path_context_cache
         self._path_context_cache_by_loop: dict[Any, Any] = {}
+        # Engines we created for loop-local caches — tracked for disposal
+        # on shutdown so pooled connections don't leak (Issue #3773 review).
+        self._path_context_engines_by_loop: dict[Any, Any] = {}
 
         # Search components (initialized on startup)
         self._bm25s_index: BM25SIndex | None = None
@@ -797,6 +805,14 @@ class SearchDaemon:
         self._async_engine = None
         self._async_session = None
 
+        # Dispose loop-local path-context engines we created lazily
+        # (Issue #3773 review feedback — avoid pooled-connection leak).
+        for engine in list(self._path_context_engines_by_loop.values()):
+            with contextlib.suppress(Exception):
+                await engine.dispose()
+        self._path_context_engines_by_loop.clear()
+        self._path_context_cache_by_loop.clear()
+
         self._initialized = False
         logger.info("SearchDaemon shutdown complete")
 
@@ -1161,6 +1177,7 @@ class SearchDaemon:
         store = PathContextStore(async_session_factory=factory, db_type=db_type)
         cache = PathContextCache(store=store)
         self._path_context_cache_by_loop[loop] = cache
+        self._path_context_engines_by_loop[loop] = engine
         return cache
 
     async def _attach_path_contexts(self, results: list[SearchResult]) -> None:
@@ -1183,7 +1200,12 @@ class SearchDaemon:
         try:
             cache = await self._resolve_path_context_cache()
         except Exception as exc:
-            logger.warning("path context cache resolution failed: %s", exc)
+            self.stats.path_context_resolve_failures += 1
+            logger.warning(
+                "path context cache resolution failed (total=%d): %s",
+                self.stats.path_context_resolve_failures,
+                exc,
+            )
             return
         if cache is None:
             return
@@ -1195,7 +1217,12 @@ class SearchDaemon:
             for r in results:
                 r.context = cache.lookup_cached(r.zone_id, r.path)
         except Exception as exc:
-            logger.warning("path context attach failed: %s", exc)
+            self.stats.path_context_attach_failures += 1
+            logger.warning(
+                "path context attach failed (total=%d): %s",
+                self.stats.path_context_attach_failures,
+                exc,
+            )
 
     async def search(
         self,
@@ -2940,6 +2967,11 @@ class SearchDaemon:
             "txtai_reranker": self.config.txtai_reranker,
             "txtai_graph": self.config.txtai_graph,
             "mutation_consumers": self.stats.mutation_consumers,
+            # Issue #3773: path-context attach runs fail-soft so search is
+            # never broken by a context-lookup bug. Expose the counts so
+            # operators can spot persistent failures via /search/stats.
+            "path_context_attach_failures": self.stats.path_context_attach_failures,
+            "path_context_resolve_failures": self.stats.path_context_resolve_failures,
         }
 
     def get_health(self) -> dict[str, Any]:

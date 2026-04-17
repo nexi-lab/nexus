@@ -133,7 +133,35 @@ async def _get_store(request: Request) -> PathContextStore:
     factory = async_sessionmaker(engine, expire_on_commit=False)
     store = PathContextStore(async_session_factory=factory, db_type=db_type)
     cached[loop] = store
+    # Track the engine for disposal on app shutdown (Issue #3773 review).
+    engines: dict[Any, Any] | None = getattr(
+        request.app.state, "_path_context_engines_by_loop", None
+    )
+    if engines is None:
+        engines = {}
+        request.app.state._path_context_engines_by_loop = engines
+    engines[loop] = engine
     return store
+
+
+async def dispose_loop_local_engines(app_state: Any) -> None:
+    """Dispose engines cached by :func:`_get_store`.
+
+    Called from the app's lifespan shutdown hook so we don't leak pooled
+    asyncpg connections when request loops die off (Issue #3773 review).
+    """
+    import contextlib
+
+    engines: dict[Any, Any] | None = getattr(app_state, "_path_context_engines_by_loop", None)
+    if not engines:
+        return
+    for engine in list(engines.values()):
+        with contextlib.suppress(Exception):
+            await engine.dispose()
+    engines.clear()
+    cached: dict[Any, Any] | None = getattr(app_state, "_path_context_store_by_loop", None)
+    if cached is not None:
+        cached.clear()
 
 
 # ---------------------------------------------------------------------------

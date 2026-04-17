@@ -45,6 +45,84 @@ class TestBaseSearchResultContextField:
         assert r.context is None
 
 
+class TestLoopLocalResolver:
+    """Regression tests for ``SearchDaemon._resolve_path_context_cache``.
+
+    Issue #3773: the resolver must return a distinct cache for each running
+    event loop so that asyncpg connections aren't shared cross-loop, and must
+    memoize per-loop so repeated lookups on one loop don't build a new engine.
+    """
+
+    @pytest.mark.asyncio
+    async def test_resolver_reuses_cache_within_loop(self, tmp_path) -> None:
+        import asyncio
+        import os
+
+        from nexus.bricks.search.daemon import DaemonConfig, SearchDaemon
+
+        db_file = tmp_path / "ctx.db"
+        db_url = f"sqlite+aiosqlite:///{db_file}"
+        # Force the resolver down the loop-local code path by setting the URL.
+        os.environ.pop("DATABASE_URL", None)
+        daemon = SearchDaemon.__new__(SearchDaemon)
+        daemon.config = DaemonConfig(database_url=db_url)
+        daemon._path_context_cache = None
+        daemon._path_context_cache_by_loop = {}
+        daemon._path_context_engines_by_loop = {}
+
+        # Need the table first; create it through the same URL.
+        engine = create_async_engine(db_url, future=True)
+        async with engine.begin() as conn:
+            await conn.exec_driver_sql(CREATE_TABLE_SQL)
+        await engine.dispose()
+
+        cache1 = await daemon._resolve_path_context_cache()
+        cache2 = await daemon._resolve_path_context_cache()
+        assert cache1 is cache2  # same loop -> memoized
+        assert asyncio.get_running_loop() in daemon._path_context_cache_by_loop
+
+        # Dispose the engine we created so the tmp file releases cleanly.
+        for eng in list(daemon._path_context_engines_by_loop.values()):
+            await eng.dispose()
+
+    def test_resolver_builds_distinct_caches_per_loop(self, tmp_path) -> None:
+        """Run the resolver on two fresh asyncio loops and confirm the
+        daemon caches distinct instances keyed by loop."""
+        import asyncio
+
+        from nexus.bricks.search.daemon import DaemonConfig, SearchDaemon
+
+        db_file = tmp_path / "ctx2.db"
+        db_url = f"sqlite+aiosqlite:///{db_file}"
+
+        # Create the table once up front.
+        async def _setup() -> None:
+            engine = create_async_engine(db_url, future=True)
+            async with engine.begin() as conn:
+                await conn.exec_driver_sql(CREATE_TABLE_SQL)
+            await engine.dispose()
+
+        asyncio.run(_setup())
+
+        daemon = SearchDaemon.__new__(SearchDaemon)
+        daemon.config = DaemonConfig(database_url=db_url)
+        daemon._path_context_cache = None
+        daemon._path_context_cache_by_loop = {}
+        daemon._path_context_engines_by_loop = {}
+
+        async def _resolve_once():
+            cache = await daemon._resolve_path_context_cache()
+            return cache
+
+        cache_a = asyncio.run(_resolve_once())
+        cache_b = asyncio.run(_resolve_once())
+        # Distinct caches because each asyncio.run creates a fresh loop.
+        assert cache_a is not cache_b
+        # Two loops tracked.
+        assert len(daemon._path_context_cache_by_loop) == 2
+        assert len(daemon._path_context_engines_by_loop) == 2
+
+
 class TestAttachContextToResults:
     @pytest.mark.asyncio
     async def test_attach_via_cache(self, cache: PathContextCache) -> None:

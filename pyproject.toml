@@ -93,10 +93,14 @@ dependencies = [
     # MCP Server (v0.7.0)
     "fastmcp>=2.0.0", # Model Context Protocol server
     # PDF parsing (default local provider; ~2-3 MB Rust ext, zero Python deps).
-    # Upstream 0.1.1 ships cp312 wheels; 3.13/3.14 build from sdist via maturin
-    # (requires Rust toolchain at install time). PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1
-    # bypasses the PyO3 0.25 max-3.13 check on 3.14.
-    "pdf-inspector>=0.1.1",
+    # Upstream 0.1.1 only ships cp312 wheels.  On 3.13/3.14 ``pip install`` would
+    # fall back to building from sdist, which requires a Rust toolchain plus
+    # ``PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1`` to bypass the PyO3 0.25 cp313 cap
+    # — neither is available in normal ``pip``/``uv`` installs.  Pin to cp312
+    # until upstream ships forward-compatible wheels, so 3.13/3.14 users aren't
+    # blocked at install time by a Rust build.  The Docker image still installs
+    # it on 3.13/3.14 via the forward-compat env var set in the Dockerfile.
+    "pdf-inspector>=0.1.1; python_version == '3.12'",
     # Fast JSON serialization (2-3x faster than stdlib json)
     "orjson>=3.10.0",
     # Roaring Bitmaps for Tiger Cache (Issue #682)

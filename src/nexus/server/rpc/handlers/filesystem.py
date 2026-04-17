@@ -578,8 +578,16 @@ async def handle_semantic_search_index(
         # RPC may scope paths as /zone/{id}/...; DB stores unscoped virtual_path.
         db_path = unscope_internal_path(path)
 
-        # Query file paths from the daemon's database connection
+        # Query file paths from the daemon's database connection.  Also
+        # grab the ``content_hash`` at selection time so the stale-doc CAS
+        # below can cite the row's then-current hash regardless of what
+        # algorithm the backend used to produce it (raw-byte BLAKE3 for
+        # local CAS, provider version IDs for S3/GCS, …).  Scope the
+        # query with ``zone_id`` — ``file_paths`` is unique on
+        # ``(zone_id, virtual_path)`` and a path-only filter can pull in
+        # another tenant's row.
         paths_to_index: list[str] = []
+        observed_hash_by_path: dict[str, str | None] = {}
         if hasattr(daemon, "_async_session") and daemon._async_session is not None:
             from sqlalchemy import text as sa_text
 
@@ -589,14 +597,29 @@ async def handle_semantic_search_index(
                     like_pattern = db_path.rstrip("/") + "/%"
                     result = await sess.execute(
                         sa_text(
-                            "SELECT virtual_path FROM file_paths"
-                            " WHERE virtual_path LIKE :like OR virtual_path = :exact"
+                            "SELECT virtual_path, content_hash FROM file_paths"
+                            " WHERE (virtual_path LIKE :like OR virtual_path = :exact)"
+                            "   AND zone_id = :zid"
+                            "   AND deleted_at IS NULL"
                         ),
-                        {"like": like_pattern, "exact": db_path},
+                        {"like": like_pattern, "exact": db_path, "zid": zone_id},
                     )
-                    paths_to_index = [r[0] for r in result.fetchall()]
+                    rows = result.fetchall()
+                    paths_to_index = [r[0] for r in rows]
+                    observed_hash_by_path = {r[0]: r[1] for r in rows}
                 else:
+                    result = await sess.execute(
+                        sa_text(
+                            "SELECT content_hash FROM file_paths"
+                            " WHERE virtual_path = :exact"
+                            "   AND zone_id = :zid"
+                            "   AND deleted_at IS NULL"
+                        ),
+                        {"exact": db_path, "zid": zone_id},
+                    )
+                    row = result.fetchone()
                     paths_to_index = [db_path]
+                    observed_hash_by_path = {db_path: row[0] if row else None}
             _log.info(
                 "semantic_search_index: found %d files under %s", len(paths_to_index), db_path
             )
@@ -627,10 +650,7 @@ async def handle_semantic_search_index(
         # because the reader constructs an admin context internally and
         # would bypass the caller's permission scope.
         from nexus.factory._semantic_search import _resolve_parse_fn
-        from nexus.factory.adapters import (
-            _apply_parse_transform_with_status,
-            _compute_content_hash,
-        )
+        from nexus.factory.adapters import _apply_parse_transform_with_status
         from nexus.lib.virtual_views import is_parseable_path
 
         _parse_fn = _resolve_parse_fn(nexus_fs)
@@ -646,11 +666,13 @@ async def handle_semantic_search_index(
         # back on the next tick.  ``_apply_parse_transform_with_status``
         # tells these apart.
         #
-        # Hash with the kernel's BLAKE3 helper so the value matches
-        # ``file_paths.content_hash`` — using SHA-256 here would cause
-        # the CAS lookup below to always miss on normal installs, leaving
-        # stale docs live forever.
-        stale_candidates: list[tuple[str, str, str]] = []
+        # ``observed_content_hash`` is whatever ``file_paths.content_hash``
+        # held at selection time — BLAKE3 for local CAS backends, provider
+        # version IDs for S3/GCS.  The CAS below compares string equality
+        # against the current row, so the stored shape doesn't matter:
+        # we only need the value not to have changed between our read and
+        # our purge.
+        stale_candidates: list[tuple[str, str, str | None]] = []
         for file_path in paths_to_index:
             try:
                 raw = nexus_fs.sys_read(file_path, context=context)
@@ -661,10 +683,9 @@ async def handle_semantic_search_index(
                 if content_str and content_str.strip():
                     documents.append({"id": doc_id, "text": content_str, "path": file_path})
                 elif is_parseable_path(file_path) and parse_status == "empty":
-                    raw_bytes = (
-                        raw if isinstance(raw, bytes) else str(raw).encode("utf-8", errors="ignore")
+                    stale_candidates.append(
+                        (doc_id, file_path, observed_hash_by_path.get(file_path))
                     )
-                    stale_candidates.append((doc_id, file_path, _compute_content_hash(raw_bytes)))
             except Exception as read_err:
                 read_errors += 1
                 _log.warning("Skipping %s: %s", file_path, read_err)
@@ -712,14 +733,21 @@ async def handle_semantic_search_index(
                             cas_err,
                         )
                         continue
-                    # No row (file deleted) or hash unchanged from what we
-                    # observed — safe to purge.  Hash advanced → skip.
-                    if row is None or row[0] is None or row[0] == observed_hash:
+                    # Safe to purge when:
+                    #   * row is None — the file_paths row was deleted
+                    #     under us, so the old doc is definitively stale.
+                    #   * row[0] == observed_hash — hash unchanged between
+                    #     selection and now, no concurrent writer.
+                    # Otherwise skip — the hash either advanced (concurrent
+                    # writer may have re-indexed) or we never had a hash to
+                    # compare against (permissive delete could wipe healthy
+                    # docs on backends that don't populate content_hash).
+                    if row is None or observed_hash is not None and row[0] == observed_hash:
                         stale_ids_to_delete.append(doc_id)
                     else:
                         _log.info(
                             "semantic_search_index: skipped stale-doc purge for %s — "
-                            "content_hash advanced under us (CAS miss)",
+                            "content_hash advanced or unavailable (CAS miss)",
                             file_path,
                         )
         elif stale_candidates:

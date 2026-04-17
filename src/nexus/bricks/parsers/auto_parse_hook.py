@@ -54,10 +54,19 @@ class AutoParseWriteHook:
         return "auto_parse"
 
     def on_post_write(self, ctx: WriteHookContext) -> None:
-        # Invalidate cached parsed_text so ContentParserEngine re-parses
+        # Invalidate cached parsed_text so ContentParserEngine re-parses.
+        # ``parsed_text_hash`` MUST be cleared alongside ``parsed_text`` —
+        # the search indexer treats a matching hash as proof the parser
+        # ran successfully against the current bytes and takes the empty-
+        # replace path if the read produces "".  A lingering stale hash
+        # after a revert-to-previous-revision (same bytes, same hash)
+        # could otherwise convince the indexer to zero out a document
+        # that actually has text, just because the parser is temporarily
+        # unavailable.
         if self._metadata is not None:
             try:
                 self._metadata.set_file_metadata(ctx.path, "parsed_text", None)
+                self._metadata.set_file_metadata(ctx.path, "parsed_text_hash", None)
                 self._metadata.set_file_metadata(ctx.path, "parsed_at", None)
                 self._metadata.set_file_metadata(ctx.path, "parser_name", None)
             except Exception:

@@ -354,28 +354,53 @@ class TestNexusFSFileReader:
         assert cached.get("parsed_text") == ""
         assert cached.get("parsed_text_hash") == hash_content(raw)
 
-    def test_has_successful_parse_true_on_hash_match(self) -> None:
-        # The indexer uses this probe to tell "valid empty parse" apart
-        # from "parse error".  A matching hash is the proof the adapter
-        # actually ran the parser and committed the result.
+    def test_has_successful_parse_true_on_hash_and_text_match(self) -> None:
+        # Probe is True only when BOTH ``parsed_text_hash`` matches AND
+        # ``parsed_text`` has been populated — the text presence guards
+        # against stale-hash latching after a revert-to-previous revision.
         nx = MagicMock()
-        nx.metadata.get_file_metadata = MagicMock(return_value="blake3-hash-of-bytes")
+        nx.metadata.get_file_metadata = MagicMock(
+            side_effect=lambda _p, key: {
+                "parsed_text_hash": "blake3-hash-of-bytes",
+                "parsed_text": "",  # empty-but-present — valid successful empty parse
+            }.get(key)
+        )
         reader = _NexusFSFileReader(nx)
         assert reader.has_successful_parse("/doc.pdf", "blake3-hash-of-bytes") is True
 
     def test_has_successful_parse_false_on_hash_mismatch(self) -> None:
         nx = MagicMock()
-        nx.metadata.get_file_metadata = MagicMock(return_value="different-hash")
+        nx.metadata.get_file_metadata = MagicMock(
+            side_effect=lambda _p, key: {
+                "parsed_text_hash": "different-hash",
+                "parsed_text": "whatever",
+            }.get(key)
+        )
         reader = _NexusFSFileReader(nx)
         assert reader.has_successful_parse("/doc.pdf", "blake3-hash-of-bytes") is False
 
     def test_has_successful_parse_false_when_no_hash_cached(self) -> None:
         # Parser broken / file never parsed → no parsed_text_hash stored.
-        # Caller should treat this as a parse error.
         nx = MagicMock()
         nx.metadata.get_file_metadata = MagicMock(return_value=None)
         reader = _NexusFSFileReader(nx)
         assert reader.has_successful_parse("/doc.pdf", "any-hash") is False
+
+    def test_has_successful_parse_false_when_text_invalidated_but_hash_lingers(self) -> None:
+        # Regression for the stale-hash-latch finding: AutoParseWriteHook
+        # clears parsed_text on every write; if parsed_text_hash still
+        # lingers (e.g., on an older schema), a revert-to-previous content
+        # would match the hash without proof the parser actually ran.  We
+        # require parsed_text to be present too.
+        nx = MagicMock()
+        nx.metadata.get_file_metadata = MagicMock(
+            side_effect=lambda _p, key: {
+                "parsed_text_hash": "blake3-hash-of-bytes",
+                "parsed_text": None,  # cache invalidated by write hook
+            }.get(key)
+        )
+        reader = _NexusFSFileReader(nx)
+        assert reader.has_successful_parse("/doc.pdf", "blake3-hash-of-bytes") is False
 
     @pytest.mark.asyncio
     async def test_read_text_handles_mixed_case_extensions(self) -> None:

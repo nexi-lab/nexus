@@ -233,13 +233,20 @@ class _NexusFSFileReader:
 
         Used by the indexer to distinguish ``read_text`` returning ``""``
         for a parseable file because:
-          * the parser was broken / file unsupported — ``parsed_text_hash``
-            will NOT match; caller should retry on the next tick, and
+          * the parser was broken / file unsupported — no matching cache
+            pair; caller should retry on the next tick, and
           * the parse ran successfully but the file legitimately yielded
             zero text (image-only PDF, blank page, scanned doc awaiting
-            OCR) — ``parsed_text_hash`` matches ``content_hash`` because
-            the adapter cached the empty parse; the caller should advance
-            ``indexed_content_hash`` and skip retrying.
+            OCR) — the adapter cached the empty parse; caller should
+            advance ``indexed_content_hash`` and skip retrying.
+
+        Proof requires BOTH a matching ``parsed_text_hash`` AND a non-None
+        ``parsed_text`` value.  The ``parsed_text`` presence check guards
+        against stale-hash latching: ``AutoParseWriteHook.on_post_write``
+        invalidates the cached text on every write, and on a revert-to-
+        previous-revision (same bytes → same hash) a lingering hash
+        without its text companion would otherwise convince us an empty
+        read was a successful empty parse.
 
         ``content_hash`` is expected to be the kernel-computed hash from
         ``file_paths.content_hash`` (BLAKE3).  The adapter writes the same
@@ -248,9 +255,12 @@ class _NexusFSFileReader:
         """
         try:
             cached_hash = self._nx.metadata.get_file_metadata(path, "parsed_text_hash")
+            if not cached_hash or cached_hash != content_hash:
+                return False
+            cached_text = self._nx.metadata.get_file_metadata(path, "parsed_text")
         except Exception:
             return False
-        return bool(cached_hash) and cached_hash == content_hash
+        return cached_text is not None
 
     def get_searchable_text(self, path: str) -> str | None:
         # Sanitize on read — older cache entries (written before the adapter's

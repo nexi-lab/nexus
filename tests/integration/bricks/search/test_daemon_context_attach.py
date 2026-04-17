@@ -149,3 +149,121 @@ class TestSerializerEmitsContext:
         r = BaseSearchResult(path="x", chunk_text="y", score=0.5)
         out = _serialize_search_result(r)
         assert "context" not in out
+
+
+class TestFullFlowStoreAttachSerialize:
+    """Chain the real store, real cache refresh+lookup, and real serializer.
+
+    Mirrors what happens in production across these boundaries:
+      admin PUT /api/v2/path-contexts/ -> store.upsert
+      backend returns hits -> daemon._attach_path_contexts -> serializer
+    """
+
+    @pytest.mark.asyncio
+    async def test_put_then_search_response_carries_context(self) -> None:
+        from nexus.server.api.v2.routers.search import _serialize_search_result
+
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:", future=True)
+        async with engine.begin() as conn:
+            await conn.exec_driver_sql(CREATE_TABLE_SQL)
+        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        store = PathContextStore(async_session_factory=factory, db_type="sqlite")
+        cache = PathContextCache(store=store)
+
+        # Admin seeds contexts (same call path as PUT /api/v2/path-contexts/).
+        await store.upsert("root", "src/nexus/bricks/search", "Hybrid search brick")
+        await store.upsert("root", "docs", "Project documentation")
+
+        # Backend returns raw results with no context set.
+        raw_results = [
+            BaseSearchResult(
+                path="src/nexus/bricks/search/fusion.py",
+                chunk_text="def rrf_fusion(...)",
+                score=0.9,
+                zone_id="root",
+                keyword_score=0.8,
+                vector_score=0.7,
+            ),
+            BaseSearchResult(
+                path="docs/README.md",
+                chunk_text="Project overview",
+                score=0.8,
+                zone_id="root",
+            ),
+            BaseSearchResult(
+                path="scripts/unrelated.py",
+                chunk_text="other",
+                score=0.5,
+                zone_id="root",
+            ),
+        ]
+
+        # Daemon-equivalent attach: one refresh per unique zone, cached lookups.
+        zones = {(r.zone_id or "root") for r in raw_results}
+        for zone in zones:
+            await cache.refresh_if_stale(zone)
+        for r in raw_results:
+            r.context = cache.lookup_cached(r.zone_id, r.path)
+
+        # Router serializer produces the HTTP response dict.
+        response = [_serialize_search_result(r) for r in raw_results]
+
+        assert response[0]["path"] == "src/nexus/bricks/search/fusion.py"
+        assert response[0]["context"] == "Hybrid search brick"
+        assert response[1]["path"] == "docs/README.md"
+        assert response[1]["context"] == "Project documentation"
+        # No matching prefix -> context key omitted to keep response compact.
+        assert response[2]["path"] == "scripts/unrelated.py"
+        assert "context" not in response[2]
+
+        await engine.dispose()
+
+    @pytest.mark.asyncio
+    async def test_empty_store_emits_no_context_anywhere(self) -> None:
+        from nexus.server.api.v2.routers.search import _serialize_search_result
+
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:", future=True)
+        async with engine.begin() as conn:
+            await conn.exec_driver_sql(CREATE_TABLE_SQL)
+        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        store = PathContextStore(async_session_factory=factory, db_type="sqlite")
+        cache = PathContextCache(store=store)
+
+        raw_results = [
+            BaseSearchResult(path="any/path.py", chunk_text="x", score=0.9, zone_id="root"),
+        ]
+        await cache.refresh_if_stale("root")
+        for r in raw_results:
+            r.context = cache.lookup_cached(r.zone_id, r.path)
+        response = [_serialize_search_result(r) for r in raw_results]
+
+        assert "context" not in response[0]
+        await engine.dispose()
+
+    @pytest.mark.asyncio
+    async def test_longest_prefix_wins_through_full_pipeline(self) -> None:
+        """Overlapping prefixes: the longer match decides which description appears."""
+        from nexus.server.api.v2.routers.search import _serialize_search_result
+
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:", future=True)
+        async with engine.begin() as conn:
+            await conn.exec_driver_sql(CREATE_TABLE_SQL)
+        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        store = PathContextStore(async_session_factory=factory, db_type="sqlite")
+        cache = PathContextCache(store=store)
+
+        await store.upsert("root", "src", "generic source")
+        await store.upsert("root", "src/nexus/bricks/search", "search brick")
+        await cache.refresh_if_stale("root")
+
+        r = BaseSearchResult(
+            path="src/nexus/bricks/search/fusion.py",
+            chunk_text="",
+            score=0.9,
+            zone_id="root",
+        )
+        r.context = cache.lookup_cached(r.zone_id, r.path)
+        out = _serialize_search_result(r)
+        assert out["context"] == "search brick"  # longer prefix wins
+
+        await engine.dispose()

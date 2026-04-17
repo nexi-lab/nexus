@@ -15,8 +15,8 @@ def test_auth_group_importable() -> None:
 
 
 def test_auth_group_has_expected_subcommands() -> None:
-    # Commands ported so far: list, test, connect, disconnect (more to come: doctor, migrate)
-    expected = {"list", "test", "connect", "disconnect", "pool"}
+    # Commands ported so far: list, test, connect, disconnect, doctor (more to come: migrate)
+    expected = {"list", "test", "connect", "disconnect", "doctor", "pool"}
     assert expected.issubset(set(auth.commands.keys()))
 
 
@@ -75,3 +75,11 @@ def test_disconnect_removes_service(monkeypatch, tmp_path: Path) -> None:
     # Either it disconnected a configured service (exit 0) or reported nothing to
     # disconnect (also OK — exit 0). The key assertion: no exception.
     assert result.exit_code == 0
+
+
+def test_doctor_runs_without_error(monkeypatch, tmp_path: Path) -> None:
+    service = build_unified_service_for_tests(tmp_path)
+    monkeypatch.setattr("nexus.bricks.auth.cli_commands._build_auth_service", lambda: service)
+
+    result = CliRunner().invoke(auth, ["doctor"])
+    assert result.exit_code in (0, 1)

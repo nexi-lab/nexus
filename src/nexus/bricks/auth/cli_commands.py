@@ -18,6 +18,7 @@ from rich.console import Console
 from rich.table import Table
 
 from nexus.contracts.exceptions import AuthenticationError
+from nexus.contracts.unified_auth import AuthStatus
 from nexus.fs._output import OutputOptions, add_output_options, render_output
 
 logger = logging.getLogger(__name__)
@@ -640,7 +641,35 @@ def disconnect_auth(service_name: str) -> None:
     console.print(f"[green]ok[/green] Removed stored auth for {service_name}")
 
 
-# Subcommands wired in later Phase-4 tasks (doctor, migrate).
+# ---------------------------------------------------------------------------
+# auth doctor
+# ---------------------------------------------------------------------------
+
+
+@auth.command(name="doctor")
+def auth_doctor() -> None:
+    """Show auth-related health across all configured services."""
+    try:
+        from nexus.bricks.auth.doctor import run_doctor  # added in Phase B (Task 11)
+
+        exit_code = run_doctor(_build_auth_service())
+    except ImportError:
+        # Phase A fallback — Phase B replaces this with direct run_doctor call.
+        service = _build_auth_service()
+        summaries = asyncio.run(service.list_summaries())
+        failures = [s for s in summaries if s.status not in {AuthStatus.AUTHED, AuthStatus.UNKNOWN}]
+        for summary in summaries:
+            style = "green" if summary.status == AuthStatus.AUTHED else "yellow"
+            console.print(
+                f"[{style}]{summary.service}[/{style}] {summary.status.value}: {summary.message}"
+            )
+        if failures:
+            raise click.ClickException("One or more services need auth setup.") from None
+        exit_code = 0
+    raise click.exceptions.Exit(exit_code)
+
+
+# Subcommands wired in later Phase-4 tasks (migrate).
 # Order preserves registration for parity testing.
 
 

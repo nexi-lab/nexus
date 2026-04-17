@@ -138,13 +138,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-markitdown = [
-    # Office/HTML/EPUB/audio parsing fallback. ~200 MB transitive deps
-    # (pandas, numpy, lxml, onnxruntime, pdfminer, python-pptx, mammoth, openpyxl, ...).
-    # Install with: pip install nexus[markitdown]
-    "markitdown[all]>=0.1.0; python_version < '3.14'",
-]
-
 performance = [
     # BLAKE3 hashing fallback when Rust extension unavailable (Issue #582)
     # Local embeddings without API (fast ONNX inference)

@@ -1741,41 +1741,73 @@ class TestNewTeamOnboarding:
 
 
 # ===================================================================
-# R13.2 Class 3/7: Cross-zone daily workflow
+# R13.2 Class 3/7: Cross-zone daily workflow via crosslink
 # ===================================================================
 class TestCrossZoneDailyWorkflow:
-    """Write + rename across pre-existing /corp + /family zones; verify
-    rename resolves within the zone while cross-zone content isolates."""
+    """Data flows through the ``/family/work/ → corp`` crosslink set up
+    in TestMountTopology: write at work path, read via crosslink,
+    modify via crosslink, verify change at original path on the OTHER
+    node, delete via crosslink, verify gone at work path.
 
-    def test_cross_zone_rename_resolves(self, cluster, api_key):
+    Strong causal chain: each step observes the prior step's mutation,
+    both across zones (via the crosslink) and across peers (via Raft)."""
+
+    def test_crosslink_roundtrip(self, cluster, api_key):
         uid = _uid()
         grpc1 = cluster["grpc1"]
+        grpc2 = cluster["grpc2"]
 
-        work_doc = f"/corp/eng/cross-work-{uid}.txt"
-        family_doc = f"/family/cross-family-{uid}.txt"
+        # /corp/eng/ and /family/work/eng/ both resolve to the `corp`
+        # zone via the crosslink mount. The same file has two URLs.
+        file_name = f"crosslink-{uid}.txt"
+        work_path = f"/corp/eng/{file_name}"
+        family_view = f"/family/work/eng/{file_name}"
 
-        _grpc_call(grpc1, "write", {"path": work_doc, "content": f"work-{uid}"}, api_key=api_key)
-        _grpc_call(
-            grpc1,
-            "write",
-            {"path": family_doc, "content": f"family-{uid}"},
-            api_key=api_key,
-        )
+        # Step 1 — create at work path.
+        initial = f"created-at-work-{uid}"
+        w1 = _grpc_call(grpc1, "write", {"path": work_path, "content": initial}, api_key=api_key)
+        assert "error" not in w1, f"work-path write failed: {w1}"
 
-        new_work_doc = f"/corp/eng/cross-work-renamed-{uid}.txt"
-        rn = _grpc_call(
-            grpc1, "sys_rename", {"src": work_doc, "dst": new_work_doc}, api_key=api_key
-        )
-        if "error" in rn:
-            pytest.skip(f"sys_rename not supported in this form: {rn}")
+        # Step 2 — read via family crosslink; MUST see step 1's bytes.
+        deadline = time.time() + 15
+        r1: dict = {}
+        while time.time() < deadline:
+            r1 = _grpc_call(grpc1, "read", {"path": family_view}, api_key=api_key)
+            if "error" not in r1 and _decode_content(r1) == initial:
+                break
+            time.sleep(0.3)
+        else:
+            pytest.fail(f"Crosslink read did not see work-path write: {r1}")
 
-        r = _grpc_call(grpc1, "read", {"path": new_work_doc}, api_key=api_key)
-        assert "error" not in r, f"Read after rename failed: {r}"
-        assert _decode_content(r) == f"work-{uid}"
+        # Step 3 — modify via the crosslink (family view).
+        updated = f"updated-via-family-{uid}"
+        w2 = _grpc_call(grpc1, "write", {"path": family_view, "content": updated}, api_key=api_key)
+        assert "error" not in w2, f"family-view write failed: {w2}"
 
-        r2 = _grpc_call(grpc1, "read", {"path": family_doc}, api_key=api_key)
-        assert "error" not in r2
-        assert _decode_content(r2) == f"family-{uid}"
+        # Step 4 — read via work path on the OTHER node; MUST see
+        # step 3's update. (Cross-zone + cross-peer in one read.)
+        deadline = time.time() + 15
+        r2: dict = {}
+        while time.time() < deadline:
+            r2 = _grpc_call(grpc2, "read", {"path": work_path}, api_key=api_key)
+            if "error" not in r2 and _decode_content(r2) == updated:
+                break
+            time.sleep(0.3)
+        else:
+            pytest.fail(f"Work-path read on follower did not see crosslink update: {r2}")
+
+        # Step 5 — delete via family view; work path MUST become gone.
+        rm = _grpc_call(grpc1, "sys_unlink", {"path": family_view}, api_key=api_key)
+        assert "error" not in rm, f"crosslink unlink failed: {rm}"
+
+        deadline = time.time() + 15
+        rr: dict = {}
+        while time.time() < deadline:
+            rr = _grpc_call(grpc1, "sys_stat", {"path": work_path}, api_key=api_key)
+            if "error" in rr or rr.get("result") is None:
+                return
+            time.sleep(0.3)
+        pytest.fail(f"File still visible at work path after crosslink unlink: {rr}")
 
 
 # ===================================================================
@@ -1931,36 +1963,82 @@ class TestFullFailoverRecovery:
 
 
 # ===================================================================
-# R13.2 Class 6/7: Multi-zone atomic write (isolation)
+# R13.2 Class 6/7: CAS dedup across zones via shared ETag
 # ===================================================================
 class TestMultiZoneAtomicWrite:
-    """Simultaneous writes to /corp + /family zones must not interfere."""
+    """Write identical content into /corp/eng and /family — both writes
+    should produce the same ETag (BLAKE3 hash) because CAS is global to
+    the kernel. Then mutate ONE side and verify the ETags diverge while
+    the other side still resolves to the original hash.
 
-    def test_parallel_writes_to_different_zones(self, cluster, api_key):
-        import concurrent.futures
+    Strong causal chain:
+      1. Write payload X to /corp/eng/X.txt → etag_corp_v1.
+      2. Write same payload X to /family/X.txt → etag_family_v1.
+      3. Observation: etag_corp_v1 == etag_family_v1 (CAS-level dedup).
+      4. Mutate /corp/eng/X.txt → etag_corp_v2 ≠ etag_corp_v1.
+      5. /family/X.txt etag still == etag_corp_v1 (isolation — zone-
+         local mutation does not bleed across).
+    """
 
+    def test_cas_dedup_then_divergence(self, cluster, api_key):
         uid = _uid()
         grpc1 = cluster["grpc1"]
 
-        corp_path = f"/corp/eng/atomic-corp-{uid}.txt"
-        family_path = f"/family/atomic-family-{uid}.txt"
+        payload = f"shared-payload-{uid}-" + ("a" * 512)
+        corp_path = f"/corp/eng/dedup-{uid}.txt"
+        family_path = f"/family/dedup-{uid}.txt"
 
-        def _write(path, content):
-            return _grpc_call(grpc1, "write", {"path": path, "content": content}, api_key=api_key)
+        # Step 1 — write identical bytes to two different paths in
+        # different zones.
+        w1 = _grpc_call(grpc1, "write", {"path": corp_path, "content": payload}, api_key=api_key)
+        assert "error" not in w1, f"corp write failed: {w1}"
+        w2 = _grpc_call(grpc1, "write", {"path": family_path, "content": payload}, api_key=api_key)
+        assert "error" not in w2, f"family write failed: {w2}"
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
-            f_corp = ex.submit(_write, corp_path, f"corp-{uid}")
-            f_family = ex.submit(_write, family_path, f"family-{uid}")
-            r_corp = f_corp.result(timeout=15)
-            r_family = f_family.result(timeout=15)
+        # Step 2 — both paths must report the same ETag (CAS dedup).
+        s_corp = _grpc_call(grpc1, "sys_stat", {"path": corp_path}, api_key=api_key)
+        s_family = _grpc_call(grpc1, "sys_stat", {"path": family_path}, api_key=api_key)
+        etag_corp_v1 = (s_corp.get("result", {}) or {}).get("etag") or (
+            s_corp.get("result", {}) or {}
+        ).get("metadata", {}).get("etag")
+        etag_family_v1 = (s_family.get("result", {}) or {}).get("etag") or (
+            s_family.get("result", {}) or {}
+        ).get("metadata", {}).get("etag")
 
-        assert "error" not in r_corp, f"corp write failed: {r_corp}"
-        assert "error" not in r_family, f"family write failed: {r_family}"
+        if not etag_corp_v1 or not etag_family_v1:
+            pytest.skip(
+                f"sys_stat did not expose etag in this build: corp={s_corp}, family={s_family}"
+            )
+        assert etag_corp_v1 == etag_family_v1, (
+            f"CAS dedup broken: {etag_corp_v1} != {etag_family_v1}"
+        )
 
-        rr_corp = _grpc_call(grpc1, "read", {"path": corp_path}, api_key=api_key)
-        rr_family = _grpc_call(grpc1, "read", {"path": family_path}, api_key=api_key)
-        assert _decode_content(rr_corp) == f"corp-{uid}"
-        assert _decode_content(rr_family) == f"family-{uid}"
+        # Step 3 — mutate ONE side.
+        mutated = f"mutated-{uid}-" + ("b" * 512)
+        wm = _grpc_call(grpc1, "write", {"path": corp_path, "content": mutated}, api_key=api_key)
+        assert "error" not in wm, f"corp mutation failed: {wm}"
+
+        # Step 4 — etag on /corp/eng diverges; etag on /family unchanged.
+        s_corp2 = _grpc_call(grpc1, "sys_stat", {"path": corp_path}, api_key=api_key)
+        s_family2 = _grpc_call(grpc1, "sys_stat", {"path": family_path}, api_key=api_key)
+        etag_corp_v2 = (s_corp2.get("result", {}) or {}).get("etag") or (
+            s_corp2.get("result", {}) or {}
+        ).get("metadata", {}).get("etag")
+        etag_family_v2 = (s_family2.get("result", {}) or {}).get("etag") or (
+            s_family2.get("result", {}) or {}
+        ).get("metadata", {}).get("etag")
+
+        assert etag_corp_v2 != etag_corp_v1, f"Mutation did not change corp etag: {etag_corp_v1}"
+        assert etag_family_v2 == etag_family_v1, (
+            f"Zone isolation broken: family etag changed {etag_family_v1} -> "
+            f"{etag_family_v2} after corp-only mutation"
+        )
+
+        # Step 5 — the original bytes must still be reachable via the
+        # /family path (the chunk behind etag_family_v1 is still in CAS).
+        rf = _grpc_call(grpc1, "read", {"path": family_path}, api_key=api_key)
+        assert "error" not in rf, f"family read failed: {rf}"
+        assert _decode_content(rf) == payload
 
 
 # ===================================================================

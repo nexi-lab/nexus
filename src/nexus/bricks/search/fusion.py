@@ -297,15 +297,22 @@ def rrf_weighted_fusion(
     rrf_scores: dict[str, dict[str, Any]] = {}
     best_rank: dict[str, int] = {}
 
+    # Zero-weight modalities contribute no score — they must also not count
+    # toward the top-rank bonus, otherwise a vector-only rank-1 hit under
+    # alpha=0.0 would still receive +0.05 (Issue #3773 review feedback).
+    keyword_weight = 1 - alpha
+    vector_weight = alpha
+
     # Add keyword results with (1 - alpha) weight
     for rank, raw_result in enumerate(keyword_results, start=1):
         result = _to_dict(raw_result)
         key = _get_result_key(result, id_key)
         if key not in rrf_scores:
             rrf_scores[key] = {"result": result.copy(), "rrf_score": 0.0}
-        rrf_scores[key]["rrf_score"] += (1 - alpha) * (1.0 / (k + rank))
+        rrf_scores[key]["rrf_score"] += keyword_weight * (1.0 / (k + rank))
         rrf_scores[key]["result"]["keyword_score"] = result.get("score", 0.0)
-        best_rank[key] = min(best_rank.get(key, rank), rank)
+        if keyword_weight > 0:
+            best_rank[key] = min(best_rank.get(key, rank), rank)
 
     # Add vector results with alpha weight
     for rank, raw_result in enumerate(vector_results, start=1):
@@ -313,9 +320,10 @@ def rrf_weighted_fusion(
         key = _get_result_key(result, id_key)
         if key not in rrf_scores:
             rrf_scores[key] = {"result": result.copy(), "rrf_score": 0.0}
-        rrf_scores[key]["rrf_score"] += alpha * (1.0 / (k + rank))
+        rrf_scores[key]["rrf_score"] += vector_weight * (1.0 / (k + rank))
         rrf_scores[key]["result"]["vector_score"] = result.get("score", 0.0)
-        best_rank[key] = min(best_rank.get(key, rank), rank)
+        if vector_weight > 0:
+            best_rank[key] = min(best_rank.get(key, rank), rank)
 
     if top_rank_bonus:
         for key, entry in rrf_scores.items():

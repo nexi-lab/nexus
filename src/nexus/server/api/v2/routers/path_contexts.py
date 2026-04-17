@@ -100,7 +100,14 @@ async def _get_store(request: Request) -> PathContextStore:
     if existing is not None:
         return existing
 
-    db_url = os.environ.get("DATABASE_URL") or os.environ.get("NEXUS_DATABASE_URL")
+    # Fallback order: env vars -> app.state.database_url (set by create_app) ->
+    # the startup-time injected store. Env-only lookup misses the
+    # ``create_app(database_url=...)`` code path (Issue #3773 review feedback).
+    db_url = (
+        os.environ.get("DATABASE_URL")
+        or os.environ.get("NEXUS_DATABASE_URL")
+        or getattr(request.app.state, "database_url", None)
+    )
     if not db_url:
         store: PathContextStore | None = getattr(request.app.state, "path_context_store", None)
         if store is None:
@@ -152,10 +159,24 @@ async def upsert_context(
 @router.get("/")
 async def list_contexts(
     zone_id: str | None = Query(default=None),
-    _auth: dict[str, Any] = Depends(require_auth),
+    auth: dict[str, Any] = Depends(require_auth),
     store: PathContextStore = Depends(_get_store),
 ) -> dict[str, Any]:
-    """List path contexts (any authenticated caller). Optional ?zone_id filter."""
+    """List path contexts.
+
+    Non-admin callers see only their own zone's contexts — enumeration across
+    zones is admin-only (Issue #3773 review feedback). Admins may pass any
+    ``zone_id`` or omit it to list across all zones.
+    """
+    is_admin = bool(auth.get("is_admin", False))
+    caller_zone = auth.get("zone_id") or ROOT_ZONE_ID
+    if not is_admin:
+        if zone_id is not None and zone_id != caller_zone:
+            raise HTTPException(
+                status_code=403,
+                detail="non-admin callers cannot list other zones",
+            )
+        zone_id = caller_zone
     records = await store.list(zone_id)
     return {
         "contexts": [

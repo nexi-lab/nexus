@@ -100,6 +100,28 @@ class TestRrfWeightedBonus:
         expected = 0.5 * (1.0 / 61) + 0.5 * (1.0 / 61)
         assert abs(results[0]["score"] - expected) < 1e-9
 
+    def test_alpha_zero_vector_rank1_gets_no_bonus(self) -> None:
+        """alpha=0 means vector has zero weight; a vector rank-1 doc absent
+        from keyword results must NOT receive the top-rank bonus (Issue #3773
+        review)."""
+        kw = [{"path": "kw_only.txt", "chunk_index": 0, "score": 1.0}]
+        vec = [{"path": "vec_only.txt", "chunk_index": 0, "score": 1.0}]
+        results = rrf_weighted_fusion(kw, vec, alpha=0.0, k=60, limit=10, id_key=None)
+        by_path = {r["path"]: r["score"] for r in results}
+        # kw_only gets full keyword weight + bonus.
+        assert abs(by_path["kw_only.txt"] - (1.0 * (1.0 / 61) + RRF_TOP1_BONUS)) < 1e-9
+        # vec_only has zero weight and must NOT receive the bonus.
+        assert by_path["vec_only.txt"] == 0.0
+
+    def test_alpha_one_keyword_rank1_gets_no_bonus(self) -> None:
+        """alpha=1 means keyword has zero weight; symmetric to the above."""
+        kw = [{"path": "kw_only.txt", "chunk_index": 0, "score": 1.0}]
+        vec = [{"path": "vec_only.txt", "chunk_index": 0, "score": 1.0}]
+        results = rrf_weighted_fusion(kw, vec, alpha=1.0, k=60, limit=10, id_key=None)
+        by_path = {r["path"]: r["score"] for r in results}
+        assert abs(by_path["vec_only.txt"] - (1.0 * (1.0 / 61) + RRF_TOP1_BONUS)) < 1e-9
+        assert by_path["kw_only.txt"] == 0.0
+
 
 class TestRrfMultiBonus:
     def test_multi_top1_gets_bonus_from_any_source(self) -> None:

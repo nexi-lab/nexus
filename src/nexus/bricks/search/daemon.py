@@ -1128,7 +1128,15 @@ class SearchDaemon:
         if existing is not None:
             return existing
 
-        db_url = os.environ.get("DATABASE_URL") or os.environ.get("NEXUS_DATABASE_URL")
+        # Prefer the explicit DaemonConfig URL (set by `create_app(database_url=...)`
+        # or the startup lifespan), fall back to env vars. Both must be consulted
+        # — env-only lookup misses the `create_app(database_url=...)` code path
+        # (Issue #3773 review feedback).
+        db_url = (
+            self.config.database_url
+            or os.environ.get("DATABASE_URL")
+            or os.environ.get("NEXUS_DATABASE_URL")
+        )
         if not db_url:
             if self._path_context_cache is not None:
                 self._path_context_cache_by_loop[loop] = self._path_context_cache

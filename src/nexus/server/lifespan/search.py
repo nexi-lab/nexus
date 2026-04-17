@@ -136,6 +136,11 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
                 logger.exception("Failed to initialize path context store/cache")
         app.state.path_context_store = path_context_store
         app.state.path_context_cache = path_context_cache
+        # Expose the database URL for loop-local resolvers that need to rebuild
+        # engines on the request loop (Issue #3773 review feedback): the env
+        # var may not be set when the app is constructed via
+        # ``create_app(database_url=...)``.
+        app.state.database_url = svc.database_url
 
         app.state.search_daemon = SearchDaemon(
             config,

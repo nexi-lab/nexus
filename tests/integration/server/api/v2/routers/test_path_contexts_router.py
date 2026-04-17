@@ -40,8 +40,14 @@ async def test_app():
     app.state.path_context_store = store
     app.include_router(path_contexts_router)
 
+    from nexus.server.api.v2.routers.path_contexts import _get_store
     from nexus.server.dependencies import require_admin, require_auth
 
+    # Bypass loop-local resolution; always use the fixture's store.
+    async def _override_store() -> PathContextStore:
+        return store
+
+    app.dependency_overrides[_get_store] = _override_store
     app.dependency_overrides[require_auth] = lambda: {
         "subject_id": "tester",
         "zone_id": "root",
@@ -150,3 +156,21 @@ class TestPathContextRouter:
     def test_list_requires_auth_only(self, client: TestClient) -> None:
         r = client.get("/api/v2/path-contexts/")
         assert r.status_code == 200
+
+    def test_non_admin_rejected_for_other_zone_query(self, test_app: FastAPI) -> None:
+        """Non-admin caller cannot pass zone_id different from their own
+        (Issue #3773 review feedback)."""
+        from nexus.server.dependencies import require_auth
+
+        test_app.dependency_overrides[require_auth] = lambda: {
+            "subject_id": "non-admin",
+            "zone_id": "root",
+            "is_admin": False,
+        }
+        with TestClient(test_app) as c:
+            # Explicit foreign zone: 403.
+            r = c.get("/api/v2/path-contexts/", params={"zone_id": "other"})
+            assert r.status_code == 403
+            # Own zone or implicit: allowed.
+            assert c.get("/api/v2/path-contexts/", params={"zone_id": "root"}).status_code == 200
+            assert c.get("/api/v2/path-contexts/").status_code == 200

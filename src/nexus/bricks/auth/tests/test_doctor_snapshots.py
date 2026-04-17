@@ -199,5 +199,7 @@ def test_doctor_output_snapshot(monkeypatch, _name, summaries, snapshot):
     result = CliRunner().invoke(auth, ["doctor"])
 
     # Snapshot captures combined output + exit code so both are locked down.
-    combined = f"exit_code={result.exit_code}\n{result.output}"
+    # rstrip trailing whitespace so the pre-commit trailing-whitespace hook
+    # does not desync snapshots from runtime output.
+    combined = f"exit_code={result.exit_code}\n{result.output}".rstrip()
     assert combined == snapshot

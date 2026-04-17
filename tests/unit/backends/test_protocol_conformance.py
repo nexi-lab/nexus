@@ -17,6 +17,7 @@ from typing import Any
 import pytest
 
 from nexus.backends.base.backend import Backend
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.core.object_store import WriteResult
 from nexus.core.protocols.connector import (
@@ -461,7 +462,7 @@ class TestCachingContractConformance:
 
         class _MockCacheConfig:
             session_factory = None
-            zone_id = "root"
+            zone_id = ROOT_ZONE_ID
             l1_only = False
 
         obj = _MockCacheConfig()

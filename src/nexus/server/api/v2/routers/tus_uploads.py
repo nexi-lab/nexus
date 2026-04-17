@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.server.dependencies import require_auth
 
 if TYPE_CHECKING:
@@ -150,7 +151,7 @@ def create_tus_uploads_router(
 
         # Use authenticated principal instead of trusting request headers
         ctx = get_operation_context(auth_result)
-        zone_id = ctx.zone_id or "root"
+        zone_id = ctx.zone_id or ROOT_ZONE_ID
         user_id = ctx.user_id or "anonymous"
 
         try:

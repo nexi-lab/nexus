@@ -29,6 +29,7 @@ from nexus.bricks.snapshot.errors import (
     TransactionNotFoundError,
 )
 from nexus.bricks.snapshot.registry import TransactionRegistry
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.protocols.snapshot import (
     ConflictInfo,
     SnapshotEntry,
@@ -433,7 +434,7 @@ class TransactionalSnapshotService:
             if meta_dict.get("modified_at")
             else datetime.now(UTC),
             version=meta_dict.get("version", 1),
-            zone_id=meta_dict.get("zone_id", "root"),
+            zone_id=meta_dict.get("zone_id", ROOT_ZONE_ID),
             owner_id=meta_dict.get("owner_id"),
         )
 
@@ -482,7 +483,7 @@ class TransactionalSnapshotService:
                             or datetime.now(UTC),
                             modified_at=datetime.now(UTC),
                             version=(getattr(current_meta, "version", 1) if current_meta else 1),
-                            zone_id=getattr(current_meta, "zone_id", "root")
+                            zone_id=getattr(current_meta, "zone_id", ROOT_ZONE_ID)
                             if current_meta
                             else "root",
                             owner_id=getattr(current_meta, "owner_id", None)

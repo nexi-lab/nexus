@@ -114,6 +114,7 @@ def server():
     server_script = f"""
 import sys, os, asyncio
 sys.path.insert(0, os.environ.get('PYTHONPATH', ''))
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
@@ -334,7 +335,7 @@ class TestWorkspaceListE2E:
         """list_workspaces without identity headers returns empty list.
 
         In open-access mode, requests without X-Nexus-Subject default to
-        user_id="anonymous", zone_id="root" — which won't match any
+        user_id="anonymous", zone_id=ROOT_ZONE_ID — which won't match any
         workspaces created by alice or bob.
         """
         resp = _rpc_call(client, base_url, "list_workspaces", {})

@@ -18,6 +18,7 @@ from nexus.bricks.snapshot.errors import (
     TransactionNotActiveError,
 )
 from nexus.bricks.snapshot.service import TransactionalSnapshotService
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 # ---------------------------------------------------------------------------
 # Lightweight fakes (avoid heavy ORM dependency)
@@ -29,7 +30,7 @@ class FakeTransactionModel:
     """Minimal stand-in for TransactionSnapshotModel."""
 
     transaction_id: str = ""
-    zone_id: str = "root"
+    zone_id: str = ROOT_ZONE_ID
     agent_id: str | None = None
     status: str = "active"
     description: str | None = None

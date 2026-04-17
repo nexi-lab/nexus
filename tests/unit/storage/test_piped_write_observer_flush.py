@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.metadata import FileMetadata
 from nexus.storage.models import (
     FilePathModel,
@@ -60,7 +61,7 @@ def _make_metadata(
         created_at=datetime.now(UTC),
         modified_at=datetime.now(UTC),
         version=version,
-        zone_id="root",
+        zone_id=ROOT_ZONE_ID,
         owner_id="user1",
     )
 

@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from nexus.bricks.search.daemon import SearchDaemon
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
@@ -232,7 +233,7 @@ class TestConnectorSearchIndexing:
             ),
         ]
 
-        results = await daemon.search("budget review Q1", zone_id="root")
+        results = await daemon.search("budget review Q1", zone_id=ROOT_ZONE_ID)
         assert len(results) == 2
         assert results[0].path == "/mnt/gmail/INBOX/tid1-mid1.yaml"
         assert results[0].score > results[1].score

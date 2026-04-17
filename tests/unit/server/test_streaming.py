@@ -15,6 +15,7 @@ from unittest.mock import patch
 
 import pytest
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.server.streaming import (
     _get_stream_secret,
     _reset_stream_secret,
@@ -123,7 +124,7 @@ class TestSignStreamToken:
         # (if signed at the same second with the same expires_in).
         with patch("nexus.server.streaming.time") as mock_time:
             mock_time.time.return_value = 1000000.0
-            token_explicit = _sign_stream_token("/f.txt", expires_in=60, zone_id="root")
+            token_explicit = _sign_stream_token("/f.txt", expires_in=60, zone_id=ROOT_ZONE_ID)
             token_implicit = _sign_stream_token("/f.txt", expires_in=60)
         assert token_explicit == token_implicit
 

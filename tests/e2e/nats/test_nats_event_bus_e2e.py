@@ -21,6 +21,8 @@ from typing import Any
 
 import pytest
 
+from nexus.contracts.constants import ROOT_ZONE_ID
+
 # ============================================================================
 # Skip conditions
 # ============================================================================
@@ -258,7 +260,7 @@ class TestDirectPublish:
         event = FileEvent(
             type=FileEventType.FILE_WRITE,
             path=unique_path,
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
 
         # Publish directly to NATS via the bus (schedule on main loop)
@@ -398,7 +400,7 @@ class TestDurableSubscriber:
             event = FileEvent(
                 type=FileEventType.FILE_WRITE,
                 path=unique_path,
-                zone_id="root",
+                zone_id=ROOT_ZONE_ID,
             )
             future = asyncio.run_coroutine_threadsafe(
                 nexus_fs._event_bus.publish(event),
@@ -531,7 +533,7 @@ class TestDeduplication:
         event = FileEvent(
             type=FileEventType.FILE_WRITE,
             path=f"/e2e-nats-test/dedup-{dedup_id}.txt",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             event_id=dedup_id,
         )
 

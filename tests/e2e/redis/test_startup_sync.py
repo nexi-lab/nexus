@@ -26,6 +26,8 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from nexus.contracts.constants import ROOT_ZONE_ID
+
 
 def _utcnow_naive() -> datetime:
     """Get current UTC time as naive datetime for PostgreSQL compatibility."""
@@ -169,7 +171,7 @@ class TestStartupSyncBasic:
                 op = OperationLogModel(
                     operation_type="write",
                     path=f"/test/file{i}.txt",
-                    zone_id="root",
+                    zone_id=ROOT_ZONE_ID,
                     status="success",
                     created_at=_utcnow_naive() - timedelta(minutes=30 - i),
                 )
@@ -285,7 +287,7 @@ class TestStartupSyncBasic:
                 op = OperationLogModel(
                     operation_type="write",
                     path=f"/test/file{i}.txt",
-                    zone_id="root",
+                    zone_id=ROOT_ZONE_ID,
                     status="success",
                     created_at=base_time - timedelta(minutes=offset),
                 )
@@ -336,7 +338,7 @@ class TestStartupSyncBasic:
             op = OperationLogModel(
                 operation_type="write",
                 path="/test/file.txt",
-                zone_id="root",
+                zone_id=ROOT_ZONE_ID,
                 status="success",
                 created_at=_utcnow_naive() - timedelta(minutes=10),
             )
@@ -404,7 +406,7 @@ class TestStartupSyncCrossPlatform:
                 op = OperationLogModel(
                     operation_type="write",
                     path=f"/shared/file{i}.txt",
-                    zone_id="root",
+                    zone_id=ROOT_ZONE_ID,
                     status="success",
                     created_at=_utcnow_naive() - timedelta(minutes=30 - i),
                 )
@@ -419,6 +421,7 @@ sys.path.insert(0, "/app/src")
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.cache.dragonfly import DragonflyClient
 from nexus.services.event_bus.redis import RedisEventBus
 
@@ -509,7 +512,7 @@ asyncio.run(sync_and_verify())
                 op = OperationLogModel(
                     operation_type="write",
                     path=f"/bidirectional/win_file{i}.txt",
-                    zone_id="root",
+                    zone_id=ROOT_ZONE_ID,
                     status="success",
                     created_at=_utcnow_naive() - timedelta(minutes=50 - i),
                 )
@@ -566,7 +569,7 @@ async def sync_and_create():
                 op = OperationLogModel(
                     operation_type="write",
                     path=f"/bidirectional/linux_file{i}.txt",
-                    zone_id="root",
+                    zone_id=ROOT_ZONE_ID,
                     status="success",
                     created_at=_utcnow_naive() - timedelta(minutes=20 - i),
                 )
@@ -666,7 +669,7 @@ class TestEventBusLockIntegration:
             "redis://localhost:6380",
         )
 
-        zone_id = "root"
+        zone_id = ROOT_ZONE_ID
         test_path = "/event-lock-integration/test-file.txt"
 
         # Linux: start subscriber that waits for events
@@ -813,7 +816,7 @@ class TestStartupSyncConcurrentWrites:
                         op = OperationLogModel(
                             operation_type="write",
                             path=f"/concurrent/file_{write_count['value']}.txt",
-                            zone_id="root",
+                            zone_id=ROOT_ZONE_ID,
                             status="success",
                             created_at=_utcnow_naive(),
                         )

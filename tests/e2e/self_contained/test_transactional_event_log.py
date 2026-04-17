@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.metadata import FileMetadata
 from nexus.services.event_bus.types import FileEventType
 from nexus.services.event_log.delivery import EventDeliveryWorker
@@ -62,7 +63,7 @@ def _make_metadata(
         created_at=datetime.now(UTC),
         modified_at=datetime.now(UTC),
         version=version,
-        zone_id="root",
+        zone_id=ROOT_ZONE_ID,
         owner_id="user1",
     )
 
@@ -79,7 +80,7 @@ class TestTransactionalOutboxIntegration:
         """Write via syncer -> start worker -> verify delivery."""
         # Step 1: Write file via syncer (transactional)
         metadata = _make_metadata("/integration.txt", etag="ihash")
-        syncer.on_write(metadata, is_new=True, path="/integration.txt", zone_id="root")
+        syncer.on_write(metadata, is_new=True, path="/integration.txt", zone_id=ROOT_ZONE_ID)
 
         # Verify: delivered=FALSE in operation_log
         with record_store.session_factory() as session:
@@ -116,7 +117,7 @@ class TestTransactionalOutboxIntegration:
         event = published_events[0]
         assert event.type == FileEventType.FILE_WRITE
         assert event.path == "/integration.txt"
-        assert event.zone_id == "root"
+        assert event.zone_id == ROOT_ZONE_ID
 
         # Step 5: Verify delivered=TRUE in operation_log
         with record_store.session_factory() as session:
@@ -132,12 +133,12 @@ class TestTransactionalOutboxIntegration:
         """Multiple writes + delete -> all delivered in created_at order."""
         # Create multiple operations
         m1 = _make_metadata("/a.txt", etag="h1")
-        syncer.on_write(m1, is_new=True, path="/a.txt", zone_id="root")
+        syncer.on_write(m1, is_new=True, path="/a.txt", zone_id=ROOT_ZONE_ID)
 
         m2 = _make_metadata("/b.txt", etag="h2")
-        syncer.on_write(m2, is_new=True, path="/b.txt", zone_id="root")
+        syncer.on_write(m2, is_new=True, path="/b.txt", zone_id=ROOT_ZONE_ID)
 
-        syncer.on_delete(path="/a.txt", zone_id="root")
+        syncer.on_delete(path="/a.txt", zone_id=ROOT_ZONE_ID)
 
         # Verify 3 undelivered records
         with record_store.session_factory() as session:
@@ -192,7 +193,7 @@ class TestTransactionalOutboxIntegration:
         """Simulate crash: dispatch fails -> restart -> events retried."""
         # Write a file
         m = _make_metadata("/crash.txt", etag="crash")
-        syncer.on_write(m, is_new=True, path="/crash.txt", zone_id="root")
+        syncer.on_write(m, is_new=True, path="/crash.txt", zone_id=ROOT_ZONE_ID)
 
         # First delivery attempt fails (simulating crash mid-dispatch)
         failing_bus = MagicMock()
@@ -243,7 +244,7 @@ class TestTransactionalOutboxIntegration:
         try:
             # Write file while worker is running
             m = _make_metadata("/bg.txt", etag="bghash")
-            syncer.on_write(m, is_new=True, path="/bg.txt", zone_id="root")
+            syncer.on_write(m, is_new=True, path="/bg.txt", zone_id=ROOT_ZONE_ID)
 
             # Signal the worker
             signal.set()
@@ -289,7 +290,7 @@ class TestTransactionalOutboxIntegration:
         try:
             # Write file and signal
             m = _make_metadata("/signal-bg.txt", etag="sighash")
-            syncer.on_write(m, is_new=True, path="/signal-bg.txt", zone_id="root")
+            syncer.on_write(m, is_new=True, path="/signal-bg.txt", zone_id=ROOT_ZONE_ID)
             signal.set()
 
             # Should be delivered quickly despite long fallback

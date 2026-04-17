@@ -20,6 +20,7 @@ from nexus.bricks.rebac.consistency.revision import (
     get_zone_revision_for_grant,
     increment_version_token,
 )
+from nexus.contracts.constants import ROOT_ZONE_ID
 from tests.helpers.dict_metastore import DictMetastore
 
 
@@ -33,12 +34,12 @@ class TestIncrementVersionToken:
     """Test increment_version_token function."""
 
     def test_first_call_returns_v1(self, version_store):
-        token = increment_version_token(version_store, zone_id="root")
+        token = increment_version_token(version_store, zone_id=ROOT_ZONE_ID)
         assert token == "v1"
 
     def test_second_call_returns_v2(self, version_store):
-        increment_version_token(version_store, zone_id="root")
-        token = increment_version_token(version_store, zone_id="root")
+        increment_version_token(version_store, zone_id=ROOT_ZONE_ID)
+        token = increment_version_token(version_store, zone_id=ROOT_ZONE_ID)
         assert token == "v2"
 
     def test_monotonic_increments(self, version_store):

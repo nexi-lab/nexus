@@ -2,6 +2,7 @@
 
 import pytest
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.grant_helpers import (
     MAX_REGISTRATION_GRANTS,
     GrantInput,
@@ -81,7 +82,7 @@ class TestGrantsToRebacTuples:
     def test_editor_maps_to_direct_editor(self):
         """'editor' role must map to 'direct_editor' relation."""
         grants = [GrantInput(path="/workspace/file.py", role="editor")]
-        tuples = grants_to_rebac_tuples(grants, agent_id="agent-1", zone_id="root")
+        tuples = grants_to_rebac_tuples(grants, agent_id="agent-1", zone_id=ROOT_ZONE_ID)
 
         assert len(tuples) == 1
         assert tuples[0]["subject"] == ("agent", "agent-1")
@@ -104,7 +105,7 @@ class TestGrantsToRebacTuples:
             GrantInput(path="/logs/*", role="viewer"),
             GrantInput(path="/config/app.json", role="viewer"),
         ]
-        tuples = grants_to_rebac_tuples(grants, agent_id="multi-agent", zone_id="root")
+        tuples = grants_to_rebac_tuples(grants, agent_id="multi-agent", zone_id=ROOT_ZONE_ID)
 
         assert len(tuples) == 3
         assert tuples[0]["relation"] == "direct_editor"

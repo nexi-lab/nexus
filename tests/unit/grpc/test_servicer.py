@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import (
     ConflictError,
     InvalidPathError,
@@ -428,7 +429,7 @@ class TestVFSServicerTypedRPCs:
         response = await servicer.Ping(request, context)
 
         assert response.version  # Non-empty version string
-        assert response.zone_id == "root"
+        assert response.zone_id == ROOT_ZONE_ID
         assert response.uptime_seconds >= 0
 
     @pytest.mark.anyio

@@ -24,6 +24,7 @@ import logging
 import time
 from typing import Any
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.protocols.lease import (
     Lease,
     LeaseState,
@@ -147,7 +148,7 @@ class DistributedLeaseManager:
         self,
         redis_client: Any,
         *,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
         key_prefix: str = "lease",
         callback_timeout: float = _CALLBACK_TIMEOUT_S,
     ) -> None:

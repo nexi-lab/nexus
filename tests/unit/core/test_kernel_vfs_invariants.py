@@ -17,6 +17,7 @@ from hypothesis import example, given, settings
 from hypothesis import strategies as st
 
 from nexus.backends.storage.cas_local import CASLocalBackend
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.core.driver_lifecycle_coordinator import DriverLifecycleCoordinator, _PyMountInfo
 from nexus.core.path_utils import canonicalize_path
 from nexus.core.router import (
@@ -57,7 +58,7 @@ def _add_mount(
     readonly: bool = False,
     admin_only: bool = False,
     io_profile: str = "balanced",
-    zone_id: str = "root",
+    zone_id: str = ROOT_ZONE_ID,
 ) -> None:
     """Insert a mount into the router's DLC map directly."""
     canonical = canonicalize_path(mount_point, zone_id)

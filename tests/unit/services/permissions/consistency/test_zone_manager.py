@@ -21,6 +21,7 @@ from nexus.bricks.rebac.consistency.zone_manager import (
     ZoneIsolationError,
     ZoneManager,
 )
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 
 class TestZoneManagerDefaults:
@@ -31,7 +32,7 @@ class TestZoneManagerDefaults:
         zone_id, subj_z, obj_z, cross = mgr.validate_write_zones(
             zone_id=None, subject_zone_id=None, object_zone_id=None, relation="editor"
         )
-        assert zone_id == "root"
+        assert zone_id == ROOT_ZONE_ID
         assert subj_z == "root"
         assert obj_z == "root"
         assert cross is False
@@ -41,7 +42,7 @@ class TestZoneManagerDefaults:
         zone_id, subj_z, obj_z, cross = mgr.validate_write_zones(
             zone_id="", subject_zone_id=None, object_zone_id=None, relation="viewer"
         )
-        assert zone_id == "root"
+        assert zone_id == ROOT_ZONE_ID
         assert subj_z == "root"
         assert obj_z == "root"
 
@@ -207,7 +208,7 @@ class TestZoneManagerKillSwitch:
             object_zone_id=None,
             relation="editor",
         )
-        assert zone_id == "root"
+        assert zone_id == ROOT_ZONE_ID
         assert subj_z == "root"
         assert obj_z == "root"
         assert cross is False

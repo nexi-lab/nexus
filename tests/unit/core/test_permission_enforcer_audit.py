@@ -22,6 +22,7 @@ pytest.importorskip("pyroaring")
 
 
 from nexus.bricks.rebac.enforcer import PermissionEnforcer
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.types import OperationContext, Permission
 
 
@@ -198,7 +199,7 @@ class TestSystemBypassAuditLogging:
             groups=[],
             is_system=True,
             request_id="sys-req-456",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
 
         enforcer.check("/workspace/file.txt", Permission.READ, ctx)

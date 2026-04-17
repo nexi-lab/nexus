@@ -15,6 +15,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.server.dependencies import require_auth
 
 logger = logging.getLogger(__name__)
@@ -64,7 +65,7 @@ async def warmup_cache(
     """Pre-populate caches for faster access."""
     from nexus.server.cache_warmer import CacheWarmer, WarmupConfig, get_file_access_tracker
 
-    zone_id = auth_result.get("zone_id", "root")
+    zone_id = auth_result.get("zone_id", ROOT_ZONE_ID)
 
     config = WarmupConfig(
         max_files=body.max_files,
@@ -145,7 +146,7 @@ async def get_hot_files(
     """Get frequently accessed files."""
     from nexus.server.cache_warmer import get_file_access_tracker
 
-    zone_id = auth_result.get("zone_id", "root")
+    zone_id = auth_result.get("zone_id", ROOT_ZONE_ID)
     tracker = get_file_access_tracker()
     hot_files = tracker.get_hot_files(zone_id=zone_id, limit=limit)
 

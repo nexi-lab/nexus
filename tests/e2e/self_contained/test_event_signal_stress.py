@@ -25,6 +25,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.services.event_log.delivery import EventDeliveryWorker
 from nexus.services.event_log.replay import EventReplayService
 from nexus.storage.models import OperationLogModel
@@ -48,7 +49,7 @@ def _insert_event(
     session_factory,
     path: str,
     operation_type: str = "write",
-    zone_id: str = "root",
+    zone_id: str = ROOT_ZONE_ID,
     delivered: bool = False,
     sequence_number: int | None = None,
 ) -> str:

@@ -75,7 +75,7 @@ class CacheCoordinator:
 
         # On write:
         coordinator.invalidate_for_write(
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             subject=("user", "alice"),
             relation="editor",
             object=("file", "/doc.txt"),
@@ -549,7 +549,7 @@ class CacheCoordinator:
 
         # Permission leases — zone-wide clear (nuclear option)
         self._notify_lease_invalidators(
-            zone_id or "root",
+            zone_id or ROOT_ZONE_ID,
             ("*", "*"),  # wildcard subject → forces zone-wide clear
             "*",
             ("*", "*"),

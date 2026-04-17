@@ -16,6 +16,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.vfs_hooks import ReadHookContext, WriteHookContext
 from nexus.core.nexus_fs_dispatch import DispatchMixin
 
@@ -208,7 +209,7 @@ class TestSyscallOverhead:
             readonly=False,
             admin_only=False,
             io_profile="local",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
         return d
 
@@ -218,7 +219,7 @@ class TestSyscallOverhead:
         """sys_write 1KB, no hooks."""
         from nexus_kernel import OperationContext
 
-        ctx = OperationContext(user_id="bench", zone_id="root")
+        ctx = OperationContext(user_id="bench", zone_id=ROOT_ZONE_ID)
         content = b"x" * 1024
 
         def _write():
@@ -232,7 +233,7 @@ class TestSyscallOverhead:
         """sys_read 1KB, no hooks (after write)."""
         from nexus_kernel import OperationContext
 
-        ctx = OperationContext(user_id="bench", zone_id="root")
+        ctx = OperationContext(user_id="bench", zone_id=ROOT_ZONE_ID)
         mounted_dispatch._kernel.sys_write("/bench/read_target.txt", ctx, b"y" * 1024)
 
         def _read():
@@ -248,7 +249,7 @@ class TestSyscallOverhead:
         for i in range(3):
             mounted_dispatch.register_intercept_write(_make_hook(f"h{i}"))
 
-        ctx = OperationContext(user_id="bench", zone_id="root")
+        ctx = OperationContext(user_id="bench", zone_id=ROOT_ZONE_ID)
         content = b"x" * 1024
 
         def _write():
@@ -264,7 +265,7 @@ class TestSyscallOverhead:
         for i in range(3):
             mounted_dispatch.register_intercept_read(_make_hook(f"h{i}"))
 
-        ctx = OperationContext(user_id="bench", zone_id="root")
+        ctx = OperationContext(user_id="bench", zone_id=ROOT_ZONE_ID)
         mounted_dispatch._kernel.sys_write("/bench/hooked_read.txt", ctx, b"z" * 1024)
 
         def _read():

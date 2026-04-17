@@ -3,6 +3,7 @@
 from unittest.mock import AsyncMock, Mock, patch
 
 from nexus.bricks.mcp.server import _resolve_mcp_operation_context, create_mcp_server
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 
 class TestCreateMCPServer:
@@ -113,7 +114,7 @@ class TestResolveMCPOperationContext:
         sentinel_ctx = OperationContext(
             user_id="kernel-init",
             groups=[],
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             is_system=True,
             is_admin=True,
         )
@@ -133,7 +134,7 @@ class TestResolveMCPOperationContext:
         sentinel_ctx = OperationContext(
             user_id="local-admin",
             groups=[],
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             is_system=False,
             is_admin=True,
         )
@@ -172,7 +173,7 @@ class TestResolveMCPOperationContext:
         nx._init_cred = None
         nx.subject_id = "root-admin"
         nx.subject_type = "user"
-        nx.zone_id = "root"
+        nx.zone_id = ROOT_ZONE_ID
         nx.is_admin = True
 
         ctx = _resolve_mcp_operation_context(nx)
@@ -185,7 +186,7 @@ class TestResolveMCPOperationContext:
         nx._init_cred = None
         nx.subject_id = "agent-42"
         nx.subject_type = "agent"
-        nx.zone_id = "root"
+        nx.zone_id = ROOT_ZONE_ID
         nx.is_admin = False
 
         ctx = _resolve_mcp_operation_context(nx)

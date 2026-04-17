@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 
 from nexus.bricks.search.skeleton_indexer import SkeletonIndexer
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 # ---------------------------------------------------------------------------
 # Minimal in-memory stubs
@@ -61,7 +62,7 @@ async def test_rename_old_path_deleted_new_path_indexed() -> None:
     old_path = "/workspace/src/auth/login.py"
     new_path = "/workspace/src/auth/authenticate.py"
     path_id = "pid-001"
-    zone_id = "root"
+    zone_id = ROOT_ZONE_ID
 
     content = b'"""User authentication module."""\n'
     reader = _StubFileReader({new_path: content})
@@ -99,7 +100,7 @@ async def test_rename_title_preserved_via_fresh_extraction() -> None:
     old_path = "/workspace/src/old_name.py"
     new_path = "/workspace/src/new_name.py"
     path_id = "pid-002"
-    zone_id = "root"
+    zone_id = ROOT_ZONE_ID
     expected_title = "Core authentication utility."
 
     reader = _StubFileReader(
@@ -132,7 +133,7 @@ async def test_rename_does_not_leave_old_path_in_daemon_locate() -> None:
 
     old_path = "/workspace/src/auth/old_login.py"
     new_path = "/workspace/src/auth/new_login.py"
-    zone_id = "root"
+    zone_id = ROOT_ZONE_ID
 
     daemon = SearchDaemon()
     # Manually populate daemon skeleton docs as bootstrap would

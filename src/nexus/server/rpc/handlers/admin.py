@@ -9,6 +9,8 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
+from nexus.contracts.constants import ROOT_ZONE_ID
+
 logger = logging.getLogger(__name__)
 
 
@@ -200,7 +202,7 @@ def handle_admin_write_permission(nexus_fs: Any, params: Any, context: Any) -> d
         subject = tuple(t["subject"])
         relation = t["relation"]
         obj = tuple(t["object"])
-        zone_id = t.get("zone_id", "root")
+        zone_id = t.get("zone_id", ROOT_ZONE_ID)
         rebac.rebac_write(
             subject=subject,
             relation=relation,

@@ -25,6 +25,7 @@ import pytest
 from nexus.bricks.auth.oauth.token_manager import TokenManager, _hash_token
 from nexus.bricks.auth.oauth.types import OAuthCredential
 from nexus.cache.inmemory import InMemoryCacheStore
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import AuthenticationError
 
 
@@ -509,7 +510,7 @@ class TestReuseDetectionDuringRefresh:
                 credential_id=model.credential_id,
                 refresh_token_hash=_hash_token("1//stale_refresh"),
                 rotation_counter=0,
-                zone_id="root",
+                zone_id=ROOT_ZONE_ID,
                 rotated_at=datetime.now(UTC),
             )
             session.add(history_entry)

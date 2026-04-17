@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.services.event_bus import RedisEventBus
 from nexus.services.event_bus.types import FileEvent, FileEventType
 
@@ -26,7 +27,7 @@ def sample_event():
     return FileEvent(
         type=FileEventType.FILE_WRITE,
         path="/test.txt",
-        zone_id="root",
+        zone_id=ROOT_ZONE_ID,
     )
 
 

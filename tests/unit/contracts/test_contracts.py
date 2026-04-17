@@ -11,6 +11,8 @@ import ast
 import importlib
 from pathlib import Path
 
+from nexus.contracts.constants import ROOT_ZONE_ID
+
 # ---------------------------------------------------------------------------
 # Helper: check that a module has zero runtime ``nexus.*`` imports
 # ---------------------------------------------------------------------------
@@ -183,4 +185,4 @@ class TestEnableReadTrackingStandalone:
 
         ctx = OperationContext(user_id="alice", groups=[])
         enable_read_tracking(ctx)
-        assert ctx.read_set.zone_id == "root"
+        assert ctx.read_set.zone_id == ROOT_ZONE_ID

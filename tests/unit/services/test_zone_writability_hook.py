@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.services.lifecycle.zone_writability_hook import ZoneWritabilityHook
 
 
@@ -30,7 +31,7 @@ class TestZoneWritabilityHook:
         assert spec.read_hooks == ()
 
     def test_pre_write_allows_normal_zone(self, hook):
-        ctx = MagicMock(zone_id="root")
+        ctx = MagicMock(zone_id=ROOT_ZONE_ID)
         hook.on_pre_write(ctx)  # should not raise
 
     def test_pre_write_blocks_terminating_zone(self, hook, zone_lifecycle):

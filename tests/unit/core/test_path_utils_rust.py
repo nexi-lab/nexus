@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import unittest
 
+from nexus.contracts.constants import ROOT_ZONE_ID
+
 try:
     from nexus_kernel import (
         canonicalize_path as rust_canonicalize_path,
@@ -233,12 +235,12 @@ class TestRustCanonicalizePath(unittest.TestCase):
 class TestRustExtractZoneId(unittest.TestCase):
     def test_basic(self) -> None:
         zone, relative = rust_extract_zone_id("/root/workspace/file.txt")
-        assert zone == "root"
+        assert zone == ROOT_ZONE_ID
         assert relative == "/workspace/file.txt"
 
     def test_root_only(self) -> None:
         zone, relative = rust_extract_zone_id("/root")
-        assert zone == "root"
+        assert zone == ROOT_ZONE_ID
         assert relative == "/"
 
     def test_custom_zone(self) -> None:

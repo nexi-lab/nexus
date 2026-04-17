@@ -30,6 +30,7 @@ from nexus.backends.connectors.gmail.schemas import (
     SendEmailSchema,
 )
 from nexus.backends.connectors.gmail.transport import LABEL_FOLDERS, GmailTransport
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import BackendError
 from nexus.contracts.types import OperationContext
 
@@ -131,7 +132,7 @@ def operation_context():
     return OperationContext(
         user_id="test@example.com",
         groups=[],
-        zone_id="root",
+        zone_id=ROOT_ZONE_ID,
     )
 
 
@@ -532,7 +533,7 @@ class TestWriteOperations:
         ctx = OperationContext(
             user_id="test@example.com",
             groups=[],
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             backend_path="SENT/_new.yaml",
         )
 
@@ -557,7 +558,7 @@ class TestWriteOperations:
         ctx = OperationContext(
             user_id="test@example.com",
             groups=[],
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             backend_path="SENT/_reply.yaml",
         )
 
@@ -581,7 +582,7 @@ class TestWriteOperations:
         ctx = OperationContext(
             user_id="test@example.com",
             groups=[],
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             backend_path="SENT/_forward.yaml",
         )
 
@@ -604,7 +605,7 @@ class TestWriteOperations:
         ctx = OperationContext(
             user_id="test@example.com",
             groups=[],
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             backend_path="DRAFTS/_new.yaml",
         )
 
@@ -626,7 +627,7 @@ class TestWriteOperations:
         ctx = OperationContext(
             user_id="test@example.com",
             groups=[],
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             backend_path="INBOX/_new.yaml",  # INBOX doesn't support writes
         )
 
@@ -647,7 +648,7 @@ class TestDeleteOperations:
         ctx = OperationContext(
             user_id="test@example.com",
             groups=[],
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             backend_path="INBOX/thread_abc-msg_123.yaml",
         )
 
@@ -660,7 +661,7 @@ class TestDeleteOperations:
         ctx = OperationContext(
             user_id="test@example.com",
             groups=[],
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             backend_path="SENT/_new.yaml",
         )
 

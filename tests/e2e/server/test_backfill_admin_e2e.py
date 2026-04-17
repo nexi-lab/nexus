@@ -14,6 +14,8 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi.testclient import TestClient
 
+from nexus.contracts.constants import ROOT_ZONE_ID
+
 logger = logging.getLogger(__name__)
 
 
@@ -112,7 +114,7 @@ class TestBackfillAdminE2E:
                 result.is_admin = False  # NOT admin
                 result.subject_type = "user"
                 result.subject_id = "regular-user"
-                result.zone_id = "root"
+                result.zone_id = ROOT_ZONE_ID
                 result.inherit_permissions = True
                 result.metadata = {}
                 return result

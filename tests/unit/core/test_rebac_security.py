@@ -26,6 +26,7 @@ from nexus.bricks.rebac.manager import (
     TraversalStats,
     WriteResult,
 )
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.types import (
     OperationContext,
     Permission,
@@ -47,7 +48,7 @@ def _make_mock_rebac(allowed_map: dict[tuple, bool] | None = None):
     rebac = MagicMock()
 
     def _check(subject, permission, object, zone_id=None):
-        key = (subject, permission, object, zone_id or "root")
+        key = (subject, permission, object, zone_id or ROOT_ZONE_ID)
         return allowed_map.get(key, False)
 
     rebac.rebac_check.side_effect = _check

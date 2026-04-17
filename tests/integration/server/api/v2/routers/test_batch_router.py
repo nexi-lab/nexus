@@ -9,6 +9,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import (
     NexusFileNotFoundError,
     NexusPermissionError,
@@ -20,7 +21,7 @@ def _make_mock_context() -> MagicMock:
     """Create a minimal mock OperationContext."""
     ctx = MagicMock()
     ctx.user_id = "test-user"
-    ctx.zone_id = "root"
+    ctx.zone_id = ROOT_ZONE_ID
     ctx.groups = []
     ctx.is_admin = False
     ctx.is_system = False

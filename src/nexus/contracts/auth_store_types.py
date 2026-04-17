@@ -10,6 +10,8 @@ Issue #2436: Move auth/ to bricks/auth/ with Protocol DI.
 from dataclasses import dataclass
 from datetime import datetime
 
+from nexus.contracts.constants import ROOT_ZONE_ID
+
 
 @dataclass(frozen=True)
 class UserDTO:
@@ -119,7 +121,7 @@ class SessionDTO:
     session_id: str
     user_id: str
     agent_id: str | None = None
-    zone_id: str = "root"
+    zone_id: str = ROOT_ZONE_ID
     created_at: datetime | None = None
     expires_at: datetime | None = None
     last_activity: datetime | None = None

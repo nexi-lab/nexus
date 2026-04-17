@@ -25,6 +25,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.services.event_log.delivery import EventDeliveryWorker
 from nexus.services.event_log.replay import EventReplayService
 from nexus.storage.models import OperationLogModel
@@ -48,7 +49,7 @@ def _insert_undelivered(
     session_factory,
     path: str = "/test.txt",
     operation_type: str = "write",
-    zone_id: str = "root",
+    zone_id: str = ROOT_ZONE_ID,
     sequence_number: int | None = None,
 ) -> str:
     """Insert an undelivered operation_log row. Returns operation_id."""
@@ -73,7 +74,7 @@ def _insert_delivered(
     session_factory,
     path: str = "/test.txt",
     operation_type: str = "write",
-    zone_id: str = "root",
+    zone_id: str = ROOT_ZONE_ID,
     sequence_number: int | None = None,
 ) -> str:
     """Insert a delivered operation_log row. Returns operation_id."""

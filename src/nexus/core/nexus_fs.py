@@ -1822,7 +1822,8 @@ class NexusFS(  # type: ignore[misc]
             version=new_version,
             created_at=meta.created_at if meta else now,
             modified_at=now,
-            zone_id=zone_id or "root",  # Issue #904, #773: Store zone_id for PREWHERE filtering
+            zone_id=zone_id
+            or ROOT_ZONE_ID,  # Issue #904, #773: Store zone_id for PREWHERE filtering
         )
 
         route.metastore.put(new_meta)
@@ -2732,7 +2733,7 @@ class NexusFS(  # type: ignore[misc]
                         size=r.size,
                         etag=r.content_id,
                         version=r.version,
-                        zone_id=zone_id or "root",
+                        zone_id=zone_id or ROOT_ZONE_ID,
                     )
                 )
             else:
@@ -2779,7 +2780,7 @@ class NexusFS(  # type: ignore[misc]
                         created_at=meta.created_at if meta else now,
                         modified_at=now,
                         version=new_version,
-                        zone_id=zone_id or "root",
+                        zone_id=zone_id or ROOT_ZONE_ID,
                     )
                 )
 

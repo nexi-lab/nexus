@@ -19,6 +19,7 @@ from typing import Any
 
 import pytest
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.types import OperationContext
 from nexus.core.config import (
     DistributedConfig,
@@ -349,7 +350,7 @@ class TestPermissionEnforcement:
         ctx = OperationContext(
             user_id="admin",
             groups=[],
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             is_admin=True,
             is_system=False,
         )
@@ -364,7 +365,7 @@ class TestPermissionEnforcement:
         ctx = OperationContext(
             user_id="admin",
             groups=[],
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             is_admin=True,
             is_system=False,
         )
@@ -378,7 +379,7 @@ class TestPermissionEnforcement:
         ctx = OperationContext(
             user_id="admin",
             groups=[],
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             is_admin=True,
             is_system=False,
         )
@@ -393,7 +394,7 @@ class TestPermissionEnforcement:
         ctx = OperationContext(
             user_id="admin",
             groups=[],
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             is_admin=True,
             is_system=False,
         )

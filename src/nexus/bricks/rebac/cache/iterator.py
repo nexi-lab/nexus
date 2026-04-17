@@ -62,7 +62,7 @@ class IteratorCache:
         >>> # First request - compute and cache
         >>> cursor_id, results, total = cache.get_or_create(
         ...     query_hash="incoming:user123",
-        ...     zone_id="root",
+        ...     zone_id=ROOT_ZONE_ID,
         ...     compute_fn=lambda: fetch_all_shares("user123")
         ... )
         >>> # Subsequent page - fetch from cache

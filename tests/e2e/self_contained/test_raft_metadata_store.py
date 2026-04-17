@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 from nexus_kernel import Kernel
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.metadata import FileMetadata
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 
@@ -705,7 +706,7 @@ class TestMultiZoneIsolation:
         store = _make_store()  # zone_id is None
         store.put(_make_meta(path="/test.txt"))
         # "root" is the fallback zone — unzoned stores serve it implicitly
-        result = store.list(zone_id="root")
+        result = store.list(zone_id=ROOT_ZONE_ID)
         assert len(result) == 1
 
     def test_list_without_zone_id_works_on_unzoned_store(self) -> None:

@@ -9,6 +9,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.contracts.aspects import AspectRegistry, LineageAspect
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.storage.lineage_service import LineageService
 from nexus.storage.models._base import Base
 
@@ -47,7 +48,7 @@ class TestRecordLineage:
         svc.record_lineage(
             entity_urn="urn:nexus:file:root:output123",
             lineage=lineage,
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             downstream_path="/output/result.json",
         )
         db_session.flush()
@@ -71,7 +72,7 @@ class TestRecordLineage:
         svc.record_lineage(
             entity_urn="urn:nexus:file:root:output123",
             lineage=lineage,
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
         db_session.flush()
 
@@ -87,7 +88,7 @@ class TestRecordLineage:
             reads=[{"path": "/a.csv", "version": 1, "etag": "e1"}],
             agent_id="agent-1",
         )
-        svc.record_lineage(entity_urn=urn, lineage=lineage1, zone_id="root")
+        svc.record_lineage(entity_urn=urn, lineage=lineage1, zone_id=ROOT_ZONE_ID)
         db_session.flush()
         assert len(svc.find_downstream("/a.csv")) == 1
 
@@ -96,7 +97,7 @@ class TestRecordLineage:
             reads=[{"path": "/b.csv", "version": 2, "etag": "e2"}],
             agent_id="agent-1",
         )
-        svc.record_lineage(entity_urn=urn, lineage=lineage2, zone_id="root")
+        svc.record_lineage(entity_urn=urn, lineage=lineage2, zone_id=ROOT_ZONE_ID)
         db_session.flush()
 
         # a.csv should no longer have downstream
@@ -124,7 +125,7 @@ class TestGetLineage:
         svc.record_lineage(
             entity_urn="urn:nexus:file:root:out1",
             lineage=lineage,
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
         db_session.flush()
 
@@ -149,7 +150,7 @@ class TestFindDownstream:
             svc.record_lineage(
                 entity_urn=f"urn:nexus:file:root:out{i}",
                 lineage=lineage,
-                zone_id="root",
+                zone_id=ROOT_ZONE_ID,
                 downstream_path=f"/output/{i}.json",
             )
         db_session.flush()
@@ -192,7 +193,7 @@ class TestFindDownstream:
             svc.record_lineage(
                 entity_urn=f"urn:nexus:file:root:out{i}",
                 lineage=lineage,
-                zone_id="root",
+                zone_id=ROOT_ZONE_ID,
             )
         db_session.flush()
 
@@ -219,7 +220,7 @@ class TestStalenessDetection:
         svc.record_lineage(
             entity_urn=downstream_urn,
             lineage=lineage,
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             downstream_path=f"/output/{downstream_urn}",
         )
         db_session.flush()
@@ -272,14 +273,18 @@ class TestStalenessDetection:
             reads=[{"path": "/in.csv", "version": 5, "etag": "e5"}],
             agent_id="agent-a",
         )
-        svc.record_lineage(entity_urn="urn:nexus:file:root:outA", lineage=lineage_a, zone_id="root")
+        svc.record_lineage(
+            entity_urn="urn:nexus:file:root:outA", lineage=lineage_a, zone_id=ROOT_ZONE_ID
+        )
 
         # Output B read input at v7 (already up to date)
         lineage_b = LineageAspect.from_session_reads(
             reads=[{"path": "/in.csv", "version": 7, "etag": "e7"}],
             agent_id="agent-b",
         )
-        svc.record_lineage(entity_urn="urn:nexus:file:root:outB", lineage=lineage_b, zone_id="root")
+        svc.record_lineage(
+            entity_urn="urn:nexus:file:root:outB", lineage=lineage_b, zone_id=ROOT_ZONE_ID
+        )
         db_session.flush()
 
         # Input is now at v7
@@ -306,14 +311,14 @@ class TestDeleteLineage:
         svc.record_lineage(
             entity_urn="urn:nexus:file:root:out1",
             lineage=lineage,
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
         db_session.flush()
 
         assert svc.get_lineage("urn:nexus:file:root:out1") is not None
         assert len(svc.find_downstream("/in.txt")) == 1
 
-        deleted = svc.delete_lineage("urn:nexus:file:root:out1", zone_id="root")
+        deleted = svc.delete_lineage("urn:nexus:file:root:out1", zone_id=ROOT_ZONE_ID)
         db_session.flush()
 
         assert deleted is True
@@ -343,7 +348,7 @@ class TestAtomicity:
         svc.record_lineage(
             entity_urn="urn:nexus:file:root:good",
             lineage=lineage,
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
         db_session.flush()
 

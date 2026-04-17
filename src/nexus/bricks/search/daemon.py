@@ -51,6 +51,7 @@ from nexus.bricks.search.mutation_events import (
 )
 from nexus.bricks.search.mutation_resolver import MutationResolver, ResolvedMutation
 from nexus.bricks.search.results import BaseSearchResult
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.lib.env import get_database_url
 
 if TYPE_CHECKING:
@@ -1026,7 +1027,7 @@ class SearchDaemon:
                 await asyncio.wait_for(asyncio.shield(self._skeleton_bootstrap_task), timeout=10.0)
         if self._skeleton_bootstrapped:
             # Probe query — forces any lazy work and logs timing
-            await self.locate("warmup", zone_id="root", limit=1)
+            await self.locate("warmup", zone_id=ROOT_ZONE_ID, limit=1)
             logger.debug("[SKELETON] index warmed: %d docs", len(self._skeleton_docs))
 
     def upsert_skeleton_doc(
@@ -1693,7 +1694,7 @@ class SearchDaemon:
                 docs_batch: dict[str, list[dict[str, Any]]] = {}
 
                 for row in rows:
-                    zone = row.zone_id or "root"
+                    zone = row.zone_id or ROOT_ZONE_ID
                     path = row.virtual_path
 
                     if (zone, path) != (cur_zone, cur_path):

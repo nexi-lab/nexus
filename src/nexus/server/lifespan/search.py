@@ -10,6 +10,8 @@ import logging
 import os
 from typing import TYPE_CHECKING
 
+from nexus.contracts.constants import ROOT_ZONE_ID
+
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
@@ -396,7 +398,7 @@ async def _wire_skeleton_indexer(app: "FastAPI", svc: "LifespanServices") -> Non
         if not hasattr(_nx, "register_intercept_write"):
             return  # NexusFS doesn't support VFS hooks in this mode
 
-        _zone_id = svc.zone_id or "root"
+        _zone_id = svc.zone_id or ROOT_ZONE_ID
 
         class _SkeletonWriteHook:
             @property

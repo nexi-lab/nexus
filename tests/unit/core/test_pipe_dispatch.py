@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import pytest
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.metadata import DT_PIPE, FileMetadata
 from nexus.core.driver_lifecycle_coordinator import DriverLifecycleCoordinator, _PyMountInfo
 from nexus.core.path_utils import canonicalize_path
@@ -32,7 +33,7 @@ def _make_router(ms) -> PathRouter:
     return PathRouter(dlc, ms, None)
 
 
-def _add_mount(router: PathRouter, mount_point: str, backend, zone_id: str = "root") -> None:
+def _add_mount(router: PathRouter, mount_point: str, backend, zone_id: str = ROOT_ZONE_ID) -> None:
     """Insert a mount into the router's DLC map directly."""
     canonical = canonicalize_path(mount_point, zone_id)
     router._dlc._mounts[canonical] = _PyMountInfo(

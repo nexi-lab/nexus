@@ -8,6 +8,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.metadata import FileMetadata
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 
@@ -16,7 +17,7 @@ from nexus.storage.raft_metadata_store import RaftMetadataStore
 # ---------------------------------------------------------------------------
 
 
-def _make_store(zone_id: str = "root") -> RaftMetadataStore:
+def _make_store(zone_id: str = ROOT_ZONE_ID) -> RaftMetadataStore:
     """Create a RaftMetadataStore with a temp directory."""
     tmpdir = tempfile.mkdtemp()
     return RaftMetadataStore.embedded(str(Path(tmpdir) / "meta"), zone_id=zone_id)

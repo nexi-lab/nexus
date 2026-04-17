@@ -11,6 +11,7 @@ import pytest
 
 from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.bricks.versioning.time_travel_service import TimeTravelService
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.core.config import PermissionConfig
 from nexus.factory import create_nexus_fs
@@ -308,7 +309,9 @@ class TestTimeTravelDebug:
         from nexus.contracts.types import OperationContext
 
         # Use context parameter with agent ID
-        context = OperationContext(user_id="test", groups=[], agent_id="agent-1", zone_id="root")
+        context = OperationContext(
+            user_id="test", groups=[], agent_id="agent-1", zone_id=ROOT_ZONE_ID
+        )
 
         path = "/workspace/agent_file.txt"
         nx.write(path, b"Agent 1 content", context=context)

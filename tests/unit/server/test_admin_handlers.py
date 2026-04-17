@@ -15,6 +15,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.server.rpc.handlers.admin import (
     format_api_key_response,
     handle_admin_create_key,
@@ -36,7 +37,7 @@ class FakeContext:
 
     is_admin: bool = False
     user: str = "testuser"
-    zone_id: str = "root"
+    zone_id: str = ROOT_ZONE_ID
 
 
 @dataclass

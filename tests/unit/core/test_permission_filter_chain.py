@@ -21,6 +21,7 @@ from nexus.bricks.rebac.filter_chain import (
     ZonePreFilterStrategy,
     run_filter_chain,
 )
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.types import OperationContext
 
 # ---------------------------------------------------------------------------
@@ -48,11 +49,11 @@ def mock_rebac():
 
 @pytest.fixture
 def ctx(mock_cache, mock_rebac):
-    context = OperationContext(user_id="alice", groups=[], zone_id="root")
+    context = OperationContext(user_id="alice", groups=[], zone_id=ROOT_ZONE_ID)
     return FilterContext(
         paths=["/workspace/a.txt", "/workspace/b.txt"],
         subject=("user", "alice"),
-        zone_id="root",
+        zone_id=ROOT_ZONE_ID,
         context=context,
         cache=mock_cache,
         rebac_manager=mock_rebac,
@@ -63,7 +64,7 @@ def _make_ctx(
     paths: list[str],
     mock_cache: MagicMock,
     mock_rebac: MagicMock,
-    zone_id: str = "root",
+    zone_id: str = ROOT_ZONE_ID,
     router: object | None = None,
 ) -> FilterContext:
     """Helper to build a FilterContext with custom paths."""
@@ -246,7 +247,7 @@ class TestZonePreFilterStrategy:
             "/workspace/ok.txt",
             "/zones/root/mine.txt",
         ]
-        ctx = _make_ctx(paths, mock_cache, mock_rebac, zone_id="root")
+        ctx = _make_ctx(paths, mock_cache, mock_rebac, zone_id=ROOT_ZONE_ID)
 
         strategy = ZonePreFilterStrategy()
         result = strategy.apply(ctx, paths)

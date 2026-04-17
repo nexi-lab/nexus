@@ -16,6 +16,7 @@ from sqlalchemy import text as sa_text
 from sqlalchemy.exc import ProgrammingError
 
 from nexus.bricks.search.mutation_events import SearchMutationEvent
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 
 @dataclass(frozen=True)
@@ -89,7 +90,7 @@ class MutationResolver:
             virtual_path = event.virtual_path
             path_id = path_id_map.get(self._path_key(event.zone_id, virtual_path), virtual_path)
             zone_id = event.zone_id
-            doc_id = f"{zone_id}:{virtual_path}" if zone_id != "root" else virtual_path
+            doc_id = f"{zone_id}:{virtual_path}" if zone_id != ROOT_ZONE_ID else virtual_path
             mutation = ResolvedMutation(
                 event=event,
                 zone_id=zone_id,

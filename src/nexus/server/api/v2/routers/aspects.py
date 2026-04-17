@@ -12,6 +12,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.server.api.v2.dependencies import get_aspect_service
 from nexus.server.api.v2.models.aspects import (
     AspectHistoryResponse,
@@ -31,7 +32,7 @@ def _verify_urn_zone(urn: str, zone_id: str) -> None:
     URNs are one-way hashes so we check the zone component embedded in the URN.
     Root zone bypasses the check as it has global visibility.
     """
-    if zone_id == "root":
+    if zone_id == ROOT_ZONE_ID:
         return
     if f":{zone_id}:" not in urn:
         raise HTTPException(status_code=403, detail="Access denied: URN is outside your zone")

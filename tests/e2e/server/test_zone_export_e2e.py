@@ -22,6 +22,7 @@ from nexus.bricks.portability import (
     inspect_bundle,
     validate_bundle,
 )
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
@@ -134,7 +135,7 @@ class TestBundleReader:
         # Create bundle
         manifest = export_zone_bundle(
             nexus_fs=nexus_fs,
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             output_path=output_path,
         )
 
@@ -152,7 +153,7 @@ class TestBundleReader:
 
         export_zone_bundle(
             nexus_fs=nexus_fs,
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             output_path=output_path,
         )
 
@@ -172,7 +173,7 @@ class TestBundleReader:
 
         export_zone_bundle(
             nexus_fs=nexus_fs,
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             output_path=output_path,
         )
 
@@ -192,7 +193,7 @@ class TestBundleReader:
 
         export_zone_bundle(
             nexus_fs=nexus_fs,
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             output_path=output_path,
         )
 
@@ -212,7 +213,7 @@ class TestValidateBundle:
 
         export_zone_bundle(
             nexus_fs=nexus_fs,
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             output_path=output_path,
         )
 
@@ -253,7 +254,7 @@ class TestInspectBundle:
 
         export_zone_bundle(
             nexus_fs=nexus_fs,
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             output_path=output_path,
         )
 
@@ -275,7 +276,7 @@ class TestExportConvenienceFunction:
 
         manifest = export_zone_bundle(
             nexus_fs=nexus_fs,
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             output_path=output_path,
             include_content=True,
             include_permissions=True,
@@ -296,7 +297,7 @@ class TestExportConvenienceFunction:
 
         export_zone_bundle(
             nexus_fs=nexus_fs,
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             output_path=output_path,
             progress_callback=on_progress,
         )

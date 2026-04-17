@@ -12,6 +12,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.types import OperationContext
 from nexus.core.nexus_fs import NexusFS
 from nexus.core.service_registry import ServiceRegistry
@@ -86,7 +87,7 @@ class TestSysReaddir:
             size=42,
             etag="abc",
             entry_type=0,
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             owner_id=None,
             modified_at=None,
             version=1,

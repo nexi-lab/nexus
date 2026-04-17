@@ -15,7 +15,7 @@ Usage:
     from nexus.raft import ZoneManager
     mgr = ZoneManager(hostname="nexus-1", base_path="/var/lib/nexus/zones")
     handle = mgr.create_zone("root", ["2@peer:2126"])
-    store = RaftMetadataStore(engine=handle, zone_id="root")
+    store = RaftMetadataStore(engine=handle, zone_id=ROOT_ZONE_ID)
 """
 
 import builtins
@@ -108,7 +108,7 @@ class RaftMetadataStore(MetastoreABC):
         from nexus.raft import ZoneManager
         mgr = ZoneManager(hostname="nexus-1", base_path="/var/lib/nexus/zones")
         handle = mgr.create_zone("root", ["2@peer:2126"])
-        store = RaftMetadataStore(engine=handle, zone_id="root")
+        store = RaftMetadataStore(engine=handle, zone_id=ROOT_ZONE_ID)
         store.put(metadata)  # replicated
     """
 
@@ -409,7 +409,7 @@ class RaftMetadataStore(MetastoreABC):
         # RaftMetadataStore is zone-local: each zone has its own sled database.
         # zone_id parameter accepted for API consistency but filtering is inherent.
         # RaftMetadataStore is zone-local. Non-zoned stores serve the "root" zone,
-        # so zone_id="root" is always allowed. Only assert on specific zone_ids.
+        # so zone_id=ROOT_ZONE_ID is always allowed. Only assert on specific zone_ids.
         # When prefix is already zone-scoped (e.g. /zone/corp/...), zone_id is
         # redundant — path prefix already constrains to the zone namespace.
         if zone_id is not None and zone_id != ROOT_ZONE_ID:

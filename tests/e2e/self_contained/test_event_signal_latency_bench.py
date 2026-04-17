@@ -21,6 +21,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.services.event_log.delivery import EventDeliveryWorker
 from nexus.services.event_log.replay import EventReplayService
 from nexus.storage.models import OperationLogModel
@@ -69,7 +70,7 @@ def _insert_undelivered(session_factory, path: str, seq: int | None = None) -> s
             operation_id=op_id,
             operation_type="write",
             path=path,
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             status="success",
             delivered=False,
             created_at=datetime.now(UTC),
@@ -87,7 +88,7 @@ def _insert_delivered(session_factory, path: str, seq: int) -> str:
             operation_id=op_id,
             operation_type="write",
             path=path,
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             status="success",
             delivered=True,
             created_at=datetime.now(UTC),

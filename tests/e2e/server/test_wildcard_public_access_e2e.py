@@ -18,11 +18,13 @@ import httpx
 import pytest
 from sqlalchemy import create_engine, text
 
+from nexus.contracts.constants import ROOT_ZONE_ID
+
 # JWT secret must match conftest.py
 JWT_SECRET = "test-secret-key-for-e2e-12345"
 
 
-def create_test_user(db_path: Path, zone_id: str = "root") -> dict:
+def create_test_user(db_path: Path, zone_id: str = ROOT_ZONE_ID) -> dict:
     """Create a test user and return auth info."""
     import jwt
 
@@ -56,7 +58,7 @@ def write_rebac_tuple(
     relation: str,
     object_type: str,
     object_id: str,
-    zone_id: str = "root",
+    zone_id: str = ROOT_ZONE_ID,
     subject_zone_id: str | None = None,
     object_zone_id: str | None = None,
 ) -> str:
@@ -295,7 +297,7 @@ class TestWildcardDirectDB:
             subject=("user", "anyone"),
             permission="read",
             object=("file", "/public/readonly.txt"),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
         assert result is True
 
@@ -304,7 +306,7 @@ class TestWildcardDirectDB:
             subject=("user", "anyone"),
             permission="write",
             object=("file", "/public/readonly.txt"),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
         assert result is False, "Wildcard reader should not grant write permission"
 
@@ -390,7 +392,7 @@ class TestWildcardPerformance:
                 subject=("user", f"nonexistent-user-{i}"),
                 permission="read",
                 object=("file", f"/files/doc-{i % 1000}.txt"),
-                zone_id="root",
+                zone_id=ROOT_ZONE_ID,
             )
             # Should be False (no wildcard, no direct grant)
             assert result is False

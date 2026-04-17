@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.services.event_bus import RedisEventBus
 from nexus.services.event_bus.types import FileEvent, FileEventType
 
@@ -41,7 +42,7 @@ class TestWALFirstPublish:
         bus = RedisEventBus(mock_redis_client, event_log=mock_event_log)
         await bus.start()
 
-        event = FileEvent(type=FileEventType.FILE_WRITE, path="/test.txt", zone_id="root")
+        event = FileEvent(type=FileEventType.FILE_WRITE, path="/test.txt", zone_id=ROOT_ZONE_ID)
         await bus.publish(event)
 
         # Verify WAL append was called
@@ -61,7 +62,7 @@ class TestWALFirstPublish:
         bus = RedisEventBus(mock_redis_client, event_log=mock_event_log)
         await bus.start()
 
-        event = FileEvent(type=FileEventType.FILE_WRITE, path="/test.txt", zone_id="root")
+        event = FileEvent(type=FileEventType.FILE_WRITE, path="/test.txt", zone_id=ROOT_ZONE_ID)
 
         # Should NOT raise — logged but published
         num_subs = await bus.publish(event)
@@ -81,7 +82,7 @@ class TestWALFirstPublish:
         # Wire event log after start
         bus.set_event_log(mock_event_log)
 
-        event = FileEvent(type=FileEventType.FILE_WRITE, path="/test.txt", zone_id="root")
+        event = FileEvent(type=FileEventType.FILE_WRITE, path="/test.txt", zone_id=ROOT_ZONE_ID)
         await bus.publish(event)
 
         # Verify event log was called
@@ -100,7 +101,7 @@ class TestOrderingGuarantees:
         await bus.start()
 
         events = [
-            FileEvent(type=FileEventType.FILE_WRITE, path=f"/test{i}.txt", zone_id="root")
+            FileEvent(type=FileEventType.FILE_WRITE, path=f"/test{i}.txt", zone_id=ROOT_ZONE_ID)
             for i in range(10)
         ]
 
@@ -124,7 +125,7 @@ class TestOrderingGuarantees:
         await bus.start()
 
         events = [
-            FileEvent(type=FileEventType.FILE_WRITE, path=f"/test{i}.txt", zone_id="root")
+            FileEvent(type=FileEventType.FILE_WRITE, path=f"/test{i}.txt", zone_id=ROOT_ZONE_ID)
             for i in range(20)
         ]
 
@@ -146,7 +147,7 @@ class TestEventLogIntegration:
         bus = RedisEventBus(mock_redis_client)  # No event_log
         await bus.start()
 
-        event = FileEvent(type=FileEventType.FILE_WRITE, path="/test.txt", zone_id="root")
+        event = FileEvent(type=FileEventType.FILE_WRITE, path="/test.txt", zone_id=ROOT_ZONE_ID)
         num_subs = await bus.publish(event)
 
         assert num_subs == 0  # Mock returns 0
@@ -171,7 +172,7 @@ class TestEventLogIntegration:
         await bus.start()
 
         events = [
-            FileEvent(type=FileEventType.FILE_WRITE, path=f"/test{i}.txt", zone_id="root")
+            FileEvent(type=FileEventType.FILE_WRITE, path=f"/test{i}.txt", zone_id=ROOT_ZONE_ID)
             for i in range(5)
         ]
 
@@ -251,7 +252,9 @@ class TestEventLogErrorRecovery:
 
         # Publish 4 events
         for i in range(4):
-            event = FileEvent(type=FileEventType.FILE_WRITE, path=f"/test{i}.txt", zone_id="root")
+            event = FileEvent(
+                type=FileEventType.FILE_WRITE, path=f"/test{i}.txt", zone_id=ROOT_ZONE_ID
+            )
             await bus.publish(event)  # Should not raise
 
         # All events should be published to Redis despite log failures
@@ -273,13 +276,13 @@ class TestEventDeduplication:
         event1 = FileEvent(
             type=FileEventType.FILE_WRITE,
             path="/test.txt",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             event_id="duplicate-id",
         )
         event2 = FileEvent(
             type=FileEventType.FILE_WRITE,
             path="/test2.txt",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             event_id="duplicate-id",
         )
 
@@ -311,7 +314,7 @@ class TestConcurrentBusAndLogOperations:
         async def publish_events():
             for i in range(10):
                 event = FileEvent(
-                    type=FileEventType.FILE_WRITE, path=f"/test{i}.txt", zone_id="root"
+                    type=FileEventType.FILE_WRITE, path=f"/test{i}.txt", zone_id=ROOT_ZONE_ID
                 )
                 await bus.publish(event)
                 await asyncio.sleep(0.01)

@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.io_profile import IOProfile
 from nexus.core.driver_lifecycle_coordinator import DriverLifecycleCoordinator, _PyMountInfo
 from nexus.core.path_utils import canonicalize_path
@@ -24,7 +25,7 @@ def _add_mount(
     readonly: bool = False,
     admin_only: bool = False,
     io_profile: str = "balanced",
-    zone_id: str = "root",
+    zone_id: str = ROOT_ZONE_ID,
 ) -> None:
     """Populate the DLC mount map directly — avoids touching the Rust kernel.
 

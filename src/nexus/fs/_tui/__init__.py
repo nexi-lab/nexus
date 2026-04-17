@@ -19,6 +19,7 @@ from textual.containers import Horizontal, Vertical
 from textual.reactive import reactive
 from textual.widgets import DataTable, Footer, Header, Input, Static
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.fs._tui.auth_guidance import auth_guidance, format_runtime_error
 from nexus.fs._tui.file_browser import FileBrowser
 from nexus.fs._tui.file_preview import FilePreview
@@ -178,7 +179,7 @@ class ContextualNexusFS:
                             "created_at": entry.get("created_at"),
                             "modified_at": entry.get("modified_at"),
                             "version": entry.get("version", 0),
-                            "zone_id": entry.get("zone_id", "root"),
+                            "zone_id": entry.get("zone_id", ROOT_ZONE_ID),
                             "entry_type": 1 if is_dir else 0,
                         }
                     )

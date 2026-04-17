@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import create_engine, text
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.core.config import PermissionConfig
 from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
@@ -121,7 +122,7 @@ async def nexus_fs_with_tiger(db_with_migrations, tmp_path):
     admin_context = OperationContext(
         user_id="admin",
         groups=["admins"],
-        zone_id="root",
+        zone_id=ROOT_ZONE_ID,
         is_admin=True,
     )
     nx._init_cred = admin_context
@@ -146,7 +147,7 @@ class TestDirectoryGrantExpansion:
             subject=("user", "alice"),
             relation="reader",
             object=("file", directory_path),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
 
         # Check that the grant was recorded in tiger_directory_grants
@@ -180,7 +181,7 @@ class TestDirectoryGrantExpansion:
         ctx = OperationContext(
             user_id="admin",
             groups=["admins"],
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             is_admin=True,
         )
 
@@ -194,7 +195,9 @@ class TestDirectoryGrantExpansion:
             nx.write(path, f"content of {path}", context=ctx)
 
         # Verify files exist
-        listed = nx.metadata.list(prefix="/workspace/project/", recursive=True, zone_id="root")
+        listed = nx.metadata.list(
+            prefix="/workspace/project/", recursive=True, zone_id=ROOT_ZONE_ID
+        )
         assert len(listed) == 3, f"Expected 3 files, got {len(listed)}"
 
         # Grant read permission on the directory
@@ -202,7 +205,7 @@ class TestDirectoryGrantExpansion:
             subject=("user", "bob"),
             relation="reader",
             object=("file", "/workspace/project/"),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
 
         # Give a moment for expansion to complete
@@ -243,7 +246,7 @@ class TestDirectoryGrantExpansion:
         ctx = OperationContext(
             user_id="admin",
             groups=["admins"],
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             is_admin=True,
         )
 
@@ -252,7 +255,7 @@ class TestDirectoryGrantExpansion:
             subject=("user", "charlie"),
             relation="reader",
             object=("file", "/workspace/shared/"),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
 
         # Now create a new file in that directory
@@ -264,7 +267,7 @@ class TestDirectoryGrantExpansion:
             subject=("user", "charlie"),
             permission="read",
             object=("file", new_file),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
         assert has_access, "Charlie should have read access to newly created file"
 
@@ -286,7 +289,7 @@ class TestDirectoryGrantExpansion:
         ctx = OperationContext(
             user_id="admin",
             groups=["admins"],
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             is_admin=True,
         )
 
@@ -297,13 +300,13 @@ class TestDirectoryGrantExpansion:
             subject=("user", "alice"),
             relation="reader",
             object=("file", "/dir_a/"),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
         nx.service("rebac").rebac_create_sync(
             subject=("user", "bob"),
             relation="reader",
             object=("file", "/dir_b/"),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
 
         # Create file in dir_a
@@ -317,7 +320,7 @@ class TestDirectoryGrantExpansion:
             subject=("user", "alice"),
             permission="read",
             object=("file", "/dir_a/moveme.txt"),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         ), "Alice should have access to file in dir_a"
 
         # Move file to dir_b
@@ -331,7 +334,7 @@ class TestDirectoryGrantExpansion:
             subject=("user", "bob"),
             permission="read",
             object=("file", "/dir_b/moveme.txt"),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
         assert has_bob_access, "Bob should have access after file moved to dir_b"
 
@@ -496,7 +499,7 @@ class TestTigerCacheIntegration:
             subject=("user", "diana"),
             relation="reader",
             object=("file", "/cache_test/"),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
 
         # Wait for expansion

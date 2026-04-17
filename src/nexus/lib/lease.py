@@ -28,6 +28,7 @@ import time
 from dataclasses import dataclass, replace
 from typing import Any
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.protocols.lease import (
     Clock,
     Lease,
@@ -136,7 +137,7 @@ class LocalLeaseManager:
     def __init__(
         self,
         *,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
         clock: Clock | None = None,
         sweep_interval: float = _SWEEP_INTERVAL_S,
         callback_timeout: float = _CALLBACK_TIMEOUT_S,

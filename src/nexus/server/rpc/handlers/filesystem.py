@@ -692,7 +692,7 @@ async def handle_semantic_search_index(
                     parse_fn=_parse_fn,
                     content_hash=observed_hash,
                 )
-                doc_id = f"{zone_id}:{file_path}" if zone_id != "root" else file_path
+                doc_id = f"{zone_id}:{file_path}" if zone_id != ROOT_ZONE_ID else file_path
                 if content_str and content_str.strip():
                     documents.append({"id": doc_id, "text": content_str, "path": file_path})
                 elif is_parseable_path(file_path) and parse_status == "empty":

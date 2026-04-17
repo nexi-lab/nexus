@@ -10,6 +10,7 @@ pytest.importorskip("pyroaring")
 
 
 from nexus.bricks.rebac.sync_permission_hook import SyncPermissionWriteHook
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.vfs_hooks import WriteHookContext
 
 
@@ -110,7 +111,7 @@ class TestOnPostWrite:
             is_new_file=False,
         )
         hook.on_post_write(ctx)
-        mock_hier.ensure_parent_tuples.assert_called_once_with("/file.txt", zone_id="root")
+        mock_hier.ensure_parent_tuples.assert_called_once_with("/file.txt", zone_id=ROOT_ZONE_ID)
 
     def test_hierarchy_error_becomes_warning(
         self, hook: SyncPermissionWriteHook, mock_hier: MagicMock

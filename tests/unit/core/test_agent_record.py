@@ -17,6 +17,7 @@ from datetime import UTC, datetime
 import pytest
 
 from nexus.contracts.agent_types import AgentRecord
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.process_types import AgentState
 
 # ---------------------------------------------------------------------------
@@ -75,7 +76,7 @@ class TestAgentRecord:
         return AgentRecord(
             agent_id="agent-1",
             owner_id="alice",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             name="Test Agent",
             state=AgentState.REGISTERED,
             generation=0,
@@ -98,7 +99,7 @@ class TestAgentRecord:
         """All fields are accessible."""
         assert record.agent_id == "agent-1"
         assert record.owner_id == "alice"
-        assert record.zone_id == "root"
+        assert record.zone_id == ROOT_ZONE_ID
         assert record.name == "Test Agent"
         assert record.state is AgentState.REGISTERED
         assert record.generation == 0

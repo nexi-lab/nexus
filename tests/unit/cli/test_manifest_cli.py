@@ -12,6 +12,7 @@ from click.testing import CliRunner
 from nexus.cli.clients.base import BaseServiceClient
 from nexus.cli.clients.manifest import ManifestClient
 from nexus.cli.commands.manifest_cli import manifest
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 MOCK_URL = "http://localhost:2026"
 
@@ -123,7 +124,7 @@ class TestManifestCreate:
                 {"tool_pattern": "read_*", "permission": "allow"},
                 {"tool_pattern": "write_file", "permission": "deny"},
             ],
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             valid_hours=720,
         )
 

@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.grant_helpers import GrantInput
 from nexus.services.agents.agent_registration import (
     AgentAlreadyExistsError,
@@ -90,7 +91,7 @@ class TestHappyPath:
                 agent_id="test-agent",
                 name="Test Agent",
                 owner_id="admin-user",
-                zone_id="root",
+                zone_id=ROOT_ZONE_ID,
             )
 
         assert isinstance(result, RegistrationResult)
@@ -98,7 +99,7 @@ class TestHappyPath:
         assert result.api_key == "sk-raw-key"
         assert result.key_id == "key-123"
         assert result.owner_id == "admin-user"
-        assert result.zone_id == "root"
+        assert result.zone_id == ROOT_ZONE_ID
         assert result.ipc_provisioned is True
         assert result.ipc_inbox is not None
 
@@ -112,7 +113,7 @@ class TestHappyPath:
                 agent_id="my-agent",
                 name="My Agent",
                 owner_id="alice",
-                zone_id="root",
+                zone_id=ROOT_ZONE_ID,
             )
 
         mock_entity_registry.register_entity.assert_called_once_with(
@@ -133,7 +134,7 @@ class TestHappyPath:
                 agent_id="proc-agent",
                 name="Process Agent",
                 owner_id="alice",
-                zone_id="root",
+                zone_id=ROOT_ZONE_ID,
             )
 
         mock_agent_registry.register_external.assert_called_once()
@@ -156,7 +157,7 @@ class TestHappyPath:
                 agent_id="grant-agent",
                 name="Grant Agent",
                 owner_id="alice",
-                zone_id="root",
+                zone_id=ROOT_ZONE_ID,
                 grants=grants,
             )
 
@@ -308,7 +309,7 @@ class TestCompensation:
         mock_rebac_manager.rebac_delete_by_subject.assert_called_once_with(
             subject_type="agent",
             subject_id="grant-leak-agent",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
 
     @pytest.mark.asyncio()

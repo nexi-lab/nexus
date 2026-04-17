@@ -42,6 +42,7 @@ from nexus.cli.commands.demo_data import (
     PLAN_VERSIONS,
 )
 from nexus.cli.theme import console
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 logger = logging.getLogger(__name__)
 
@@ -456,7 +457,7 @@ def _seed_permissions_docker(config: dict[str, Any], tuples: list[dict[str, Any]
 
     # Serialise tuples as [[subject, relation, object, zone_id], ...]
     payload = json.dumps(
-        [[t["subject"], t["relation"], t["object"], t.get("zone_id", "root")] for t in tuples]
+        [[t["subject"], t["relation"], t["object"], t.get("zone_id", ROOT_ZONE_ID)] for t in tuples]
     )
 
     cmd = [
@@ -1083,7 +1084,7 @@ def _delete_permissions_docker(config: dict[str, Any]) -> int:
 
     tuples = DEMO_PERMISSION_TUPLES
     payload = json.dumps(
-        [[t["subject"], t["relation"], t["object"], t.get("zone_id", "root")] for t in tuples]
+        [[t["subject"], t["relation"], t["object"], t.get("zone_id", ROOT_ZONE_ID)] for t in tuples]
     )
 
     cmd = [

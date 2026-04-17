@@ -21,6 +21,7 @@ from sqlalchemy.orm import sessionmaker
 
 from nexus.bricks.auth.oauth.token_manager import TokenManager, _hash_token
 from nexus.cache.inmemory import InMemoryCacheStore
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import AuthenticationError
 from nexus.server.auth.oauth_provider import OAuthCredential
 from nexus.storage.models._base import Base
@@ -299,7 +300,7 @@ class TestOAuthRotationE2E:
                 credential_id=model.credential_id,
                 refresh_token_hash=_hash_token("1//victim_refresh"),
                 rotation_counter=0,
-                zone_id="root",
+                zone_id=ROOT_ZONE_ID,
                 rotated_at=datetime.now(UTC),
             )
             session.add(history_entry)
@@ -365,14 +366,14 @@ def fastapi_e2e(monkeypatch):
         actor_id="alice@test.com",
         provider="google",
         credential_id="cred-001",
-        zone_id="root",
+        zone_id=ROOT_ZONE_ID,
     )
     audit_logger.log_event(
         event_type="token_rotated",
         actor_id="alice@test.com",
         provider="google",
         credential_id="cred-001",
-        zone_id="root",
+        zone_id=ROOT_ZONE_ID,
         details={"rotation_counter": 1},
     )
 
@@ -496,7 +497,7 @@ class TestSecretsAuditRestE2E:
                 result.is_admin = False
                 result.subject_type = "user"
                 result.subject_id = "regular-user"
-                result.zone_id = "root"
+                result.zone_id = ROOT_ZONE_ID
                 result.inherit_permissions = True
                 result.metadata = {}
                 return result

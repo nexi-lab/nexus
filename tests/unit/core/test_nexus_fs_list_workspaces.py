@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from nexus.bricks.workspace.workspace_registry import WorkspaceConfig
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 
 def _make_workspace(path: str, created_by: str | None = None) -> WorkspaceConfig:
@@ -66,7 +67,7 @@ class TestListWorkspacesAuthGuard:
 
     def test_raises_when_user_id_missing(self, nexus_fs) -> None:
         """Context without user_id should raise ValueError."""
-        ctx = _make_context(user_id=None, zone_id="root")
+        ctx = _make_context(user_id=None, zone_id=ROOT_ZONE_ID)
         with pytest.raises(ValueError, match="requires authenticated context"):
             nexus_fs.service("workspace_rpc").list_workspaces(context=ctx)
 
@@ -84,7 +85,7 @@ class TestListWorkspacesAuthGuard:
 
     def test_raises_when_user_id_empty_string(self, nexus_fs) -> None:
         """Context with empty string user_id should raise ValueError."""
-        ctx = _make_context(user_id="", zone_id="root")
+        ctx = _make_context(user_id="", zone_id=ROOT_ZONE_ID)
         with pytest.raises(ValueError, match="requires authenticated context"):
             nexus_fs.service("workspace_rpc").list_workspaces(context=ctx)
 
@@ -105,7 +106,7 @@ class TestListWorkspacesFiltering:
             _make_workspace("/zone/root/user/bob/workspace/project2", created_by="bob"),
         ]
 
-        ctx = _make_context(user_id="alice", zone_id="root")
+        ctx = _make_context(user_id="alice", zone_id=ROOT_ZONE_ID)
         result = nexus_fs.service("workspace_rpc").list_workspaces(context=ctx)
 
         assert len(result) == 1
@@ -118,7 +119,7 @@ class TestListWorkspacesFiltering:
             _make_workspace("/shared/other-project", created_by="bob"),
         ]
 
-        ctx = _make_context(user_id="alice", zone_id="root")
+        ctx = _make_context(user_id="alice", zone_id=ROOT_ZONE_ID)
         result = nexus_fs.service("workspace_rpc").list_workspaces(context=ctx)
 
         assert len(result) == 1
@@ -135,7 +136,7 @@ class TestListWorkspacesFiltering:
             _make_workspace("/zone/root/user/bob/workspace/bobs", created_by="bob"),
         ]
 
-        ctx = _make_context(user_id="alice", zone_id="root")
+        ctx = _make_context(user_id="alice", zone_id=ROOT_ZONE_ID)
         result = nexus_fs.service("workspace_rpc").list_workspaces(context=ctx)
 
         assert len(result) == 2
@@ -149,7 +150,7 @@ class TestListWorkspacesFiltering:
             _make_workspace("/zone/root/user/bob/workspace/project", created_by="bob"),
         ]
 
-        ctx = _make_context(user_id="alice", zone_id="root")
+        ctx = _make_context(user_id="alice", zone_id=ROOT_ZONE_ID)
         result = nexus_fs.service("workspace_rpc").list_workspaces(context=ctx)
 
         assert result == []
@@ -158,7 +159,7 @@ class TestListWorkspacesFiltering:
         """Should return empty list when registry is empty."""
         nexus_fs._workspace_registry.list_workspaces.return_value = []
 
-        ctx = _make_context(user_id="alice", zone_id="root")
+        ctx = _make_context(user_id="alice", zone_id=ROOT_ZONE_ID)
         result = nexus_fs.service("workspace_rpc").list_workspaces(context=ctx)
 
         assert result == []
@@ -170,7 +171,7 @@ class TestListWorkspacesFiltering:
             _make_workspace("/other/path", created_by=None),
         ]
 
-        ctx = _make_context(user_id="alice", zone_id="root")
+        ctx = _make_context(user_id="alice", zone_id=ROOT_ZONE_ID)
         result = nexus_fs.service("workspace_rpc").list_workspaces(context=ctx)
 
         assert len(result) == 1
@@ -183,7 +184,7 @@ class TestListWorkspacesFiltering:
         ]
 
         # Some contexts use 'user' instead of 'user_id'
-        ctx = SimpleNamespace(user_id="alice", zone_id="root")
+        ctx = SimpleNamespace(user_id="alice", zone_id=ROOT_ZONE_ID)
         result = nexus_fs.service("workspace_rpc").list_workspaces(context=ctx)
 
         assert len(result) == 1
@@ -195,7 +196,7 @@ class TestListWorkspacesFiltering:
             _make_workspace("/zone/root/user/alice/workspace/project", created_by="alice"),
         ]
 
-        ctx = _make_context(user_id="alice", zone_id="root")
+        ctx = _make_context(user_id="alice", zone_id=ROOT_ZONE_ID)
         result = nexus_fs.service("workspace_rpc").list_workspaces(context=ctx)
 
         assert len(result) == 1

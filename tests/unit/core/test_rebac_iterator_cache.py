@@ -9,6 +9,7 @@ from nexus.bricks.rebac.cache.iterator import (
     CursorExpiredError,
     IteratorCache,
 )
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 
 class TestIteratorCache:
@@ -21,7 +22,7 @@ class TestIteratorCache:
         # First call should compute results
         cursor_id, results, total = cache.get_or_create(
             query_hash="test:query",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             compute_fn=lambda: [{"id": i} for i in range(10)],
         )
 
@@ -32,7 +33,7 @@ class TestIteratorCache:
         # Second call with same query should return cached results
         cursor_id2, results2, total2 = cache.get_or_create(
             query_hash="test:query",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             compute_fn=lambda: [{"id": i} for i in range(20)],  # Different results
         )
 
@@ -47,7 +48,7 @@ class TestIteratorCache:
         # Create cached results
         cursor_id, results, total = cache.get_or_create(
             query_hash="test:query",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             compute_fn=lambda: [{"id": i} for i in range(100)],
         )
 
@@ -79,7 +80,7 @@ class TestIteratorCache:
 
         cursor_id, results, total = cache.get_or_create(
             query_hash="test:query",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             compute_fn=lambda: [{"id": i} for i in range(10)],
         )
 
@@ -135,7 +136,7 @@ class TestIteratorCache:
 
         cursor_id, _, _ = cache.get_or_create(
             query_hash="test:query",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             compute_fn=lambda: [{"id": i} for i in range(10)],
         )
 
@@ -162,14 +163,14 @@ class TestIteratorCache:
         # First call - miss
         cursor_id, _, _ = cache.get_or_create(
             query_hash="test:query",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             compute_fn=lambda: [{"id": i} for i in range(10)],
         )
 
         # Second call with same query - hit
         cache.get_or_create(
             query_hash="test:query",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             compute_fn=lambda: [],
         )
 
@@ -197,14 +198,14 @@ class TestIteratorCache:
         # First call
         cursor1, _, _ = cache.get_or_create(
             query_hash="same:query",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             compute_fn=compute,
         )
 
         # Second call with same query
         cursor2, _, _ = cache.get_or_create(
             query_hash="same:query",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             compute_fn=compute,
         )
 
@@ -218,12 +219,12 @@ class TestIteratorCache:
 
         cursor1, _, _ = cache.get_or_create(
             query_hash="query1",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             compute_fn=lambda: [{"id": 1}],
         )
         cursor2, _, _ = cache.get_or_create(
             query_hash="query2",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             compute_fn=lambda: [{"id": 2}],
         )
 
@@ -239,12 +240,12 @@ class TestIteratorCache:
 
         cursor1, _, _ = cache.get_or_create(
             query_hash="query1",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             compute_fn=lambda: [{"id": 1}],
         )
         cursor2, _, _ = cache.get_or_create(
             query_hash="query2",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             compute_fn=lambda: [{"id": 2}],
         )
 
@@ -270,7 +271,7 @@ class TestIteratorCache:
         # Generate some metrics
         cursor_id, _, _ = cache.get_or_create(
             query_hash="test:query",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             compute_fn=lambda: [{"id": i} for i in range(10)],
         )
         cache.get_page(cursor_id, offset=0, limit=5)
@@ -294,7 +295,7 @@ class TestIteratorCache:
 
         cursor_id, results, total = cache.get_or_create(
             query_hash="empty:query",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             compute_fn=lambda: [],
         )
 
@@ -312,7 +313,7 @@ class TestIteratorCache:
 
         cursor_id, _, _ = cache.get_or_create(
             query_hash="test:query",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             compute_fn=lambda: [{"id": i} for i in range(15)],
         )
 
@@ -332,11 +333,11 @@ class TestIteratorCache:
             results=[1, 2, 3],
             total_count=3,
             created_at=time.time(),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
 
         assert cached.cursor_id == "test-cursor"
         assert cached.query_hash == "test:hash"
         assert cached.results == [1, 2, 3]
         assert cached.total_count == 3
-        assert cached.zone_id == "root"
+        assert cached.zone_id == ROOT_ZONE_ID

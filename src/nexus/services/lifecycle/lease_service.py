@@ -19,6 +19,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.protocols.lease import (
     Lease,
     LeaseManagerProtocol,
@@ -51,7 +52,7 @@ class LeaseService:
     def __init__(
         self,
         *,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
         clock: Clock | None = None,
         manager: LeaseManagerProtocol | None = None,
     ) -> None:

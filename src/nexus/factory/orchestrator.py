@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from nexus.contracts.constants import ROOT_ZONE_ID
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -493,7 +495,7 @@ async def _register_vfs_hooks(
         def _metadata_list_iter(
             prefix: str,
             recursive: bool = True,
-            zone_id: str = "root",  # noqa: ARG001
+            zone_id: str = ROOT_ZONE_ID,  # noqa: ARG001
         ) -> Any:
             return nx.metadata.list(prefix=prefix, recursive=recursive)
 

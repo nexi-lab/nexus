@@ -25,6 +25,7 @@ from nexus.backends.connectors.calendar.schemas import (
     UpdateEventSchema,
 )
 from nexus.backends.connectors.calendar.transport import CalendarTransport
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.types import OperationContext
 
 # ============================================================================
@@ -106,7 +107,7 @@ def operation_context():
     return OperationContext(
         user_id="test@example.com",
         groups=[],
-        zone_id="root",
+        zone_id=ROOT_ZONE_ID,
     )
 
 

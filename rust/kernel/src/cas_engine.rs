@@ -62,16 +62,19 @@ impl From<io::Error> for CASError {
 pub(crate) struct CASEngine {
     transport: LocalCASTransport,
     chunk_assembler: Option<Arc<dyn crate::cas_chunking::ChunkAssembler>>,
+    chunking_strategy: Option<Arc<dyn crate::cas_chunking::ChunkingStrategy>>,
 }
 
 #[allow(dead_code)]
 impl CASEngine {
     /// Create a new CASEngine backed by a local filesystem transport.
-    /// CDC chunk reassembly is enabled by default via `ChunkedManifestAssembler`.
+    /// CDC chunk reassembly (read) + chunked-manifest write are enabled by
+    /// default via `ChunkedManifestAssembler` + `FastCDCStrategy`.
     pub fn new(transport: LocalCASTransport) -> Self {
         Self {
             transport,
             chunk_assembler: Some(crate::cas_chunking::default_chunk_assembler()),
+            chunking_strategy: Some(crate::cas_chunking::default_chunking_strategy()),
         }
     }
 
@@ -95,12 +98,20 @@ impl CASEngine {
         Ok(data)
     }
 
-    /// Write content and return its BLAKE3 hash.
+    /// Write content and return its BLAKE3 hash (single blob) or the manifest
+    /// hash (chunked). CDC composition: if a `ChunkWriter` is injected and it
+    /// says the content should be chunked, we split into CDC chunks, write
+    /// the manifest + `.meta` sidecar, and return the manifest hash. Single
+    /// blobs pass through `transport.write_blob` unchanged.
     ///
-    /// CAS dedup: if content already exists, the write is skipped.
-    ///
-    /// Corresponds to Python `CASAddressingEngine.write_content(content)`.
+    /// CAS dedup: if the resulting blob already exists, the write is skipped
+    /// (implemented inside the transport).
     pub fn write_content(&self, content: &[u8]) -> Result<String, CASError> {
+        if let Some(strategy) = &self.chunking_strategy {
+            if strategy.should_chunk(content) {
+                return strategy.write_chunked(content, &self.transport);
+            }
+        }
         Ok(self.transport.write_blob(content)?)
     }
 

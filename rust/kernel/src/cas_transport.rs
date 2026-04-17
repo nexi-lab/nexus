@@ -271,6 +271,25 @@ impl LocalCASTransport {
     }
 
     /// Remove a CAS blob from disk.
+    /// Write a `.meta` JSON sidecar next to a blob (used by CDC to flag
+    /// chunked manifests for GC + Python-side `is_chunked` compatibility).
+    /// Path is `cas/<h[0..2]>/<h[2..4]>/<hash>.meta`.
+    pub fn write_meta(&self, content_hash: &str, meta: &[u8]) -> io::Result<()> {
+        let key = blob_key(content_hash);
+        let path = self.resolve(&format!("{}.meta", key));
+        self.ensure_parent(&path)?;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&path)?;
+        file.write_all(meta)?;
+        if self.fsync_on_write {
+            file.sync_all()?;
+        }
+        Ok(())
+    }
+
     pub fn remove_blob(&self, content_hash: &str) -> io::Result<()> {
         let key = blob_key(content_hash);
         let path = self.resolve(&key);

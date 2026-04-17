@@ -22,6 +22,7 @@ regex = { workspace = true }
 memchr = { workspace = true }
 globset = { workspace = true }
 blake3 = { workspace = true }
+fastcdc = { workspace = true }
 string-interner = { workspace = true }
 roaring = { workspace = true }
 encoding_rs = "0.8.35"

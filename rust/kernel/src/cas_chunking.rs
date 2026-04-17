@@ -1,18 +1,37 @@
-//! CDC chunk assembly — pluggable composition for CAS read path.
+//! CDC chunking — pluggable composition for CAS read + write paths.
 //!
-//! Extracts the inline manifest detection from `CASEngine.read_content()`
-//! into a composable trait. Matches the Python CDC `ChunkingStrategy` DI
-//! pattern used by `CASAddressingEngine`.
+//! Two DI traits mirror the Python `ChunkingStrategy` Protocol:
+//!   - `ChunkingStrategy` (write): if content should be chunked, split it,
+//!     store chunks + manifest + `.meta` sidecar, return the manifest hash.
+//!     Two implementations — `FastCDCStrategy` (content-defined chunking for
+//!     large blobs) and `MessageBoundaryStrategy` (LLM-conversation JSON,
+//!     one chunk per message for cross-conversation prefix dedup).
+//!   - `ChunkAssembler` (read): if a blob is a chunked manifest, reassemble
+//!     into the original content. Shared across strategies because all
+//!     writers emit the same `{"type":"chunked_manifest","chunks":[...]}`
+//!     format. `CASEngine.read_content()` delegates here.
 //!
-//! `CASEngine` takes `Option<Arc<dyn ChunkAssembler>>` via DI — if present,
-//! the assembler gets first look at every blob read; if the blob is a chunked
-//! manifest, the assembler reassembles the chunks and returns the original
-//! content.
+//! Split traits (Rust composition) instead of one big Python-style Protocol:
+//! the write path and read path have no overlapping state, and many callers
+//! need only the reader.
 
 use crate::cas_engine::CASError;
 use crate::cas_transport::LocalCASTransport;
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::sync::Arc;
+
+// ---------------------------------------------------------------------------
+// CDC tuning constants (must match Python `nexus.backends.engines.cdc`)
+// ---------------------------------------------------------------------------
+
+/// Minimum content size to trigger CDC chunking (16 MiB).
+pub(crate) const CDC_THRESHOLD_BYTES: usize = 16 * 1024 * 1024;
+/// FastCDC minimum chunk size (256 KiB).
+const CDC_MIN_CHUNK_SIZE: u32 = 256 * 1024;
+/// FastCDC average chunk size target (1 MiB).
+const CDC_AVG_CHUNK_SIZE: u32 = 1024 * 1024;
+/// FastCDC maximum chunk size (4 MiB).
+const CDC_MAX_CHUNK_SIZE: u32 = 4 * 1024 * 1024;
 
 // ---------------------------------------------------------------------------
 // ChunkAssembler trait
@@ -47,14 +66,16 @@ impl ChunkAssembler for ChunkedManifestAssembler {
         data: &[u8],
         transport: &LocalCASTransport,
     ) -> Result<Option<Vec<u8>>, CASError> {
-        // Fast reject: only check blobs < 500KB that start with the manifest prefix
+        // Fast reject: only check blobs < 500KB (manifests are always small —
+        // ~100 bytes per chunk entry). Parse as JSON and check the `type`
+        // field directly — key order is not guaranteed across serializers
+        // (serde_json default sorts alphabetically, Python dict preserves
+        // insertion order, so anchored prefix matches are unreliable).
         if data.len() >= 500 * 1024 {
             return Ok(None);
         }
-        if !data
-            .get(..30)
-            .is_some_and(|p| p.starts_with(b"{\"type\":\"chunked_manifest"))
-        {
+        // Cheap pre-check: must start with `{` to even be JSON object.
+        if data.first() != Some(&b'{') {
             return Ok(None);
         }
 
@@ -62,6 +83,16 @@ impl ChunkAssembler for ChunkedManifestAssembler {
             Ok(v) => v,
             Err(_) => return Ok(None),
         };
+
+        // Only act on blobs whose top-level `type` is `chunked_manifest`;
+        // leaves every other JSON blob untouched.
+        let is_manifest = manifest
+            .get("type")
+            .and_then(|t| t.as_str())
+            .is_some_and(|t| t == "chunked_manifest");
+        if !is_manifest {
+            return Ok(None);
+        }
 
         let chunks = match manifest.get("chunks").and_then(|c| c.as_array()) {
             Some(c) => c,
@@ -143,4 +174,221 @@ fn reassemble_chunks(chunks: &[Value], transport: &LocalCASTransport) -> Result<
 #[allow(dead_code)]
 pub(crate) fn default_chunk_assembler() -> Arc<dyn ChunkAssembler> {
     Arc::new(ChunkedManifestAssembler)
+}
+
+// ---------------------------------------------------------------------------
+// ChunkingStrategy trait (write-side composition)
+// ---------------------------------------------------------------------------
+
+/// Pluggable chunked-write strategy for the CAS write path (DI composition).
+///
+/// Name matches the Python `ChunkingStrategy` Protocol so the two sides stay
+/// aligned even though the Rust trait is write-only (reads share the single
+/// `ChunkAssembler` above since every strategy emits the same manifest format).
+pub(crate) trait ChunkingStrategy: Send + Sync {
+    fn should_chunk(&self, content: &[u8]) -> bool;
+
+    fn write_chunked(
+        &self,
+        content: &[u8],
+        transport: &LocalCASTransport,
+    ) -> Result<String, CASError>;
+}
+
+// ---------------------------------------------------------------------------
+// Manifest writer helper — shared by all strategies
+// ---------------------------------------------------------------------------
+
+/// Package `chunk_entries` into the canonical
+/// `{"type":"chunked_manifest","chunks":[...]}` blob + `.meta` sidecar.
+/// Strategies decide boundaries; this helper guarantees every strategy
+/// produces something the single `ChunkAssembler` reader can rebuild.
+fn finalize_manifest(
+    chunk_entries: Vec<Value>,
+    chunk_count: usize,
+    total_size: usize,
+    full_content_hash: String,
+    transport: &LocalCASTransport,
+) -> Result<String, CASError> {
+    let avg_chunk_size = if chunk_count > 0 {
+        total_size / chunk_count
+    } else {
+        0
+    };
+
+    let manifest = json!({
+        "type": "chunked_manifest",
+        "total_size": total_size,
+        "chunk_count": chunk_count,
+        "avg_chunk_size": avg_chunk_size,
+        "content_hash": full_content_hash,
+        "chunks": chunk_entries,
+    });
+    let manifest_bytes =
+        serde_json::to_vec(&manifest).map_err(|e| CASError::IOError(std::io::Error::other(e)))?;
+
+    let manifest_hash = transport
+        .write_blob(&manifest_bytes)
+        .map_err(CASError::IOError)?;
+
+    // `.meta` sidecar — lets Python `CDCEngine.is_chunked(hash)` recognise
+    // Rust-written manifests without opening the blob. Format matches
+    // `CASAddressingEngine._write_meta()`.
+    let sidecar = json!({
+        "size": total_size,
+        "is_chunked_manifest": true,
+        "chunk_count": chunk_count,
+    });
+    let sidecar_bytes =
+        serde_json::to_vec(&sidecar).map_err(|e| CASError::IOError(std::io::Error::other(e)))?;
+    transport
+        .write_meta(&manifest_hash, &sidecar_bytes)
+        .map_err(CASError::IOError)?;
+
+    Ok(manifest_hash)
+}
+
+// ---------------------------------------------------------------------------
+// FastCDCStrategy — content-defined chunking for large blobs
+// ---------------------------------------------------------------------------
+
+/// FastCDC + BLAKE3 chunking for generic large content (≥ 16 MiB).
+///
+/// Byte-compatible with Python `nexus.backends.engines.cdc.CDCEngine` output
+/// so a Rust-written chunked file reads fine on a Python side and vice versa
+/// (they share the manifest format).
+pub(crate) struct FastCDCStrategy;
+
+impl ChunkingStrategy for FastCDCStrategy {
+    fn should_chunk(&self, content: &[u8]) -> bool {
+        content.len() > CDC_THRESHOLD_BYTES
+    }
+
+    fn write_chunked(
+        &self,
+        content: &[u8],
+        transport: &LocalCASTransport,
+    ) -> Result<String, CASError> {
+        let total_size = content.len();
+
+        // FastCDC content-defined chunking. Walks `content`, emitting
+        // variable-size chunks whose boundaries depend on content (not
+        // position), so insert/delete edits only re-hash adjacent chunks.
+        let chunker = fastcdc::v2020::FastCDC::new(
+            content,
+            CDC_MIN_CHUNK_SIZE,
+            CDC_AVG_CHUNK_SIZE,
+            CDC_MAX_CHUNK_SIZE,
+        );
+
+        let mut chunk_entries: Vec<Value> = Vec::new();
+        let mut chunk_count = 0usize;
+        for chunk in chunker {
+            let chunk_bytes = &content[chunk.offset..chunk.offset + chunk.length];
+            let chunk_hash = transport
+                .write_blob(chunk_bytes)
+                .map_err(CASError::IOError)?;
+            chunk_entries.push(json!({
+                "chunk_hash": chunk_hash,
+                "offset": chunk.offset as u64,
+                "length": chunk.length as u64,
+            }));
+            chunk_count += 1;
+        }
+
+        let full_content_hash = library::hash::hash_content(content);
+        finalize_manifest(
+            chunk_entries,
+            chunk_count,
+            total_size,
+            full_content_hash,
+            transport,
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// MessageBoundaryStrategy — one chunk per message for LLM conversation JSON
+// ---------------------------------------------------------------------------
+
+/// Chunk LLM-conversation JSON at message boundaries (one chunk per message)
+/// so conversations sharing a prefix dedup via CAS. Always-chunk mode:
+/// `should_chunk()` returns true for any valid message array (not size-gated),
+/// because LLM conversations are small but benefit heavily from per-message
+/// dedup. Returns false for non-conversation content — caller falls back to
+/// single-blob CAS storage.
+///
+/// Mirrors Python
+/// `nexus.backends.compute.message_chunking.MessageBoundaryStrategy`.
+#[allow(dead_code)]
+pub(crate) struct MessageBoundaryStrategy;
+
+impl ChunkingStrategy for MessageBoundaryStrategy {
+    fn should_chunk(&self, content: &[u8]) -> bool {
+        // Valid conversation = JSON array of ≥2 message dicts with a `role`
+        // key. Anything else falls through to single-blob.
+        let v: Value = match serde_json::from_slice(content) {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
+        let Some(arr) = v.as_array() else {
+            return false;
+        };
+        if arr.len() < 2 {
+            return false;
+        }
+        arr.first()
+            .and_then(|m| m.as_object())
+            .is_some_and(|o| o.contains_key("role"))
+    }
+
+    fn write_chunked(
+        &self,
+        content: &[u8],
+        transport: &LocalCASTransport,
+    ) -> Result<String, CASError> {
+        let total_size = content.len();
+        let full_content_hash = library::hash::hash_content(content);
+
+        let parsed: Value = serde_json::from_slice(content)
+            .map_err(|e| CASError::IOError(std::io::Error::other(e)))?;
+        let messages = parsed.as_array().ok_or_else(|| {
+            CASError::IOError(std::io::Error::other("expected JSON array of messages"))
+        })?;
+
+        // Each message → its own chunk. Offset tracks byte position of the
+        // message in the re-encoded concatenation (deterministic ordering
+        // for reassembly + dedup parity with Python's implementation).
+        let mut chunk_entries: Vec<Value> = Vec::new();
+        let mut offset: u64 = 0;
+        for msg in messages {
+            let msg_bytes =
+                serde_json::to_vec(msg).map_err(|e| CASError::IOError(std::io::Error::other(e)))?;
+            let chunk_hash = transport
+                .write_blob(&msg_bytes)
+                .map_err(CASError::IOError)?;
+            let length = msg_bytes.len() as u64;
+            chunk_entries.push(json!({
+                "chunk_hash": chunk_hash,
+                "offset": offset,
+                "length": length,
+            }));
+            offset += length;
+        }
+
+        finalize_manifest(
+            chunk_entries,
+            messages.len(),
+            total_size,
+            full_content_hash,
+            transport,
+        )
+    }
+}
+
+/// Create the default chunking strategy (FastCDC — generic CAS writes).
+/// LLM backends explicitly inject `MessageBoundaryStrategy`.
+#[allow(dead_code)]
+pub(crate) fn default_chunking_strategy() -> Arc<dyn ChunkingStrategy> {
+    Arc::new(FastCDCStrategy)
 }

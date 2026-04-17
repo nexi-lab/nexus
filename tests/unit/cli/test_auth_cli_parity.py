@@ -9,14 +9,23 @@ from nexus.cli.commands.auth_cli import auth as cli_auth
 from nexus.fs._auth_cli import auth as fs_auth
 
 
-def test_same_underlying_group_object() -> None:
-    """Both entry points re-export the same Click group instance."""
-    assert cli_auth is fs_auth
-
-
 def test_same_subcommands_registered() -> None:
-    """Defensive check: even if re-export drifts, subcommand set matches."""
+    """Both entry points expose the same set of subcommands.
+
+    The two groups are separate Click objects (fs_auth is defined in the fs
+    entry point so nexus-fs can still load without the `nexus.bricks` package
+    in the slim wheel), but when the full package is installed they share
+    identical subcommand references.
+    """
     assert set(cli_auth.commands.keys()) == set(fs_auth.commands.keys())
+
+
+def test_same_subcommand_objects() -> None:
+    """Subcommand objects are the literal same references — no handler drift."""
+    for name, cli_cmd in cli_auth.commands.items():
+        assert fs_auth.commands[name] is cli_cmd, (
+            f"subcommand {name!r} has drifted between nexus auth and nexus-fs auth"
+        )
 
 
 def test_list_parity(monkeypatch, tmp_path):

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from click.testing import CliRunner
 
 from nexus.bricks.auth.cli_commands import auth
@@ -130,3 +132,47 @@ def test_post_finalize_full_auth_flow_without_tokens_db(monkeypatch, tmp_path):
     # backing file is credentials.json, not tokens.db.
     leaked_tokens = list(tmp_path.rglob("tokens.db"))
     assert leaked_tokens == [], f"legacy tokens.db should not appear: {leaked_tokens}"
+
+
+def test_build_auth_service_wires_profile_store(monkeypatch, tmp_path):
+    """Regression test for C1: _build_auth_service() must inject a real profile_store.
+
+    Before the fix, migration_components() returned (legacy, None, backend) because
+    _build_auth_service never opened a SqliteAuthProfileStore.  --finalize then
+    crashed with AttributeError when calling profile_store.get(profile_id).
+
+    This test exercises the real _build_auth_service() (no monkeypatch of it) and
+    asserts that migration_components()[1] is not None.
+    """
+    from nexus.bricks.auth.cli_commands import _build_auth_service
+    from nexus.bricks.auth.profile_store import SqliteAuthProfileStore
+
+    # Redirect the profile store to tmp_path so the test doesn't touch ~.
+    real_cls = SqliteAuthProfileStore
+    db_path_used: list[Path] = []
+
+    def _patched_cls(db_path, **kwargs):
+        redirected = tmp_path / "auth_profiles.db"
+        db_path_used.append(redirected)
+        return real_cls(redirected, **kwargs)
+
+    monkeypatch.setattr(
+        "nexus.bricks.auth.profile_store.SqliteAuthProfileStore",
+        _patched_cls,
+    )
+
+    # Redirect get_token_manager so no real OAuth DB is touched.
+    monkeypatch.setattr(
+        "nexus.fs._oauth_support.get_token_manager",
+        lambda *a, **kw: None,
+    )
+
+    svc = _build_auth_service()
+    components = svc.migration_components()
+    _legacy, profile_store, _backend = components
+
+    assert profile_store is not None, (
+        "C1: _build_auth_service() did not inject a profile_store — "
+        "migrate --finalize would crash with AttributeError on profile_store.get()"
+    )
+    assert db_path_used, "Expected SqliteAuthProfileStore to be constructed"

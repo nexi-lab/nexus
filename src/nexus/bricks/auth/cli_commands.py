@@ -31,13 +31,21 @@ logger = logging.getLogger(__name__)
 
 def _build_auth_service() -> Any:
     """Build a UnifiedAuthService wired for production use."""
+    from pathlib import Path
+
     oauth_module = importlib.import_module("nexus.bricks.auth.oauth.credential_service")
     unified_module = importlib.import_module("nexus.bricks.auth.unified_service")
     fs_oauth_module = importlib.import_module("nexus.fs._oauth_support")
+    profile_store_module = importlib.import_module("nexus.bricks.auth.profile_store")
     oauth_service = oauth_module.OAuthCredentialService(
         token_manager=fs_oauth_module.get_token_manager()
     )
-    return unified_module.UnifiedAuthService(oauth_service=oauth_service)
+    db_path = Path("~/.nexus/auth_profiles.db").expanduser()
+    profile_store = profile_store_module.SqliteAuthProfileStore(db_path)
+    return unified_module.UnifiedAuthService(
+        oauth_service=oauth_service,
+        profile_store=profile_store,
+    )
 
 
 # ---------------------------------------------------------------------------

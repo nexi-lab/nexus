@@ -36,13 +36,9 @@ class TestFailureReasonEnum:
             "scope_insufficient",
             "clock_skew",
             "unknown",
-            "model_not_found",
         }
         actual = {e.value for e in AuthProfileFailureReason}
         assert expected == actual
-
-    def test_deprecated_model_not_found_still_accessible(self) -> None:
-        assert AuthProfileFailureReason.MODEL_NOT_FOUND.value == "model_not_found"
 
     def test_new_values_accessible(self) -> None:
         assert AuthProfileFailureReason.MFA_REQUIRED.value == "mfa_required"
@@ -50,6 +46,13 @@ class TestFailureReasonEnum:
         assert AuthProfileFailureReason.UPSTREAM_CLI_MISSING.value == "upstream_cli_missing"
         assert AuthProfileFailureReason.SCOPE_INSUFFICIENT.value == "scope_insufficient"
         assert AuthProfileFailureReason.CLOCK_SKEW.value == "clock_skew"
+
+
+def test_model_not_found_enum_removed():
+    """MODEL_NOT_FOUND was deprecated and removed in Phase 4 (#3741)."""
+    assert not hasattr(AuthProfileFailureReason, "MODEL_NOT_FOUND")
+    names = {member.name for member in AuthProfileFailureReason}
+    assert "MODEL_NOT_FOUND" not in names
 
 
 # ---------------------------------------------------------------------------

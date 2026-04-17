@@ -55,8 +55,8 @@ def classify_anthropic_error(exc: Exception) -> AuthProfileFailureReason:
         return AuthProfileFailureReason.TIMEOUT
 
     if isinstance(exc, anthropic.NotFoundError):
-        # 404 on model endpoint
-        return AuthProfileFailureReason.MODEL_NOT_FOUND
+        # 404 on model endpoint — model access denied or model does not exist
+        return AuthProfileFailureReason.UNKNOWN
 
     if isinstance(exc, anthropic.BadRequestError):
         # 400 — could be billing exhaustion or malformed request.

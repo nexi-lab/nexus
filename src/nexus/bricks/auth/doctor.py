@@ -68,11 +68,6 @@ FIX_HINTS: dict[tuple[AuthProfileFailureReason, str | None], str] = {
     (AuthProfileFailureReason.UNKNOWN, None): (
         "Unclassified failure. Check `nexus auth pool status` and logs for details."
     ),
-    # Deprecated — kept for backward compatibility until Task 14 removes the enum value.
-    (AuthProfileFailureReason.MODEL_NOT_FOUND, None): (
-        "Deprecated failure reason (model_not_found). Re-run to reclassify; "
-        "if persistent, check the provider's model availability."
-    ),
     # ------------------------------------------------------------------ #
     # Provider-specific overrides.                                         #
     # ------------------------------------------------------------------ #

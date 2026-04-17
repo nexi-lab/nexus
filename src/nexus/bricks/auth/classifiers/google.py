@@ -91,7 +91,8 @@ def _classify_single(exc: Exception) -> AuthProfileFailureReason:
                 return AuthProfileFailureReason.OVERLOADED
 
             if status == 404:
-                return AuthProfileFailureReason.MODEL_NOT_FOUND
+                # Resource not found — model access denied or model does not exist
+                return AuthProfileFailureReason.UNKNOWN
 
             if status == 400:
                 return AuthProfileFailureReason.FORMAT

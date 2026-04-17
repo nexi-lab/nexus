@@ -716,23 +716,9 @@ def disconnect_auth(service_name: str) -> None:
 @auth.command(name="doctor")
 def auth_doctor() -> None:
     """Show auth-related health across all configured services."""
-    try:
-        from nexus.bricks.auth.doctor import run_doctor  # added in Phase B (Task 11)
+    from nexus.bricks.auth.doctor import run_doctor
 
-        exit_code = run_doctor(_build_auth_service())
-    except ImportError:
-        # Phase A fallback — Phase B replaces this with direct run_doctor call.
-        service = _build_auth_service()
-        summaries = asyncio.run(service.list_summaries())
-        failures = [s for s in summaries if s.status not in {AuthStatus.AUTHED, AuthStatus.UNKNOWN}]
-        for summary in summaries:
-            style = "green" if summary.status == AuthStatus.AUTHED else "yellow"
-            console.print(
-                f"[{style}]{summary.service}[/{style}] {summary.status.value}: {summary.message}"
-            )
-        if failures:
-            raise click.ClickException("One or more services need auth setup.") from None
-        exit_code = 0
+    exit_code = run_doctor(_build_auth_service())
     raise click.exceptions.Exit(exit_code)
 
 

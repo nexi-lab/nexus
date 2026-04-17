@@ -66,7 +66,6 @@ def _add_mount(
         readonly=readonly,
         admin_only=admin_only,
         io_profile=io_profile,
-        stream_backend_factory=None,
         zone_id=zone_id,
     )
 

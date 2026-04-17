@@ -43,7 +43,10 @@ def _build_service(
     """Build a MountService with mocked gateway."""
     if gateway is None:
         gateway = _mock_gateway(permission_ok=permission_ok)
-    service = MountService(router=gateway.router, gateway=gateway)
+    # nexus_fs is required for sys_setattr(DT_MOUNT) — kernel-backed mount path
+    # after F4 Rust-ification.
+    mock_nexus_fs = MagicMock()
+    service = MountService(router=gateway.router, gateway=gateway, nexus_fs=mock_nexus_fs)
     # DriverLifecycleCoordinator is kernel-owned; mock it for unit tests.
     service._driver_coordinator = MagicMock()
     return service, gateway

@@ -15,8 +15,19 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from nexus.contracts.metadata import DT_MOUNT
 from nexus.core.config import PermissionConfig
 from nexus.storage.raft_metadata_store import RaftMetadataStore
+
+
+def _mount_via_setattr(nx, mount_point: str, backend, *, readonly: bool = False) -> None:
+    """Register a mount via the kernel sys_setattr(DT_MOUNT) API.
+
+    Replaces the legacy ``nx._driver_coordinator.mount()`` call removed in
+    the F4 Rust-ification. The kernel path wires routing, metastore, and
+    dcache in one step.
+    """
+    nx.sys_setattr(mount_point, entry_type=DT_MOUNT, backend=backend, readonly=readonly)
 
 
 @pytest.fixture
@@ -51,7 +62,7 @@ async def test_mount_creates_directory_entry(nx_with_mount):
     mount_backend.name = "test_mount"
 
     # Add mount via driver coordinator (simulating config-based mount)
-    nx._driver_coordinator.mount("/mnt/test", mount_backend, readonly=False)
+    _mount_via_setattr(nx, "/mnt/test", mount_backend, readonly=False)
 
     # Create directory entry (this is what server.py now does)
     nx.mkdir("/mnt/test", parents=True, exist_ok=True)
@@ -89,7 +100,7 @@ async def test_mount_appears_in_listing(nx_with_mount):
     mount_backend.name = "test_mount"
 
     # Add mount and create directory
-    nx._driver_coordinator.mount("/mnt/gcs_demo", mount_backend, readonly=False)
+    _mount_via_setattr(nx, "/mnt/gcs_demo", mount_backend, readonly=False)
     nx.mkdir("/mnt/gcs_demo", parents=True, exist_ok=True)
 
     # List root directory (non-recursive)
@@ -115,7 +126,7 @@ async def test_mount_appears_in_detailed_listing(nx_with_mount):
     mount_backend.name = "test_mount"
 
     # Add mount and create directory
-    nx._driver_coordinator.mount("/personal/alice", mount_backend, readonly=False)
+    _mount_via_setattr(nx, "/personal/alice", mount_backend, readonly=False)
     nx.mkdir("/personal/alice", parents=True, exist_ok=True)
 
     # List with details
@@ -152,7 +163,7 @@ async def test_nested_mount_creates_all_parents(nx_with_mount):
     mount_backend.name = "deep_mount"
 
     # Add mount and create directory with parents
-    nx._driver_coordinator.mount("/a/b/c/mount", mount_backend, readonly=False)
+    _mount_via_setattr(nx, "/a/b/c/mount", mount_backend, readonly=False)
     nx.mkdir("/a/b/c/mount", parents=True, exist_ok=True)
 
     # Verify all parents exist
@@ -233,7 +244,7 @@ async def test_multiple_mounts_in_same_parent(nx_with_mount):
     for name in ["mount1", "mount2", "mount3"]:
         mount_backend = MagicMock()
         mount_backend.name = name
-        nx._driver_coordinator.mount(f"/mnt/{name}", mount_backend, readonly=False)
+        _mount_via_setattr(nx, f"/mnt/{name}", mount_backend, readonly=False)
         nx.mkdir(f"/mnt/{name}", parents=True, exist_ok=True)
 
     # List /mnt

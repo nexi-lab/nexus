@@ -15,8 +15,8 @@ def test_auth_group_importable() -> None:
 
 
 def test_auth_group_has_expected_subcommands() -> None:
-    # Commands ported so far: list, test, connect, disconnect, doctor (more to come: migrate)
-    expected = {"list", "test", "connect", "disconnect", "doctor", "pool"}
+    # All Phase 1 commands: list, test, connect, disconnect, doctor, pool, migrate
+    expected = {"list", "test", "connect", "disconnect", "doctor", "pool", "migrate"}
     assert expected.issubset(set(auth.commands.keys()))
 
 
@@ -91,4 +91,12 @@ def test_pool_status_runs(monkeypatch, tmp_path: Path) -> None:
 
     result = CliRunner().invoke(auth, ["pool", "status", "s3"])
     # With no configured pool, exit 0 and a sensible message is expected.
+    assert result.exit_code == 0
+
+
+def test_migrate_dry_run_runs(monkeypatch, tmp_path: Path) -> None:
+    service = build_unified_service_for_tests(tmp_path)
+    monkeypatch.setattr("nexus.bricks.auth.cli_commands._build_auth_service", lambda: service)
+
+    result = CliRunner().invoke(auth, ["migrate"])  # no --apply = dry run
     assert result.exit_code == 0

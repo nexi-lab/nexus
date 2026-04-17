@@ -736,7 +736,83 @@ def auth_doctor() -> None:
     raise click.exceptions.Exit(exit_code)
 
 
-# Subcommands wired in later Phase-4 tasks (migrate).
+# ---------------------------------------------------------------------------
+# auth migrate (Phase 1 flow)
+# ---------------------------------------------------------------------------
+
+
+@auth.command("migrate")
+@click.option("--apply", is_flag=True, default=False, help="Actually copy rows (default: dry-run)")
+def auth_migrate(apply: bool) -> None:
+    """Migrate OAuth credentials to the unified auth-profile store.
+
+    Dry-run by default — prints what would be copied without writing.
+    Pass --apply to actually copy rows into the new store.
+
+    This is Phase 1 of the auth unification (#3722). Migration is copy-only:
+    the old store is never modified or deleted.
+    """
+    from pathlib import Path
+
+    from nexus.bricks.auth.migrate import build_migration_plan, execute_migration
+    from nexus.bricks.auth.profile_store import SqliteAuthProfileStore
+    from nexus.fs._oauth_support import get_token_manager
+
+    # Guard: refuse to run if the source store is a shared/remote DB.
+    # Check all env vars that get_token_manager() / get_database_url() consult.
+    for env_var in ("NEXUS_DATABASE_URL", "POSTGRES_URL", "DATABASE_URL"):
+        db_url = os.environ.get(env_var, "")
+        if db_url and not db_url.startswith("sqlite"):
+            raise click.ClickException(
+                "auth migrate only supports local SQLite deployments. "
+                f"Detected {env_var}={db_url!r}. "
+                "Shared-DB migration will be supported in Phase 4 (#3741)."
+            )
+
+    # Collect old credentials across ALL zones — pass zone_id=None to
+    # TokenManager.list_credentials() to avoid filtering to root only.
+    token_manager = get_token_manager()
+    old_creds = asyncio.run(token_manager.list_credentials(zone_id=None))
+
+    if not old_creds:
+        console.print("[nexus.muted]No OAuth credentials found to migrate.[/nexus.muted]")
+        return
+
+    # Open (or create) the new profile store
+    db_path = Path("~/.nexus/auth_profiles.db").expanduser()
+    store = SqliteAuthProfileStore(db_path)
+    try:
+        plan = build_migration_plan(old_creds, store)
+        result = execute_migration(plan, old_creds, store, apply=apply)
+
+        if not apply:
+            console.print("[bold]Dry-run[/bold] (pass --apply to write):\n")
+
+        for entry in result.entries:
+            if entry.action == "copy":
+                style = "nexus.success" if apply else "nexus.info"
+                verb = "Copied" if apply else "Would copy"
+                console.print(f"  [{style}]{verb}[/{style}] {entry.profile_id}")
+            elif entry.action == "skip_exists":
+                console.print(f"  [nexus.muted]Skip (exists)[/nexus.muted] {entry.profile_id}")
+            elif entry.action == "skip_unmappable":
+                console.print(
+                    f"  [nexus.warning]Skip (unmappable)[/nexus.warning] "
+                    f"{entry.provider}/{entry.user_email}: {entry.reason}"
+                )
+            elif entry.action == "error":
+                console.print(
+                    f"  [nexus.error]Error[/nexus.error] {entry.profile_id}: {entry.reason}"
+                )
+
+        console.print(
+            f"\n{'Dry-run' if result.dry_run else 'Result'}: "
+            f"{result.copied} copied, {result.skipped} skipped, {result.errors} errors"
+        )
+    finally:
+        store.close()
+
+
 # Order preserves registration for parity testing.
 
 

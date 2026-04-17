@@ -53,6 +53,13 @@ Nexus fixes this. One VFS-style interface — start embedded in a single Python 
 
 **Kernel** never changes. **Drivers** swap at config time. **Bricks** mount and unmount at runtime — like `insmod`/`rmmod` for an AI filesystem.
 
+## Requirements
+
+- **Python 3.14+** (Nexus dropped support for 3.12/3.13 in vNEXT). Bare-metal
+  `pip install nexus` requires a Rust toolchain because `pdf-inspector` builds
+  from sdist until upstream ships cp314 wheels. The official Docker image
+  ships Rust and handles this automatically.
+
 ## Get started in 30 seconds
 
 ### Option A: Docker (recommended)
@@ -130,7 +137,7 @@ File explorer, API inspector, monitoring dashboard, agent lifecycle management, 
 <details>
 <summary><strong>All bricks and system services →</strong></summary>
 
-**Bricks (runtime-loadable):** Access Manifests · Auth (API key, OAuth, mTLS) · Catalog (schema extraction) · Context Manifests · Delegation · Discovery · Identity (DID + credentials) · IPC (pipes) · MCP · Mount · Parsers (50+ formats via MarkItDown) · Pay · Portability (import/export) · ReBAC · Sandbox (Docker) · Search · Share Links (capability URLs) · Snapshots · Task Manager · TUS Uploads (resumable) · Versioning · Workflows · Workspace
+**Bricks (runtime-loadable):** Access Manifests · Auth (API key, OAuth, mTLS) · Catalog (schema extraction) · Context Manifests · Delegation · Discovery · Identity (DID + credentials) · IPC (pipes) · MCP · Mount · Parsers (50+ formats via pdf-inspector) · Pay · Portability (import/export) · ReBAC · Sandbox (Docker) · Search · Share Links (capability URLs) · Snapshots · Task Manager · TUS Uploads (resumable) · Versioning · Workflows · Workspace
 
 **System services:** Agent Registry · Agent Runtime · Event Bus · Event Log · Namespace · Scheduler (fair-share, priority tiers) · Sync · Lifecycle
 

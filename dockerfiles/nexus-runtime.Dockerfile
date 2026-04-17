@@ -14,7 +14,7 @@
 #   Used automatically by DockerSandboxProvider
 #   Or manually: docker run -it --cap-add SYS_ADMIN nexus-sandbox:latest
 
-FROM python:3.13-slim
+FROM python:3.14-slim
 
 # Metadata
 ARG NEXUS_VERSION=latest

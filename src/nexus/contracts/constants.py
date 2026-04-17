@@ -55,6 +55,24 @@ DEFAULT_NEXUS_PORT = 2026
 DEFAULT_GRPC_BIND_ADDR = "0.0.0.0:2126"
 """Default Raft gRPC bind address. Override via NEXUS_BIND_ADDR env var."""
 
+MAX_GRPC_MESSAGE_BYTES = 64 * 1024 * 1024  # 64 MiB
+"""Maximum gRPC message size (bytes) for the unified VFS service.
+
+Applies to every client/server that talks to ``NexusVFSServiceStub``:
+
+- Python server (``grpc.aio.server(options=...)`` in ``nexus.grpc.server``)
+- Python client (``nexus.grpc.defaults.build_channel_options`` used by
+  ``RPCTransport``, ``RaftClient``, and federation e2e tests)
+- Rust client (``peer_blob_client``'s tonic
+  ``max_decoding/encoding_message_size``)
+
+Rust mirror: ``contracts::MAX_GRPC_MESSAGE_BYTES`` in
+``rust/contracts/src/constants.rs``. Raising this value requires
+bumping both in lockstep.
+
+Chosen as 64 MiB to accommodate large file reads (> 16 MiB CDC chunk
+threshold) and unbounded list_metadata responses. Issue #2938."""
+
 DEFAULT_LANGGRAPH_URL = "http://localhost:2024"
 """Default LangGraph server URL. Override via LANGGRAPH_SERVER_URL env var."""
 

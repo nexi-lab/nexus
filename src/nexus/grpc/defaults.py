@@ -8,11 +8,9 @@ Issue #2938: gRPC channel option tuning.
 
 from __future__ import annotations
 
-# Maximum gRPC message size (bytes) for all channels.
-# 64 MB accommodates large file reads and unbounded list_metadata() responses.
-# A per-channel split (e.g. 16 MB for metadata) is unsafe until list_metadata()
-# enforces server-side pagination — see client.py:list_metadata(limit=0).
-MAX_GRPC_MESSAGE_BYTES = 64 * 1024 * 1024  # 64 MB
+from nexus.contracts.constants import MAX_GRPC_MESSAGE_BYTES
+
+__all__ = ["MAX_GRPC_MESSAGE_BYTES", "build_channel_options"]
 
 
 def build_channel_options(

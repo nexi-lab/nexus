@@ -138,7 +138,14 @@ async def startup_grpc(app: "FastAPI", _svc: "LifespanServices") -> list[asyncio
         object_store=_object_store,
     )
 
-    server = grpc.aio.server()
+    # Match the client-side cap (nexus.contracts.constants.MAX_GRPC_MESSAGE_BYTES,
+    # 64 MiB) so the server accepts every payload clients are allowed to send.
+    # Default grpc.aio.server() caps inbound messages at 4 MiB, which is
+    # tighter than the CDC chunk threshold (16 MiB) and would reject single-
+    # shot writes of files larger than ~4 MiB via the Call RPC.
+    from nexus.grpc.defaults import build_channel_options
+
+    server = grpc.aio.server(options=build_channel_options())
     vfs_pb2_grpc.add_NexusVFSServiceServicer_to_server(servicer, server)
 
     tls_config = _resolve_tls_config(app)

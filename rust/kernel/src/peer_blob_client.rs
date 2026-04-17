@@ -128,7 +128,14 @@ impl PeerBlobClient {
             .map_err(|e| format!("per-peer semaphore closed: {e}"))?;
 
         let channel = self.channel_for(address).await?;
-        let mut client = vfs_proto::nexus_vfs_service_client::NexusVfsServiceClient::new(channel);
+        // Match the server + Python-client gRPC caps. tonic's default
+        // decode cap is 4 MiB, which rejects full-content ReadBlob
+        // responses for any file above ~4 MiB — the CDC chunk threshold
+        // is 16 MiB so even a single chunk can exceed 4 MiB.
+        // Single source of truth: `contracts::MAX_GRPC_MESSAGE_BYTES`.
+        let mut client = vfs_proto::nexus_vfs_service_client::NexusVfsServiceClient::new(channel)
+            .max_decoding_message_size(contracts::MAX_GRPC_MESSAGE_BYTES)
+            .max_encoding_message_size(contracts::MAX_GRPC_MESSAGE_BYTES);
         let mut request = tonic::Request::new(vfs_proto::ReadBlobRequest {
             content_hash: content_hash.to_string(),
             auth_token: self.auth_token.clone(),

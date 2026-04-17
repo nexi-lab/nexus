@@ -350,3 +350,79 @@ class DualReadAuthProfileStore:
         raw_error: str | None = None,
     ) -> None:
         self._new.mark_failure(profile_id, reason, raw_error=raw_error)
+
+
+# ---------------------------------------------------------------------------
+# Phase C finalization: verify-then-delete legacy rows (#3741)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class FinalizeFailure:
+    """One verification failure during `auth migrate --finalize`."""
+
+    profile_id: str
+    detail: str
+
+
+@dataclass(frozen=True, slots=True)
+class FinalizeResult:
+    """Outcome of finalize_migration: either all legacy rows verified and deleted,
+    or nothing was deleted because at least one row failed verification."""
+
+    ok: bool
+    deleted: list[str] = field(default_factory=list)
+    failures: list[FinalizeFailure] = field(default_factory=list)
+
+
+def finalize_migration(
+    *,
+    legacy_store: Any,  # duck-typed: list_rows() -> Iterable[(profile_id, credential)], delete(profile_id)
+    profile_store: Any,  # AuthProfileStore
+    backend: Any,  # CredentialBackend
+) -> FinalizeResult:
+    """Verify parity between legacy store and profile store, then delete legacy rows.
+
+    Two-phase: (1) verify every legacy row has a matching profile plus a passing
+    health_check; (2) only if all pass, delete the legacy rows. Any failure aborts —
+    nothing is deleted, operator fixes and re-runs.
+    """
+    import asyncio
+
+    from nexus.bricks.auth.credential_backend import HealthStatus
+
+    legacy_rows = list(legacy_store.list_rows())
+    failures: list[FinalizeFailure] = []
+
+    async def _check_one(profile_id: str) -> None:
+        profile = profile_store.get(profile_id)
+        if profile is None:
+            failures.append(
+                FinalizeFailure(
+                    profile_id=profile_id,
+                    detail=f"legacy row {profile_id} has no matching profile in profile store",
+                )
+            )
+            return
+        health = await backend.health_check(profile_id)
+        if health.status != HealthStatus.HEALTHY:
+            failures.append(
+                FinalizeFailure(
+                    profile_id=profile_id,
+                    detail=f"health_check failed for {profile_id}: {health.message}",
+                )
+            )
+
+    async def _check_all() -> None:
+        await asyncio.gather(*(_check_one(pid) for pid, _ in legacy_rows))
+
+    asyncio.run(_check_all())
+
+    if failures:
+        return FinalizeResult(ok=False, deleted=[], failures=failures)
+
+    deleted: list[str] = []
+    for profile_id, _ in legacy_rows:
+        legacy_store.delete(profile_id)
+        deleted.append(profile_id)
+    return FinalizeResult(ok=True, deleted=deleted, failures=[])

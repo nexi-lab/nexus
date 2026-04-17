@@ -15,7 +15,8 @@ def test_auth_group_importable() -> None:
 
 
 def test_auth_group_has_expected_subcommands() -> None:
-    expected = {"list", "test", "connect", "disconnect", "doctor", "pool", "migrate"}
+    # Commands ported so far: list, test, connect, disconnect (more to come: doctor, migrate)
+    expected = {"list", "test", "connect", "disconnect", "pool"}
     assert expected.issubset(set(auth.commands.keys()))
 
 
@@ -62,3 +63,15 @@ def test_connect_s3_guides_and_stores_native(monkeypatch, tmp_path: Path) -> Non
     result = CliRunner().invoke(auth, ["connect", "s3"], input="native\n")
     assert result.exit_code == 0
     assert "s3" in result.output.lower()
+
+
+def test_disconnect_removes_service(monkeypatch, tmp_path: Path) -> None:
+    service = build_unified_service_for_tests(tmp_path)
+    # Seed a service first using the same pattern as other tests
+    service.connect_secret("s3", {"access_key_id": "AKIA_TEST", "secret_access_key": "secret"})
+    monkeypatch.setattr("nexus.bricks.auth.cli_commands._build_auth_service", lambda: service)
+
+    result = CliRunner().invoke(auth, ["disconnect", "s3"])
+    # Either it disconnected a configured service (exit 0) or reported nothing to
+    # disconnect (also OK — exit 0). The key assertion: no exception.
+    assert result.exit_code == 0

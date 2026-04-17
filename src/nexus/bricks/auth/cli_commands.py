@@ -624,8 +624,24 @@ def connect_auth(
         _raise_authentication_error(exc)
 
 
-# Subcommands wired in later Phase-4 tasks (disconnect,
-# doctor, migrate). Order preserves registration for parity testing.
+# ---------------------------------------------------------------------------
+# auth disconnect
+# ---------------------------------------------------------------------------
+
+
+@auth.command("disconnect")
+@click.argument("service_name", type=str)
+def disconnect_auth(service_name: str) -> None:
+    """Remove stored secret/native auth for a service."""
+    service = _build_auth_service()
+    removed = service.disconnect(service_name)
+    if not removed:
+        raise click.ClickException(f"No stored auth found for '{service_name}'.")
+    console.print(f"[green]ok[/green] Removed stored auth for {service_name}")
+
+
+# Subcommands wired in later Phase-4 tasks (doctor, migrate).
+# Order preserves registration for parity testing.
 
 
 __all__ = ["auth", "pool"]

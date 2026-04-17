@@ -158,14 +158,12 @@ def run_doctor(service: Any) -> int:
     Prints one labeled line per auth profile and returns an exit code
     (0 if all ok, 1 if any failure / cooldown).
     """
-    from rich.console import Console
-    from rich.markup import escape
+    import click
 
-    console = Console()
     lines = list(_collect_lines(service))
     any_failures = False
     for line in lines:
-        console.print(escape(line.format()))
+        click.echo(line.format())
         if line.status in {"error", "cooldown"}:
             any_failures = True
     return 1 if any_failures else 0

@@ -88,13 +88,17 @@ impl DriverLifecycleCoordinator {
             is_external,
         )?;
 
-        // 2. Write DT_MOUNT metadata entry (best-effort) — zone-relative key.
-        // Mount point is always "/" in its own zone context (like Linux
-        // per-superblock root inode: ext4 stores "/", not "/mnt/disk1").
+        // 2. Write DT_MOUNT metadata entry (best-effort).
+        // Per-mount metastore (federation zone): key is "/" (zone-relative,
+        // like Linux per-superblock root inode). Global-fallback metastore:
+        // key is the full mount_point (otherwise every new mount would
+        // overwrite the global "/" entry). ``with_metastore_scoped`` hands
+        // us ``is_per_mount`` so we pick the correct key.
         let canonical = canonicalize(mount_point, zone_id);
-        kernel.with_metastore(&canonical, |ms| {
+        kernel.with_metastore_scoped(&canonical, |ms, is_per_mount| {
+            let key = if is_per_mount { "/" } else { mount_point };
             let meta = crate::metastore::FileMetadata {
-                path: "/".to_string(),
+                path: key.to_string(),
                 backend_name: backend_name.to_string(),
                 physical_path: String::new(),
                 size: 0,
@@ -106,7 +110,7 @@ impl DriverLifecycleCoordinator {
                 created_at_ms: None,
                 modified_at_ms: None,
             };
-            let _ = ms.put("/", meta);
+            let _ = ms.put(key, meta);
         });
 
         // 3. DCache entry for mount point

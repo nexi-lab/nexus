@@ -189,22 +189,61 @@ class IndexingService:
                         parse_ok = False
 
             if parse_ok:
-                # Successful parse, zero text — advance tracking and exit.
-                # No chunks to insert; any prior chunks are stale for this
-                # revision and can be cleared via the pipeline on the next
-                # non-empty write, so we don't DELETE here (avoids racing
-                # concurrent indexers the same way the failure path does).
+                # Successful parse, zero text — atomically replace any
+                # prior chunks with nothing: delete stale rows for this
+                # path_id AND advance ``indexed_content_hash`` in the same
+                # transaction.  Without the DELETE, a non-empty previous
+                # revision's chunks would remain live even though the
+                # current content legitimately has no text — search would
+                # keep serving the stale version forever since the normal
+                # hash-match skip path will never revisit this row.
+                #
+                # Use ``SELECT … FOR UPDATE`` on ``file_paths`` so a
+                # concurrent reindex that lands between our step-1 read
+                # and this block serializes behind us (same CAS discipline
+                # as the parse-error stale-chunk branch below).
                 with self._get_session() as session:
-                    latest = session.get(FilePathModel, path_id)
-                    if latest is not None:
-                        latest.indexed_content_hash = current_content_hash
-                        latest.last_indexed_at = datetime.now(UTC)
+                    try:
+                        locked = session.execute(
+                            select(FilePathModel)
+                            .where(
+                                FilePathModel.path_id == path_id,
+                                FilePathModel.deleted_at.is_(None),
+                            )
+                            .with_for_update()
+                        ).scalar_one_or_none()
+                    except Exception:
+                        locked = session.execute(
+                            select(FilePathModel).where(
+                                FilePathModel.path_id == path_id,
+                                FilePathModel.deleted_at.is_(None),
+                            )
+                        ).scalar_one_or_none()
+                    # CAS: only apply the zero-chunk replacement when the
+                    # row still holds the same indexed_content_hash we
+                    # observed in step 1.  If a concurrent writer has
+                    # already advanced past us, let them win — their
+                    # indexing was more recent than ours.
+                    if locked is not None and locked.indexed_content_hash == observed_indexed_hash:
+                        session.execute(
+                            delete(DocumentChunkModel).where(
+                                DocumentChunkModel.path_id == path_id,
+                            ),
+                        )
+                        locked.indexed_content_hash = current_content_hash
+                        locked.last_indexed_at = datetime.now(UTC)
                         session.commit()
-                logger.info(
-                    "[INDEXING-SVC] Successful empty parse for %s — advancing "
-                    "indexed_content_hash with 0 chunks",
-                    path,
-                )
+                        logger.info(
+                            "[INDEXING-SVC] Successful empty parse for %s — cleared "
+                            "prior chunks and advanced indexed_content_hash",
+                            path,
+                        )
+                    else:
+                        logger.info(
+                            "[INDEXING-SVC] Skipped empty-parse replace for %s — "
+                            "indexed_content_hash advanced under us (CAS miss)",
+                            path,
+                        )
                 return 0
             if (
                 current_content_hash is not None

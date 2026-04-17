@@ -354,6 +354,10 @@ class TestIndexDocument:
         that case — otherwise the file stays perpetually 'unindexed' and we
         burn CPU reparsing it on every tick.  The adapter probes for this
         via ``has_successful_parse`` (matching ``parsed_text_hash``).
+
+        It must also DELETE any existing chunks for the path_id, otherwise
+        a non-empty previous revision would keep serving stale text forever
+        (the normal hash-match skip path means this row is never revisited).
         """
         file_model = _mock_file_model(
             path_id="pid-pdf-empty",
@@ -378,6 +382,14 @@ class TestIndexDocument:
         # But indexed_content_hash MUST advance so we don't retry forever.
         assert file_model.indexed_content_hash == "blake3-hash-of-blank-pdf"
         session.commit.assert_called_once()
+        # DELETE must have been issued so a prior non-empty revision's
+        # chunks don't keep serving stale text.
+        delete_calls = [
+            call
+            for call in session.execute.call_args_list
+            if "delete" in str(call).lower() or "DELETE" in str(call)
+        ]
+        assert delete_calls, "expected DELETE on document_chunks during empty-parse replace"
         file_reader.has_successful_parse.assert_called_once_with(
             "/blank.pdf", "blake3-hash-of-blank-pdf"
         )

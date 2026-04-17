@@ -626,10 +626,11 @@ async def handle_semantic_search_index(
         # pure transform rather than calling ``_NexusFSFileReader.read_text``
         # because the reader constructs an admin context internally and
         # would bypass the caller's permission scope.
-        import hashlib as _hashlib
-
         from nexus.factory._semantic_search import _resolve_parse_fn
-        from nexus.factory.adapters import _apply_parse_transform
+        from nexus.factory.adapters import (
+            _apply_parse_transform_with_status,
+            _compute_content_hash,
+        )
         from nexus.lib.virtual_views import is_parseable_path
 
         _parse_fn = _resolve_parse_fn(nexus_fs)
@@ -637,29 +638,33 @@ async def handle_semantic_search_index(
         documents: list[dict[str, Any]] = []
         read_errors = 0
         total_chunks = 0
-        # Track (doc_id, file_path, observed_raw_hash) tuples for parseable
-        # files that produced empty content after parse.  Purging them from
-        # the backend reclaims coverage lost when the parser was broken
-        # on a previous successful index pass, but we only want to purge
-        # when we can prove the file hasn't been rewritten between our
-        # read and the purge — otherwise a concurrent indexer with newer
-        # bytes could have already re-populated the doc, and our delete
-        # would wipe its fresh state.
+        # Track (doc_id, file_path, observed_content_hash) tuples for
+        # parseable files whose parse SUCCEEDED but produced empty text
+        # (image-only PDFs, blank docx, …).  Only these are reliable
+        # stale-doc signals: a parser *error* might be a transient outage,
+        # and wiping the doc would delete healthy content that will come
+        # back on the next tick.  ``_apply_parse_transform_with_status``
+        # tells these apart.
+        #
+        # Hash with the kernel's BLAKE3 helper so the value matches
+        # ``file_paths.content_hash`` — using SHA-256 here would cause
+        # the CAS lookup below to always miss on normal installs, leaving
+        # stale docs live forever.
         stale_candidates: list[tuple[str, str, str]] = []
         for file_path in paths_to_index:
             try:
                 raw = nexus_fs.sys_read(file_path, context=context)
-                content_str = _apply_parse_transform(nexus_fs, file_path, raw, parse_fn=_parse_fn)
+                content_str, parse_status = _apply_parse_transform_with_status(
+                    nexus_fs, file_path, raw, parse_fn=_parse_fn
+                )
                 doc_id = f"{zone_id}:{file_path}" if zone_id != "root" else file_path
                 if content_str and content_str.strip():
                     documents.append({"id": doc_id, "text": content_str, "path": file_path})
-                elif is_parseable_path(file_path):
+                elif is_parseable_path(file_path) and parse_status == "empty":
                     raw_bytes = (
                         raw if isinstance(raw, bytes) else str(raw).encode("utf-8", errors="ignore")
                     )
-                    stale_candidates.append(
-                        (doc_id, file_path, _hashlib.sha256(raw_bytes).hexdigest())
-                    )
+                    stale_candidates.append((doc_id, file_path, _compute_content_hash(raw_bytes)))
             except Exception as read_err:
                 read_errors += 1
                 _log.warning("Skipping %s: %s", file_path, read_err)

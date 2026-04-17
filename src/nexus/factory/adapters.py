@@ -43,14 +43,44 @@ def _apply_parse_transform(
     error, returns ``""`` so the indexer skips the file instead of
     embedding utf-8 garbage.
     """
+    text, _status = _apply_parse_transform_with_status(nx, path, raw, parse_fn=parse_fn)
+    return text
+
+
+def _apply_parse_transform_with_status(
+    nx: Any,
+    path: str,
+    raw: Any,
+    *,
+    parse_fn: Callable[[bytes, str], bytes | None] | None,
+) -> tuple[str, str]:
+    """Variant of :func:`_apply_parse_transform` that also reports status.
+
+    Returns ``(text, status)`` where ``status`` is one of:
+      * ``"ok"`` — non-empty text produced (either from a parse run or a
+        direct utf-8 decode for non-parseable paths).
+      * ``"empty"`` — parseable file that parsed successfully but yielded
+        zero extractable text (image-only PDF, blank .docx, …).  Also
+        returned for non-parseable files whose decoded content happens to
+        be empty.
+      * ``"error"`` — parseable file where parsing failed (parser missing,
+        raised, or returned ``None``).  The RPC stale-doc purge path uses
+        this to avoid deleting healthy docs during transient parser
+        outages — only ``"empty"`` is a reliable stale signal.
+    """
     if is_parseable_path(path):
         raw_bytes = raw if isinstance(raw, bytes) else str(raw).encode("utf-8", errors="ignore")
         parsed = _get_parsed_text_sync(nx, path, raw_bytes, parse_fn=parse_fn)
-        return _sanitize_for_index(parsed) if parsed is not None else ""
+        if parsed is None:
+            return "", "error"
+        text = _sanitize_for_index(parsed)
+        return text, ("empty" if not text else "ok")
 
     if isinstance(raw, bytes):
-        return _sanitize_for_index(raw.decode("utf-8", errors="ignore"))
-    return _sanitize_for_index(str(raw))
+        decoded = _sanitize_for_index(raw.decode("utf-8", errors="ignore"))
+    else:
+        decoded = _sanitize_for_index(str(raw))
+    return decoded, ("empty" if not decoded else "ok")
 
 
 def _compute_content_hash(raw: bytes) -> str:

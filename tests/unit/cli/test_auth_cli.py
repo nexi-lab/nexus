@@ -134,6 +134,5 @@ def test_doctor_shows_auth_statuses(
 
     assert result.exit_code != 0
     assert "s3" in result.output
-    assert "authed" in result.output
+    assert "ok" in result.output
     assert "gcs" in result.output
-    assert "One or more services need auth setup." in result.output

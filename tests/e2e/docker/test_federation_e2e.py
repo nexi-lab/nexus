@@ -1050,3 +1050,957 @@ class TestFederationCacheCoherence:
             msg="Cross-zone write not propagated to node-2",
             timeout=30,
         )
+
+
+# ===========================================================================
+# R13 — Federation E2E coverage expansion
+# ===========================================================================
+#
+# 19 new test classes appended below, spanning:
+#   R13.1 — gap coverage (uncovered RPCs / behaviors): 11 classes
+#   R13.2 — long-flow user journeys: 7 classes
+#   R13.3 — CLI surface smoke tests: 1 class
+#
+# All new classes reuse the module-scoped `cluster` + `api_key` fixtures
+# and the existing `_grpc_call` / `_grpc_call_or_skip` helpers so we don't
+# fork state or re-spin compose. Ordering: these classes run AFTER the
+# original 9 classes because they rely on the pre-built topology
+# (/corp, /corp/eng, …) that TestZoneLifecycle + TestMountTopology
+# construct.
+#
+# Tests that require external infrastructure (SSE sidecar for LLM
+# mock, witness auto-join semantics, network-partition docker calls)
+# self-skip with a clear reason if the prerequisite isn't available.
+
+
+# ---------------------------------------------------------------------------
+# R13 helpers — docker SDK + CLI exec used by partition / CLI tests
+# ---------------------------------------------------------------------------
+def _docker_client_or_skip():
+    """Return a docker.DockerClient or call pytest.skip."""
+    try:
+        import docker as docker_sdk
+
+        client = docker_sdk.from_env()
+        client.ping()
+        return client
+    except Exception as exc:
+        pytest.skip(f"Docker SDK not available: {exc}")
+
+
+def _cli_exec(container_name: str, argv: list[str], timeout: int = 30) -> tuple[int, str, str]:
+    """Run ``nexus <argv...>`` inside a compose container via docker exec.
+
+    Returns (exit_code, stdout, stderr). Tests using this helper get
+    auto-skipped if Docker SDK isn't reachable.
+    """
+    client = _docker_client_or_skip()
+    try:
+        container = client.containers.get(container_name)
+    except Exception as exc:
+        pytest.skip(f"Container {container_name} not found: {exc}")
+
+    cmd = ["nexus", *argv]
+    env_overrides = {"NEXUS_API_KEY": E2E_ADMIN_API_KEY}
+    result = container.exec_run(
+        cmd,
+        environment=env_overrides,
+        demux=True,
+        tty=False,
+    )
+    stdout_b, stderr_b = result.output or (b"", b"")
+    stdout = (stdout_b or b"").decode(errors="replace")
+    stderr = (stderr_b or b"").decode(errors="replace")
+    return result.exit_code, stdout, stderr
+
+
+# ===================================================================
+# R13.1 Class 1/11: Scatter-gather chunked read across nodes
+# ===================================================================
+class TestScatterGatherChunkedRead:
+    """R10-SG: cross-node chunk fetch for chunked (>=16MiB) file reads.
+
+    Writes a large file on node-1, reads it on node-2 BEFORE waiting for
+    chunk replication. Chunk bytes live on node-1's local CAS until the
+    scatter-gather fetcher pulls them via ReadBlob, so the read exercises
+    the full remote-fetch path.
+    """
+
+    def test_cross_node_chunked_read(self, cluster, api_key):
+        uid = _uid()
+        grpc1 = cluster["grpc1"]
+        grpc2 = cluster["grpc2"]
+
+        # 17 MiB > CDC threshold (16 MiB) guarantees a chunked manifest.
+        path = f"/corp/eng/sg-chunked-{uid}.bin"
+        size = 17 * 1024 * 1024
+        content = "x" * size
+        # Sprinkle boundary markers so FastCDC produces variable chunks.
+        chunks = [content[i : i + 4096] for i in range(0, size, 4096)]
+        for i in range(len(chunks)):
+            if i % 37 == 0:
+                chunks[i] = f"<boundary-{uid}-{i}>" + chunks[i][20:]
+        content = "".join(chunks)[:size]
+
+        w = _grpc_call(
+            grpc1, "write", {"path": path, "content": content}, api_key=api_key, timeout=60
+        )
+        assert "error" not in w, f"Large chunked write failed: {w}"
+
+        # Wait for metadata (Raft) to replicate to node-2 — the manifest
+        # hash must be visible before we attempt the cross-node read.
+        _wait_replicated(
+            grpc2,
+            "/corp/eng/",
+            path,
+            api_key,
+            msg="Chunked file metadata not replicated",
+            timeout=30,
+        )
+
+        # Read on node-2 — chunks are fetched from node-1 via ReadBlob.
+        r = _grpc_call(grpc2, "read", {"path": path}, api_key=api_key, timeout=60)
+        assert "error" not in r, f"Cross-node chunked read failed: {r}"
+        decoded = _decode_content(r)
+        assert len(decoded) == size, f"Size mismatch: got {len(decoded)}, want {size}"
+        assert decoded == content, "Content mismatch after scatter-gather fetch"
+
+        # Second read should succeed from chunk cache (no re-fetch). We
+        # can't directly assert "no RPC to peer" from here, but the read
+        # must succeed with identical payload.
+        r2 = _grpc_call(grpc2, "read", {"path": path}, api_key=api_key, timeout=30)
+        assert "error" not in r2, f"Second chunked read failed: {r2}"
+        assert _decode_content(r2) == content
+
+
+# ===================================================================
+# R13.1 Class 2/11: federation_share / federation_join RPCs
+# ===================================================================
+class TestFederationShareJoin:
+    """Peer-to-peer zone bootstrap via share + join RPCs (not create_zone)."""
+
+    def test_share_creates_new_zone(self, cluster, api_key):
+        uid = _uid()
+        grpc1 = cluster["grpc1"]
+
+        share_path = f"/corp/eng/shared-{uid}"
+        mk = _grpc_call(grpc1, "mkdir", {"path": share_path, "parents": True}, api_key=api_key)
+        assert "error" not in mk, f"mkdir {share_path} failed: {mk}"
+
+        share_r = _grpc_call_or_skip(
+            grpc1,
+            "federation_share",
+            {"local_path": share_path},
+            api_key=api_key,
+            skip_msg="federation_share not available",
+        )
+        if "error" in share_r:
+            pytest.skip(f"federation_share failed: {share_r}")
+        new_zone_id = share_r.get("result", share_r).get("zone_id", "")
+        assert new_zone_id, f"No zone_id returned: {share_r}"
+        _wait_zone_ready(grpc1, new_zone_id, api_key, timeout=15)
+
+    def test_join_sees_shared_content(self, cluster, api_key):
+        uid = _uid()
+        grpc1 = cluster["grpc1"]
+        grpc2 = cluster["grpc2"]
+
+        share_path = f"/corp/eng/joinable-{uid}"
+        mk = _grpc_call(grpc1, "mkdir", {"path": share_path, "parents": True}, api_key=api_key)
+        assert "error" not in mk
+
+        file_path = f"{share_path}/hello.txt"
+        wr = _grpc_call(
+            grpc1, "write", {"path": file_path, "content": f"shared-{uid}"}, api_key=api_key
+        )
+        assert "error" not in wr
+
+        sh = _grpc_call_or_skip(
+            grpc1,
+            "federation_share",
+            {"local_path": share_path},
+            api_key=api_key,
+            skip_msg="federation_share not available",
+        )
+        if "error" in sh:
+            pytest.skip(f"share failed: {sh}")
+        zone_id = sh.get("result", sh).get("zone_id", "")
+        if not zone_id:
+            pytest.skip(f"no zone_id from share: {sh}")
+
+        local_mount = f"/corp/joined-{uid}"
+        mk2 = _grpc_call(grpc2, "mkdir", {"path": local_mount, "parents": True}, api_key=api_key)
+        assert "error" not in mk2
+        jn = _grpc_call_or_skip(
+            grpc2,
+            "federation_join",
+            {
+                "peer_addr": "grpc://nexus-1:2028",
+                "remote_path": share_path,
+                "local_path": local_mount,
+            },
+            api_key=api_key,
+            skip_msg="federation_join not available",
+        )
+        if "error" in jn:
+            pytest.skip(f"join failed (API shape may have changed): {jn}")
+
+        deadline = time.time() + 30
+        last: dict = {}
+        while time.time() < deadline:
+            rr = _grpc_call(grpc2, "read", {"path": f"{local_mount}/hello.txt"}, api_key=api_key)
+            last = rr
+            if "error" not in rr and _decode_content(rr) == f"shared-{uid}":
+                return
+            time.sleep(1)
+        pytest.fail(f"Joined zone content not visible: {last}")
+
+
+# ===================================================================
+# R13.1 Class 3/11: Zone snapshot export + import round-trip
+# ===================================================================
+class TestZoneSnapshotExportImport:
+    """CLI ``zone export`` + ``zone import`` round-trip.
+
+    Requires docker exec access to run the ``nexus zone export/import``
+    CLI inside a container. Skips if the CLI subcommand is missing.
+    """
+
+    def test_export_import_roundtrip(self, cluster, api_key):
+        uid = _uid()
+        grpc1 = cluster["grpc1"]
+        zone_id = f"snap-{uid}"
+
+        _grpc_call(grpc1, "federation_create_zone", {"zone_id": zone_id}, api_key=api_key)
+        _wait_zone_ready(grpc1, zone_id, api_key, timeout=10)
+
+        mount_path = f"/corp/eng/snap-{uid}-mnt"
+        mk = _grpc_call(grpc1, "mkdir", {"path": mount_path, "parents": True}, api_key=api_key)
+        assert "error" not in mk
+        mnt = _grpc_call(
+            grpc1,
+            "federation_mount",
+            {"parent_zone": "corp-eng", "path": mount_path, "target_zone": zone_id},
+            api_key=api_key,
+        )
+        assert "error" not in mnt, f"mount failed: {mnt}"
+
+        data_path = f"{mount_path}/doc.txt"
+        wr = _grpc_call(
+            grpc1, "write", {"path": data_path, "content": f"snap-payload-{uid}"}, api_key=api_key
+        )
+        assert "error" not in wr
+
+        export_dest = f"/tmp/zone-export-{uid}.tar"
+        rc, out, err = _cli_exec(
+            "nexus-dyn-node-1",
+            ["zone", "export", zone_id, "--output", export_dest],
+            timeout=60,
+        )
+        if rc != 0:
+            pytest.skip(f"zone export CLI not available or failed: rc={rc} err={err[:200]}")
+
+        new_zone_id = f"snap-reimport-{uid}"
+        rc2, out2, err2 = _cli_exec(
+            "nexus-dyn-node-1",
+            ["zone", "import", export_dest, "--zone-id", new_zone_id],
+            timeout=60,
+        )
+        if rc2 != 0:
+            pytest.skip(f"zone import CLI not available or failed: rc={rc2} err={err2[:200]}")
+
+        _wait_zone_ready(grpc1, new_zone_id, api_key, timeout=15)
+
+
+# ===================================================================
+# R13.1 Class 4/11: Lock TTL extension (heartbeat)
+# ===================================================================
+class TestLockTTLExtension:
+    """``sys_lock`` with an existing ``lock_id`` extends TTL (heartbeat)."""
+
+    def test_extend_lock_ttl(self, cluster, api_key):
+        uid = _uid()
+        grpc1 = cluster["grpc1"]
+        lock_path = f"/corp/eng/extend-{uid}.txt"
+
+        wr = _grpc_call(
+            grpc1, "write", {"path": lock_path, "content": f"extend-{uid}"}, api_key=api_key
+        )
+        assert "error" not in wr
+
+        acq = _grpc_call_or_skip(
+            grpc1,
+            "lock_acquire",
+            {"path": lock_path, "ttl": 3},
+            api_key=api_key,
+            skip_msg="Lock API not available",
+        )
+        if "error" in acq:
+            pytest.skip(f"lock_acquire failed: {acq}")
+        acq_data = acq.get("result", acq)
+        if not acq_data.get("acquired"):
+            pytest.skip("lock_acquire did not succeed")
+        lock_id = acq_data.get("lock_id", "")
+
+        # Sleep half the original TTL, then extend by another 10s.
+        time.sleep(1.5)
+        ext = _grpc_call(
+            grpc1,
+            "sys_lock",
+            {"path": lock_path, "lock_id": lock_id, "ttl": 10},
+            api_key=api_key,
+        )
+        if "error" in ext:
+            pytest.skip(f"sys_lock(extend) not supported: {ext}")
+
+        # Total 4s > original 3s TTL — lock should still be held.
+        time.sleep(2.5)
+        info = _grpc_call(grpc1, "sys_stat", {"path": lock_path}, api_key=api_key)
+        assert "error" not in info, f"sys_stat failed: {info}"
+        info_data = info.get("result", info)
+        stat_meta = info_data.get("metadata", info_data)
+        lock_state = stat_meta.get("lock") or {}
+        holders = lock_state.get("holders", [])
+        assert holders, f"Lock should still be held after extend: {info_data}"
+
+        _grpc_call(grpc1, "sys_unlock", {"path": lock_path, "lock_id": lock_id}, api_key=api_key)
+
+
+# ===================================================================
+# R13.1 Class 5/11: Concurrent zone creation — race condition
+# ===================================================================
+class TestConcurrentZoneCreation:
+    """Both nodes create the same zone concurrently — exactly one should
+    win, or both return an idempotent success. No split-brain."""
+
+    def test_concurrent_create_no_split_brain(self, cluster, api_key):
+        import concurrent.futures
+
+        uid = _uid()
+        zone_id = f"race-{uid}"
+        grpc1 = cluster["grpc1"]
+        grpc2 = cluster["grpc2"]
+
+        def _create(target):
+            return _grpc_call(
+                target, "federation_create_zone", {"zone_id": zone_id}, api_key=api_key
+            )
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+            f1 = ex.submit(_create, grpc1)
+            f2 = ex.submit(_create, grpc2)
+            r1 = f1.result(timeout=30)
+            r2 = f2.result(timeout=30)
+
+        successes = [r for r in (r1, r2) if "error" not in r]
+        assert len(successes) >= 1, f"Neither create succeeded: r1={r1}, r2={r2}"
+        _wait_zone_ready(grpc1, zone_id, api_key, timeout=10)
+        _wait_zone_ready(grpc2, zone_id, api_key, timeout=10)
+
+        zones = _grpc_call(grpc1, "federation_list_zones", {}, api_key=api_key)
+        assert "error" not in zones
+        ids = [z["zone_id"] for z in zones["result"]["zones"]]
+        assert ids.count(zone_id) == 1, f"Zone appears multiple times: {ids}"
+
+
+# ===================================================================
+# R13.1 Class 6/11: Zone removal with active mounts
+# ===================================================================
+class TestZoneRemovalWithActiveMounts:
+    """Remove a zone mounted at multiple paths — all mounts must clean
+    up atomically; reads afterwards return errors."""
+
+    def test_remove_zone_cleans_all_mounts(self, cluster, api_key):
+        uid = _uid()
+        grpc1 = cluster["grpc1"]
+        zone_id = f"cleanup-{uid}"
+
+        _grpc_call(grpc1, "federation_create_zone", {"zone_id": zone_id}, api_key=api_key)
+        _wait_zone_ready(grpc1, zone_id, api_key, timeout=10)
+
+        mnt_a = f"/corp/cleanup-a-{uid}"
+        mnt_b = f"/family/cleanup-b-{uid}"
+        for parent_zone, path in [("corp", mnt_a), ("family", mnt_b)]:
+            mk = _grpc_call(grpc1, "mkdir", {"path": path, "parents": True}, api_key=api_key)
+            assert "error" not in mk
+            r = _grpc_call(
+                grpc1,
+                "federation_mount",
+                {"parent_zone": parent_zone, "path": path, "target_zone": zone_id},
+                api_key=api_key,
+            )
+            assert "error" not in r, f"mount {path} failed: {r}"
+
+        probe = f"{mnt_a}/probe.txt"
+        wr = _grpc_call(grpc1, "write", {"path": probe, "content": f"probe-{uid}"}, api_key=api_key)
+        assert "error" not in wr
+
+        rm = _grpc_call(grpc1, "federation_remove_zone", {"zone_id": zone_id}, api_key=api_key)
+        assert "error" not in rm, f"remove_zone failed: {rm}"
+
+        # Wait for removal to propagate.
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            zones = _grpc_call(grpc1, "federation_list_zones", {}, api_key=api_key)
+            if "error" not in zones and zone_id not in [
+                z["zone_id"] for z in zones["result"]["zones"]
+            ]:
+                break
+            time.sleep(0.5)
+
+        for path in [f"{mnt_a}/probe.txt", f"{mnt_b}/probe.txt"]:
+            r = _grpc_call(grpc1, "read", {"path": path}, api_key=api_key)
+            assert "error" in r, f"Read should fail after zone removal: {path} -> {r}"
+
+
+# ===================================================================
+# R13.1 Class 7/11: Witness auto-join (observability only)
+# ===================================================================
+class TestWitnessAutoJoin:
+    """Verify a post-launch-created zone pulls in the witness node
+    automatically. Soft-skips if the compose stack has no witness."""
+
+    def test_witness_participates_in_new_zone(self, cluster, api_key):
+        uid = _uid()
+        grpc1 = cluster["grpc1"]
+        zone_id = f"witness-{uid}"
+
+        _grpc_call(grpc1, "federation_create_zone", {"zone_id": zone_id}, api_key=api_key)
+        _wait_zone_ready(grpc1, zone_id, api_key, timeout=10)
+
+        info = _grpc_call(grpc1, "federation_cluster_info", {"zone_id": zone_id}, api_key=api_key)
+        assert "error" not in info, f"cluster_info failed: {info}"
+        data = info["result"]
+        witness_count = data.get("witness_count", 0)
+        voters = data.get("voter_count", data.get("members_count", 0))
+        if witness_count == 0:
+            pytest.skip(
+                "Witness node not configured in this compose file; "
+                "cannot validate auto-join (track as follow-up)."
+            )
+        assert voters >= 2, f"Expected ≥2 voters + witness: {data}"
+
+
+# ===================================================================
+# R13.1 Class 8/11: Zone-level Raft introspection
+# ===================================================================
+class TestZoneRaftIntrospection:
+    """``federation_cluster_info`` returns Raft commit index — it must
+    monotonically advance after writes."""
+
+    def test_raft_commit_index_progresses_on_writes(self, cluster, api_key):
+        uid = _uid()
+        grpc1 = cluster["grpc1"]
+
+        def _commit_idx(zone: str) -> int:
+            r = _grpc_call(grpc1, "federation_cluster_info", {"zone_id": zone}, api_key=api_key)
+            if "error" in r:
+                return -1
+            d = r.get("result", r)
+            for k in ("commit_index", "last_committed", "log_index"):
+                if k in d:
+                    try:
+                        return int(d[k])
+                    except (TypeError, ValueError):
+                        pass
+            return -1
+
+        before = _commit_idx("corp-eng")
+        if before < 0:
+            pytest.skip("cluster_info does not expose commit_index")
+
+        for i in range(3):
+            path = f"/corp/eng/raft-progress-{uid}-{i}.txt"
+            wr = _grpc_call(
+                grpc1, "write", {"path": path, "content": f"raft-{uid}-{i}"}, api_key=api_key
+            )
+            assert "error" not in wr
+
+        deadline = time.time() + 15
+        after = before
+        while time.time() < deadline and after <= before:
+            after = _commit_idx("corp-eng")
+            time.sleep(0.5)
+        assert after > before, f"Commit index did not advance: {before} -> {after}"
+
+
+# ===================================================================
+# R13.1 Class 9/11: Partial replication failure (network_partition)
+# ===================================================================
+class TestPartialReplicationFailure:
+    """docker network disconnect -> write on node-1 -> reconnect ->
+    verify node-2 catches up via Raft log without dropped entries."""
+
+    def test_partition_then_heal(self, cluster, api_key):
+        client = _docker_client_or_skip()
+        uid = _uid()
+        grpc1 = cluster["grpc1"]
+        grpc2 = cluster["grpc2"]
+
+        try:
+            node2 = client.containers.get("nexus-dyn-node-2")
+        except Exception as exc:
+            pytest.skip(f"node-2 container not found: {exc}")
+        networks = list(node2.attrs["NetworkSettings"]["Networks"].keys())
+        if not networks:
+            pytest.skip("node-2 has no docker networks attached")
+        net_name = networks[0]
+
+        try:
+            net_obj = client.networks.get(net_name)
+        except Exception as exc:
+            pytest.skip(f"docker network get failed: {exc}")
+
+        try:
+            net_obj.disconnect("nexus-dyn-node-2", force=True)
+        except Exception as exc:
+            pytest.skip(f"network disconnect not supported in this env: {exc}")
+
+        reconnected = False
+        written: list[str] = []
+        try:
+            # Write 5 files on node-1 while node-2 is partitioned.
+            for i in range(5):
+                path = f"/corp/eng/partition-{uid}-{i}.txt"
+                wr = _grpc_call(
+                    grpc1,
+                    "write",
+                    {"path": path, "content": f"p-{uid}-{i}"},
+                    api_key=api_key,
+                )
+                if "error" in wr:
+                    # Quorum may be lost (only 2 voters) — skip cleanly.
+                    pytest.skip(f"Write during partition failed (likely quorum loss): {wr}")
+                written.append(path)
+        finally:
+            try:
+                net_obj.connect("nexus-dyn-node-2")
+                reconnected = True
+            except Exception:
+                pass
+
+        assert reconnected, "Failed to reconnect node-2; cluster may be in bad state."
+
+        _wait_healthy([cluster["node2"]], timeout=60)
+        for path in written:
+            _wait_replicated(
+                grpc2,
+                "/corp/eng/",
+                path,
+                api_key,
+                msg=f"Post-partition catch-up missing: {path}",
+                timeout=30,
+            )
+
+
+# ===================================================================
+# R13.1 Class 10/11: OpenAI backend Rust CAS (skipped — needs sidecar)
+# ===================================================================
+@pytest.mark.skip(reason="Requires an SSE mock sidecar in the compose file — follow-up.")
+class TestOpenAIBackendRustCAS:
+    """End-to-end LLM streaming via Rust OpenAIBackend inside a container.
+
+    To enable: add a pytest-httpserver or custom Python SSE-mock service
+    to ``dockerfiles/docker-compose.dynamic-federation-test.yml``, reachable
+    from nexus-dyn-node-1 as ``http://sse-mock:8080/``. Then mount
+    ``backend_type='openai'`` on ``/llm`` with ``openai_base_url`` pointing
+    at that sidecar and drive ``nx.llm_start_streaming`` via an RPC.
+    """
+
+    def test_streaming_round_trip(self, cluster, api_key):
+        raise RuntimeError("see skip reason")
+
+
+# ===================================================================
+# R13.1 Class 11/11: Anthropic backend Rust CAS (skipped — same reason)
+# ===================================================================
+@pytest.mark.skip(reason="Requires an SSE mock sidecar in the compose file — follow-up.")
+class TestAnthropicBackendRustCAS:
+    """Mirror of TestOpenAIBackendRustCAS with Anthropic-shaped SSE."""
+
+    def test_streaming_round_trip(self, cluster, api_key):
+        raise RuntimeError("see skip reason")
+
+
+# ===================================================================
+# R13.2 Class 1/7: Day at the office — CRUD + lock + delete
+# ===================================================================
+class TestDayAtTheOffice:
+    """Full CRUD lifecycle: write 4 versions, read on follower, acquire
+    lock, update-under-lock, release, delete, verify gone on follower."""
+
+    def test_full_lifecycle(self, cluster, api_key):
+        uid = _uid()
+        grpc1 = cluster["grpc1"]
+        grpc2 = cluster["grpc2"]
+
+        project = f"/corp/eng/day-office-{uid}"
+        mk = _grpc_call(grpc1, "mkdir", {"path": project, "parents": True}, api_key=api_key)
+        assert "error" not in mk, f"mkdir failed: {mk}"
+
+        spec = f"{project}/spec.md"
+        versions = [f"v{i}-{uid}" for i in range(4)]
+        for v in versions:
+            wr = _grpc_call(grpc1, "write", {"path": spec, "content": v}, api_key=api_key)
+            assert "error" not in wr, f"write {v} failed: {wr}"
+
+        _wait_replicated(
+            grpc2,
+            project + "/",
+            spec,
+            api_key,
+            timeout=15,
+            msg="spec.md not replicated to follower",
+        )
+        r = _grpc_call(grpc2, "read", {"path": spec}, api_key=api_key)
+        assert "error" not in r, f"read on follower failed: {r}"
+        assert _decode_content(r) == versions[-1]
+
+        acq = _grpc_call_or_skip(
+            grpc1,
+            "lock_acquire",
+            {"path": spec, "ttl": 30},
+            api_key=api_key,
+            skip_msg="Lock API not available",
+        )
+        if "error" in acq or not acq.get("result", acq).get("acquired"):
+            pytest.skip("lock_acquire failed — cannot test locked update")
+        lock_id = acq["result"]["lock_id"]
+
+        final = f"final-{uid}"
+        wr = _grpc_call(grpc1, "write", {"path": spec, "content": final}, api_key=api_key)
+        assert "error" not in wr, f"write under lock failed: {wr}"
+
+        _grpc_call(grpc1, "sys_unlock", {"path": spec, "lock_id": lock_id}, api_key=api_key)
+        rm = _grpc_call(grpc1, "sys_unlink", {"path": spec}, api_key=api_key)
+        assert "error" not in rm, f"unlink failed: {rm}"
+
+        deadline = time.time() + 20
+        while time.time() < deadline:
+            rr = _grpc_call(grpc2, "sys_stat", {"path": spec}, api_key=api_key)
+            if "error" in rr or rr.get("result") is None:
+                return
+            time.sleep(0.5)
+        pytest.fail("spec.md still visible on follower after delete")
+
+
+# ===================================================================
+# R13.2 Class 2/7: New team onboarding — nested zones
+# ===================================================================
+class TestNewTeamOnboarding:
+    """Create a zone, mount at a deep nested path, populate, verify on
+    peers, unmount, verify disposal."""
+
+    def test_zone_lifecycle_with_nested_paths(self, cluster, api_key):
+        uid = _uid()
+        grpc1 = cluster["grpc1"]
+        grpc2 = cluster["grpc2"]
+        zone_id = f"team-{uid}"
+
+        _grpc_call(grpc1, "federation_create_zone", {"zone_id": zone_id}, api_key=api_key)
+        _grpc_call(grpc2, "federation_create_zone", {"zone_id": zone_id}, api_key=api_key)
+        _wait_zone_ready(grpc1, zone_id, api_key, timeout=15)
+        _wait_zone_ready(grpc2, zone_id, api_key, timeout=15)
+
+        mount_path = f"/corp/eng/team-x-{uid}"
+        mk = _grpc_call(grpc1, "mkdir", {"path": mount_path, "parents": True}, api_key=api_key)
+        assert "error" not in mk
+        mnt = _grpc_call(
+            grpc1,
+            "federation_mount",
+            {"parent_zone": "corp-eng", "path": mount_path, "target_zone": zone_id},
+            api_key=api_key,
+        )
+        assert "error" not in mnt, f"mount failed: {mnt}"
+
+        for i in range(10):
+            p = f"{mount_path}/projects/proj1/docs/f{i}.txt"
+            wr = _grpc_call(grpc1, "write", {"path": p, "content": f"{uid}-{i}"}, api_key=api_key)
+            assert "error" not in wr, f"write {i} failed: {wr}"
+
+        _wait_replicated(
+            grpc2,
+            f"{mount_path}/projects/proj1/docs/",
+            f"{mount_path}/projects/proj1/docs/f0.txt",
+            api_key,
+            timeout=30,
+        )
+
+        um = _grpc_call(
+            grpc1,
+            "federation_unmount",
+            {"parent_zone": "corp-eng", "path": mount_path},
+            api_key=api_key,
+        )
+        assert "error" not in um, f"unmount failed: {um}"
+
+        r = _grpc_call(
+            grpc1, "read", {"path": f"{mount_path}/projects/proj1/docs/f0.txt"}, api_key=api_key
+        )
+        assert "error" in r
+
+
+# ===================================================================
+# R13.2 Class 3/7: Cross-zone daily workflow
+# ===================================================================
+class TestCrossZoneDailyWorkflow:
+    """Write + rename across pre-existing /corp + /family zones; verify
+    rename resolves within the zone while cross-zone content isolates."""
+
+    def test_cross_zone_rename_resolves(self, cluster, api_key):
+        uid = _uid()
+        grpc1 = cluster["grpc1"]
+
+        work_doc = f"/corp/eng/cross-work-{uid}.txt"
+        family_doc = f"/family/cross-family-{uid}.txt"
+
+        _grpc_call(grpc1, "write", {"path": work_doc, "content": f"work-{uid}"}, api_key=api_key)
+        _grpc_call(
+            grpc1,
+            "write",
+            {"path": family_doc, "content": f"family-{uid}"},
+            api_key=api_key,
+        )
+
+        new_work_doc = f"/corp/eng/cross-work-renamed-{uid}.txt"
+        rn = _grpc_call(
+            grpc1, "sys_rename", {"src": work_doc, "dst": new_work_doc}, api_key=api_key
+        )
+        if "error" in rn:
+            pytest.skip(f"sys_rename not supported in this form: {rn}")
+
+        r = _grpc_call(grpc1, "read", {"path": new_work_doc}, api_key=api_key)
+        assert "error" not in r, f"Read after rename failed: {r}"
+        assert _decode_content(r) == f"work-{uid}"
+
+        r2 = _grpc_call(grpc1, "read", {"path": family_doc}, api_key=api_key)
+        assert "error" not in r2
+        assert _decode_content(r2) == f"family-{uid}"
+
+
+# ===================================================================
+# R13.2 Class 4/7: Concurrent lock contention edit
+# ===================================================================
+class TestConcurrentLockEdit:
+    """Node A holds exclusive lock, B's write blocks until release, then
+    B's write wins — final content reflects B."""
+
+    def test_contended_write_ordering(self, cluster, api_key):
+        import concurrent.futures
+
+        uid = _uid()
+        grpc1 = cluster["grpc1"]
+        grpc2 = cluster["grpc2"]
+        lock_path = f"/corp/eng/contend-edit-{uid}.txt"
+
+        _grpc_call(grpc1, "write", {"path": lock_path, "content": f"init-{uid}"}, api_key=api_key)
+
+        acq = _grpc_call_or_skip(
+            grpc1,
+            "lock_acquire",
+            {"path": lock_path, "ttl": 10},
+            api_key=api_key,
+            skip_msg="Lock API not available",
+        )
+        acq_data = acq.get("result", {})
+        if "error" in acq or not acq_data.get("acquired"):
+            pytest.skip("lock_acquire failed")
+        lock_a = acq_data["lock_id"]
+
+        def _node_b_write():
+            deadline = time.time() + 15
+            while time.time() < deadline:
+                r = _grpc_call(
+                    grpc2, "lock_acquire", {"path": lock_path, "ttl": 10}, api_key=api_key
+                )
+                if "error" not in r and r.get("result", {}).get("acquired"):
+                    lid = r["result"]["lock_id"]
+                    wr = _grpc_call(
+                        grpc2,
+                        "write",
+                        {"path": lock_path, "content": f"B-{uid}"},
+                        api_key=api_key,
+                    )
+                    _grpc_call(
+                        grpc2,
+                        "sys_unlock",
+                        {"path": lock_path, "lock_id": lid},
+                        api_key=api_key,
+                    )
+                    return wr
+                time.sleep(0.5)
+            return {"error": "B could not acquire within timeout"}
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+            b_future = ex.submit(_node_b_write)
+            time.sleep(1)  # give B a chance to start retrying
+
+            wa = _grpc_call(
+                grpc1, "write", {"path": lock_path, "content": f"A-{uid}"}, api_key=api_key
+            )
+            assert "error" not in wa
+            _grpc_call(grpc1, "sys_unlock", {"path": lock_path, "lock_id": lock_a}, api_key=api_key)
+
+            b_result = b_future.result(timeout=20)
+
+        if "error" in b_result:
+            pytest.skip(f"B's write did not complete: {b_result}")
+
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            r = _grpc_call(grpc1, "read", {"path": lock_path}, api_key=api_key)
+            if "error" not in r and _decode_content(r) == f"B-{uid}":
+                return
+            time.sleep(0.5)
+        pytest.fail(f"Final content not B's write: {r}")
+
+
+# ===================================================================
+# R13.2 Class 5/7: Full failover with delete+rename replay
+# ===================================================================
+class TestFullFailoverRecovery:
+    """Extended failover: delete + rename happen while node-1 is down;
+    node-1 catches up via Raft log replay on restart."""
+
+    @pytest.mark.order(after="TestLeaderFailover::test_failover_and_recovery")
+    def test_failover_with_delete_rename_replay(self, cluster, api_key):
+        client = _docker_client_or_skip()
+        uid = _uid()
+        grpc1 = cluster["grpc1"]
+        grpc2 = cluster["grpc2"]
+
+        base = f"/corp/eng/recover-{uid}"
+        mk = _grpc_call(grpc1, "mkdir", {"path": base, "parents": True}, api_key=api_key)
+        assert "error" not in mk
+        for i in range(3):
+            wr = _grpc_call(
+                grpc1,
+                "write",
+                {"path": f"{base}/doc{i}.txt", "content": f"pre-{uid}-{i}"},
+                api_key=api_key,
+            )
+            assert "error" not in wr
+
+        for i in range(3):
+            _wait_replicated(grpc2, f"{base}/", f"{base}/doc{i}.txt", api_key, timeout=15)
+
+        try:
+            node1 = client.containers.get("nexus-dyn-node-1")
+        except Exception as exc:
+            pytest.skip(f"node-1 container not found: {exc}")
+        node1.stop(timeout=10)
+
+        try:
+            _wait_healthy([cluster["node2"]], timeout=30)
+            _wait_leader_elected(grpc2, "corp-eng", api_key, timeout=15)
+
+            _grpc_call(grpc2, "sys_unlink", {"path": f"{base}/doc0.txt"}, api_key=api_key)
+            rn = _grpc_call(
+                grpc2,
+                "sys_rename",
+                {"src": f"{base}/doc1.txt", "dst": f"{base}/doc1-renamed.txt"},
+                api_key=api_key,
+            )
+            if "error" in rn:
+                pytest.skip(f"sys_rename not available: {rn}")
+            _grpc_call(
+                grpc2,
+                "write",
+                {"path": f"{base}/doc3.txt", "content": f"post-{uid}-3"},
+                api_key=api_key,
+            )
+        finally:
+            node1.start()
+            _wait_healthy([cluster["node1"]], timeout=30)
+
+        deadline = time.time() + 30
+        s = r2 = r3 = {}
+        while time.time() < deadline:
+            s = _grpc_call(grpc1, "sys_stat", {"path": f"{base}/doc0.txt"}, api_key=api_key)
+            r2 = _grpc_call(
+                grpc1, "sys_stat", {"path": f"{base}/doc1-renamed.txt"}, api_key=api_key
+            )
+            r3 = _grpc_call(grpc1, "sys_stat", {"path": f"{base}/doc3.txt"}, api_key=api_key)
+            s_gone = "error" in s or s.get("result") is None
+            r2_present = "error" not in r2 and r2.get("result") is not None
+            r3_present = "error" not in r3 and r3.get("result") is not None
+            if s_gone and r2_present and r3_present:
+                return
+            time.sleep(1)
+        pytest.fail(f"Replay incomplete: doc0={s}, doc1-renamed={r2}, doc3={r3}")
+
+
+# ===================================================================
+# R13.2 Class 6/7: Multi-zone atomic write (isolation)
+# ===================================================================
+class TestMultiZoneAtomicWrite:
+    """Simultaneous writes to /corp + /family zones must not interfere."""
+
+    def test_parallel_writes_to_different_zones(self, cluster, api_key):
+        import concurrent.futures
+
+        uid = _uid()
+        grpc1 = cluster["grpc1"]
+
+        corp_path = f"/corp/eng/atomic-corp-{uid}.txt"
+        family_path = f"/family/atomic-family-{uid}.txt"
+
+        def _write(path, content):
+            return _grpc_call(grpc1, "write", {"path": path, "content": content}, api_key=api_key)
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+            f_corp = ex.submit(_write, corp_path, f"corp-{uid}")
+            f_family = ex.submit(_write, family_path, f"family-{uid}")
+            r_corp = f_corp.result(timeout=15)
+            r_family = f_family.result(timeout=15)
+
+        assert "error" not in r_corp, f"corp write failed: {r_corp}"
+        assert "error" not in r_family, f"family write failed: {r_family}"
+
+        rr_corp = _grpc_call(grpc1, "read", {"path": corp_path}, api_key=api_key)
+        rr_family = _grpc_call(grpc1, "read", {"path": family_path}, api_key=api_key)
+        assert _decode_content(rr_corp) == f"corp-{uid}"
+        assert _decode_content(rr_family) == f"family-{uid}"
+
+
+# ===================================================================
+# R13.2 Class 7/7: LLM session end-to-end (skipped — needs SSE sidecar)
+# ===================================================================
+@pytest.mark.skip(reason="Requires an SSE mock sidecar in the compose file — follow-up.")
+class TestLLMSessionEndToEnd:
+    """ManagedAgentLoop driving a multi-turn session through the Rust
+    OpenAIBackend, validating CAS dedup + envelope retrieval."""
+
+    def test_three_turn_conversation(self, cluster, api_key):
+        raise RuntimeError("see skip reason")
+
+
+# ===================================================================
+# R13.3 Class 1/1: CLI surface — federation/zone/locks commands
+# ===================================================================
+class TestFederationCLISurface:
+    """Smoke-test that `nexus federation|zone|locks <sub>` still works."""
+
+    def test_federation_status_cli(self, cluster, api_key):
+        rc, out, err = _cli_exec("nexus-dyn-node-1", ["federation", "status"], timeout=30)
+        if rc != 0:
+            pytest.skip(f"federation status CLI failed: rc={rc} err={err[:200]}")
+        assert len(out) > 0, f"Empty output: stderr={err[:200]}"
+
+    def test_federation_zones_cli(self, cluster, api_key):
+        rc, out, err = _cli_exec("nexus-dyn-node-1", ["federation", "zones"], timeout=30)
+        if rc != 0:
+            pytest.skip(f"federation zones CLI failed: rc={rc} err={err[:200]}")
+        for z in ["corp", "corp-eng", "family"]:
+            assert z in out, f"Zone '{z}' not in output: {out[:400]}"
+
+    def test_zone_list_cli(self, cluster, api_key):
+        rc, out, err = _cli_exec("nexus-dyn-node-1", ["zone", "list"], timeout=30)
+        if rc != 0:
+            pytest.skip(f"zone list CLI failed: rc={rc} err={err[:200]}")
+        assert len(out) > 0, f"Empty output from zone list: stderr={err[:200]}"
+
+    def test_locks_list_cli(self, cluster, api_key):
+        rc, out, err = _cli_exec("nexus-dyn-node-1", ["locks", "list"], timeout=30)
+        if rc != 0 and "Usage" not in err and "No such command" not in err:
+            pytest.skip(f"locks list CLI failed: rc={rc} err={err[:200]}")

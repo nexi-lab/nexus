@@ -6,7 +6,7 @@ both kernel (``nexus.core``) and presentation (``nexus.fuse``) layers.
 When a user requests ``file_parsed.xlsx.md``, the system:
 1. Recognizes it as a virtual view request
 2. Reads the original ``file.xlsx``
-3. Parses it using the appropriate parser (MarkItDown)
+3. Parses it using the appropriate parser (pdf-inspector)
 4. Returns the parsed text content
 
 Virtual views are read-only and don't create actual files.

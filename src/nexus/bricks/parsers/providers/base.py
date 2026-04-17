@@ -12,7 +12,7 @@ class ProviderConfig:
     """Configuration for a parse provider.
 
     Attributes:
-        name: Provider name (e.g., "unstructured", "llamaparse", "markitdown")
+        name: Provider name (e.g., "unstructured", "llamaparse", "pdf-inspector")
         enabled: Whether the provider is enabled
         priority: Priority for provider selection (higher = preferred)
         api_key: API key for the provider (if required)
@@ -35,7 +35,7 @@ class ParseProvider(ABC):
     """Abstract base class for parse providers.
 
     A parse provider converts document content to structured text (typically markdown).
-    Providers can be local (MarkItDown) or API-based (Unstructured, LlamaParse).
+    Providers can be local (pdf-inspector) or API-based (Unstructured, LlamaParse).
 
     Example:
         >>> class MyProvider(ParseProvider):

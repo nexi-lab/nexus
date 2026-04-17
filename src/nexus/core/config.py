@@ -94,7 +94,7 @@ class ParseConfig:
     """File parsing configuration.
 
     Controls auto-parse on write and provider configurations for
-    document parsing (unstructured, llamaparse, markitdown).
+    document parsing (unstructured, llamaparse, pdf-inspector).
     """
 
     auto_parse: bool = True

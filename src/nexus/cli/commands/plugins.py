@@ -4,7 +4,7 @@ import asyncio
 import contextlib
 import inspect
 import subprocess
-from typing import Any, cast
+from typing import Any
 
 import click
 from rich.table import Table
@@ -335,11 +335,7 @@ def _register_plugin_commands(main: click.Group) -> None:
             import importlib.metadata as im_metadata
 
             entry_points = im_metadata.entry_points()
-            if hasattr(entry_points, "select"):
-                nexus_plugins = entry_points.select(group="nexus.plugins")
-            else:
-                result = entry_points.get("nexus.plugins")
-                nexus_plugins = cast(Any, result if result else [])
+            nexus_plugins = entry_points.select(group="nexus.plugins")
 
             plugin_class = None
             for ep in nexus_plugins:

@@ -6,7 +6,7 @@ import importlib.metadata
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 import yaml
 
@@ -71,11 +71,7 @@ class PluginRegistry(BaseRegistry[NexusPlugin]):
         try:
             entry_points = importlib.metadata.entry_points()
 
-            if hasattr(entry_points, "select"):
-                nexus_plugins = entry_points.select(group="nexus.plugins")
-            else:
-                result = entry_points.get("nexus.plugins")
-                nexus_plugins = cast(Any, result if result else [])
+            nexus_plugins = entry_points.select(group="nexus.plugins")
 
             for entry_point in nexus_plugins:
                 try:

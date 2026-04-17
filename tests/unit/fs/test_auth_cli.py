@@ -183,3 +183,45 @@ def test_fs_google_oauth_setup_stores_service_specific_provider(
 
     assert calls["provider_name"] == "google-drive"
     assert calls["stored_provider"] == "google-drive"
+
+
+def test_fs_auth_cli_loads_in_slim_package_without_bricks(monkeypatch):
+    """Regression: slim nexus-fs wheel excludes nexus.bricks — the module must
+    still import cleanly so `nexus-fs --help` works.  No subcommands register
+    in that case (user gets Click's usage error on invocation)."""
+    import importlib
+    import sys
+
+    # Hide every nexus.bricks.* entry + the cached fs._auth_cli so the import
+    # actually re-runs under the simulated slim environment.
+    saved_modules = {
+        name: sys.modules[name]
+        for name in list(sys.modules)
+        if name == "nexus.bricks"
+        or name.startswith("nexus.bricks.")
+        or name == "nexus.fs._auth_cli"
+    }
+    for name in saved_modules:
+        del sys.modules[name]
+
+    class _SlimBlocker:
+        def find_spec(self, name, path, target=None):  # noqa: ARG002, ANN001
+            if name == "nexus.bricks" or name.startswith("nexus.bricks."):
+                raise ModuleNotFoundError(f"blocked (simulated slim nexus-fs wheel): {name}")
+            return None
+
+    blocker = _SlimBlocker()
+    sys.meta_path.insert(0, blocker)
+    try:
+        slim_module = importlib.import_module("nexus.fs._auth_cli")
+        # Must expose an `auth` Click group so nexus.fs._cli can register it.
+        assert slim_module.auth.name == "auth"
+        # No subcommands — bricks is unavailable.
+        assert dict(slim_module.auth.commands) == {}
+    finally:
+        sys.meta_path.remove(blocker)
+        # Restore prior modules so the full-package tests that follow see a
+        # fully-populated `auth` group.
+        del sys.modules["nexus.fs._auth_cli"]
+        for name, module in saved_modules.items():
+            sys.modules[name] = module

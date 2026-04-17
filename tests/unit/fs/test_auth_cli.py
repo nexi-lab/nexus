@@ -36,7 +36,7 @@ def _build_service(tmp_path: Path) -> UnifiedAuthService:
 
 def test_fs_auth_connect_s3_guides_and_stores_native(monkeypatch, tmp_path: Path) -> None:
     service = _build_service(tmp_path)
-    monkeypatch.setattr("nexus.fs._auth_cli._build_auth_service", lambda: service)
+    monkeypatch.setattr("nexus.bricks.auth.cli_commands._build_auth_service", lambda: service)
 
     runner = CliRunner()
     result = runner.invoke(auth, ["connect", "s3"], input="native\n")
@@ -44,12 +44,14 @@ def test_fs_auth_connect_s3_guides_and_stores_native(monkeypatch, tmp_path: Path
     assert result.exit_code == 0
     assert "Choose auth mode for s3" in result.output
     assert "Setup steps for s3 (native)" in result.output
-    assert "Next: nexus-fs auth test s3" in result.output
+    assert "Next: nexus auth test s3" in result.output
 
 
 def test_fs_auth_connect_gws_uses_local_oauth_setup(monkeypatch) -> None:
     called: dict[str, str | None] = {}
-    monkeypatch.setattr("nexus.fs._auth_cli._build_auth_service", lambda: _StubAuthService())
+    monkeypatch.setattr(
+        "nexus.bricks.auth.cli_commands._build_auth_service", lambda: _StubAuthService()
+    )
 
     def _fake_google_setup(
         *,
@@ -71,7 +73,7 @@ def test_fs_auth_connect_gws_uses_local_oauth_setup(monkeypatch) -> None:
             }
         )
 
-    monkeypatch.setattr("nexus.fs._auth_cli.run_google_oauth_setup", _fake_google_setup)
+    monkeypatch.setattr("nexus.fs._oauth_support.run_google_oauth_setup", _fake_google_setup)
 
     runner = CliRunner()
     result = runner.invoke(auth, ["connect", "gws"], input="alice@example.com\n")
@@ -114,7 +116,7 @@ def test_fs_auth_test_gws_prints_target_breakdown(monkeypatch) -> None:
                 ],
             }
 
-    monkeypatch.setattr("nexus.fs._auth_cli._build_auth_service", lambda: _Service())
+    monkeypatch.setattr("nexus.bricks.auth.cli_commands._build_auth_service", lambda: _Service())
     monkeypatch.setenv("NEXUS_NO_AUTO_JSON", "1")
 
     runner = CliRunner()

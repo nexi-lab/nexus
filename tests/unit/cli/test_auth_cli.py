@@ -37,7 +37,7 @@ def test_connect_s3_guides_and_stores_native(
     tmp_path: Path,
 ) -> None:
     service = _build_service(tmp_path)
-    monkeypatch.setattr("nexus.cli.commands.auth_cli._build_auth_service", lambda: service)
+    monkeypatch.setattr("nexus.bricks.auth.cli_commands._build_auth_service", lambda: service)
 
     runner = CliRunner()
     result = runner.invoke(auth, ["connect", "s3"], input="native\n")
@@ -57,7 +57,7 @@ def test_connect_gcs_secret_prompts_for_credentials_path(
     tmp_path: Path,
 ) -> None:
     service = _build_service(tmp_path)
-    monkeypatch.setattr("nexus.cli.commands.auth_cli._build_auth_service", lambda: service)
+    monkeypatch.setattr("nexus.bricks.auth.cli_commands._build_auth_service", lambda: service)
 
     runner = CliRunner()
     result = runner.invoke(
@@ -81,13 +81,13 @@ def test_connect_gws_prompts_for_user_email_and_runs_google_setup(
 ) -> None:
     called: dict[str, str | None] = {}
     monkeypatch.setattr(
-        "nexus.cli.commands.auth_cli._build_auth_service",
+        "nexus.bricks.auth.cli_commands._build_auth_service",
         lambda: _StubAuthService(),
     )
     monkeypatch.setenv("NEXUS_OAUTH_GOOGLE_CLIENT_ID", "client-id")
     monkeypatch.setenv("NEXUS_OAUTH_GOOGLE_CLIENT_SECRET", "client-secret")
 
-    def _fake_setup(service_name: str, user_email: str | None) -> None:
+    def _fake_setup(*, user_email: str, service_name: str = "gws", **kwargs: object) -> None:
         called.update(
             {
                 "service_name": service_name,
@@ -95,7 +95,7 @@ def test_connect_gws_prompts_for_user_email_and_runs_google_setup(
             }
         )
 
-    monkeypatch.setattr("nexus.cli.commands.auth_cli._run_google_oauth_setup", _fake_setup)
+    monkeypatch.setattr("nexus.fs._oauth_support.run_google_oauth_setup", _fake_setup)
 
     runner = CliRunner()
     result = runner.invoke(auth, ["connect", "gws"], input="alice@example.com\n")
@@ -111,7 +111,7 @@ def test_test_auth_reports_actionable_guidance_for_missing_gws_oauth(
     tmp_path: Path,
 ) -> None:
     service = _build_service(tmp_path)
-    monkeypatch.setattr("nexus.cli.commands.auth_cli._build_auth_service", lambda: service)
+    monkeypatch.setattr("nexus.bricks.auth.cli_commands._build_auth_service", lambda: service)
 
     runner = CliRunner()
     result = runner.invoke(auth, ["test", "gws"])
@@ -126,7 +126,7 @@ def test_doctor_shows_auth_statuses(
 ) -> None:
     service = _build_service(tmp_path)
     service.connect_secret("s3", {"access_key_id": "AKIA_TEST", "secret_access_key": "secret"})
-    monkeypatch.setattr("nexus.cli.commands.auth_cli._build_auth_service", lambda: service)
+    monkeypatch.setattr("nexus.bricks.auth.cli_commands._build_auth_service", lambda: service)
     monkeypatch.setattr(service, "_detect_native", lambda service_name: None)
 
     runner = CliRunner()

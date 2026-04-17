@@ -74,9 +74,10 @@ class TestAuthListNewTable:
         runner = CliRunner(env={"NEXUS_NO_AUTO_JSON": "1"})
         with (
             patch(
-                "nexus.fs._auth_cli._try_profile_store_list", return_value=_make_store_profiles()
+                "nexus.bricks.auth.cli_commands._try_profile_store_list",
+                return_value=_make_store_profiles(),
             ),
-            patch("nexus.fs._auth_cli._build_auth_service", return_value=mock_svc),
+            patch("nexus.bricks.auth.cli_commands._build_auth_service", return_value=mock_svc),
         ):
             result = runner.invoke(auth, ["list"])
 
@@ -92,9 +93,10 @@ class TestAuthListNewTable:
         runner = CliRunner(env={"NEXUS_NO_AUTO_JSON": "1"})
         with (
             patch(
-                "nexus.fs._auth_cli._try_profile_store_list", return_value=_make_store_profiles()
+                "nexus.bricks.auth.cli_commands._try_profile_store_list",
+                return_value=_make_store_profiles(),
             ),
-            patch("nexus.fs._auth_cli._build_auth_service", return_value=mock_svc),
+            patch("nexus.bricks.auth.cli_commands._build_auth_service", return_value=mock_svc),
         ):
             result = runner.invoke(auth, ["list"])
 
@@ -115,8 +117,8 @@ class TestAuthListFallback:
 
         runner = CliRunner(env={"NEXUS_NO_AUTO_JSON": "1"})
         with (
-            patch("nexus.fs._auth_cli._try_profile_store_list", return_value=None),
-            patch("nexus.fs._auth_cli._build_auth_service", return_value=mock_service),
+            patch("nexus.bricks.auth.cli_commands._try_profile_store_list", return_value=None),
+            patch("nexus.bricks.auth.cli_commands._build_auth_service", return_value=mock_service),
         ):
             result = runner.invoke(auth, ["list"])
 
@@ -135,9 +137,10 @@ class TestAuthListJsonOutput:
         mock_svc.list_summaries = AsyncMock(return_value=[])
         with (
             patch(
-                "nexus.fs._auth_cli._try_profile_store_list", return_value=_make_store_profiles()
+                "nexus.bricks.auth.cli_commands._try_profile_store_list",
+                return_value=_make_store_profiles(),
             ),
-            patch("nexus.fs._auth_cli._build_auth_service", return_value=mock_svc),
+            patch("nexus.bricks.auth.cli_commands._build_auth_service", return_value=mock_svc),
         ):
             result = runner.invoke(auth, ["list", "--json"])
 

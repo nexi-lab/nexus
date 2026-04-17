@@ -677,6 +677,11 @@ async def handle_semantic_search_index(
         # read time.  If the hash has advanced, someone rewrote the file
         # under us and a concurrent indexer may have already succeeded
         # against the newer bytes — deleting would wipe that fresh doc.
+        #
+        # ``file_paths`` is keyed by ``(zone_id, virtual_path)`` so the
+        # lookup must be zone-scoped; a path-only query could pull another
+        # tenant's row, producing a nondeterministic delete/no-delete
+        # decision for the caller's zone.
         stale_ids_to_delete: list[str] = []
         if stale_candidates and hasattr(daemon, "_async_session") and daemon._async_session:
             from sqlalchemy import text as _sa_text
@@ -688,9 +693,11 @@ async def handle_semantic_search_index(
                             await sess.execute(
                                 _sa_text(
                                     "SELECT content_hash FROM file_paths"
-                                    " WHERE virtual_path = :vp AND deleted_at IS NULL"
+                                    " WHERE virtual_path = :vp"
+                                    "   AND zone_id = :zid"
+                                    "   AND deleted_at IS NULL"
                                 ),
-                                {"vp": file_path},
+                                {"vp": file_path, "zid": zone_id},
                             )
                         ).fetchone()
                     except Exception as cas_err:

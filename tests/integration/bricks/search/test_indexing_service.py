@@ -348,6 +348,71 @@ class TestIndexDocument:
         assert file_model.last_indexed_at is None
 
     @pytest.mark.asyncio
+    async def test_index_document_advances_hash_on_successful_empty_parse(self) -> None:
+        """Image-only / blank PDFs legitimately produce zero searchable text.
+        The indexer must advance ``indexed_content_hash`` with zero chunks in
+        that case — otherwise the file stays perpetually 'unindexed' and we
+        burn CPU reparsing it on every tick.  The adapter probes for this
+        via ``has_successful_parse`` (matching ``parsed_text_hash``).
+        """
+        file_model = _mock_file_model(
+            path_id="pid-pdf-empty",
+            content_hash="blake3-hash-of-blank-pdf",
+            indexed_content_hash=None,
+            virtual_path="/blank.pdf",
+        )
+        pipeline = _mock_pipeline()
+        service, _, session, file_reader = _build_service(
+            pipeline=pipeline,
+            file_model=file_model,
+            content="",  # empty — parser succeeded but no text extracted
+        )
+        # Adapter reports: yes, this empty is a valid successful parse.
+        file_reader.has_successful_parse = MagicMock(return_value=True)
+
+        result = await service.index_document("/blank.pdf")
+
+        assert result == 0
+        # No pipeline work (nothing to chunk / embed).
+        pipeline.index_document.assert_not_called()
+        # But indexed_content_hash MUST advance so we don't retry forever.
+        assert file_model.indexed_content_hash == "blake3-hash-of-blank-pdf"
+        session.commit.assert_called_once()
+        file_reader.has_successful_parse.assert_called_once_with(
+            "/blank.pdf", "blake3-hash-of-blank-pdf"
+        )
+
+    @pytest.mark.asyncio
+    async def test_index_document_retries_on_parse_error_when_hash_unmatched(self) -> None:
+        """Distinct from the successful-empty case: when ``has_successful_parse``
+        returns False (parser broken, file never parsed), the retry path
+        must still fire — don't latch the failure.
+        """
+        file_model = _mock_file_model(
+            path_id="pid-pdf-broken",
+            content_hash="blake3-hash-of-broken-pdf",
+            indexed_content_hash=None,
+            virtual_path="/broken.pdf",
+        )
+        pipeline = _mock_pipeline()
+        service, _, session, file_reader = _build_service(
+            pipeline=pipeline,
+            file_model=file_model,
+            content="",
+        )
+        # No record of a successful parse.
+        file_reader.has_successful_parse = MagicMock(return_value=False)
+
+        result = await service.index_document("/broken.pdf")
+
+        assert result == 0
+        pipeline.index_document.assert_not_called()
+        # Tracking fields stay untouched so the next tick retries.
+        assert file_model.indexed_content_hash is None
+        assert file_model.last_indexed_at is None
+        session.commit.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_index_document_skips_stale_delete_when_concurrent_reindex_advanced_hash(
         self,
     ) -> None:

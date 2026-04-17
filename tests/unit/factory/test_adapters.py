@@ -86,10 +86,10 @@ class TestNexusFSFileReader:
 
     @pytest.mark.asyncio
     async def test_read_text_uses_cached_parsed_text_for_pdf(self) -> None:
-        import hashlib
+        from nexus.core.hash_fast import hash_content
 
         raw = b"%PDF-1.4 binary-bytes"
-        raw_hash = hashlib.sha256(raw).hexdigest()
+        raw_hash = hash_content(raw)
 
         nx = MagicMock()
         nx.sys_read = MagicMock(return_value=raw)
@@ -261,10 +261,10 @@ class TestNexusFSFileReader:
         # Defense-in-depth: cache entries written with NULs before the
         # write-path sanitizer existed must still be scrubbed on the
         # cached-read path when their hash matches the current raw bytes.
-        import hashlib
+        from nexus.core.hash_fast import hash_content
 
         raw = b"%PDF-1.4"
-        raw_hash = hashlib.sha256(raw).hexdigest()
+        raw_hash = hash_content(raw)
 
         nx = MagicMock()
         nx.sys_read = MagicMock(return_value=raw)
@@ -325,6 +325,57 @@ class TestNexusFSFileReader:
         # The metastore should never even be consulted for parseable paths —
         # we short-circuit before it.
         nx.metadata.get_searchable_text.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_read_text_caches_successful_empty_parse(self) -> None:
+        # Image-only / blank PDFs legitimately produce an empty markdown
+        # string.  The adapter must cache the empty result against its
+        # content hash so the indexer can tell "parse ok, zero text" apart
+        # from "parse broken" on the next tick.  Without this distinction,
+        # the indexer would retry the file forever.
+        from nexus.core.hash_fast import hash_content
+
+        raw = b"%PDF-1.4 image-only"
+        nx = MagicMock()
+        nx.sys_read = MagicMock(return_value=raw)
+        nx.metadata.get_file_metadata = MagicMock(return_value=None)
+        nx.metadata.set_file_metadata = MagicMock()
+        # parse_fn simulates ParsersBrick.create_parse_fn returning b"" for
+        # a successfully-parsed image-only PDF.
+        parse_fn = MagicMock(return_value=b"")
+        reader = _NexusFSFileReader(nx, parse_fn=parse_fn)
+
+        result = await reader.read_text("/image_only.pdf")
+        assert result == ""
+
+        # Both parsed_text and parsed_text_hash MUST be cached so the
+        # indexer's has_successful_parse probe can see the parse ran.
+        cached = {c.args[1]: c.args[2] for c in nx.metadata.set_file_metadata.call_args_list}
+        assert cached.get("parsed_text") == ""
+        assert cached.get("parsed_text_hash") == hash_content(raw)
+
+    def test_has_successful_parse_true_on_hash_match(self) -> None:
+        # The indexer uses this probe to tell "valid empty parse" apart
+        # from "parse error".  A matching hash is the proof the adapter
+        # actually ran the parser and committed the result.
+        nx = MagicMock()
+        nx.metadata.get_file_metadata = MagicMock(return_value="blake3-hash-of-bytes")
+        reader = _NexusFSFileReader(nx)
+        assert reader.has_successful_parse("/doc.pdf", "blake3-hash-of-bytes") is True
+
+    def test_has_successful_parse_false_on_hash_mismatch(self) -> None:
+        nx = MagicMock()
+        nx.metadata.get_file_metadata = MagicMock(return_value="different-hash")
+        reader = _NexusFSFileReader(nx)
+        assert reader.has_successful_parse("/doc.pdf", "blake3-hash-of-bytes") is False
+
+    def test_has_successful_parse_false_when_no_hash_cached(self) -> None:
+        # Parser broken / file never parsed → no parsed_text_hash stored.
+        # Caller should treat this as a parse error.
+        nx = MagicMock()
+        nx.metadata.get_file_metadata = MagicMock(return_value=None)
+        reader = _NexusFSFileReader(nx)
+        assert reader.has_successful_parse("/doc.pdf", "any-hash") is False
 
     @pytest.mark.asyncio
     async def test_read_text_handles_mixed_case_extensions(self) -> None:

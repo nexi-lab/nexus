@@ -53,6 +53,20 @@ def _apply_parse_transform(
     return _sanitize_for_index(str(raw))
 
 
+def _compute_content_hash(raw: bytes) -> str:
+    """Hash raw bytes the same way the kernel hashes ``file_paths.content_hash``.
+
+    Using the kernel's BLAKE3 helper (with the same fallback chain) means
+    the adapter's ``parsed_text_hash`` key aligns with
+    ``file_paths.content_hash``, so downstream consumers (e.g.
+    ``IndexingService``) can cross-reference the two without running a
+    second hash pass on the raw bytes.
+    """
+    from nexus.core.hash_fast import hash_content
+
+    return hash_content(raw)
+
+
 def _get_parsed_text_sync(
     nx: Any,
     path: str,
@@ -66,20 +80,36 @@ def _get_parsed_text_sync(
     wrapper when an event loop is active, so blocking inside the RPC
     handler for one document at a time is acceptable; we don't need a
     second ``asyncio.to_thread`` hop here.
-    """
-    import hashlib
 
+    Return value:
+      * ``None`` — parse error (parser missing, raised, or returned None).
+        Caller should fail-closed.
+      * ``""`` — parse succeeded but yielded no extractable text (image-only
+        PDF, scanned doc, blank page).  A cache entry IS written so the
+        indexer can distinguish this case from a parse error via the
+        presence of a matching ``parsed_text_hash``.
+      * non-empty string — successfully parsed markdown.
+    """
     # Content-hash the raw bytes so the cache entry is zone-aware and
     # revision-aware.  File metadata is keyed by path alone in the default
     # metastore; two zones with different ``/report.pdf`` files, or the same
     # file rewritten with fresh bytes, would otherwise collide on the path
     # key and one would silently serve the other's parsed text.
-    raw_hash = hashlib.sha256(raw).hexdigest()
+    try:
+        raw_hash = _compute_content_hash(raw)
+    except Exception:
+        # Hashing itself never fails in normal operation; but if BLAKE3 is
+        # broken, indexing the file without cache safety is worse than
+        # skipping — fail closed.
+        logger.warning(
+            "parse transform: content-hash computation failed for %s", path, exc_info=True
+        )
+        return None
 
     try:
         cached = nx.metadata.get_file_metadata(path, "parsed_text")
         cached_hash = nx.metadata.get_file_metadata(path, "parsed_text_hash")
-        if cached and cached_hash == raw_hash:
+        if cached_hash == raw_hash and cached is not None:
             cached_str = (
                 cached if isinstance(cached, str) else cached.decode("utf-8", errors="ignore")
             )
@@ -102,6 +132,10 @@ def _get_parsed_text_sync(
     if parsed_bytes is None:
         logger.warning("parse transform: parse_fn returned None for %s", path)
         return None
+    # ``parsed_bytes == b""`` is a SUCCESSFUL parse that yielded zero
+    # extractable text (image-only/blank PDFs, scanned docs).  Cache the
+    # empty string with the hash companion so the indexer recognizes this
+    # as a valid empty parse instead of retrying forever.
     text = _sanitize_for_index(parsed_bytes.decode("utf-8", errors="ignore"))
     logger.info("parse transform: parsed %s → %d chars markdown", path, len(text))
 
@@ -163,6 +197,30 @@ class _NexusFSFileReader:
             content_raw,
             parse_fn=self._parse_fn,
         )
+
+    def has_successful_parse(self, path: str, content_hash: str) -> bool:
+        """Return True if the metastore records a successful parse at ``content_hash``.
+
+        Used by the indexer to distinguish ``read_text`` returning ``""``
+        for a parseable file because:
+          * the parser was broken / file unsupported — ``parsed_text_hash``
+            will NOT match; caller should retry on the next tick, and
+          * the parse ran successfully but the file legitimately yielded
+            zero text (image-only PDF, blank page, scanned doc awaiting
+            OCR) — ``parsed_text_hash`` matches ``content_hash`` because
+            the adapter cached the empty parse; the caller should advance
+            ``indexed_content_hash`` and skip retrying.
+
+        ``content_hash`` is expected to be the kernel-computed hash from
+        ``file_paths.content_hash`` (BLAKE3).  The adapter writes the same
+        hash under ``parsed_text_hash``, so matching values prove the parse
+        ran against the current bytes.
+        """
+        try:
+            cached_hash = self._nx.metadata.get_file_metadata(path, "parsed_text_hash")
+        except Exception:
+            return False
+        return bool(cached_hash) and cached_hash == content_hash
 
     def get_searchable_text(self, path: str) -> str | None:
         # Sanitize on read — older cache entries (written before the adapter's

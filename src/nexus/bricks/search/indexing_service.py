@@ -162,18 +162,50 @@ class IndexingService:
         content = await self._read_content(path)
 
         # Parseable binaries (.pdf, .docx, .xlsx, …) surface an empty string
-        # from the reader when parse_fn is missing, raises, or returns None.
-        # Advancing ``indexed_content_hash`` in that case would latch the
-        # failure: the next reindex sees the hash match and skips the file
-        # forever, creating a silent search hole.  Leave the tracking fields
-        # untouched so the next tick retries parsing.
+        # from the reader in TWO distinct scenarios which need different
+        # handling:
+        #   * parse error — parser missing, raised, or returned ``None``.
+        #     Advancing ``indexed_content_hash`` would latch the failure
+        #     (the next reindex sees the hash match and skips forever),
+        #     so leave tracking fields untouched and retry next tick.
+        #   * successful empty parse — image-only PDF, blank .docx, scanned
+        #     doc awaiting OCR.  The parser legitimately produced zero
+        #     searchable text.  Retrying forever is wasted work and the
+        #     stale-chunk delete would wipe chunks that SHOULD stay gone
+        #     for this revision.  Advance ``indexed_content_hash`` and move
+        #     on — the file is genuinely "no text to index."
         #
-        # When the file previously had indexed chunks and its content has
-        # changed, we also DELETE the stale chunks — query paths read
-        # ``document_chunks`` directly without gating on
-        # ``indexed_content_hash``, so leaving old rows live would serve
-        # outdated PDF text indefinitely until the parser recovers.
+        # The adapter distinguishes the two by writing ``parsed_text_hash``
+        # only on successful parses (including empty ones).  Ask it via
+        # ``has_successful_parse`` before picking the retry path.
         if is_parseable_path(path) and not (content and content.strip()):
+            parse_ok = False
+            if current_content_hash is not None:
+                parse_ok_check = getattr(self._file_reader, "has_successful_parse", None)
+                if callable(parse_ok_check):
+                    try:
+                        parse_ok = bool(parse_ok_check(path, current_content_hash))
+                    except Exception:
+                        parse_ok = False
+
+            if parse_ok:
+                # Successful parse, zero text — advance tracking and exit.
+                # No chunks to insert; any prior chunks are stale for this
+                # revision and can be cleared via the pipeline on the next
+                # non-empty write, so we don't DELETE here (avoids racing
+                # concurrent indexers the same way the failure path does).
+                with self._get_session() as session:
+                    latest = session.get(FilePathModel, path_id)
+                    if latest is not None:
+                        latest.indexed_content_hash = current_content_hash
+                        latest.last_indexed_at = datetime.now(UTC)
+                        session.commit()
+                logger.info(
+                    "[INDEXING-SVC] Successful empty parse for %s — advancing "
+                    "indexed_content_hash with 0 chunks",
+                    path,
+                )
+                return 0
             if (
                 current_content_hash is not None
                 and observed_indexed_hash is not None

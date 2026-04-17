@@ -35,14 +35,32 @@ router = APIRouter(prefix="/api/v2/path-contexts", tags=["path_contexts"])
 
 def _normalize_prefix(raw: str) -> str:
     """Canonical form: no leading/trailing slashes, no '..' traversal,
-    no empty segments.
+    no empty segments, no control or zero-width characters.
 
-    Raises ValueError on traversal attempts or double-slash segments. The
-    empty-segment check (Round-6 review) prevents admin input like
-    ``src//bricks`` from being stored verbatim — real paths never contain
-    double slashes, so such a rule would silently never match anything.
+    Raises ValueError on traversal attempts, double-slash segments, or
+    characters that would never match real filesystem paths.
+
+    Round-6 review added the empty-segment check so ``src//bricks`` is
+    rejected rather than stored verbatim. Round-8 review added the
+    control/zero-width character check: ASCII NULL trips asyncpg,
+    \\t/\\n/\\r/\\x7F never appear in real paths, and Unicode zero-width
+    chars (U+200B and friends) would produce two visually-identical but
+    distinct prefix rows — admin can't tell them apart, and lookups
+    against real paths silently miss.
     """
+    import unicodedata
+
     value = raw.strip()
+    for ch in value:
+        code = ord(ch)
+        if code < 0x20 or code == 0x7F:
+            raise ValueError(f"path_prefix must not contain control characters (got {raw!r})")
+        # ``Cf`` = format characters (zero-width space, zero-width joiner,
+        # BiDi marks, etc.). They collapse to visually-identical strings.
+        if unicodedata.category(ch) == "Cf":
+            raise ValueError(
+                f"path_prefix must not contain zero-width or format characters (got {raw!r})"
+            )
     while value.startswith("/"):
         value = value[1:]
     while value.endswith("/"):
@@ -106,11 +124,13 @@ async def _get_store(request: Request) -> PathContextStore:
 
     # Round-7 review: prune closed-loop entries so the per-loop dicts can't
     # grow unbounded on long-running servers that cycle through request
-    # loops (worker recycling, anyio loop churn).
+    # loops (worker recycling, anyio loop churn). Round-8 review: tolerate
+    # non-loop keys (test fixtures / mocks injecting unusual keys) — a
+    # missing ``is_closed`` attr is treated as closed.
     engines_for_prune: dict[Any, Any] | None = getattr(
         request.app.state, "_path_context_engines_by_loop", None
     )
-    stale = [lk for lk in cached if lk.is_closed()]
+    stale = [lk for lk in cached if not hasattr(lk, "is_closed") or lk.is_closed()]
     for lk in stale:
         cached.pop(lk, None)
         if engines_for_prune is not None:

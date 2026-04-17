@@ -1162,7 +1162,14 @@ class SearchDaemon:
         # recycling, anyio loop churn). Entries for dead loops can't be
         # disposed from here anyway — shutdown can only reach the current
         # loop's engine — so dropping their refs is the correct cleanup.
-        stale = [lk for lk in self._path_context_cache_by_loop if lk.is_closed()]
+        # Round-8 review: tolerate non-loop keys (mocks, test fixtures) — a
+        # missing ``is_closed`` attr is treated as closed so the lookup
+        # never raises AttributeError.
+        stale = [
+            lk
+            for lk in self._path_context_cache_by_loop
+            if not hasattr(lk, "is_closed") or lk.is_closed()
+        ]
         for lk in stale:
             self._path_context_cache_by_loop.pop(lk, None)
             self._path_context_engines_by_loop.pop(lk, None)

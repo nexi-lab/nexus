@@ -256,6 +256,23 @@ class PathContextCache:
         if lock is None:
             lock = asyncio.Lock()
             self._locks[zone_id] = lock
+            # Round-8 review: zone_id is client-controlled via
+            # X-Nexus-Zone-ID, so an authenticated caller can induce
+            # arbitrary lock creation. Bound the dict by dropping
+            # non-held locks once it exceeds a safe multiple of
+            # _max_zones. We only drop locks with ``locked() == False``
+            # to preserve the Round-3 identity guarantee for any
+            # refresh currently in flight.
+            cap = max(self._max_zones * 4, 16)
+            if len(self._locks) > cap:
+                for victim_id in list(self._locks):
+                    if victim_id == zone_id:
+                        continue
+                    victim = self._locks[victim_id]
+                    if not victim.locked():
+                        self._locks.pop(victim_id, None)
+                    if len(self._locks) <= cap:
+                        break
         return lock
 
     async def refresh_if_stale(self, zone_id: str) -> None:

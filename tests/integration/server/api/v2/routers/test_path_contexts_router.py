@@ -141,6 +141,34 @@ class TestPathContextRouter:
         )
         assert r.status_code == 422 or r.status_code == 400
 
+    def test_put_rejects_null_byte_in_prefix(self, client: TestClient) -> None:
+        """Round-8 review: NULL bytes trip asyncpg and never appear in
+        real filesystem paths — reject at the validator boundary so the
+        router returns 4xx instead of 500."""
+        r = client.put(
+            "/api/v2/path-contexts/",
+            json={"zone_id": "root", "path_prefix": "src\x00evil", "description": "x"},
+        )
+        assert r.status_code in (400, 422)
+
+    def test_put_rejects_control_chars_in_prefix(self, client: TestClient) -> None:
+        """Round-8 review: tab/newline/CR in prefixes never match real
+        paths — silently unreachable rule."""
+        r = client.put(
+            "/api/v2/path-contexts/",
+            json={"zone_id": "root", "path_prefix": "src\tbricks", "description": "x"},
+        )
+        assert r.status_code in (400, 422)
+
+    def test_put_rejects_zero_width_in_prefix(self, client: TestClient) -> None:
+        """Round-8 review: U+200B produces visually-identical but distinct
+        rows — admin can't tell them apart and lookups silently miss."""
+        r = client.put(
+            "/api/v2/path-contexts/",
+            json={"zone_id": "root", "path_prefix": "src\u200bbricks", "description": "x"},
+        )
+        assert r.status_code in (400, 422)
+
     def test_non_admin_cannot_write(self, test_app: FastAPI) -> None:
         from fastapi import HTTPException
 

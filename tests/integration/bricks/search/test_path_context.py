@@ -275,6 +275,38 @@ class TestDaemonConfigMaxZonesWiring:
         assert cache._max_zones == 3
 
 
+class TestPathContextCacheLocksCap:
+    """Round-8 review regression: zone_id is client-controlled via the
+    ``X-Nexus-Zone-ID`` header. The per-zone ``asyncio.Lock`` dict is
+    intentionally not LRU-evicted (Round-3 identity guarantee), but an
+    authenticated caller could still churn unique zone_ids and inflate
+    ``_locks`` without bound. Bound the dict by dropping non-held locks
+    once it exceeds a safe multiple of ``max_zones``."""
+
+    @pytest.mark.asyncio
+    async def test_locks_dict_bounded_by_cap(self, store: PathContextStore) -> None:
+        cache = PathContextCache(store=store, max_zones=4)
+        for i in range(40):
+            cache._lock_for(f"z{i}")
+        # Cap from source: max(_max_zones * 4, 16) => 16. Tolerate +1 because
+        # the newest lock is retained even when it tips over the cap.
+        assert len(cache._locks) <= 17
+
+    @pytest.mark.asyncio
+    async def test_locks_dict_preserves_currently_held_locks(self, store: PathContextStore) -> None:
+        """Round-3 identity guarantee must survive Round-8 cap logic: any
+        lock currently ``locked()`` must NOT be dropped by the cap."""
+        cache = PathContextCache(store=store, max_zones=4)
+        held = cache._lock_for("hot_zone")
+        await held.acquire()
+        try:
+            for i in range(80):
+                cache._lock_for(f"z{i}")
+            assert cache._locks.get("hot_zone") is held
+        finally:
+            held.release()
+
+
 class TestPathContextCacheLRU:
     @pytest.mark.asyncio
     async def test_lru_bound_evicts_oldest_zone(self, store: PathContextStore) -> None:

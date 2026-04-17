@@ -58,8 +58,8 @@ def classify_openai_error(exc: Exception) -> AuthProfileFailureReason:
         return AuthProfileFailureReason.OVERLOADED
 
     if isinstance(exc, openai.NotFoundError):
-        # 404 on model endpoint — this key doesn't have access to this model
-        return AuthProfileFailureReason.MODEL_NOT_FOUND
+        # 404 on model endpoint — model access denied or model does not exist
+        return AuthProfileFailureReason.UNKNOWN
 
     if isinstance(exc, openai.BadRequestError):
         # 400 — malformed request; not an auth/rate issue

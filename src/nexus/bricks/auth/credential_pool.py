@@ -76,7 +76,6 @@ _DEFAULT_COOLDOWN_POLICY: dict[AuthProfileFailureReason, timedelta | None] = {
     AuthProfileFailureReason.AUTH_PERMANENT: timedelta(days=365),
     AuthProfileFailureReason.AUTH: None,
     AuthProfileFailureReason.FORMAT: None,
-    AuthProfileFailureReason.MODEL_NOT_FOUND: None,  # deprecated — remove in Phase 4
     AuthProfileFailureReason.MFA_REQUIRED: timedelta(days=365),
     AuthProfileFailureReason.PROXY_OR_TLS: timedelta(minutes=5),
     AuthProfileFailureReason.UPSTREAM_CLI_MISSING: None,  # structural — needs user fix

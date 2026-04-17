@@ -16,6 +16,7 @@ Decision 8A: migration is copy-only, never deletes.
 
 from __future__ import annotations
 
+import builtins
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -232,12 +233,22 @@ class OldStoreAdapter:
     IMPORTANT: This is a point-in-time snapshot, not a live read-through.
     Credentials added/revoked in the old store after construction are not
     visible until the adapter is reconstructed. This is acceptable for the
-    migration CLI (runs once) and short-lived dual-read windows. Phase 2
-    (#3739) should replace this with a live adapter backed by the actual
-    OAuthCredentialService if dual-read is used in long-running processes.
+    migration CLI (runs once).
+
+    Pass ``oauth_service`` to make delete() persist to the real credential
+    store (marking rows as revoked) rather than only removing the in-memory
+    snapshot — required for Phase 4 finalization (#3741).
     """
 
-    def __init__(self, old_credentials: list[dict[str, Any]]) -> None:
+    def __init__(
+        self,
+        old_credentials: list[dict[str, Any]],
+        *,
+        oauth_service: Any | None = None,
+    ) -> None:
+        self._oauth_service = oauth_service
+        # Keep raw credential metadata for zone-aware delete.
+        self._raw: dict[str, dict[str, Any]] = {}
         self._profiles: dict[str, AuthProfile] = {}
         for cred in old_credentials:
             provider = cred.get("provider", "")
@@ -254,6 +265,7 @@ class OldStoreAdapter:
                 user_email,
                 zone_id if zone_id and zone_id != "root" else None,
             )
+            self._raw[profile_id] = cred
             self._profiles[profile_id] = AuthProfile(
                 id=profile_id,
                 provider=provider,
@@ -270,6 +282,55 @@ class OldStoreAdapter:
 
     def get(self, profile_id: str) -> AuthProfile | None:
         return self._profiles.get(profile_id)
+
+    def list_rows(self) -> builtins.list[tuple[str, AuthProfile]]:
+        """Enumerate (profile_id, profile) tuples for every legacy row.
+
+        Used by finalize_migration() to verify parity before deleting rows.
+        """
+        return list(self._profiles.items())
+
+    def delete(self, profile_id: str) -> None:
+        """Remove the legacy row keyed by profile_id.
+
+        Used by finalize_migration() after parity verification passes.
+        When an oauth_service was supplied at construction, this also calls
+        OAuthCredentialService.delete_credentials() to mark the row as revoked
+        in the underlying token store, ensuring the legacy DB row is not just
+        removed from the in-memory snapshot (#3741).
+        """
+        cred = self._raw.pop(profile_id, None)
+        self._profiles.pop(profile_id, None)
+
+        if self._oauth_service is not None and cred is not None:
+            import asyncio
+
+            provider = cred.get("provider", "")
+            user_email = cred.get("user_email", "")
+            zone_id = cred.get("zone_id") or None
+            if provider and user_email:
+                try:
+                    asyncio.run(
+                        self._oauth_service.delete_credentials(
+                            provider=provider,
+                            user_email=user_email,
+                            zone_id=zone_id,
+                        )
+                    )
+                except RuntimeError:
+                    # Already inside a running event loop (e.g. pytest-asyncio).
+                    # Fall back to a thread to avoid "cannot run nested" error.
+                    import concurrent.futures
+
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                        pool.submit(
+                            asyncio.run,
+                            self._oauth_service.delete_credentials(
+                                provider=provider,
+                                user_email=user_email,
+                                zone_id=zone_id,
+                            ),
+                        ).result()
 
 
 class DualReadAuthProfileStore:
@@ -350,3 +411,93 @@ class DualReadAuthProfileStore:
         raw_error: str | None = None,
     ) -> None:
         self._new.mark_failure(profile_id, reason, raw_error=raw_error)
+
+
+# ---------------------------------------------------------------------------
+# Phase C finalization: verify-then-delete legacy rows (#3741)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class FinalizeFailure:
+    """One verification failure during `auth migrate --finalize`."""
+
+    profile_id: str
+    detail: str
+
+
+@dataclass(frozen=True, slots=True)
+class FinalizeResult:
+    """Outcome of finalize_migration: either all legacy rows verified and deleted,
+    or nothing was deleted because at least one row failed verification."""
+
+    ok: bool
+    deleted: list[str] = field(default_factory=list)
+    failures: list[FinalizeFailure] = field(default_factory=list)
+
+
+def finalize_migration(
+    *,
+    legacy_store: Any,  # duck-typed: list_rows() -> Iterable[(profile_id, credential)], delete(profile_id)
+    profile_store: Any,  # AuthProfileStore
+    backend: Any,  # CredentialBackend
+) -> FinalizeResult:
+    """Verify parity between legacy store and profile store, then delete legacy rows.
+
+    Two-phase: (1) verify every legacy row has a matching profile plus a passing
+    health_check; (2) only if all pass, delete the legacy rows. Any failure aborts —
+    nothing is deleted, operator fixes and re-runs.
+    """
+    import asyncio
+
+    from nexus.bricks.auth.credential_backend import HealthStatus
+
+    legacy_rows = list(legacy_store.list_rows())
+    failures: list[FinalizeFailure] = []
+
+    async def _check_one(profile_id: str) -> None:
+        profile = profile_store.get(profile_id)
+        if profile is None:
+            failures.append(
+                FinalizeFailure(
+                    profile_id=profile_id,
+                    detail=f"legacy row {profile_id} has no matching profile in profile store",
+                )
+            )
+            return
+        health = await backend.health_check(profile_id)
+        if health.status != HealthStatus.HEALTHY:
+            failures.append(
+                FinalizeFailure(
+                    profile_id=profile_id,
+                    detail=f"health_check failed for {profile_id}: {health.message}",
+                )
+            )
+
+    async def _check_all() -> None:
+        await asyncio.gather(*(_check_one(pid) for pid, _ in legacy_rows))
+
+    try:
+        running_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        running_loop = None
+
+    if running_loop is not None:
+        # We're inside an already-running event loop (e.g. pytest-asyncio AUTO
+        # mode, Jupyter). Use nest_asyncio if available, or run in a thread.
+        import concurrent.futures
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(asyncio.run, _check_all())
+            future.result()
+    else:
+        asyncio.run(_check_all())
+
+    if failures:
+        return FinalizeResult(ok=False, deleted=[], failures=failures)
+
+    deleted: list[str] = []
+    for profile_id, _ in legacy_rows:
+        legacy_store.delete(profile_id)
+        deleted.append(profile_id)
+    return FinalizeResult(ok=True, deleted=deleted, failures=[])

@@ -668,10 +668,10 @@ def _make_openai_exc(exc_class, *, code: str | None = None, message: str = "erro
             lambda openai: _make_openai_exc(openai.InternalServerError),
             AuthProfileFailureReason.OVERLOADED,
         ),
-        # Not found (model access)
+        # Not found (model access) — maps to UNKNOWN since Phase 4 (#3741)
         (
             lambda openai: _make_openai_exc(openai.NotFoundError),
-            AuthProfileFailureReason.MODEL_NOT_FOUND,
+            AuthProfileFailureReason.UNKNOWN,
         ),
         # Bad request
         (

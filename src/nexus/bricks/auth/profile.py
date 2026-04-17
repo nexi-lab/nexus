@@ -49,10 +49,6 @@ class AuthProfileFailureReason(Enum):
     CLOCK_SKEW = "clock_skew"  # client/server clock drift broke signature validation
     UNKNOWN = "unknown"  # fallback when classifier can't map the error
 
-    # Deprecated: remove in Phase 4 (#3741). Kept for backward compatibility
-    # with existing classifiers and cooldown policy entries.
-    MODEL_NOT_FOUND = "model_not_found"
-
 
 # ---------------------------------------------------------------------------
 # Usage stats

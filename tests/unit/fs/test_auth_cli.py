@@ -36,7 +36,7 @@ def _build_service(tmp_path: Path) -> UnifiedAuthService:
 
 def test_fs_auth_connect_s3_guides_and_stores_native(monkeypatch, tmp_path: Path) -> None:
     service = _build_service(tmp_path)
-    monkeypatch.setattr("nexus.fs._auth_cli._build_auth_service", lambda: service)
+    monkeypatch.setattr("nexus.bricks.auth.cli_commands._build_auth_service", lambda: service)
 
     runner = CliRunner()
     result = runner.invoke(auth, ["connect", "s3"], input="native\n")
@@ -44,12 +44,14 @@ def test_fs_auth_connect_s3_guides_and_stores_native(monkeypatch, tmp_path: Path
     assert result.exit_code == 0
     assert "Choose auth mode for s3" in result.output
     assert "Setup steps for s3 (native)" in result.output
-    assert "Next: nexus-fs auth test s3" in result.output
+    assert "Next: nexus auth test s3" in result.output
 
 
 def test_fs_auth_connect_gws_uses_local_oauth_setup(monkeypatch) -> None:
     called: dict[str, str | None] = {}
-    monkeypatch.setattr("nexus.fs._auth_cli._build_auth_service", lambda: _StubAuthService())
+    monkeypatch.setattr(
+        "nexus.bricks.auth.cli_commands._build_auth_service", lambda: _StubAuthService()
+    )
 
     def _fake_google_setup(
         *,
@@ -71,7 +73,7 @@ def test_fs_auth_connect_gws_uses_local_oauth_setup(monkeypatch) -> None:
             }
         )
 
-    monkeypatch.setattr("nexus.fs._auth_cli.run_google_oauth_setup", _fake_google_setup)
+    monkeypatch.setattr("nexus.fs._oauth_support.run_google_oauth_setup", _fake_google_setup)
 
     runner = CliRunner()
     result = runner.invoke(auth, ["connect", "gws"], input="alice@example.com\n")
@@ -114,7 +116,7 @@ def test_fs_auth_test_gws_prints_target_breakdown(monkeypatch) -> None:
                 ],
             }
 
-    monkeypatch.setattr("nexus.fs._auth_cli._build_auth_service", lambda: _Service())
+    monkeypatch.setattr("nexus.bricks.auth.cli_commands._build_auth_service", lambda: _Service())
     monkeypatch.setenv("NEXUS_NO_AUTO_JSON", "1")
 
     runner = CliRunner()
@@ -181,3 +183,48 @@ def test_fs_google_oauth_setup_stores_service_specific_provider(
 
     assert calls["provider_name"] == "google-drive"
     assert calls["stored_provider"] == "google-drive"
+
+
+def test_fs_auth_cli_loads_in_slim_package_without_bricks(monkeypatch):
+    """Regression: slim nexus-fs wheel excludes nexus.bricks — the module must
+    still import cleanly so `nexus-fs --help` works.  No subcommands register
+    in that case (user gets Click's usage error on invocation)."""
+    import importlib
+    import sys
+
+    # Hide every nexus.bricks.* entry + the cached fs._auth_cli so the import
+    # actually re-runs under the simulated slim environment.
+    saved_modules = {
+        name: sys.modules[name]
+        for name in list(sys.modules)
+        if name == "nexus.bricks"
+        or name.startswith("nexus.bricks.")
+        or name == "nexus.fs._auth_cli"
+    }
+    for name in saved_modules:
+        del sys.modules[name]
+
+    class _SlimBlocker:
+        def find_spec(self, name, path, target=None):  # noqa: ARG002, ANN001
+            if name == "nexus.bricks" or name.startswith("nexus.bricks."):
+                raise ModuleNotFoundError(f"blocked (simulated slim nexus-fs wheel): {name}")
+            return None
+
+    blocker = _SlimBlocker()
+    sys.meta_path.insert(0, blocker)
+    try:
+        slim_module = importlib.import_module("nexus.fs._auth_cli")
+        # Must expose an `auth` Click group so nexus.fs._cli can register it.
+        assert slim_module.auth.name == "auth"
+        # Trigger the lazy loader (list_commands) — bricks is blocked, so the
+        # group stays empty.  Previously this checked `.commands` directly,
+        # but the group now loads lazily to keep nexus.fs free of an eager
+        # bricks import (see src/nexus/fs/_auth_cli.py).
+        assert slim_module.auth.list_commands(None) == []
+    finally:
+        sys.meta_path.remove(blocker)
+        # Restore prior modules so the full-package tests that follow see a
+        # fully-populated `auth` group.
+        del sys.modules["nexus.fs._auth_cli"]
+        for name, module in saved_modules.items():
+            sys.modules[name] = module

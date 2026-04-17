@@ -17,6 +17,7 @@ mod bitmap;
 mod bloom;
 mod cas_chunking;
 mod cas_engine;
+mod cas_remote;
 mod cas_transport;
 mod dcache;
 mod dispatch;
@@ -49,6 +50,7 @@ mod openai_backend;
 #[cfg(feature = "connectors")]
 mod openai_inference;
 mod path_utils;
+mod peer_blob_client;
 mod permission_hook;
 mod pipe;
 mod pipe_manager;

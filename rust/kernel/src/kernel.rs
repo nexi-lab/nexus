@@ -528,6 +528,18 @@ pub struct Kernel {
     // origin in backend_name (e.g. "cas-local@nexus-1:2126"). Enables
     // on-demand remote content fetch on other nodes.
     self_address: parking_lot::RwLock<Option<String>>,
+    // Shared tokio runtime — constructed once at Kernel::new and used by
+    // every peer RPC (scatter-gather chunk fetch + federation remote
+    // reads). Replaces the one-shot `Builder::new_current_thread()` inside
+    // `try_remote_fetch` so tokio's workers shut down cleanly on
+    // `release_metastores`/Drop (addresses R11 hypothesis #2 — stuck async
+    // task blocking `docker stop`).
+    pub(crate) peer_client: Arc<crate::peer_blob_client::PeerBlobClient>,
+    // Scatter-gather fetcher: drives bounded fan-out against
+    // `backend_name.origins` whenever a local chunk miss occurs. Installed
+    // on every `CASEngine` via `MountTable` on mount registration.
+    #[allow(dead_code)]
+    pub(crate) chunk_fetcher: Arc<crate::cas_remote::GrpcChunkFetcher>,
 }
 
 impl Kernel {
@@ -535,6 +547,14 @@ impl Kernel {
 
     /// Create an empty kernel. Components wired by wrapper after construction.
     pub fn new() -> Self {
+        let runtime = crate::peer_blob_client::build_kernel_runtime();
+        let peer_client = Arc::new(crate::peer_blob_client::PeerBlobClient::new(Arc::clone(
+            &runtime,
+        )));
+        let chunk_fetcher = Arc::new(crate::cas_remote::GrpcChunkFetcher::new(
+            Arc::clone(&peer_client),
+            None,
+        ));
         Self {
             dlc: crate::dlc::DriverLifecycleCoordinator::new(),
             dcache: DCache::new(),
@@ -566,6 +586,8 @@ impl Kernel {
             stream_manager: Arc::new(crate::stream_manager::StreamManager::new()),
             native_hooks: Mutex::new(NativeHookRegistry::new()),
             self_address: parking_lot::RwLock::new(None),
+            peer_client,
+            chunk_fetcher,
         }
         // Observers registered on-demand (not at Kernel::new()).
         // FileWatcher + StreamEventObservers are registered by orchestrator
@@ -2615,34 +2637,15 @@ impl Kernel {
             .ok_or_else(not_found)?
             .to_string();
 
-        let endpoint = format!("http://{}", origin);
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| KernelError::IOError(format!("tokio runtime: {e}")))?;
-
-        let request_hash = content_hash.clone();
-        let data = runtime.block_on(async move {
-            let client_cfg = transport::ClientConfig::default();
-            let channel = transport::create_channel(&endpoint, &client_cfg)
-                .await
-                .map_err(|e| KernelError::IOError(format!("remote fetch channel: {e}")))?;
-            let mut client =
-                vfs_proto::nexus_vfs_service_client::NexusVfsServiceClient::new(channel);
-            let resp = client
-                .read_blob(tonic::Request::new(vfs_proto::ReadBlobRequest {
-                    content_hash: request_hash,
-                    auth_token: String::new(),
-                }))
-                .await
-                .map_err(|e| KernelError::IOError(format!("ReadBlob: {e}")))?
-                .into_inner();
-            if resp.is_error {
-                let msg = String::from_utf8_lossy(&resp.error_payload);
-                return Err(KernelError::IOError(format!("ReadBlob error: {msg}")));
-            }
-            Ok::<Vec<u8>, KernelError>(resp.content)
-        })?;
+        // Drive the RPC on the kernel-owned shared runtime — reusing the
+        // pooled tonic Channel from `peer_client`. No more one-shot
+        // `new_current_thread()` per call (that pattern left the runtime
+        // lingering if the future hadn't finished draining; see R11
+        // hypothesis #2).
+        let data = self
+            .peer_client
+            .fetch_blob(origin, &content_hash)
+            .map_err(KernelError::IOError)?;
 
         // Cache the remote-fetched blob into the local mount backend so
         // subsequent reads hit locally. Critical for failover: once the

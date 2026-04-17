@@ -161,9 +161,24 @@ pub trait ObjectStore: Send + Sync {
 pub(crate) struct CasLocalBackend(CASEngine);
 
 impl CasLocalBackend {
+    #[allow(dead_code)]
     pub fn new(root: &Path, fsync: bool) -> io::Result<Self> {
         let transport = LocalCASTransport::new(root, fsync)?;
         Ok(Self(CASEngine::new(transport)))
+    }
+
+    /// Build a backend with a scatter-gather fetcher pre-wired. Used by
+    /// `add_mount` so every per-mount `CASEngine` can fall through to
+    /// peer RPCs on local chunk miss.
+    pub fn new_with_fetcher(
+        root: &Path,
+        fsync: bool,
+        fetcher: std::sync::Arc<dyn crate::cas_remote::RemoteChunkFetcher>,
+    ) -> io::Result<Self> {
+        let transport = LocalCASTransport::new(root, fsync)?;
+        let mut engine = CASEngine::new(transport);
+        engine.set_fetcher(fetcher);
+        Ok(Self(engine))
     }
 }
 

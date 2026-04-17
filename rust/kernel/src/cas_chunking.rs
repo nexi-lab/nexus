@@ -16,6 +16,7 @@
 //! need only the reader.
 
 use crate::cas_engine::CASError;
+use crate::cas_remote::RemoteChunkFetcher;
 use crate::cas_transport::LocalCASTransport;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -41,11 +42,18 @@ const CDC_MAX_CHUNK_SIZE: u32 = 4 * 1024 * 1024;
 ///
 /// If `try_reassemble` returns `Some(bytes)`, the caller uses those bytes
 /// instead of the raw blob. If `None`, the blob is returned as-is.
+///
+/// `fetcher + origins` enable scatter-gather: when a chunk is missing
+/// locally, the assembler calls `fetcher.fetch_chunk(hash, origins)` to
+/// pull it from a peer, hash-verifies, writes back to local CAS, and
+/// retries. `fetcher: None` preserves local-only behaviour (unit tests).
 pub(crate) trait ChunkAssembler: Send + Sync {
     fn try_reassemble(
         &self,
         data: &[u8],
         transport: &LocalCASTransport,
+        fetcher: Option<&dyn RemoteChunkFetcher>,
+        origins: &[String],
     ) -> Result<Option<Vec<u8>>, CASError>;
 }
 
@@ -65,6 +73,8 @@ impl ChunkAssembler for ChunkedManifestAssembler {
         &self,
         data: &[u8],
         transport: &LocalCASTransport,
+        fetcher: Option<&dyn RemoteChunkFetcher>,
+        origins: &[String],
     ) -> Result<Option<Vec<u8>>, CASError> {
         // Fast reject: only check blobs < 500KB (manifests are always small —
         // ~100 bytes per chunk entry). Parse as JSON and check the `type`
@@ -99,17 +109,75 @@ impl ChunkAssembler for ChunkedManifestAssembler {
             None => return Ok(None),
         };
 
-        reassemble_chunks(chunks, transport).map(Some)
+        reassemble_chunks(chunks, transport, fetcher, origins).map(Some)
     }
 }
 
-/// Reassemble CDC chunks from manifest chunk array.
+/// Read a single chunk + verify its BLAKE3 hash matches the expected value.
 ///
-/// Validates that chunks cover `[0, total)` exactly — no gaps, no overlaps,
-/// no negative offsets (§ review fix #7). A malformed manifest that once
-/// produced silently corrupt content now surfaces as `CASError::IOError`.
-fn reassemble_chunks(chunks: &[Value], transport: &LocalCASTransport) -> Result<Vec<u8>, CASError> {
-    let mut parts: Vec<(u64, Vec<u8>)> = Vec::with_capacity(chunks.len());
+/// Mirrors Python `CDCEngine._read_and_verify_chunk`. Shared by
+/// `reassemble_chunks` and `CASEngine::read_chunked_range`.
+///
+/// On a local miss, falls back to `fetcher.fetch_chunk(hash, origins)` —
+/// used when metadata has Raft-replicated ahead of the content. The peer
+/// response is already hash-verified inside the fetcher; we still double-check
+/// here before writing it back so local CAS never holds bad bytes.
+pub(crate) fn read_and_verify_chunk(
+    transport: &LocalCASTransport,
+    expected_hash: &str,
+    fetcher: Option<&dyn RemoteChunkFetcher>,
+    origins: &[String],
+) -> Result<Vec<u8>, CASError> {
+    match transport.read_blob(expected_hash) {
+        Ok(data) => {
+            let actual = library::hash::hash_content(&data);
+            if actual != expected_hash {
+                return Err(CASError::IOError(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "chunk hash mismatch: expected {}, got {}",
+                        expected_hash, actual
+                    ),
+                )));
+            }
+            Ok(data)
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            // Scatter-gather fall-back: pull from a peer, hash-verify again,
+            // write-back to local CAS, return. Idempotent for CAS.
+            if let Some(f) = fetcher {
+                if !origins.is_empty() {
+                    if let Some(bytes) = f.fetch_chunk(expected_hash, origins) {
+                        let actual = library::hash::hash_content(&bytes);
+                        if actual != expected_hash {
+                            return Err(CASError::IOError(std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                format!(
+                                    "remote chunk hash mismatch: expected {}, got {}",
+                                    expected_hash, actual
+                                ),
+                            )));
+                        }
+                        // Write-back. `write_blob_with_hash` is dedup-aware.
+                        let _ = transport.write_blob_with_hash(&bytes, expected_hash);
+                        return Ok(bytes);
+                    }
+                }
+            }
+            Err(CASError::NotFound(expected_hash.to_string()))
+        }
+        Err(e) => Err(CASError::IOError(e)),
+    }
+}
+
+/// Reassemble CDC chunks from manifest chunk array (full-content path).
+pub(crate) fn reassemble_chunks(
+    chunks: &[Value],
+    transport: &LocalCASTransport,
+    fetcher: Option<&dyn RemoteChunkFetcher>,
+    origins: &[String],
+) -> Result<Vec<u8>, CASError> {
+    let mut parts: Vec<(i64, Vec<u8>)> = Vec::with_capacity(chunks.len());
     for chunk in chunks {
         let hash = chunk
             .get("chunk_hash")
@@ -121,17 +189,8 @@ fn reassemble_chunks(chunks: &[Value], transport: &LocalCASTransport) -> Result<
                 ))
             })?;
         let offset = chunk.get("offset").and_then(|o| o.as_i64()).unwrap_or(0);
-        if offset < 0 {
-            return Err(CASError::IOError(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("negative chunk offset {offset} for {hash}"),
-            )));
-        }
-        let data = transport.read_blob(hash).map_err(|e| match e.kind() {
-            std::io::ErrorKind::NotFound => CASError::NotFound(hash.to_string()),
-            _ => CASError::IOError(e),
-        })?;
-        parts.push((offset as u64, data));
+        let data = read_and_verify_chunk(transport, hash, fetcher, origins)?;
+        parts.push((offset, data));
     }
 
     parts.sort_by_key(|(offset, _)| *offset);
@@ -193,6 +252,23 @@ pub(crate) trait ChunkingStrategy: Send + Sync {
         content: &[u8],
         transport: &LocalCASTransport,
     ) -> Result<String, CASError>;
+
+    /// Split `content` into chunks without touching storage.
+    /// Returned tuples are `(offset, bytes)`; "offset" means "input byte
+    /// offset" for content-defined strategies (FastCDC) and "cumulative
+    /// re-serialized offset" for message-boundary strategies.
+    ///
+    /// Used by `CASEngine::write_chunked_partial` to re-chunk an affected
+    /// region without duplicating the boundary-detection logic.
+    fn chunk_content(&self, content: &[u8]) -> Result<Vec<(u64, Vec<u8>)>, CASError>;
+
+    /// Whether this strategy supports byte-offset partial writes. True for
+    /// FastCDC (content-byte offsets meaningful), false for MessageBoundary
+    /// (offsets are virtual — partial writes have no semantic meaning on a
+    /// message-array conversation).
+    fn supports_partial_writes(&self) -> bool {
+        false
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -203,7 +279,7 @@ pub(crate) trait ChunkingStrategy: Send + Sync {
 /// `{"type":"chunked_manifest","chunks":[...]}` blob + `.meta` sidecar.
 /// Strategies decide boundaries; this helper guarantees every strategy
 /// produces something the single `ChunkAssembler` reader can rebuild.
-fn finalize_manifest(
+pub(crate) fn finalize_manifest(
     chunk_entries: Vec<Value>,
     chunk_count: usize,
     total_size: usize,
@@ -264,6 +340,10 @@ impl ChunkingStrategy for FastCDCStrategy {
         content.len() > CDC_THRESHOLD_BYTES
     }
 
+    fn supports_partial_writes(&self) -> bool {
+        true
+    }
+
     fn write_chunked(
         &self,
         content: &[u8],
@@ -304,6 +384,21 @@ impl ChunkingStrategy for FastCDCStrategy {
             full_content_hash,
             transport,
         )
+    }
+
+    fn chunk_content(&self, content: &[u8]) -> Result<Vec<(u64, Vec<u8>)>, CASError> {
+        let chunker = fastcdc::v2020::FastCDC::new(
+            content,
+            CDC_MIN_CHUNK_SIZE,
+            CDC_AVG_CHUNK_SIZE,
+            CDC_MAX_CHUNK_SIZE,
+        );
+        let mut out: Vec<(u64, Vec<u8>)> = Vec::new();
+        for chunk in chunker {
+            let slice = &content[chunk.offset..chunk.offset + chunk.length];
+            out.push((chunk.offset as u64, slice.to_vec()));
+        }
+        Ok(out)
     }
 }
 
@@ -383,6 +478,24 @@ impl ChunkingStrategy for MessageBoundaryStrategy {
             full_content_hash,
             transport,
         )
+    }
+
+    fn chunk_content(&self, content: &[u8]) -> Result<Vec<(u64, Vec<u8>)>, CASError> {
+        let parsed: Value = serde_json::from_slice(content)
+            .map_err(|e| CASError::IOError(std::io::Error::other(e)))?;
+        let messages = parsed.as_array().ok_or_else(|| {
+            CASError::IOError(std::io::Error::other("expected JSON array of messages"))
+        })?;
+        let mut out: Vec<(u64, Vec<u8>)> = Vec::new();
+        let mut offset: u64 = 0;
+        for msg in messages {
+            let msg_bytes =
+                serde_json::to_vec(msg).map_err(|e| CASError::IOError(std::io::Error::other(e)))?;
+            let length = msg_bytes.len() as u64;
+            out.push((offset, msg_bytes));
+            offset += length;
+        }
+        Ok(out)
     }
 }
 

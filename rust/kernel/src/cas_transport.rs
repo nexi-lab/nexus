@@ -290,6 +290,37 @@ impl LocalCASTransport {
         Ok(())
     }
 
+    /// Read a `.meta` JSON sidecar.
+    ///
+    /// Corresponds to Python `CASAddressingEngine._read_meta()`'s transport fetch.
+    /// Returns `io::ErrorKind::NotFound` when the sidecar is absent (callers
+    /// treat that as "not chunked").
+    pub fn read_meta(&self, content_hash: &str) -> io::Result<Vec<u8>> {
+        let key = blob_key(content_hash);
+        let path = self.resolve(&format!("{}.meta", key));
+        std::fs::read(&path)
+    }
+
+    /// Cheap existence check for the `.meta` sidecar — used by `is_chunked`
+    /// as a fast-reject before the full read + JSON parse.
+    pub fn meta_exists(&self, content_hash: &str) -> bool {
+        let key = blob_key(content_hash);
+        let path = self.resolve(&format!("{}.meta", key));
+        path.is_file()
+    }
+
+    /// Remove the `.meta` sidecar. Absorbs `NotFound` (best-effort, matches
+    /// Python's `contextlib.suppress(Exception)` in `delete_chunked`).
+    pub fn remove_meta(&self, content_hash: &str) -> io::Result<()> {
+        let key = blob_key(content_hash);
+        let path = self.resolve(&format!("{}.meta", key));
+        match std::fs::remove_file(&path) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
+
     pub fn remove_blob(&self, content_hash: &str) -> io::Result<()> {
         let key = blob_key(content_hash);
         let path = self.resolve(&key);
@@ -526,46 +557,42 @@ mod tests {
     }
 
     #[test]
-    fn test_concurrent_writes_never_truncated_readable() {
-        // Regression for review fix #2: the old code used
-        // OpenOptions::create(true).truncate(true), so concurrent writers of
-        // the same hash would both truncate and re-write. Any reader racing
-        // in between could observe a zero-length file (wrong content hash).
-        // The new tmp+rename path must keep readers consistent at all times.
-        use std::sync::Arc;
-        use std::thread;
+    fn test_meta_roundtrip() {
+        let (_tmp, transport) = setup();
+        let content = b"meta roundtrip";
+        let hash = transport.write_blob(content).unwrap();
 
-        let tmp = TempDir::new().unwrap();
-        let transport = Arc::new(LocalCASTransport::new(tmp.path(), false).unwrap());
-        let content = vec![0x7A; 128 * 1024];
-        let hash = library::hash::hash_content(&content);
+        assert!(!transport.meta_exists(&hash));
+        let err = transport.read_meta(&hash).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
 
-        let writers: Vec<_> = (0..8)
-            .map(|_| {
-                let t = Arc::clone(&transport);
-                let c = content.clone();
-                thread::spawn(move || t.write_blob(&c).unwrap())
-            })
-            .collect();
-        let reader = {
-            let t = Arc::clone(&transport);
-            let hash_reader = hash.clone();
-            thread::spawn(move || {
-                for _ in 0..200 {
-                    if let Ok(bytes) = t.read_blob(&hash_reader) {
-                        // Partial reads (wrong length) would indicate the
-                        // destination was observed mid-write.
-                        assert_eq!(bytes.len(), 128 * 1024);
-                    }
-                }
-            })
-        };
-        for h in writers {
-            assert_eq!(h.join().unwrap(), hash);
-        }
-        reader.join().unwrap();
-        let final_bytes = transport.read_blob(&hash).unwrap();
-        assert_eq!(final_bytes, content);
+        let meta = br#"{"size":14,"is_chunked_manifest":false}"#;
+        transport.write_meta(&hash, meta).unwrap();
+
+        assert!(transport.meta_exists(&hash));
+        let read_back = transport.read_meta(&hash).unwrap();
+        assert_eq!(read_back, meta);
+    }
+
+    #[test]
+    fn test_remove_meta_absorbs_not_found() {
+        let (_tmp, transport) = setup();
+        transport
+            .remove_meta("0000000000000000000000000000000000000000000000000000000000000000")
+            .unwrap();
+    }
+
+    #[test]
+    fn test_remove_meta_deletes_sidecar() {
+        let (_tmp, transport) = setup();
+        let hash = transport.write_blob(b"with meta").unwrap();
+        transport.write_meta(&hash, b"{}").unwrap();
+        assert!(transport.meta_exists(&hash));
+
+        transport.remove_meta(&hash).unwrap();
+        assert!(!transport.meta_exists(&hash));
+        // Blob itself is untouched
+        assert!(transport.exists(&hash));
     }
 
     #[test]

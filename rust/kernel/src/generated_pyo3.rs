@@ -1627,7 +1627,13 @@ impl PyKernel {
                     .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
                 Some(Box::new(b))
             } else {
-                let b = CasLocalBackend::new(Path::new(root), fsync)
+                // Inject the kernel-owned scatter-gather fetcher so local
+                // chunk misses on this mount can fall through to peer RPCs
+                // against the file's `backend_name.origins`.
+                let fetcher: Arc<dyn crate::cas_remote::RemoteChunkFetcher> =
+                    Arc::clone(&self.inner.chunk_fetcher)
+                        as Arc<dyn crate::cas_remote::RemoteChunkFetcher>;
+                let b = CasLocalBackend::new_with_fetcher(Path::new(root), fsync, fetcher)
                     .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
                 Some(Box::new(b))
             }

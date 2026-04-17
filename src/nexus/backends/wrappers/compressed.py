@@ -42,6 +42,9 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from compression import zstd
+from compression.zstd import ZstdCompressor
+
 from nexus.backends.storage.delegating import DelegatingBackend
 from nexus.backends.wrappers.headers import COMPRESSED_HEADER as _COMPRESSED_HEADER
 from nexus.backends.wrappers.metrics import WrapperMetrics
@@ -52,38 +55,12 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# zstd availability detection (Python 3.14+ stdlib or zstandard package)
+# zstd availability detection (Python 3.14+ stdlib)
 # ---------------------------------------------------------------------------
 
-_ZSTD_AVAILABLE = False
-_zstd_compress: object | None = None
-_zstd_decompress: object | None = None
-
-try:
-    from compression import zstd  # Python 3.14+
-
-    _zstd_compress = zstd.compress
-    _zstd_decompress = zstd.decompress
-    _ZSTD_AVAILABLE = True
-    logger.debug("[COMPRESSED_WRAPPER] Using Python 3.14+ native zstd")
-except ImportError:
-    try:
-        import zstandard
-
-        def _compat_compress(data: bytes, *, level: int = 3) -> bytes:
-            compressor = zstandard.ZstdCompressor(level=level)
-            return bytes(compressor.compress(data))
-
-        def _compat_decompress(data: bytes) -> bytes:
-            decompressor = zstandard.ZstdDecompressor()
-            return bytes(decompressor.decompress(data))
-
-        _zstd_compress = _compat_compress
-        _zstd_decompress = _compat_decompress
-        _ZSTD_AVAILABLE = True
-        logger.debug("[COMPRESSED_WRAPPER] Using zstandard package")
-    except ImportError:
-        logger.debug("[COMPRESSED_WRAPPER] zstd not available")
+_zstd_compress = zstd.compress
+_zstd_decompress = zstd.decompress
+_ZSTD_AVAILABLE = True
 
 
 def is_zstd_available() -> bool:
@@ -144,18 +121,10 @@ class CompressedStorage(DelegatingBackend):
     ``read_content`` / ``write_content`` / ``batch_read_content`` from
     DelegatingBackend. Overrides ``_transform_on_write`` and
     ``_transform_on_read`` to add compression/decompression.
-
-    Raises:
-        RuntimeError: If zstd is not available at construction time.
     """
 
     def __init__(self, inner: "Backend", config: CompressedStorageConfig | None = None) -> None:
         super().__init__(inner)
-        if not _ZSTD_AVAILABLE:
-            raise RuntimeError(
-                "zstd compression not available. Install the 'zstandard' package "
-                "or upgrade to Python 3.14+ for native compression.zstd support."
-            )
         self._config = config or CompressedStorageConfig()
         self._metrics = WrapperMetrics(
             meter_name="nexus.compressed_storage",
@@ -170,16 +139,7 @@ class CompressedStorage(DelegatingBackend):
         )
 
         # Cache compressor instance for reuse.
-        # ZstdCompressor.compress() is documented thread-safe (stateless per call).
-        # See: https://github.com/indygreg/python-zstandard/blob/main/README.rst
-        try:
-            import zstandard
-
-            self._cached_compressor: zstandard.ZstdCompressor | None = zstandard.ZstdCompressor(
-                level=self._config.level
-            )
-        except ImportError:
-            self._cached_compressor = None
+        self._cached_compressor: ZstdCompressor = ZstdCompressor(level=self._config.level)
 
         logger.info(
             "CompressedStorage initialized (zstd, level=%d, min_size=%d)",
@@ -218,10 +178,9 @@ class CompressedStorage(DelegatingBackend):
             return content
 
         try:
-            if self._cached_compressor is not None:
-                compressed = bytes(self._cached_compressor.compress(content))
-            else:
-                compressed = _zstd_compress(content, level=self._config.level)  # type: ignore[misc, operator]
+            compressed = self._cached_compressor.compress(content) + self._cached_compressor.flush(
+                self._cached_compressor.FLUSH_FRAME
+            )
 
             # Only use compressed version if it actually saves space
             if len(compressed) >= len(content):
@@ -255,7 +214,7 @@ class CompressedStorage(DelegatingBackend):
 
         compressed = data[_HEADER_LEN:]
         try:
-            result = bytes(_zstd_decompress(compressed))  # type: ignore[misc, operator]
+            result = bytes(_zstd_decompress(compressed))
             self._metrics.increment("decompress_ops")
             return result
         except Exception as e:

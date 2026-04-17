@@ -21,7 +21,7 @@ Design reference:
     - Issue #2077: Deduplicate backend wrapper boilerplate
 """
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -31,7 +31,8 @@ from nexus.core.object_store import WriteResult
 from tests.unit.backends.wrapper_test_helpers import make_leaf, make_storage_mock
 
 pytestmark = pytest.mark.skipif(
-    not is_zstd_available(), reason="zstd not available (install zstandard or use Python 3.14+)"
+    not is_zstd_available(),
+    reason="zstd not available (requires Python 3.14+ stdlib compression.zstd)",
 )
 
 # ---------------------------------------------------------------------------
@@ -358,14 +359,12 @@ class TestCompressedFailureFallback:
 
         content = b"this should be stored uncompressed " * 100
 
-        # Mock the compressor to raise
-        with (
-            patch.object(wrapper, "_cached_compressor", None),
-            patch(
-                "nexus.backends.wrappers.compressed._zstd_compress",
-                side_effect=RuntimeError("compressor broken"),
-            ),
-        ):
+        # Replace the cached compressor with a mock that raises on compress.
+        # ZstdCompressor.compress is a read-only C slot, so we swap the whole
+        # object rather than patching the attribute directly.
+        broken_compressor = MagicMock()
+        broken_compressor.compress.side_effect = RuntimeError("compressor broken")
+        with patch.object(wrapper, "_cached_compressor", broken_compressor):
             write_resp = wrapper.write_content(content)
 
         # Write should succeed with uncompressed content

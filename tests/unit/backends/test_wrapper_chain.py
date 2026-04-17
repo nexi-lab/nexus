@@ -22,7 +22,8 @@ from nexus.core.object_store import WriteResult
 from tests.unit.backends.wrapper_test_helpers import make_storage_mock
 
 pytestmark = pytest.mark.skipif(
-    not is_zstd_available(), reason="zstd not available (install zstandard or use Python 3.14+)"
+    not is_zstd_available(),
+    reason="zstd not available (requires Python 3.14+ stdlib compression.zstd)",
 )
 
 # ---------------------------------------------------------------------------

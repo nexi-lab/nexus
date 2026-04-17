@@ -30,7 +30,8 @@ from nexus.backends.wrappers.logging import LoggingBackendWrapper
 from nexus.contracts.describable import Describable
 
 _skip_no_zstd = pytest.mark.skipif(
-    not is_zstd_available(), reason="zstd not available (install zstandard or use Python 3.14+)"
+    not is_zstd_available(),
+    reason="zstd not available (requires Python 3.14+ stdlib compression.zstd)",
 )
 
 _TEST_KEY = AESGCMSIV.generate_key(bit_length=256)

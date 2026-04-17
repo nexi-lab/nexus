@@ -263,18 +263,6 @@ class ProviderRegistry(BaseRegistry[ParseProvider]):
         except ImportError as e:
             logger.debug("pdf-inspector provider not available: %s", e)
 
-        # Try to register MarkItDown (optional fallback for non-PDF formats)
-        try:
-            from nexus.bricks.parsers.providers.markitdown_provider import MarkItDownProvider
-
-            config = config_map.get("markitdown", ProviderConfig(name="markitdown", priority=10))
-            markitdown_provider = MarkItDownProvider(config)
-            if markitdown_provider.is_available():
-                self.register(markitdown_provider)
-                registered += 1
-        except Exception as e:
-            logger.debug("MarkItDown provider not available: %s", e)
-
         logger.info("Auto-discovered %d parse providers", registered)
         return registered
 

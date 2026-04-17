@@ -13,7 +13,6 @@ from collections.abc import Callable
 from typing import Any
 
 from nexus.bricks.parsers.detection import prepare_content_for_parsing
-from nexus.bricks.parsers.markitdown_parser import MarkItDownParser
 from nexus.bricks.parsers.pdf_inspector_parser import PdfInspectorParser
 from nexus.bricks.parsers.providers.base import ProviderConfig
 from nexus.bricks.parsers.providers.registry import ProviderRegistry
@@ -29,7 +28,6 @@ class ParsersBrick:
     - Zero imports from ``nexus.core``
     - Constructor injection for config
     - Provides ``parse_fn`` callback for virtual views
-    - Shares a single ``MarkItDownParser`` across registries
 
     Example::
 
@@ -50,10 +48,8 @@ class ParsersBrick:
         """
         # Parser registry — extension-based selection.
         # PdfInspectorParser registered first so it wins priority sort for .pdf.
-        # MarkItDownParser covers non-PDF formats (when markitdown is installed).
         self._parser_registry = ParserRegistry()
         self._parser_registry.register(PdfInspectorParser())
-        self._parser_registry.register(MarkItDownParser())
 
         # Provider registry — API-provider selection
         self._provider_registry = ProviderRegistry()
@@ -95,7 +91,7 @@ class ParsersBrick:
     def create_parse_fn(self) -> Callable[[bytes, str], bytes | None]:
         """Create a sync parse callback for virtual views.
 
-        Uses the shared ``ParserRegistry`` (no redundant MarkItDown instance).
+        Uses the shared ``ParserRegistry``.
         Detects whether a running event loop already exists and delegates via
         ``run_in_executor`` when it does (Issue #13A).
 

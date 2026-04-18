@@ -26,7 +26,7 @@ per-sandbox clients that talk to it.
 | Storage (metastore + records) | SQLite | PostgreSQL |
 | Cache | In-process LRU | Dragonfly / Redis |
 | Keyword search | BM25S mmap | BM25S + Zoekt |
-| Semantic search | Federated to peers; BM25S fallback | Local txtai + federation |
+| Semantic search | Local (sqlite-vec) or federated (peers); BM25S fallback | Local txtai + federation |
 | HTTP surface | `/health`, `/api/v2/features` | Full `/api/v2/*` |
 | MCP | Yes | Yes |
 | Target RSS | <400 MB | Multi-GB |
@@ -61,13 +61,60 @@ profile: sandbox
 #   data_dir: ~/.nexus/sandbox
 #   db_path: ~/.nexus/sandbox/nexus.db
 #   cache_size_mb: 64
-#   enable_vector_search: false
+# Opt in to local vector search (requires an embedding API key, see below):
+# enable_vector_search: true
 
 features:
   # Everything off by default except SANDBOX's required set.
   # Re-enable specific bricks:
   # workflows: true
 ```
+
+## Local vector search (opt-in)
+
+SANDBOX can do real vector search locally, without federation, using:
+
+* **`sqlite-vec`** — a tiny (~3 MB) SQLite extension that adds a `vec0`
+  virtual table with KNN. The vector data lives in the same `nexus.db`
+  file as the rest of SANDBOX state; nothing new to operate.
+* **`litellm`** — provider-agnostic embeddings. Bring your own API key
+  for OpenAI / Cohere / Anthropic / Azure / etc. Default model is
+  `text-embedding-3-small` (1536 dim). Override with
+  `NEXUS_EMBEDDING_MODEL`.
+
+Both are bundled with the `[sandbox]` extra:
+
+```bash
+pip install 'nexus-ai-fs[sandbox]'
+```
+
+It's **off by default** so SANDBOX still boots without an embedding
+key. To enable, opt in via the config or env:
+
+```yaml
+profile: sandbox
+enable_vector_search: true
+```
+
+```bash
+# any provider supported by litellm
+export OPENAI_API_KEY=sk-...
+# (optional) override the embedding model
+# export NEXUS_EMBEDDING_MODEL=text-embedding-3-large
+NEXUS_PROFILE=sandbox NEXUS_ENABLE_VECTOR_SEARCH=true nexus serve
+```
+
+When enabled, the SANDBOX semantic search path becomes:
+
+1. **Primary** — local sqlite-vec KNN inside the active zone. Hits
+   come back without any degraded flag.
+2. **Secondary** — federation to configured peer zones (if any).
+3. **Tertiary** — BM25S keyword search with `semantic_degraded=true`
+   stamped on every result.
+
+When the `[sandbox]` extra isn't installed (or no API key is set), the
+factory logs a single WARNING naming the missing package and falls
+through to steps 2 and 3 transparently — boot does not fail.
 
 ## Federation
 

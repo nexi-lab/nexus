@@ -249,6 +249,27 @@ async def connect(
     # Load configuration
     cfg = load_config(config)
 
+    # Issue #3778: propagate selected config fields to env so the boot
+    # tiers (orchestrator, _wired.py) — which read env vars directly,
+    # not the as-yet-unattached ``nx._config`` — see them.  We only set
+    # values that are NOT already present in env so explicit env wins.
+    #
+    # ``enable_vector_search`` is propagated only when the user *explicitly*
+    # set it in their input dict (not when the schema default leaks through
+    # the ``model_dump`` roundtrip in ``_load_from_dict``). This keeps the
+    # SANDBOX default off-by-default — users opt in via either an explicit
+    # dict key or the ``NEXUS_ENABLE_VECTOR_SEARCH`` env var.
+    if not os.environ.get("NEXUS_PROFILE"):
+        _profile_val = getattr(cfg, "profile", None)
+        if _profile_val:
+            os.environ["NEXUS_PROFILE"] = str(_profile_val)
+    if not os.environ.get("NEXUS_ENABLE_VECTOR_SEARCH"):
+        _user_evs: bool | None = None
+        if isinstance(config, dict) and "enable_vector_search" in config:
+            _user_evs = bool(config["enable_vector_search"])
+        if _user_evs is not None:
+            os.environ["NEXUS_ENABLE_VECTOR_SEARCH"] = "true" if _user_evs else "false"
+
     # ── Profile: remote ──────────────────────────────────────────────
     if cfg.profile == "remote":
         from urllib.parse import urlparse

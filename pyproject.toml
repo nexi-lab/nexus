@@ -174,6 +174,12 @@ sandbox = [
     "bm25s>=0.2",
     "cachetools>=5.0",
     "tokenizers>=0.15",
+    # Local vector storage (sqlite-vec = SQLite extension, ~3 MB wheel).
+    # Loaded into the same nexus.db file via conn.enable_load_extension().
+    "sqlite-vec>=0.1",
+    # Remote embeddings via any provider (OpenAI / Cohere / Azure / etc.).
+    # BYO API key — picked up from the standard env vars by litellm.
+    "litellm>=1.74.0",
 ]
 
 sentry = [

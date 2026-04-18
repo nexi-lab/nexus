@@ -169,7 +169,80 @@ async def _boot_post_kernel_services(
         # can detect SANDBOX and route to the BM25S fallback with a stamped
         # ``semantic_degraded=True`` flag.  Profile is sourced from env (set
         # by connect()/CLI); falls back to None for callers that don't set it.
+        # ``nx._config`` isn't yet attached at this point in the boot — the
+        # env var is the canonical signal here.
         _profile = (_os.environ.get("NEXUS_PROFILE") or "").strip().lower() or None
+
+        # Issue #3778: optional local sqlite-vec backend (SANDBOX only).
+        # We only attempt the import when:
+        #   * profile == "sandbox"  AND
+        #   * enable_vector_search is True  (opt-in; default False on SANDBOX)
+        #
+        # The user can opt-in via either ``cfg.enable_vector_search=True`` in
+        # the config dict (preferred) or ``NEXUS_ENABLE_VECTOR_SEARCH=true``
+        # in the env. Both ``sqlite-vec`` and ``litellm`` must be importable;
+        # missing either degrades silently to the federation/BM25S chain.
+        #
+        # Note: ``nx._config`` is only attached AFTER ``create_nexus_fs()``
+        # returns (see nexus/__init__.py), so at this point in the boot we
+        # rely on env-var signalling. ``connect()`` propagates the config
+        # dict's ``enable_vector_search`` to ``NEXUS_ENABLE_VECTOR_SEARCH``
+        # before invoking the factory (Issue #3778).
+        _sqlite_vec_backend: Any = None
+
+        def _env_truthy(name: str) -> bool:
+            return (_os.environ.get(name) or "").strip().lower() in (
+                "1",
+                "true",
+                "yes",
+                "on",
+            )
+
+        _enable_vec = _env_truthy("NEXUS_ENABLE_VECTOR_SEARCH")
+        if _profile == "sandbox" and _enable_vec:
+            try:
+                from nexus.bricks.search.sqlite_vec_backend import SqliteVecBackend
+
+                # Derive db path. Prefer NEXUS_DB_PATH; otherwise pull from
+                # the record_store's SQLAlchemy engine URL (only valid when
+                # the record store is SQLite-backed, which is the SANDBOX
+                # case by construction).
+                _vec_db_path: str | None = _os.environ.get("NEXUS_DB_PATH") or None
+                if not _vec_db_path:
+                    _rs = getattr(nx, "_record_store", None)
+                    _eng = getattr(_rs, "engine", None) if _rs is not None else None
+                    if _eng is not None:
+                        _url = str(_eng.url)
+                        # SQLAlchemy SQLite URL: sqlite:////absolute/path.db
+                        if _url.startswith("sqlite:///"):
+                            _vec_db_path = _url[len("sqlite:///") :]
+                            # Restore leading slash for absolute paths
+                            # (SQLAlchemy uses 4 slashes: sqlite:////abs).
+                            if _url.startswith("sqlite:////"):
+                                _vec_db_path = "/" + _vec_db_path.lstrip("/")
+
+                if _vec_db_path:
+                    _sqlite_vec_backend = SqliteVecBackend(db_path=str(_vec_db_path))
+                    logger.info(
+                        "[BOOT:WIRED] SqliteVecBackend created (db=%s) — SANDBOX local vector search enabled",
+                        _vec_db_path,
+                    )
+                else:
+                    logger.warning(
+                        "[BOOT:WIRED] SANDBOX enable_vector_search=true but no db_path resolved; "
+                        "skipping local vector backend"
+                    )
+            except ImportError as exc:
+                logger.warning(
+                    "[BOOT:WIRED] SANDBOX enable_vector_search=true but optional dep missing (%s); "
+                    "install with: pip install 'nexus-ai-fs[sandbox]' — falling back to federation/BM25S",
+                    exc,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "[BOOT:WIRED] SqliteVecBackend init failed: %s — falling back to federation/BM25S",
+                    exc,
+                )
 
         search_service = SearchService(
             metadata_store=nx.metadata,
@@ -181,8 +254,13 @@ async def _boot_post_kernel_services(
             record_store=getattr(nx, "_record_store", None),
             gateway=gateway,
             deployment_profile=_profile,
+            sqlite_vec_backend=_sqlite_vec_backend,
         )
-        logger.debug("[BOOT:WIRED] SearchService created (kernel-level, profile=%s)", _profile)
+        logger.debug(
+            "[BOOT:WIRED] SearchService created (kernel-level, profile=%s, sqlite_vec=%s)",
+            _profile,
+            _sqlite_vec_backend is not None,
+        )
     except Exception as exc:
         logger.warning(
             "[BOOT:WIRED] SearchService unavailable (glob/grep will not work): %s",

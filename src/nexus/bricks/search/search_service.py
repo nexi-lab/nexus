@@ -203,6 +203,7 @@ class SearchService:
         file_cache: Any | None = None,
         zoekt_client: Any | None = None,
         deployment_profile: str | None = None,
+        sqlite_vec_backend: Any | None = None,
     ):
         """Initialize search service.
 
@@ -220,6 +221,13 @@ class SearchService:
                 When set to ``"sandbox"``, a semantic search that goes through
                 ``_semantic_with_sandbox_fallback`` will degrade gracefully to
                 local BM25S when federation reports all peers unreachable.
+            sqlite_vec_backend: Optional ``SqliteVecBackend`` instance
+                (Issue #3778). When supplied, SANDBOX-profile semantic search
+                tries this local vector backend first; a non-empty result set
+                short-circuits the federation/BM25S fallback chain. The
+                factory only wires this when ``profile=sandbox`` AND
+                ``cfg.enable_vector_search`` AND both ``sqlite-vec`` +
+                ``litellm`` are importable.
         """
         self.metadata = metadata_store
         self._record_store = record_store
@@ -263,6 +271,11 @@ class SearchService:
         # the instance so a long-running sandbox doesn't spam the log.
         self._deployment_profile = (deployment_profile or "").lower() or None
         self._sandbox_fallback_warned = False
+        # Issue #3778: optional local vector backend (sqlite-vec + litellm).
+        # When non-None on SANDBOX, semantic search tries the local backend
+        # first and only falls back to federation/BM25S when it returns
+        # empty (or raises).
+        self._sqlite_vec_backend = sqlite_vec_backend
 
         logger.info("[SearchService] Initialized")
 
@@ -3315,6 +3328,78 @@ class SearchService:
             stamped.append(r)
         return stamped
 
+    async def _try_sqlite_vec_sandbox(
+        self,
+        *,
+        query: str,
+        path: str,
+        limit: int,
+        context: "OperationContext | None",
+    ) -> builtins.list[dict[str, Any]] | None:
+        """Issue #3778: try the local sqlite-vec backend first on SANDBOX.
+
+        Returns:
+            * a non-empty list of dict results when the backend is wired and
+              KNN returned hits — caller should NOT stamp ``semantic_degraded``
+              because this is a *real* semantic match.
+            * ``None`` when the backend is absent, errored, or returned no
+              hits — caller falls through to the federation/BM25S chain.
+        """
+        backend = self._sqlite_vec_backend
+        if backend is None:
+            return None
+
+        zone_id = getattr(context, "zone_id", None) if context else None
+        if not zone_id:
+            zone_id = ROOT_ZONE_ID
+
+        try:
+            from nexus.server.path_utils import unscope_internal_path as _unscope
+
+            db_path = _unscope(path) if path != "/" else None
+            fetch_limit = limit * 3 if self._permission_enforcer else limit
+            results = await backend.search(
+                query=query,
+                limit=fetch_limit,
+                zone_id=zone_id,
+                search_type="hybrid",
+                path_filter=db_path,
+            )
+        except Exception as exc:
+            logger.warning(
+                "[SearchService] SANDBOX local sqlite-vec search failed (%s); "
+                "falling back to federation/BM25S chain",
+                exc,
+            )
+            return None
+
+        if not results:
+            return None
+
+        hits: builtins.list[dict[str, Any]] = []
+        for r in results:
+            entry: dict[str, Any] = {
+                "path": r.path,
+                "chunk_text": getattr(r, "chunk_text", ""),
+                "score": round(r.score, 4),
+                "chunk_index": getattr(r, "chunk_index", 0),
+                "start_offset": getattr(r, "start_offset", 0) or 0,
+                "end_offset": getattr(r, "end_offset", 0) or 0,
+                "line_start": getattr(r, "line_start", 0) or 0,
+                "line_end": getattr(r, "line_end", 0) or 0,
+            }
+            ctx_val = getattr(r, "context", None)
+            if ctx_val is not None:
+                entry["context"] = ctx_val
+            hits.append(entry)
+
+        if self._permission_enforcer and hits and context is not None:
+            all_paths = [h["path"] for h in hits]
+            accessible = set(self._permission_enforcer.filter_list(all_paths, context))
+            hits = [h for h in hits if h["path"] in accessible]
+
+        return hits[:limit] if hits else None
+
     async def _semantic_search_sandbox(
         self,
         *,
@@ -3323,18 +3408,33 @@ class SearchService:
         limit: int,
         context: "OperationContext | None",
     ) -> builtins.list[dict[str, Any]]:
-        """SANDBOX-profile semantic_search: degrade to BM25S with stamped flag.
+        """SANDBOX-profile semantic_search: local vec → federation → BM25S.
 
-        Issue #3778.  SANDBOX never has federated peers configured, so we
-        synthesise a "no peers searched" FederatedSearchResponse to drive the
-        shared fallback wrapper.  The BM25S callable delegates to the local
-        SearchDaemon's keyword path (which is backed by BM25S when the
-        daemon's bm25s backend is available) and falls back to the SQL
-        chunk search when no daemon is wired (offline tests).
+        Issue #3778. The fallback chain on SANDBOX is:
 
-        The result dicts carry ``semantic_degraded=True`` so MCP and HTTP
-        callers can surface the flag directly to clients.
+        1. **Local sqlite-vec** (``self._sqlite_vec_backend``). When wired
+           and the KNN query returns hits, those hits are returned directly
+           and ``semantic_degraded`` is NOT set (this is a real semantic
+           match, just on a local store rather than a federated peer).
+        2. **Federation**: SANDBOX never has peers configured, so the
+           ``FederatedSearchResponse`` is synthesised as "no peers" — that
+           causes ``_semantic_with_sandbox_fallback`` to invoke the BM25S
+           callable.
+        3. **BM25S** (via the local SearchDaemon's keyword path), or the
+           SQL chunk search when no daemon is wired. Results carry
+           ``semantic_degraded=True`` so MCP / HTTP clients can warn users
+           that the answer is keyword-only.
         """
+        # Step 1 — try the local vector backend first.
+        local = await self._try_sqlite_vec_sandbox(
+            query=query, path=path, limit=limit, context=context
+        )
+        if local is not None:
+            return local
+
+        # Step 2 + 3 — synthesise an empty FederatedSearchResponse so the
+        # shared fallback wrapper invokes the BM25S callable and stamps
+        # ``semantic_degraded=True`` on every result.
         from nexus.bricks.search.federated_search import (
             FederatedSearchResponse,
         )

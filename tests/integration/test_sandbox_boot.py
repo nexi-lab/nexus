@@ -163,6 +163,73 @@ async def test_sandbox_http_surface_is_restricted(
         nx.close()
 
 
+def _resolve_search_service(nx: object) -> object | None:
+    """Return the underlying SearchService instance from ``nx.service("search")``.
+
+    ``nx.service(name)`` returns a ``ServiceRef`` proxy; the actual
+    instance lives on ``._service_instance``.
+    """
+    ref = nx.service("search") if hasattr(nx, "service") else None
+    if ref is None:
+        return None
+    return getattr(ref, "_service_instance", ref)
+
+
+@pytest.mark.asyncio
+async def test_sandbox_default_does_not_instantiate_sqlite_vec_backend(
+    tmp_path: Path,
+) -> None:
+    """SANDBOX default config has enable_vector_search=False, so the
+    optional local sqlite-vec backend must NOT be wired into SearchService.
+    """
+    nx = await nexus.connect(config=_sandbox_config(tmp_path))
+    try:
+        svc = _resolve_search_service(nx)
+        assert svc is not None
+        # Default SANDBOX: enable_vector_search=False -> no backend wired.
+        assert getattr(svc, "_sqlite_vec_backend", None) is None
+    finally:
+        nx.close()
+
+
+@pytest.mark.asyncio
+async def test_sandbox_with_vector_search_enabled_wires_backend(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Opt-in path: with enable_vector_search=True (and the optional deps
+    importable), the SqliteVecBackend is constructed and attached to
+    SearchService.
+    """
+    pytest.importorskip("sqlite_vec")
+    pytest.importorskip("litellm")
+
+    cfg = _sandbox_config(tmp_path)
+    cfg["enable_vector_search"] = True
+
+    # Patch litellm.aembedding so any accidental call doesn't go to a real
+    # provider (the backend is lazy — no embedding call at construction).
+    async def _fake_aembedding(**_kwargs: object) -> object:
+        class _R:
+            data = [{"embedding": [0.0]}]
+
+        return _R()
+
+    monkeypatch.setattr("litellm.aembedding", _fake_aembedding, raising=False)
+
+    nx = await nexus.connect(config=cfg)
+    try:
+        svc = _resolve_search_service(nx)
+        assert svc is not None
+        backend = getattr(svc, "_sqlite_vec_backend", None)
+        assert backend is not None, (
+            "SqliteVecBackend should be wired when enable_vector_search=True"
+        )
+        # Sanity: profile threading is intact.
+        assert svc._deployment_profile == "sandbox"
+    finally:
+        nx.close()
+
+
 @pytest.mark.asyncio
 async def test_sandbox_features_endpoint_reports_enabled_bricks(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch

@@ -91,7 +91,18 @@ pub struct RaftConfig {
     /// Unique node ID within the cluster.
     pub id: u64,
 
-    /// IDs of peer nodes in the cluster.
+    /// IDs of **OTHER** peer nodes in the cluster (MUST NOT include `self.id`).
+    ///
+    /// raft-rs builds the voter set as `{self.id} ∪ config.peers`. Including
+    /// `self.id` here produces duplicate voter IDs in ConfState, which
+    /// raft-rs's quorum math counts as distinct members and skews the
+    /// required majority (e.g. a 3-voter cluster persisted as
+    /// `[self, self, v2, v3]` would need 3/4 to commit instead of 2/3).
+    ///
+    /// Callers MUST filter out `self.id` before constructing `RaftConfig`.
+    /// As a defense-in-depth, `ZoneConsensus::new` de-duplicates and logs
+    /// a warning when duplicates are detected — treat that warning as a
+    /// caller bug, not a runtime fix.
     pub peers: Vec<u64>,
 
     /// Number of ticks before triggering election.
@@ -438,6 +449,14 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
 
         if !config.skip_bootstrap {
             // Build the expected voter set from config.
+            //
+            // Raft contract: `config.peers` MUST exclude `config.id`. raft-rs
+            // counts duplicate voter IDs as distinct members, so a caller
+            // that accidentally includes self in `peers` would persist a
+            // ConfState like `[self, self, v2, v3]` and break quorum math.
+            //
+            // Dedupe here as defense-in-depth and log loudly when a
+            // duplicate slips through — fix the caller, don't rely on this.
             let mut voters = vec![config.id];
             voters.extend(config.peers.iter());
             let persisted = &initial_state.conf_state;

@@ -138,7 +138,9 @@ impl ZoneRaftRegistry {
     ///
     /// # Arguments
     /// * `zone_id` — Unique zone identifier.
-    /// * `peers` — Peer nodes in this zone's Raft group.
+    /// * `peers` — The full cluster roster for this zone (may include
+    ///   this node's own `NodeAddress`; self is filtered out before
+    ///   passing to raft-rs per the `RaftConfig.peers` contract).
     /// * `runtime_handle` — Tokio runtime handle for spawning the transport loop.
     #[allow(clippy::result_large_err)]
     pub fn create_zone(
@@ -147,14 +149,26 @@ impl ZoneRaftRegistry {
         peers: Vec<NodeAddress>,
         runtime_handle: &tokio::runtime::Handle,
     ) -> Result<ZoneConsensus<FullStateMachine>, TransportError> {
-        let peer_ids: Vec<u64> = peers.iter().map(|p| p.id).collect();
+        // Filter self out of the voter ID list. Callers (federation bootstrap,
+        // zone_manager) commonly pass the full cluster roster from NEXUS_PEERS
+        // which includes this node's own address; raft-rs expects
+        // `config.peers` to list OTHER peers only, so including self would
+        // produce a duplicate voter ID in ConfState.
+        let peer_ids: Vec<u64> = peers
+            .iter()
+            .map(|p| p.id)
+            .filter(|&id| id != self.node_id)
+            .collect();
         let config = RaftConfig {
             id: self.node_id,
             peers: peer_ids,
             ..Default::default()
         };
 
-        let campaign = peers.is_empty(); // single-node: campaign immediately
+        // Single-node vs multi-node: campaign immediately only if we are
+        // the sole voter. peers may contain self, so check the filtered
+        // ID list instead of the raw NodeAddress vec.
+        let campaign = config.peers.is_empty();
         self.setup_zone(zone_id, config, peers, campaign, runtime_handle)
     }
 

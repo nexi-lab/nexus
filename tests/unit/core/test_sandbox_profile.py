@@ -7,7 +7,6 @@ external services (SQLite + in-mem LRU + BM25S), exposes only MCP +
 
 from nexus.contracts.deployment_profile import (
     BRICK_EVENTLOG,
-    BRICK_FEDERATION,
     BRICK_LLM,
     BRICK_MCP,
     BRICK_NAMESPACE,
@@ -34,7 +33,6 @@ class TestSandboxProfileEnum:
         assert BRICK_PERMISSIONS in bricks
         assert BRICK_SEARCH in bricks
         assert BRICK_MCP in bricks
-        assert BRICK_FEDERATION in bricks
         assert BRICK_PARSERS in bricks
 
     def test_default_bricks_excludes_heavy(self) -> None:
@@ -56,5 +54,5 @@ class TestSandboxProfileEnum:
         assert sandbox.issubset(full)
 
     def test_sandbox_size(self) -> None:
-        """SANDBOX = LITE (7) + 4 adds = 11 bricks."""
-        assert len(DeploymentProfile.SANDBOX.default_bricks()) == 11
+        """SANDBOX = LITE (7) + 3 adds (SEARCH, MCP, PARSERS) = 10 bricks."""
+        assert len(DeploymentProfile.SANDBOX.default_bricks()) == 10

@@ -23,7 +23,7 @@ The full Nexus server requires PostgreSQL, Dragonfly, and optionally Zoekt — t
 |---|---|---|
 | Q1 | Profile shape | New tier `DeploymentProfile.SANDBOX` (not alias, not override of LITE) |
 | Q2 | Hub-connected vs standalone | Hybrid: local BM25S + federated semantic with graceful degradation |
-| Q3 | Default brick set | `LITE` base + `SEARCH, MCP, FEDERATION, PARSERS` |
+| Q3 | Default brick set | `LITE` base + `SEARCH, MCP, PARSERS` (FEDERATION is auto-detected from peer zone config, not brick-gated) |
 | Q4 | Storage backend | Profile-gated defaults (SQLite + in-mem LRU + local disk); user config wins |
 | Q5 | HTTP surface | MCP + `/health` + `/api/v2/features` only |
 | Q6 | Docker packaging | One Dockerfile, two tags via `--build-arg NEXUS_PROFILE_EXTRAS={all,sandbox}` |
@@ -43,8 +43,8 @@ One Nexus process per agent sandbox. Zero external services required to boot.
 │  │  MCP transport (stdio or HTTP)          │  │
 │  │      │                                  │  │
 │  │      ▼                                  │  │
-│  │  Bricks: SEARCH, MCP, FEDERATION,       │  │
-│  │          PARSERS + LITE base            │  │
+│  │  Bricks: SEARCH, MCP, PARSERS + LITE    │  │
+│  │  (federation: auto from ZoneManager)    │  │
 │  │      │                                  │  │
 │  │      ▼                                  │  │
 │  │  Storage: SQLite (meta+records)         │  │
@@ -75,7 +75,7 @@ One Nexus process per agent sandbox. Zero external services required to boot.
 **File**: `src/nexus/contracts/deployment_profile.py`
 
 - Add `SANDBOX = "sandbox"` to the `StrEnum`.
-- Add `_SANDBOX_BRICKS = _LITE_BRICKS | frozenset({SEARCH, MCP, FEDERATION, PARSERS})`.
+- Add `_SANDBOX_BRICKS = _LITE_BRICKS | frozenset({SEARCH, MCP, PARSERS})`. Federation is auto-detected from ZoneManager (not brick-gated); no `BRICK_FEDERATION` entry in `_SANDBOX_BRICKS`.
 - Register in `_PROFILE_BRICKS` dict.
 - Update module docstring hierarchy: `sandbox` sits as a distinct tier — it is a superset of `lite` but a proper subset of `full`.
 - Add to `lib/performance_tuning.py`: `SANDBOX` tuning entry with `thread_pool_size=4`, `default_workers=2`, `db_pool_size=2`, `asyncpg_max_size=0`, `search_max_concurrency=2`.

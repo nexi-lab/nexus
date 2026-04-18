@@ -99,7 +99,6 @@ import pytest
 
 from nexus.contracts.deployment_profile import (
     BRICK_EVENTLOG,
-    BRICK_FEDERATION,
     BRICK_LLM,
     BRICK_MCP,
     BRICK_NAMESPACE,
@@ -126,7 +125,6 @@ class TestSandboxProfileEnum:
         assert BRICK_PERMISSIONS in bricks
         assert BRICK_SEARCH in bricks
         assert BRICK_MCP in bricks
-        assert BRICK_FEDERATION in bricks
         assert BRICK_PARSERS in bricks
 
     def test_default_bricks_excludes_heavy(self) -> None:
@@ -148,8 +146,8 @@ class TestSandboxProfileEnum:
         assert sandbox.issubset(full)
 
     def test_sandbox_size(self) -> None:
-        """SANDBOX = LITE (7) + 4 adds = 11 bricks."""
-        assert len(DeploymentProfile.SANDBOX.default_bricks()) == 11
+        """SANDBOX = LITE (7) + 3 adds (SEARCH, MCP, PARSERS) = 10 bricks."""
+        assert len(DeploymentProfile.SANDBOX.default_bricks()) == 10
 ```
 
 - [ ] **Step 2: Run test, verify fail**
@@ -190,11 +188,12 @@ _SANDBOX_BRICKS: frozenset[str] = _LITE_BRICKS | frozenset(
     {
         BRICK_SEARCH,
         BRICK_MCP,
-        BRICK_FEDERATION,
         BRICK_PARSERS,
     }
 )
 ```
+
+Note: `BRICK_FEDERATION` is intentionally excluded. Federation is auto-detected from ZoneManager (same as FULL); no brick flag is needed or checked at boot.
 
 In the `_PROFILE_BRICKS` dict (around line 217), add:
 

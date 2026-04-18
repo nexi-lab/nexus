@@ -187,7 +187,6 @@ _SANDBOX_BRICKS: frozenset[str] = _LITE_BRICKS | frozenset(
     {
         BRICK_SEARCH,
         BRICK_MCP,
-        BRICK_FEDERATION,
         BRICK_PARSERS,
     }
 )
@@ -218,7 +217,6 @@ _FULL_BRICKS: frozenset[str] = _LITE_BRICKS | frozenset(
         BRICK_PARSERS,
         BRICK_SNAPSHOT,
         BRICK_ACP,
-        BRICK_FEDERATION,
     }
 )
 

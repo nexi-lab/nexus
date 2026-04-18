@@ -32,6 +32,7 @@ import click
 @click.option("--resume", default=None, help="Resume specific session by ID.")
 @click.option(
     "--deployment-profile",
+    type=click.Choice(["slim", "cluster", "embedded", "lite", "sandbox", "full", "cloud"]),
     default=None,
     help="Deployment profile for embedded mode (default: cluster).",
 )

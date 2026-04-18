@@ -540,3 +540,16 @@ class Kernel:
 
 class SysReadResult: ...
 class SysWriteResult: ...
+
+class FederationClient:
+    def py_new(
+        self,
+        local_ca_pem: bytes | None = None,
+        node_cert_pem: bytes | None = None,
+        node_key_pem: bytes | None = None,
+        tofu_store_path: str | None = None,
+    ) -> Self: ...
+    def discover_mount(self, peer_addr: str, path: str) -> dict[str, Any]: ...
+    def request_join_zone(
+        self, peer_addr: str, zone_id: str, node_id: int, node_address: str
+    ) -> None: ...

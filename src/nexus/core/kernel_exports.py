@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from nexus_kernel import (
     BloomFilter,
+    FederationClient,
     Kernel,
     OperationContext,
     RustRouteResult,
@@ -79,6 +80,7 @@ from nexus_kernel import (
 
 __all__ = [
     "BloomFilter",
+    "FederationClient",
     "Kernel",
     "OperationContext",
     "RustRouteResult",

@@ -417,17 +417,15 @@ class NexusConfig(BaseModel):
 def _apply_sandbox_defaults(cfg: "NexusConfig") -> "NexusConfig":
     """Apply SANDBOX profile defaults (Issue #3778).
 
-    When profile=sandbox, fill in unset fields with lightweight values
-    (local backend, SQLite paths under ~/.nexus/sandbox/, small cache,
-    no vector search). User-set values always win.
+    When profile=sandbox, fill in fields the user did NOT explicitly set
+    with lightweight values (local backend, SQLite paths under
+    ~/.nexus/sandbox/, small cache, no vector search).
 
-    Because NexusConfig has non-Optional fields with system defaults for
-    backend (="path_local"), cache_size_mb (=100), and enable_vector_search
-    (=True), we treat those system defaults as "unset" and replace them
-    with the sandbox-appropriate values. Any explicitly different value is
-    treated as a user override and is preserved unchanged.
+    "Explicitly set" = present in `cfg.model_fields_set`. User values
+    always win, even if their value happens to equal a non-sandbox default.
 
-    This runs after env/YAML merge so user overrides are visible.
+    This runs after env/YAML merge so user overrides are visible via
+    `model_fields_set`.
     """
     from pathlib import Path as _Path
     from typing import Any as _Any
@@ -435,32 +433,28 @@ def _apply_sandbox_defaults(cfg: "NexusConfig") -> "NexusConfig":
     if cfg.profile != "sandbox":
         return cfg
 
+    user_set = cfg.model_fields_set
     updates: dict[str, _Any] = {}
 
-    # backend: system default "path_local" → sandbox default "local"
-    if cfg.backend == "path_local":
+    if "backend" not in user_set:
         updates["backend"] = "local"
 
-    # data_dir: None → ~/.nexus/sandbox
-    if cfg.data_dir is None:
+    if "data_dir" not in user_set:
         updates["data_dir"] = str(_Path.home() / ".nexus" / "sandbox")
     data_dir = updates.get("data_dir", cfg.data_dir)
 
-    # SQLite paths derived from data_dir (only when still None)
     db_path = f"{data_dir}/nexus.db"
-    if cfg.db_path is None:
+    if "db_path" not in user_set:
         updates["db_path"] = db_path
-    if cfg.metastore_path is None:
+    if "metastore_path" not in user_set:
         updates["metastore_path"] = db_path
-    if cfg.record_store_path is None:
+    if "record_store_path" not in user_set:
         updates["record_store_path"] = db_path
 
-    # cache_size_mb: system default 100 → sandbox default 64
-    if cfg.cache_size_mb == 100:
+    if "cache_size_mb" not in user_set:
         updates["cache_size_mb"] = 64
 
-    # enable_vector_search: system default True → sandbox default False
-    if cfg.enable_vector_search is True:
+    if "enable_vector_search" not in user_set:
         updates["enable_vector_search"] = False
 
     if not updates:

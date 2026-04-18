@@ -596,118 +596,53 @@ class ZoneManager:
     ) -> None:
         """Mount a zone at a path in another zone (NFS-style, strict).
 
-        The mount point must already exist as a DT_DIR entry in the parent
-        zone — matching Linux NFS behavior where the mount point directory
-        must be created beforehand (``mkdir -p /mnt/nfs && mount ...``).
-
-        The existing DT_DIR is replaced with a DT_MOUNT entry that routes
-        all child path access to the target zone.
-
-        No implicit directory creation: callers must ensure the mount point
-        and all its parents exist first. See Task #125 for future ``-p``
-        auto-create option.
+        R16.1b: raft-replicated state (DT_MOUNT entry + i_links_count
+        bump + DT_DIR auto-create + idempotency check) is handled by
+        the Rust ``PyZoneManager.mount`` call. This shim adds the
+        Python-only pieces Rust cannot own directly:
+        ``DriverLifecycleCoordinator`` bookkeeping + dcache invalidation.
 
         Args:
             parent_zone_id: Zone containing the mount point.
             mount_path: Path in parent zone where target is mounted.
-                Must already exist as DT_DIR.
+                Auto-created as DT_DIR if absent (mkdir -p semantics).
             target_zone_id: Zone to mount.
             increment_links: If True (default), increment i_links_count on
                 target zone. Set to False when the caller (e.g. JoinZone RPC
                 handler) has already incremented on the leader side.
+            global_path: Global path used for DLC registration when the
+                federation mount is surfaced under a different mount point
+                than ``mount_path`` (share_subtree). Defaults to ``mount_path``.
 
         Raises:
-            ValueError: If mount_path doesn't exist, is not DT_DIR, or
-                is already a DT_MOUNT.
+            ValueError: If mount_path is occupied by a non-directory entry
+                or by a DT_MOUNT to a different target.
             RuntimeError: If parent or target zone doesn't exist.
         """
-        parent_store = self.get_store(parent_zone_id)
-        if parent_store is None:
-            raise RuntimeError(f"Parent zone '{parent_zone_id}' not found")
-
-        target_store = self.get_store(target_zone_id)
-        if target_store is None:
-            raise RuntimeError(f"Target zone '{target_zone_id}' not found")
-
-        # NFS compliance: mount point must exist as a directory.
-        # Auto-create DT_DIR if missing (mkdir -p semantics, matches
-        # ensure_topology() behavior for static mounts).
-        existing = parent_store.get(mount_path)
-        if existing is None:
-            dir_entry = FileMetadata(
-                path=mount_path,
-                backend_name="virtual",
-                physical_path="",
-                size=0,
-                entry_type=DT_DIR,
-                zone_id=parent_zone_id,
-            )
-            parent_store.put(dir_entry)
-            existing = dir_entry
-            logger.info(
-                "Auto-created mount point directory '%s' in zone '%s'",
-                mount_path,
-                parent_zone_id,
-            )
-        if existing.is_mount:
-            if existing.target_zone_id == target_zone_id:
-                # Idempotent raft replication: another node already committed
-                # the DT_MOUNT into this zone's state machine. We still need
-                # to register the mount with THIS node's DLC so kernel syscall
-                # routing picks it up — otherwise sys_read on /corp/eng/foo
-                # on a follower node falls through to the global metastore
-                # and federation replication is invisible.
-                if self._coordinator:
-                    dlc_path = global_path or mount_path
-                    root_backend = self._coordinator.get_root_backend()
-                    if root_backend is not None:
-                        self._mount_via_kernel(dlc_path, root_backend, target_store)
-                logger.debug(
-                    "Mount '%s' → '%s' already committed to raft; ensured DLC entry",
-                    mount_path,
-                    target_zone_id,
-                )
-                return
-            raise ValueError(
-                f"Mount point '{mount_path}' is already a DT_MOUNT in zone "
-                f"'{parent_zone_id}'. Unmount first."
-            )
-        if existing.entry_type != DT_DIR:
-            raise ValueError(
-                f"Mount point '{mount_path}' is not a directory "
-                f"(type={existing.entry_type}) in zone '{parent_zone_id}'. "
-                f"Mount points must be directories."
-            )
-
-        # Replace DT_DIR with DT_MOUNT (shadows original directory contents)
-        mount_entry = FileMetadata(
-            path=mount_path,
-            backend_name="mount",
-            physical_path="",
-            size=0,
-            entry_type=DT_MOUNT,
-            target_zone_id=target_zone_id,
-            zone_id=parent_zone_id,
+        # Raft-replicated state (DT_DIR auto-create + DT_MOUNT put +
+        # i_links_count bump + idempotency) — Rust owns this.
+        self._py_mgr.mount(
+            parent_zone_id,
+            mount_path,
+            target_zone_id,
+            increment_links=increment_links,
         )
-        parent_store.put(mount_entry)
 
-        # Increment target zone's i_links_count (POSIX: link() → nlink++)
-        # Raft propose() transparently forwards to leader if this node
-        # is a follower for the target zone.
-        if increment_links:
-            self._increment_links(target_store)
-
-        # Register in local mount map via DLC (runtime routing)
-        if self._coordinator:
+        # Python-only DLC bookkeeping: the coordinator tracks per-mount
+        # backend references and kernel routing state that has no Rust
+        # equivalent yet. Always wired (even on idempotent raft replays)
+        # so follower nodes pick up the mount for local syscall routing.
+        target_store = self.get_store(target_zone_id)
+        if self._coordinator and target_store is not None:
             dlc_path = global_path or mount_path
             root_backend = self._coordinator.get_root_backend()
             if root_backend is not None:
                 self._mount_via_kernel(dlc_path, root_backend, target_store)
 
-        # Invalidate proxy dcache — entries resolved through this mount point
-        # are now stale (the path prefix routes to a different zone).
-        # Clear entire dcache because mount_path is zone-relative but dcache
-        # keys are global paths; mounts are rare so full clear is fine.
+        # Invalidate proxy dcache — entries resolved through this mount
+        # point are now stale. Clear entire dcache because mount_path is
+        # zone-relative but dcache keys are global paths; mounts are rare
+        # so the full clear is fine.
         if self._dcache_proxy is not None:
             self._dcache_proxy._dcache.clear()
 
@@ -723,55 +658,21 @@ class ZoneManager:
     ) -> None:
         """Remove a mount point, restoring the original DT_DIR.
 
-        Replaces the DT_MOUNT entry with a DT_DIR (NFS behavior: ``umount``
-        reveals the original mount point directory) and decrements the target
-        zone's i_links_count (POSIX: unlink() → nlink--).
+        R16.1b: raft-replicated state (restore DT_DIR + decrement target
+        zone's i_links_count) is handled by ``PyZoneManager.unmount``,
+        which returns the former ``target_zone_id``. This shim only
+        unwires the DLC bookkeeping + dcache.
 
-        Any entries that were shadowed by the DT_MOUNT become visible again
-        (stale entries from share_subtree are harmless per federation-memo §6).
-
-        Args:
-            parent_zone_id: Zone containing the mount point.
-            mount_path: Path to unmount.
-
-        Raises:
-            ValueError: If path is not a mount point.
+        Raises ``ValueError`` if the path is not a mount point.
         """
-        parent_store = self.get_store(parent_zone_id)
-        if parent_store is None:
-            raise RuntimeError(f"Parent zone '{parent_zone_id}' not found")
+        target_zone_id = self._py_mgr.unmount(parent_zone_id, mount_path)
 
-        existing = parent_store.get(mount_path)
-        if existing is None or not existing.is_mount:
-            raise ValueError(f"'{mount_path}' is not a mount point in zone '{parent_zone_id}'")
-
-        target_zone_id = existing.target_zone_id
-
-        # Restore DT_DIR at mount point (NFS: umount reveals original directory)
-        restored_dir = FileMetadata(
-            path=mount_path,
-            backend_name="virtual",
-            physical_path="",
-            size=0,
-            entry_type=DT_DIR,
-            zone_id=parent_zone_id,
-        )
-        parent_store.put(restored_dir)
-
-        # Decrement target zone's i_links_count (POSIX: unlink() → nlink--)
-        if target_zone_id:
-            target_store = self.get_store(target_zone_id)
-            if target_store is not None:
-                self._decrement_links(target_store)
-
-        # Remove from local MountTable via DLC (runtime routing)
+        # Remove from local MountTable via DLC (runtime routing).
         if self._coordinator:
             self._coordinator.unmount(global_path or mount_path)
 
-        # Invalidate proxy dcache — entries cached through this mount point
-        # would still resolve into the now-unmounted zone.
-        # Clear entire dcache because mount_path is zone-relative but dcache
-        # keys are global paths; unmounts are rare so full clear is fine.
+        # Invalidate proxy dcache — entries cached through this mount
+        # point would still resolve into the now-unmounted zone.
         if self._dcache_proxy is not None:
             self._dcache_proxy._dcache.clear()
 

@@ -666,6 +666,116 @@ impl PyMetastore {
     }
 }
 
+// =========================================================================
+// Federation mount helpers (R16.1b)
+// =========================================================================
+
+// DirEntryType integer codes — must stay in sync with
+// proto/nexus/core/metadata.proto and the Python FileMetadata
+// constants in src/nexus/contracts/metadata.py.
+#[cfg(all(feature = "grpc", has_protos))]
+const DT_DIR: i32 = 1;
+#[cfg(all(feature = "grpc", has_protos))]
+const DT_MOUNT: i32 = 2;
+
+// Raft counter key for a zone's POSIX i_links_count — must match
+// RaftMetadataStore._KEY_LINKS_COUNT in
+// src/nexus/storage/raft_metadata_store.py.
+#[cfg(all(feature = "grpc", has_protos))]
+const I_LINKS_COUNT_KEY: &str = "__i_links_count__";
+
+/// Encode a minimal ``FileMetadata`` proto for federation mount writes.
+///
+/// Mirrors ``MetadataMapper.to_proto`` for the fields the mount path
+/// needs: ``path``, ``backend_name``, ``physical_path``, ``entry_type``,
+/// ``zone_id``, ``target_zone_id``. Size/version default to
+/// ``0``/``0`` — downstream ``raft_metastore::proto_to_kernel`` maps
+/// proto-default ``i32`` to the kernel's ``u32`` version field.
+#[cfg(all(feature = "grpc", has_protos))]
+fn encode_file_metadata(
+    path: &str,
+    backend_name: &str,
+    physical_path: &str,
+    entry_type: i32,
+    zone_id: &str,
+    target_zone_id: &str,
+) -> Vec<u8> {
+    use crate::transport::proto::nexus::core::FileMetadata as ProtoFileMetadata;
+    use prost::Message;
+
+    let proto = ProtoFileMetadata {
+        path: path.to_string(),
+        backend_name: backend_name.to_string(),
+        physical_path: physical_path.to_string(),
+        entry_type,
+        zone_id: zone_id.to_string(),
+        target_zone_id: target_zone_id.to_string(),
+        ..Default::default()
+    };
+    proto.encode_to_vec()
+}
+
+/// Decode ``FileMetadata`` proto bytes to the raft-crate proto type.
+///
+/// Kept local so the mount path doesn't need to depend on
+/// ``nexus_kernel::raft_metastore`` (avoids kernel→raft→kernel cycles).
+#[cfg(all(feature = "grpc", has_protos))]
+fn decode_file_metadata(
+    bytes: &[u8],
+) -> Result<crate::transport::proto::nexus::core::FileMetadata, prost::DecodeError> {
+    use crate::transport::proto::nexus::core::FileMetadata as ProtoFileMetadata;
+    use prost::Message;
+    ProtoFileMetadata::decode(bytes)
+}
+
+/// Propose a ``Command::SetMetadata`` through raft on the given node and
+/// wait for the apply-side acknowledgement. Mirrors the sync pattern
+/// ``PyZoneHandle::propose_command`` uses.
+#[cfg(all(feature = "grpc", has_protos))]
+fn propose_set_metadata(
+    handle: &tokio::runtime::Handle,
+    node: &crate::raft::ZoneConsensus<FullStateMachine>,
+    key: &str,
+    value: Vec<u8>,
+) -> Result<(), String> {
+    let cmd = Command::SetMetadata {
+        key: key.to_string(),
+        value,
+    };
+    match handle.block_on(node.propose(cmd)) {
+        Ok(CommandResult::Success) | Ok(CommandResult::Value(_)) => Ok(()),
+        Ok(CommandResult::Error(e)) => Err(e),
+        Ok(other) => Err(format!("unexpected result: {:?}", other)),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Propose a ``Command::AdjustCounter`` through raft on the given node.
+/// Returns the new counter value.
+#[cfg(all(feature = "grpc", has_protos))]
+fn propose_adjust_counter(
+    handle: &tokio::runtime::Handle,
+    node: &crate::raft::ZoneConsensus<FullStateMachine>,
+    key: &str,
+    delta: i64,
+) -> Result<i64, String> {
+    let cmd = Command::AdjustCounter {
+        key: key.to_string(),
+        delta,
+    };
+    match handle.block_on(node.propose(cmd)) {
+        Ok(CommandResult::Value(bytes)) => {
+            let arr: [u8; 8] = bytes
+                .try_into()
+                .map_err(|_| "invalid counter value encoding".to_string())?;
+            Ok(i64::from_be_bytes(arr))
+        }
+        Ok(CommandResult::Error(e)) => Err(e),
+        Ok(other) => Err(format!("unexpected counter result: {:?}", other)),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 // =============================================================================
 // ZoneManager: Multi-zone Raft registry exposed to Python
 // =============================================================================
@@ -964,6 +1074,184 @@ impl PyZoneManager {
         self.registry
             .remove_zone(zone_id)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to remove zone: {}", e)))
+    }
+
+    /// Mount a target zone at a path in a parent zone (NFS-style, strict).
+    ///
+    /// Writes a DT_MOUNT ``FileMetadata`` entry at ``mount_path`` in the
+    /// parent zone's raft-replicated metastore, then bumps the target zone's
+    /// ``__i_links_count__`` counter (POSIX: link() → nlink++). Auto-creates
+    /// a DT_DIR at ``mount_path`` if it doesn't exist yet (matches
+    /// ``ensure_topology()`` behavior for static mounts).
+    ///
+    /// Idempotent: if ``mount_path`` is already DT_MOUNT to the same target,
+    /// this returns ``Ok(())`` without proposing a new raft command.
+    ///
+    /// Python-side DLC bookkeeping (coordinator ``_store_mount_info``,
+    /// ``_dcache_proxy._dcache.clear()``) stays in the Python shim —
+    /// R16.1b only owns the raft-replicated state (DT_MOUNT entry +
+    /// links_count).
+    ///
+    /// Args:
+    ///     parent_zone_id: Zone containing the mount point.
+    ///     mount_path: Path in the parent zone (must exist as DT_DIR or be absent).
+    ///     target_zone_id: Zone to mount.
+    ///     increment_links: If ``True`` (default), bumps target's i_links_count.
+    ///         Callers like the JoinZone RPC handler pass ``False`` when the
+    ///         leader-side already incremented.
+    #[pyo3(signature = (parent_zone_id, mount_path, target_zone_id, *, increment_links=true))]
+    pub fn mount(
+        &self,
+        py: Python<'_>,
+        parent_zone_id: &str,
+        mount_path: &str,
+        target_zone_id: &str,
+        increment_links: bool,
+    ) -> PyResult<()> {
+        use pyo3::exceptions::PyValueError;
+
+        let parent_node = self.registry.get_node(parent_zone_id).ok_or_else(|| {
+            PyRuntimeError::new_err(format!("Parent zone '{}' not found", parent_zone_id))
+        })?;
+        let target_node = self.registry.get_node(target_zone_id).ok_or_else(|| {
+            PyRuntimeError::new_err(format!("Target zone '{}' not found", target_zone_id))
+        })?;
+
+        let parent_zone_id = parent_zone_id.to_string();
+        let mount_path = mount_path.to_string();
+        let target_zone_id = target_zone_id.to_string();
+        let handle = self.runtime.handle().clone();
+
+        py.detach(|| -> PyResult<()> {
+            let existing = handle
+                .block_on(
+                    parent_node
+                        .with_state_machine(|sm: &FullStateMachine| sm.get_metadata(&mount_path)),
+                )
+                .map_err(|e| PyRuntimeError::new_err(format!("get_metadata: {}", e)))?
+                .map(|bytes| decode_file_metadata(&bytes))
+                .transpose()
+                .map_err(|e| PyRuntimeError::new_err(format!("decode existing: {}", e)))?;
+
+            if let Some(ref meta) = existing {
+                if meta.entry_type == DT_MOUNT {
+                    if meta.target_zone_id == target_zone_id {
+                        // Idempotent raft replication — Rust side done.
+                        return Ok(());
+                    }
+                    return Err(PyValueError::new_err(format!(
+                        "Mount point '{}' is already a DT_MOUNT in zone '{}'. Unmount first.",
+                        mount_path, parent_zone_id
+                    )));
+                }
+                if meta.entry_type != DT_DIR {
+                    return Err(PyValueError::new_err(format!(
+                        "Mount point '{}' is not a directory (type={}) in zone '{}'. \
+                         Mount points must be directories.",
+                        mount_path, meta.entry_type, parent_zone_id
+                    )));
+                }
+            } else {
+                // Auto-create DT_DIR (mkdir -p semantics).
+                let dir_bytes =
+                    encode_file_metadata(&mount_path, "virtual", "", DT_DIR, &parent_zone_id, "");
+                propose_set_metadata(&handle, &parent_node, &mount_path, dir_bytes)
+                    .map_err(|e| PyRuntimeError::new_err(format!("auto-create DT_DIR: {}", e)))?;
+            }
+
+            // Replace DT_DIR with DT_MOUNT (shadows original directory contents).
+            let mount_bytes = encode_file_metadata(
+                &mount_path,
+                "mount",
+                "",
+                DT_MOUNT,
+                &parent_zone_id,
+                &target_zone_id,
+            );
+            propose_set_metadata(&handle, &parent_node, &mount_path, mount_bytes)
+                .map_err(|e| PyRuntimeError::new_err(format!("DT_MOUNT put: {}", e)))?;
+
+            if increment_links {
+                propose_adjust_counter(&handle, &target_node, I_LINKS_COUNT_KEY, 1)
+                    .map_err(|e| PyRuntimeError::new_err(format!("adjust_counter(+1): {}", e)))?;
+            }
+
+            Ok(())
+        })
+    }
+
+    /// Remove a mount point, restoring the original DT_DIR.
+    ///
+    /// Replaces the DT_MOUNT with a DT_DIR and decrements the target zone's
+    /// ``__i_links_count__``. Returns the former target zone id so the
+    /// Python shim can call ``DriverLifecycleCoordinator.unmount()`` with it.
+    ///
+    /// Raises ``ValueError`` if ``mount_path`` is not a mount point in the
+    /// parent zone.
+    #[pyo3(signature = (parent_zone_id, mount_path))]
+    pub fn unmount(
+        &self,
+        py: Python<'_>,
+        parent_zone_id: &str,
+        mount_path: &str,
+    ) -> PyResult<Option<String>> {
+        use pyo3::exceptions::PyValueError;
+
+        let parent_node = self.registry.get_node(parent_zone_id).ok_or_else(|| {
+            PyRuntimeError::new_err(format!("Parent zone '{}' not found", parent_zone_id))
+        })?;
+
+        let parent_zone_id = parent_zone_id.to_string();
+        let mount_path = mount_path.to_string();
+        let handle = self.runtime.handle().clone();
+        let registry = std::sync::Arc::clone(&self.registry);
+
+        py.detach(|| -> PyResult<Option<String>> {
+            let existing = handle
+                .block_on(
+                    parent_node
+                        .with_state_machine(|sm: &FullStateMachine| sm.get_metadata(&mount_path)),
+                )
+                .map_err(|e| PyRuntimeError::new_err(format!("get_metadata: {}", e)))?
+                .map(|bytes| decode_file_metadata(&bytes))
+                .transpose()
+                .map_err(|e| PyRuntimeError::new_err(format!("decode existing: {}", e)))?;
+
+            let existing = match existing {
+                Some(m) if m.entry_type == DT_MOUNT => m,
+                _ => {
+                    return Err(PyValueError::new_err(format!(
+                        "'{}' is not a mount point in zone '{}'",
+                        mount_path, parent_zone_id
+                    )));
+                }
+            };
+
+            let target_zone_id_opt: Option<String> = if existing.target_zone_id.is_empty() {
+                None
+            } else {
+                Some(existing.target_zone_id.clone())
+            };
+
+            // Restore DT_DIR at the mount point.
+            let dir_bytes =
+                encode_file_metadata(&mount_path, "virtual", "", DT_DIR, &parent_zone_id, "");
+            propose_set_metadata(&handle, &parent_node, &mount_path, dir_bytes)
+                .map_err(|e| PyRuntimeError::new_err(format!("restore DT_DIR: {}", e)))?;
+
+            // Decrement i_links_count on the target zone if locally hosted.
+            if let Some(ref target_id) = target_zone_id_opt {
+                if let Some(target_node) = registry.get_node(target_id) {
+                    propose_adjust_counter(&handle, &target_node, I_LINKS_COUNT_KEY, -1).map_err(
+                        |e| PyRuntimeError::new_err(format!("adjust_counter(-1): {}", e)),
+                    )?;
+                }
+                // Target not locally hosted → decrement is the remote leader's
+                // job; the Python caller owns cross-zone RPC in that path.
+            }
+
+            Ok(target_zone_id_opt)
+        })
     }
 
     /// List all zone IDs.
@@ -1591,4 +1879,69 @@ pub fn register_python_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(all(feature = "grpc", has_protos))]
     m.add_function(wrap_pyfunction!(hostname_to_node_id, m)?)?;
     Ok(())
+}
+
+// =============================================================================
+// Unit tests: federation mount helpers (R16.1b)
+// =============================================================================
+//
+// End-to-end mount success / idempotent / auto-create paths need a full
+// ZoneConsensus + tokio runtime; those are exercised by the federation
+// E2E suite (docker) gated at R12. Here we cover the pure helper
+// surface that backs those flows — encoder, decoder, and field fidelity.
+
+#[cfg(all(test, feature = "grpc", has_protos))]
+mod mount_helpers_tests {
+    use super::*;
+
+    #[test]
+    fn encode_dt_mount_preserves_target_zone_id() {
+        let bytes = encode_file_metadata("/mnt/peer", "mount", "", DT_MOUNT, "zone-a", "zone-b");
+        let decoded = decode_file_metadata(&bytes).expect("decode must succeed");
+        assert_eq!(decoded.path, "/mnt/peer");
+        assert_eq!(decoded.backend_name, "mount");
+        assert_eq!(decoded.physical_path, "");
+        assert_eq!(decoded.entry_type, DT_MOUNT);
+        assert_eq!(decoded.zone_id, "zone-a");
+        assert_eq!(decoded.target_zone_id, "zone-b");
+    }
+
+    #[test]
+    fn encode_dt_dir_has_empty_target_zone_id() {
+        let bytes = encode_file_metadata("/mnt/peer", "virtual", "", DT_DIR, "zone-a", "");
+        let decoded = decode_file_metadata(&bytes).expect("decode must succeed");
+        assert_eq!(decoded.entry_type, DT_DIR);
+        assert_eq!(decoded.target_zone_id, "");
+        assert_eq!(decoded.zone_id, "zone-a");
+    }
+
+    /// Guard the exact byte shape: a mount entry and a dir entry at the
+    /// same path only differ in ``entry_type`` + ``backend_name`` +
+    /// ``target_zone_id`` — Python's ``MetadataMapper.to_proto`` output
+    /// for the same logical entry must decode identically.
+    #[test]
+    fn mount_and_dir_bytes_differ_only_in_expected_fields() {
+        let mount_bytes = encode_file_metadata("/x", "mount", "", DT_MOUNT, "zone-a", "zone-b");
+        let dir_bytes = encode_file_metadata("/x", "virtual", "", DT_DIR, "zone-a", "");
+
+        let mount_decoded = decode_file_metadata(&mount_bytes).unwrap();
+        let dir_decoded = decode_file_metadata(&dir_bytes).unwrap();
+
+        assert_eq!(mount_decoded.path, dir_decoded.path);
+        assert_eq!(mount_decoded.zone_id, dir_decoded.zone_id);
+        assert_ne!(mount_decoded.entry_type, dir_decoded.entry_type);
+        assert_ne!(mount_decoded.backend_name, dir_decoded.backend_name);
+        assert_ne!(mount_decoded.target_zone_id, dir_decoded.target_zone_id);
+    }
+
+    #[test]
+    fn i_links_count_key_matches_python_constant() {
+        // Guard rail: the Rust constant must match
+        // ``RaftMetadataStore._KEY_LINKS_COUNT`` in
+        // ``src/nexus/storage/raft_metadata_store.py`` — a mismatch here
+        // means Rust-side AdjustCounter writes to a different raft-log key
+        // than the Python reader expects, and federation nlink tracking
+        // silently diverges.
+        assert_eq!(I_LINKS_COUNT_KEY, "__i_links_count__");
+    }
 }

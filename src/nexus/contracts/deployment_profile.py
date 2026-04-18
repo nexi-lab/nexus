@@ -11,7 +11,7 @@ The profile sets the *defaults*; explicit overrides always win.
 Lego Architecture reference: Part 10 — Edge Deployment.
 
 Profile hierarchy (superset relationship):
-    slim ⊂ cluster ⊂ embedded ⊂ lite ⊂ full ⊆ cloud
+    slim ⊂ cluster ⊂ embedded ⊂ lite ⊂ sandbox ⊂ full ⊆ cloud
 
 REMOTE is orthogonal — zero local bricks, all operations proxy via RemoteBackend:
     remote  (no local bricks — NFS-client model)
@@ -120,6 +120,7 @@ class DeploymentProfile(StrEnum):
     - cluster: Minimal multi-node — Raft + federation, no auth/PostgreSQL
     - embedded: MCU / WASM (<1 MB) — eventlog only
     - lite: Pi, Jetson, mobile (512 MB–4 GB) — core services, no LLM/Pay
+    - sandbox: Agent sandbox (zero external services; SQLite + in-mem cache + BM25S; #3778)
     - full: Desktop, laptop (4–32 GB) — all bricks, local inference
     - cloud: k8s, serverless (unlimited) — all + federation + multi-tenant
     - remote: Client-side proxy — zero local bricks, NFS-client model (Issue #844)
@@ -129,6 +130,7 @@ class DeploymentProfile(StrEnum):
     CLUSTER = "cluster"
     EMBEDDED = "embedded"
     LITE = "lite"
+    SANDBOX = "sandbox"
     FULL = "full"
     CLOUD = "cloud"
     REMOTE = "remote"
@@ -181,6 +183,15 @@ _LITE_BRICKS: frozenset[str] = _EMBEDDED_BRICKS | frozenset(
     }
 )
 
+_SANDBOX_BRICKS: frozenset[str] = _LITE_BRICKS | frozenset(
+    {
+        BRICK_SEARCH,
+        BRICK_MCP,
+        BRICK_FEDERATION,
+        BRICK_PARSERS,
+    }
+)
+
 _FULL_BRICKS: frozenset[str] = _LITE_BRICKS | frozenset(
     {
         BRICK_SEARCH,
@@ -207,6 +218,7 @@ _FULL_BRICKS: frozenset[str] = _LITE_BRICKS | frozenset(
         BRICK_PARSERS,
         BRICK_SNAPSHOT,
         BRICK_ACP,
+        BRICK_FEDERATION,
     }
 )
 
@@ -219,6 +231,7 @@ _PROFILE_BRICKS: dict[DeploymentProfile, frozenset[str]] = {
     DeploymentProfile.CLUSTER: _CLUSTER_BRICKS,
     DeploymentProfile.EMBEDDED: _EMBEDDED_BRICKS,
     DeploymentProfile.LITE: _LITE_BRICKS,
+    DeploymentProfile.SANDBOX: _SANDBOX_BRICKS,
     DeploymentProfile.FULL: _FULL_BRICKS,
     DeploymentProfile.CLOUD: _CLOUD_BRICKS,
     DeploymentProfile.REMOTE: _REMOTE_BRICKS,

@@ -246,7 +246,7 @@ class TestNexusConfigProfile:
     def test_valid_profiles(self) -> None:
         from nexus.config import NexusConfig
 
-        for p in ["slim", "embedded", "lite", "full", "cloud"]:
+        for p in ["slim", "embedded", "lite", "sandbox", "full", "cloud"]:
             cfg = NexusConfig(profile=p)
             assert cfg.profile == p
         # "remote" requires url

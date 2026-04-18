@@ -17,7 +17,11 @@ from nexus.bricks.auth.envelope import (
 )
 
 # Regex: any base64 or hex blob of 16+ bytes shouldn't appear in error text.
-_BLOB_RE = re.compile(r"(?:[A-Za-z0-9+/]{22,}={0,2}|[0-9a-fA-F]{32,})")
+# Real base64 of random secret bytes almost always contains a digit. Pure
+# identifier names (class names, field names) don't. Requiring a digit in
+# the base64 branch keeps the check sensitive to leaked secrets while
+# avoiding false positives on long class names like "EnvelopeConfigurationError".
+_BLOB_RE = re.compile(r"(?:(?=[A-Za-z0-9+/]*[0-9])[A-Za-z0-9+/]{22,}={0,2}|[0-9a-fA-F]{32,})")
 
 
 class TestAESGCMEnvelope:
@@ -83,3 +87,20 @@ class TestErrorReprDiscipline:
             raise DecryptionFailed.from_row(
                 tenant_id=uuid.uuid4(), profile_id="x", kek_version=1, cause="y"
             )
+
+    def test_regex_catches_actual_base64_secret(self) -> None:
+        """Sanity check the blob-detection regex actually catches a real
+        base64 of random bytes — we tightened it to avoid class-name false
+        positives, make sure we didn't neuter it."""
+        import base64
+        import secrets
+
+        fake_secret = base64.b64encode(secrets.token_bytes(24)).decode()
+        # Should match (base64 of 24 random bytes is 32 chars, includes digits with
+        # overwhelming probability).
+        # Try up to 5 times in case we unluckily drew an all-letter base64.
+        for _ in range(5):
+            if _BLOB_RE.search(fake_secret):
+                return
+            fake_secret = base64.b64encode(secrets.token_bytes(24)).decode()
+        pytest.fail("_BLOB_RE failed to match 5 consecutive real base64 secrets")

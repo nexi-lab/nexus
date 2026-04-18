@@ -40,14 +40,16 @@ def backend(transport):
 
 @pytest.fixture
 def backend_with_features(transport):
-    """CASAddressingEngine with all Feature DI enabled."""
+    """CASAddressingEngine with Feature DI enabled.
+
+    Bloom filter was removed in R10f — direct `_transport.exists()` is
+    fast enough that the pre-filter no longer pays back.
+    """
     cache = SimpleCache()
-    bloom = SimpleBloom()
     callback = MagicMock()
     return CASAddressingEngine(
         transport,
         backend_name="test-local-features",
-        bloom_filter=bloom,
         content_cache=cache,
         on_write_callback=callback,
     )
@@ -67,19 +69,6 @@ class SimpleCache:
 
     def put(self, key: str, value: bytes) -> None:
         self._store[key] = value
-
-
-class SimpleBloom:
-    """Minimal Bloom filter for testing (uses a set — 0% false positives)."""
-
-    def __init__(self):
-        self._set: set[str] = set()
-
-    def add(self, key: str) -> None:
-        self._set.add(key)
-
-    def might_exist(self, key: str) -> bool:
-        return key in self._set
 
 
 # === Basic CRUD ===
@@ -230,26 +219,6 @@ class TestDirectoryOperations:
         entries = backend.list_dir("parent")
         assert "child1/" in entries
         assert "child2/" in entries
-
-
-# === Feature DI: Bloom Filter ===
-
-
-class TestBloomFilter:
-    def test_bloom_fast_miss(self, backend_with_features):
-        """Bloom filter should reject content that was never written."""
-        b = backend_with_features
-        assert b.content_exists("deadbeef" * 8) is False
-
-    def test_bloom_hit_after_write(self, backend_with_features):
-        b = backend_with_features
-        r = b.write_content(b"bloom test")
-        assert b.content_exists(r.content_id) is True
-
-    def test_bloom_populated_on_write(self, backend_with_features):
-        b = backend_with_features
-        r = b.write_content(b"data")
-        assert b._bloom.might_exist(r.content_id) is True
 
 
 # === Feature DI: Content Cache ===

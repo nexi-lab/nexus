@@ -790,28 +790,48 @@ async fn run_mount_event_consumer(
             continue;
         };
 
-        Python::attach(|py| {
-            let args = (
-                event.parent_zone_id.clone(),
-                event.mount_path.clone(),
-                event.target_zone_id.clone(),
-            );
-            match cb.call1(py, args) {
-                Ok(_) => {}
-                Err(e) => {
-                    // Surface the traceback so the operator sees why a
-                    // real DT_MOUNT didn't wire up DLC on this node.
-                    e.clone_ref(py).print(py);
-                    tracing::error!(
-                        parent_zone = %event.parent_zone_id,
-                        path = %event.mount_path,
-                        target = %event.target_zone_id,
-                        error = %e,
-                        "mount-event: Python hook raised; DT_MOUNT DLC wiring skipped for this event",
-                    );
-                }
-            }
-        });
+        // The Python callback calls back into the Rust ``mount()`` path,
+        // which does ``runtime.handle().block_on(...)``. That's illegal
+        // on a tokio worker thread ("Cannot start a runtime from within
+        // a runtime"), so we dispatch the callback to the blocking
+        // thread pool — ``block_on`` is legal there. Await the result
+        // so events stay sequential (matches Python's single-threaded
+        // reconciler semantics) and consumer panics can't silently
+        // close the channel.
+        let parent_zone = event.parent_zone_id.clone();
+        let mount_path = event.mount_path.clone();
+        let target_zone = event.target_zone_id.clone();
+        let join_result = tokio::task::spawn_blocking(move || {
+            Python::attach(|py| {
+                cb.call1(py, (parent_zone, mount_path, target_zone))
+                    .map(|_| ())
+                    .map_err(|e| {
+                        // Surface the traceback so the operator sees
+                        // why a real DT_MOUNT didn't wire up DLC.
+                        e.clone_ref(py).print(py);
+                        e.to_string()
+                    })
+            })
+        })
+        .await;
+
+        match join_result {
+            Ok(Ok(())) => {}
+            Ok(Err(msg)) => tracing::error!(
+                parent_zone = %event.parent_zone_id,
+                path = %event.mount_path,
+                target = %event.target_zone_id,
+                error = %msg,
+                "mount-event: Python hook raised; DT_MOUNT DLC wiring skipped for this event",
+            ),
+            Err(join_err) => tracing::error!(
+                parent_zone = %event.parent_zone_id,
+                path = %event.mount_path,
+                target = %event.target_zone_id,
+                error = %join_err,
+                "mount-event: blocking task failed to join; consumer continues",
+            ),
+        }
     }
     tracing::debug!("mount-event consumer: channel closed, consumer task exiting");
 }
@@ -909,7 +929,13 @@ fn path_matches_prefix(path: &str, normalized_prefix: &str) -> bool {
 }
 
 /// Propose a ``Command::AdjustCounter`` through raft on the given node.
-/// Returns the new counter value.
+/// Returns the new counter value, or ``i64::MIN`` when the proposal
+/// was forwarded to the leader over gRPC (``RaftResponse`` drops the
+/// 8-byte value payload for ``CommandResult::Value`` — see
+/// ``command_result_to_proto`` in ``transport/server.rs``). Callers
+/// on the federation mount path ignore the returned value, so
+/// treating "forwarded success" as "counter adjusted, value unknown"
+/// matches the intent without requiring a proto round-trip fix.
 #[cfg(all(feature = "grpc", has_protos))]
 fn propose_adjust_counter(
     handle: &tokio::runtime::Handle,
@@ -928,6 +954,11 @@ fn propose_adjust_counter(
                 .map_err(|_| "invalid counter value encoding".to_string())?;
             Ok(i64::from_be_bytes(arr))
         }
+        // Forwarded to leader over gRPC: the RaftResponse proto drops
+        // the counter bytes, so the apply's ``Value(new_count)`` comes
+        // back flattened to ``Success``. The counter mutation did land
+        // in the state machine; we just don't know the new value.
+        Ok(CommandResult::Success) => Ok(i64::MIN),
         Ok(CommandResult::Error(e)) => Err(e),
         Ok(other) => Err(format!("unexpected counter result: {:?}", other)),
         Err(e) => Err(e.to_string()),

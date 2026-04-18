@@ -177,6 +177,9 @@ services:
   test:
     image: nexus-fullnode:latest
     container_name: nexus-dyn-test
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     working_dir: /app
     depends_on:
       nexus-1:
@@ -195,7 +198,7 @@ services:
         echo "Installing test dependencies..."
         pip install -q pytest pytest-asyncio pytest-timeout httpx grpcio grpcio-tools protobuf docker
         echo "Running dynamic federation E2E tests..."
-        python -m pytest tests/e2e/docker/test_federation_e2e.py -v --no-header -o "addopts=" -x --timeout=180
+        python -m pytest tests/e2e/docker/test_federation_e2e.py -v --no-header -o "addopts=" --timeout=180
       '
     networks:
       - dyn-nexus-network

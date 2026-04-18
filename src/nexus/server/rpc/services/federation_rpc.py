@@ -58,9 +58,11 @@ class FederationRPCService:
         return {"zone_id": zone_id, "created": True}
 
     @rpc_expose(admin_only=True, description="Remove a Raft zone")
-    def federation_remove_zone(self, zone_id: str) -> dict[str, Any]:
-        self._zone_manager.remove_zone(zone_id)
-        logger.info("Zone '%s' removed via RPC", zone_id)
+    def federation_remove_zone(
+        self, zone_id: str, force: bool = False
+    ) -> dict[str, Any]:
+        self._zone_manager.remove_zone(zone_id, force=force)
+        logger.info("Zone '%s' removed via RPC (force=%s)", zone_id, force)
         return {"zone_id": zone_id, "removed": True}
 
     @rpc_expose(description="Share a local subtree as a federation zone")

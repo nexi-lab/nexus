@@ -639,22 +639,6 @@ class ZoneManager:
     # i_links_count helpers (POSIX i_nlink semantics)
     # =========================================================================
 
-    @staticmethod
-    def _increment_links(store: "RaftMetadataStore") -> int:
-        """Increment a zone's i_links_count via atomic Raft command.
-
-        Returns the new count.
-        """
-        return store.adjust_zone_links_count(1)
-
-    @staticmethod
-    def _decrement_links(store: "RaftMetadataStore") -> int:
-        """Decrement a zone's i_links_count via atomic Raft command.
-
-        Returns the new count. Never goes below 0 (clamped in state machine).
-        """
-        return store.adjust_zone_links_count(-1)
-
     def get_links_count(self, zone_id: str) -> int:
         """Get a zone's current i_links_count.
 
@@ -846,54 +830,63 @@ class ZoneManager:
         return self._apply_topology()
 
     def _all_mounts_ready(self) -> bool:
-        """Check if all pending mounts are fully applied on this node.
+        """Check if all pending mounts are present on this node as DT_MOUNT.
 
-        Uses target zone's i_links_count as mount-complete indicator:
-        Phase B (_increment_links) sets i_links_count on the target zone.
-        The expected count equals the number of mounts referencing that zone.
-
-        Works on both leader and follower nodes (reads replicated state).
+        R16.4: switched from the i_links_count-based readiness probe (which
+        needed the Phase-B leader write to have replicated) to a direct
+        DT_MOUNT presence check. The R16.1b ``mount()`` shim writes
+        DT_MOUNT + adjusts links_count as one leader-forwarded proposal,
+        so once the DT_MOUNT has replicated to this node the topology is
+        locally ready.
         """
         if not self._pending_mounts:
             return True
-        # Count expected links per target zone
-        from collections import Counter
 
-        expected_counts = Counter(self._pending_mounts.values())
-        for target_zone_id, expected in expected_counts.items():
-            target_store = self.get_store(target_zone_id)
-            if target_store is None:
+        active_mounts: dict[str, str] = {}
+        assert self._root_zone_id is not None
+        for global_path, target_zone_id in sorted(
+            self._pending_mounts.items(), key=lambda x: x[0].count("/")
+        ):
+            parent_zone, local_path = self._resolve_mount_parent(global_path, active_mounts)
+            parent_store = self.get_store(parent_zone)
+            if parent_store is None:
                 return False
-            if target_store.get_zone_links_count() < expected:
+            existing = parent_store.get(local_path)
+            if existing is None or not existing.is_mount:
                 return False
+            active_mounts[global_path] = target_zone_id
         return True
 
-    @staticmethod
-    def _is_zone_leader(store: "RaftMetadataStore") -> bool:
-        """Check if this node is the Raft leader for the given zone's store."""
-        try:
-            engine = store._engine  # noqa: SLF001
-            return engine is not None and hasattr(engine, "is_leader") and engine.is_leader()
-        except Exception:
-            return False
+    def _resolve_mount_parent(
+        self, global_path: str, active_mounts: dict[str, str]
+    ) -> tuple[str, str]:
+        """Compute ``(parent_zone_id, zone_relative_path)`` for a global mount path.
+
+        Longest-prefix match against the already-resolved mounts so nested
+        federation mounts (``/corp/eng`` under ``/corp``) end up with
+        ``parent_zone = "corp"`` and ``local_path = "/eng"``. Falls back
+        to the root zone when no containing mount is present.
+        """
+        assert self._root_zone_id is not None
+        for mount_path in sorted(active_mounts, key=len, reverse=True):
+            if global_path.startswith(mount_path + "/"):
+                return active_mounts[mount_path], global_path[len(mount_path) :]
+        return self._root_zone_id, global_path
 
     def _apply_topology(self) -> bool:
-        """Apply pending topology entries with per-zone fault tolerance.
+        """Apply pending topology entries through the R16.1b mount shim.
 
-        Each zone has independent Raft leadership. A single mount requires
-        writes to TWO zones (parent for DT_MOUNT, target for i_links_count),
-        which may have different leaders on different nodes. This method
-        handles each write independently — no cross-zone atomicity needed.
+        R16.4: the old Phase A / Phase B per-mount handwritten raft writes
+        collapse into a single ``self.mount()`` call per entry. The Rust
+        mount path (``PyZoneManager.mount``) handles auto-create DT_DIR,
+        idempotent DT_MOUNT put, ``AdjustCounter(+1)`` on the target's
+        ``__i_links_count__``, leader forwarding, and the apply-event
+        hook wires DLC on peer nodes automatically. Failures (leader
+        unreachable, target not yet opened locally) raise ``RuntimeError``
+        and the entry stays in ``_pending_mounts`` for the next call.
 
-        Per-mount phases:
-          Phase A: Create DT_DIR + DT_MOUNT in parent zone
-          Phase B: Increment i_links_count in target zone
-
-        Each phase has its own leadership check and error handling.
-        Failed phases stay pending for the next ensure_topology() call.
-
-        Returns:
-            True if all topology is fully applied, False if still converging.
+        Returns True when every pending mount has applied on this node;
+        False while still converging.
         """
         assert self._root_zone_id is not None
         root_store = self.get_store(self._root_zone_id)
@@ -901,56 +894,39 @@ class ZoneManager:
             logger.debug("Root zone store not ready yet (zone=%s)", self._root_zone_id)
             return False
 
-        # --- Root "/" creation (needs root zone leader) ---
-        root = root_store.get("/")
-        if root is None:
-            if not self._is_zone_leader(root_store):
-                return False
+        # Root "/" goes through raft propose; forwards to leader
+        # transparently. If no leader is up yet, the propose RuntimeErrors
+        # and we retry on the next ensure_topology() tick.
+        if root_store.get("/") is None:
             try:
-                root_entry = FileMetadata(
-                    path="/",
-                    backend_name="virtual",
-                    physical_path="",
-                    size=0,
-                    entry_type=DT_DIR,
-                    zone_id=self._root_zone_id,
+                root_store.put(
+                    FileMetadata(
+                        path="/",
+                        backend_name="virtual",
+                        physical_path="",
+                        size=0,
+                        entry_type=DT_DIR,
+                        zone_id=self._root_zone_id,
+                    )
                 )
-                root_store.put(root_entry)
-                logger.info(
-                    "Leader: created root '/' in zone '%s'",
-                    self._root_zone_id,
-                )
+                logger.info("Created root '/' in zone '%s'", self._root_zone_id)
             except RuntimeError as e:
                 logger.debug("Root creation deferred: %s", e)
                 return False
 
-        # --- Mount topology (per-mount, per-zone fault tolerance) ---
         if not self._pending_mounts:
             self._topology_initialized = True
             return True
 
         # Process mounts in path-depth order (parents before children)
+        # so nested-mount resolution picks up the freshly applied parent.
         sorted_mounts = sorted(self._pending_mounts.items(), key=lambda x: x[0].count("/"))
-
-        # Track active mounts for nested path resolution
-        active_mounts: dict[str, str] = {}  # global_path → zone_id
-        remaining: dict[str, str] = {}  # mounts not yet fully applied
+        active_mounts: dict[str, str] = {}
+        remaining: dict[str, str] = {}
 
         for global_path, target_zone_id in sorted_mounts:
-            # Resolve which zone owns this mount point
-            parent_zone = self._root_zone_id
-            local_path = global_path
-
-            # Find longest-prefix active mount (nested mount resolution)
-            for mount_path in sorted(active_mounts, key=len, reverse=True):
-                if global_path.startswith(mount_path + "/"):
-                    parent_zone = active_mounts[mount_path]
-                    local_path = global_path[len(mount_path) :]
-                    break
-
-            parent_store = self.get_store(parent_zone)
-            target_store = self.get_store(target_zone_id)
-            if parent_store is None or target_store is None:
+            parent_zone, local_path = self._resolve_mount_parent(global_path, active_mounts)
+            if self.get_store(target_zone_id) is None or self.get_store(parent_zone) is None:
                 logger.warning(
                     "Zone store missing for mount '%s' (parent=%s, target=%s)",
                     global_path,
@@ -960,71 +936,34 @@ class ZoneManager:
                 remaining[global_path] = target_zone_id
                 continue
 
-            # --- Phase A: DT_MOUNT in parent zone ---
-            existing = parent_store.get(local_path)
-            if existing is None or not existing.is_mount:
-                if not self._is_zone_leader(parent_store):
-                    remaining[global_path] = target_zone_id
-                    active_mounts[global_path] = target_zone_id
-                    continue
-                try:
-                    # Create directory if needed
-                    if existing is None:
-                        dir_entry = FileMetadata(
-                            path=local_path,
-                            backend_name="virtual",
-                            physical_path="",
-                            size=0,
-                            entry_type=DT_DIR,
-                            zone_id=parent_zone,
-                        )
-                        parent_store.put(dir_entry)
-
-                    # Replace DT_DIR with DT_MOUNT
-                    mount_entry = FileMetadata(
-                        path=local_path,
-                        backend_name="mount",
-                        physical_path="",
-                        size=0,
-                        entry_type=DT_MOUNT,
-                        target_zone_id=target_zone_id,
-                        zone_id=parent_zone,
-                    )
-                    parent_store.put(mount_entry)
-
-                    # Register in local mount map via DLC (runtime routing)
-                    if self._coordinator:
-                        _target_store = self.get_store(target_zone_id)
-                        root_backend = self._coordinator.get_root_backend()
-                        if root_backend is not None and _target_store is not None:
-                            self._mount_via_kernel(global_path, root_backend, _target_store)
-
-                    logger.debug(
-                        "Phase A done: DT_MOUNT '%s' in zone '%s'", global_path, parent_zone
-                    )
-                except RuntimeError:
-                    remaining[global_path] = target_zone_id
-                    active_mounts[global_path] = target_zone_id
-                    continue
-
-            # --- Phase B: i_links_count in target zone ---
-            # Count how many pending mounts reference this target zone.
-            # i_links_count must reflect ALL mount references, not just the first.
-            expected_links = sum(1 for _, tz in sorted_mounts if tz == target_zone_id)
-            if target_store.get_zone_links_count() < expected_links:
-                if not self._is_zone_leader(target_store):
-                    remaining[global_path] = target_zone_id
-                    active_mounts[global_path] = target_zone_id
-                    continue
-                try:
-                    self._increment_links(target_store)
-                    logger.debug("Phase B done: i_links_count for zone '%s'", target_zone_id)
-                except RuntimeError:
-                    remaining[global_path] = target_zone_id
-                    active_mounts[global_path] = target_zone_id
-                    continue
-
-            active_mounts[global_path] = target_zone_id
+            try:
+                self.mount(
+                    parent_zone,
+                    local_path,
+                    target_zone_id,
+                    global_path=global_path,
+                )
+                active_mounts[global_path] = target_zone_id
+                logger.debug(
+                    "Topology: mounted '%s' → zone '%s' (parent=%s, local=%s)",
+                    global_path,
+                    target_zone_id,
+                    parent_zone,
+                    local_path,
+                )
+            except RuntimeError as e:
+                # Leader unreachable, proposal rejected, or a transient
+                # raft error. Keep it in remaining + active so nested
+                # children can still resolve against this parent on
+                # the next attempt (the DT_MOUNT will land eventually).
+                logger.debug(
+                    "Topology: mount('%s' → '%s') deferred: %s",
+                    global_path,
+                    target_zone_id,
+                    e,
+                )
+                remaining[global_path] = target_zone_id
+                active_mounts[global_path] = target_zone_id
 
         applied = len(self._pending_mounts) - len(remaining)
         if remaining:

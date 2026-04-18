@@ -26,14 +26,18 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 
 use base64::Engine as _;
-use pyo3::exceptions::{PyIOError, PyRuntimeError, PyValueError};
-use pyo3::prelude::*;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use time::OffsetDateTime;
+
+#[cfg(feature = "python")]
+use pyo3::exceptions::{PyIOError, PyRuntimeError, PyValueError};
+#[cfg(feature = "python")]
+use pyo3::prelude::*;
+#[cfg(feature = "python")]
+use std::sync::Mutex;
 
 /// Outcome of [`TofuTrustStore::verify_or_trust`]. Serialized as
 /// ``"trusted_new"`` / ``"trusted_known"`` over the PyO3 boundary.
@@ -311,9 +315,12 @@ impl TofuTrustStore {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// PyO3 surface
+// PyO3 surface — only compiled when the ``python`` feature is on.
+// Server-only builds (e.g. ``nexus-witness`` / ``nexus-federation-server``)
+// skip this block and link against the pure-Rust ``TofuTrustStore``.
 // ─────────────────────────────────────────────────────────────────────
 
+#[cfg(feature = "python")]
 /// Read-only view of a trusted zone entry exposed to Python.
 #[pyclass(name = "TrustedZone", get_all)]
 #[derive(Debug, Clone)]
@@ -326,6 +333,7 @@ pub struct PyTrustedZone {
     pub peer_addresses: Vec<String>,
 }
 
+#[cfg(feature = "python")]
 impl From<TrustedZone> for PyTrustedZone {
     fn from(t: TrustedZone) -> Self {
         Self {
@@ -342,11 +350,13 @@ impl From<TrustedZone> for PyTrustedZone {
 /// PyO3 wrapper for the file-backed trust store. Serializes concurrent
 /// writes through an internal ``Mutex`` so callers can hand the same
 /// instance to multiple threads without guarding it themselves.
+#[cfg(feature = "python")]
 #[pyclass(name = "TofuTrustStore")]
 pub struct PyTofuTrustStore {
     inner: Mutex<TofuTrustStore>,
 }
 
+#[cfg(feature = "python")]
 #[pymethods]
 impl PyTofuTrustStore {
     /// Open (or create-on-first-write) a trust store at ``path``.
@@ -421,6 +431,7 @@ impl PyTofuTrustStore {
     }
 }
 
+#[cfg(feature = "python")]
 impl PyTofuTrustStore {
     fn lock_inner(&self) -> PyResult<std::sync::MutexGuard<'_, TofuTrustStore>> {
         self.inner
@@ -429,6 +440,7 @@ impl PyTofuTrustStore {
     }
 }
 
+#[cfg(feature = "python")]
 fn tofu_error_to_py(e: TofuError) -> PyErr {
     match e {
         TofuError::FingerprintMismatch { .. } => PyRuntimeError::new_err(e.to_string()),

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 
 import pytest
@@ -11,6 +12,7 @@ from nexus.bricks.auth.envelope import (
     AESGCMEnvelope,
     CiphertextCorrupted,
     DecryptionFailed,
+    DEKCache,
     EnvelopeConfigurationError,
     EnvelopeError,
     WrappedDEKInvalid,
@@ -104,3 +106,52 @@ class TestErrorReprDiscipline:
                 return
             fake_secret = base64.b64encode(secrets.token_bytes(24)).decode()
         pytest.fail("_BLOB_RE failed to match 5 consecutive real base64 secrets")
+
+
+class TestDEKCache:
+    def test_hit_after_put(self) -> None:
+        cache = DEKCache(ttl_seconds=60, max_entries=8)
+        key = cache.make_key(tenant_id="t", kek_version=1, wrapped_dek=b"abcd")
+        cache.put(key, b"\x00" * 32)
+        assert cache.get(key) == b"\x00" * 32
+        assert cache.hits == 1
+        assert cache.misses == 0
+
+    def test_miss_on_empty(self) -> None:
+        cache = DEKCache(ttl_seconds=60, max_entries=8)
+        key = cache.make_key(tenant_id="t", kek_version=1, wrapped_dek=b"abcd")
+        assert cache.get(key) is None
+        assert cache.misses == 1
+        assert cache.hits == 0
+
+    def test_ttl_expires(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        now = [1000.0]
+        monkeypatch.setattr("nexus.bricks.auth.envelope._monotonic", lambda: now[0])
+        cache = DEKCache(ttl_seconds=5, max_entries=8)
+        key = cache.make_key(tenant_id="t", kek_version=1, wrapped_dek=b"abcd")
+        cache.put(key, b"\x11" * 32)
+        now[0] += 4
+        assert cache.get(key) == b"\x11" * 32
+        now[0] += 2  # total 6s > ttl
+        assert cache.get(key) is None
+
+    def test_lru_eviction_on_size(self) -> None:
+        cache = DEKCache(ttl_seconds=60, max_entries=2)
+        k1 = cache.make_key(tenant_id="t", kek_version=1, wrapped_dek=b"1")
+        k2 = cache.make_key(tenant_id="t", kek_version=1, wrapped_dek=b"2")
+        k3 = cache.make_key(tenant_id="t", kek_version=1, wrapped_dek=b"3")
+        cache.put(k1, b"\x01" * 32)
+        cache.put(k2, b"\x02" * 32)
+        cache.get(k1)  # bump k1 to MRU
+        cache.put(k3, b"\x03" * 32)  # evicts k2 (LRU)
+        assert cache.get(k1) == b"\x01" * 32
+        assert cache.get(k2) is None
+        assert cache.get(k3) == b"\x03" * 32
+
+    def test_key_uses_wrapped_dek_hash_not_bytes(self) -> None:
+        cache = DEKCache(ttl_seconds=60, max_entries=8)
+        key = cache.make_key(tenant_id="t", kek_version=1, wrapped_dek=b"raw-wrapped-dek-bytes")
+        # Repr of the key should not contain "raw-wrapped-dek-bytes"
+        assert b"raw-wrapped-dek-bytes" not in repr(key).encode()
+        expected_digest = hashlib.sha256(b"raw-wrapped-dek-bytes").hexdigest()
+        assert expected_digest in repr(key)

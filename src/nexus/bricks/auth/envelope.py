@@ -12,8 +12,12 @@ Design: docs/superpowers/specs/2026-04-18-issue-3803-envelope-encryption-design.
 
 from __future__ import annotations
 
+import hashlib
 import secrets
+import time
 import uuid
+from collections import OrderedDict
+from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 from cryptography.exceptions import InvalidTag
@@ -165,3 +169,72 @@ class EncryptionProvider(Protocol):
         aad: bytes,
         kek_version: int,
     ) -> bytes: ...
+
+
+# ---------------------------------------------------------------------------
+# DEKCache — TTL + LRU cache for unwrapped DEKs
+# ---------------------------------------------------------------------------
+
+
+def _monotonic() -> float:
+    """Indirection so tests can monkeypatch the clock."""
+    return time.monotonic()
+
+
+@dataclass(frozen=True, slots=True)
+class DEKCacheKey:
+    tenant_id: str
+    kek_version: int
+    wrapped_dek_sha256: str
+
+    def __repr__(self) -> str:
+        return (
+            f"DEKCacheKey(tenant={self.tenant_id}, v={self.kek_version}, "
+            f"sha256={self.wrapped_dek_sha256})"
+        )
+
+
+class DEKCache:
+    """TTL + LRU cache for unwrapped DEKs.
+
+    Keyed by ``(tenant_id, kek_version, sha256(wrapped_dek))`` — the hash, not
+    the wrapped bytes, so cache-key logging is safe. Does not cache negative
+    results: a KMS/Vault blip shouldn't pin decrypt-failed for the TTL window.
+    """
+
+    def __init__(self, *, ttl_seconds: int = 300, max_entries: int = 1024) -> None:
+        self._ttl = ttl_seconds
+        self._max = max_entries
+        self._store: OrderedDict[DEKCacheKey, tuple[float, bytes]] = OrderedDict()
+        self.hits = 0
+        self.misses = 0
+
+    @staticmethod
+    def make_key(
+        *, tenant_id: str | uuid.UUID, kek_version: int, wrapped_dek: bytes
+    ) -> DEKCacheKey:
+        return DEKCacheKey(
+            tenant_id=str(tenant_id),
+            kek_version=kek_version,
+            wrapped_dek_sha256=hashlib.sha256(wrapped_dek).hexdigest(),
+        )
+
+    def get(self, key: DEKCacheKey) -> bytes | None:
+        entry = self._store.get(key)
+        if entry is None:
+            self.misses += 1
+            return None
+        expires_at, dek = entry
+        if _monotonic() >= expires_at:
+            self._store.pop(key, None)
+            self.misses += 1
+            return None
+        self._store.move_to_end(key)  # mark MRU
+        self.hits += 1
+        return dek
+
+    def put(self, key: DEKCacheKey, dek: bytes) -> None:
+        self._store[key] = (_monotonic() + self._ttl, dek)
+        self._store.move_to_end(key)
+        while len(self._store) > self._max:
+            self._store.popitem(last=False)  # evict LRU

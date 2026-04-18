@@ -725,6 +725,163 @@ def auth_migrate(apply: bool, finalize: bool) -> None:
         store.close()
 
 
+# ---------------------------------------------------------------------------
+# auth migrate-to-postgres (epic #3788 Phase F)
+# ---------------------------------------------------------------------------
+
+
+@auth.command("migrate-to-postgres")
+@click.option(
+    "--db-url",
+    required=True,
+    help="PostgreSQL URL (e.g. postgresql+psycopg2://user:pw@host:5432/db).",
+)
+@click.option(
+    "--tenant",
+    required=True,
+    help="Tenant name; created if it does not exist.",
+)
+@click.option(
+    "--principal",
+    required=True,
+    help="Principal external_sub (OIDC sub / keypair fingerprint); created if absent.",
+)
+@click.option(
+    "--principal-kind",
+    default="human",
+    type=click.Choice(["human", "agent", "machine"]),
+    help="Principal kind used when creating a new principal row.",
+)
+@click.option(
+    "--auth-method",
+    default="bootstrap",
+    help="Auth method recorded on the principal_alias row.",
+)
+@click.option(
+    "--source-db",
+    type=click.Path(),
+    default=None,
+    help="Path to SQLite auth_profiles.db (default: ~/.nexus/auth_profiles.db).",
+)
+@click.option(
+    "--apply",
+    is_flag=True,
+    default=False,
+    help="Actually copy rows (default: dry-run).",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help="Overwrite rows that already exist in the target store.",
+)
+def auth_migrate_to_postgres(
+    db_url: str,
+    tenant: str,
+    principal: str,
+    principal_kind: str,
+    auth_method: str,
+    source_db: str | None,
+    apply: bool,
+    force: bool,
+) -> None:
+    """Migrate local SQLite auth profiles into a multi-tenant Postgres store.
+
+    Part of epic #3788 (Phase F). Copy-only by default — the SQLite source is
+    never modified. Safe to rerun: rows already in the target are skipped
+    unless --force is passed.
+
+    Example (dry-run, then apply)::
+
+        nexus auth migrate-to-postgres \\
+            --db-url postgresql+psycopg2://postgres:pw@host/nexus \\
+            --tenant acme --principal alice@acme.com
+
+        nexus auth migrate-to-postgres ... --apply
+    """
+    from pathlib import Path
+
+    from sqlalchemy import create_engine
+
+    from nexus.bricks.auth.postgres_migrate import (
+        build_migration_plan,
+        execute_migration,
+    )
+    from nexus.bricks.auth.postgres_profile_store import (
+        PostgresAuthProfileStore,
+        ensure_principal,
+        ensure_schema,
+        ensure_tenant,
+    )
+    from nexus.bricks.auth.profile_store import SqliteAuthProfileStore
+
+    sqlite_path = (
+        Path(source_db).expanduser()
+        if source_db
+        else Path("~/.nexus/auth_profiles.db").expanduser()
+    )
+    if not sqlite_path.exists():
+        raise click.ClickException(f"Source SQLite DB not found: {sqlite_path}")
+
+    engine = create_engine(db_url, future=True)
+    try:
+        ensure_schema(engine)
+        tenant_id = ensure_tenant(engine, tenant)
+        principal_id = ensure_principal(
+            engine,
+            tenant_id=tenant_id,
+            kind=principal_kind,
+            external_sub=principal,
+            auth_method=auth_method,
+        )
+
+        source = SqliteAuthProfileStore(sqlite_path)
+        target = PostgresAuthProfileStore(
+            db_url,
+            tenant_id=tenant_id,
+            principal_id=principal_id,
+            engine=engine,
+        )
+        try:
+            plan = build_migration_plan(source, target, force=force)
+            result = execute_migration(plan, source, target, apply=apply)
+
+            if not apply:
+                console.print("[bold]Dry-run[/bold] (pass --apply to write):\n")
+
+            for entry in result.entries:
+                if entry.action in ("copy", "overwrite"):
+                    style = "nexus.success" if apply else "nexus.info"
+                    verb = {
+                        ("copy", True): "Copied",
+                        ("copy", False): "Would copy",
+                        ("overwrite", True): "Overwrote",
+                        ("overwrite", False): "Would overwrite",
+                    }[(entry.action, apply)]
+                    console.print(f"  [{style}]{verb}[/{style}] {entry.profile_id}")
+                elif entry.action == "skip_exists":
+                    console.print(f"  [nexus.muted]Skip (exists)[/nexus.muted] {entry.profile_id}")
+                elif entry.action == "error":
+                    console.print(
+                        f"  [nexus.error]Error[/nexus.error] {entry.profile_id}: {entry.reason}"
+                    )
+
+            console.print(
+                f"\n{'Dry-run' if result.dry_run else 'Result'}: "
+                f"tenant={tenant} principal={principal} "
+                f"{result.copied} copied, {result.skipped} skipped, "
+                f"{result.errors} errors"
+            )
+
+            if result.errors > 0:
+                raise click.exceptions.Exit(1)
+        finally:
+            source.close()
+            target.close()
+    finally:
+        engine.dispose()
+
+
 # Order preserves registration for parity testing.
 
 

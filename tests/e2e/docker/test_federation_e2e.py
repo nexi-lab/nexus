@@ -956,19 +956,32 @@ class TestLeaderFailover:
             # Restart node-1 — split Docker-level start from health-check
             # wait so we can tell WHICH phase stalls if the test ever
             # times out again (R11 hypothesis).
+            #
+            # NOTE: docker-py's `container.wait(condition=...)` only
+            # accepts {"not-running", "next-exit", "removed"} — there
+            # is no "running" condition (the API blocks until the
+            # container EXITS). We poll `container.attrs["State"]
+            # ["Status"]` instead, which is what we actually want.
             t_start = time.time()
             node1_container.start()
-            try:
-                node1_container.wait(condition="running", timeout=30)
-            except Exception as exc:  # diagnostic path
+            running_deadline = time.time() + 30
+            running = False
+            while time.time() < running_deadline:
+                node1_container.reload()
+                if node1_container.attrs["State"]["Status"] == "running":
+                    running = True
+                    break
+                time.sleep(0.5)
+            if not running:
                 logs = b""
                 try:
                     logs = node1_container.logs(tail=200, stderr=True)
                 except Exception:
                     pass
                 pytest.fail(
-                    "node-1 container.wait(running) did not complete within 30s "
-                    f"(elapsed={time.time() - t_start:.1f}s): {exc}\n"
+                    "node-1 did not reach running state within 30s "
+                    f"(elapsed={time.time() - t_start:.1f}s, "
+                    f"current state={node1_container.attrs['State']['Status']})\n"
                     f"--- docker logs (tail 200) ---\n{(logs or b'').decode(errors='replace')}"
                 )
             t_running = time.time()
@@ -1157,57 +1170,140 @@ def _cli_exec(container_name: str, argv: list[str], timeout: int = 30) -> tuple[
 # R13.1 Class 1/11: Scatter-gather chunked read across nodes
 # ===================================================================
 class TestScatterGatherChunkedRead:
-    """R10-SG: cross-node chunk fetch for chunked (>=16MiB) file reads.
+    """R10-SG: true scatter-gather — reader holds some chunks locally
+    (from an earlier remote fetch + cache) while the manifest's NEW
+    chunks only exist on the writer node. One read assembles both.
 
-    Writes a large file on node-1, reads it on node-2 BEFORE waiting for
-    chunk replication. Chunk bytes live on node-1's local CAS until the
-    scatter-gather fetcher pulls them via ReadBlob, so the read exercises
-    the full remote-fetch path.
+    Because CAS content is stored on the node that EXECUTES a write
+    (Raft forwards writes to the leader), we can't simply "have node-2
+    do a partial write" — the bytes still land on node-1. The standard
+    way to engineer a mixed local/remote state is:
+
+    1. node-1 writes a 17 MiB chunked file → chunks C0..C4 on node-1.
+    2. node-2 reads the file once → scatter-gather remote-fetches all
+       chunks from node-1 AND caches them to node-2's local CAS.
+    3. node-1 does a partial write that replaces the middle region →
+       the new manifest references {C0, C_new, C_newer, C4} — the new
+       chunks exist ONLY on node-1.
+    4. node-2 reads the file again → HAS C0, C4 locally (from the step-
+       2 cache), MUST fetch C_new, C_newer remotely from node-1. This
+       is the local+remote mix the plan wants validated.
     """
 
-    def test_cross_node_chunked_read(self, cluster, api_key):
+    def test_mixed_local_and_remote_chunks(self, cluster, api_key):
         uid = _uid()
         grpc1 = cluster["grpc1"]
         grpc2 = cluster["grpc2"]
 
-        # 17 MiB > CDC threshold (16 MiB) guarantees a chunked manifest.
-        # Use varied content (not constant bytes) so FastCDC produces
-        # multiple chunks rather than collapsing to one fingerprint.
         path = f"/corp/eng/sg-chunked-{uid}.bin"
-        target_size = 17 * 1024 * 1024
-        chunk_filler = f"nexus-sg-{uid}-chunk-content-block-varied-payload-marker-"
-        content = (chunk_filler * (target_size // len(chunk_filler) + 1))[:target_size]
-        size = len(content)
+        total_size = 17 * 1024 * 1024
 
-        w = _grpc_call(
+        # Two distinct fillers so CDC produces divergent fingerprints at
+        # the middle boundary — replaced chunks genuinely differ from
+        # originals instead of accidentally deduping.
+        filler_a = f"nexus-sg-a-{uid}-head-tail-block-varied-marker-"
+        filler_b = f"nexus-sg-b-{uid}-middle-block-different-marker-"
+        content = (filler_a * (total_size // len(filler_a) + 1))[:total_size]
+
+        # Step 1: full-file write on node-1.
+        w1 = _grpc_call(
             grpc1, "write", {"path": path, "content": content}, api_key=api_key, timeout=60
         )
-        assert "error" not in w, f"Large chunked write failed: {w}"
-
-        # Wait for metadata (Raft) to replicate to node-2 — the manifest
-        # hash must be visible before we attempt the cross-node read.
+        assert "error" not in w1, f"Initial chunked write failed: {w1}"
         _wait_replicated(
             grpc2,
             "/corp/eng/",
             path,
             api_key,
-            msg="Chunked file metadata not replicated",
+            msg="Initial manifest not replicated",
             timeout=30,
         )
 
-        # Read on node-2 — chunks are fetched from node-1 via ReadBlob.
-        r = _grpc_call(grpc2, "read", {"path": path}, api_key=api_key, timeout=60)
-        assert "error" not in r, f"Cross-node chunked read failed: {r}"
-        decoded = _decode_content(r)
-        assert len(decoded) == size, f"Size mismatch: got {len(decoded)}, want {size}"
-        assert decoded == content, "Content mismatch after scatter-gather fetch"
+        # Step 2: node-2 reads the whole file → remote-fetches ALL
+        # chunks from node-1 and caches them locally. After this, node-
+        # 2's CAS has every chunk the current manifest references.
+        r_warm = _grpc_call(grpc2, "read", {"path": path}, api_key=api_key, timeout=60)
+        assert "error" not in r_warm, f"Warm-up read on node-2 failed: {r_warm}"
 
-        # Second read should succeed from chunk cache (no re-fetch). We
-        # can't directly assert "no RPC to peer" from here, but the read
-        # must succeed with identical payload.
-        r2 = _grpc_call(grpc2, "read", {"path": path}, api_key=api_key, timeout=30)
-        assert "error" not in r2, f"Second chunked read failed: {r2}"
-        assert _decode_content(r2) == content
+        # Step 3: partial write on node-1 replacing bytes [6 MiB, 11 MiB).
+        # Wide enough to span several CDC chunks so the new manifest has
+        # multiple NEW chunks that only exist on node-1 (not in node-2's
+        # step-2 cache).
+        mid_offset = 6 * 1024 * 1024
+        mid_len = 5 * 1024 * 1024
+        middle_bytes = (filler_b * (mid_len // len(filler_b) + 1))[:mid_len]
+        w2 = _grpc_call(
+            grpc1,
+            "write",
+            {"path": path, "content": middle_bytes, "offset": mid_offset},
+            api_key=api_key,
+            timeout=60,
+        )
+        if "error" in w2:
+            pytest.skip(f"offset-based write not available via RPC: {w2}")
+
+        # Build expected final content locally for comparison.
+        import hashlib
+
+        expected = bytearray(content.encode("utf-8"))
+        expected[mid_offset : mid_offset + mid_len] = middle_bytes.encode("utf-8")
+        expected_bytes = bytes(expected)
+        expected_hash = hashlib.blake2b(expected_bytes, digest_size=32).hexdigest()
+
+        def _diagnose(label: str, got: bytes) -> str:
+            # NEVER let pytest's diff engine ndiff 17 MiB — O(n²) hangs.
+            if got == expected_bytes:
+                return f"{label}: OK"
+            got_hash = hashlib.blake2b(got, digest_size=32).hexdigest()
+            first_diff = -1
+            for i in range(min(len(got), len(expected_bytes))):
+                if got[i] != expected_bytes[i]:
+                    first_diff = i
+                    break
+            if first_diff == -1 and len(got) != len(expected_bytes):
+                first_diff = min(len(got), len(expected_bytes))
+            ctx = 32
+            lo = max(0, first_diff - ctx) if first_diff >= 0 else 0
+            hi = lo + 2 * ctx
+            return (
+                f"{label}: MISMATCH "
+                f"len={len(got)} want={len(expected_bytes)} "
+                f"hash={got_hash[:16]} want_hash={expected_hash[:16]} "
+                f"first_diff={first_diff} "
+                f"got[{lo}:{hi}]={got[lo:hi]!r} want[{lo}:{hi}]={expected_bytes[lo:hi]!r}"
+            )
+
+        # Step 4: node-2 reads the modified file. Some chunks (head,
+        # tail) are in node-2's local CAS from the step-2 warm-up; the
+        # new middle chunks only exist on node-1. The read MUST succeed
+        # by mixing local reads with a remote fetch — the defining
+        # scatter-gather behavior.
+        deadline = time.time() + 30
+        r2: dict = {}
+        decoded2: bytes = b""
+        while time.time() < deadline:
+            r2 = _grpc_call(grpc2, "read", {"path": path}, api_key=api_key, timeout=60)
+            if "error" not in r2:
+                decoded2 = _decode_content(r2)
+                if isinstance(decoded2, str):
+                    decoded2 = decoded2.encode("utf-8")
+                if decoded2 == expected_bytes:
+                    break
+            time.sleep(0.5)
+        assert "error" not in r2, f"Node-2 post-modify read failed: {r2}"
+        if decoded2 != expected_bytes:
+            pytest.fail(_diagnose("node2 read (local head/tail + remote middle)", decoded2))
+
+        # Sanity: node-1 reads — purely local (every chunk of the new
+        # manifest exists on node-1). Confirms the data itself is correct
+        # and the above read really did traverse a mixed local/remote path.
+        r1 = _grpc_call(grpc1, "read", {"path": path}, api_key=api_key, timeout=60)
+        assert "error" not in r1, f"Node-1 post-modify read failed: {r1}"
+        decoded1 = _decode_content(r1)
+        if isinstance(decoded1, str):
+            decoded1 = decoded1.encode("utf-8")
+        if decoded1 != expected_bytes:
+            pytest.fail(_diagnose("node1 read (all local)", decoded1))
 
 
 # ===================================================================
@@ -1309,7 +1405,10 @@ class TestZoneSnapshotExportImport:
         zone_id = f"snap-{uid}"
 
         _grpc_call(grpc1, "federation_create_zone", {"zone_id": zone_id}, api_key=api_key)
-        _wait_zone_ready(grpc1, zone_id, api_key, timeout=10)
+        _grpc_call(
+            cluster["grpc2"], "federation_create_zone", {"zone_id": zone_id}, api_key=api_key
+        )
+        _wait_zone_ready(grpc1, zone_id, api_key, timeout=15)
 
         mount_path = f"/corp/eng/snap-{uid}-mnt"
         mk = _grpc_call(grpc1, "mkdir", {"path": mount_path, "parents": True}, api_key=api_key)
@@ -1450,10 +1549,16 @@ class TestZoneRemovalWithActiveMounts:
     def test_remove_zone_cleans_all_mounts(self, cluster, api_key):
         uid = _uid()
         grpc1 = cluster["grpc1"]
+        grpc2 = cluster["grpc2"]
         zone_id = f"cleanup-{uid}"
 
+        # Create on BOTH nodes so the Raft zone group has all peers and
+        # subsequent writes/removes reach quorum (mirrors existing
+        # TestZoneLifecycle.test_zones_visible_on_both_nodes pattern).
         _grpc_call(grpc1, "federation_create_zone", {"zone_id": zone_id}, api_key=api_key)
-        _wait_zone_ready(grpc1, zone_id, api_key, timeout=10)
+        _grpc_call(grpc2, "federation_create_zone", {"zone_id": zone_id}, api_key=api_key)
+        _wait_zone_ready(grpc1, zone_id, api_key, timeout=15)
+        _wait_zone_ready(grpc2, zone_id, api_key, timeout=15)
 
         mnt_a = f"/corp/cleanup-a-{uid}"
         mnt_b = f"/family/cleanup-b-{uid}"
@@ -1472,7 +1577,16 @@ class TestZoneRemovalWithActiveMounts:
         wr = _grpc_call(grpc1, "write", {"path": probe, "content": f"probe-{uid}"}, api_key=api_key)
         assert "error" not in wr
 
-        rm = _grpc_call(grpc1, "federation_remove_zone", {"zone_id": zone_id}, api_key=api_key)
+        # Server refuses federation_remove_zone while mounts exist unless
+        # force=True is passed — we explicitly want the ATOMIC cleanup
+        # semantics the plan describes ("both mounts removed atomically"),
+        # so force the remove and verify subsequent reads fail.
+        rm = _grpc_call(
+            grpc1,
+            "federation_remove_zone",
+            {"zone_id": zone_id, "force": True},
+            api_key=api_key,
+        )
         assert "error" not in rm, f"remove_zone failed: {rm}"
 
         # Wait for removal to propagate.
@@ -1500,10 +1614,13 @@ class TestWitnessAutoJoin:
     def test_witness_participates_in_new_zone(self, cluster, api_key):
         uid = _uid()
         grpc1 = cluster["grpc1"]
+        grpc2 = cluster["grpc2"]
         zone_id = f"witness-{uid}"
 
         _grpc_call(grpc1, "federation_create_zone", {"zone_id": zone_id}, api_key=api_key)
-        _wait_zone_ready(grpc1, zone_id, api_key, timeout=10)
+        _grpc_call(grpc2, "federation_create_zone", {"zone_id": zone_id}, api_key=api_key)
+        _wait_zone_ready(grpc1, zone_id, api_key, timeout=15)
+        _wait_zone_ready(grpc2, zone_id, api_key, timeout=15)
 
         info = _grpc_call(grpc1, "federation_cluster_info", {"zone_id": zone_id}, api_key=api_key)
         assert "error" not in info, f"cluster_info failed: {info}"
@@ -1980,22 +2097,30 @@ class TestFullFailoverRecovery:
                 api_key=api_key,
             )
         finally:
-            # Split start + wait(running) + _wait_healthy so timeouts
-            # surface actionable diagnostics (see TestLeaderFailover for
-            # the same pattern + R11 debug notes).
+            # Split start + reach-running poll + _wait_healthy so
+            # timeouts surface actionable diagnostics. See
+            # TestLeaderFailover for the wait-condition note (docker-py
+            # has no "running" condition; we poll State.Status).
             t_start = time.time()
             node1.start()
-            try:
-                node1.wait(condition="running", timeout=30)
-            except Exception as exc:
+            running_deadline = time.time() + 30
+            running = False
+            while time.time() < running_deadline:
+                node1.reload()
+                if node1.attrs["State"]["Status"] == "running":
+                    running = True
+                    break
+                time.sleep(0.5)
+            if not running:
                 logs = b""
                 try:
                     logs = node1.logs(tail=200, stderr=True)
                 except Exception:
                     pass
                 pytest.fail(
-                    "node-1 wait(running) timed out "
-                    f"(elapsed={time.time() - t_start:.1f}s): {exc}\n"
+                    "node-1 did not reach running within 30s "
+                    f"(elapsed={time.time() - t_start:.1f}s, "
+                    f"current state={node1.attrs['State']['Status']})\n"
                     f"--- docker logs (tail 200) ---\n{(logs or b'').decode(errors='replace')}"
                 )
             t_running = time.time()

@@ -37,6 +37,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from starlette.middleware.gzip import GZipMiddleware
+from starlette.routing import Route as _StarletteRoute
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import (
@@ -114,6 +115,40 @@ async def to_thread_with_timeout(
         )
     except TimeoutError:
         raise TimeoutError(f"Operation timed out after {effective_timeout}s") from None
+
+
+# ============================================================================
+# Issue #3778: SANDBOX HTTP allowlist
+# ============================================================================
+
+SANDBOX_HTTP_ALLOWLIST: frozenset[str] = frozenset(
+    {
+        # Issue #3778: SANDBOX HTTP surface
+        "/health",
+        "/api/v2/features",
+        # FastAPI built-ins
+        "/openapi.json",
+        "/docs",
+        "/docs/oauth2-redirect",
+        "/redoc",
+    }
+)
+
+
+def _filter_routes_for_sandbox(app: "FastAPI") -> None:
+    """Issue #3778: remove every `Route` not in SANDBOX_HTTP_ALLOWLIST.
+
+    Idempotent. Leaves `Mount`s, `WebSocketRoute`s, and startup/shutdown
+    event handlers untouched — only path-bound `Route` instances are
+    filtered. Called once after all routers have been included, when the
+    profile is sandbox.
+    """
+    kept = []
+    for r in app.router.routes:
+        if isinstance(r, _StarletteRoute) and r.path not in SANDBOX_HTTP_ALLOWLIST:
+            continue
+        kept.append(r)
+    app.router.routes = kept
 
 
 # ============================================================================
@@ -604,6 +639,10 @@ def create_app(
         instrument_fastapi_app(app)
     except ImportError:
         pass
+
+    # Issue #3778: SANDBOX profile restricts HTTP surface
+    if _profile_str == "sandbox":
+        _filter_routes_for_sandbox(app)
 
     return app
 

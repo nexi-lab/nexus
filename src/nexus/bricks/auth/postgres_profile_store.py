@@ -52,11 +52,33 @@ from nexus.bricks.auth.profile import (
 logger = logging.getLogger(__name__)
 
 
+class CrossPrincipalConflict(Exception):
+    """Raised by ``PostgresAuthProfileStore.upsert_strict`` when the target
+    ``profile.id`` is already owned by another principal in the same tenant.
+
+    Callers (notably the migration CLI) surface this as a policy decision —
+    not a database error — so the operator can delete the foreign row or
+    retarget the migration.
+    """
+
+    def __init__(self, *, profile_id: str, foreign_principals: list[uuid.UUID]):
+        self.profile_id = profile_id
+        self.foreign_principals = foreign_principals
+        super().__init__(
+            f"profile_id={profile_id!r} already owned by "
+            f"{', '.join(str(p) for p in foreign_principals)} in the same tenant"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Schema (idempotent CREATE TABLE IF NOT EXISTS + RLS policies)
 # ---------------------------------------------------------------------------
 
-_SCHEMA_STATEMENTS: tuple[str, ...] = (
+# Table + index DDL. Does NOT touch RLS so migrations and backfills
+# (in _upgrade_shape_in_place) can run before any FORCE ROW LEVEL SECURITY
+# policy is active. Production-critical: backfills under FORCE RLS with a
+# non-BYPASSRLS role silently affect zero rows.
+_TABLE_STATEMENTS: tuple[str, ...] = (
     """
     CREATE TABLE IF NOT EXISTS tenants (
         id          UUID PRIMARY KEY,
@@ -75,21 +97,31 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_principals_tenant_id ON principals(tenant_id)",
+    # UNIQUE (id, tenant_id) is a no-op for uniqueness (id is already
+    # PRIMARY KEY) but lets principal_aliases carry a composite FK
+    # ``(tenant_id, principal_id) -> principals(tenant_id, id)`` so a
+    # malformed alias cannot point at a principal that lives in another
+    # tenant. Schema-level tenant/principal consistency.
+    "CREATE UNIQUE INDEX IF NOT EXISTS uix_principals_id_tenant ON principals(id, tenant_id)",
     """
     CREATE TABLE IF NOT EXISTS principal_aliases (
+        tenant_id    UUID NOT NULL,
         auth_method  TEXT NOT NULL,
         external_sub TEXT NOT NULL,
-        principal_id UUID NOT NULL REFERENCES principals(id) ON DELETE CASCADE,
+        principal_id UUID NOT NULL,
         created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        PRIMARY KEY (auth_method, external_sub)
+        PRIMARY KEY (tenant_id, auth_method, external_sub),
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+        FOREIGN KEY (principal_id, tenant_id)
+            REFERENCES principals(id, tenant_id) ON DELETE CASCADE
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_principal_aliases_principal_id ON principal_aliases(principal_id)",
     """
     CREATE TABLE IF NOT EXISTS auth_profiles (
         tenant_id          UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+        principal_id       UUID NOT NULL,
         id                 TEXT NOT NULL,
-        principal_id       UUID NOT NULL REFERENCES principals(id) ON DELETE CASCADE,
         provider           TEXT NOT NULL,
         account_identifier TEXT NOT NULL,
         backend            TEXT NOT NULL,
@@ -105,11 +137,18 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
         raw_error          TEXT,
         created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        PRIMARY KEY (tenant_id, id)
+        PRIMARY KEY (tenant_id, principal_id, id),
+        FOREIGN KEY (principal_id, tenant_id)
+            REFERENCES principals(id, tenant_id) ON DELETE CASCADE
     )
     """,
-    "CREATE INDEX IF NOT EXISTS idx_auth_profiles_principal ON auth_profiles(tenant_id, principal_id)",
-    "CREATE INDEX IF NOT EXISTS idx_auth_profiles_provider ON auth_profiles(tenant_id, provider)",
+    "CREATE INDEX IF NOT EXISTS idx_auth_profiles_provider ON auth_profiles(tenant_id, principal_id, provider)",
+    "CREATE INDEX IF NOT EXISTS idx_auth_profiles_tenant_id_only ON auth_profiles(tenant_id, id)",
+)
+
+# RLS statements. Run LAST so the backfill in _upgrade_shape_in_place is not
+# shadowed by FORCE RLS policies before the backfill row visibility is set.
+_RLS_STATEMENTS: tuple[str, ...] = (
     "ALTER TABLE tenants ENABLE ROW LEVEL SECURITY",
     "ALTER TABLE tenants FORCE ROW LEVEL SECURITY",
     "ALTER TABLE principals ENABLE ROW LEVEL SECURITY",
@@ -136,10 +175,7 @@ _POLICY_STATEMENTS: tuple[str, ...] = (
     "DROP POLICY IF EXISTS tenant_isolation_aliases ON principal_aliases",
     """
     CREATE POLICY tenant_isolation_aliases ON principal_aliases
-        USING (principal_id IN (
-            SELECT id FROM principals
-            WHERE tenant_id = current_setting('app.current_tenant', true)::UUID
-        ))
+        USING (tenant_id = current_setting('app.current_tenant', true)::UUID)
     """,
     "DROP POLICY IF EXISTS tenant_isolation_auth_profiles ON auth_profiles",
     """
@@ -150,21 +186,213 @@ _POLICY_STATEMENTS: tuple[str, ...] = (
 
 
 def ensure_schema(engine: Engine) -> None:
-    """Create (idempotently) every table, index, and RLS policy.
+    """Create (idempotently) every table, index, and RLS policy, and upgrade
+    an already-present older shape in place.
 
     Intended for:
       - Test fixtures (fresh schema per module)
       - Dev bootstrap
       - First-run on an empty production database
+      - Upgrading a database that was already bootstrapped by an earlier
+        iteration of this module, where ``principal_aliases`` had no
+        ``tenant_id`` column and ``auth_profiles`` had PK ``(tenant_id, id)``
 
-    Production rollouts should eventually migrate to Alembic — intentionally
-    out of scope for PR 1.
+    The upgrade path is in-place and idempotent: on a fresh DB the ALTER
+    statements are no-ops because the CREATE TABLE DDL already produces the
+    current shape. Production rollouts will formalise this with Alembic once
+    the Postgres path actually goes live.
     """
+    # Advisory lock serializes concurrent ensure_schema() runs (multi-replica
+    # bootstrap, parallel test processes). The lock key is a stable hash of
+    # the module-qualified name so it never collides with unrelated callers.
+    # pg_advisory_xact_lock releases automatically at transaction end.
+    _LOCK_KEY = 0x3788A17F  # "#3788 auth-store schema" — arbitrary, stable
     with engine.begin() as conn:
-        for stmt in _SCHEMA_STATEMENTS:
+        conn.execute(text(f"SELECT pg_advisory_xact_lock({_LOCK_KEY})"))
+        # Order matters: tables → legacy-shape upgrade (backfill UPDATE needs
+        # row visibility) → RLS enable/force → policies. Flipping any pair
+        # breaks bootstrap on a non-superuser role with pre-existing data.
+        for stmt in _TABLE_STATEMENTS:
+            conn.execute(text(stmt))
+        _upgrade_shape_in_place(conn)
+        for stmt in _RLS_STATEMENTS:
             conn.execute(text(stmt))
         for stmt in _POLICY_STATEMENTS:
             conn.execute(text(stmt))
+
+
+_UPGRADE_TABLES = ("tenants", "principals", "principal_aliases", "auth_profiles")
+
+
+def _upgrade_shape_in_place(conn: Connection) -> None:
+    """Run the ALTERs needed to upgrade a pre-composite-PK shape.
+
+    - ``principal_aliases``: add ``tenant_id`` column + backfill from
+      ``principals`` + rebuild PK to ``(tenant_id, auth_method, external_sub)``
+      + add composite ``(principal_id, tenant_id)`` FK
+    - ``auth_profiles``: rebuild PK from ``(tenant_id, id)`` to
+      ``(tenant_id, principal_id, id)``
+
+    Uses ``information_schema`` to detect which steps are needed, so running
+    this on an already-current schema is a no-op.
+
+    FORCE ROW LEVEL SECURITY is temporarily disabled for the duration of
+    the upgrade so that the cross-tenant backfill ``UPDATE`` can actually
+    see the legacy rows. Running a backfill under an active alias policy
+    (``tenant_id = current_setting('app.current_tenant', true)::UUID``)
+    would silently match zero rows because ``app.current_tenant`` is not
+    set during schema bootstrap — ``SET NOT NULL`` would then abort. RLS
+    state is restored at the tail so ``_RLS_STATEMENTS`` re-forces policy
+    enforcement unchanged. All ``ALTER TABLE`` and the RLS toggling run in
+    the same transaction, so a mid-upgrade abort does not leave RLS
+    disabled.
+    """
+    # Record current RLS state so we can restore it, then disable. If a
+    # table is absent (first-run, CREATE above already emitted the new
+    # shape), the disable no-ops — the statement works on any existing
+    # table and we don't care about the initial state.
+    for tbl in _UPGRADE_TABLES:
+        conn.execute(text(f"ALTER TABLE {tbl} NO FORCE ROW LEVEL SECURITY"))
+        conn.execute(text(f"ALTER TABLE {tbl} DISABLE ROW LEVEL SECURITY"))
+
+    # --- principal_aliases: ensure tenant_id column exists ---
+    # Filter by current schema so a sibling schema (e.g. a different
+    # test module's copy of the tables) does not fool the upgrade check.
+    has_tenant_col = conn.execute(
+        text(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_schema = CURRENT_SCHEMA() "
+            "  AND table_name = 'principal_aliases' "
+            "  AND column_name = 'tenant_id'"
+        )
+    ).fetchone()
+    if has_tenant_col is None:
+        # IF NOT EXISTS makes the DDL safe if a concurrent runner beat us
+        # after the information_schema check.
+        conn.execute(
+            text(
+                "ALTER TABLE principal_aliases "
+                "ADD COLUMN IF NOT EXISTS tenant_id UUID "
+                "REFERENCES tenants(id) ON DELETE CASCADE"
+            )
+        )
+        conn.execute(
+            text(
+                "UPDATE principal_aliases pa "
+                "SET tenant_id = p.tenant_id "
+                "FROM principals p "
+                "WHERE pa.principal_id = p.id AND pa.tenant_id IS NULL"
+            )
+        )
+        conn.execute(text("ALTER TABLE principal_aliases ALTER COLUMN tenant_id SET NOT NULL"))
+        conn.execute(
+            text("ALTER TABLE principal_aliases DROP CONSTRAINT IF EXISTS principal_aliases_pkey")
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE principal_aliases "
+                "ADD PRIMARY KEY (tenant_id, auth_method, external_sub)"
+            )
+        )
+
+    # --- principal_aliases: composite (principal_id, tenant_id) FK ---
+    # Ensures upgraded installs get the same tenant/principal consistency
+    # invariant that fresh installs get from CREATE TABLE. Without this a
+    # malformed alias row could point to a principal in another tenant even
+    # though its own ``tenant_id`` column says otherwise — the alias RLS
+    # policy trusts ``tenant_id`` directly, so that would be a real trust
+    # boundary gap.
+    has_composite_fk = conn.execute(
+        text(
+            "SELECT 1 FROM information_schema.referential_constraints rc "
+            "JOIN information_schema.key_column_usage kcu "
+            "  ON rc.constraint_name = kcu.constraint_name "
+            " AND rc.constraint_schema = kcu.table_schema "
+            "WHERE kcu.table_schema = CURRENT_SCHEMA() "
+            "  AND kcu.table_name = 'principal_aliases' "
+            "  AND kcu.column_name IN ('principal_id', 'tenant_id') "
+            "GROUP BY rc.constraint_name "
+            "HAVING COUNT(DISTINCT kcu.column_name) = 2 "
+            "LIMIT 1"
+        )
+    ).fetchone()
+    if has_composite_fk is None:
+        # Drop the legacy single-column FK if it exists, then add the
+        # composite FK. ``information_schema`` would report the legacy FK
+        # as a referential constraint too, so the guard above checks
+        # specifically for a constraint that covers BOTH columns.
+        conn.execute(
+            text(
+                "ALTER TABLE principal_aliases "
+                "DROP CONSTRAINT IF EXISTS principal_aliases_principal_id_fkey"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE principal_aliases "
+                "ADD CONSTRAINT principal_aliases_principal_tenant_fkey "
+                "FOREIGN KEY (principal_id, tenant_id) "
+                "REFERENCES principals(id, tenant_id) ON DELETE CASCADE"
+            )
+        )
+
+    # --- auth_profiles: rebuild PK to include principal_id ---
+    pk_cols = [
+        row[0]
+        for row in conn.execute(
+            text(
+                "SELECT kcu.column_name "
+                "FROM information_schema.table_constraints tc "
+                "JOIN information_schema.key_column_usage kcu "
+                "  ON tc.constraint_name = kcu.constraint_name "
+                " AND tc.table_schema = kcu.table_schema "
+                " AND tc.table_name = kcu.table_name "
+                "WHERE tc.table_schema = CURRENT_SCHEMA() "
+                "  AND tc.table_name = 'auth_profiles' "
+                "  AND tc.constraint_type = 'PRIMARY KEY' "
+                "ORDER BY kcu.ordinal_position"
+            )
+        ).fetchall()
+    ]
+    if pk_cols and set(pk_cols) != {"tenant_id", "principal_id", "id"}:
+        conn.execute(text("ALTER TABLE auth_profiles DROP CONSTRAINT IF EXISTS auth_profiles_pkey"))
+        conn.execute(
+            text("ALTER TABLE auth_profiles ADD PRIMARY KEY (tenant_id, principal_id, id)")
+        )
+
+    # --- auth_profiles: composite (principal_id, tenant_id) FK ---
+    # Same invariant as principal_aliases: tenant_id and principal_id on an
+    # auth_profiles row must reference the same principal. Fresh installs
+    # inherit this from CREATE TABLE; upgraded installs need the ALTER.
+    has_ap_composite_fk = conn.execute(
+        text(
+            "SELECT 1 FROM information_schema.referential_constraints rc "
+            "JOIN information_schema.key_column_usage kcu "
+            "  ON rc.constraint_name = kcu.constraint_name "
+            " AND rc.constraint_schema = kcu.table_schema "
+            "WHERE kcu.table_schema = CURRENT_SCHEMA() "
+            "  AND kcu.table_name = 'auth_profiles' "
+            "  AND kcu.column_name IN ('principal_id', 'tenant_id') "
+            "GROUP BY rc.constraint_name "
+            "HAVING COUNT(DISTINCT kcu.column_name) = 2 "
+            "LIMIT 1"
+        )
+    ).fetchone()
+    if has_ap_composite_fk is None:
+        conn.execute(
+            text(
+                "ALTER TABLE auth_profiles "
+                "DROP CONSTRAINT IF EXISTS auth_profiles_principal_id_fkey"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE auth_profiles "
+                "ADD CONSTRAINT auth_profiles_principal_tenant_fkey "
+                "FOREIGN KEY (principal_id, tenant_id) "
+                "REFERENCES principals(id, tenant_id) ON DELETE CASCADE"
+            )
+        )
 
 
 def drop_schema(engine: Engine) -> None:
@@ -192,7 +420,7 @@ def ensure_tenant(engine: Engine, name: str) -> uuid.UUID:
             {"name": name},
         ).fetchone()
         if row is not None:
-            return row[0]
+            return uuid.UUID(str(row[0]))
         tenant_id = uuid.uuid4()
         conn.execute(
             text("INSERT INTO tenants (id, name) VALUES (:id, :name)"),
@@ -215,18 +443,25 @@ def ensure_principal(
     ``external_sub`` keys the alias (e.g. OIDC sub claim, machine keypair
     fingerprint). ``auth_method`` is the provider that issued it (``oidc``,
     ``bound-keypair``, ``bootstrap`` for tests/migration).
+
+    Aliases are tenant-scoped: the same ``(auth_method, external_sub)`` can
+    map to different principals in different tenants. This keeps tenants as
+    hard isolation boundaries — a human whose OIDC sub happens to match
+    across tenants is modelled as two distinct principals.
     """
     with engine.begin() as conn:
         if external_sub is not None:
             alias = conn.execute(
                 text(
                     "SELECT principal_id FROM principal_aliases "
-                    "WHERE auth_method = :m AND external_sub = :s"
+                    "WHERE tenant_id = :tid "
+                    "AND auth_method = :m "
+                    "AND external_sub = :s"
                 ),
-                {"m": auth_method, "s": external_sub},
+                {"tid": tenant_id, "m": auth_method, "s": external_sub},
             ).fetchone()
             if alias is not None:
-                return alias[0]
+                return uuid.UUID(str(alias[0]))
 
         principal_id = uuid.uuid4()
         conn.execute(
@@ -244,10 +479,16 @@ def ensure_principal(
         if external_sub is not None:
             conn.execute(
                 text(
-                    "INSERT INTO principal_aliases (auth_method, external_sub, principal_id) "
-                    "VALUES (:m, :s, :p)"
+                    "INSERT INTO principal_aliases "
+                    "    (tenant_id, auth_method, external_sub, principal_id) "
+                    "VALUES (:tid, :m, :s, :p)"
                 ),
-                {"m": auth_method, "s": external_sub, "p": principal_id},
+                {
+                    "tid": tenant_id,
+                    "m": auth_method,
+                    "s": external_sub,
+                    "p": principal_id,
+                },
             )
         return principal_id
 
@@ -258,22 +499,21 @@ def ensure_principal(
 
 _UPSERT_SQL = """
 INSERT INTO auth_profiles (
-    tenant_id, id, principal_id,
+    tenant_id, principal_id, id,
     provider, account_identifier, backend, backend_key,
     last_synced_at, sync_ttl_seconds,
     last_used_at, success_count, failure_count,
     cooldown_until, cooldown_reason, disabled_until, raw_error,
     updated_at
 ) VALUES (
-    :tenant_id, :id, :principal_id,
+    :tenant_id, :principal_id, :id,
     :provider, :account_identifier, :backend, :backend_key,
     :last_synced_at, :sync_ttl_seconds,
     :last_used_at, :success_count, :failure_count,
     :cooldown_until, :cooldown_reason, :disabled_until, :raw_error,
     NOW()
 )
-ON CONFLICT (tenant_id, id) DO UPDATE SET
-    principal_id       = EXCLUDED.principal_id,
+ON CONFLICT (tenant_id, principal_id, id) DO UPDATE SET
     provider           = EXCLUDED.provider,
     account_identifier = EXCLUDED.account_identifier,
     backend            = EXCLUDED.backend,
@@ -473,7 +713,17 @@ class PostgresAuthProfileStore:
             tenant_id=self._tenant_id,
             principal_id=self._principal_id,
         )
+        # Take the same ``(tenant_id, profile_id)`` advisory lock that
+        # ``upsert_strict`` uses, so a plain ``upsert`` cannot slip a
+        # foreign-principal row in between a strict call's check and
+        # write. Locks do not block unrelated rows — only writers
+        # targeting the same tenant+id tuple serialize.
+        lock_key = f"{self._tenant_id}/{profile.id}"
         with self._scoped() as conn:
+            conn.execute(
+                text("SELECT pg_advisory_xact_lock(hashtextextended(:k, 0))"),
+                {"k": lock_key},
+            )
             conn.execute(text(_UPSERT_SQL), params)
 
     def delete(self, profile_id: str) -> None:
@@ -498,7 +748,21 @@ class PostgresAuthProfileStore:
     ) -> None:
         if not upserts and not deletes:
             return
+        # Acquire advisory locks up front, in sorted order, to keep the
+        # lock protocol consistent with ``upsert`` / ``upsert_strict`` and
+        # prevent deadlocks between two callers whose upsert-lists overlap
+        # on multiple ids. Sorting ensures both callers request the same
+        # locks in the same order.
+        lock_keys = sorted(
+            {f"{self._tenant_id}/{p.id}" for p in upserts}
+            | {f"{self._tenant_id}/{pid}" for pid in deletes}
+        )
         with self._scoped() as conn:
+            for key in lock_keys:
+                conn.execute(
+                    text("SELECT pg_advisory_xact_lock(hashtextextended(:k, 0))"),
+                    {"k": key},
+                )
             for p in upserts:
                 conn.execute(
                     text(_UPSERT_SQL),
@@ -528,8 +792,17 @@ class PostgresAuthProfileStore:
         daemons may be writing to the same row, so a per-process dirty bit
         would be stale. Direct ``UPDATE`` with ``last_used_at = NOW()`` also
         clears the cooldown window if it has already elapsed.
+
+        Takes the same ``(tenant_id, profile_id)`` advisory lock as the
+        other mutators so a concurrent ``upsert`` cannot clobber the
+        success-counter increment with caller-supplied stats.
         """
+        lock_key = f"{self._tenant_id}/{profile_id}"
         with self._scoped() as conn:
+            conn.execute(
+                text("SELECT pg_advisory_xact_lock(hashtextextended(:k, 0))"),
+                {"k": lock_key},
+            )
             conn.execute(
                 text(
                     "UPDATE auth_profiles SET "
@@ -558,7 +831,12 @@ class PostgresAuthProfileStore:
         raw_error: str | None = None,
     ) -> None:
         truncated = raw_error[:RAW_ERROR_MAX_LEN] if raw_error else None
+        lock_key = f"{self._tenant_id}/{profile_id}"
         with self._scoped() as conn:
+            conn.execute(
+                text("SELECT pg_advisory_xact_lock(hashtextextended(:k, 0))"),
+                {"k": lock_key},
+            )
             conn.execute(
                 text(
                     "UPDATE auth_profiles SET "
@@ -576,6 +854,92 @@ class PostgresAuthProfileStore:
                     "raw_error": truncated,
                 },
             )
+
+    # ------------------------------------------------------------------
+    # Tenant-wide helpers (migration/admin only — outside normal Protocol)
+    # ------------------------------------------------------------------
+
+    def upsert_strict(self, profile: AuthProfile) -> None:
+        """Atomic write: upsert ``profile`` iff no other principal in this
+        tenant owns the same ``profile.id``.
+
+        Intended for migrations + admin writes where silent divergence under
+        concurrency would be surprising. The lock guarantees that no other
+        writer targeting the same ``(tenant_id, profile_id)`` can observe or
+        produce a cross-principal INSERT until this transaction commits.
+
+        The composite PK ``(tenant_id, principal_id, id)`` already prevents
+        ownership *takeover*; this method additionally prevents silent
+        ownership *divergence* (two principals each holding their own row
+        for the same business id inside one tenant), which operators almost
+        never want.
+
+        Raises:
+            CrossPrincipalConflict: when a foreign owner is present; the
+                profile is NOT written.
+        """
+        lock_key = f"{self._tenant_id}/{profile.id}"
+        with self._scoped() as conn:
+            # Serialize every writer targeting this (tenant, profile_id)
+            # tuple for the duration of the transaction, closing the window
+            # between "check" and "upsert" that the migration apply path
+            # would otherwise have.
+            conn.execute(
+                text("SELECT pg_advisory_xact_lock(hashtextextended(:k, 0))"),
+                {"k": lock_key},
+            )
+            foreign = conn.execute(
+                text(
+                    "SELECT principal_id FROM auth_profiles "
+                    "WHERE tenant_id = :tid AND id = :id "
+                    "  AND principal_id != :pid"
+                ),
+                {
+                    "tid": self._tenant_id,
+                    "pid": self._principal_id,
+                    "id": profile.id,
+                },
+            ).fetchall()
+            if foreign:
+                raise CrossPrincipalConflict(
+                    profile_id=profile.id,
+                    foreign_principals=sorted(row[0] for row in foreign),
+                )
+            conn.execute(
+                text(_UPSERT_SQL),
+                _profile_params(
+                    profile,
+                    tenant_id=self._tenant_id,
+                    principal_id=self._principal_id,
+                ),
+            )
+
+    def tenant_scope_owners_of(self, profile_id: str) -> set[uuid.UUID]:
+        """Return every ``principal_id`` that owns ``profile_id`` in this
+        store's tenant. Empty set if the id does not exist.
+
+        The composite PK ``(tenant_id, principal_id, id)`` allows the same
+        business id (e.g. ``"google/alice"``) to exist under multiple
+        principals in the same tenant — ``fetchone()`` would be
+        non-deterministic. This helper returns the full set so callers can
+        make the two distinct decisions (is it owned by *this* principal?
+        is it owned by *some other* principal?) deterministically.
+
+        Bypasses the principal filter used by the Protocol methods. Intended
+        exclusively for the migration CLI + admin scripts that need to detect
+        cross-principal collisions before calling ``upsert`` (which is now
+        principal-scoped via the composite PK and will *not* silently take
+        over another principal's row).
+
+        Still honors tenant scoping — returns an empty set for profile_ids
+        owned by other tenants, regardless of RLS configuration.
+        """
+        with self._scoped() as conn:
+            rows = conn.execute(
+                text("SELECT principal_id FROM auth_profiles WHERE tenant_id = :tid AND id = :id"),
+                {"tid": self._tenant_id, "id": profile_id},
+            ).fetchall()
+        return {row[0] for row in rows}
 
     # ------------------------------------------------------------------
     # Lifecycle

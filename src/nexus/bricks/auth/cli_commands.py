@@ -861,6 +861,10 @@ def auth_migrate_to_postgres(
                     console.print(f"  [{style}]{verb}[/{style}] {entry.profile_id}")
                 elif entry.action == "skip_exists":
                     console.print(f"  [nexus.muted]Skip (exists)[/nexus.muted] {entry.profile_id}")
+                elif entry.action == "conflict_principal":
+                    console.print(
+                        f"  [nexus.error]Conflict[/nexus.error] {entry.profile_id}: {entry.reason}"
+                    )
                 elif entry.action == "error":
                     console.print(
                         f"  [nexus.error]Error[/nexus.error] {entry.profile_id}: {entry.reason}"

@@ -21,7 +21,10 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
-from nexus.bricks.auth.postgres_profile_store import PostgresAuthProfileStore
+from nexus.bricks.auth.postgres_profile_store import (
+    CrossPrincipalConflict,
+    PostgresAuthProfileStore,
+)
 from nexus.bricks.auth.profile import AuthProfile, AuthProfileStore
 
 logger = logging.getLogger(__name__)
@@ -38,7 +41,19 @@ class PostgresMigrationEntry:
 
     profile_id: str
     provider: str
-    action: str  # "copy", "skip_exists", "overwrite", "error"
+    # "copy"              → row is absent in the target; will be inserted
+    # "overwrite"         → row exists under the *same* principal; will be
+    #                       re-written (only reached with ``force=True``)
+    # "skip_exists"       → row exists under the *same* principal; plan opted
+    #                       to leave it
+    # "conflict_principal"→ row exists under a *different* principal in the
+    #                       same tenant; aborts the apply to prevent
+    #                       silent ownership reassignment (never auto-healed,
+    #                       even with ``force=True`` — the operator must
+    #                       delete the foreign row or pick a different
+    #                       destination principal)
+    # "error"             → plan-to-apply drift (source row disappeared)
+    action: str
     reason: str = ""
 
 
@@ -68,14 +83,44 @@ def build_migration_plan(
 ) -> list[PostgresMigrationEntry]:
     """Walk source rows and decide what to do for each against the target.
 
-    ``force=True`` schedules an overwrite for rows that already exist in the
-    target. Default is conservative — existing rows are skipped so operators
-    can rerun the tool safely.
+    Three cases for each source row:
+
+    1. Target row exists under *another* principal in the same tenant →
+       ``conflict_principal``. Never auto-healed — silently rewriting another
+       principal's row is exactly the ownership-takeover failure mode we want
+       to prevent. Operator must delete the foreign row or pick a different
+       destination principal before the migration can proceed.
+    2. Target row exists under *this* principal → ``skip_exists`` by default,
+       ``overwrite`` if ``force=True``.
+    3. No target row → ``copy``.
     """
     entries: list[PostgresMigrationEntry] = []
+    target_principal = target.principal_id
     for profile in source.list():
-        existing = target.get(profile.id)
-        if existing is not None and not force:
+        owners = target.tenant_scope_owners_of(profile.id)
+        owned_by_self = target_principal in owners
+        other_owners = sorted(owners - {target_principal})
+
+        if other_owners:
+            # Any foreign owner aborts the migration for this id — listing
+            # all of them surfaces the full blast radius to the operator
+            # (not just whichever row Postgres returned first).
+            entries.append(
+                PostgresMigrationEntry(
+                    profile_id=profile.id,
+                    provider=profile.provider,
+                    action="conflict_principal",
+                    reason=(
+                        "row already owned by "
+                        f"{', '.join(str(p) for p in other_owners)} "
+                        "in the same tenant; refuse to reassign ownership "
+                        "during migration"
+                    ),
+                )
+            )
+            continue
+
+        if owned_by_self and not force:
             entries.append(
                 PostgresMigrationEntry(
                     profile_id=profile.id,
@@ -90,7 +135,7 @@ def build_migration_plan(
             PostgresMigrationEntry(
                 profile_id=profile.id,
                 provider=profile.provider,
-                action="overwrite" if existing is not None else "copy",
+                action="overwrite" if owned_by_self else "copy",
             )
         )
     return entries
@@ -113,6 +158,12 @@ def execute_migration(
     for entry in plan:
         result.entries.append(entry)
 
+        if entry.action == "conflict_principal":
+            # Ownership-takeover guard — counts as an error, not a skip, so
+            # CLI exits non-zero and scripts do not treat it as a clean run.
+            result.errors += 1
+            continue
+
         if entry.action not in ("copy", "overwrite"):
             result.skipped += 1
             continue
@@ -128,9 +179,24 @@ def execute_migration(
             result.errors += 1
             continue
 
+        # Atomic conflict-check + write. ``upsert_strict`` takes an
+        # advisory lock scoped to ``(tenant_id, profile_id)`` inside the
+        # same transaction, so concurrent writers targeting the same id in
+        # the same tenant are serialized. The plan-time check is a
+        # user-visible preview; ``upsert_strict`` is the authoritative
+        # enforcement point.
         try:
-            target.upsert(_clone_with_fresh_usage_stats(profile))
+            target.upsert_strict(_clone_with_fresh_usage_stats(profile))
             result.copied += 1
+        except CrossPrincipalConflict as exc:
+            entry.action = "conflict_principal"
+            entry.reason = (
+                "row already owned by "
+                f"{', '.join(str(p) for p in exc.foreign_principals)} "
+                "in the same tenant at apply time; refuse to reassign "
+                "ownership"
+            )
+            result.errors += 1
         except Exception as exc:
             logger.warning("Postgres migration error for %s: %s", entry.profile_id, exc)
             entry.action = "error"

@@ -210,3 +210,106 @@ class TestExecute:
         assert result.errors == 1
         assert result.copied == 0
         assert result.entries[0].action == "error"
+
+
+class TestCrossPrincipalCollision:
+    """Migration must refuse to reassign a profile_id from one principal to
+    another within the same tenant — that is an ownership-takeover attack
+    surface, not a legitimate migration."""
+
+    def test_conflict_injected_between_plan_and_apply_is_caught(
+        self,
+        pg_engine: Engine,
+        sqlite_source: SqliteAuthProfileStore,
+    ) -> None:
+        """TOCTOU regression: plan passes (no foreign owner yet), a foreign
+        owner appears between plan and apply, execute must still refuse to
+        write. Proves the apply-time recheck actually runs, not just the
+        plan-time check."""
+        tid = ensure_tenant(pg_engine, f"toctou-{uuid.uuid4()}")
+        alice = ensure_principal(
+            pg_engine,
+            tenant_id=tid,
+            external_sub=f"alice-{uuid.uuid4()}",
+            auth_method="test",
+        )
+        bob = ensure_principal(
+            pg_engine,
+            tenant_id=tid,
+            external_sub=f"bob-{uuid.uuid4()}",
+            auth_method="test",
+        )
+        alice_store = PostgresAuthProfileStore(
+            PG_URL, tenant_id=tid, principal_id=alice, engine=pg_engine
+        )
+        bob_store = PostgresAuthProfileStore(
+            PG_URL, tenant_id=tid, principal_id=bob, engine=pg_engine
+        )
+        try:
+            sqlite_source.upsert(make_profile("shared", backend_key="src-key"))
+
+            # Plan runs while target is empty → action=copy.
+            plan = build_migration_plan(sqlite_source, bob_store)
+            assert plan[0].action == "copy"
+
+            # Another principal lands the id between plan and apply.
+            alice_store.upsert(make_profile("shared", backend_key="alice-key"))
+
+            result = execute_migration(plan, sqlite_source, bob_store, apply=True)
+            assert result.errors == 1
+            assert result.copied == 0
+            assert result.entries[0].action == "conflict_principal"
+            assert bob_store.get("shared") is None
+        finally:
+            alice_store.close()
+            bob_store.close()
+
+    def test_cross_principal_id_collision_is_flagged_not_copied(
+        self,
+        pg_engine: Engine,
+        sqlite_source: SqliteAuthProfileStore,
+    ) -> None:
+        tid = ensure_tenant(pg_engine, f"mig-collide-{uuid.uuid4()}")
+        alice = ensure_principal(
+            pg_engine,
+            tenant_id=tid,
+            external_sub=f"alice-{uuid.uuid4()}",
+            auth_method="test",
+        )
+        bob = ensure_principal(
+            pg_engine,
+            tenant_id=tid,
+            external_sub=f"bob-{uuid.uuid4()}",
+            auth_method="test",
+        )
+        alice_store = PostgresAuthProfileStore(
+            PG_URL, tenant_id=tid, principal_id=alice, engine=pg_engine
+        )
+        bob_store = PostgresAuthProfileStore(
+            PG_URL, tenant_id=tid, principal_id=bob, engine=pg_engine
+        )
+        try:
+            alice_store.upsert(make_profile("shared", backend_key="alice-key"))
+            sqlite_source.upsert(make_profile("shared", backend_key="src-key"))
+
+            plan = build_migration_plan(sqlite_source, bob_store)
+            assert len(plan) == 1
+            assert plan[0].action == "conflict_principal"
+
+            # Even with --force, ownership is NOT reassigned.
+            plan_forced = build_migration_plan(sqlite_source, bob_store, force=True)
+            assert plan_forced[0].action == "conflict_principal"
+
+            result = execute_migration(plan_forced, sqlite_source, bob_store, apply=True)
+            assert result.errors == 1
+            assert result.copied == 0
+
+            # Alice's row is untouched.
+            alice_row = alice_store.get("shared")
+            assert alice_row is not None
+            assert alice_row.backend_key == "alice-key"
+            # Bob did NOT get a row.
+            assert bob_store.get("shared") is None
+        finally:
+            alice_store.close()
+            bob_store.close()

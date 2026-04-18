@@ -879,7 +879,11 @@ class TestLeaderFailover:
         try:
             import docker as docker_sdk
 
-            docker_client = docker_sdk.from_env()
+            # docker-py default client timeout is 60s; Windows Docker Desktop's
+            # containers/start API can block >60s during container restart
+            # (Hyper-V namespace teardown on the stopped container). Raise to
+            # 180s so SDK calls don't ReadTimeout before the daemon responds.
+            docker_client = docker_sdk.from_env(timeout=180)
             docker_client.ping()
         except Exception as exc:
             pytest.skip(f"Docker SDK not available: {exc}")
@@ -1133,7 +1137,9 @@ def _docker_client_or_skip():
     try:
         import docker as docker_sdk
 
-        client = docker_sdk.from_env()
+        # 180s client timeout for Windows Docker Desktop — daemon can block
+        # >60s on container lifecycle APIs during namespace teardown.
+        client = docker_sdk.from_env(timeout=180)
         client.ping()
         return client
     except Exception as exc:

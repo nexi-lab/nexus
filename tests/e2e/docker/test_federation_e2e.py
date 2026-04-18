@@ -298,6 +298,96 @@ def api_key(cluster):
     return E2E_ADMIN_API_KEY
 
 
+@pytest.fixture(scope="module")
+def federation_zones(cluster, api_key):
+    """Idempotently ensure the standard federation topology exists.
+
+    Any test that assumes ``corp``, ``corp-eng``, ``corp-sales``,
+    ``family`` zones plus the usual mount tree (``/corp``,
+    ``/corp/eng``, ``/corp/sales``, ``/family``, ``/family/work``)
+    should depend on this fixture. Running that test in isolation
+    (``pytest -k test_failover_and_recovery``) then works without
+    relying on `TestZoneLifecycle` / `TestMountTopology` having run
+    first — which was the hidden test-order coupling before.
+
+    Idempotent: creating an existing zone / mount returns success
+    or an "already exists" error, which we swallow. Safe to call
+    across every module-scoped test.
+    """
+    grpc1 = cluster["grpc1"]
+    grpc2 = cluster["grpc2"]
+    expected_zones = ["corp", "corp-eng", "corp-sales", "family"]
+
+    def _ensure_zone(target: str, zone_id: str) -> None:
+        r = _grpc_call(
+            target,
+            "federation_create_zone",
+            {"zone_id": zone_id},
+            api_key=api_key,
+        )
+        if "error" in r:
+            msg = str(r.get("error", {}).get("message", "")).lower()
+            # Benign on repeat calls — zone already exists.
+            if "already" in msg or "exists" in msg:
+                return
+            pytest.fail(f"federation_create_zone({zone_id}) on {target}: {r}")
+
+    # Create zones on node-1 first, then node-2 (joins the raft group).
+    for target in [grpc1, grpc2]:
+        for zone_id in expected_zones:
+            _ensure_zone(target, zone_id)
+
+    for zone_id in expected_zones:
+        _wait_zone_ready(grpc1, zone_id, api_key, timeout=30)
+        _wait_zone_ready(grpc2, zone_id, api_key, timeout=30)
+
+    # Build the mount tree. Mounts are replicated through raft's root
+    # zone, so we try each mount on both nodes and tolerate "already
+    # mounted" errors (they mean raft replication beat us to it).
+    def _ensure_mount(parent_zone: str, path: str, target_zone: str) -> None:
+        mk = _grpc_call(grpc1, "mkdir", {"path": path, "parents": True}, api_key=api_key)
+        if "error" in mk:
+            msg = str(mk.get("error", {}).get("message", "")).lower()
+            if "exists" not in msg and "already" not in msg:
+                pytest.fail(f"mkdir {path}: {mk}")
+
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            for t in [grpc1, grpc2]:
+                r = _grpc_call(
+                    t,
+                    "federation_mount",
+                    {
+                        "parent_zone": parent_zone,
+                        "path": path,
+                        "target_zone": target_zone,
+                    },
+                    api_key=api_key,
+                )
+                if "error" not in r:
+                    return
+                msg = str(r.get("error", {}).get("message", ""))
+                if "already a DT_MOUNT" in msg or "already" in msg.lower():
+                    return
+            time.sleep(0.5)
+        pytest.fail(f"mount {target_zone} at {path} did not succeed within 10s")
+
+    mounts = [
+        ("root", "/corp", "corp"),
+        ("root", "/family", "family"),
+        ("corp", "/corp/eng", "corp-eng"),
+        ("corp", "/corp/sales", "corp-sales"),
+        ("family", "/family/work", "corp"),
+    ]
+    for parent_zone, path, target_zone in mounts:
+        _ensure_mount(parent_zone, path, target_zone)
+
+    return {
+        "zones": expected_zones,
+        "mounts": [path for _, path, _ in mounts],
+    }
+
+
 # ===================================================================
 # Class 1: Cluster Health
 # ===================================================================
@@ -944,7 +1034,7 @@ class TestAdminIntrospection:
 class TestLeaderFailover:
     """Leader crash, survivor takes over, writes new data, leader recovers."""
 
-    def test_failover_and_recovery(self, cluster, api_key):
+    def test_failover_and_recovery(self, cluster, api_key, federation_zones):
         """Stop node-1, verify node-2 serves data, restart, verify catch-up."""
         try:
             import docker as docker_sdk
@@ -2126,7 +2216,7 @@ class TestFullFailoverRecovery:
     node-1 catches up via Raft log replay on restart."""
 
     @pytest.mark.order(after="TestLeaderFailover::test_failover_and_recovery")
-    def test_failover_with_delete_rename_replay(self, cluster, api_key):
+    def test_failover_with_delete_rename_replay(self, cluster, api_key, federation_zones):
         client = _docker_client_or_skip()
         uid = _uid()
         grpc1 = cluster["grpc1"]

@@ -480,7 +480,11 @@ impl ZoneTransportService for ZoneTransportServiceImpl {
                 // Restart recovery: zone data on disk, reopen with existing ConfState
                 let handle = tokio::runtime::Handle::current();
                 let peers = self.registry.get_all_peers();
-                match self.registry.create_zone(&req.zone_id, peers, &handle) {
+                match self
+                    .registry
+                    .create_zone(&req.zone_id, peers, &handle)
+                    .await
+                {
                     Ok(n) => {
                         tracing::info!("Fullnode auto-joined zone '{}'", req.zone_id);
                         n

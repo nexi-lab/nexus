@@ -145,7 +145,7 @@ impl ZoneRaftRegistry {
     ///   passing to raft-rs per the `RaftConfig.peers` contract).
     /// * `runtime_handle` — Tokio runtime handle for spawning the transport loop.
     #[allow(clippy::result_large_err)]
-    pub fn create_zone(
+    pub async fn create_zone(
         &self,
         zone_id: &str,
         peers: Vec<NodeAddress>,
@@ -172,6 +172,7 @@ impl ZoneRaftRegistry {
         // ID list instead of the raw NodeAddress vec.
         let campaign = config.peers.is_empty();
         self.setup_zone(zone_id, config, peers, campaign, runtime_handle)
+            .await
     }
 
     /// Join an existing zone as a new Voter.
@@ -181,7 +182,7 @@ impl ZoneRaftRegistry {
     ///
     /// After calling this, send a JoinZone RPC to the leader.
     #[allow(clippy::result_large_err)]
-    pub fn join_zone(
+    pub async fn join_zone(
         &self,
         zone_id: &str,
         peers: Vec<NodeAddress>,
@@ -198,11 +199,12 @@ impl ZoneRaftRegistry {
         };
 
         self.setup_zone(zone_id, config, peers, false, runtime_handle)
+            .await
     }
 
     /// Internal: open sled, create ZoneConsensus + driver, spawn transport loop, register zone.
     #[allow(clippy::result_large_err)]
-    fn setup_zone(
+    async fn setup_zone(
         &self,
         zone_id: &str,
         config: RaftConfig,
@@ -375,13 +377,28 @@ impl ZoneRaftRegistry {
         let transport_handle = runtime_handle.spawn(transport_loop.run(shutdown_rx));
 
         if campaign {
-            // Block until campaign is processed by the driver.
             // Per raft contract: for single-node, campaign() grants self-vote
             // (quorum=1) and the node becomes leader immediately. For multi-node,
             // campaign() sends MsgVote to peers and returns (election is async).
-            // This ensures the node is ready before returning to the caller.
-            runtime_handle
-                .block_on(async { handle.campaign().await })
+            // Awaiting it here ensures the node is ready before we return.
+            //
+            // History note: this used to be a sync `setup_zone` that called
+            // `runtime_handle.block_on(handle.campaign())`. That violated
+            // tokio's contract — `Handle::block_on` panics when called from an
+            // async context, and the gRPC step_message handler's auto-join path
+            // IS async. The panic silently unwound through setup_zone, dropped
+            // the local `shutdown_tx`, and the transport loop we had just
+            // spawned shut down before the zone was registered — which
+            // manifested as the failover catch-up timeout (node-1 never
+            // actually became a voter of its own zones after restart).
+            //
+            // The proper fix is to respect tokio's sync/async boundary: keep
+            // setup_zone async, let sync callers bridge at their own boundary
+            // (PyO3 uses its runtime_handle.block_on), and let async callers
+            // just await. No `block_on` inside setup_zone.
+            handle
+                .campaign()
+                .await
                 .map_err(|e| TransportError::Connection(format!("Campaign failed: {}", e)))?;
         }
 

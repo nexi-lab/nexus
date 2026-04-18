@@ -157,6 +157,7 @@ mod grpc_cluster {
                     all_peers[i].clone(),
                     &tokio::runtime::Handle::current(),
                 )
+                .await
                 .expect("Failed to create zone");
 
             // Start gRPC server in background

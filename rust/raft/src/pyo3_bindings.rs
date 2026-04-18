@@ -851,9 +851,18 @@ impl PyZoneManager {
             })
             .collect::<PyResult<Vec<_>>>()?;
 
+        // PyO3 is the sync↔async boundary here: Python is sync, but setup
+        // needs to .await a campaign / snapshot restore. block_on is safe
+        // because this thread is outside any tokio runtime — the rule it
+        // violates ("Cannot start a runtime from within a runtime") only
+        // applies to callers already inside an async context.
         let node = self
-            .registry
-            .create_zone(zone_id, peer_addrs, self.runtime.handle())
+            .runtime
+            .handle()
+            .block_on(
+                self.registry
+                    .create_zone(zone_id, peer_addrs, self.runtime.handle()),
+            )
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to create zone: {}", e)))?;
 
         Ok(PyZoneHandle {
@@ -887,9 +896,15 @@ impl PyZoneManager {
             })
             .collect::<PyResult<Vec<_>>>()?;
 
+        // See create_zone for why we use runtime.block_on here (PyO3
+        // sync↔async boundary).
         let node = self
-            .registry
-            .join_zone(zone_id, peer_addrs, self.runtime.handle())
+            .runtime
+            .handle()
+            .block_on(
+                self.registry
+                    .join_zone(zone_id, peer_addrs, self.runtime.handle()),
+            )
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to join zone: {}", e)))?;
 
         Ok(PyZoneHandle {

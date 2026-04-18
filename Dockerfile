@@ -159,7 +159,10 @@ FROM python:3.14-slim
 
 ARG USE_CHINA_MIRROR
 ARG TARGETARCH
+# Re-declare in stage-2 so smoke tests and conditional logic can read it.
+ARG NEXUS_PROFILE_EXTRAS=all,performance,compression,monitoring,docker,event-streaming,sentry,pay
 ENV USE_CHINA_MIRROR=${USE_CHINA_MIRROR}
+ENV NEXUS_PROFILE_EXTRAS=${NEXUS_PROFILE_EXTRAS}
 
 # ---------- Runtime dependencies ----------
 # libgomp1: OpenMP runtime required by txtai, scikit-learn, numpy (Issue #2946)
@@ -184,9 +187,14 @@ RUN set -eux; \
         ln -sf /usr/lib/aarch64-linux-gnu/libgomp.so.1 /usr/lib/libgomp.so.1; \
     elif [ "${TARGETARCH}" = "amd64" ]; then \
         ln -sf /usr/lib/x86_64-linux-gnu/libgomp.so.1 /usr/lib/libgomp.so.1; \
-    fi && \
-    ln -sf /usr/local/lib/python3.14/site-packages/torch/lib/libc10.so /usr/lib/libc10.so
-ENV LD_PRELOAD="/usr/lib/libgomp.so.1 /usr/lib/libc10.so"
+    fi; \
+    # torch is only installed when extras include 'all' — skip symlink on SANDBOX (#3778).
+    if [ -f /usr/local/lib/python3.14/site-packages/torch/lib/libc10.so ]; then \
+        ln -sf /usr/local/lib/python3.14/site-packages/torch/lib/libc10.so /usr/lib/libc10.so; \
+    fi
+# LD_PRELOAD: libgomp only (always safe). When torch is installed, the entrypoint
+# extends LD_PRELOAD to include libc10.so (see docker-entrypoint.sh).
+ENV LD_PRELOAD="/usr/lib/libgomp.so.1"
 ENV GLIBC_TUNABLES="glibc.rtld.optional_static_tls=16384"
 
 # ---------- CLI connectors: gws + gh (Issue #3148) ----------
@@ -230,14 +238,20 @@ COPY --from=zoekt-builder /go/bin/zoekt-webserver /usr/local/bin/zoekt-webserver
 # This does NOT affect runtime (the server starts fine); it only affects
 # this build-time import check. We split the check: non-torch imports
 # are fatal, torch-dependent imports (txtai) are best-effort on ARM64.
+# Always verifiable (present regardless of extras): Rust extensions + psutil.
 RUN python3 -c "\
 import nexus_kernel; \
 from _nexus_raft import Metastore; \
-import pgvector; \
-import docker; \
-import fastembed; \
 import psutil; \
-print('✓ Core imports passed')"
+print('✓ Core imports passed (always-present subset)')"
+# Extras-gated imports (only when NEXUS_PROFILE_EXTRAS includes 'all').
+# SANDBOX profile deliberately excludes these (Issue #3778).
+RUN set -eux; \
+    case ",${NEXUS_PROFILE_EXTRAS}," in \
+      *,all,*) \
+        python3 -c "import pgvector; import docker; import fastembed; print('✓ all-extras imports passed')" ;; \
+      *) echo "Skipping pgvector/docker/fastembed smoke test for extras: ${NEXUS_PROFILE_EXTRAS}" ;; \
+    esac
 RUN python3 -c "\
 from nexus_kernel import cosine_similarity_f32, dot_product_f32; \
 s = cosine_similarity_f32([1.0, 0.0, 0.0], [1.0, 0.0, 0.0]); \

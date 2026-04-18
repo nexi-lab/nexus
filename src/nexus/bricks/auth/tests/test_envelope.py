@@ -155,3 +155,43 @@ class TestDEKCache:
         assert b"raw-wrapped-dek-bytes" not in repr(key).encode()
         expected_digest = hashlib.sha256(b"raw-wrapped-dek-bytes").hexdigest()
         assert expected_digest in repr(key)
+
+    def test_concurrent_get_put_is_safe(self) -> None:
+        """Under concurrent reads + writes, counters stay correct and the
+        OrderedDict doesn't corrupt. Not a perf test — just a sanity check
+        that the lock is in place."""
+        import concurrent.futures
+        import threading
+
+        cache = DEKCache(ttl_seconds=60, max_entries=256)
+        keys = [
+            cache.make_key(tenant_id="t", kek_version=1, wrapped_dek=i.to_bytes(4, "big"))
+            for i in range(32)
+        ]
+        dek = b"\x55" * 32
+        for k in keys:
+            cache.put(k, dek)
+
+        barrier = threading.Barrier(8)
+
+        def worker() -> int:
+            barrier.wait()
+            hits = 0
+            for _ in range(200):
+                for k in keys:
+                    if cache.get(k) is not None:
+                        hits += 1
+                    cache.put(k, dek)
+            return hits
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+            results = list(pool.map(lambda _: worker(), range(8)))
+
+        # All 8 workers each ran 200*32 = 6400 gets. All should have hit (keys
+        # are repopulated before each get via the put loop). Exact counts
+        # depend on interleaving but must be positive.
+        assert sum(results) > 0
+        # Under a race without a lock, counter increments would be lost and
+        # cache.hits + cache.misses would be strictly less than the number
+        # of get() calls. With a lock they're exactly equal.
+        assert cache.hits + cache.misses == 8 * 200 * 32

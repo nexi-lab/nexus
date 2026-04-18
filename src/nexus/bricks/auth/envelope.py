@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import secrets
+import threading
 import time
 import uuid
 from collections import OrderedDict
@@ -200,12 +201,18 @@ class DEKCache:
     Keyed by ``(tenant_id, kek_version, sha256(wrapped_dek))`` — the hash, not
     the wrapped bytes, so cache-key logging is safe. Does not cache negative
     results: a KMS/Vault blip shouldn't pin decrypt-failed for the TTL window.
+
+    Thread-safe: callers may share one instance across a thread pool. The
+    internal lock is held for the duration of each ``get`` / ``put`` call;
+    since both operations are O(1) against an in-memory OrderedDict, contention
+    is negligible.
     """
 
     def __init__(self, *, ttl_seconds: int = 300, max_entries: int = 1024) -> None:
         self._ttl = ttl_seconds
         self._max = max_entries
         self._store: OrderedDict[DEKCacheKey, tuple[float, bytes]] = OrderedDict()
+        self._lock = threading.Lock()
         self.hits = 0
         self.misses = 0
 
@@ -220,21 +227,23 @@ class DEKCache:
         )
 
     def get(self, key: DEKCacheKey) -> bytes | None:
-        entry = self._store.get(key)
-        if entry is None:
-            self.misses += 1
-            return None
-        expires_at, dek = entry
-        if _monotonic() >= expires_at:
-            self._store.pop(key, None)
-            self.misses += 1
-            return None
-        self._store.move_to_end(key)  # mark MRU
-        self.hits += 1
-        return dek
+        with self._lock:
+            entry = self._store.get(key)
+            if entry is None:
+                self.misses += 1
+                return None
+            expires_at, dek = entry
+            if _monotonic() >= expires_at:
+                self._store.pop(key, None)
+                self.misses += 1
+                return None
+            self._store.move_to_end(key)
+            self.hits += 1
+            return dek
 
     def put(self, key: DEKCacheKey, dek: bytes) -> None:
-        self._store[key] = (_monotonic() + self._ttl, dek)
-        self._store.move_to_end(key)
-        while len(self._store) > self._max:
-            self._store.popitem(last=False)  # evict LRU
+        with self._lock:
+            self._store[key] = (_monotonic() + self._ttl, dek)
+            self._store.move_to_end(key)
+            while len(self._store) > self._max:
+                self._store.popitem(last=False)

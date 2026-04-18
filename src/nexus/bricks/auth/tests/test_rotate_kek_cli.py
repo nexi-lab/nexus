@@ -1,0 +1,183 @@
+"""Tests for `nexus auth rotate-kek` (issue #3803)."""
+
+from __future__ import annotations
+
+import os
+import uuid
+from collections.abc import Generator
+
+import pytest
+
+pytest.importorskip("sqlalchemy")
+pytest.importorskip("click")
+
+from click.testing import CliRunner
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import Engine
+
+from nexus.bricks.auth.cli_commands import auth
+from nexus.bricks.auth.credential_backend import ResolvedCredential
+from nexus.bricks.auth.envelope_providers.in_memory import InMemoryEncryptionProvider
+from nexus.bricks.auth.postgres_profile_store import (
+    PostgresAuthProfileStore,
+    drop_schema,
+    ensure_principal,
+    ensure_schema,
+    ensure_tenant,
+)
+from nexus.bricks.auth.tests.conftest import make_profile
+
+PG_URL = os.environ.get(
+    "TEST_POSTGRES_URL",
+    "postgresql+psycopg2://postgres:nexus@localhost:5432/nexus",
+)
+
+
+def _pg_is_available() -> bool:
+    try:
+        eng = create_engine(PG_URL)
+        with eng.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        eng.dispose()
+        return True
+    except Exception:
+        return False
+
+
+pytestmark = [
+    pytest.mark.postgres,
+    pytest.mark.xdist_group("postgres_auth_profile_store"),
+    pytest.mark.skipif(
+        not _pg_is_available(),
+        reason="PostgreSQL not reachable at TEST_POSTGRES_URL.",
+    ),
+]
+
+
+@pytest.fixture(scope="module")
+def pg_engine() -> Generator[Engine, None, None]:
+    engine = create_engine(PG_URL, future=True)
+    drop_schema(engine)
+    ensure_schema(engine)
+    yield engine
+    drop_schema(engine)
+    engine.dispose()
+
+
+@pytest.fixture()
+def seeded_tenant(
+    pg_engine: Engine,
+) -> Generator[tuple[uuid.UUID, InMemoryEncryptionProvider], None, None]:
+    """Return (tenant_id, encryption_provider) with 2 rows at v1, provider at v2."""
+    t = ensure_tenant(pg_engine, f"rot-{uuid.uuid4()}")
+    p = ensure_principal(pg_engine, tenant_id=t, external_sub=f"s-{uuid.uuid4()}", auth_method="t")
+    prov = InMemoryEncryptionProvider()
+    store = PostgresAuthProfileStore(
+        PG_URL, tenant_id=t, principal_id=p, engine=pg_engine, encryption_provider=prov
+    )
+    try:
+        store.upsert_with_credential(
+            make_profile("a"), ResolvedCredential(kind="api_key", api_key="k-a")
+        )
+        store.upsert_with_credential(
+            make_profile("b"), ResolvedCredential(kind="api_key", api_key="k-b")
+        )
+    finally:
+        store.close()
+    prov.rotate()
+    yield t, prov
+
+
+def _tenant_name(engine: Engine, tenant_id: uuid.UUID) -> str:
+    with engine.begin() as conn:
+        row = conn.execute(
+            text("SELECT name FROM tenants WHERE id = :tid"), {"tid": tenant_id}
+        ).fetchone()
+    assert row is not None
+    return row[0]
+
+
+class TestRotateKekCLI:
+    def test_dry_run_reports_counts_no_writes(
+        self,
+        seeded_tenant: tuple[uuid.UUID, InMemoryEncryptionProvider],
+        pg_engine: Engine,
+    ) -> None:
+        t, prov = seeded_tenant
+        from nexus.bricks.auth.cli_commands import _TEST_PROVIDER_REGISTRY
+
+        _TEST_PROVIDER_REGISTRY["inmem"] = lambda: prov
+        os.environ["NEXUS_AUTH_ROTATE_KEK_TEST_PROVIDER_ID"] = "inmem"
+        try:
+            runner = CliRunner()
+            result = runner.invoke(
+                auth,
+                [
+                    "rotate-kek",
+                    "--db-url",
+                    PG_URL,
+                    "--tenant",
+                    _tenant_name(pg_engine, t),
+                ],
+            )
+            assert result.exit_code == 0, result.output
+            assert "dry-run" in result.output.lower()
+            assert "2" in result.output  # 2 stale rows
+            # No writes: rows are still at v1
+            with pg_engine.begin() as conn:
+                conn.execute(text("SET LOCAL app.current_tenant = :tid"), {"tid": str(t)})
+                versions = sorted(
+                    r[0]
+                    for r in conn.execute(
+                        text(
+                            "SELECT kek_version FROM auth_profiles "
+                            "WHERE tenant_id = :tid AND ciphertext IS NOT NULL"
+                        ),
+                        {"tid": t},
+                    ).fetchall()
+                )
+            assert versions == [1, 1]
+        finally:
+            os.environ.pop("NEXUS_AUTH_ROTATE_KEK_TEST_PROVIDER_ID", None)
+            _TEST_PROVIDER_REGISTRY.pop("inmem", None)
+
+    def test_apply_rewraps_all(
+        self,
+        seeded_tenant: tuple[uuid.UUID, InMemoryEncryptionProvider],
+        pg_engine: Engine,
+    ) -> None:
+        t, prov = seeded_tenant
+        from nexus.bricks.auth.cli_commands import _TEST_PROVIDER_REGISTRY
+
+        _TEST_PROVIDER_REGISTRY["inmem"] = lambda: prov
+        os.environ["NEXUS_AUTH_ROTATE_KEK_TEST_PROVIDER_ID"] = "inmem"
+        try:
+            runner = CliRunner()
+            result = runner.invoke(
+                auth,
+                [
+                    "rotate-kek",
+                    "--db-url",
+                    PG_URL,
+                    "--tenant",
+                    _tenant_name(pg_engine, t),
+                    "--apply",
+                ],
+            )
+            assert result.exit_code == 0, result.output
+            with pg_engine.begin() as conn:
+                conn.execute(text("SET LOCAL app.current_tenant = :tid"), {"tid": str(t)})
+                versions = [
+                    r[0]
+                    for r in conn.execute(
+                        text(
+                            "SELECT DISTINCT kek_version FROM auth_profiles "
+                            "WHERE tenant_id = :tid AND ciphertext IS NOT NULL"
+                        ),
+                        {"tid": t},
+                    ).fetchall()
+                ]
+            assert versions == [2]
+        finally:
+            os.environ.pop("NEXUS_AUTH_ROTATE_KEK_TEST_PROVIDER_ID", None)
+            _TEST_PROVIDER_REGISTRY.pop("inmem", None)

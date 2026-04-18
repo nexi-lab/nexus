@@ -11,6 +11,7 @@ import importlib
 import logging
 import os
 import re
+from collections.abc import Callable
 from typing import Any
 
 import click
@@ -882,6 +883,126 @@ def auth_migrate_to_postgres(
         finally:
             source.close()
             target.close()
+    finally:
+        engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# auth rotate-kek (issue #3803 — envelope KEK rotation)
+# ---------------------------------------------------------------------------
+
+# Test hook: lets test modules register a provider factory without building
+# real Vault/KMS wiring. Production code paths never use this registry — they
+# construct a provider from CLI args (lands with the Phase D consumer).
+_TEST_PROVIDER_REGISTRY: dict[str, Callable[[], object]] = {}
+
+
+@auth.command("rotate-kek")
+@click.option(
+    "--db-url",
+    required=True,
+    help="PostgreSQL URL (e.g. postgresql+psycopg2://user:pw@host:5432/db).",
+)
+@click.option(
+    "--tenant",
+    required=True,
+    help="Tenant name whose rows should be rewrapped at the provider's current version.",
+)
+@click.option(
+    "--apply", is_flag=True, default=False, help="Actually rewrap rows (default: dry-run)."
+)
+@click.option("--batch-size", default=100, show_default=True, help="Rows per batch.")
+@click.option(
+    "--max-rows",
+    default=None,
+    type=int,
+    help="Upper bound on rows rewrapped across all batches (omit for no cap).",
+)
+def auth_rotate_kek(
+    db_url: str,
+    tenant: str,
+    apply: bool,
+    batch_size: int,
+    max_rows: int | None,
+) -> None:
+    """Rewrap auth_profiles rows at the current provider KEK version.
+
+    Dry-run by default. Operator promotes the provider version out-of-band
+    (Vault: ``vault write -f transit/keys/<name>/rotate``; AWS KMS: managed);
+    then runs this command to sweep rows stuck at older versions.
+    """
+    import uuid as _uuid
+
+    from sqlalchemy import create_engine, text
+
+    from nexus.bricks.auth.postgres_profile_store import (
+        ensure_schema,
+        rotate_kek_for_tenant,
+    )
+
+    test_provider_id = os.environ.get("NEXUS_AUTH_ROTATE_KEK_TEST_PROVIDER_ID")
+    if test_provider_id:
+        factory = _TEST_PROVIDER_REGISTRY.get(test_provider_id)
+        if factory is None:
+            raise click.ClickException(f"Test provider id {test_provider_id!r} not registered")
+        assert callable(factory)
+        provider = factory()
+    else:
+        raise click.ClickException(
+            "No production provider wiring yet. This command is consumer-driven "
+            "— Phase D wires a real EncryptionProvider factory. Tests use "
+            "NEXUS_AUTH_ROTATE_KEK_TEST_PROVIDER_ID."
+        )
+
+    engine = create_engine(db_url, future=True)
+    try:
+        ensure_schema(engine)
+        with engine.begin() as conn:
+            row = conn.execute(
+                text("SELECT id FROM tenants WHERE name = :n"), {"n": tenant}
+            ).fetchone()
+        if row is None:
+            raise click.ClickException(f"Tenant {tenant!r} not found")
+        tenant_id = _uuid.UUID(str(row[0]))
+
+        if not apply:
+            target = provider.current_version(tenant_id=tenant_id)
+            with engine.begin() as conn:
+                conn.execute(text("SET LOCAL app.current_tenant = :tid"), {"tid": str(tenant_id)})
+                stale = conn.execute(
+                    text(
+                        "SELECT kek_version, COUNT(*) FROM auth_profiles "
+                        "WHERE tenant_id = :tid AND ciphertext IS NOT NULL "
+                        "  AND kek_version < :target "
+                        "GROUP BY kek_version ORDER BY kek_version"
+                    ),
+                    {"tid": tenant_id, "target": target},
+                ).fetchall()
+            total = sum(r[1] for r in stale)
+            click.echo(f"dry-run: target_version={target}, stale_rows={total}")
+            for version, count in stale:
+                click.echo(f"  kek_version={version}: {count} rows")
+            click.echo("Pass --apply to rewrap.")
+            return
+
+        report = rotate_kek_for_tenant(
+            engine,
+            tenant_id=tenant_id,
+            encryption_provider=provider,
+            batch_size=batch_size,
+            max_rows=max_rows,
+        )
+        click.echo(
+            f"rewrapped={report.rows_rewrapped} "
+            f"failed={report.rows_failed} "
+            f"remaining={report.rows_remaining} "
+            f"target_version={report.target_version}"
+        )
+        if report.rows_failed:
+            click.echo(
+                f"WARNING: {report.rows_failed} rows failed to rewrap — see logs for details",
+                err=True,
+            )
     finally:
         engine.dispose()
 

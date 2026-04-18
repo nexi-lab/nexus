@@ -26,7 +26,6 @@ from nexus.contracts.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
     from nexus.security.tls.config import ZoneTlsConfig
-    from nexus.security.tls.trust_store import TofuTrustStore
 
 logger = logging.getLogger(__name__)
 
@@ -64,23 +63,24 @@ class NexusFederation:
     def __init__(
         self,
         zone_manager: Any,
-        trust_store: "TofuTrustStore | None" = None,
+        trust_store: Any = None,
     ) -> None:
         """Initialize federation orchestrator.
 
         Args:
             zone_manager: ZoneManager instance for local zone operations.
-            trust_store: TOFU trust store for peer zone CA verification.
-                Auto-created from ZoneManager's tls_config if None.
+            trust_store: ``nexus_kernel.TofuTrustStore`` for peer zone CA
+                verification. Auto-created from the ZoneManager's
+                ``tls_config`` when ``None``.
         """
         self._mgr = zone_manager
         self._trust_store = trust_store
         if trust_store is None:
             tls_cfg = getattr(zone_manager, "tls_config", None)
             if tls_cfg is not None:
-                from nexus.security.tls.trust_store import TofuTrustStore
+                from nexus_kernel import TofuTrustStore
 
-                self._trust_store = TofuTrustStore(tls_cfg.known_zones_path)
+                self._trust_store = TofuTrustStore(str(tls_cfg.known_zones_path))
 
         # Cache TLS credentials for gRPC connections.
         self._tls_config: ZoneTlsConfig | None = getattr(zone_manager, "tls_config", None)
@@ -438,8 +438,10 @@ class NexusFederation:
             ca_pem = self._tls_config.ca_pem
             # Use TOFU CA bundle if trust store has trusted zones
             if self._trust_store is not None:
-                bundle = self._trust_store.build_ca_bundle(self._tls_config.ca_cert_path)
-                ca_pem = bundle.read_bytes()
+                from pathlib import Path as _Path
+
+                bundle_path = self._trust_store.build_ca_bundle(str(self._tls_config.ca_cert_path))
+                ca_pem = _Path(bundle_path).read_bytes()
             creds = grpc.ssl_channel_credentials(
                 root_certificates=ca_pem,
                 private_key=self._tls_config.node_key_pem,

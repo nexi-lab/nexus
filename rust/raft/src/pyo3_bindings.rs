@@ -2293,6 +2293,13 @@ pub fn register_python_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(join_cluster, m)?)?;
     #[cfg(all(feature = "grpc", has_protos))]
     m.add_function(wrap_pyfunction!(hostname_to_node_id, m)?)?;
+
+    #[cfg(feature = "grpc")]
+    {
+        use crate::federation::tofu::{PyTofuTrustStore, PyTrustedZone};
+        m.add_class::<PyTofuTrustStore>()?;
+        m.add_class::<PyTrustedZone>()?;
+    }
     Ok(())
 }
 

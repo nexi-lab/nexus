@@ -1,11 +1,8 @@
-"""Tests for SSH-style TOFU mTLS certificate generation, trust store (#1250),
-and K3s-style join token (#2694)."""
+"""Tests for TLS certificate generation and K3s-style join token (#2694)."""
 
 from __future__ import annotations
 
 from pathlib import Path
-
-import pytest
 
 from nexus.security.tls.certgen import (
     cert_fingerprint,
@@ -20,11 +17,6 @@ from nexus.security.tls.join_token import (
     generate_join_token,
     parse_join_token,
     verify_password,
-)
-from nexus.security.tls.trust_store import (
-    TofuResult,
-    TofuTrustStore,
-    ZoneCertificateChangedError,
 )
 
 # ---------------------------------------------------------------------------
@@ -134,100 +126,15 @@ class TestZoneTlsConfig:
 
 
 # ---------------------------------------------------------------------------
-# TOFU Trust Store
-# ---------------------------------------------------------------------------
-
-
-class TestTofuTrustStore:
-    def _make_store(self, tmp_path: Path) -> TofuTrustStore:
-        return TofuTrustStore(tmp_path / "known_zones")
-
-    def test_trust_new_zone(self, tmp_path: Path) -> None:
-        store = self._make_store(tmp_path)
-        cert, _ = generate_zone_ca("new-zone")
-        result = store.verify_or_trust("new-zone", cert, "10.0.0.1:2126")
-        assert result == TofuResult.TRUSTED_NEW
-
-    def test_trust_known_zone(self, tmp_path: Path) -> None:
-        store = self._make_store(tmp_path)
-        cert, _ = generate_zone_ca("known-zone")
-        store.verify_or_trust("known-zone", cert, "10.0.0.1:2126")
-        result = store.verify_or_trust("known-zone", cert, "10.0.0.1:2126")
-        assert result == TofuResult.TRUSTED_KNOWN
-
-    def test_fingerprint_mismatch_raises(self, tmp_path: Path) -> None:
-        store = self._make_store(tmp_path)
-        cert1, _ = generate_zone_ca("rotate-zone")
-        cert2, _ = generate_zone_ca("rotate-zone")  # different key → different fingerprint
-        store.verify_or_trust("rotate-zone", cert1, "10.0.0.1:2126")
-        with pytest.raises(ZoneCertificateChangedError) as exc_info:
-            store.verify_or_trust("rotate-zone", cert2, "10.0.0.1:2126")
-        assert "ZONE CERTIFICATE CHANGED" in str(exc_info.value)
-
-    def test_persistence_across_reload(self, tmp_path: Path) -> None:
-        path = tmp_path / "known_zones"
-        cert, _ = generate_zone_ca("persist-zone")
-        store1 = TofuTrustStore(path)
-        store1.verify_or_trust("persist-zone", cert, "10.0.0.1:2126")
-        # Reload from disk
-        store2 = TofuTrustStore(path)
-        result = store2.verify_or_trust("persist-zone", cert, "10.0.0.2:2126")
-        assert result == TofuResult.TRUSTED_KNOWN
-
-    def test_remove_zone(self, tmp_path: Path) -> None:
-        store = self._make_store(tmp_path)
-        cert, _ = generate_zone_ca("rm-zone")
-        store.verify_or_trust("rm-zone", cert, "10.0.0.1:2126")
-        assert store.remove("rm-zone") is True
-        assert store.remove("rm-zone") is False
-        # After remove, same cert should be trusted as new
-        result = store.verify_or_trust("rm-zone", cert, "10.0.0.1:2126")
-        assert result == TofuResult.TRUSTED_NEW
-
-    def test_get_ca_pem(self, tmp_path: Path) -> None:
-        store = self._make_store(tmp_path)
-        cert, _ = generate_zone_ca("pem-zone")
-        store.verify_or_trust("pem-zone", cert, "10.0.0.1:2126")
-        pem = store.get_ca_pem("pem-zone")
-        assert pem is not None
-        assert b"BEGIN CERTIFICATE" in pem
-
-    def test_get_ca_pem_unknown(self, tmp_path: Path) -> None:
-        store = self._make_store(tmp_path)
-        assert store.get_ca_pem("unknown") is None
-
-    def test_list_trusted(self, tmp_path: Path) -> None:
-        store = self._make_store(tmp_path)
-        cert1, _ = generate_zone_ca("zone-a")
-        cert2, _ = generate_zone_ca("zone-b")
-        store.verify_or_trust("zone-a", cert1, "a:2126")
-        store.verify_or_trust("zone-b", cert2, "b:2126")
-        trusted = store.list_trusted()
-        ids = {t.zone_id for t in trusted}
-        assert ids == {"zone-a", "zone-b"}
-
-    def test_peer_addresses_accumulate(self, tmp_path: Path) -> None:
-        store = self._make_store(tmp_path)
-        cert, _ = generate_zone_ca("multi-peer")
-        store.verify_or_trust("multi-peer", cert, "10.0.0.1:2126")
-        store.verify_or_trust("multi-peer", cert, "10.0.0.2:2126")
-        store.verify_or_trust("multi-peer", cert, "10.0.0.1:2126")  # duplicate
-        trusted = store.list_trusted()
-        assert len(trusted) == 1
-        assert set(trusted[0].peer_addresses) == {"10.0.0.1:2126", "10.0.0.2:2126"}
-
-
-# ---------------------------------------------------------------------------
 # Integration: full cert lifecycle
 # ---------------------------------------------------------------------------
 
 
 class TestFullLifecycle:
     def test_generate_save_load_verify(self, tmp_path: Path) -> None:
-        """End-to-end: generate certs, save, reload, use trust store."""
+        """End-to-end: generate certs, save, reload, verify fingerprint."""
         tls_dir = tmp_path / "tls"
 
-        # Generate zone A certs
         ca_a, ca_key_a = generate_zone_ca("zone-a")
         node_a, node_key_a = generate_node_cert(1, "zone-a", ca_a, ca_key_a)
         save_pem(tls_dir / "ca.pem", ca_a)
@@ -235,21 +142,9 @@ class TestFullLifecycle:
         save_pem(tls_dir / "node.pem", node_a)
         save_pem(tls_dir / "node-key.pem", node_key_a, is_private=True)
 
-        # Load config
         cfg = ZoneTlsConfig.from_data_dir(tmp_path)
         assert cfg is not None
 
-        # Generate zone B certs (peer)
-        ca_b, _ = generate_zone_ca("zone-b")
-
-        # TOFU: zone A trusts zone B on first contact
-        trust = TofuTrustStore(cfg.known_zones_path)
-        result = trust.verify_or_trust("zone-b", ca_b, "10.0.0.2:2126")
-        assert result == TofuResult.TRUSTED_NEW
-
-        # Verify zone B CA is retrievable
-        pem = trust.get_ca_pem("zone-b")
-        assert pem is not None
         reloaded = load_pem_cert(cfg.ca_cert_path)
         assert cert_fingerprint(reloaded) == cert_fingerprint(ca_a)
 

@@ -57,6 +57,12 @@ pub mod storage;
 /// full ZoneConsensus support (leader election, log replication).
 pub mod raft;
 
+/// Federation orchestration layer — cross-node zone share / join
+/// flows and the TOFU peer-CA trust store. See [`federation`] for
+/// the sub-module layout.
+#[cfg(feature = "grpc")]
+pub mod federation;
+
 /// gRPC transport layer (requires `grpc` feature).
 ///
 /// This module provides network transport for Raft messages using gRPC.

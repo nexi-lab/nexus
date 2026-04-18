@@ -53,6 +53,7 @@ from nexus.bricks.auth.envelope import (
     AESGCMEnvelope,
     DEKCache,
     EncryptionProvider,
+    EnvelopeError,
 )
 from nexus.bricks.auth.envelope_metrics import (
     DEK_CACHE_HITS,
@@ -1032,8 +1033,7 @@ class PostgresAuthProfileStore:
         with self._scoped() as conn:
             row = conn.execute(
                 text(
-                    "SELECT *, ciphertext, wrapped_dek, nonce, aad, kek_version "
-                    "FROM auth_profiles "
+                    "SELECT * FROM auth_profiles "
                     "WHERE tenant_id = :tid AND principal_id = :pid AND id = :id"
                 ),
                 {
@@ -1285,7 +1285,10 @@ def rotate_kek_for_tenant(
                     new_wrapped, new_version = encryption_provider.wrap_dek(
                         dek, tenant_id=tenant_id, aad=bytes(row.aad)
                     )
-                except Exception as exc:
+                except EnvelopeError as exc:
+                    # Narrow to EnvelopeError: a genuine programming bug inside
+                    # the rotation loop (TypeError, KeyError, ...) must crash
+                    # loud rather than be silently counted as a rotation failure.
                     logger.error(
                         "rotate_kek_for_tenant: per-row failure "
                         "tenant=%s principal=%s profile=%s kek_version=%s cause=%s",

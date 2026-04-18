@@ -238,19 +238,18 @@ COPY --from=zoekt-builder /go/bin/zoekt-webserver /usr/local/bin/zoekt-webserver
 # This does NOT affect runtime (the server starts fine); it only affects
 # this build-time import check. We split the check: non-torch imports
 # are fatal, torch-dependent imports (txtai) are best-effort on ARM64.
-# Always verifiable (present regardless of extras): Rust extensions + psutil.
+# Always verifiable (present regardless of extras): Rust extensions.
 RUN python3 -c "\
 import nexus_kernel; \
 from _nexus_raft import Metastore; \
-import psutil; \
 print('✓ Core imports passed (always-present subset)')"
-# Extras-gated imports (only when NEXUS_PROFILE_EXTRAS includes 'all').
-# SANDBOX profile deliberately excludes these (Issue #3778).
+# Extras-gated imports.
+# SANDBOX profile deliberately excludes pgvector/docker/fastembed/psutil (Issue #3778).
 RUN set -eux; \
     case ",${NEXUS_PROFILE_EXTRAS}," in \
       *,all,*) \
-        python3 -c "import pgvector; import docker; import fastembed; print('✓ all-extras imports passed')" ;; \
-      *) echo "Skipping pgvector/docker/fastembed smoke test for extras: ${NEXUS_PROFILE_EXTRAS}" ;; \
+        python3 -c "import pgvector; import docker; import fastembed; import psutil; print('✓ all-extras imports passed')" ;; \
+      *) echo "Skipping pgvector/docker/fastembed/psutil smoke test for extras: ${NEXUS_PROFILE_EXTRAS}" ;; \
     esac
 RUN python3 -c "\
 from nexus_kernel import cosine_similarity_f32, dot_product_f32; \

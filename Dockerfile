@@ -70,6 +70,10 @@ COPY pyproject.toml uv.lock* README.md Cargo.toml Cargo.lock ./
 # Create minimal package stub so setuptools can discover the package
 RUN mkdir -p src/nexus && echo '__version__ = "0.0.0"' > src/nexus/__init__.py
 ENV UV_HTTP_TIMEOUT=300
+# Select which pip extras to install at build time.
+# Default (full image): all,performance,compression,monitoring,docker,event-streaming,sentry,pay
+# Lean sandbox image:   sandbox
+ARG NEXUS_PROFILE_EXTRAS=all,performance,compression,monitoring,docker,event-streaming,sentry,pay
 # Pre-install torch before txtai[ann] to control the variant.
 # TORCH_VARIANT=cpu  → CPU-only wheels (~300 MB, no CUDA)
 # TORCH_VARIANT=cuda → Default PyPI wheels with CUDA (~2 GB)
@@ -80,16 +84,16 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     else \
         uv pip install --system -i $(cat /tmp/pip_index) torch; \
     fi && \
-    if [ "$NEXUS_TXTAI_USE_API_EMBEDDINGS" = "true" ]; then \
-        uv pip install --system -i $(cat /tmp/pip_index) \
-            ".[all,performance,compression,monitoring,docker,event-streaming,sentry,pay]" \
-            "txtai[ann]>=9.0"; \
-    else \
-        uv pip install --system -i $(cat /tmp/pip_index) \
-            ".[all,performance,compression,monitoring,docker,event-streaming,sentry,pay]" \
-            "txtai[ann]>=9.0" \
-            "sentence-transformers>=5.3"; \
-    fi
+    set -eux; \
+    uv pip install --system -i "$(cat /tmp/pip_index)" ".[${NEXUS_PROFILE_EXTRAS}]"; \
+    case ",${NEXUS_PROFILE_EXTRAS}," in \
+      *,all,*) \
+        uv pip install --system -i "$(cat /tmp/pip_index)" "txtai[ann]>=9.0"; \
+        if [ -z "$TARGETPLATFORM" ] || [ "$TARGETPLATFORM" = "linux/amd64" ]; then \
+          uv pip install --system -i "$(cat /tmp/pip_index)" "sentence-transformers>=5.3"; \
+        fi ;; \
+      *) echo "Skipping txtai/sentence-transformers for profile extras: ${NEXUS_PROFILE_EXTRAS}" ;; \
+    esac
 
 # NOTE: hnswlib removal moved to after the final pip install (line ~121)
 # to ensure it's not re-introduced by any subsequent install step.

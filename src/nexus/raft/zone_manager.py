@@ -674,12 +674,12 @@ class ZoneManager:
     ) -> str:
         """Share a subtree by creating a new zone and copying metadata into it.
 
-        Steps:
-        1. Create a new zone (auto UUID if zone_id not provided)
-        2. List all entries under path in parent zone
-        3. Copy each entry to new zone (rebase paths: /a/b/foo → /foo)
-        4. Replace path with DT_MOUNT in parent zone (shadows old entries)
-        NO deletion — old entries are harmless, shadowed by DT_MOUNT.
+        R16.3: the copy+rebase loop, nested-DT_MOUNT link-count bumps,
+        and synthetic root-"/" fallback live in Rust
+        (``PyZoneManager.share_subtree_core``). This shim handles the
+        outer orchestration: precondition checks, UUID generation,
+        creating the Python ``RaftMetadataStore`` wrapper, and flipping
+        the parent mount point to DT_MOUNT via the R16.1b mount shim.
 
         Args:
             parent_zone_id: Zone containing the subtree to share.
@@ -700,72 +700,25 @@ class ZoneManager:
         if parent_store is None:
             raise RuntimeError(f"Parent zone '{parent_zone_id}' not found")
 
-        # Check path isn't already a mount
         existing = parent_store.get(path)
         if existing is not None and existing.is_mount:
             raise ValueError(f"'{path}' is already a DT_MOUNT in zone '{parent_zone_id}'")
 
-        # Generate zone ID
         new_zone_id = zone_id or str(uuid.uuid4())
 
-        # Step 1: Create new zone
-        new_store = self.create_zone(new_zone_id, peers=peers)
+        # Create the new zone (registers Python RaftMetadataStore wrapper
+        # in self._stores so get_store(new_zone_id) works below).
+        self.create_zone(new_zone_id, peers=peers)
 
-        # Step 2: List all entries under path (including path itself if it's a dir)
-        # Normalize: ensure path ends without trailing slash for prefix matching
-        prefix = path.rstrip("/")
-        entries = [
-            e
-            for e in parent_store.list_iter(prefix=prefix, recursive=True)
-            if e.path == prefix or e.path.startswith(prefix + "/")
-        ]
+        # Rust copy + rebase + nested link-count bumps. Returns the
+        # count of entries copied for the log line below.
+        copied = self._py_mgr.share_subtree_core(parent_zone_id, path, new_zone_id)
 
-        # Step 3: Copy entries to new zone with path rebasing
-        # Track nested DT_MOUNT targets so we can increment their link counts
-        from dataclasses import replace
-
-        nested_mount_targets: list[str] = []
-
-        for entry in entries:
-            if entry.path == prefix:
-                # The root dir becomes "/" in the new zone
-                rebased = replace(
-                    entry,
-                    path="/",
-                    zone_id=new_zone_id,
-                    entry_type=DT_DIR,
-                )
-            else:
-                # Rebase: /usr/alice/projectA/foo → /foo
-                relative = entry.path[len(prefix) :]
-                if not relative.startswith("/"):
-                    relative = "/" + relative
-                rebased = replace(entry, path=relative, zone_id=new_zone_id)
-                # Track nested mounts for link count updates
-                if entry.is_mount and entry.target_zone_id:
-                    nested_mount_targets.append(entry.target_zone_id)
-            new_store.put(rebased)
-
-        # Increment link counts for nested mount targets (Finding #4)
-        for nested_target_id in nested_mount_targets:
-            nested_store = self.get_store(nested_target_id)
-            if nested_store is not None:
-                self._increment_links(nested_store)
-
-        # Ensure new zone has a root "/" even if no entries existed
-        if new_store.get("/") is None:
-            root_entry = FileMetadata(
-                path="/",
-                backend_name="virtual",
-                physical_path="",
-                size=0,
-                entry_type=DT_DIR,
-                zone_id=new_zone_id,
-            )
-            new_store.put(root_entry)
-
-        # Step 4: Ensure path exists as DT_DIR (may be implicit directory)
-        # mount() requires an explicit DT_DIR entry (NFS compliance).
+        # Ensure the parent mount point exists as an explicit DT_DIR —
+        # NFS compliance requires it so the R16.1b mount shim's
+        # idempotency check sees the expected entry_type. (Rust-side
+        # share_subtree_core deliberately leaves this to Python because
+        # the Rust mount() path already handles auto-create DT_DIR.)
         if parent_store.get(path) is None:
             parent_store.put(
                 FileMetadata(
@@ -778,7 +731,9 @@ class ZoneManager:
                 )
             )
 
-        # Step 5: Replace DT_DIR with DT_MOUNT (shadows old entries)
+        # Flip parent DT_DIR → DT_MOUNT. The mount shim handles DLC
+        # wiring + dcache invalidation; the apply-event hook (R16.2)
+        # reconciles peer nodes on replication.
         self.mount(parent_zone_id, path, new_zone_id)
 
         logger.info(
@@ -786,7 +741,7 @@ class ZoneManager:
             path,
             parent_zone_id,
             new_zone_id,
-            len(entries),
+            copied,
         )
         return new_zone_id
 

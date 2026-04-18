@@ -887,6 +887,27 @@ async fn scan_existing_mounts(registry: std::sync::Arc<crate::raft::ZoneRaftRegi
     }
 }
 
+/// Is ``path`` either exactly ``normalized_prefix`` or a descendant
+/// separated by a ``/`` boundary? (R16.3 ``share_subtree_core``)
+///
+/// Guards against the sibling-bleed bug where a raw ``starts_with``
+/// would match ``/usr/alicebob`` when filtering under ``/usr/alice``.
+/// Empty ``normalized_prefix`` matches everything (used when the
+/// caller passed ``/`` — i.e. share the whole zone).
+#[cfg(all(feature = "grpc", has_protos))]
+fn path_matches_prefix(path: &str, normalized_prefix: &str) -> bool {
+    if normalized_prefix.is_empty() {
+        true
+    } else {
+        path == normalized_prefix || {
+            // Cheap boundary check without allocating a new `String`.
+            path.len() > normalized_prefix.len()
+                && path.starts_with(normalized_prefix)
+                && path.as_bytes()[normalized_prefix.len()] == b'/'
+        }
+    }
+}
+
 /// Propose a ``Command::AdjustCounter`` through raft on the given node.
 /// Returns the new counter value.
 #[cfg(all(feature = "grpc", has_protos))]
@@ -1468,6 +1489,183 @@ impl PyZoneManager {
             }
 
             Ok(target_zone_id_opt)
+        })
+    }
+
+    /// Copy every FileMetadata entry under ``prefix`` in ``parent_zone_id``
+    /// into ``new_zone_id`` with path rebased to the new zone's root, then
+    /// bump ``__i_links_count__`` on each nested DT_MOUNT target that the
+    /// local node owns (R16.3 ``share_subtree`` core).
+    ///
+    /// Leaves the outer Python orchestration to:
+    ///   - validate parent / target-not-mount preconditions,
+    ///   - generate the new zone id,
+    ///   - call ``create_zone`` (registers the Python
+    ///     ``RaftMetadataStore`` wrapper in ``self._stores``),
+    ///   - ensure the parent mount point exists as DT_DIR,
+    ///   - call ``mount()`` to flip it to DT_MOUNT.
+    ///
+    /// Returns the count of entries copied for logging.
+    ///
+    /// Behavior:
+    ///   - The entry at ``prefix`` (if present) becomes ``/`` in the new
+    ///     zone with entry_type forced to DT_DIR (matches Python's
+    ///     ``entry_type=DT_DIR`` override for the root).
+    ///   - Every deeper entry has the ``prefix`` stripped from its path;
+    ///     ``zone_id`` is rewritten to ``new_zone_id``; other fields
+    ///     (including ``target_zone_id``) are preserved bit-for-bit via
+    ///     the proto round-trip.
+    ///   - If no entry existed at ``prefix``, a synthetic DT_DIR root is
+    ///     written at ``/`` in the new zone so downstream mount() has a
+    ///     valid target.
+    ///   - Nested DT_MOUNT entries found during the copy have their
+    ///     ``target_zone_id``'s ``__i_links_count__`` incremented (+1)
+    ///     when the target is locally hosted — matches Finding #4 in
+    ///     the Python federation docs.
+    ///
+    /// Does NOT auto-create a DT_DIR at ``prefix`` in the parent zone
+    /// or call mount() — those stay in the Python orchestration because
+    /// they interact with the ``_dcache_proxy`` / ``_coordinator``
+    /// bookkeeping that R16.1b left in Python.
+    #[pyo3(signature = (parent_zone_id, prefix, new_zone_id))]
+    pub fn share_subtree_core(
+        &self,
+        py: Python<'_>,
+        parent_zone_id: &str,
+        prefix: &str,
+        new_zone_id: &str,
+    ) -> PyResult<usize> {
+        use pyo3::exceptions::PyValueError;
+
+        let parent_node = self.registry.get_node(parent_zone_id).ok_or_else(|| {
+            PyRuntimeError::new_err(format!("Parent zone '{}' not found", parent_zone_id))
+        })?;
+        let new_node = self.registry.get_node(new_zone_id).ok_or_else(|| {
+            PyRuntimeError::new_err(format!(
+                "Target zone '{}' not found (was create_zone called?)",
+                new_zone_id
+            ))
+        })?;
+
+        // Normalize prefix to match Python's rstrip("/"): "/" → "" means
+        // copy everything; "/a/b/" → "/a/b". An empty prefix after
+        // normalization is a structural error (can't rebase root).
+        let normalized_prefix = prefix.trim_end_matches('/').to_string();
+        if normalized_prefix.is_empty() && prefix != "/" {
+            return Err(PyValueError::new_err(format!(
+                "share_subtree: empty prefix (got '{}')",
+                prefix
+            )));
+        }
+
+        let parent_zone_id = parent_zone_id.to_string();
+        let new_zone_id = new_zone_id.to_string();
+        let handle = self.runtime.handle().clone();
+        let registry = std::sync::Arc::clone(&self.registry);
+
+        py.detach(|| -> PyResult<usize> {
+            // Scan the parent's metastore for everything under the prefix.
+            // list_metadata is a prefix scan; we post-filter to match
+            // Python's "path == prefix or path.startswith(prefix + '/')"
+            // so siblings like /usr/alicebob don't leak into /usr/alice.
+            let scan_prefix = if normalized_prefix.is_empty() {
+                "/".to_string()
+            } else {
+                normalized_prefix.clone()
+            };
+            let entries = handle
+                .block_on(
+                    parent_node.with_state_machine(move |sm: &FullStateMachine| {
+                        sm.list_metadata(&scan_prefix)
+                    }),
+                )
+                .map_err(|e| PyRuntimeError::new_err(format!("list_metadata: {}", e)))?;
+
+            let mut copied: usize = 0;
+            let mut nested_mount_targets: Vec<String> = Vec::new();
+            let mut root_written = false;
+
+            for (path, value) in entries {
+                if !path_matches_prefix(&path, &normalized_prefix) {
+                    continue;
+                }
+                let proto = match decode_file_metadata(&value) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        tracing::warn!(
+                            zone = %parent_zone_id,
+                            path = %path,
+                            error = %e,
+                            "share_subtree: skipping entry with undecodable FileMetadata",
+                        );
+                        continue;
+                    }
+                };
+
+                let (rebased_path, rebased_entry_type) = if path == normalized_prefix {
+                    // Root of the shared subtree becomes "/" as DT_DIR,
+                    // matching Python's `replace(..., path="/", entry_type=DT_DIR)`.
+                    root_written = true;
+                    ("/".to_string(), DT_DIR)
+                } else {
+                    // Strip the prefix from the path; ensure leading "/".
+                    let mut relative = path[normalized_prefix.len()..].to_string();
+                    if !relative.starts_with('/') {
+                        relative.insert(0, '/');
+                    }
+                    // Track nested DT_MOUNTs so we can bump their link
+                    // counts after copying (Finding #4).
+                    if proto.entry_type == DT_MOUNT && !proto.target_zone_id.is_empty() {
+                        nested_mount_targets.push(proto.target_zone_id.clone());
+                    }
+                    (relative, proto.entry_type)
+                };
+
+                let rebased_bytes = encode_file_metadata(
+                    &rebased_path,
+                    &proto.backend_name,
+                    &proto.physical_path,
+                    rebased_entry_type,
+                    &new_zone_id,
+                    &proto.target_zone_id,
+                );
+                propose_set_metadata(&handle, &new_node, &rebased_path, rebased_bytes).map_err(
+                    |e| {
+                        PyRuntimeError::new_err(format!(
+                            "share_subtree: copy {}: {}",
+                            rebased_path, e
+                        ))
+                    },
+                )?;
+                copied += 1;
+            }
+
+            // Ensure the new zone has a root "/" even if no entries
+            // existed at the prefix (matches Python's fallback).
+            if !root_written {
+                let root_bytes = encode_file_metadata("/", "virtual", "", DT_DIR, &new_zone_id, "");
+                propose_set_metadata(&handle, &new_node, "/", root_bytes).map_err(|e| {
+                    PyRuntimeError::new_err(format!("share_subtree: synth root put: {}", e))
+                })?;
+            }
+
+            // Bump i_links_count on every nested DT_MOUNT target that is
+            // locally hosted. Remote-only targets are the leader node's
+            // job once the DT_MOUNT replicates there.
+            for target_id in &nested_mount_targets {
+                if let Some(target_node) = registry.get_node(target_id) {
+                    propose_adjust_counter(&handle, &target_node, I_LINKS_COUNT_KEY, 1).map_err(
+                        |e| {
+                            PyRuntimeError::new_err(format!(
+                                "share_subtree: nested adjust_counter({}): {}",
+                                target_id, e
+                            ))
+                        },
+                    )?;
+                }
+            }
+
+            Ok(copied)
         })
     }
 
@@ -2149,6 +2347,39 @@ mod mount_helpers_tests {
         assert_ne!(mount_decoded.entry_type, dir_decoded.entry_type);
         assert_ne!(mount_decoded.backend_name, dir_decoded.backend_name);
         assert_ne!(mount_decoded.target_zone_id, dir_decoded.target_zone_id);
+    }
+
+    /// R16.3: ``share_subtree`` must not bleed sibling paths into the
+    /// copy set — ``/usr/alice`` as the prefix must not match
+    /// ``/usr/alicebob``. This is the boundary-check guard that
+    /// ``path_matches_prefix`` provides on top of raw ``starts_with``.
+    #[test]
+    fn path_matches_prefix_rejects_sibling_with_shared_stem() {
+        assert!(!path_matches_prefix("/usr/alicebob", "/usr/alice"));
+        assert!(!path_matches_prefix("/usr/alice-temp", "/usr/alice"));
+    }
+
+    #[test]
+    fn path_matches_prefix_accepts_self_and_descendants() {
+        assert!(path_matches_prefix("/usr/alice", "/usr/alice"));
+        assert!(path_matches_prefix("/usr/alice/", "/usr/alice"));
+        assert!(path_matches_prefix("/usr/alice/foo", "/usr/alice"));
+        assert!(path_matches_prefix("/usr/alice/foo/bar", "/usr/alice"));
+    }
+
+    #[test]
+    fn path_matches_prefix_empty_prefix_matches_anything() {
+        // Empty normalized_prefix is only produced when the caller
+        // passed "/", meaning "share the whole zone".
+        assert!(path_matches_prefix("/", ""));
+        assert!(path_matches_prefix("/a", ""));
+        assert!(path_matches_prefix("/foo/bar", ""));
+    }
+
+    #[test]
+    fn path_matches_prefix_rejects_non_descendants() {
+        assert!(!path_matches_prefix("/usr", "/usr/alice"));
+        assert!(!path_matches_prefix("/etc/passwd", "/usr/alice"));
     }
 
     #[test]

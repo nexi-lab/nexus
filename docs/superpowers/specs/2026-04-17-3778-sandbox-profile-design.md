@@ -105,14 +105,16 @@ Explicit off-by-default bricks (not in `_SANDBOX_BRICKS`): `LLM`, `PAY`, `SANDBO
 ### 4. HTTP surface allowlist
 **Files**: `src/nexus/server/fastapi_server.py`, `src/nexus/server/lifespan/*`
 
-- Add `SANDBOX_HTTP_ALLOWLIST = frozenset({"/health", "/api/v2/features"})`.
-- Router-mount loop: when profile is `sandbox`, skip any router whose prefix isn't in the allowlist.
-- MCP transport boot unchanged (it's a separate brick).
+- Add route-level allowlist: `SANDBOX_HTTP_ALLOWLIST = frozenset({"/health", "/api/v2/features"})`.
+- After all routers are declared, when profile is `sandbox`: walk `app.router.routes`, retain only routes whose `path` is in the allowlist (plus built-in `openapi.json` / docs endpoints). Drop everything else before the app starts serving.
+- Rationale for route-level (not router-level): `/api/v2/features` lives inside the larger `/api/v2/*` API router; we can't simply skip the router mount without also dropping `/api/v2/features`.
+- MCP transport boot unchanged (separate brick).
 
 ### 5. Federated semantic with degraded flag
 **Files**: `src/nexus/bricks/search/federated_search.py`, `src/nexus/bricks/search/search_service.py`
 
-- Semantic path: if profile is `sandbox` and no local vector backend, delegate to federation.
+- "No local vector backend" condition: `cfg.enable_vector_search is False` AND no vector DB URL set AND `txtai_backend` not wired. This condition is the default for SANDBOX; users who override `enable_vector_search=True` opt back into local semantic and skip the federation path.
+- Semantic path: if profile is `sandbox` and the above condition holds, delegate to federation.
 - Wrap federation call: on `FederationUnreachableError` or all-peers-fail, fall back to BM25S local and set `semantic_degraded=True` on the response.
 - WARNING logged once per session via rate-limited logger (reuse existing pattern if one exists; otherwise a module-level `_warned_once: bool`).
 - Partial peer failure (some OK) → use RRF from reachable peers, no degraded flag.
@@ -128,7 +130,7 @@ Explicit off-by-default bricks (not in `_SANDBOX_BRICKS`): `LLM`, `PAY`, `SANDBO
 sandbox = [
     "bm25s>=0.2",
     "cachetools>=5.0",
-    "pdf-inspector>=0.1",   # from #3757
+    "pdf-inspector",        # version must match what #3757 lands in pyproject.toml
     "tokenizers>=0.15",
 ]
 ```
@@ -167,7 +169,7 @@ NEXUS_PROFILE=sandbox nexus serve
   → MCP transport ready
 ```
 
-Invariant: boot completes in <5s on warm disk with no network I/O on the critical path.
+Invariant: boot completes in <5s on warm disk with no network I/O on the critical path **when SANDBOX defaults are used**. If the user explicitly sets a PG or Dragonfly URL, that connection attempt is on the critical path and the <5s target no longer applies to that configuration.
 
 ### Search flow (semantic)
 

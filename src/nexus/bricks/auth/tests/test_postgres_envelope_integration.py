@@ -18,12 +18,16 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
+from nexus.bricks.auth.credential_backend import ResolvedCredential
+from nexus.bricks.auth.envelope_providers.in_memory import InMemoryEncryptionProvider
 from nexus.bricks.auth.postgres_profile_store import (
+    PostgresAuthProfileStore,
     drop_schema,
     ensure_principal,
     ensure_schema,
     ensure_tenant,
 )
+from nexus.bricks.auth.tests.conftest import make_profile
 
 PG_URL = os.environ.get(
     "TEST_POSTGRES_URL",
@@ -106,3 +110,91 @@ class TestSchema:
                     "a": b"a",
                 },
             )
+
+
+@pytest.fixture()
+def encryption_provider() -> InMemoryEncryptionProvider:
+    return InMemoryEncryptionProvider()
+
+
+@pytest.fixture()
+def pg_store_crypto(
+    pg_engine: Engine,
+    tenant_id: uuid.UUID,
+    principal_id: uuid.UUID,
+    encryption_provider: InMemoryEncryptionProvider,
+) -> Generator[PostgresAuthProfileStore, None, None]:
+    store = PostgresAuthProfileStore(
+        PG_URL,
+        tenant_id=tenant_id,
+        principal_id=principal_id,
+        engine=pg_engine,
+        encryption_provider=encryption_provider,
+    )
+    yield store
+    store.close()
+
+
+class TestEncryptedUpsertAndGet:
+    def test_roundtrip(self, pg_store_crypto: PostgresAuthProfileStore) -> None:
+        profile = make_profile("google/alice")
+        cred = ResolvedCredential(
+            kind="bearer_token",
+            access_token="ya29.fake",
+            scopes=("https://www.googleapis.com/auth/userinfo.email",),
+        )
+        pg_store_crypto.upsert_with_credential(profile, cred)
+        got = pg_store_crypto.get_with_credential("google/alice")
+        assert got is not None
+        p, c = got
+        assert p.id == "google/alice"
+        assert c is not None
+        assert c.access_token == "ya29.fake"
+        assert c.scopes == ("https://www.googleapis.com/auth/userinfo.email",)
+
+    def test_get_returns_none_for_missing(self, pg_store_crypto: PostgresAuthProfileStore) -> None:
+        assert pg_store_crypto.get_with_credential("does-not-exist") is None
+
+    def test_pr1_row_returns_none_credential(
+        self,
+        pg_store_crypto: PostgresAuthProfileStore,
+        pg_engine: Engine,
+        tenant_id: uuid.UUID,
+        principal_id: uuid.UUID,
+    ) -> None:
+        """A row written via plain upsert reads back (profile, None)."""
+        plain_store = PostgresAuthProfileStore(
+            PG_URL,
+            tenant_id=tenant_id,
+            principal_id=principal_id,
+            engine=pg_engine,
+        )
+        plain_store.upsert(make_profile("openai/bob"))
+        got = pg_store_crypto.get_with_credential("openai/bob")
+        assert got is not None
+        p, c = got
+        assert p.id == "openai/bob"
+        assert c is None
+
+    def test_ctor_without_provider_rejects_crypto_methods(
+        self,
+        pg_engine: Engine,
+        tenant_id: uuid.UUID,
+        principal_id: uuid.UUID,
+    ) -> None:
+        store = PostgresAuthProfileStore(
+            PG_URL,
+            tenant_id=tenant_id,
+            principal_id=principal_id,
+            engine=pg_engine,
+        )
+        try:
+            with pytest.raises(RuntimeError, match="encryption_provider"):
+                store.upsert_with_credential(
+                    make_profile("x"),
+                    ResolvedCredential(kind="api_key", api_key="k"),
+                )
+            with pytest.raises(RuntimeError, match="encryption_provider"):
+                store.get_with_credential("x")
+        finally:
+            store.close()

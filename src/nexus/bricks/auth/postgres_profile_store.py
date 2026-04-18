@@ -22,9 +22,10 @@ is no in-memory LRU cache — Postgres is multi-writer, so per-process caching
 would be stale in the presence of other daemons. Local read-through caching
 is deferred to the client-side nexus-bot daemon (epic #3788 Phase D).
 
-Crypto columns (ciphertext, wrapped_dek, nonce, kek_version, aad) are
-deliberately NOT added in this PR — they land in #3788 Phase C. This store
-persists routing metadata only, matching the current AuthProfile contract.
+Crypto columns (ciphertext, wrapped_dek, nonce, aad, kek_version) are added
+in this PR (#3803, Phase C). Rows written without an ``encryption_provider``
+leave those columns NULL and remain readable; rows written with
+``upsert_with_credential`` carry the full envelope tuple.
 
 Feature gate: instantiated only when ``NEXUS_AUTH_STORE=postgres``. Default
 remains SqliteAuthProfileStore until downstream consumers migrate.
@@ -33,15 +34,32 @@ remains SqliteAuthProfileStore until downstream consumers migrate.
 from __future__ import annotations
 
 import builtins
+import json
 import logging
+import secrets
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import asdict
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Connection, Engine
 
+from nexus.bricks.auth.credential_backend import ResolvedCredential
+from nexus.bricks.auth.envelope import (
+    AADMismatch,
+    AESGCMEnvelope,
+    DEKCache,
+    EncryptionProvider,
+)
+from nexus.bricks.auth.envelope_metrics import (
+    DEK_CACHE_HITS,
+    DEK_CACHE_MISSES,
+    DEK_UNWRAP_ERRORS,
+    DEK_UNWRAP_LATENCY,
+)
 from nexus.bricks.auth.profile import (
     RAW_ERROR_MAX_LEN,
     AuthProfile,
@@ -568,6 +586,46 @@ ON CONFLICT (tenant_id, principal_id, id) DO UPDATE SET
     updated_at         = NOW()
 """
 
+_UPSERT_WITH_CREDENTIAL_SQL = """
+INSERT INTO auth_profiles (
+    tenant_id, principal_id, id,
+    provider, account_identifier, backend, backend_key,
+    last_synced_at, sync_ttl_seconds,
+    last_used_at, success_count, failure_count,
+    cooldown_until, cooldown_reason, disabled_until, raw_error,
+    ciphertext, wrapped_dek, nonce, aad, kek_version,
+    updated_at
+) VALUES (
+    :tenant_id, :principal_id, :id,
+    :provider, :account_identifier, :backend, :backend_key,
+    :last_synced_at, :sync_ttl_seconds,
+    :last_used_at, :success_count, :failure_count,
+    :cooldown_until, :cooldown_reason, :disabled_until, :raw_error,
+    :ciphertext, :wrapped_dek, :nonce, :aad, :kek_version,
+    NOW()
+)
+ON CONFLICT (tenant_id, principal_id, id) DO UPDATE SET
+    provider           = EXCLUDED.provider,
+    account_identifier = EXCLUDED.account_identifier,
+    backend            = EXCLUDED.backend,
+    backend_key        = EXCLUDED.backend_key,
+    last_synced_at     = EXCLUDED.last_synced_at,
+    sync_ttl_seconds   = EXCLUDED.sync_ttl_seconds,
+    last_used_at       = EXCLUDED.last_used_at,
+    success_count      = EXCLUDED.success_count,
+    failure_count      = EXCLUDED.failure_count,
+    cooldown_until     = EXCLUDED.cooldown_until,
+    cooldown_reason    = EXCLUDED.cooldown_reason,
+    disabled_until     = EXCLUDED.disabled_until,
+    raw_error          = EXCLUDED.raw_error,
+    ciphertext         = EXCLUDED.ciphertext,
+    wrapped_dek        = EXCLUDED.wrapped_dek,
+    nonce              = EXCLUDED.nonce,
+    aad                = EXCLUDED.aad,
+    kek_version        = EXCLUDED.kek_version,
+    updated_at         = NOW()
+"""
+
 
 def _reason_to_str(reason: AuthProfileFailureReason | None) -> str | None:
     return reason.value if reason else None
@@ -664,6 +722,8 @@ class PostgresAuthProfileStore:
         principal_id: uuid.UUID | str,
         engine: Engine | None = None,
         pool_size: int = 5,
+        encryption_provider: EncryptionProvider | None = None,
+        dek_cache: DEKCache | None = None,
     ) -> None:
         self._tenant_id = uuid.UUID(str(tenant_id))
         self._principal_id = uuid.UUID(str(principal_id))
@@ -679,6 +739,9 @@ class PostgresAuthProfileStore:
         else:
             self._engine = engine
             self._owns_engine = False
+        self._encryption_provider = encryption_provider
+        self._aesgcm = AESGCMEnvelope()
+        self._dek_cache = dek_cache or DEKCache()
 
     # ------------------------------------------------------------------
     # Internal: scoped-transaction helper
@@ -892,6 +955,134 @@ class PostgresAuthProfileStore:
                     "raw_error": truncated,
                 },
             )
+
+    # ------------------------------------------------------------------
+    # Envelope encryption (issue #3803)
+    # ------------------------------------------------------------------
+
+    def _require_provider(self) -> EncryptionProvider:
+        if self._encryption_provider is None:
+            raise RuntimeError(
+                "encryption_provider is required for upsert_with_credential / "
+                "get_with_credential — construct PostgresAuthProfileStore(..., "
+                "encryption_provider=...)"
+            )
+        return self._encryption_provider
+
+    def _aad_for(self, profile_id: str) -> bytes:
+        return f"{self._tenant_id}|{self._principal_id}|{profile_id}".encode()
+
+    @staticmethod
+    def _serialize_credential(cred: ResolvedCredential) -> bytes:
+        # Canonical JSON: sorted keys, compact separators. Deterministic for
+        # rotation rewrap; any change here breaks existing ciphertext readability.
+        payload = asdict(cred)
+        expires_at: datetime | None = cred.expires_at
+        if expires_at is not None:
+            payload["expires_at"] = expires_at.isoformat()
+        payload["scopes"] = list(cred.scopes)
+        return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+    @staticmethod
+    def _deserialize_credential(data: bytes) -> ResolvedCredential:
+        raw = json.loads(data.decode("utf-8"))
+        expires_at = raw.get("expires_at")
+        if isinstance(expires_at, str):
+            expires_at = datetime.fromisoformat(expires_at)
+        return ResolvedCredential(
+            kind=raw["kind"],
+            api_key=raw.get("api_key"),
+            access_token=raw.get("access_token"),
+            expires_at=expires_at,
+            scopes=tuple(raw.get("scopes", ())),
+            metadata=raw.get("metadata", {}) or {},
+        )
+
+    def upsert_with_credential(self, profile: AuthProfile, credential: ResolvedCredential) -> None:
+        provider = self._require_provider()
+        aad = self._aad_for(profile.id)
+        dek = secrets.token_bytes(32)
+        nonce, ciphertext = self._aesgcm.encrypt(
+            dek, self._serialize_credential(credential), aad=aad
+        )
+        wrapped_dek, kek_version = provider.wrap_dek(dek, tenant_id=self._tenant_id, aad=aad)
+        params = _profile_params(
+            profile, tenant_id=self._tenant_id, principal_id=self._principal_id
+        )
+        params.update(
+            ciphertext=ciphertext,
+            wrapped_dek=wrapped_dek,
+            nonce=nonce,
+            aad=aad,
+            kek_version=kek_version,
+        )
+        lock_key = f"{self._tenant_id}/{profile.id}"
+        with self._scoped() as conn:
+            conn.execute(
+                text("SELECT pg_advisory_xact_lock(hashtextextended(:k, 0))"),
+                {"k": lock_key},
+            )
+            conn.execute(text(_UPSERT_WITH_CREDENTIAL_SQL), params)
+
+    def get_with_credential(
+        self, profile_id: str
+    ) -> tuple[AuthProfile, ResolvedCredential | None] | None:
+        provider = self._require_provider()
+        with self._scoped() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT *, ciphertext, wrapped_dek, nonce, aad, kek_version "
+                    "FROM auth_profiles "
+                    "WHERE tenant_id = :tid AND principal_id = :pid AND id = :id"
+                ),
+                {
+                    "tid": self._tenant_id,
+                    "pid": self._principal_id,
+                    "id": profile_id,
+                },
+            ).fetchone()
+        if row is None:
+            return None
+        profile = _row_to_profile(row)
+        if row.ciphertext is None:
+            return profile, None
+        expected_aad = self._aad_for(profile_id)
+        if bytes(row.aad) != expected_aad:
+            raise AADMismatch.from_row(
+                tenant_id=self._tenant_id,
+                profile_id=profile_id,
+                kek_version=row.kek_version,
+                cause="stored AAD does not match tenant|principal|profile_id",
+            )
+        cache_key = self._dek_cache.make_key(
+            tenant_id=self._tenant_id,
+            kek_version=row.kek_version,
+            wrapped_dek=bytes(row.wrapped_dek),
+        )
+        tenant_label = str(self._tenant_id)
+        dek = self._dek_cache.get(cache_key)
+        if dek is None:
+            DEK_CACHE_MISSES.labels(tenant_id=tenant_label).inc()
+            try:
+                with DEK_UNWRAP_LATENCY.labels(tenant_id=tenant_label).time():
+                    dek = provider.unwrap_dek(
+                        bytes(row.wrapped_dek),
+                        tenant_id=self._tenant_id,
+                        aad=expected_aad,
+                        kek_version=row.kek_version,
+                    )
+            except Exception as exc:
+                DEK_UNWRAP_ERRORS.labels(
+                    tenant_id=tenant_label, error_class=type(exc).__name__
+                ).inc()
+                raise
+            self._dek_cache.put(cache_key, dek)
+        else:
+            DEK_CACHE_HITS.labels(tenant_id=tenant_label).inc()
+        plaintext = self._aesgcm.decrypt(
+            dek, bytes(row.nonce), bytes(row.ciphertext), aad=expected_aad
+        )
+        return profile, self._deserialize_credential(plaintext)
 
     # ------------------------------------------------------------------
     # Tenant-wide helpers (migration/admin only — outside normal Protocol)

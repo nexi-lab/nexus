@@ -8,7 +8,7 @@ version = "0.4.7"
 description = "Unified filesystem abstraction for cloud storage — mount S3, GCS, and local storage with two lines of Python"
 readme = "README.md"
 license = "Apache-2.0"
-requires-python = ">=3.11"
+requires-python = ">=3.14"
 authors = [
     { name = "Nexi Lab Team" },
 ]
@@ -18,9 +18,6 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
     "Topic :: System :: Filesystems",
     "Typing :: Typed",
@@ -123,6 +120,6 @@ line-length = 100
 select = ["E", "F", "I", "UP", "B"]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.14"
 warn_return_any = true
 warn_unused_configs = true

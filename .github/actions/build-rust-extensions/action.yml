@@ -43,7 +43,8 @@ runs:
       run: |
         # raft-proto's protobuf-build requires protoc >= 3.1.0 (semver 3.x).
         # Modern protoc (28.x+) uses a different version scheme that fails the check.
-        # Ubuntu's apt provides 3.12.x; macOS needs a manual 3.x install.
+        # Python 3.14 is set up by the actions/setup-python step in calling workflows;
+        # this action's setup is version-agnostic.
         if [ "$RUNNER_OS" = "Linux" ]; then
           sudo apt-get update && sudo apt-get install -y protobuf-compiler
         elif [ "$RUNNER_OS" = "macOS" ]; then

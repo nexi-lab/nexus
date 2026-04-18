@@ -412,7 +412,7 @@ Parser providers are auto-discovered from environment variables:
 
 - `UNSTRUCTURED_API_KEY`
 - `LLAMA_CLOUD_API_KEY`
-- local MarkItDown fallback
+- local pdf-inspector fallback
 
 ### 5.2 Initialize semantic search
 

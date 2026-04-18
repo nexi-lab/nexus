@@ -7,7 +7,7 @@ name: Conda Pack
 # so there is no conflict between this workflow and release.yml.
 #
 # Build order per runner:
-#   1. Create nexus conda env (Python 3.13) + pip install .
+#   1. Create nexus conda env (Python 3.14) + pip install .
 #   2. Compile kernel  (rust/kernel) via maturin
 #   3. Compile raft  (rust/raft --features full) via maturin
 #   4. pip install both .whl files into the nexus env
@@ -62,10 +62,10 @@ jobs:
           channels: conda-forge,defaults
           channel-priority: strict
 
-      - name: Create nexus conda environment (Python 3.13)
+      - name: Create nexus conda environment (Python 3.14)
         shell: bash -el {0}
         run: |
-          conda create -n nexus python=3.13 -y
+          conda create -n nexus python=3.14 -y
 
       - name: Install project into nexus environment
         shell: bash -el {0}

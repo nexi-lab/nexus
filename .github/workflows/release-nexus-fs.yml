@@ -18,6 +18,9 @@ on:
     tags:
       - "nexus-fs-v*"
 
+env:
+  PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
+
 permissions:
   contents: write
   id-token: write
@@ -59,7 +62,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: "3.14"
 
       - name: Install build tools
         run: python -m pip install build hatchling

@@ -38,7 +38,7 @@ import nexus
 ## Environment (if applicable)
 
 - **Nexus Version:** [e.g., 0.1.0]
-- **Python Version:** [e.g., 3.11.5]
+- **Python Version:** [e.g., 3.14.1]
 - **OS:** [e.g., macOS 14.0]
 - **Deployment Mode:** [embedded/monolithic/distributed]
 

@@ -26,7 +26,7 @@ import pytest
 # === Helpers ===
 
 # Use Python 3.13 which has the Rust Metastore extension built for arm64
-PYTHON = "/opt/homebrew/bin/python3.13"
+PYTHON = "/opt/homebrew/bin/python3.14"
 SERVER_STARTUP_TIMEOUT = 30
 
 # Clear proxy env vars so localhost connections work

@@ -545,7 +545,7 @@ services:
   #   docker compose -f dockerfiles/compose.yaml --profile test run --rm test pytest tests/unit -v
   # ============================================
   test:
-    image: python:3.13
+    image: python:3.14
     container_name: nexus-test
     working_dir: /app
     profiles:

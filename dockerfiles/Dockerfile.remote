@@ -9,7 +9,7 @@
 #   docker run --rm -e NEXUS_URL=http://host:2026 nexus-remote:latest nexus --help
 
 # ── Builder stage ────────────────────────────────────────────────────
-FROM python:3.13-slim AS builder
+FROM python:3.14-slim AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends gcc && rm -rf /var/lib/apt/lists/*
 
@@ -22,7 +22,7 @@ COPY src/ /build/src/
 RUN pip install --no-cache-dir --no-deps --prefix=/install /build
 
 # ── Runtime stage ────────────────────────────────────────────────────
-FROM python:3.13-slim
+FROM python:3.14-slim
 
 LABEL org.opencontainers.image.title="Nexus Remote Client"
 LABEL org.opencontainers.image.description="Slim remote-only Nexus client (gRPC)"

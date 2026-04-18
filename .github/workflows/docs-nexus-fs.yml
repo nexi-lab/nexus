@@ -24,6 +24,7 @@ defaults:
 
 env:
   DISABLE_MKDOCS_2_WARNING: "true"
+  PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
 
 jobs:
   check:
@@ -36,7 +37,7 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: "3.14"
 
       - name: Install dependencies
         run: pip install -r requirements-docs.txt

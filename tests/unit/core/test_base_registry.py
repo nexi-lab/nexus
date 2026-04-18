@@ -155,7 +155,7 @@ class TestDiscoverFromPackage:
             Parser,
             key_fn=lambda cls: cls.__name__,
         )
-        assert count >= 1  # at least MarkItDownParser
+        assert count >= 1  # at least PdfInspectorParser
 
     def test_discover_nonexistent_package(self) -> None:
         reg: BaseRegistry[object] = BaseRegistry("empty")

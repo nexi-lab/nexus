@@ -44,7 +44,7 @@ body:
       description: Your setup (if relevant to the question)
       placeholder: |
         - Nexus Version: 0.1.0
-        - Python Version: 3.11.5
+        - Python Version: 3.14.1
         - OS: Ubuntu 22.04
         - Deployment Mode: embedded
 

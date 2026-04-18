@@ -2,7 +2,7 @@
 # Uses nexus-langgraph repository instead of examples/langgraph
 # Multi-stage build for optimal image size
 
-FROM python:3.13-slim AS builder
+FROM python:3.14-slim AS builder
 
 # Install build dependencies (including build-essential for Rust linking)
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -33,7 +33,7 @@ RUN uv pip install --system . "langgraph-api==0.7.19"
 # ============================================
 # Production image
 # ============================================
-FROM python:3.13-slim
+FROM python:3.14-slim
 
 # Install runtime dependencies only
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -41,7 +41,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy Python packages and CLI tools from builder
-COPY --from=builder /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
+COPY --from=builder /usr/local/lib/python3.14/site-packages /usr/local/lib/python3.14/site-packages
 COPY --from=builder /usr/local/bin/ /usr/local/bin/
 
 # Copy application files

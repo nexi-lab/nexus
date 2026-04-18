@@ -53,15 +53,12 @@ async def debug_asyncio() -> dict[str, Any]:
     except Exception as e:
         result["tasks_error"] = str(e)
 
-    # Python 3.14+ call graph introspection
-    try:
-        from asyncio import format_call_graph  # type: ignore[attr-defined]
+    # Python 3.14 call graph introspection
+    from asyncio import format_call_graph
 
+    try:
         result["call_graph_available"] = True
         result["call_graph"] = format_call_graph()
-    except ImportError:
-        result["call_graph_available"] = False
-        result["call_graph_note"] = "Requires Python 3.14+"
     except Exception as e:
         result["call_graph_error"] = str(e)
 

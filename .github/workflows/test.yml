@@ -7,6 +7,9 @@ on:
     branches: [main, develop]
   merge_group:
 
+env:
+  PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -46,7 +49,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: "3.14"
 
       - name: Install uv
         uses: astral-sh/setup-uv@v3
@@ -55,7 +58,7 @@ jobs:
           cache-dependency-glob: "pyproject.toml"
 
       - name: Create virtual environment
-        run: uv venv --python 3.13
+        run: uv venv --python 3.14
 
       - name: Download Rust wheels
         uses: actions/download-artifact@v4
@@ -92,10 +95,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.13
+      - name: Set up Python 3.14
         uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: "3.14"
 
       - name: Build Rust extensions
         uses: ./.github/actions/build-rust-extensions
@@ -121,7 +124,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        python-version: ["3.13"]
+        python-version: ["3.14"]
 
     steps:
       - name: Checkout code
@@ -202,7 +205,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: "3.14"
 
       - name: Install uv
         uses: astral-sh/setup-uv@v3
@@ -211,7 +214,7 @@ jobs:
           cache-dependency-glob: "pyproject.toml"
 
       - name: Create virtual environment
-        run: uv venv --python 3.13
+        run: uv venv --python 3.14
 
       - name: Download Rust wheels
         uses: actions/download-artifact@v4
@@ -257,7 +260,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: "3.14"
 
       - name: Install uv
         uses: astral-sh/setup-uv@v3
@@ -266,7 +269,7 @@ jobs:
           cache-dependency-glob: "pyproject.toml"
 
       - name: Create virtual environment
-        run: uv venv --python 3.13
+        run: uv venv --python 3.14
 
       - name: Download Rust wheels
         uses: actions/download-artifact@v4
@@ -310,7 +313,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: "3.14"
 
       - name: Install uv
         uses: astral-sh/setup-uv@v3
@@ -319,7 +322,7 @@ jobs:
           cache-dependency-glob: "pyproject.toml"
 
       - name: Create virtual environment
-        run: uv venv --python 3.13
+        run: uv venv --python 3.14
 
       - name: Download Rust wheels
         uses: actions/download-artifact@v4
@@ -349,7 +352,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: "3.14"
 
       - name: Install uv
         uses: astral-sh/setup-uv@v3
@@ -358,7 +361,7 @@ jobs:
           cache-dependency-glob: "pyproject.toml"
 
       - name: Create virtual environment
-        run: uv venv --python 3.13
+        run: uv venv --python 3.14
 
       - name: Download Rust wheels
         uses: actions/download-artifact@v4
@@ -395,7 +398,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: "3.14"
 
       - name: Install uv
         uses: astral-sh/setup-uv@v3
@@ -404,7 +407,7 @@ jobs:
           cache-dependency-glob: "pyproject.toml"
 
       - name: Create virtual environment
-        run: uv venv --python 3.13
+        run: uv venv --python 3.14
 
       - name: Download Rust wheels
         uses: actions/download-artifact@v4
@@ -436,7 +439,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: "3.14"
 
       - name: Install uv
         uses: astral-sh/setup-uv@v3
@@ -480,7 +483,7 @@ jobs:
         env:
           VIRTUAL_ENV: /tmp/nexus-fs-test
         run: |
-          uv venv --python 3.13 $VIRTUAL_ENV
+          uv venv --python 3.14 $VIRTUAL_ENV
           uv pip install --python $VIRTUAL_ENV/bin/python rust-dist/*.whl
           start_time=$(date +%s%N)
           uv pip install --python $VIRTUAL_ENV/bin/python dist/*.whl
@@ -571,7 +574,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: "3.14"
 
       - name: Install uv
         uses: astral-sh/setup-uv@v3
@@ -580,7 +583,7 @@ jobs:
           cache-dependency-glob: "pyproject.toml"
 
       - name: Create virtual environment
-        run: uv venv --python 3.13
+        run: uv venv --python 3.14
 
       - name: Download Rust wheels
         uses: actions/download-artifact@v4
@@ -626,7 +629,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: "3.14"
 
       - name: Install uv
         uses: astral-sh/setup-uv@v3
@@ -635,7 +638,7 @@ jobs:
           cache-dependency-glob: "pyproject.toml"
 
       - name: Create virtual environment
-        run: uv venv --python 3.13
+        run: uv venv --python 3.14
 
       - name: Download Rust wheels
         uses: actions/download-artifact@v4
@@ -686,7 +689,7 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
-        python-version: ["3.13"]
+        python-version: ["3.14"]
     steps:
       - run: echo "No code changes — skipping tests"
 

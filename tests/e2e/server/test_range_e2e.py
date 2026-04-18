@@ -6,7 +6,7 @@ enabled and actual file persistence.
 Uses the nexus_server fixture from conftest.py which starts
 `nexus serve` as a subprocess with NEXUS_API_KEY auth.
 
-Run with: .venv/bin/python3.12 -m pytest tests/e2e/test_range_e2e.py -v -p no:xdist -o "addopts="
+Run with: .venv/bin/python3.14 -m pytest tests/e2e/test_range_e2e.py -v -p no:xdist -o "addopts="
 """
 
 import base64

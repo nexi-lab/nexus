@@ -7,6 +7,9 @@ on:
     branches: [main, develop]
   merge_group:
 
+env:
+  PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -23,7 +26,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: "3.14"
 
       - name: Install uv
         uses: astral-sh/setup-uv@v3
@@ -32,7 +35,7 @@ jobs:
           cache-dependency-glob: "pyproject.toml"
 
       - name: Create virtual environment
-        run: uv venv --python 3.13
+        run: uv venv --python 3.14
 
       - name: Build Rust extensions
         uses: ./.github/actions/build-rust-extensions
@@ -79,7 +82,7 @@ jobs:
       - name: Set up Python (for PyO3 crates)
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.14'
 
       - name: Install Python dev headers
         run: sudo apt-get update && sudo apt-get install -y python3-dev

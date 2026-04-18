@@ -36,6 +36,9 @@ on:
     tags:
       - "v*"
 
+env:
+  PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
+
 permissions:
   contents: write
 
@@ -87,7 +90,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.14"
 
       - name: Resolve artifact version
         shell: bash

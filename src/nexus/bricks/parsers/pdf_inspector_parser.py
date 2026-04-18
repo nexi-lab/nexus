@@ -35,7 +35,7 @@ class PdfInspectorParser(Parser):
 
     @property
     def priority(self) -> int:
-        # Outrank MarkItDownParser (default 0) for .pdf
+        # Higher than the Parser base default (0) so pdf-inspector is picked first for .pdf
         return 20
 
     def can_parse(self, file_path: str, mime_type: str | None = None) -> bool:

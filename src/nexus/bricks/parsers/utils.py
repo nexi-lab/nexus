@@ -1,7 +1,6 @@
 """Shared utilities for markdown parsing — extract_structure & create_chunks.
 
-Deduplicated from MarkItDownParser, MarkItDownProvider, and LlamaParseProvider
-(Issue #5A).
+Shared parser helpers used by PdfInspectorProvider and LlamaParseProvider.
 
 Issue #3718: Both functions now delegate to the canonical
 ``md_structure.parse_markdown_structure()`` parser, preserving their

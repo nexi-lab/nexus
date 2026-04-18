@@ -18,7 +18,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=0 go install github.com/sourcegraph/zoekt/cmd/zoekt-webserver@latest
 
 # ---------- Stage 2: Build Python + Rust ----------
-FROM python:3.13-slim AS builder
+FROM python:3.14-slim AS builder
 
 # 设置国内镜像环境变量（默认 false，国外环境不使用）
 ARG USE_CHINA_MIRROR
@@ -146,12 +146,12 @@ RUN rm -rf src/*.egg-info build/ && \
 ARG TARGETARCH
 RUN if [ "${TARGETARCH}" = "arm64" ]; then \
         pip uninstall -y hnswlib && \
-        rm -f /usr/local/lib/python3.13/site-packages/hnswlib*.so && \
+        rm -f /usr/local/lib/python3.14/site-packages/hnswlib*.so && \
         echo "✓ hnswlib removed (ARM64 SIGILL fix)"; \
     fi
 
 # ---------- Production image ----------
-FROM python:3.13-slim
+FROM python:3.14-slim
 
 ARG USE_CHINA_MIRROR
 ARG TARGETARCH
@@ -181,7 +181,7 @@ RUN set -eux; \
     elif [ "${TARGETARCH}" = "amd64" ]; then \
         ln -sf /usr/lib/x86_64-linux-gnu/libgomp.so.1 /usr/lib/libgomp.so.1; \
     fi && \
-    ln -sf /usr/local/lib/python3.13/site-packages/torch/lib/libc10.so /usr/lib/libc10.so
+    ln -sf /usr/local/lib/python3.14/site-packages/torch/lib/libc10.so /usr/lib/libc10.so
 ENV LD_PRELOAD="/usr/lib/libgomp.so.1 /usr/lib/libc10.so"
 ENV GLIBC_TUNABLES="glibc.rtld.optional_static_tls=16384"
 
@@ -206,7 +206,7 @@ RUN set -eux; \
     gws --version && gh --version
 
 # ---------- Copy Python packages + Rust extensions ----------
-COPY --from=builder /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
+COPY --from=builder /usr/local/lib/python3.14/site-packages /usr/local/lib/python3.14/site-packages
 COPY --from=builder /usr/local/bin/nexus /usr/local/bin/nexus
 COPY --from=builder /usr/local/bin/nexusd /usr/local/bin/nexusd
 COPY --from=builder /usr/local/bin/alembic /usr/local/bin/alembic

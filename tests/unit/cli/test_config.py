@@ -437,13 +437,3 @@ def test_load_from_environment_skips_pdf_inspector_when_unavailable(monkeypatch)
     config = _load_from_environment()
     names = [p["name"] for p in (config.parse_providers or [])]
     assert "pdf-inspector" not in names
-
-
-def test_load_from_environment_skips_markitdown_when_unavailable(monkeypatch):
-    monkeypatch.delenv("UNSTRUCTURED_API_KEY", raising=False)
-    monkeypatch.delenv("LLAMA_CLOUD_API_KEY", raising=False)
-    monkeypatch.setitem(sys.modules, "markitdown", None)
-
-    config = _load_from_environment()
-    names = [p["name"] for p in (config.parse_providers or [])]
-    assert "markitdown" not in names

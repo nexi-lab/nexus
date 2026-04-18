@@ -18,7 +18,7 @@ def test_supported_formats_is_pdf_only():
 
 def test_priority_outranks_default():
     parser = PdfInspectorParser()
-    # MarkItDownParser returns default 0 from Parser.priority
+    # Parser base class returns default priority 0
     assert parser.priority > 0
 
 
@@ -78,17 +78,17 @@ async def test_parse_invalid_bytes_raises_parser_error():
 
 
 # Regression: ensure ParsersBrick's create_parse_fn routes PDFs to
-# pdf-inspector on a default install (markitdown not installed). This was
-# the C1 gap identified in code review.
+# pdf-inspector on a default install.  Confirms the brick wires pdf-inspector
+# into the auto-parse-on-write pipeline (``create_parse_fn`` /
+# ``AutoParseWriteHook``) so PDFs flow to the indexer.
 
 
-def test_brick_create_parse_fn_handles_pdf_without_markitdown():
+def test_brick_create_parse_fn_handles_pdf():
     """Regression test for auto-parse-on-write path (issue #3757).
 
     ``ParsersBrick.create_parse_fn`` resolves parsers via ``ParserRegistry``
-    (not ``ProviderRegistry``). Before PdfInspectorParser existed, a default
-    install silently dropped PDFs in the auto-parse pipeline because
-    MarkItDownParser.can_parse returned False.
+    (not ``ProviderRegistry``). Confirms that PdfInspectorParser is wired
+    into the auto-parse pipeline so PDFs are parsed on write.
     """
     pytest.importorskip("pdf_inspector")
     from nexus.bricks.parsers.brick import ParsersBrick

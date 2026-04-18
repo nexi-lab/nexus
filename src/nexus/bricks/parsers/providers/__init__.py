@@ -5,7 +5,6 @@ parsing backends:
 - UnstructuredProvider: Uses Unstructured.io API
 - LlamaParseProvider: Uses LlamaParse API
 - PdfInspectorProvider: Local PDF parsing with pdf-inspector (Rust + PyO3)
-- MarkItDownProvider: Local fallback for non-PDF formats (optional install)
 
 Example:
     >>> from nexus.bricks.parsers.providers import ProviderRegistry

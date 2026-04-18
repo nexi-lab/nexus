@@ -168,6 +168,14 @@ sandbox-monty = [
     "pydantic-monty>=0.0.4",
 ]
 
+sandbox = [
+    # Issue #3778: SANDBOX profile — agent sandbox runtime (zero external services)
+    "bm25s>=0.2",
+    "cachetools>=5.0",
+    # "pdf-inspector",  # Uncomment once #3757 lands; pulled in when PARSERS brick is enabled
+    "tokenizers>=0.15",
+]
+
 sentry = [
     # Sentry error tracking and performance monitoring (Issue #759)
     "sentry-sdk[fastapi]>=2.0.0",

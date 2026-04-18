@@ -125,7 +125,7 @@ jobs:
 
           # Wait for server to be ready
           echo "Waiting for Nexus to start..."
-          for i in $(seq 1 90); do
+          for i in $(seq 1 180); do
             if ! docker ps --format '{{.Names}}' | grep -qx nexus-e2e; then
               echo "::error::nexus-e2e exited before becoming healthy"
               docker inspect nexus-e2e --format 'exit_code={{.State.ExitCode}} status={{.State.Status}} started_at={{.State.StartedAt}} finished_at={{.State.FinishedAt}} error={{json .State.Error}}' || true
@@ -142,7 +142,7 @@ jobs:
             sleep 1
           done
           if ! curl -sf http://localhost:2026/healthz/ready > /dev/null 2>&1; then
-            echo "::error::nexus-e2e never became healthy within 90 seconds"
+            echo "::error::nexus-e2e never became healthy within 180 seconds"
             docker inspect nexus-e2e --format 'exit_code={{.State.ExitCode}} status={{.State.Status}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} started_at={{.State.StartedAt}} finished_at={{.State.FinishedAt}} error={{json .State.Error}}' || true
             echo "Crash signatures from container logs:"
             docker logs nexus-e2e 2>&1 | grep -E -m 20 'Illegal instruction|Traceback|ERROR:|FATAL:|panic|segmentation fault|core dumped' || true

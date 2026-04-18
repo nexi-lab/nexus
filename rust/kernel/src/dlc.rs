@@ -106,6 +106,7 @@ impl DriverLifecycleCoordinator {
                 version: 1,
                 entry_type: 2, // DT_MOUNT
                 zone_id: Some(zone_id.to_string()),
+                target_zone_id: None,
                 mime_type: None,
                 created_at_ms: None,
                 modified_at_ms: None,

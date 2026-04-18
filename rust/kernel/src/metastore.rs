@@ -22,6 +22,12 @@ pub struct FileMetadata {
     pub version: u32,
     pub entry_type: u8,
     pub zone_id: Option<String>,
+    /// Mount target zone (DT_MOUNT entries only). Mirrors
+    /// ``FileMetadata.target_zone_id`` in the proto / Python dataclass.
+    /// Federation mounts need this to round-trip through Rust — without
+    /// it, a DT_MOUNT entry written Python-side loses its target when
+    /// Rust proposes/applies it via raft.
+    pub target_zone_id: Option<String>,
     pub mime_type: Option<String>,
     /// Creation timestamp (Unix epoch milliseconds). Populated by
     /// ``kernel::sys_write`` on first write; subsequent overwrites preserve
@@ -522,10 +528,14 @@ fn fm_composite_key(path: &str, key: &str) -> String {
 ///         [has_mime_type:u8][mime_type_len:u32][mime_type]
 ///         [has_created_at:u8][created_at:i64]
 ///         [has_modified_at:u8][modified_at:i64]
+///         [has_target_zone_id:u8][target_zone_id_len:u32][target_zone_id]
 ///
 /// version_tag distinguishes v1 (no timestamps) from v2 (timestamps appended).
 /// v1 has no leading tag; the first byte is the path length, which always
 /// has a high byte of 0 for paths shorter than 16M, while v2 starts with 2.
+/// ``target_zone_id`` is appended at the end as a v2 extension — records
+/// written before the field existed are read back with ``None`` (tolerated
+/// at EOF in ``deserialize_metadata``).
 fn serialize_metadata(meta: &FileMetadata) -> Vec<u8> {
     let mut buf = Vec::with_capacity(280);
 
@@ -564,6 +574,7 @@ fn serialize_metadata(meta: &FileMetadata) -> Vec<u8> {
     write_opt_str(&mut buf, &meta.mime_type);
     write_opt_i64(&mut buf, meta.created_at_ms);
     write_opt_i64(&mut buf, meta.modified_at_ms);
+    write_opt_str(&mut buf, &meta.target_zone_id);
 
     buf
 }
@@ -659,6 +670,14 @@ fn deserialize_metadata(data: &[u8]) -> Result<FileMetadata, MetastoreError> {
         (None, None)
     };
 
+    // ``target_zone_id`` is a late addition to v2; tolerate truncation
+    // for records written before the field existed.
+    let target_zone_id = if pos < data.len() {
+        read_opt_str(data, &mut pos)?
+    } else {
+        None
+    };
+
     Ok(FileMetadata {
         path,
         backend_name,
@@ -668,6 +687,7 @@ fn deserialize_metadata(data: &[u8]) -> Result<FileMetadata, MetastoreError> {
         version,
         entry_type,
         zone_id,
+        target_zone_id,
         mime_type,
         created_at_ms,
         modified_at_ms,
@@ -1055,6 +1075,7 @@ mod tests {
             version: 3,
             entry_type: 0,
             zone_id: Some("root".to_string()),
+            target_zone_id: None,
             mime_type: None,
             created_at_ms: None,
             modified_at_ms: None,
@@ -1069,7 +1090,31 @@ mod tests {
         assert_eq!(restored.version, meta.version);
         assert_eq!(restored.entry_type, meta.entry_type);
         assert_eq!(restored.zone_id, meta.zone_id);
+        assert_eq!(restored.target_zone_id, meta.target_zone_id);
         assert_eq!(restored.mime_type, meta.mime_type);
+    }
+
+    #[test]
+    fn test_serialize_roundtrip_preserves_target_zone_id() {
+        let meta = FileMetadata {
+            path: "/mnt/peer".to_string(),
+            backend_name: "".to_string(),
+            physical_path: "".to_string(),
+            size: 0,
+            etag: None,
+            version: 1,
+            entry_type: 2, // DT_MOUNT
+            zone_id: Some("zone-a".to_string()),
+            target_zone_id: Some("zone-b".to_string()),
+            mime_type: None,
+            created_at_ms: None,
+            modified_at_ms: None,
+        };
+        let data = serialize_metadata(&meta);
+        let restored = deserialize_metadata(&data).unwrap();
+        assert_eq!(restored.target_zone_id, Some("zone-b".to_string()));
+        assert_eq!(restored.zone_id, Some("zone-a".to_string()));
+        assert_eq!(restored.entry_type, 2);
     }
 
     fn mk_meta(path: &str, version: u32) -> FileMetadata {
@@ -1082,6 +1127,7 @@ mod tests {
             version,
             entry_type: 0,
             zone_id: None,
+            target_zone_id: None,
             mime_type: None,
             created_at_ms: None,
             modified_at_ms: None,
@@ -1191,6 +1237,7 @@ mod tests {
             version: 1,
             entry_type: 0,
             zone_id: None,
+            target_zone_id: None,
             mime_type: None,
             created_at_ms: None,
             modified_at_ms: None,

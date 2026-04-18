@@ -15,11 +15,14 @@
 //!
 //! Field fidelity note: the kernel ``FileMetadata`` struct tracks a
 //! subset of the proto fields (path/backend_name/physical_path/size/etag/
-//! version/entry_type/zone_id/mime_type). Missing fields (``created_at``,
-//! ``modified_at``, ``owner_id``, ``target_zone_id``, ``ttl_seconds``)
-//! round-trip through Python-side writes fine but are defaulted on
-//! kernel-only writes. Widening ``kernel::metastore::FileMetadata`` is
-//! tracked separately.
+//! version/entry_type/zone_id/target_zone_id/mime_type). ``target_zone_id``
+//! was added in R16.1a so DT_MOUNT entries round-trip through Rust; the
+//! remaining missing fields (``owner_id``, ``ttl_seconds`` and the
+//! ``created_at``/``modified_at`` ISO-8601 strings — distinct from the
+//! ``created_at_ms``/``modified_at_ms`` epoch fields already tracked)
+//! still round-trip through Python-side writes fine but are defaulted on
+//! kernel-only writes. Widening ``kernel::metastore::FileMetadata`` to
+//! cover those is tracked by follow-up #16.
 
 use std::sync::Arc;
 
@@ -51,7 +54,7 @@ impl ZoneMetastore {
     }
 }
 
-fn proto_to_kernel(bytes: &[u8]) -> Result<KernelFileMetadata, MetastoreError> {
+pub(crate) fn proto_to_kernel(bytes: &[u8]) -> Result<KernelFileMetadata, MetastoreError> {
     let proto = ProtoFileMetadata::decode(bytes)
         .map_err(|e| MetastoreError::IOError(format!("FileMetadata proto decode: {e}")))?;
     Ok(KernelFileMetadata {
@@ -71,6 +74,11 @@ fn proto_to_kernel(bytes: &[u8]) -> Result<KernelFileMetadata, MetastoreError> {
         } else {
             Some(proto.zone_id)
         },
+        target_zone_id: if proto.target_zone_id.is_empty() {
+            None
+        } else {
+            Some(proto.target_zone_id)
+        },
         mime_type: if proto.mime_type.is_empty() {
             None
         } else {
@@ -81,7 +89,7 @@ fn proto_to_kernel(bytes: &[u8]) -> Result<KernelFileMetadata, MetastoreError> {
     })
 }
 
-fn kernel_to_proto(meta: &KernelFileMetadata) -> Vec<u8> {
+pub(crate) fn kernel_to_proto(meta: &KernelFileMetadata) -> Vec<u8> {
     let proto = ProtoFileMetadata {
         path: meta.path.clone(),
         backend_name: meta.backend_name.clone(),
@@ -91,6 +99,7 @@ fn kernel_to_proto(meta: &KernelFileMetadata) -> Vec<u8> {
         version: meta.version as i32,
         entry_type: meta.entry_type as i32,
         zone_id: meta.zone_id.clone().unwrap_or_default(),
+        target_zone_id: meta.target_zone_id.clone().unwrap_or_default(),
         mime_type: meta.mime_type.clone().unwrap_or_default(),
         ..Default::default()
     };
@@ -168,5 +177,63 @@ impl Metastore for ZoneMetastore {
 
     fn exists(&self, path: &str) -> Result<bool, MetastoreError> {
         self.get(path).map(|m| m.is_some())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mk_mount_entry() -> KernelFileMetadata {
+        KernelFileMetadata {
+            path: "/mnt/peer".to_string(),
+            backend_name: "federation".to_string(),
+            physical_path: String::new(),
+            size: 0,
+            etag: None,
+            version: 1,
+            entry_type: 2, // DT_MOUNT
+            zone_id: Some("zone-a".to_string()),
+            target_zone_id: Some("zone-b".to_string()),
+            mime_type: None,
+            created_at_ms: None,
+            modified_at_ms: None,
+        }
+    }
+
+    /// R16.1a byte-compat guard: a DT_MOUNT entry must preserve
+    /// ``target_zone_id`` across a proto encode→decode round-trip so
+    /// Rust-authored federation mounts don't silently drop the target
+    /// zone Python readers rely on.
+    #[test]
+    fn roundtrip_mount_entry_preserves_target_zone_id() {
+        let original = mk_mount_entry();
+        let bytes = kernel_to_proto(&original);
+        let restored = proto_to_kernel(&bytes).expect("decode must succeed");
+
+        assert_eq!(restored.path, original.path);
+        assert_eq!(restored.backend_name, original.backend_name);
+        assert_eq!(restored.physical_path, original.physical_path);
+        assert_eq!(restored.size, original.size);
+        assert_eq!(restored.etag, original.etag);
+        assert_eq!(restored.version, original.version);
+        assert_eq!(restored.entry_type, original.entry_type);
+        assert_eq!(restored.zone_id, original.zone_id);
+        assert_eq!(restored.target_zone_id, original.target_zone_id);
+        assert_eq!(restored.mime_type, original.mime_type);
+        assert_eq!(restored.created_at_ms, None);
+        assert_eq!(restored.modified_at_ms, None);
+    }
+
+    /// Empty ``target_zone_id`` maps to ``None`` (proto3 default),
+    /// matching ``MetadataMapper.from_proto`` on the Python side.
+    #[test]
+    fn roundtrip_non_mount_entry_has_none_target_zone_id() {
+        let mut meta = mk_mount_entry();
+        meta.entry_type = 0; // DT_REG
+        meta.target_zone_id = None;
+        let bytes = kernel_to_proto(&meta);
+        let restored = proto_to_kernel(&bytes).expect("decode must succeed");
+        assert_eq!(restored.target_zone_id, None);
     }
 }

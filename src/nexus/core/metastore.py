@@ -462,6 +462,15 @@ class RustMetastoreProxy(MetastoreABC):
     def close(self) -> None:
         """No-op — Rust kernel manages redb lifecycle."""
 
+    def get_searchable_text(self, path: str) -> str | None:  # noqa: ARG002
+        # Rust kernel does not cache parsed_text; callers fall through to
+        # raw file reads via the file_reader. Mirrors the RaftMetadataStore
+        # API so SearchService.grep can hasattr-check uniformly.
+        return None
+
+    def get_searchable_text_bulk(self, paths: Sequence[str]) -> dict[str, str]:  # noqa: ARG002
+        return {}
+
     @property
     def cache_stats(self) -> dict[str, Any]:
         """Return Rust DCache stats (no Python dcache)."""

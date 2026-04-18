@@ -527,6 +527,49 @@ _LITE_TUNING = ProfileTuning(
     ),
 )
 
+_SANDBOX_TUNING = ProfileTuning(
+    concurrency=ConcurrencyTuning(
+        default_workers=2,
+        thread_pool_size=8,
+        max_async_concurrency=4,
+        task_runner_workers=2,
+    ),
+    network=NetworkTuning(
+        default_http_timeout=10.0,
+        webhook_timeout=5.0,
+        long_operation_timeout=30.0,
+    ),
+    storage=StorageTuning(
+        write_buffer_flush_ms=100,
+        write_buffer_max_size=50,
+        changelog_chunk_size=100,
+        db_pool_size=2,
+        db_max_overflow=2,
+    ),
+    search=SearchTuning(
+        grep_parallel_workers=2,
+        list_parallel_workers=2,
+        search_max_concurrency=2,
+        vector_pool_workers=0,  # no local vector backend
+    ),
+    cache=CacheTuning(
+        tiger_max_workers=1,
+        tiger_batch_size=20,
+    ),
+    # Reuse LITE values for remaining slices
+    background_task=_LITE_TUNING.background_task,
+    resiliency=_LITE_TUNING.resiliency,
+    connector=_LITE_TUNING.connector,
+    pool=PoolTuning(
+        asyncpg_min_size=0,
+        asyncpg_max_size=0,  # SQLite, no asyncpg
+        httpx_max_connections=10,
+        remote_pool_maxsize=10,
+    ),
+    eviction=_LITE_TUNING.eviction,
+    qos=_LITE_TUNING.qos,
+)
+
 _FULL_TUNING = ProfileTuning(
     concurrency=ConcurrencyTuning(
         default_workers=4,
@@ -695,6 +738,7 @@ def _get_profile_tuning_map() -> dict[str, ProfileTuning]:
         DeploymentProfile.CLUSTER: _SLIM_TUNING,  # CLUSTER reuses SLIM tuning
         DeploymentProfile.EMBEDDED: _EMBEDDED_TUNING,
         DeploymentProfile.LITE: _LITE_TUNING,
+        DeploymentProfile.SANDBOX: _SANDBOX_TUNING,
         DeploymentProfile.FULL: _FULL_TUNING,
         DeploymentProfile.CLOUD: _CLOUD_TUNING,
         DeploymentProfile.REMOTE: _SLIM_TUNING,  # REMOTE reuses SLIM tuning

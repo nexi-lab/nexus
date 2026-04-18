@@ -56,3 +56,27 @@ class TestSandboxProfileEnum:
     def test_sandbox_size(self) -> None:
         """SANDBOX = LITE (7) + 3 adds (SEARCH, MCP, PARSERS) = 10 bricks."""
         assert len(DeploymentProfile.SANDBOX.default_bricks()) == 10
+
+
+class TestSandboxTuning:
+    def test_tuning_resolves(self) -> None:
+        from nexus.lib.performance_tuning import resolve_profile_tuning
+
+        tuning = resolve_profile_tuning(DeploymentProfile.SANDBOX)
+        assert tuning is not None
+
+    def test_tuning_is_small(self) -> None:
+        """SANDBOX should have smaller pools than FULL."""
+        from nexus.lib.performance_tuning import resolve_profile_tuning
+
+        sandbox = resolve_profile_tuning(DeploymentProfile.SANDBOX)
+        full = resolve_profile_tuning(DeploymentProfile.FULL)
+        assert sandbox.concurrency.default_workers < full.concurrency.default_workers
+        assert sandbox.storage.db_pool_size < full.storage.db_pool_size
+
+    def test_tuning_disables_asyncpg_pool(self) -> None:
+        """SANDBOX uses SQLite — no asyncpg pool."""
+        from nexus.lib.performance_tuning import resolve_profile_tuning
+
+        tuning = resolve_profile_tuning(DeploymentProfile.SANDBOX)
+        assert tuning.pool.asyncpg_max_size == 0

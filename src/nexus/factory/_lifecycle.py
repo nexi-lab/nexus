@@ -242,16 +242,25 @@ async def _initialize_services(
     """
     # --- IPC adapter bind + mount (extracted from _boot_wired_services) ---
     from nexus.factory._wired import _initialize_wired_ipc
+    from nexus.factory.service_routing import enlist_services
 
     # Build services dict from ServiceRegistry for IPC initialization
     _ipc_services: dict[str, Any] = {}
     _ipc_svc_fn = getattr(nx, "service", None)
     if _ipc_svc_fn is not None:
-        for _ipc_name in ("ipc_provisioner",):
+        for _ipc_name in ("ipc_zone_id", "ipc_provisioner"):
             _ipc_val = _ipc_svc_fn(_ipc_name)
             if _ipc_val is not None:
+                # Unwrap ServiceRef proxy to the raw instance — downstream
+                # consumers (AgentProvisioner, PyO3 Rust bindings) need the
+                # underlying type (str for zone_id, object for provisioner),
+                # not the transparent proxy.
+                _ipc_val = getattr(_ipc_val, "_service_instance", _ipc_val)
                 _ipc_services[_ipc_name] = _ipc_val
     _initialize_wired_ipc(nx, _ipc_services)
+    # _initialize_wired_ipc may have created ipc_provisioner — enlist newly
+    # produced services so /api/v2/ipc/* and lifespan IPC startup can resolve them.
+    await enlist_services(nx, _ipc_services)
 
     # --- Register VFS hooks (INTERCEPT + OBSERVE — Issue #900) ---
     # Issue #1610/#1612/#1613/#1616: All hooks declare hook_spec() (duck-typed).

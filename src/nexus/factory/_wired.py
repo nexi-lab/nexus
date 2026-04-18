@@ -535,6 +535,16 @@ def _initialize_wired_ipc(nx: Any, services: dict[str, Any]) -> None:
     """
     _ipc_zone_id = services.get("ipc_zone_id")
     if _ipc_zone_id is None:
+        # Brick-disabled profiles never register ipc_zone_id — silent skip is correct.
+        # But if the brick IS registered yet missing from `services`, the caller
+        # forgot to thread it through — that's a wiring bug, warn loudly.
+        _svc_fn = getattr(nx, "service", None)
+        if _svc_fn is not None and _svc_fn("ipc_zone_id") is not None:
+            logger.warning(
+                "[BOOT:WIRED] IPC init skipped: ipc_zone_id registered but not "
+                "threaded into services dict — /api/v2/ipc/* will return 503. "
+                "Check caller in _lifecycle.py."
+            )
         return
 
     try:

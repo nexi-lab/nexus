@@ -16,7 +16,9 @@
 //!   └── ...
 //! ```
 
-use crate::raft::{FullStateMachine, RaftConfig, RaftStorage, ReplicationLog, ZoneConsensus};
+use crate::raft::{
+    FullStateMachine, RaftConfig, RaftStorage, ReplicationLog, StateMachine, ZoneConsensus,
+};
 use crate::storage::RedbStore;
 use crate::transport::{
     ClientConfig, NodeAddress, RaftClientPool, SharedPeerMap, TlsConfig, TransportError,
@@ -289,6 +291,42 @@ impl ZoneRaftRegistry {
         let state_machine = FullStateMachine::new(&store).map_err(|e| {
             TransportError::Connection(format!("Failed to create state machine: {}", e))
         })?;
+
+        // R14 raft-rs contract fix: rehydrate advisory lock state from
+        // any persisted snapshot before raft-rs gets the state machine.
+        //
+        // raft-rs's RaftLog::new sets `applied = first_index - 1`. If
+        // the log was compacted at index X, first_index = X+1 and
+        // raft-rs will only re-emit committed entries in [X+1..commit]
+        // on startup. It does NOT re-emit the stored snapshot itself
+        // — Ready's `snapshot` field is only populated by a *new*
+        // snapshot received from the leader at runtime.
+        //
+        // Pre-R14 this didn't matter: advisory lock state was persisted
+        // row-by-row in redb, so FullStateMachine::new loaded it from
+        // there. After R14 the BTreeMap is in-memory only; without
+        // this rehydration, any advisory holders committed before the
+        // last compact would be lost on restart. Rehydrating here
+        // keeps the post-restart state machine consistent with other
+        // replicas that are caught up via the normal log-replay path.
+        use raft::Storage;
+        if let Ok(snap) = raft_storage.snapshot(0, 0) {
+            let meta = snap.get_metadata();
+            if meta.index > 0 && !snap.data.is_empty() {
+                state_machine.restore_snapshot(&snap.data).map_err(|e| {
+                    TransportError::Connection(format!(
+                        "Failed to rehydrate state machine from stored snapshot at index {}: {}",
+                        meta.index, e
+                    ))
+                })?;
+                tracing::info!(
+                    zone = %zone_id,
+                    snapshot_index = meta.index,
+                    snapshot_term = meta.term,
+                    "Rehydrated advisory lock state from stored snapshot on startup",
+                );
+            }
+        }
 
         // Create EC replication log (non-witness nodes only)
         let replication_log = if !config.is_witness {

@@ -831,6 +831,76 @@ class TestDistributedLocks:
                 return  # expired as expected
         pytest.fail(f"Lock did not expire after TTL: info={info}, retry_acquire={a2}")
 
+    def test_lock_visible_on_follower_post_commit(self, cluster, api_key):
+        """After a leader commit, the follower's sys_stat must see the lock.
+
+        R14 invariant: advisory lock state lives in the raft state
+        machine's shared ``Arc<Mutex<LockState>>`` on every replica.
+        Once ``apply_acquire_lock`` commits on the leader, the apply
+        path on each follower mutates its local copy of that Arc
+        under the same mutex. A follower ``sys_stat`` read hits the
+        follower's advisory map directly (no ReadIndex), so the
+        holder must be visible as soon as the follower has applied
+        the committed entry.
+        """
+        uid = _uid()
+        grpc1 = cluster["grpc1"]
+        grpc2 = cluster["grpc2"]
+        lock_path = f"/corp/eng/follower-visible-{uid}.txt"
+
+        w = _grpc_call(
+            grpc1,
+            "write",
+            {"path": lock_path, "content": f"fv-{uid}"},
+            api_key=api_key,
+        )
+        assert "error" not in w
+
+        acquire_r = _grpc_call_or_skip(
+            grpc1,
+            "lock_acquire",
+            {"path": lock_path, "ttl": 60},
+            api_key=api_key,
+            skip_msg="Lock API not available",
+        )
+        if "error" in acquire_r:
+            pytest.skip(f"lock_acquire returned error: {acquire_r}")
+        lock_data = acquire_r.get("result", acquire_r)
+        if not lock_data.get("acquired"):
+            pytest.skip("lock_acquire did not succeed on leader")
+        lock_id = lock_data.get("lock_id", "")
+
+        # Follower visibility: poll sys_stat on node-2 with a tight
+        # bound (replication lag should be sub-second; anything > 5s
+        # is a regression of the R14 SSOT invariant).
+        deadline = time.time() + 5.0
+        visible = False
+        last_info: dict = {}
+        while time.time() < deadline:
+            info = _grpc_call(grpc2, "sys_stat", {"path": lock_path}, api_key=api_key)
+            if "error" not in info:
+                info_data = info.get("result", info)
+                stat_meta = info_data.get("metadata", info_data)
+                lock_state = stat_meta.get("lock")
+                if lock_state is not None and len(lock_state.get("holders", [])) > 0:
+                    visible = True
+                    last_info = lock_state
+                    break
+            time.sleep(0.1)
+
+        # Cleanup regardless of assertion outcome.
+        _grpc_call(
+            grpc1,
+            "sys_unlock",
+            {"path": lock_path, "lock_id": lock_id},
+            api_key=api_key,
+        )
+
+        assert visible, (
+            f"Follower did not see lock within 5s of leader commit — "
+            f"R14 SSOT advisory map failed to replicate. Last info: {last_info}"
+        )
+
 
 # ===================================================================
 # Class 8: Admin Introspection

@@ -32,7 +32,7 @@ use pyo3::prelude::*;
 
 use crate::raft::{
     Command, CommandResult, FullStateMachine, HolderInfo as RustHolderInfo,
-    LockInfo as RustLockInfo, LockState as RustLockState, StateMachine,
+    LockAcquireResult as RustLockAcquireResult, LockInfo as RustLockInfo, StateMachine,
 };
 use crate::storage::RedbStore;
 
@@ -132,8 +132,8 @@ pub struct PyLockState {
     pub holders: Vec<PyHolderInfo>,
 }
 
-impl From<RustLockState> for PyLockState {
-    fn from(s: RustLockState) -> Self {
+impl From<RustLockAcquireResult> for PyLockState {
+    fn from(s: RustLockAcquireResult) -> Self {
         Self {
             acquired: s.acquired,
             current_holders: s.current_holders,

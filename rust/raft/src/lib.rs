@@ -105,8 +105,8 @@ pub mod prelude {
     pub use crate::storage::{RedbBatch, RedbStore, RedbTree, RedbTreeBatch, StorageError};
 
     pub use crate::raft::{
-        Command, CommandResult, FullStateMachine, HolderInfo, LockInfo, LockMode, LockState,
-        RaftError, StateMachine, WitnessStateMachine,
+        Command, CommandResult, FullStateMachine, HolderInfo, LockAcquireResult, LockEntry,
+        LockInfo, LockMode, LockState, RaftError, StateMachine, WitnessStateMachine,
     };
 
     #[cfg(feature = "consensus")]

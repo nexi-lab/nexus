@@ -508,7 +508,7 @@ pub(crate) async fn forward_propose(
 fn proto_result_to_command_result(
     result: Option<proto::nexus::raft::RaftResponse>,
 ) -> crate::raft::CommandResult {
-    use crate::raft::{CommandResult, HolderInfo, LockMode, LockState};
+    use crate::raft::{CommandResult, HolderInfo, LockAcquireResult, LockMode};
     use proto::nexus::raft::raft_response::Result as ProtoVariant;
 
     let Some(resp) = result else {
@@ -532,7 +532,7 @@ fn proto_result_to_command_result(
             } else {
                 Vec::new()
             };
-            CommandResult::LockResult(LockState {
+            CommandResult::LockResult(LockAcquireResult {
                 acquired: lr.acquired,
                 current_holders: holders.len() as u32,
                 max_holders: 0,

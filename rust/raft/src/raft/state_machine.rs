@@ -5,13 +5,21 @@
 //! (NOT file data - that stays in CAS/S3).
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use parking_lot::Mutex;
+use redb::ReadableTable;
 use serde::{Deserialize, Serialize};
 
-use redb::ReadableTable;
+use crate::storage::{RedbStore, RedbTree};
 
-use crate::storage::{RedbStorageError, RedbStore, RedbTree};
+// Advisory lock types are the shared SSOT, defined in `contracts::lock_state`.
+// Re-exported from this module (and from `crate::raft`) so existing
+// callers keep their `use raft::{LockMode, ...}` paths.
+pub use contracts::lock_state::{
+    HolderInfo, LockAcquireResult, LockEntry, LockInfo, LockMode, LockState,
+};
 
 use super::Result;
 
@@ -136,7 +144,7 @@ pub enum CommandResult {
     Value(Vec<u8>),
 
     /// Lock acquisition result.
-    LockResult(LockState),
+    LockResult(LockAcquireResult),
 
     /// Compare-and-swap result.
     CasResult {
@@ -150,145 +158,12 @@ pub enum CommandResult {
     Error(String),
 }
 
-/// Per-holder conflict mode.
-///
-/// Shared holders may coexist with other Shared holders up to
-/// `LockInfo::max_holders`. Exclusive holders must be the sole
-/// holder — they block both other Exclusive acquirers and any
-/// Shared acquirers. This is the standard reader-writer lock rule,
-/// implemented natively in the state machine so federation and
-/// standalone modes share one behaviour (the old Python
-/// `LocalLockManager` emulated it with a two-semaphore gate, and
-/// `RaftLockManager` silently dropped the semantics).
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
-pub enum LockMode {
-    /// Sole-holder lock. Blocks any concurrent acquire.
-    #[default]
-    Exclusive,
-    /// Read-like lock. Coexists with other Shared holders up to
-    /// `LockInfo::max_holders`; blocked by any Exclusive holder.
-    Shared,
-}
-
-/// State of a lock acquisition attempt.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LockState {
-    /// Whether the lock was acquired.
-    pub acquired: bool,
-    /// Current number of holders.
-    pub current_holders: u32,
-    /// Maximum allowed holders.
-    pub max_holders: u32,
-    /// If not acquired, who are the current holders.
-    pub holders: Vec<HolderInfo>,
-}
-
-/// Information about a lock holder.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct HolderInfo {
-    /// Unique lock ID (UUID).
-    pub lock_id: String,
-    /// Holder description (e.g., "agent:xxx").
-    pub holder_info: String,
-    /// Conflict mode for this holder (F4 C1).
-    pub mode: LockMode,
-    /// When the lock was acquired (Unix timestamp).
-    pub acquired_at: u64,
-    /// When the lock expires (Unix timestamp).
-    pub expires_at: u64,
-}
-
-/// Lock entry stored in the state machine.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct LockInfo {
-    /// Resource path.
-    pub path: String,
-    /// Maximum concurrent holders.
-    pub max_holders: u32,
-    /// Current holders.
-    pub holders: Vec<HolderInfo>,
-}
-
-impl LockInfo {
-    /// Create a new lock with the first holder.
-    fn new(path: String, max_holders: u32, first_holder: HolderInfo) -> Self {
-        Self {
-            path,
-            max_holders,
-            holders: vec![first_holder],
-        }
-    }
-
-    /// Check if the lock has any Exclusive holder.
-    fn has_exclusive(&self) -> bool {
-        self.holders.iter().any(|h| h.mode == LockMode::Exclusive)
-    }
-
-    /// Check if a specific lock_id already holds the lock.
-    fn has_holder(&self, lock_id: &str) -> bool {
-        self.holders.iter().any(|h| h.lock_id == lock_id)
-    }
-
-    /// Add a new holder.
-    fn add_holder(&mut self, holder: HolderInfo) {
-        self.holders.push(holder);
-    }
-
-    /// Remove a holder by lock_id.
-    fn remove_holder(&mut self, lock_id: &str) -> bool {
-        let len_before = self.holders.len();
-        self.holders.retain(|h| h.lock_id != lock_id);
-        self.holders.len() < len_before
-    }
-
-    /// Remove expired holders and return true if any were removed.
-    fn remove_expired(&mut self, now: u64) -> bool {
-        let len_before = self.holders.len();
-        self.holders.retain(|h| h.expires_at > now);
-        self.holders.len() < len_before
-    }
-
-    /// Extend a holder's TTL.
-    fn extend_ttl(&mut self, lock_id: &str, new_expires_at: u64) -> bool {
-        for holder in &mut self.holders {
-            if holder.lock_id == lock_id {
-                holder.expires_at = new_expires_at;
-                return true;
-            }
-        }
-        false
-    }
-
-    /// Check if the lock has no holders.
-    fn is_empty(&self) -> bool {
-        self.holders.is_empty()
-    }
-
-    /// Get current lock state for response.
-    fn to_state(&self, acquired: bool) -> LockState {
-        LockState {
-            acquired,
-            current_holders: self.holders.len() as u32,
-            max_holders: self.max_holders,
-            holders: self.holders.clone(),
-        }
-    }
-
-    /// F4 C1 conflict check: can a holder with the given `mode`
-    /// acquire, given the existing holders?
-    ///
-    /// * Exclusive: only if there are no current holders at all.
-    /// * Shared: only if there is no Exclusive holder and the
-    ///   holder count is below `max_holders`.
-    fn can_accept(&self, mode: LockMode) -> bool {
-        match mode {
-            LockMode::Exclusive => self.holders.is_empty(),
-            LockMode::Shared => {
-                !self.has_exclusive() && (self.holders.len() as u32) < self.max_holders
-            }
-        }
-    }
-}
+// Advisory lock types — `LockMode`, `HolderInfo`, `LockInfo`,
+// `LockAcquireResult`, `LockEntry`, `LockState` — are now defined in
+// `contracts::lock_state` and re-exported at the top of this file. All
+// state-transition logic lives on `LockState` (the shared BTreeMap-based
+// SSOT) so the local `LockManager` path and the raft apply path go
+// through the same primitives under the same mutex.
 
 /// State machine trait that must be implemented by applications.
 ///
@@ -503,8 +378,17 @@ impl StateMachine for WitnessStateMachine {
 
 // Tree names for FullStateMachine
 const TREE_METADATA: &str = "sm_metadata";
-const TREE_LOCKS: &str = "sm_locks";
 const KEY_LAST_APPLIED: &[u8] = b"__last_applied__";
+
+// R14: Advisory locks no longer have a redb tree. The BTreeMap in
+// `Arc<Mutex<LockState>>` is the single source of truth; persistence
+// happens via raft snapshots. This preserves raft's "apply = atomic
+// commit point" contract — reads and writes observe the same state
+// under the same mutex, and there is no two-phase window between a
+// BTreeMap mirror and a redb row where a crash could leave them
+// divergent. On startup the BTreeMap is rebuilt from a snapshot
+// (`restore_snapshot`) plus log replay; see `FullStateMachine::apply`
+// for the replay semantics.
 
 // ---------------------------------------------------------------------------
 // LWW (Last Writer Wins) helpers for EC conflict resolution
@@ -553,40 +437,63 @@ fn decode_modified_at_unix(bytes: &[u8]) -> u64 {
 
 /// Full state machine for STRONG_HA zones.
 ///
-/// Stores metadata and locks in redb for persistence. This is used
-/// by leader and follower nodes (not witnesses).
+/// Metadata lives in redb for durability; advisory locks live in an
+/// in-memory `Arc<Mutex<LockState>>` BTreeMap that is the single source
+/// of truth shared with the kernel's `LockManager`. This matches the
+/// raft invariant that apply is an atomic commit point — readers and
+/// writers both hit the same mutex, so there is no divergence window.
 ///
 /// # Storage Layout
 ///
 /// ```text
 /// redb database
-/// ├── sm_metadata/        # File metadata (key: path)
-/// │   ├── "/zone/file1" -> FileMetadata (serialized)
-/// │   ├── "/zone/file2" -> FileMetadata (serialized)
-/// │   └── ...
-/// └── sm_locks/           # Distributed locks (key: path)
-///     ├── "/zone/file1" -> LockInfo (serialized)
+/// └── sm_metadata/        # File metadata (key: path)
+///     ├── "/zone/file1" -> FileMetadata (serialized)
+///     ├── "/zone/file2" -> FileMetadata (serialized)
 ///     └── ...
+///
+/// in-memory
+/// └── advisory: Arc<Mutex<LockState>> # Advisory locks (BTreeMap)
 /// ```
+///
+/// Advisory-lock persistence happens through raft snapshots: `snapshot`
+/// serializes the BTreeMap under the mutex; `restore_snapshot`
+/// deserializes and replaces the BTreeMap under the same mutex. Between
+/// snapshots, the raft log is the durable record — advisory state is
+/// rebuilt by log replay on restart.
 pub struct FullStateMachine {
     /// Metadata tree: path -> serialized FileMetadata.
     metadata: RedbTree,
-    /// Locks tree: path -> serialized LockInfo.
-    locks: RedbTree,
-    /// Last applied log index.
+    /// Advisory lock SSOT — shared with the kernel's `LockManager`.
+    advisory: Arc<Mutex<LockState>>,
+    /// Last applied metadata/Noop log index (persisted to redb).
+    ///
+    /// Gates metadata-command idempotency during log replay —
+    /// `AdjustCounter` would double-count otherwise. Lock commands
+    /// are idempotent under full replay (acquire/release cycles
+    /// cancel out) so they ignore this guard and always apply.
     last_applied: u64,
 }
 
 impl FullStateMachine {
-    /// Create a new full state machine.
+    /// Create a new full state machine with its own advisory-lock Arc.
     ///
-    /// # Arguments
-    /// * `store` - The redb store to use for persistence
+    /// Callers that need to share the advisory map with a kernel
+    /// `LockManager` should use [`FullStateMachine::with_advisory`]
+    /// and pre-build the Arc there.
     pub fn new(store: &RedbStore) -> Result<Self> {
-        let metadata = store.tree(TREE_METADATA)?;
-        let locks = store.tree(TREE_LOCKS)?;
+        Self::with_advisory(store, Arc::new(Mutex::new(LockState::new())))
+    }
 
-        // Load last_applied from metadata tree
+    /// Create a new full state machine that shares its advisory map
+    /// with the provided `Arc<Mutex<LockState>>`. Used by the kernel's
+    /// `LockManager::upgrade_to_distributed` path so local holders
+    /// survive the upgrade and every reader on the node sees the same
+    /// state.
+    pub fn with_advisory(store: &RedbStore, advisory: Arc<Mutex<LockState>>) -> Result<Self> {
+        let metadata = store.tree(TREE_METADATA)?;
+
+        // Load last_applied from metadata tree.
         let last_applied = match metadata.get(KEY_LAST_APPLIED)? {
             Some(bytes) => {
                 let arr: [u8; 8] = bytes
@@ -599,9 +506,16 @@ impl FullStateMachine {
 
         Ok(Self {
             metadata,
-            locks,
+            advisory,
             last_applied,
         })
+    }
+
+    /// Clone the shared advisory-lock handle. Used by the kernel's
+    /// `LockManager::upgrade_to_distributed` to adopt the state
+    /// machine's `Arc<Mutex<LockState>>` after the zone is set up.
+    pub fn advisory_state(&self) -> Arc<Mutex<LockState>> {
+        self.advisory.clone()
     }
 
     /// Get current Unix timestamp. Public so proposal sites can capture
@@ -789,10 +703,11 @@ impl FullStateMachine {
         Ok(CommandResult::Success)
     }
 
-    /// Apply AcquireLock command.
+    /// Apply AcquireLock — delegates to `LockState::apply_acquire` under
+    /// the shared advisory mutex.
     ///
-    /// `now` is the wall-clock timestamp from the replicated command, ensuring
-    /// all replicas compute identical lock state (Issue #3029 / Bug 1).
+    /// `now` is the wall-clock timestamp captured at proposal time so
+    /// all replicas reach identical state (#3029 / Bug 1).
     #[allow(clippy::too_many_arguments)]
     fn apply_acquire_lock(
         &self,
@@ -804,105 +719,35 @@ impl FullStateMachine {
         mode: LockMode,
         now: u64,
     ) -> Result<CommandResult> {
-        let expires_at = now + ttl_secs as u64;
-
-        let new_holder = HolderInfo {
-            lock_id: lock_id.to_string(),
-            holder_info: holder_info.to_string(),
-            mode,
-            acquired_at: now,
-            expires_at,
-        };
-
-        // Try to get existing lock
-        let mut lock_info: LockInfo = match self.locks.get(path.as_bytes())? {
-            Some(bytes) => bincode::deserialize(&bytes)?,
-            None => {
-                // No existing lock - create new one
-                let lock = LockInfo::new(path.to_string(), max_holders, new_holder);
-                let serialized = bincode::serialize(&lock)?;
-                self.locks.set(path.as_bytes(), &serialized)?;
-                return Ok(CommandResult::LockResult(lock.to_state(true)));
-            }
-        };
-
-        // Clean up expired holders first
-        lock_info.remove_expired(now);
-
-        // Check if this lock_id already holds the lock (idempotent)
-        if lock_info.has_holder(lock_id) {
-            // Already holding — extend TTL.
-            lock_info.extend_ttl(lock_id, expires_at);
-            let serialized = bincode::serialize(&lock_info)?;
-            self.locks.set(path.as_bytes(), &serialized)?;
-            return Ok(CommandResult::LockResult(lock_info.to_state(true)));
-        }
-
-        // Check that max_holders matches (can't mix mutex and semaphore
-        // on the same path — the capacity is a property of the lock,
-        // not the holder).
-        if lock_info.max_holders != max_holders {
-            return Ok(CommandResult::LockResult(lock_info.to_state(false)));
-        }
-
-        if lock_info.can_accept(mode) {
-            lock_info.add_holder(new_holder);
-            let serialized = bincode::serialize(&lock_info)?;
-            self.locks.set(path.as_bytes(), &serialized)?;
-            Ok(CommandResult::LockResult(lock_info.to_state(true)))
-        } else {
-            // Conflict — Exclusive wants sole holder but path has
-            // holders, or Shared met an Exclusive, or the Shared
-            // capacity is full.
-            Ok(CommandResult::LockResult(lock_info.to_state(false)))
-        }
+        let mut guard = self.advisory.lock();
+        let result =
+            guard.apply_acquire(path, lock_id, max_holders, ttl_secs, holder_info, mode, now);
+        Ok(CommandResult::LockResult(result))
     }
 
-    /// Apply ReleaseLock command.
-    ///
-    /// Returns Success if the holder was found and removed.
-    /// Returns Error if the lock doesn't exist or the holder is not found.
+    /// Apply ReleaseLock — delegates to `LockState::apply_release`.
     fn apply_release_lock(&self, path: &str, lock_id: &str) -> Result<CommandResult> {
-        let mut lock_info: LockInfo = match self.locks.get(path.as_bytes())? {
-            Some(bytes) => bincode::deserialize(&bytes)?,
-            None => {
-                // No lock exists - error (not owned)
-                return Ok(CommandResult::Error("Lock not found".to_string()));
-            }
-        };
-
-        // Remove the holder - returns true if holder was found and removed
-        if !lock_info.remove_holder(lock_id) {
-            // Holder not found - error (not owned or already released)
-            return Ok(CommandResult::Error("Lock holder not found".to_string()));
-        }
-
-        if lock_info.is_empty() {
-            // No more holders - delete the lock entry
-            self.locks.delete(path.as_bytes())?;
+        let mut guard = self.advisory.lock();
+        if guard.apply_release(path, lock_id) {
+            Ok(CommandResult::Success)
+        } else if guard.get_lock(path).is_none() {
+            Ok(CommandResult::Error("Lock not found".to_string()))
         } else {
-            // Save updated lock
-            let serialized = bincode::serialize(&lock_info)?;
-            self.locks.set(path.as_bytes(), &serialized)?;
+            Ok(CommandResult::Error("Lock holder not found".to_string()))
         }
-
-        Ok(CommandResult::Success)
     }
 
+    /// Apply ForceReleaseLock — delegates to `LockState::apply_force_release`.
     fn apply_force_release_lock(&self, path: &str) -> Result<CommandResult> {
-        match self.locks.get(path.as_bytes())? {
-            Some(_) => {
-                self.locks.delete(path.as_bytes())?;
-                Ok(CommandResult::Success)
-            }
-            None => Ok(CommandResult::Error("Lock not found".to_string())),
+        let mut guard = self.advisory.lock();
+        if guard.apply_force_release(path) {
+            Ok(CommandResult::Success)
+        } else {
+            Ok(CommandResult::Error("Lock not found".to_string()))
         }
     }
 
-    /// Apply ExtendLock command.
-    ///
-    /// `now` is the wall-clock timestamp from the replicated command, ensuring
-    /// all replicas compute identical lock state (Issue #3029 / Bug 1).
+    /// Apply ExtendLock — delegates to `LockState::apply_extend`.
     fn apply_extend_lock(
         &self,
         path: &str,
@@ -910,23 +755,11 @@ impl FullStateMachine {
         new_ttl_secs: u32,
         now: u64,
     ) -> Result<CommandResult> {
-        let new_expires_at = now + new_ttl_secs as u64;
-
-        let mut lock_info: LockInfo = match self.locks.get(path.as_bytes())? {
-            Some(bytes) => bincode::deserialize(&bytes)?,
-            None => {
-                // No lock exists - error
-                return Ok(CommandResult::Error("Lock not found".to_string()));
-            }
-        };
-
-        // Remove expired holders first
-        lock_info.remove_expired(now);
-
-        if lock_info.extend_ttl(lock_id, new_expires_at) {
-            let serialized = bincode::serialize(&lock_info)?;
-            self.locks.set(path.as_bytes(), &serialized)?;
+        let mut guard = self.advisory.lock();
+        if guard.apply_extend(path, lock_id, new_ttl_secs, now) {
             Ok(CommandResult::Success)
+        } else if guard.get_lock(path).is_none() {
+            Ok(CommandResult::Error("Lock not found".to_string()))
         } else {
             Ok(CommandResult::Error("Lock holder not found".to_string()))
         }
@@ -960,40 +793,14 @@ impl FullStateMachine {
         Ok(result)
     }
 
-    /// Get lock info by path.
+    /// Get lock info by path (reads the shared advisory map).
     pub fn get_lock(&self, path: &str) -> Result<Option<LockInfo>> {
-        match self.locks.get(path.as_bytes())? {
-            Some(bytes) => Ok(Some(bincode::deserialize(&bytes)?)),
-            None => Ok(None),
-        }
+        Ok(self.advisory.lock().get_lock(path))
     }
 
-    /// List all locks matching a prefix.
+    /// List all locks matching a prefix (reads the shared advisory map).
     pub fn list_locks(&self, prefix: &str, limit: usize) -> Result<Vec<LockInfo>> {
-        let mut result = Vec::new();
-        // Helper closure to process iterator items
-        let mut collect = |items: &mut dyn Iterator<
-            Item = std::result::Result<(Vec<u8>, Vec<u8>), RedbStorageError>,
-        >|
-         -> Result<()> {
-            for item in items {
-                if result.len() >= limit {
-                    break;
-                }
-                let (_, value) = item?;
-                let lock_info: LockInfo = bincode::deserialize(&value)?;
-                if !lock_info.holders.is_empty() {
-                    result.push(lock_info);
-                }
-            }
-            Ok(())
-        };
-        if prefix.is_empty() {
-            collect(&mut self.locks.iter())?;
-        } else {
-            collect(&mut self.locks.scan_prefix(prefix.as_bytes()))?;
-        }
-        Ok(result)
+        Ok(self.advisory.lock().list_locks(prefix, limit))
     }
 }
 
@@ -1002,8 +809,8 @@ impl FullStateMachine {
 struct Snapshot {
     /// All metadata entries.
     metadata: HashMap<String, Vec<u8>>,
-    /// All lock entries.
-    locks: HashMap<String, LockInfo>,
+    /// Advisory lock SSOT at snapshot time (clone of the BTreeMap).
+    advisory: LockState,
     /// Last applied index.
     last_applied: u64,
 }
@@ -1055,20 +862,21 @@ impl FullStateMachine {
         }
     }
 
-    /// Execute a command inside a caller-provided redb write transaction.
+    /// Execute a metadata/Noop command inside a caller-provided redb write
+    /// transaction. Lock commands don't flow through this path — they only
+    /// mutate the in-memory advisory `LockState` and never touch redb.
     ///
     /// This is the transactional variant of `execute()`, used by `apply()` to
-    /// ensure the command mutation and `last_applied` marker are persisted
+    /// ensure metadata mutations and the `last_applied` marker are persisted
     /// atomically in a single redb transaction (matching etcd/CockroachDB/TiKV
     /// practice). Without this, a crash between execute and save_last_applied
     /// could cause non-idempotent commands (e.g. AdjustCounter) to replay.
-    fn execute_in_txn(
+    fn execute_metadata_in_txn(
         &self,
         txn: &redb::WriteTransaction,
         command: &Command,
     ) -> Result<CommandResult> {
         let meta_def = redb::TableDefinition::<&[u8], &[u8]>::new(self.metadata.name());
-        let locks_def = redb::TableDefinition::<&[u8], &[u8]>::new(self.locks.name());
 
         match command {
             Command::SetMetadata { key, value } => {
@@ -1139,160 +947,26 @@ impl FullStateMachine {
                 Ok(CommandResult::Value(new_val.to_be_bytes().to_vec()))
             }
 
-            Command::AcquireLock {
-                path,
-                lock_id,
-                max_holders,
-                ttl_secs,
-                holder_info,
-                mode,
-                now_secs,
-            } => {
-                let expires_at = now_secs + *ttl_secs as u64;
-                let new_holder = HolderInfo {
-                    lock_id: lock_id.to_string(),
-                    holder_info: holder_info.to_string(),
-                    mode: *mode,
-                    acquired_at: *now_secs,
-                    expires_at,
-                };
-
-                let mut table = txn
-                    .open_table(locks_def)
-                    .map_err(|e| super::RaftError::Storage(format!("open locks: {e}")))?;
-                let existing = table
-                    .get(path.as_bytes())
-                    .map_err(|e| super::RaftError::Storage(format!("get lock: {e}")))?
-                    .map(|v| v.value().to_vec());
-
-                let mut lock_info: LockInfo = match existing {
-                    Some(bytes) => bincode::deserialize(&bytes)?,
-                    None => {
-                        let lock = LockInfo::new(path.to_string(), *max_holders, new_holder);
-                        let serialized = bincode::serialize(&lock)?;
-                        table
-                            .insert(path.as_bytes(), serialized.as_slice())
-                            .map_err(|e| super::RaftError::Storage(format!("insert lock: {e}")))?;
-                        return Ok(CommandResult::LockResult(lock.to_state(true)));
-                    }
-                };
-
-                lock_info.remove_expired(*now_secs);
-
-                if lock_info.has_holder(lock_id) {
-                    // Idempotent re-acquire — bump TTL.
-                    lock_info.extend_ttl(lock_id, expires_at);
-                    let serialized = bincode::serialize(&lock_info)?;
-                    table
-                        .insert(path.as_bytes(), serialized.as_slice())
-                        .map_err(|e| super::RaftError::Storage(format!("insert lock: {e}")))?;
-                    return Ok(CommandResult::LockResult(lock_info.to_state(true)));
-                }
-
-                if lock_info.max_holders != *max_holders {
-                    return Ok(CommandResult::LockResult(lock_info.to_state(false)));
-                }
-
-                if lock_info.can_accept(*mode) {
-                    lock_info.add_holder(new_holder);
-                    let serialized = bincode::serialize(&lock_info)?;
-                    table
-                        .insert(path.as_bytes(), serialized.as_slice())
-                        .map_err(|e| super::RaftError::Storage(format!("insert lock: {e}")))?;
-                    Ok(CommandResult::LockResult(lock_info.to_state(true)))
-                } else {
-                    // Conflict — Exclusive met existing holders, or
-                    // Shared met an Exclusive / hit capacity.
-                    Ok(CommandResult::LockResult(lock_info.to_state(false)))
-                }
-            }
-
-            Command::ReleaseLock { path, lock_id } => {
-                let mut table = txn
-                    .open_table(locks_def)
-                    .map_err(|e| super::RaftError::Storage(format!("open locks: {e}")))?;
-                let existing = table
-                    .get(path.as_bytes())
-                    .map_err(|e| super::RaftError::Storage(format!("get lock: {e}")))?
-                    .map(|v| v.value().to_vec());
-
-                let mut lock_info: LockInfo = match existing {
-                    Some(bytes) => bincode::deserialize(&bytes)?,
-                    None => {
-                        return Ok(CommandResult::Error("Lock not found".to_string()));
-                    }
-                };
-
-                if !lock_info.remove_holder(lock_id) {
-                    return Ok(CommandResult::Error("Lock holder not found".to_string()));
-                }
-
-                if lock_info.is_empty() {
-                    table
-                        .remove(path.as_bytes())
-                        .map_err(|e| super::RaftError::Storage(format!("remove lock: {e}")))?;
-                } else {
-                    let serialized = bincode::serialize(&lock_info)?;
-                    table
-                        .insert(path.as_bytes(), serialized.as_slice())
-                        .map_err(|e| super::RaftError::Storage(format!("insert lock: {e}")))?;
-                }
-
-                Ok(CommandResult::Success)
-            }
-
-            Command::ForceReleaseLock { path } => {
-                let mut table = txn
-                    .open_table(locks_def)
-                    .map_err(|e| super::RaftError::Storage(format!("open locks: {e}")))?;
-                let existed = table
-                    .remove(path.as_bytes())
-                    .map_err(|e| super::RaftError::Storage(format!("remove lock: {e}")))?
-                    .is_some();
-                if existed {
-                    Ok(CommandResult::Success)
-                } else {
-                    Ok(CommandResult::Error("Lock not found".to_string()))
-                }
-            }
-
-            Command::ExtendLock {
-                path,
-                lock_id,
-                new_ttl_secs,
-                now_secs,
-            } => {
-                let new_expires_at = now_secs + *new_ttl_secs as u64;
-                let mut table = txn
-                    .open_table(locks_def)
-                    .map_err(|e| super::RaftError::Storage(format!("open locks: {e}")))?;
-                let existing = table
-                    .get(path.as_bytes())
-                    .map_err(|e| super::RaftError::Storage(format!("get lock: {e}")))?
-                    .map(|v| v.value().to_vec());
-
-                let mut lock_info: LockInfo = match existing {
-                    Some(bytes) => bincode::deserialize(&bytes)?,
-                    None => {
-                        return Ok(CommandResult::Error("Lock not found".to_string()));
-                    }
-                };
-
-                lock_info.remove_expired(*now_secs);
-
-                if lock_info.extend_ttl(lock_id, new_expires_at) {
-                    let serialized = bincode::serialize(&lock_info)?;
-                    table
-                        .insert(path.as_bytes(), serialized.as_slice())
-                        .map_err(|e| super::RaftError::Storage(format!("insert lock: {e}")))?;
-                    Ok(CommandResult::Success)
-                } else {
-                    Ok(CommandResult::Error("Lock holder not found".to_string()))
-                }
-            }
-
             Command::Noop => Ok(CommandResult::Success),
+
+            // Lock commands never flow here.
+            Command::AcquireLock { .. }
+            | Command::ReleaseLock { .. }
+            | Command::ForceReleaseLock { .. }
+            | Command::ExtendLock { .. } => Err(super::RaftError::InvalidState(
+                "execute_metadata_in_txn called with a lock command".into(),
+            )),
         }
+    }
+
+    fn is_lock_command(command: &Command) -> bool {
+        matches!(
+            command,
+            Command::AcquireLock { .. }
+                | Command::ReleaseLock { .. }
+                | Command::ForceReleaseLock { .. }
+                | Command::ExtendLock { .. }
+        )
     }
 }
 
@@ -1355,17 +1029,68 @@ impl StateMachine for FullStateMachine {
     }
 
     fn apply(&mut self, index: u64, command: &Command) -> Result<CommandResult> {
+        // Lock commands: mutate the in-memory advisory map under its
+        // own mutex. They are idempotent under full log replay
+        // (acquire/release cycles cancel out, TTL expiry is
+        // deterministic from now_secs in the command), so they skip
+        // the `last_applied` idempotency guard. This is what lets a
+        // follower rebuild its BTreeMap from the log on restart even
+        // when `last_applied` has been persisted — the metadata side
+        // still uses the guard, but the advisory side needs every
+        // committed entry replayed.
+        if Self::is_lock_command(command) {
+            let result = match command {
+                Command::AcquireLock {
+                    path,
+                    lock_id,
+                    max_holders,
+                    ttl_secs,
+                    holder_info,
+                    mode,
+                    now_secs,
+                } => self.apply_acquire_lock(
+                    path,
+                    lock_id,
+                    *max_holders,
+                    *ttl_secs,
+                    holder_info,
+                    *mode,
+                    *now_secs,
+                )?,
+                Command::ReleaseLock { path, lock_id } => self.apply_release_lock(path, lock_id)?,
+                Command::ForceReleaseLock { path } => self.apply_force_release_lock(path)?,
+                Command::ExtendLock {
+                    path,
+                    lock_id,
+                    new_ttl_secs,
+                    now_secs,
+                } => self.apply_extend_lock(path, lock_id, *new_ttl_secs, *now_secs)?,
+                _ => unreachable!("is_lock_command filtered non-lock variants"),
+            };
+            // Track high-water mark in memory for monitoring; we don't
+            // persist it for lock-only entries because the idempotency
+            // check doesn't apply to them and because their persistent
+            // record lives in the raft log + snapshot, not redb.
+            if index > self.last_applied {
+                self.last_applied = index;
+            }
+            return Ok(result);
+        }
+
+        // Metadata path: skip if we've already applied this index.
+        // Protects `AdjustCounter` and similar non-idempotent
+        // commands from double-replay on restart.
         if index <= self.last_applied {
             return Ok(CommandResult::Success);
         }
 
-        // Atomic apply: execute the command AND persist last_applied in a
-        // single redb write transaction. This matches etcd (boltdb txn),
-        // CockroachDB (Pebble WriteBatch), and TiKV (RocksDB WriteBatch).
-        //
-        // Without atomicity, a crash between execute() and save_last_applied()
-        // would cause non-idempotent commands (e.g. AdjustCounter) to replay
-        // on restart, silently diverging from other replicas.
+        // Atomic apply: execute the metadata command AND persist
+        // `last_applied` in a single redb write transaction. This
+        // matches etcd (boltdb txn), CockroachDB (Pebble WriteBatch),
+        // and TiKV (RocksDB WriteBatch). Without atomicity, a crash
+        // between execute() and save_last_applied() would cause
+        // non-idempotent commands to replay on restart, silently
+        // diverging from other replicas.
         let db = self.metadata.raw_db();
         let meta_def = redb::TableDefinition::<&[u8], &[u8]>::new(self.metadata.name());
 
@@ -1385,7 +1110,7 @@ impl StateMachine for FullStateMachine {
         // and unrecoverable — if this replica fails but others succeed, state
         // has diverged. Following etcd/CockroachDB: panic to prevent silent
         // divergence (node must be restored from snapshot).
-        let result = match self.execute_in_txn(&write_txn, command) {
+        let result = match self.execute_metadata_in_txn(&write_txn, command) {
             Ok(result) => result,
             Err(e) => {
                 panic!(
@@ -1443,19 +1168,14 @@ impl StateMachine for FullStateMachine {
             }
         }
 
-        let mut locks = HashMap::new();
-        for item in self.locks.iter() {
-            let (key, value) = item?;
-            if let Ok(path) = String::from_utf8(key) {
-                if let Ok(lock_info) = bincode::deserialize(&value) {
-                    locks.insert(path, lock_info);
-                }
-            }
-        }
+        // Snapshot the advisory map under its own mutex. One clone of
+        // the BTreeMap is cheap (shallow tree copy) and lets us drop
+        // the mutex before bincoding.
+        let advisory = self.advisory.lock().clone();
 
         let snapshot = Snapshot {
             metadata,
-            locks,
+            advisory,
             last_applied: self.last_applied,
         };
 
@@ -1465,18 +1185,17 @@ impl StateMachine for FullStateMachine {
     fn restore_snapshot(&mut self, data: &[u8]) -> Result<()> {
         let snapshot: Snapshot = bincode::deserialize(data)?;
 
-        // Atomic restore: all clears + inserts in a single redb transaction.
-        // If any step fails, the transaction rolls back and old state is preserved.
+        // Atomic restore for metadata: clear + repopulate in a single
+        // redb transaction. Advisory locks are in-memory only — they
+        // are replaced under their own mutex after the redb commit.
         let db = self.metadata.raw_db();
         let meta_def = redb::TableDefinition::<&[u8], &[u8]>::new(self.metadata.name());
-        let locks_def = redb::TableDefinition::<&[u8], &[u8]>::new(self.locks.name());
 
         let write_txn = db.begin_write().map_err(|e| {
             super::RaftError::Storage(format!("begin_write for snapshot restore: {e}"))
         })?;
 
         {
-            // Clear and repopulate metadata table
             write_txn
                 .delete_table(meta_def)
                 .map_err(|e| super::RaftError::Storage(format!("delete metadata table: {e}")))?;
@@ -1495,28 +1214,22 @@ impl StateMachine for FullStateMachine {
                     snapshot.last_applied.to_be_bytes().as_slice(),
                 )
                 .map_err(|e| super::RaftError::Storage(format!("insert last_applied: {e}")))?;
-
-            // Clear and repopulate locks table
-            drop(meta_table);
-            write_txn
-                .delete_table(locks_def)
-                .map_err(|e| super::RaftError::Storage(format!("delete locks table: {e}")))?;
-            let mut locks_table = write_txn
-                .open_table(locks_def)
-                .map_err(|e| super::RaftError::Storage(format!("open locks table: {e}")))?;
-            for (path, lock_info) in &snapshot.locks {
-                let serialized = bincode::serialize(lock_info)?;
-                locks_table
-                    .insert(path.as_bytes(), serialized.as_slice())
-                    .map_err(|e| super::RaftError::Storage(format!("insert lock: {e}")))?;
-            }
         }
 
         write_txn
             .commit()
             .map_err(|e| super::RaftError::Storage(format!("commit snapshot restore: {e}")))?;
 
-        // Update in-memory state only after successful commit
+        // Replace advisory state under its mutex. Single acquisition
+        // preserves the atomicity invariant: any concurrent reader
+        // sees either the full pre-restore map or the full post-
+        // restore map, never a torn in-between.
+        {
+            let mut guard = self.advisory.lock();
+            *guard = snapshot.advisory;
+        }
+
+        // Update in-memory state only after both writes succeed.
         self.last_applied = snapshot.last_applied;
 
         Ok(())
@@ -1676,7 +1389,10 @@ mod tests {
         let decoded1: Snapshot = bincode::deserialize(&snap1).unwrap();
         let decoded2: Snapshot = bincode::deserialize(&snap2).unwrap();
         assert_eq!(decoded1.metadata, decoded2.metadata, "Metadata diverged");
-        assert_eq!(decoded1.locks, decoded2.locks, "Locks diverged");
+        assert_eq!(
+            decoded1.advisory.locks, decoded2.advisory.locks,
+            "Locks diverged"
+        );
         assert_eq!(
             decoded1.last_applied, decoded2.last_applied,
             "last_applied diverged"
@@ -2636,12 +2352,310 @@ mod tests {
         .unwrap();
         let snapshot_data = sm2.snapshot().unwrap();
         sm.restore_snapshot(&snapshot_data).unwrap();
+
+        // Metadata persists across reopens (redb-backed).
         let sm3 = FullStateMachine::new(&store).unwrap();
         assert_eq!(
             sm3.get_metadata("/persisted").unwrap(),
             Some(b"value".to_vec())
         );
-        assert!(sm3.get_lock("/persisted").unwrap().is_some());
         assert_eq!(sm3.last_applied_index(), 2);
+
+        // Advisory locks are in-memory only after R14 — reopening
+        // constructs a fresh empty `Arc<Mutex<LockState>>`. Rebuilding
+        // the BTreeMap is the job of the raft replay + snapshot restore
+        // path on startup, not this plain `new(&store)` constructor.
+        assert!(sm3.get_lock("/persisted").unwrap().is_none());
+
+        // The same-instance sm (the one that received restore_snapshot)
+        // does hold the advisory state — the mutex was repopulated in
+        // place.
+        assert!(sm.get_lock("/persisted").unwrap().is_some());
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // R14 — SSOT invariants: shared Arc, atomicity, rehydration
+    // ═══════════════════════════════════════════════════════════════
+
+    /// The `advisory_state()` handle is a clone of the Arc the apply
+    /// path writes into — mutations made via `sm.apply(AcquireLock)`
+    /// must be visible to any external holder of the same Arc without
+    /// taking a second snapshot or restart.
+    #[test]
+    fn r14_apply_is_visible_through_shared_arc() {
+        let store = RedbStore::open_temporary().unwrap();
+        let mut sm = FullStateMachine::new(&store).unwrap();
+        let shared = sm.advisory_state();
+
+        sm.apply(
+            1,
+            &Command::AcquireLock {
+                path: "/r14/a".into(),
+                lock_id: "h1".into(),
+                max_holders: 1,
+                ttl_secs: 60,
+                holder_info: "agent".into(),
+                mode: LockMode::Exclusive,
+                now_secs: 1000,
+            },
+        )
+        .unwrap();
+
+        // The external Arc sees the committed state immediately — no
+        // ReadIndex, no redb round-trip.
+        let guard = shared.lock();
+        let entry = guard.get_lock("/r14/a").expect("lock should exist");
+        assert_eq!(entry.holders.len(), 1);
+        assert_eq!(entry.holders[0].lock_id, "h1");
+    }
+
+    /// Pre-populating the advisory Arc **before** constructing the
+    /// state machine must survive: the state machine's apply path
+    /// operates on that same Arc (no copy / replace on construction).
+    /// This models the kernel's upgrade path where LockManager hands
+    /// its Arc into FullStateMachine::with_advisory.
+    #[test]
+    fn r14_with_advisory_preserves_preexisting_holders() {
+        use std::sync::Arc;
+
+        let store = RedbStore::open_temporary().unwrap();
+        let advisory = Arc::new(Mutex::new(LockState::new()));
+
+        // Simulate local-mode kernel holders that existed pre-upgrade.
+        {
+            let mut guard = advisory.lock();
+            guard.apply_acquire(
+                "/r14/pre",
+                "local-h1",
+                1,
+                60,
+                "agent",
+                LockMode::Exclusive,
+                1000,
+            );
+        }
+
+        let sm = FullStateMachine::with_advisory(&store, advisory.clone()).unwrap();
+
+        // The state machine sees the pre-existing holder via shared Arc.
+        assert!(sm.get_lock("/r14/pre").unwrap().is_some());
+    }
+
+    /// Snapshot serialization of the advisory BTreeMap is lossless —
+    /// snapshot → fresh state machine → restore_snapshot produces an
+    /// identical map.
+    #[test]
+    fn r14_snapshot_roundtrip_advisory_only() {
+        let store = RedbStore::open_temporary().unwrap();
+        let mut sm = FullStateMachine::new(&store).unwrap();
+        for (idx, (path, id, mode)) in [
+            ("/r14/a", "h1", LockMode::Exclusive),
+            ("/r14/b", "r1", LockMode::Shared),
+            ("/r14/b", "r2", LockMode::Shared),
+        ]
+        .iter()
+        .enumerate()
+        {
+            sm.apply(
+                (idx + 1) as u64,
+                &Command::AcquireLock {
+                    path: path.to_string(),
+                    lock_id: id.to_string(),
+                    max_holders: 3,
+                    ttl_secs: 60,
+                    holder_info: "agent".into(),
+                    mode: *mode,
+                    now_secs: 1000,
+                },
+            )
+            .unwrap();
+        }
+
+        let snap = sm.snapshot().unwrap();
+
+        let store2 = RedbStore::open_temporary().unwrap();
+        let mut sm2 = FullStateMachine::new(&store2).unwrap();
+        sm2.restore_snapshot(&snap).unwrap();
+
+        let a = sm2.get_lock("/r14/a").unwrap().unwrap();
+        assert_eq!(a.holders.len(), 1);
+        assert_eq!(a.holders[0].lock_id, "h1");
+
+        let b = sm2.get_lock("/r14/b").unwrap().unwrap();
+        assert_eq!(b.holders.len(), 2);
+        assert_eq!(b.max_holders, 3);
+    }
+
+    /// Lock commands are idempotent under full log replay — applying
+    /// the same committed entry a second time (simulating a post-
+    /// restart replay) produces the same final state, not a double-
+    /// apply. This is the invariant that lets the apply() lock-path
+    /// skip the `index <= last_applied` guard without corrupting state.
+    #[test]
+    fn r14_lock_replay_is_idempotent() {
+        let store = RedbStore::open_temporary().unwrap();
+        let mut sm = FullStateMachine::new(&store).unwrap();
+
+        let cmd = Command::AcquireLock {
+            path: "/r14/replay".into(),
+            lock_id: "h1".into(),
+            max_holders: 1,
+            ttl_secs: 60,
+            holder_info: "agent".into(),
+            mode: LockMode::Exclusive,
+            now_secs: 1000,
+        };
+        sm.apply(1, &cmd).unwrap();
+        // Replay: raft-rs may re-emit the same committed entry on
+        // restart if our reported applied lags. Apply must be a no-op.
+        sm.apply(1, &cmd).unwrap();
+
+        let info = sm.get_lock("/r14/replay").unwrap().unwrap();
+        assert_eq!(info.holders.len(), 1);
+    }
+
+    /// Apply and external reads share a single mutex. A reader can
+    /// never observe a half-applied lock (an entry where max_holders
+    /// was updated but the new holder hasn't been appended yet)
+    /// because `LockState::apply_acquire` runs as a single
+    /// mutate-under-guard step. Stress this with N writers + M
+    /// readers; every read snapshot must reflect a complete,
+    /// consistent state.
+    #[test]
+    fn r14_apply_and_read_are_atomic_under_contention() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        use std::sync::Arc;
+
+        let store = RedbStore::open_temporary().unwrap();
+        let sm = Arc::new(std::sync::Mutex::new(
+            FullStateMachine::new(&store).unwrap(),
+        ));
+        let shared = sm.lock().unwrap().advisory_state();
+
+        let next_idx = Arc::new(AtomicU64::new(1));
+        let writer_count = 32;
+        let reader_count = 32;
+
+        let mut handles = Vec::new();
+
+        for i in 0..writer_count {
+            let sm = sm.clone();
+            let next_idx = next_idx.clone();
+            handles.push(std::thread::spawn(move || {
+                let idx = next_idx.fetch_add(1, Ordering::Relaxed);
+                let path = format!("/r14/stress/{}", i % 8);
+                let id = format!("h{}", i);
+                sm.lock()
+                    .unwrap()
+                    .apply(
+                        idx,
+                        &Command::AcquireLock {
+                            path,
+                            lock_id: id,
+                            max_holders: 32,
+                            ttl_secs: 60,
+                            holder_info: "agent".into(),
+                            mode: LockMode::Shared,
+                            now_secs: 1000,
+                        },
+                    )
+                    .unwrap();
+            }));
+        }
+
+        for _ in 0..reader_count {
+            let shared = shared.clone();
+            handles.push(std::thread::spawn(move || {
+                for _ in 0..100 {
+                    let guard = shared.lock();
+                    // Invariant: for every entry with holders,
+                    // `max_holders` is non-zero (seeded atomically
+                    // with the first push).
+                    for entry in guard.locks.values() {
+                        if !entry.holders.is_empty() {
+                            assert!(
+                                entry.max_holders > 0,
+                                "observed entry with holders but max_holders=0",
+                            );
+                        }
+                    }
+                }
+            }));
+        }
+
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        let guard = shared.lock();
+        let total_holders: usize = guard.locks.values().map(|e| e.holders.len()).sum();
+        assert!(total_holders > 0);
+        assert!(total_holders <= writer_count as usize);
+    }
+
+    /// Snapshot taken while apply is in-flight captures a
+    /// point-in-time state — no torn reads of the BTreeMap. The
+    /// snapshot's BTreeMap clone happens under the advisory mutex
+    /// (same as apply), so either the apply completed before the
+    /// clone (snapshot sees it) or after (snapshot doesn't). Never
+    /// neither / both.
+    #[test]
+    fn r14_snapshot_under_concurrent_apply_is_consistent() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        use std::sync::Arc;
+
+        let store = RedbStore::open_temporary().unwrap();
+        let sm = Arc::new(std::sync::Mutex::new(
+            FullStateMachine::new(&store).unwrap(),
+        ));
+        let next_idx = Arc::new(AtomicU64::new(1));
+        let snapshots = Arc::new(std::sync::Mutex::new(Vec::<Vec<u8>>::new()));
+
+        let sm_w = sm.clone();
+        let next_idx_w = next_idx.clone();
+        let writer = std::thread::spawn(move || {
+            for i in 0..50 {
+                let idx = next_idx_w.fetch_add(1, Ordering::Relaxed);
+                sm_w.lock()
+                    .unwrap()
+                    .apply(
+                        idx,
+                        &Command::AcquireLock {
+                            path: format!("/r14/sn/{}", i),
+                            lock_id: format!("h{}", i),
+                            max_holders: 1,
+                            ttl_secs: 60,
+                            holder_info: "agent".into(),
+                            mode: LockMode::Exclusive,
+                            now_secs: 1000,
+                        },
+                    )
+                    .unwrap();
+            }
+        });
+
+        let sm_s = sm.clone();
+        let snapshots_s = snapshots.clone();
+        let snapper = std::thread::spawn(move || {
+            for _ in 0..5 {
+                let bytes = sm_s.lock().unwrap().snapshot().unwrap();
+                snapshots_s.lock().unwrap().push(bytes);
+            }
+        });
+
+        writer.join().unwrap();
+        snapper.join().unwrap();
+
+        // Every captured snapshot must deserialize and reproduce a
+        // self-consistent map — holders only on entries whose
+        // `max_holders > 0`.
+        for bytes in snapshots.lock().unwrap().iter() {
+            let snap: Snapshot = bincode::deserialize(bytes).unwrap();
+            for entry in snap.advisory.locks.values() {
+                if !entry.holders.is_empty() {
+                    assert!(entry.max_holders > 0);
+                }
+            }
+        }
     }
 }

@@ -3,28 +3,34 @@
 //! Single `LockManager` struct replaces both `VFSLockManagerInner` (I/O locks)
 //! and `LocalLockManager` / `DistributedLockManager` (advisory locks).
 //!
-//! Two acquire modes on the same struct:
+//! Two acquire modes:
 //!   - **I/O lock** (kernel-internal): blocking, hierarchy-aware, no TTL, auto
-//!     handle via `blocking_acquire` / `do_release`.
+//!     handle via `blocking_acquire` / `do_release`. Stays in the node-local
+//!     `IOLockState`; never replicates.
 //!   - **Advisory lock** (user-facing): try-once, hierarchy-aware, TTL-based,
 //!     explicit lock_id via `acquire_lock` / `release_lock` / `extend_lock`.
+//!     Backed by the shared `Arc<Mutex<contracts::LockState>>` — same Arc
+//!     the raft state machine holds once `upgrade_to_distributed` fires.
 //!
-//! Both lock types stored in the same `BTreeMap<String, LockEntry>`, enabling
-//! unified hierarchy conflict detection. I/O and advisory locks are orthogonal —
-//! they do not conflict with each other.
+//! I/O and advisory locks are orthogonal — they do not conflict with each
+//! other. They live in separate structures now that advisory state is
+//! shared with raft.
 //!
-//! Optional Raft backend: when `raft` is `Some`, advisory lock writes go through
-//! `propose()`, reads through `read_linearizable()`. I/O locks always stay local.
+//! After R14, distributed mode does not split reads from writes: writes
+//! still go through `node.propose()` for raft consensus, and the apply
+//! path mutates the same `Arc<Mutex<LockState>>`. Reads hit that Arc
+//! directly, so they observe exactly what the local apply committed.
 
-use parking_lot::{Condvar, Mutex};
+use parking_lot::{Condvar, Mutex, RwLock};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use nexus_raft::prelude::{
-    Command, CommandResult, FullStateMachine, LockInfo as RaftLockInfo, LockMode as RaftLockMode,
-    ZoneConsensus,
+use contracts::lock_state::{
+    HolderInfo as SharedHolderInfo, LockMode as SharedLockMode, LockState as SharedLockState,
 };
+use nexus_raft::prelude::{Command, CommandResult, FullStateMachine, ZoneConsensus};
 
 // ── Lock types (advisory) ───────────────────────────────────────────
 
@@ -73,48 +79,23 @@ struct HandleInfo {
     mode: LockMode,
 }
 
-// ── Unified lock entry ──────────────────────────────────────────────
-
-/// Per-path lock state — holds both I/O lock and advisory lock state.
-///
-/// I/O and advisory locks are orthogonal: an I/O write lock on `/a` does
-/// NOT conflict with an advisory Exclusive lock on `/a`. They serve
-/// different layers (kernel I/O serialization vs. user-facing coordination).
-#[derive(Debug, Clone)]
-struct LockEntry {
-    // ── I/O lock state (anonymous, blocking) ──
+/// Per-path I/O lock state — readers + optional exclusive writer.
+#[derive(Debug, Clone, Default)]
+struct IOEntry {
     io_readers: u32,
-    io_writer: Option<u64>, // handle of current writer
-    // ── Advisory lock state (named, TTL-based) ──
-    max_holders: u32,
-    holders: Vec<KernelHolderInfo>,
+    io_writer: Option<u64>,
 }
 
-impl LockEntry {
-    fn new() -> Self {
-        Self {
-            io_readers: 0,
-            io_writer: None,
-            max_holders: 0,
-            holders: Vec::new(),
-        }
-    }
-
-    /// True when both I/O and advisory state are empty (can be GC'd).
+impl IOEntry {
     fn is_idle(&self) -> bool {
-        self.io_readers == 0 && self.io_writer.is_none() && self.holders.is_empty()
-    }
-
-    /// True when I/O state is idle (for `is_locked` check).
-    fn io_idle(&self) -> bool {
         self.io_readers == 0 && self.io_writer.is_none()
     }
 }
 
-/// Protected state: all lock mutations go through this Mutex.
-#[derive(Debug)]
-struct LockState {
-    locks: BTreeMap<String, LockEntry>,
+/// Local I/O lock state — never replicates.
+#[derive(Debug, Default)]
+struct IOLockState {
+    locks: BTreeMap<String, IOEntry>,
     handles: HashMap<u64, HandleInfo>,
 }
 
@@ -168,8 +149,6 @@ fn ancestors(path: &str) -> Vec<&str> {
     result
 }
 
-// ── Advisory lock helpers ───────────────────────────────────────────
-
 pub(crate) fn lock_now_secs() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -177,55 +156,37 @@ pub(crate) fn lock_now_secs() -> u64 {
         .unwrap_or(0)
 }
 
-fn prune_expired_holders(holders: &mut Vec<KernelHolderInfo>, now: u64) {
-    holders.retain(|h| h.expires_at_secs > now);
-}
-
-fn accepts_new_holder(
-    holders: &[KernelHolderInfo],
-    max_holders: u32,
-    mode: KernelLockMode,
-) -> bool {
-    match mode {
-        KernelLockMode::Exclusive => holders.is_empty(),
-        KernelLockMode::Shared => {
-            let has_exclusive = holders.iter().any(|h| h.mode == KernelLockMode::Exclusive);
-            !has_exclusive && (holders.len() as u32) < max_holders
-        }
-    }
-}
-
 // ── Raft conversion helpers ─────────────────────────────────────────
 
-fn kernel_mode_to_raft(m: KernelLockMode) -> RaftLockMode {
+fn kernel_to_shared_mode(m: KernelLockMode) -> SharedLockMode {
     match m {
-        KernelLockMode::Exclusive => RaftLockMode::Exclusive,
-        KernelLockMode::Shared => RaftLockMode::Shared,
+        KernelLockMode::Exclusive => SharedLockMode::Exclusive,
+        KernelLockMode::Shared => SharedLockMode::Shared,
     }
 }
 
-fn raft_mode_to_kernel(m: RaftLockMode) -> KernelLockMode {
+fn shared_to_kernel_mode(m: SharedLockMode) -> KernelLockMode {
     match m {
-        RaftLockMode::Exclusive => KernelLockMode::Exclusive,
-        RaftLockMode::Shared => KernelLockMode::Shared,
+        SharedLockMode::Exclusive => KernelLockMode::Exclusive,
+        SharedLockMode::Shared => KernelLockMode::Shared,
     }
 }
 
-fn raft_lock_to_kernel(lock: RaftLockInfo) -> KernelLockInfo {
+fn shared_holder_to_kernel(h: &SharedHolderInfo) -> KernelHolderInfo {
+    KernelHolderInfo {
+        lock_id: h.lock_id.clone(),
+        holder_info: h.holder_info.clone(),
+        mode: shared_to_kernel_mode(h.mode),
+        acquired_at_secs: h.acquired_at,
+        expires_at_secs: h.expires_at,
+    }
+}
+
+fn shared_lock_to_kernel(lock: contracts::LockInfo) -> KernelLockInfo {
     KernelLockInfo {
         path: lock.path,
         max_holders: lock.max_holders,
-        holders: lock
-            .holders
-            .into_iter()
-            .map(|h| KernelHolderInfo {
-                lock_id: h.lock_id,
-                holder_info: h.holder_info,
-                mode: raft_mode_to_kernel(h.mode),
-                acquired_at_secs: h.acquired_at,
-                expires_at_secs: h.expires_at,
-            })
-            .collect(),
+        holders: lock.holders.iter().map(shared_holder_to_kernel).collect(),
     }
 }
 
@@ -251,14 +212,23 @@ impl std::fmt::Display for LockError {
 
 /// Unified lock manager: I/O lock + advisory lock + optional Raft.
 ///
-/// Replaces the previous `VFSLockManagerInner` (I/O), `LocalLockManager`
-/// (advisory, standalone), `DistributedLockManager` (advisory, federation),
-/// and `LockManagerKind` enum dispatch.
+/// I/O locks live in a local `Mutex<IOLockState>` — they never
+/// replicate. Advisory locks live in a shared
+/// `Arc<Mutex<contracts::LockState>>` which is adopted from the raft
+/// state machine once `upgrade_to_distributed` fires, so the kernel
+/// and the raft apply path mutate exactly the same BTreeMap under
+/// exactly one mutex.
+///
+/// The outer `RwLock` wraps the Arc only so `upgrade_to_distributed`
+/// can swap it. Readers take the RwLock for a short snapshot, clone
+/// the Arc, then lock the inner mutex — the cost is one atomic plus
+/// one Arc clone per operation, amortized invisibly.
 ///
 /// Shared via `Arc` between Kernel and VFSLockManager PyO3 wrapper.
 pub struct LockManager {
-    state: Mutex<LockState>,
-    notify: Condvar,        // for blocking I/O acquire
+    io_state: Mutex<IOLockState>,
+    advisory: RwLock<Arc<Mutex<SharedLockState>>>,
+    notify: Condvar,        // for blocking I/O acquire (paired with io_state)
     next_handle: AtomicU64, // for auto-generated I/O lock handles
     raft: Mutex<Option<(ZoneConsensus<FullStateMachine>, tokio::runtime::Handle)>>,
 
@@ -273,10 +243,8 @@ pub struct LockManager {
 impl LockManager {
     pub fn new() -> Self {
         Self {
-            state: Mutex::new(LockState {
-                locks: BTreeMap::new(),
-                handles: HashMap::new(),
-            }),
+            io_state: Mutex::new(IOLockState::default()),
+            advisory: RwLock::new(Arc::new(Mutex::new(SharedLockState::new()))),
             notify: Condvar::new(),
             next_handle: AtomicU64::new(0),
             raft: Mutex::new(None),
@@ -299,15 +267,82 @@ impl LockManager {
     /// must converge on the same backend zone; since `add_mount` fires in
     /// the same deterministic order on every peer (driven by replicated
     /// mount topology), first-wins is cluster-consistent.
+    ///
+    /// The upgrade also migrates existing local advisory holders into
+    /// the state machine's shared `Arc<Mutex<LockState>>` and adopts
+    /// that Arc — from this point on, both the kernel and the raft
+    /// apply path mutate the same BTreeMap under the same mutex, so
+    /// there is no divergence window between writers and readers.
     pub fn upgrade_to_distributed(
         &self,
         node: ZoneConsensus<FullStateMachine>,
         runtime: tokio::runtime::Handle,
     ) {
         let mut raft = self.raft.lock();
-        if raft.is_none() {
-            *raft = Some((node, runtime));
+        if raft.is_some() {
+            return;
         }
+
+        // Adopt the state machine's advisory Arc so reads, kernel-local
+        // acquires (before any raft-applied entry arrives) and raft
+        // apply all hit the same mutex.
+        let shared_advisory = {
+            // Briefly block to fetch the Arc. We use the runtime's
+            // block_on because upgrade_to_distributed is called from a
+            // sync context (kernel::add_mount on the Python side).
+            runtime.block_on(async {
+                node.with_state_machine(|sm: &FullStateMachine| sm.advisory_state())
+                    .await
+            })
+        };
+
+        // Transfer any kernel-local advisory holders into the shared
+        // map. In practice there won't be any on a fresh upgrade
+        // (add_mount fires on startup, before users can acquire), but
+        // the safety we owe is: never overwrite state the raft apply
+        // path already wrote into the shared map. Raft may have
+        // started replaying committed entries the moment the state
+        // machine was constructed, so we treat raft's state as
+        // authoritative and only fill in paths that the shared map
+        // doesn't already own.
+        //
+        // We then swap kernel's own Arc pointer to the shared one so
+        // subsequent local acquires and reads hit the same BTreeMap
+        // the raft apply path mutates.
+        {
+            let mut dst = shared_advisory.lock();
+            let mut slot = self.advisory.write();
+            let old = std::mem::replace(&mut *slot, shared_advisory.clone());
+            drop(slot);
+            let src = old.lock();
+            let mut migrated = 0usize;
+            let mut skipped = 0usize;
+            for (path, entry) in &src.locks {
+                if entry.holders.is_empty() {
+                    continue;
+                }
+                if dst.locks.contains_key(path) {
+                    // Raft apply already wrote this path — authoritative.
+                    skipped += 1;
+                    continue;
+                }
+                dst.locks.insert(path.clone(), entry.clone());
+                migrated += 1;
+            }
+            if migrated > 0 || skipped > 0 {
+                tracing::info!(
+                    migrated = migrated,
+                    skipped_because_raft_owns = skipped,
+                    "LockManager.upgrade_to_distributed: migrated local advisory holders into shared state machine map",
+                );
+            }
+        }
+
+        *raft = Some((node, runtime));
+    }
+
+    fn advisory(&self) -> Arc<Mutex<SharedLockState>> {
+        self.advisory.read().clone()
     }
 
     // ── I/O lock: blocking acquire ──────────────────────────────────
@@ -321,7 +356,7 @@ impl LockManager {
 
         // Fast path: non-blocking try under mutex.
         {
-            let mut state = self.state.lock();
+            let mut state = self.io_state.lock();
             if let Some(handle) =
                 Self::try_acquire_io_locked(&mut state, &self.next_handle, &norm_path, mode)
             {
@@ -345,7 +380,7 @@ impl LockManager {
         loop {
             self.contention_count.fetch_add(1, Ordering::Relaxed);
 
-            let mut state = self.state.lock();
+            let mut state = self.io_state.lock();
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
                 self.timeout_count.fetch_add(1, Ordering::Relaxed);
@@ -373,7 +408,7 @@ impl LockManager {
     /// Release a previously acquired I/O lock by handle.
     pub fn do_release(&self, handle: u64) -> bool {
         let released = {
-            let mut state = self.state.lock();
+            let mut state = self.io_state.lock();
 
             let info = match state.handles.remove(&handle) {
                 Some(info) => info,
@@ -411,11 +446,7 @@ impl LockManager {
     // ── I/O lock: conflict detection ────────────────────────────────
 
     /// Check whether `path` in I/O `mode` conflicts with any *ancestor* I/O locks.
-    fn ancestor_io_conflict(
-        locks: &BTreeMap<String, LockEntry>,
-        path: &str,
-        mode: LockMode,
-    ) -> bool {
+    fn ancestor_io_conflict(locks: &BTreeMap<String, IOEntry>, path: &str, mode: LockMode) -> bool {
         for anc in ancestors(path) {
             if let Some(entry) = locks.get(anc) {
                 match mode {
@@ -437,7 +468,7 @@ impl LockManager {
 
     /// Check whether any *descendant* path has a conflicting I/O lock.
     fn descendant_io_conflict(
-        locks: &BTreeMap<String, LockEntry>,
+        locks: &BTreeMap<String, IOEntry>,
         path: &str,
         mode: LockMode,
     ) -> bool {
@@ -470,7 +501,7 @@ impl LockManager {
 
     /// Attempt a single non-blocking I/O acquire under the lock.
     fn try_acquire_io_locked(
-        state: &mut LockState,
+        state: &mut IOLockState,
         next_handle: &AtomicU64,
         path: &str,
         mode: LockMode,
@@ -482,10 +513,7 @@ impl LockManager {
             return None;
         }
 
-        let entry = state
-            .locks
-            .entry(path.to_string())
-            .or_insert_with(LockEntry::new);
+        let entry = state.locks.entry(path.to_string()).or_default();
 
         match mode {
             LockMode::Read => {
@@ -526,17 +554,17 @@ impl LockManager {
     /// Check whether `path` currently has any active I/O lock.
     pub fn is_locked(&self, path: &str) -> bool {
         let norm = normalize_path(path);
-        let state = self.state.lock();
-        state.locks.get(&norm).is_some_and(|entry| !entry.io_idle())
+        let state = self.io_state.lock();
+        state.locks.get(&norm).is_some_and(|entry| !entry.is_idle())
     }
 
     /// Return I/O lock-holder information for `path`: (readers, writer_handle).
     /// Returns `None` if unlocked.
     pub fn io_holders(&self, path: &str) -> Option<(u32, u64)> {
         let norm = normalize_path(path);
-        let state = self.state.lock();
+        let state = self.io_state.lock();
         match state.locks.get(&norm) {
-            Some(entry) if !entry.io_idle() => {
+            Some(entry) if !entry.is_idle() => {
                 Some((entry.io_readers, entry.io_writer.unwrap_or(0)))
             }
             _ => None,
@@ -545,13 +573,13 @@ impl LockManager {
 
     /// Number of actively locked paths (I/O locks only — for VFSLockManager.active_locks).
     pub fn io_active_locks(&self) -> usize {
-        let state = self.state.lock();
-        state.locks.values().filter(|e| !e.io_idle()).count()
+        let state = self.io_state.lock();
+        state.locks.values().filter(|e| !e.is_idle()).count()
     }
 
     /// Number of active I/O handles.
     pub fn io_active_handles(&self) -> usize {
-        self.state.lock().handles.len()
+        self.io_state.lock().handles.len()
     }
 
     /// Metrics accessors.
@@ -571,77 +599,17 @@ impl LockManager {
         self.total_acquire_ns.load(Ordering::Relaxed)
     }
 
-    // ── Advisory lock: hierarchy conflict detection ─────────────────
-
-    /// Check whether any *ancestor* has an advisory lock that conflicts with `mode`.
-    fn ancestor_advisory_conflict(
-        locks: &BTreeMap<String, LockEntry>,
-        path: &str,
-        mode: KernelLockMode,
-    ) -> bool {
-        for anc in ancestors(path) {
-            if let Some(entry) = locks.get(anc) {
-                if !entry.holders.is_empty() {
-                    match mode {
-                        KernelLockMode::Exclusive => return true,
-                        KernelLockMode::Shared => {
-                            if entry
-                                .holders
-                                .iter()
-                                .any(|h| h.mode == KernelLockMode::Exclusive)
-                            {
-                                return true;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        false
-    }
-
-    /// Check whether any *descendant* has a conflicting advisory lock.
-    fn descendant_advisory_conflict(
-        locks: &BTreeMap<String, LockEntry>,
-        path: &str,
-        mode: KernelLockMode,
-    ) -> bool {
-        let prefix = if path.ends_with('/') {
-            path.to_string()
-        } else {
-            format!("{}/", path)
-        };
-
-        let mut upper = prefix.clone();
-        upper.pop();
-        upper.push('0');
-
-        for (_key, entry) in locks.range(prefix..upper) {
-            if !entry.holders.is_empty() {
-                match mode {
-                    KernelLockMode::Exclusive => return true,
-                    KernelLockMode::Shared => {
-                        if entry
-                            .holders
-                            .iter()
-                            .any(|h| h.mode == KernelLockMode::Exclusive)
-                        {
-                            return true;
-                        }
-                    }
-                }
-            }
-        }
-        false
-    }
-
     // ── Advisory lock: public API ───────────────────────────────────
 
     /// Try to acquire an advisory lock. Returns `Ok(true)` when the caller
     /// became (or already was) a holder, `Ok(false)` on conflict.
     ///
-    /// When Raft backend is active, the write goes through `propose()`.
-    /// I/O locks always stay local regardless.
+    /// When the raft backend is installed, the write flows through
+    /// `node.propose()` so it reaches consensus; the apply path then
+    /// mutates the same `Arc<Mutex<LockState>>` this manager holds.
+    /// When raft is not installed, the mutation happens directly on
+    /// the shared map. Either way, there is one state transition and
+    /// one mutex acquisition.
     pub fn acquire_lock(
         &self,
         path: &str,
@@ -653,14 +621,13 @@ impl LockManager {
     ) -> Result<bool, LockError> {
         let raft_guard = self.raft.lock();
         if let Some((ref node, ref runtime)) = *raft_guard {
-            // Distributed path: propose through Raft
             let cmd = Command::AcquireLock {
                 path: path.to_string(),
                 lock_id: lock_id.to_string(),
                 max_holders,
                 ttl_secs: ttl_secs.min(u32::MAX as u64) as u32,
                 holder_info: holder_info.to_string(),
-                mode: kernel_mode_to_raft(mode),
+                mode: kernel_to_shared_mode(mode),
                 now_secs: FullStateMachine::now(),
             };
             let result = runtime.block_on(node.propose(cmd)).map_err(|e| {
@@ -676,14 +643,15 @@ impl LockManager {
                 )),
             }
         } else {
-            // Local path: in-process BTreeMap
             drop(raft_guard);
-            self.acquire_lock_local(path, lock_id, mode, max_holders, ttl_secs, holder_info)
+            self.apply_acquire(path, lock_id, mode, max_holders, ttl_secs, holder_info)
         }
     }
 
-    /// Local advisory lock acquire (standalone mode).
-    fn acquire_lock_local(
+    /// Local advisory lock acquire (pre-raft path). Delegates to
+    /// `contracts::LockState::apply_acquire` under the shared mutex —
+    /// exactly the same state transition the raft apply path runs.
+    fn apply_acquire(
         &self,
         path: &str,
         lock_id: &str,
@@ -693,50 +661,18 @@ impl LockManager {
         holder_info: &str,
     ) -> Result<bool, LockError> {
         let now = lock_now_secs();
-        let expires_at = now.saturating_add(ttl_secs);
-        let mut state = self.state.lock();
-
-        // Hierarchy conflict check (advisory)
-        if Self::ancestor_advisory_conflict(&state.locks, path, mode) {
-            return Ok(false);
-        }
-        if Self::descendant_advisory_conflict(&state.locks, path, mode) {
-            return Ok(false);
-        }
-
-        let entry = state
-            .locks
-            .entry(path.to_string())
-            .or_insert_with(LockEntry::new);
-
-        // Prune expired holders
-        prune_expired_holders(&mut entry.holders, now);
-
-        // Idempotent re-acquire: same lock_id already present
-        if let Some(h) = entry.holders.iter_mut().find(|h| h.lock_id == lock_id) {
-            h.expires_at_secs = expires_at;
-            return Ok(true);
-        }
-
-        // First holder sets max_holders; subsequent holders must match
-        if entry.holders.is_empty() {
-            entry.max_holders = max_holders;
-        } else if entry.max_holders != max_holders {
-            return Ok(false);
-        }
-
-        if accepts_new_holder(&entry.holders, entry.max_holders, mode) {
-            entry.holders.push(KernelHolderInfo {
-                lock_id: lock_id.to_string(),
-                holder_info: holder_info.to_string(),
-                mode,
-                acquired_at_secs: now,
-                expires_at_secs: expires_at,
-            });
-            Ok(true)
-        } else {
-            Ok(false)
-        }
+        let advisory = self.advisory();
+        let mut guard = advisory.lock();
+        let result = guard.apply_acquire(
+            path,
+            lock_id,
+            max_holders,
+            ttl_secs.min(u32::MAX as u64) as u32,
+            holder_info,
+            kernel_to_shared_mode(mode),
+            now,
+        );
+        Ok(result.acquired)
     }
 
     /// Release a specific advisory lock holder. Returns `Ok(true)` if found.
@@ -753,23 +689,14 @@ impl LockManager {
             Ok(matches!(result, CommandResult::Success))
         } else {
             drop(raft_guard);
-            self.release_lock_local(path, lock_id)
+            Ok(self.apply_release(path, lock_id))
         }
     }
 
-    fn release_lock_local(&self, path: &str, lock_id: &str) -> Result<bool, LockError> {
-        let mut state = self.state.lock();
-        if let Some(entry) = state.locks.get_mut(path) {
-            let before = entry.holders.len();
-            entry.holders.retain(|h| h.lock_id != lock_id);
-            let removed = entry.holders.len() < before;
-            if entry.is_idle() {
-                state.locks.remove(path);
-            }
-            Ok(removed)
-        } else {
-            Ok(false)
-        }
+    fn apply_release(&self, path: &str, lock_id: &str) -> bool {
+        let advisory = self.advisory();
+        let result = advisory.lock().apply_release(path, lock_id);
+        result
     }
 
     /// Force-release ALL advisory holders on `path` (admin override).
@@ -785,19 +712,14 @@ impl LockManager {
             Ok(matches!(result, CommandResult::Success))
         } else {
             drop(raft_guard);
-            let mut state = self.state.lock();
-            if let Some(entry) = state.locks.get_mut(path) {
-                let had_holders = !entry.holders.is_empty();
-                entry.holders.clear();
-                entry.max_holders = 0;
-                if entry.is_idle() {
-                    state.locks.remove(path);
-                }
-                Ok(had_holders)
-            } else {
-                Ok(false)
-            }
+            Ok(self.apply_force_release(path))
         }
+    }
+
+    fn apply_force_release(&self, path: &str) -> bool {
+        let advisory = self.advisory();
+        let result = advisory.lock().apply_force_release(path);
+        result
     }
 
     /// Extend a holder's TTL. Returns `Ok(true)` if extended.
@@ -816,89 +738,37 @@ impl LockManager {
             Ok(matches!(result, CommandResult::Success))
         } else {
             drop(raft_guard);
-            let now = lock_now_secs();
-            let new_expires = now.saturating_add(ttl_secs);
-            let mut state = self.state.lock();
-            if let Some(entry) = state.locks.get_mut(path) {
-                prune_expired_holders(&mut entry.holders, now);
-                if let Some(h) = entry.holders.iter_mut().find(|h| h.lock_id == lock_id) {
-                    h.expires_at_secs = new_expires;
-                    Ok(true)
-                } else {
-                    Ok(false)
-                }
-            } else {
-                Ok(false)
-            }
+            Ok(self.apply_extend(path, lock_id, ttl_secs))
         }
     }
 
+    fn apply_extend(&self, path: &str, lock_id: &str, ttl_secs: u64) -> bool {
+        let advisory = self.advisory();
+        let now = lock_now_secs();
+        let result =
+            advisory
+                .lock()
+                .apply_extend(path, lock_id, ttl_secs.min(u32::MAX as u64) as u32, now);
+        result
+    }
+
     /// Read the full advisory lock record for a path (or `None` if unlocked).
+    ///
+    /// Post-R14 this always reads from the local shared map — which is
+    /// the same Arc as the state machine's apply path on this node. A
+    /// committed write is visible here as soon as apply returns, so no
+    /// ReadIndex round-trip is needed.
     pub fn get_lock_info(&self, path: &str) -> Result<Option<KernelLockInfo>, LockError> {
-        let raft_guard = self.raft.lock();
-        if let Some((ref node, ref runtime)) = *raft_guard {
-            let key = path.to_string();
-            let fut = node.read_linearizable(move |sm: &FullStateMachine| sm.get_lock(&key));
-            let lock_opt = runtime
-                .block_on(fut)
-                .map_err(|e| {
-                    LockError::IOError(format!("LockManager.get_lock_info({path}) read_index: {e}"))
-                })?
-                .map_err(|e| {
-                    LockError::IOError(format!("LockManager.get_lock_info({path}): {e:?}"))
-                })?;
-            Ok(lock_opt.map(raft_lock_to_kernel))
-        } else {
-            drop(raft_guard);
-            let state = self.state.lock();
-            Ok(state.locks.get(path).and_then(|entry| {
-                if entry.holders.is_empty() {
-                    None
-                } else {
-                    Some(KernelLockInfo {
-                        path: path.to_string(),
-                        max_holders: entry.max_holders,
-                        holders: entry.holders.clone(),
-                    })
-                }
-            }))
-        }
+        let advisory = self.advisory();
+        let result = advisory.lock().get_lock(path).map(shared_lock_to_kernel);
+        Ok(result)
     }
 
     /// Enumerate advisory locks with a given path prefix, capped at `limit`.
     pub fn list_locks(&self, prefix: &str, limit: usize) -> Result<Vec<KernelLockInfo>, LockError> {
-        let raft_guard = self.raft.lock();
-        if let Some((ref node, ref runtime)) = *raft_guard {
-            let key = prefix.to_string();
-            let fut =
-                node.read_linearizable(move |sm: &FullStateMachine| sm.list_locks(&key, limit));
-            let locks = runtime
-                .block_on(fut)
-                .map_err(|e| {
-                    LockError::IOError(format!("LockManager.list_locks({prefix}) read_index: {e}"))
-                })?
-                .map_err(|e| {
-                    LockError::IOError(format!("LockManager.list_locks({prefix}): {e:?}"))
-                })?;
-            Ok(locks.into_iter().map(raft_lock_to_kernel).collect())
-        } else {
-            drop(raft_guard);
-            let state = self.state.lock();
-            let mut out = Vec::new();
-            for (key, entry) in state.locks.iter() {
-                if out.len() >= limit {
-                    break;
-                }
-                if key.starts_with(prefix) && !entry.holders.is_empty() {
-                    out.push(KernelLockInfo {
-                        path: key.clone(),
-                        max_holders: entry.max_holders,
-                        holders: entry.holders.clone(),
-                    });
-                }
-            }
-            Ok(out)
-        }
+        let advisory = self.advisory();
+        let locks = advisory.lock().list_locks(prefix, limit);
+        Ok(locks.into_iter().map(shared_lock_to_kernel).collect())
     }
 }
 

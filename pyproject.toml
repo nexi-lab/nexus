@@ -367,6 +367,8 @@ markers = [
     "quarantine: Tests that are flaky or timing-dependent (deselected by default in CI)",
     "postgres: marks tests that require a running PostgreSQL instance (Issue #1299)",
     "benchmark_ci: critical benchmarks run on every PR",
+    "vault: marks tests that require a running Vault dev server (opt-in, see docs/guides/auth-envelope-encryption.md)",
+    "kms: marks tests that require a reachable AWS KMS endpoint (opt-in, real AWS or LocalStack)",
 ]
 
 [tool.coverage.run]

@@ -35,11 +35,14 @@ def _make_db(tmp_path: Path) -> Path:
                 created_at TEXT NOT NULL
             );
 
+            -- Production schema: migration tiger_resource_map_remove_tenant
+            -- dropped tenant_id / zone_id because resource paths are globally
+            -- unique. Unique constraint is (resource_type, resource_id).
             CREATE TABLE tiger_resource_map (
                 resource_int_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 resource_type TEXT NOT NULL,
                 resource_id TEXT NOT NULL,
-                zone_id TEXT NOT NULL
+                UNIQUE (resource_type, resource_id)
             );
             """
         )
@@ -100,13 +103,18 @@ def _make_db(tmp_path: Path) -> Path:
         )
         conn.executemany(
             """
-            INSERT INTO tiger_resource_map (resource_type, resource_id, zone_id)
-            VALUES (?, ?, ?)
+            INSERT INTO tiger_resource_map (resource_type, resource_id)
+            VALUES (?, ?)
             """,
             [
-                ("file", "/workspace/demo/original.txt", "default"),
-                ("file", "/zone/default/workspace/demo/original.txt", "default"),
-                ("file", "/workspace/demo/original.txt", "other-zone"),
+                # Paths are globally unique post-migration. The rename case
+                # stores both the unscoped and the zone-scoped form as
+                # independent int-ids because callers may emit either.
+                ("file", "/workspace/demo/original.txt"),
+                ("file", "/zone/default/workspace/demo/original.txt"),
+                # A sibling file under the same prefix — must survive the
+                # single-file rename cleanup (is_directory=False).
+                ("file", "/workspace/demo/sibling.txt"),
             ],
         )
         conn.commit()
@@ -213,13 +221,97 @@ def test_update_object_path_updates_mixed_scoped_rows_without_touching_other_zon
 
         resource_rows = conn.execute(
             """
-            SELECT resource_id, zone_id
+            SELECT resource_id
             FROM tiger_resource_map
             ORDER BY resource_int_id
             """
         ).fetchall()
-        assert [tuple(row) for row in resource_rows] == [
-            ("/workspace/demo/original.txt", "other-zone"),
+        # Renamed path(s) must be deleted (both unscoped and zone-scoped
+        # forms); the sibling file under the same prefix must survive.
+        assert [row[0] for row in resource_rows] == [
+            "/workspace/demo/sibling.txt",
         ]
+    finally:
+        conn.close()
+
+
+def test_cleanup_tiger_resource_map_does_not_emit_zone_clause(tmp_path: Path):
+    """Regression: the tiger_resource_map DELETE must NOT include zone_id.
+
+    Migration ``tiger_resource_map_remove_tenant`` dropped the tenant/zone
+    axis (resource paths are globally unique). Any SQL that emits
+    ``AND zone_id = ?`` against this table fails in postgres with
+    ``column "zone_id" does not exist``, silently leaking stale
+    (int_id ↔ path) entries through every rename/move.
+    """
+    db_path = tmp_path / "tiger_only.db"
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.executescript(
+            """
+            CREATE TABLE rebac_tuples (
+                tuple_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                subject_type TEXT, subject_id TEXT, subject_relation TEXT,
+                relation TEXT, object_type TEXT, object_id TEXT,
+                zone_id TEXT, expires_at TEXT
+            );
+            CREATE TABLE rebac_changelog (
+                change_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                change_type TEXT, tuple_id INTEGER,
+                subject_type TEXT, subject_id TEXT, relation TEXT,
+                object_type TEXT, object_id TEXT, zone_id TEXT,
+                created_at TEXT
+            );
+            -- Production schema: no zone_id column.
+            CREATE TABLE tiger_resource_map (
+                resource_int_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                resource_type TEXT NOT NULL,
+                resource_id TEXT NOT NULL,
+                UNIQUE (resource_type, resource_id)
+            );
+            """
+        )
+        conn.executemany(
+            "INSERT INTO tiger_resource_map (resource_type, resource_id) VALUES (?, ?)",
+            [("file", "/zone/default/workspace/doc.txt")],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    resource_map = type(
+        "ResourceMap",
+        (),
+        {
+            "_uuid_to_int": {("file", "/zone/default/workspace/doc.txt"): 1},
+            "_int_to_uuid": {1: ("file", "/zone/default/workspace/doc.txt")},
+        },
+    )()
+    tiger_cache = type("TigerCache", (), {"_resource_map": resource_map})()
+
+    updater = PathUpdater(
+        connection_factory=lambda: _connection_factory(db_path),
+        create_cursor=lambda conn: conn.cursor(),
+        fix_sql=lambda sql: sql,
+        invalidate_cache_cb=lambda *args, **kwargs: None,
+        tiger_invalidate_cache_cb=None,
+        tiger_cache=tiger_cache,
+    )
+
+    # Must not raise OperationalError("no such column: zone_id") — this is
+    # the exact failure mode seen in production postgres.
+    updater.update_object_path(
+        old_path="/zone/default/workspace/doc.txt",
+        new_path="/zone/default/workspace/doc-renamed.txt",
+        object_type="file",
+        is_directory=False,
+    )
+
+    conn = sqlite3.connect(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT resource_id FROM tiger_resource_map ORDER BY resource_int_id"
+        ).fetchall()
+        assert [row[0] for row in rows] == []  # stale entry cleaned up
     finally:
         conn.close()

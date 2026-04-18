@@ -410,31 +410,22 @@ class PathUpdater:
             where_sql, params = self._build_path_match_clause(
                 "resource_id", candidates, is_directory
             )
-            zone_sql, zone_params = self._build_zone_clause(requested_zone_id)
-            if is_directory:
-                cursor.execute(
-                    self._fix_sql(
-                        f"""
-                        DELETE FROM tiger_resource_map
-                        WHERE resource_type = ?
-                          AND ({where_sql})
-                          {zone_sql}
-                        """
-                    ),
-                    (object_type, *params, *zone_params),
-                )
-            else:
-                cursor.execute(
-                    self._fix_sql(
-                        f"""
-                        DELETE FROM tiger_resource_map
-                        WHERE resource_type = ?
-                          AND ({where_sql})
-                          {zone_sql}
-                        """
-                    ),
-                    (object_type, *params, *zone_params),
-                )
+            # tiger_resource_map intentionally has NO zone_id column (migration
+            # tiger_resource_map_remove_tenant dropped the tenant axis because
+            # resource paths are globally unique). Emitting `AND zone_id = ?`
+            # here makes postgres reject the DELETE with
+            # `column "zone_id" does not exist`, so stale (int_id ↔ path)
+            # entries never get cleaned up after rename/move. Omit the clause.
+            cursor.execute(
+                self._fix_sql(
+                    f"""
+                    DELETE FROM tiger_resource_map
+                    WHERE resource_type = ?
+                      AND ({where_sql})
+                    """
+                ),
+                (object_type, *params),
+            )
             deleted = cursor.rowcount
             if deleted and deleted > 0:
                 logger.info(

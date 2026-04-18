@@ -2,7 +2,7 @@
 
 No PostgreSQL, no Dragonfly/Redis, no Zoekt required.
 
-Validates the full SANDBOX wiring across Tasks 1-13:
+Validates the full SANDBOX wiring across Tasks 1-14:
   * ``nexus.connect(profile="sandbox")`` boots end-to-end and exposes a
     usable VFS (write + sys_read round-trip).
   * HTTP surface restricted to ``/health`` + ``/api/v2/features`` (+ FastAPI
@@ -10,99 +10,63 @@ Validates the full SANDBOX wiring across Tasks 1-13:
   * ``/api/v2/features`` reports ``profile="sandbox"`` and the expected
     enabled brick set (no ``llm``, ``pay``, ``observability``).
 
-Tests are grouped under ``xdist_group`` so they run serially on the same
-xdist worker: SANDBOX boot still touches a shared Raft bind address
-(wiring gap — see ``nexus.connect`` around the ``"ipc" in enabled_bricks``
-gate) and multiple concurrent attempts collide on the redb lock.
+The ``_force_single_node_metastore`` workaround and the explicit path-field
+overrides in ``_sandbox_config`` are intentionally absent after the two wiring
+gaps closed by Issue #3778 Task-14 follow-up:
 
-Each test patches ``NexusFederation.bootstrap`` so federation falls back
-to the single-node in-process metastore — this is what a true SANDBOX
-boot will eventually do natively, and it is the only way today to
-exercise "no external services" until the wiring gap is closed.
+  1. Federation bootstrap is now gated on ``BRICK_FEDERATION`` (not
+     ``BRICK_IPC``), so SANDBOX never attempts Raft.
+  2. ``_load_from_dict`` strips stale sandbox-defaulted path fields when
+     the user supplies a custom ``data_dir``, so ``_apply_sandbox_defaults``
+     correctly re-derives ``metastore_path`` / ``db_path`` /
+     ``record_store_path`` from the user-provided path.
+
+Tests still run serially (xdist_group) to avoid redb lock collisions on the
+shared tmp SQLite file across concurrent workers.
 """
 
 from __future__ import annotations
 
 import time
 from pathlib import Path
+from unittest.mock import patch
 
 import httpx
 import pytest
 
 import nexus
 
-# Run serially — SANDBOX boot currently touches shared Raft ports/state.
+# Run serially — SQLite file creation can collide across xdist workers.
 pytestmark = pytest.mark.xdist_group(name="sandbox_boot")
 
 
 def _sandbox_config(tmp_path: Path) -> dict[str, object]:
     """Build a SANDBOX config dict pinned to ``tmp_path``.
 
-    Every path-bearing field is explicit so that stale env vars (e.g. a
-    left-over ``NEXUS_PROFILE=sandbox`` in the shell) cannot cause
-    ``_apply_sandbox_defaults`` to steer paths into ``~/.nexus/sandbox``
-    via the ``_load_from_environment`` → ``model_dump`` roundtrip in
-    ``_load_from_dict``. This is a known wiring gap in Task 4 — see the
-    report for ``test_sandbox_http_surface_is_restricted`` and
-    ``test_sandbox_features_endpoint_reports_enabled_bricks``.
+    Only ``profile`` + ``data_dir`` are required — after the wiring fix,
+    ``_load_from_dict`` correctly re-derives ``db_path`` / ``metastore_path``
+    / ``record_store_path`` from the supplied ``data_dir``.
     """
     base = tmp_path / "nexus"
-    db_path = str(base / "nexus.db")
     return {
         "profile": "sandbox",
         "data_dir": str(base),
-        "db_path": db_path,
-        "metastore_path": db_path,
-        "record_store_path": db_path,
     }
 
 
-def _force_single_node_metastore(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Force ``nexus.connect`` to skip federation.
-
-    SANDBOX does *not* need federation (no Raft, no peers, no gRPC bind).
-    The current ``connect()`` gate still tries to bootstrap federation
-    when the IPC brick is enabled (IPC is in SANDBOX ⊂ LITE).
-
-    We patch ``NexusFederation.bootstrap`` to raise the well-known
-    "ZoneManager requires PyO3 build --features full" RuntimeError at
-    the top level (bypassing the inner retry-with-backoff loop inside
-    ``NexusFederation.bootstrap``), so that ``connect()`` falls through
-    immediately to ``_open_local_metastore``.
-
-    This mirrors the pattern used by
-    ``tests/integration/test_connect_quickstart.py`` but targets the
-    outer bootstrap so the 12-retry backoff never fires.
-    """
-    from nexus.raft.federation import NexusFederation
-
-    def _raise_missing_full_build(*_args, **_kwargs):
-        raise RuntimeError(
-            "ZoneManager requires PyO3 build with --features full. "
-            "Build with: maturin develop -m rust/raft/Cargo.toml --features full"
-        )
-
-    monkeypatch.setattr(NexusFederation, "bootstrap", _raise_missing_full_build)
-
-
 @pytest.mark.asyncio
-async def test_sandbox_boots_without_external_services(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_sandbox_boots_without_external_services(tmp_path: Path) -> None:
     """Boot nexus with profile=sandbox; expect fast boot + basic FS ops.
 
     Spec target per Issue #3778 is <5 s, measured on a warm Python
     interpreter. In the pytest harness the first ``nexus.connect`` in a
-    fresh xdist worker pays significant extra cost for Rust kernel init,
-    Raft module import and FederationBootstrap wrapper resolution — none
-    of which is SANDBOX-specific and all of which amortises across
-    subsequent calls. We enforce a generous 60 s ceiling here so that CI
-    variability does not flake the test; the actual measured cold-boot
-    cost is always surfaced in the failure message, and the <5 s spec
-    target is tracked as a Task-14 follow-up (see the task report).
+    fresh xdist worker pays significant extra cost for Rust kernel init
+    and module imports — none of which is SANDBOX-specific and all of
+    which amortises across subsequent calls. We enforce a generous 60 s
+    ceiling here so that CI variability does not flake the test; the
+    actual measured cold-boot cost is always surfaced in the failure
+    message, and the <5 s spec target is tracked as a Task-14 follow-up.
     """
-    _force_single_node_metastore(monkeypatch)
-
     t0 = time.monotonic()
     nx = await nexus.connect(config=_sandbox_config(tmp_path))
     boot_time = time.monotonic() - t0
@@ -116,6 +80,25 @@ async def test_sandbox_boots_without_external_services(
         nx.write("/hello.txt", b"hello")
         assert nx.sys_read("/hello.txt") == b"hello"
     finally:
+        nx.close()
+
+
+@pytest.mark.asyncio
+async def test_sandbox_boot_never_calls_federation_bootstrap(tmp_path: Path) -> None:
+    """SANDBOX boot must NOT attempt federation (Raft) bootstrap.
+
+    Regression: prior code gated federation on ``"ipc" in enabled_bricks``.
+    BRICK_IPC is present in SANDBOX (⊃ LITE), so federation was incorrectly
+    started.  After the fix the gate uses ``BRICK_FEDERATION``, which only
+    CLUSTER and CLOUD include.
+    """
+    from nexus.raft.federation import NexusFederation
+
+    def _must_not_be_called(*_args, **_kwargs) -> None:
+        raise AssertionError("NexusFederation.bootstrap must NOT be called for profile=sandbox")
+
+    with patch.object(NexusFederation, "bootstrap", side_effect=_must_not_be_called):
+        nx = await nexus.connect(config=_sandbox_config(tmp_path))
         nx.close()
 
 
@@ -142,7 +125,6 @@ async def test_sandbox_http_surface_is_restricted(
 
     All other API routes must 404 after Task 11's route allowlist filter.
     """
-    _force_single_node_metastore(monkeypatch)
     monkeypatch.setenv("NEXUS_PROFILE", "sandbox")
 
     nx = await nexus.connect(config=_sandbox_config(tmp_path))
@@ -186,7 +168,6 @@ async def test_sandbox_features_endpoint_reports_enabled_bricks(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """/api/v2/features reports profile=sandbox and the expected brick set."""
-    _force_single_node_metastore(monkeypatch)
     monkeypatch.setenv("NEXUS_PROFILE", "sandbox")
 
     nx = await nexus.connect(config=_sandbox_config(tmp_path))
@@ -220,7 +201,7 @@ async def test_sandbox_features_endpoint_reports_enabled_bricks(
             )
 
             # SANDBOX must NOT enable heavyweight bricks
-            for forbidden in ("llm", "pay", "observability"):
+            for forbidden in ("llm", "pay", "observability", "federation"):
                 assert forbidden not in enabled, (
                     f"SANDBOX should not enable '{forbidden}'; enabled={sorted(enabled)}"
                 )

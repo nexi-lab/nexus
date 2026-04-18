@@ -7,6 +7,7 @@ external services (SQLite + in-mem LRU + BM25S), exposes only MCP +
 
 from nexus.contracts.deployment_profile import (
     BRICK_EVENTLOG,
+    BRICK_FEDERATION,
     BRICK_LLM,
     BRICK_MCP,
     BRICK_NAMESPACE,
@@ -42,6 +43,27 @@ class TestSandboxProfileEnum:
         assert BRICK_SANDBOX not in bricks  # sandbox provisioning brick
         assert BRICK_WORKFLOWS not in bricks
         assert BRICK_OBSERVABILITY not in bricks
+
+    def test_sandbox_excludes_federation(self) -> None:
+        """SANDBOX must not include BRICK_FEDERATION — no Raft, no external peers."""
+        assert BRICK_FEDERATION not in DeploymentProfile.SANDBOX.default_bricks()
+
+    def test_lite_excludes_federation(self) -> None:
+        """LITE also has IPC but must not start federation (pre-existing bug
+        exposed by Issue #3778 integration test)."""
+        assert BRICK_FEDERATION not in DeploymentProfile.LITE.default_bricks()
+
+    def test_cluster_includes_federation(self) -> None:
+        """CLUSTER is the minimum profile that enables federation."""
+        assert BRICK_FEDERATION in DeploymentProfile.CLUSTER.default_bricks()
+
+    def test_cloud_includes_federation(self) -> None:
+        """CLOUD includes federation as well."""
+        assert BRICK_FEDERATION in DeploymentProfile.CLOUD.default_bricks()
+
+    def test_full_excludes_federation(self) -> None:
+        """FULL (single-node desktop) does NOT include federation."""
+        assert BRICK_FEDERATION not in DeploymentProfile.FULL.default_bricks()
 
     def test_sandbox_superset_of_lite(self) -> None:
         sandbox = DeploymentProfile.SANDBOX.default_bricks()

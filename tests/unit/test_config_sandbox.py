@@ -109,3 +109,46 @@ class TestApplySandboxDefaults:
         cfg = NexusConfig(profile="sandbox", cache_size_mb=100)
         result = _apply_sandbox_defaults(cfg)
         assert result.cache_size_mb == 100
+
+
+class TestLoadFromDictSandbox:
+    def test_data_dir_override_rederives_sqlite_paths(self) -> None:
+        """Regression: user-supplied data_dir via _load_from_dict must update
+        all SQLite path fields — bug from Task 14's integration test.
+
+        _load_from_environment() may stamp sandbox paths derived from the
+        default ~/.nexus/sandbox data_dir.  After model_dump() + update() in
+        _load_from_dict, those stale paths appear in the merged dict even when
+        the user only specified data_dir=/tmp/custom.  _apply_sandbox_defaults
+        then sees path fields already "present" and skips re-deriving them.
+        The fix strips stale path fields from merged_dict before constructing
+        the final NexusConfig, so _apply_sandbox_defaults can re-derive them
+        from the user's custom data_dir.
+        """
+        from nexus.config import _load_from_dict
+
+        cfg = _load_from_dict({"profile": "sandbox", "data_dir": "/tmp/custom"})
+        assert cfg.data_dir == "/tmp/custom"
+        assert cfg.db_path == "/tmp/custom/nexus.db"
+        assert cfg.metastore_path == "/tmp/custom/nexus.db"
+        assert cfg.record_store_path == "/tmp/custom/nexus.db"
+
+    def test_explicit_path_fields_in_dict_are_not_overridden(self) -> None:
+        """If the user explicitly provides db_path in config_dict, it must win
+        over any data_dir-derived value (the strip only fires when path fields
+        are absent from the user's dict)."""
+        from nexus.config import _load_from_dict
+
+        cfg = _load_from_dict(
+            {
+                "profile": "sandbox",
+                "data_dir": "/tmp/custom",
+                "db_path": "/tmp/custom/override.db",
+                "metastore_path": "/tmp/custom/override.db",
+                "record_store_path": "/tmp/custom/override.db",
+            }
+        )
+        assert cfg.data_dir == "/tmp/custom"
+        assert cfg.db_path == "/tmp/custom/override.db"
+        assert cfg.metastore_path == "/tmp/custom/override.db"
+        assert cfg.record_store_path == "/tmp/custom/override.db"

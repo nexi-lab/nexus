@@ -512,9 +512,10 @@ async def connect(
     metadata_store: MetastoreABC
     federation = None
 
-    # Federation: attempt when IPC brick is enabled (cluster profile and above).
-    # Federation is a system service (not a brick) but requires IPC infrastructure.
-    if "ipc" in enabled_bricks:
+    # Federation: attempt only when the FEDERATION brick is explicitly enabled.
+    # LITE and SANDBOX both include IPC but must NOT start Raft (no external
+    # services).  Only CLUSTER and CLOUD include BRICK_FEDERATION.
+    if "federation" in enabled_bricks:
         try:
             from nexus.raft.federation import NexusFederation
 

@@ -46,15 +46,15 @@ class InMemoryEncryptionProvider(EncryptionProvider):
     def current_version(self, *, tenant_id: uuid.UUID) -> int:  # noqa: ARG002
         return self._current_version
 
-    def _context_aad(self, tenant_id: uuid.UUID, aad: bytes) -> bytes:
-        return f"v=inmem|tenant={tenant_id}|".encode() + aad
+    def _context_aad(self, tenant_id: uuid.UUID, kek_version: int, aad: bytes) -> bytes:
+        return f"v=inmem|tenant={tenant_id}|kek={kek_version}|".encode() + aad
 
     def wrap_dek(self, dek: bytes, *, tenant_id: uuid.UUID, aad: bytes) -> tuple[bytes, int]:
         self.wrap_count += 1
         version = self._current_version
         kek = self._versions[version]
         nonce = secrets.token_bytes(self._nonce_len)
-        ct = AESGCM(kek).encrypt(nonce, dek, self._context_aad(tenant_id, aad))
+        ct = AESGCM(kek).encrypt(nonce, dek, self._context_aad(tenant_id, version, aad))
         return nonce + ct, version
 
     def unwrap_dek(
@@ -76,7 +76,7 @@ class InMemoryEncryptionProvider(EncryptionProvider):
         kek = self._versions[kek_version]
         nonce, ct = wrapped[: self._nonce_len], wrapped[self._nonce_len :]
         try:
-            return AESGCM(kek).decrypt(nonce, ct, self._context_aad(tenant_id, aad))
+            return AESGCM(kek).decrypt(nonce, ct, self._context_aad(tenant_id, kek_version, aad))
         except InvalidTag as exc:
             raise WrappedDEKInvalid.from_row(
                 tenant_id=tenant_id,

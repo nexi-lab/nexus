@@ -266,3 +266,39 @@ class TestInMemoryEncryptionProvider:
         prov.unwrap_dek(w, tenant_id=tid, aad=b"a", kek_version=v)
         assert prov.wrap_count == 1
         assert prov.unwrap_count == 2
+
+    def test_kek_version_downgrade_unwrap_fails(self) -> None:
+        """Unwrap a v1-wrapped DEK while claiming kek_version=2 must fail.
+
+        Real providers reject this at the provider layer (Vault Transit:
+        decrypt with wrong key_version fails; AWS KMS: kek_version is encoded
+        in the opaque blob so the claim is ignored but downgrade can't succeed).
+        The fake must match — otherwise contract tests pass against the fake
+        and fail against real providers.
+        """
+        from nexus.bricks.auth.envelope import WrappedDEKInvalid
+
+        prov = InMemoryEncryptionProvider()
+        import uuid
+
+        tid = uuid.uuid4()
+        dek = b"\x77" * 32
+        wrapped, v1 = prov.wrap_dek(dek, tenant_id=tid, aad=b"a")
+        prov.rotate()  # current is now v2, v1 KEK still in _versions
+        with pytest.raises(WrappedDEKInvalid):
+            # Claim the row was wrapped at v2 even though it was v1
+            prov.unwrap_dek(wrapped, tenant_id=tid, aad=b"a", kek_version=2)
+
+    def test_unwrap_count_increments_on_failure(self) -> None:
+        """Failed unwraps still count — models a real KMS round-trip that
+        failed at the provider layer."""
+        from nexus.bricks.auth.envelope import WrappedDEKInvalid
+
+        prov = InMemoryEncryptionProvider()
+        import uuid
+
+        tid = uuid.uuid4()
+        w, v = prov.wrap_dek(b"\x00" * 32, tenant_id=tid, aad=b"a")
+        with pytest.raises(WrappedDEKInvalid):
+            prov.unwrap_dek(w, tenant_id=uuid.uuid4(), aad=b"a", kek_version=v)
+        assert prov.unwrap_count == 1

@@ -26,8 +26,15 @@ concurrency:
 
 jobs:
   docker-build-smoke:
-    name: Docker Build Smoke Test
+    name: Docker Build — ${{ matrix.profile.tag }}
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        profile:
+          - tag: latest
+            extras: all,performance,compression,monitoring,docker,event-streaming,sentry,pay
+          - tag: sandbox
+            extras: sandbox
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -41,13 +48,26 @@ jobs:
           context: .
           push: false
           target: builder
+          build-args: |
+            NEXUS_PROFILE_EXTRAS=${{ matrix.profile.extras }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Build Docker image (full)
+      - name: Build Docker image (full — ${{ matrix.profile.tag }})
         uses: docker/build-push-action@v6
         with:
           context: .
           push: false
+          tags: ghcr.io/nexi-lab/nexus:${{ matrix.profile.tag }}
+          build-args: |
+            NEXUS_PROFILE_EXTRAS=${{ matrix.profile.extras }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Assert sandbox image size
+        if: matrix.profile.tag == 'sandbox'
+        run: |
+          size_bytes=$(docker image inspect ghcr.io/nexi-lab/nexus:sandbox --format '{{.Size}}')
+          size_mb=$((size_bytes / 1024 / 1024))
+          echo "Sandbox image size: ${size_mb} MB"
+          test $size_mb -lt 500 || { echo "Image too large: ${size_mb}MB (limit: 500MB)"; exit 1; }

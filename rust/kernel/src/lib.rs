@@ -77,6 +77,7 @@ mod simd;
 mod slack_backend;
 #[cfg(unix)]
 mod stdio_pipe;
+mod stdio_stream;
 mod stream;
 mod stream_manager;
 mod stream_observer;
@@ -173,6 +174,9 @@ fn nexus_kernel(m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<shm_stream::SharedMemoryStreamBackend>()?;
     // Raft-backed durable stream (replaces Python `WALStreamBackend`).
     m.add_class::<wal_stream::WalStreamBackend>()?;
+    // Subprocess-stdio accumulation stream (Unix raw-fd pump).
+    #[cfg(unix)]
+    m.add_class::<stdio_stream::StdioStreamBackend>()?;
     m.add_class::<semaphore::VFSSemaphore>()?;
     // CAS Volume Engine (Issue #3403)
     m.add_class::<volume_engine::VolumeEngine>()?;

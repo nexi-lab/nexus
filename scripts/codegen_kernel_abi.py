@@ -114,6 +114,7 @@ CAPABILITY_GROUP_CONFIG: dict[str, tuple[str, ...]] = {
     "ipc": (
         "SharedMemoryPipeBackend",
         "SharedMemoryStreamBackend",
+        "StdioStreamBackend",
         "WalStreamBackend",
     ),
     "io": ("read_file", "read_files_bulk"),
@@ -167,6 +168,9 @@ RETURN_OVERRIDES: dict[str, str] = {
     "WalStreamBackend.read_at": "tuple[bytes, int]",
     "WalStreamBackend.read_batch": "tuple[list[bytes], int]",
     "WalStreamBackend.stats": "dict[str, Any]",
+    "StdioStreamBackend.read_at": "tuple[bytes, int]",
+    "StdioStreamBackend.read_batch": "tuple[list[bytes], int]",
+    "StdioStreamBackend.stats": "dict[str, Any]",
     "Kernel.dcache_stats": "dict[str, Any]",
     "Kernel.dcache_get_full": "dict[str, Any] | None",
     "Kernel.route": "RustRouteResult",

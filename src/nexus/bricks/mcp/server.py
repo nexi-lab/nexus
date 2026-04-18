@@ -1170,20 +1170,35 @@ async def create_mcp_server(
             Next page: nexus_semantic_search("machine learning algorithms", limit=10, offset=10)
         """
         nx_instance = _get_nexus_instance(ctx)
-        if not hasattr(nx_instance, "semantic_search"):
+
+        # Resolve SearchService via the kernel service registry (Issue #3778).
+        # NexusFS does not expose ``semantic_search`` as a direct attribute —
+        # the method lives on SearchService, reached through ``nx.service("search")``.
+        search_service: Any = None
+        try:
+            svc_fn = getattr(nx_instance, "service", None)
+            if svc_fn is not None:
+                search_service = svc_fn("search")
+        except Exception:
+            search_service = None
+
+        if search_service is None or not hasattr(search_service, "semantic_search"):
             return tool_error(
                 "unavailable",
-                "Semantic search not available (requires NexusFS with semantic search initialized).",
+                "Semantic search not available (search brick not loaded).",
             )
 
         try:
             # Over-fetch to allow has_more detection without a second round-trip
             fetch_limit = offset + limit * 2
-            all_results = await nx_instance.semantic_search(
-                query, path=path, search_mode=search_mode, limit=fetch_limit
+            all_results = await search_service.semantic_search(
+                query=query,
+                path=path,
+                search_mode=search_mode,
+                limit=fetch_limit,
             )
         except Exception as e:
-            if "not initialized" in str(e).lower():
+            if "not initialized" in str(e).lower() or "not available" in str(e).lower():
                 return tool_error("unavailable", "Semantic search not available (not initialized).")
             return tool_error("internal", f"Error in semantic search: {e}", str(e))
 
@@ -1191,7 +1206,16 @@ async def create_mcp_server(
         paginated_results = all_results[offset : offset + limit]
         has_more = (offset + limit) < total
 
-        result = {
+        # Issue #3778: surface the SANDBOX BM25S-fallback flag at the envelope
+        # level so clients can display a "degraded" indicator without having
+        # to scan every item.  ``semantic_degraded`` is stamped on each item
+        # dict when the fallback ran; we propagate it to the envelope when
+        # at least one item carries it.
+        degraded = any(
+            isinstance(r, dict) and r.get("semantic_degraded") is True for r in paginated_results
+        )
+
+        result: dict[str, Any] = {
             "total": total,
             "count": len(paginated_results),
             "offset": offset,
@@ -1199,6 +1223,8 @@ async def create_mcp_server(
             "has_more": has_more,
             "next_offset": offset + limit if has_more else None,
         }
+        if degraded:
+            result["semantic_degraded"] = True
 
         return format_response(result, response_format)
 

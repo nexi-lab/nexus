@@ -1,69 +1,158 @@
-"""E2E: SANDBOX nexus + MCP stdio client (Issue #3778).
+"""E2E: SANDBOX MCP semantic search surfaces ``semantic_degraded`` flag (Issue #3778).
 
-No subprocess-spawning MCP stdio-client fixture exists in the current test
-harness (tests/e2e/self_contained/mcp/conftest.py only provides environment
-isolation via `isolate_mcp_integration_tests`).  The in-process `mcp_server`
-fixture from test_mcp_server_integration.py calls `nx_instance.semantic_search`
-directly and does not route through SearchService._semantic_with_sandbox_fallback,
-so the `semantic_degraded` flag would not be visible through that path either.
+This test exercises the in-process MCP tool handler — the same code path a
+real MCP stdio client would hit — to prove that:
 
-Wiring the MCP search tool path to invoke _semantic_with_sandbox_fallback when
-NEXUS_PROFILE=sandbox would touch the nexus_semantic_search handler and the
-NexusFS.semantic_search delegation chain — more than 20 lines and tracked as a
-follow-up on Issue #3778.
+1. The MCP ``nexus_semantic_search`` tool resolves ``SearchService`` via
+   ``nx.service("search")`` (not the non-existent ``nx.semantic_search``
+   attribute), and
+2. In SANDBOX profile, the SearchService's semantic path degrades to local
+   BM25S and stamps every result dict with ``semantic_degraded=True``, and
+3. The WARNING is logged exactly once per SearchService instance.
 
-The test is xfail until a proper MCP e2e harness is added.
+We don't spawn a real MCP stdio subprocess — FastMCP's ``get_tool()`` gives
+us the registered callable, which is exactly what the wire protocol would
+invoke.  This is ~30 lines lighter than a subprocess harness while still
+covering the wiring gap Task 10 flagged.
 """
 
+from __future__ import annotations
+
+import json
+import logging
 from pathlib import Path
+from typing import Any, cast
+from unittest.mock import MagicMock
 
 import pytest
+
+from nexus.bricks.mcp.server import create_mcp_server
+from nexus.bricks.search.search_service import SearchService
+from nexus.core.nexus_fs import NexusFS
+
+
+class _StubRecordStore:
+    """Minimal RecordStore stub — enough for SearchService's SQL path to
+    return an empty list without raising.  The SANDBOX fallback test does
+    not need any real indexed content; it only checks that the stamping
+    and logging wiring are correct."""
+
+    def __init__(self) -> None:
+        self.engine = MagicMock()
+
+        def _session_factory() -> Any:
+            session = MagicMock()
+            session.execute.return_value = MagicMock(fetchall=lambda: [])
+            return session
+
+        self.session_factory = _session_factory
+
+
+class _FakeNexus:
+    """Duck-typed NexusFS stand-in exposing only ``service("search")``.
+
+    Routes ``service("search")`` to a real SearchService configured for
+    SANDBOX.  That's all the MCP ``nexus_semantic_search`` handler touches
+    after the Issue #3778 wiring fix.
+    """
+
+    def __init__(self, search_service: SearchService) -> None:
+        self._search_service = search_service
+
+    def service(self, name: str) -> Any:
+        if name == "search":
+            return self._search_service
+        return None
 
 
 @pytest.mark.e2e
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    reason=(
-        "Issue #3778: blocked on MCP e2e harness — no existing fixture spawns an MCP "
-        "stdio subprocess for the SANDBOX profile.  The in-process mcp_server fixture "
-        "does not route through SearchService._semantic_with_sandbox_fallback, so "
-        "semantic_degraded=True would not appear.  Wire the fallback into the MCP "
-        "nexus_semantic_search handler as a follow-up to this issue."
-    ),
-    strict=False,
-)
 async def test_sandbox_mcp_semantic_search_includes_degraded_flag(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """With SANDBOX profile and no peers configured, semantic search must
-    return results (BM25S fallback) with ``semantic_degraded=True`` per result.
+    """SANDBOX + MCP semantic search → every item has ``semantic_degraded=True``.
 
-    Blocked on:
-    1. A subprocess-spawning MCP stdio client fixture that starts Nexus with
-       NEXUS_PROFILE=sandbox and sends JSON-RPC tool calls over stdio.
-    2. Wiring ``SearchService._semantic_with_sandbox_fallback`` into the MCP
-       ``nexus_semantic_search`` tool so the degraded flag propagates to the
-       tool response JSON.
-
-    When both are available, replace this skeleton with the real assertion:
-
-        monkeypatch.setenv("NEXUS_PROFILE", "sandbox")
-        monkeypatch.setenv("NEXUS_DATA_DIR", str(tmp_path / "nexus"))
-
-        # Seed content so BM25S has something to return
-        await mcp_client.call_tool(
-            "nexus_write_file",
-            {"path": "/README.md", "content": "hello world from sandbox"},
-        )
-
-        resp = await mcp_client.call_tool(
-            "nexus_semantic_search",
-            {"query": "sandbox", "search_mode": "semantic"},
-        )
-
-        assert "items" in resp
-        assert len(resp["items"]) >= 1
-        assert all(r.get("semantic_degraded") is True for r in resp["items"])
+    This is the Task-10 follow-up that validates the wiring between the MCP
+    ``nexus_semantic_search`` handler and
+    ``SearchService._semantic_with_sandbox_fallback``.
     """
-    pytest.xfail("MCP stdio harness not yet available; see Issue #3778 follow-up notes above.")
+    monkeypatch.setenv("NEXUS_PROFILE", "sandbox")
+
+    # Build a real SANDBOX SearchService with a stub record_store so the
+    # BM25S fallback's SQL path returns [] cleanly (no daemon wired).
+    search_service = SearchService(
+        metadata_store=MagicMock(),
+        enforce_permissions=False,
+        record_store=_StubRecordStore(),
+        deployment_profile="sandbox",
+    )
+
+    # Patch the SQL fallback to return synthetic hits so the test can assert
+    # the degraded-flag stamping end-to-end.
+    async def _fake_sql(query: str, path: str, limit: int) -> list[dict[str, Any]]:
+        return [
+            {
+                "path": "/README.md",
+                "chunk_text": f"sandbox hit for {query}",
+                "score": 0.9,
+                "chunk_index": 0,
+                "start_offset": 0,
+                "end_offset": 10,
+                "line_start": 1,
+                "line_end": 1,
+            },
+            {
+                "path": "/docs/intro.md",
+                "chunk_text": "another sandbox hit",
+                "score": 0.7,
+                "chunk_index": 0,
+                "start_offset": 0,
+                "end_offset": 10,
+                "line_start": 1,
+                "line_end": 1,
+            },
+        ]
+
+    monkeypatch.setattr(search_service, "_sql_chunk_search", _fake_sql)
+
+    caplog.set_level(logging.DEBUG, logger="nexus.bricks.search.search_service")
+
+    # Spin up the MCP server with our fake Nexus — create_mcp_server registers
+    # every tool including nexus_semantic_search.  create_mcp_server is typed
+    # to take a concrete NexusFS but only touches ``service(...)`` here, so
+    # cast lets the test use the minimal duck-typed stand-in without bringing
+    # a real NexusFS + backend stack online.
+    fake_nx = cast(NexusFS, _FakeNexus(search_service))
+    mcp = await create_mcp_server(nx=fake_nx)
+
+    tool = await mcp.get_tool("nexus_semantic_search")
+    assert tool is not None, "nexus_semantic_search tool not registered"
+
+    # Exercise the MCP handler the same way the wire protocol would.
+    raw = await tool.fn(query="sandbox", limit=5, search_mode="semantic")
+    # The handler serialises via format_response → JSON string for "json" mode.
+    resp = json.loads(raw) if isinstance(raw, str) else raw
+
+    assert "items" in resp, f"unexpected response shape: {resp}"
+    assert len(resp["items"]) == 2, resp
+    assert all(r.get("semantic_degraded") is True for r in resp["items"]), resp["items"]
+    assert resp.get("semantic_degraded") is True, resp
+
+    # Fire the search a second + third time to confirm the WARN-once guarantee.
+    await tool.fn(query="sandbox again", limit=5, search_mode="semantic")
+    await tool.fn(query="sandbox third", limit=5, search_mode="semantic")
+
+    warn_records = [
+        rec
+        for rec in caplog.records
+        if rec.levelno == logging.WARNING
+        and rec.name == "nexus.bricks.search.search_service"
+        and "SANDBOX" in rec.getMessage()
+    ]
+    assert len(warn_records) == 1, (
+        f"expected exactly 1 SANDBOX WARNING across 3 calls, got "
+        f"{len(warn_records)}: {[r.getMessage() for r in warn_records]}"
+    )
+    assert search_service._sandbox_fallback_warned is True

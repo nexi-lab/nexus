@@ -161,7 +161,15 @@ async def _boot_post_kernel_services(
     # not core filesystem enumeration.
     search_service: Any = None
     try:
+        import os as _os
+
         from nexus.bricks.search.search_service import SearchService
+
+        # Issue #3778: thread the active deployment profile so semantic_search
+        # can detect SANDBOX and route to the BM25S fallback with a stamped
+        # ``semantic_degraded=True`` flag.  Profile is sourced from env (set
+        # by connect()/CLI); falls back to None for callers that don't set it.
+        _profile = (_os.environ.get("NEXUS_PROFILE") or "").strip().lower() or None
 
         search_service = SearchService(
             metadata_store=nx.metadata,
@@ -172,8 +180,9 @@ async def _boot_post_kernel_services(
             default_context=nx._init_cred,
             record_store=getattr(nx, "_record_store", None),
             gateway=gateway,
+            deployment_profile=_profile,
         )
-        logger.debug("[BOOT:WIRED] SearchService created (kernel-level)")
+        logger.debug("[BOOT:WIRED] SearchService created (kernel-level, profile=%s)", _profile)
     except Exception as exc:
         logger.warning(
             "[BOOT:WIRED] SearchService unavailable (glob/grep will not work): %s",

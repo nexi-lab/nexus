@@ -316,3 +316,11 @@ class TestMetricsImport:
             "KEK_ROTATE_ROWS",
         ):
             assert hasattr(m, name), f"missing metric: {name}"
+
+
+class TestCredentialCarryingProtocol:
+    def test_protocol_defines_two_methods(self) -> None:
+        from nexus.bricks.auth.profile import CredentialCarryingProfileStore
+
+        assert hasattr(CredentialCarryingProfileStore, "upsert_with_credential")
+        assert hasattr(CredentialCarryingProfileStore, "get_with_credential")

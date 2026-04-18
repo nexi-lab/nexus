@@ -290,12 +290,24 @@ impl LockManager {
 
     /// Upgrade to distributed mode (federation DI). Sets Raft backend
     /// for advisory lock operations. I/O locks remain local always.
+    ///
+    /// Idempotent: the **first** caller installs the backend; subsequent
+    /// callers are no-ops. This matters in federation — lock state lives
+    /// in one specific zone's state machine (the first replicated mount
+    /// the kernel sees), and swapping the backend mid-flight would orphan
+    /// holders committed through the previous zone's Raft log. All nodes
+    /// must converge on the same backend zone; since `add_mount` fires in
+    /// the same deterministic order on every peer (driven by replicated
+    /// mount topology), first-wins is cluster-consistent.
     pub fn upgrade_to_distributed(
         &self,
         node: ZoneConsensus<FullStateMachine>,
         runtime: tokio::runtime::Handle,
     ) {
-        *self.raft.lock() = Some((node, runtime));
+        let mut raft = self.raft.lock();
+        if raft.is_none() {
+            *raft = Some((node, runtime));
+        }
     }
 
     // ── I/O lock: blocking acquire ──────────────────────────────────

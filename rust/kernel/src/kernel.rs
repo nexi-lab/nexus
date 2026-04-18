@@ -1315,11 +1315,27 @@ impl Kernel {
             let canonical = canonicalize(mount_point, zone_id);
             self.mount_table.install_metastore(&canonical, ms);
         }
-        // Federation DI: upgrade lock manager for root zone.
+        // Federation DI: the presence of `raft_backend` on a mount means
+        // the mount is cross-node replicated (a ZoneConsensus is attached).
+        // Once ANY replicated mount lands in the kernel, locks must also
+        // become cross-node — otherwise sys_lock on a federated path only
+        // sees each node's local BTreeMap and every node accepts the same
+        // acquire.
+        //
+        // LockManager's upgrade is first-wins (idempotent), so the first
+        // replicated mount on each peer picks the backend zone. Because
+        // federation topology is replicated + applied in a deterministic
+        // order on every peer, all nodes converge on the same zone for
+        // lock state. Subsequent mounts keep that backend so live lock
+        // state never migrates between state machines.
+        //
+        // Previously this was gated on `zone_id == ROOT_ZONE_ID`, but
+        // Python-driven federation bootstrap never calls add_mount for
+        // the root zone itself — it only mounts non-root zones under `/`
+        // — so that branch never fired in production and the whole
+        // cluster stayed in local-lock mode.
         if let Some((node, runtime)) = raft_backend {
-            if zone_id == crate::ROOT_ZONE_ID {
-                self.lock_manager.upgrade_to_distributed(node, runtime);
-            }
+            self.lock_manager.upgrade_to_distributed(node, runtime);
         }
         Ok(())
     }

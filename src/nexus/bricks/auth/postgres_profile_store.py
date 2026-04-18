@@ -1233,6 +1233,10 @@ def rotate_kek_for_tenant(
     rewrapped = 0
     failed = 0
     tenant_label = str(tenant_id)
+    # Track profile ids that failed this run so they are not re-selected on
+    # subsequent batch iterations, preventing an infinite retry loop.
+    # ``id`` is unique per tenant (PK is (tenant_id, id)).
+    _failed_ids: list[str] = []
     while True:
         if max_rows is not None and rewrapped + failed >= max_rows:
             break
@@ -1244,18 +1248,29 @@ def rotate_kek_for_tenant(
                 text("SET LOCAL app.current_tenant = :tid"),
                 {"tid": str(tenant_id)},
             )
+            # Exclude rows that already failed so the loop terminates.
+            if _failed_ids:
+                exclude_clause = " AND id != ALL(:skip_ids)"
+                params: dict[str, builtins.object] = {
+                    "tid": tenant_id,
+                    "target": target,
+                    "lim": this_batch,
+                    "skip_ids": _failed_ids,
+                }
+            else:
+                exclude_clause = ""
+                params = {"tid": tenant_id, "target": target, "lim": this_batch}
             rows = conn.execute(
                 text(
                     "SELECT tenant_id, principal_id, id, wrapped_dek, aad, kek_version "
                     "FROM auth_profiles "
                     "WHERE tenant_id = :tid "
                     "  AND ciphertext IS NOT NULL "
-                    "  AND kek_version < :target "
-                    "ORDER BY principal_id, id "
+                    "  AND kek_version < :target" + exclude_clause + " ORDER BY principal_id, id "
                     "FOR UPDATE SKIP LOCKED "
                     "LIMIT :lim"
                 ),
-                {"tid": tenant_id, "target": target, "lim": this_batch},
+                params,
             ).fetchall()
             if not rows:
                 break
@@ -1280,6 +1295,7 @@ def rotate_kek_for_tenant(
                         row.kek_version,
                         type(exc).__name__,
                     )
+                    _failed_ids.append(row.id)
                     failed += 1
                     continue
                 conn.execute(

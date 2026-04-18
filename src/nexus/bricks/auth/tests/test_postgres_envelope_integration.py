@@ -425,3 +425,65 @@ class TestRotateKEKForTenant:
         )
         assert report.rows_rewrapped == 2
         assert report.rows_remaining == 1
+
+
+class TestRotateKEKFailures:
+    def test_per_row_failure_continues_batch(
+        self,
+        pg_store_crypto: PostgresAuthProfileStore,
+        pg_engine: Engine,
+        tenant_id: uuid.UUID,
+        encryption_provider: InMemoryEncryptionProvider,
+    ) -> None:
+        """An unwrap failure on one row leaves that row on the old version; the
+        batch continues to completion for other rows."""
+        from nexus.bricks.auth.envelope import WrappedDEKInvalid
+
+        for i in range(3):
+            pg_store_crypto.upsert_with_credential(
+                make_profile(f"fail-{i}"),
+                ResolvedCredential(kind="api_key", api_key=f"k{i}"),
+            )
+        encryption_provider.rotate()
+
+        middle_wrapped = None
+        with pg_engine.begin() as conn:
+            conn.execute(text("SET LOCAL app.current_tenant = :tid"), {"tid": str(tenant_id)})
+            row = conn.execute(
+                text(
+                    "SELECT wrapped_dek FROM auth_profiles WHERE tenant_id = :tid AND id = 'fail-1'"
+                ),
+                {"tid": tenant_id},
+            ).fetchone()
+            assert row is not None
+            middle_wrapped = bytes(row.wrapped_dek)
+
+        real = encryption_provider
+
+        class _FlakyProvider:
+            def current_version(self, *, tenant_id):
+                return real.current_version(tenant_id=tenant_id)
+
+            def wrap_dek(self, dek, *, tenant_id, aad):
+                return real.wrap_dek(dek, tenant_id=tenant_id, aad=aad)
+
+            def unwrap_dek(self, wrapped, *, tenant_id, aad, kek_version):
+                if wrapped == middle_wrapped:
+                    raise WrappedDEKInvalid.from_row(
+                        tenant_id=tenant_id,
+                        profile_id="fail-1",
+                        kek_version=kek_version,
+                        cause="simulated flake",
+                    )
+                return real.unwrap_dek(
+                    wrapped, tenant_id=tenant_id, aad=aad, kek_version=kek_version
+                )
+
+        report = rotate_kek_for_tenant(
+            pg_engine,
+            tenant_id=tenant_id,
+            encryption_provider=_FlakyProvider(),
+        )
+        assert report.rows_rewrapped == 2
+        assert report.rows_failed == 1
+        assert report.rows_remaining == 1

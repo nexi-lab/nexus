@@ -202,6 +202,7 @@ class SearchService:
         grep_parallel_workers: int = GREP_PARALLEL_WORKERS,
         file_cache: Any | None = None,
         zoekt_client: Any | None = None,
+        deployment_profile: str | None = None,
     ):
         """Initialize search service.
 
@@ -215,6 +216,10 @@ class SearchService:
             record_store: RecordStoreABC for SQL engine (needed for semantic search)
             gateway: NexusFSGateway for file ops, routing, and dependency tracking
             zoekt_client: Injected ZoektClient instance (Issue #2188).
+            deployment_profile: Active deployment profile name (Issue #3778).
+                When set to ``"sandbox"``, a semantic search that goes through
+                ``_semantic_with_sandbox_fallback`` will degrade gracefully to
+                local BM25S when federation reports all peers unreachable.
         """
         self.metadata = metadata_store
         self._record_store = record_store
@@ -252,6 +257,12 @@ class SearchService:
         self._cross_zone_cache: TTLCache[tuple[str, ...], builtins.list[str]] = TTLCache(
             maxsize=1024, ttl=5.0
         )
+
+        # Issue #3778: SANDBOX profile — degrade semantic search to BM25S when
+        # federation reports all peers unreachable. The warn-once flag lives on
+        # the instance so a long-running sandbox doesn't spam the log.
+        self._deployment_profile = (deployment_profile or "").lower() or None
+        self._sandbox_fallback_warned = False
 
         logger.info("[SearchService] Initialized")
 
@@ -3232,6 +3243,77 @@ class SearchService:
         self._indexing_service = components.indexing_service
         self._indexing_pipeline = components.indexing_pipeline
         self._pipeline_indexer = components.pipeline_indexer
+
+    async def _semantic_with_sandbox_fallback(
+        self,
+        federation_call: "Any",
+        bm25s_call: "Any",
+    ) -> "builtins.list[Any]":
+        """Run federated semantic search with SANDBOX-profile BM25S fallback.
+
+        Issue #3778. When the active profile is SANDBOX and federation reports
+        that every peer failed (see ``is_all_peers_failed``), we fall back to
+        the local BM25S callable and stamp each result with
+        ``semantic_degraded=True``. A WARNING is logged only on the first
+        fallback per ``SearchService`` instance; subsequent fallbacks are
+        silent to avoid flooding a long-running sandbox's logs.
+
+        The callables are supplied by the caller so this method is easy to
+        test and has no hard dependency on specific federation / BM25S
+        constructor shapes.
+
+        Args:
+            federation_call: zero-arg awaitable that returns a
+                ``FederatedSearchResponse``. Wrap the real dispatcher's
+                ``.search(...)`` with functools.partial or a lambda.
+            bm25s_call: zero-arg awaitable that returns a list of
+                ``BaseSearchResult`` (or any object with ``semantic_degraded``
+                assignable). Executed only when federation reports all peers
+                failed AND the profile is SANDBOX.
+
+        Returns:
+            A list of results. When the SANDBOX fallback kicks in, each item
+            has ``semantic_degraded = True``. Otherwise the federation's
+            results are returned as-is (``semantic_degraded`` unset).
+        """
+        # Defer imports so the main code path doesn't pay for them.
+        from nexus.bricks.search.federated_search import is_all_peers_failed
+
+        fed_response = await federation_call()
+
+        is_sandbox = self._deployment_profile == "sandbox"
+        if not is_sandbox:
+            return list(fed_response.results)
+
+        if not is_all_peers_failed(fed_response):
+            return list(fed_response.results)
+
+        # SANDBOX + all peers failed → fall back to local BM25S.
+        if not self._sandbox_fallback_warned:
+            logger.warning(
+                "[SearchService] SANDBOX: federation unreachable (zones_searched=%d, "
+                "zones_failed=%d) — degrading semantic search to local BM25S. "
+                "Results will be marked semantic_degraded=True. Further occurrences "
+                "will be logged at DEBUG.",
+                len(fed_response.zones_searched),
+                len(fed_response.zones_failed),
+            )
+            self._sandbox_fallback_warned = True
+        else:
+            logger.debug("[SearchService] SANDBOX semantic fallback to BM25S (already warned once)")
+
+        import contextlib
+
+        bm25s_results = await bm25s_call()
+        stamped: builtins.list[Any] = []
+        for r in bm25s_results:
+            # Result may not accept the attribute (e.g. a plain dict / frozen
+            # dataclass) — in that case skip stamping but still return it so
+            # the caller gets *something*.
+            with contextlib.suppress(AttributeError):
+                r.semantic_degraded = True
+            stamped.append(r)
+        return stamped
 
     @rpc_expose(description="Search documents using natural language queries")
     async def semantic_search(

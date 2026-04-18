@@ -135,11 +135,22 @@ _TABLE_STATEMENTS: tuple[str, ...] = (
         cooldown_reason    TEXT,
         disabled_until     TIMESTAMPTZ,
         raw_error          TEXT,
+        ciphertext         BYTEA,
+        wrapped_dek        BYTEA,
+        nonce              BYTEA,
+        aad                BYTEA,
+        kek_version        INTEGER,
         created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         PRIMARY KEY (tenant_id, principal_id, id),
         FOREIGN KEY (principal_id, tenant_id)
-            REFERENCES principals(id, tenant_id) ON DELETE CASCADE
+            REFERENCES principals(id, tenant_id) ON DELETE CASCADE,
+        CONSTRAINT auth_profiles_envelope_all_or_none CHECK (
+            (ciphertext IS NULL) = (wrapped_dek IS NULL)
+            AND (ciphertext IS NULL) = (nonce IS NULL)
+            AND (ciphertext IS NULL) = (aad IS NULL)
+            AND (ciphertext IS NULL) = (kek_version IS NULL)
+        )
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_auth_profiles_provider ON auth_profiles(tenant_id, principal_id, provider)",
@@ -393,6 +404,33 @@ def _upgrade_shape_in_place(conn: Connection) -> None:
                 "REFERENCES principals(id, tenant_id) ON DELETE CASCADE"
             )
         )
+
+    # --- auth_profiles: envelope encryption columns (issue #3803) ---
+    for col, decl in (
+        ("ciphertext", "BYTEA"),
+        ("wrapped_dek", "BYTEA"),
+        ("nonce", "BYTEA"),
+        ("aad", "BYTEA"),
+        ("kek_version", "INTEGER"),
+    ):
+        conn.execute(text(f"ALTER TABLE auth_profiles ADD COLUMN IF NOT EXISTS {col} {decl}"))
+    # CHECK constraint. Use DROP ... IF EXISTS + ADD for idempotency.
+    conn.execute(
+        text(
+            "ALTER TABLE auth_profiles DROP CONSTRAINT IF EXISTS auth_profiles_envelope_all_or_none"
+        )
+    )
+    conn.execute(
+        text(
+            "ALTER TABLE auth_profiles "
+            "ADD CONSTRAINT auth_profiles_envelope_all_or_none CHECK ("
+            "    (ciphertext IS NULL) = (wrapped_dek IS NULL)"
+            "    AND (ciphertext IS NULL) = (nonce IS NULL)"
+            "    AND (ciphertext IS NULL) = (aad IS NULL)"
+            "    AND (ciphertext IS NULL) = (kek_version IS NULL)"
+            ")"
+        )
+    )
 
 
 def drop_schema(engine: Engine) -> None:

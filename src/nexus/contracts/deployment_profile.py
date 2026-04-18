@@ -11,10 +11,11 @@ The profile sets the *defaults*; explicit overrides always win.
 Lego Architecture reference: Part 10 — Edge Deployment.
 
 Profile hierarchy (superset relationship):
-    slim ⊂ cluster ⊂ embedded ⊂ lite ⊂ sandbox ⊂ full ⊆ cloud
+    slim ⊂ embedded ⊂ lite ⊂ sandbox ⊂ full ⊆ cloud
 
-REMOTE is orthogonal — zero local bricks, all operations proxy via RemoteBackend:
-    remote  (no local bricks — NFS-client model)
+CLUSTER and REMOTE are orthogonal tiers — not part of the superset chain:
+    cluster  (minimal multi-node — Raft + federation only; disjoint from embedded)
+    remote   (no local bricks — NFS-client model; Issue #844)
 """
 
 import logging

@@ -54,7 +54,29 @@ def cli(
         "NEXUS_URL": NEXUS_URL,
         "NEXUS_API_KEY": key,
     }
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)
+    debug = os.environ.get("NEXUS_E2E_DEBUG") in ("1", "true", "yes")
+    t0 = time.perf_counter()
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)
+        elapsed = time.perf_counter() - t0
+        if r.returncode != 0 or (debug and not r.stdout.strip()):
+            brief = " ".join(args[:3])
+            stderr_head = (r.stderr or "").strip().splitlines()[:5]
+            print(
+                f"    [cli: {brief!r} rc={r.returncode} t={elapsed:.1f}s stdout={len(r.stdout)}B stderr={stderr_head}]",
+                file=sys.stderr,
+                flush=True,
+            )
+        return r
+    except subprocess.TimeoutExpired:
+        elapsed = time.perf_counter() - t0
+        brief = " ".join(args[:3])
+        print(
+            f"    [cli: {brief!r} TIMEOUT after {elapsed:.1f}s (limit={timeout}s)]",
+            file=sys.stderr,
+            flush=True,
+        )
+        raise
 
 
 def rpc_transport():

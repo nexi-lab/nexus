@@ -94,6 +94,27 @@ class FederatedSearchResponse:
     cached: bool = False
 
 
+class FederationUnreachableError(Exception):
+    """Raised (or signaled) when federated search cannot reach any peer.
+
+    Issue #3778: SANDBOX profile treats this as a signal to fall back to
+    local BM25S and stamp results with ``semantic_degraded=True``.
+    """
+
+
+def is_all_peers_failed(response: FederatedSearchResponse) -> bool:
+    """Return True when the response reflects zero reachable peers.
+
+    Equivalent to: zero peers configured, or every configured peer
+    failed to respond.
+
+    Issue #3778.
+    """
+    if not response.zones_searched and not response.zones_failed:
+        return True
+    return bool(not response.results and len(response.zones_failed) >= len(response.zones_searched))
+
+
 class FederatedSearchDispatcher:
     """Fans out search queries across zones and fuses results via RRF.
 

@@ -65,8 +65,8 @@ class StreamBackend(Protocol):
     this interface so StreamManager is transport-agnostic.
 
     Implementations:
-        Rust kernel IPC registry       — in-process append-only buffer (Rust, ~0.5μs)
-        SharedMemoryStreamBackend (shm_stream.py) — cross-process mmap'd linear buffer (~1–5μs)
+        Rust kernel IPC registry                  — in-process append-only buffer (~0.5μs)
+        Rust ``SharedMemoryStreamBackend``        — cross-process mmap'd linear buffer (~1–5μs)
     """
 
     async def write(self, data: bytes, *, blocking: bool = True) -> int: ...
@@ -87,20 +87,3 @@ class StreamBackend(Protocol):
 
     @property
     def tail(self) -> int: ...
-
-
-# ---------------------------------------------------------------------------
-# Error translation (used by shm_stream.py)
-# ---------------------------------------------------------------------------
-
-
-def _translate_rust_error(exc: RuntimeError) -> None:
-    """Translate Rust RuntimeError tags to Python exception classes."""
-    msg = str(exc)
-    if msg.startswith("StreamClosed:"):
-        raise StreamClosedError(msg.split(":", 1)[1]) from None
-    if msg.startswith("StreamFull:"):
-        raise StreamFullError(msg.split(":", 1)[1]) from None
-    if msg.startswith("StreamEmpty:"):
-        raise StreamEmptyError(msg.split(":", 1)[1]) from None
-    raise exc

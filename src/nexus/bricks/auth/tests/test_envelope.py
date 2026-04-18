@@ -302,3 +302,17 @@ class TestInMemoryEncryptionProvider:
         with pytest.raises(WrappedDEKInvalid):
             prov.unwrap_dek(w, tenant_id=uuid.uuid4(), aad=b"a", kek_version=v)
         assert prov.unwrap_count == 1
+
+
+class TestMetricsImport:
+    def test_all_metrics_defined(self) -> None:
+        from nexus.bricks.auth import envelope_metrics as m
+
+        for name in (
+            "DEK_CACHE_HITS",
+            "DEK_CACHE_MISSES",
+            "DEK_UNWRAP_ERRORS",
+            "DEK_UNWRAP_LATENCY",
+            "KEK_ROTATE_ROWS",
+        ):
+            assert hasattr(m, name), f"missing metric: {name}"

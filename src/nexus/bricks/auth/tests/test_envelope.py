@@ -17,6 +17,7 @@ from nexus.bricks.auth.envelope import (
     EnvelopeError,
     WrappedDEKInvalid,
 )
+from nexus.bricks.auth.envelope_providers.in_memory import InMemoryEncryptionProvider
 
 # Regex: any base64 or hex blob of 16+ bytes shouldn't appear in error text.
 # Real base64 of random secret bytes almost always contains a digit. Pure
@@ -195,3 +196,73 @@ class TestDEKCache:
         # cache.hits + cache.misses would be strictly less than the number
         # of get() calls. With a lock they're exactly equal.
         assert cache.hits + cache.misses == 8 * 200 * 32
+
+
+class TestInMemoryEncryptionProvider:
+    def test_roundtrip(self) -> None:
+        prov = InMemoryEncryptionProvider()
+        import uuid
+
+        tid = uuid.uuid4()
+        dek = b"\x22" * 32
+        wrapped, version = prov.wrap_dek(dek, tenant_id=tid, aad=b"aad")
+        assert version == 1
+        assert wrapped != dek
+        assert prov.unwrap_dek(wrapped, tenant_id=tid, aad=b"aad", kek_version=1) == dek
+
+    def test_current_version_bumps_after_rotate(self) -> None:
+        prov = InMemoryEncryptionProvider()
+        import uuid
+
+        tid = uuid.uuid4()
+        assert prov.current_version(tenant_id=tid) == 1
+        prov.rotate()
+        assert prov.current_version(tenant_id=tid) == 2
+
+    def test_wrap_at_v2_unwrap_at_v1_still_works(self) -> None:
+        prov = InMemoryEncryptionProvider()
+        import uuid
+
+        tid = uuid.uuid4()
+        dek = b"\x33" * 32
+        wrapped_v1, v1 = prov.wrap_dek(dek, tenant_id=tid, aad=b"a")
+        prov.rotate()
+        wrapped_v2, v2 = prov.wrap_dek(dek, tenant_id=tid, aad=b"a")
+        assert v1 == 1 and v2 == 2
+        # Both readable
+        assert prov.unwrap_dek(wrapped_v1, tenant_id=tid, aad=b"a", kek_version=v1) == dek
+        assert prov.unwrap_dek(wrapped_v2, tenant_id=tid, aad=b"a", kek_version=v2) == dek
+
+    def test_wrong_tenant_unwrap_fails(self) -> None:
+        from nexus.bricks.auth.envelope import WrappedDEKInvalid
+
+        prov = InMemoryEncryptionProvider()
+        import uuid
+
+        tid_a, tid_b = uuid.uuid4(), uuid.uuid4()
+        dek = b"\x44" * 32
+        wrapped, v = prov.wrap_dek(dek, tenant_id=tid_a, aad=b"a")
+        with pytest.raises(WrappedDEKInvalid):
+            prov.unwrap_dek(wrapped, tenant_id=tid_b, aad=b"a", kek_version=v)
+
+    def test_wrong_aad_unwrap_fails(self) -> None:
+        from nexus.bricks.auth.envelope import WrappedDEKInvalid
+
+        prov = InMemoryEncryptionProvider()
+        import uuid
+
+        tid = uuid.uuid4()
+        wrapped, v = prov.wrap_dek(b"\x55" * 32, tenant_id=tid, aad=b"aad-A")
+        with pytest.raises(WrappedDEKInvalid):
+            prov.unwrap_dek(wrapped, tenant_id=tid, aad=b"aad-B", kek_version=v)
+
+    def test_counters(self) -> None:
+        prov = InMemoryEncryptionProvider()
+        import uuid
+
+        tid = uuid.uuid4()
+        w, v = prov.wrap_dek(b"\x66" * 32, tenant_id=tid, aad=b"a")
+        prov.unwrap_dek(w, tenant_id=tid, aad=b"a", kek_version=v)
+        prov.unwrap_dek(w, tenant_id=tid, aad=b"a", kek_version=v)
+        assert prov.wrap_count == 1
+        assert prov.unwrap_count == 2

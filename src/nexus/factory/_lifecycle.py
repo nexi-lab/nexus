@@ -158,13 +158,14 @@ async def _wire_services(
         # Wire DLC into ZoneManager for runtime mount registration
         _zone_mgr = federation.zone_manager
         _zone_mgr._coordinator = nx._driver_coordinator
-        # Start the background reconciler now that DLC is available.
-        # It scans each local zone's replicated state machine for
-        # DT_MOUNT entries and ensures the kernel mount table matches.
-        # Needed because federation_mount may run on a peer node and
-        # replicate via Raft without triggering a local DLC hook here.
-        if hasattr(_zone_mgr, "start_mount_reconciler"):
-            _zone_mgr.start_mount_reconciler()
+        # R16.2: register the DT_MOUNT apply-event hook with Rust
+        # PyZoneManager. Replaces the old polling reconciler thread —
+        # Rust fires a MountEvent on every DT_MOUNT commit and runs a
+        # one-shot catch-up scan at registration time so any mounts
+        # replayed before this point are surfaced through the same
+        # callback path.
+        if hasattr(_zone_mgr, "install_mount_hook"):
+            _zone_mgr.install_mount_hook()
 
     # descendant_checker is now accessed via PermissionCheckHook (KernelDispatch INTERCEPT).
     # No kernel DI needed — PermissionCheckHook holds the reference internally.

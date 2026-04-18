@@ -750,6 +750,143 @@ fn propose_set_metadata(
     }
 }
 
+/// Consume ``MountEvent``s emitted by any zone's ``FullStateMachine``
+/// apply path (R16.2).
+///
+/// Runs as a long-lived tokio task spawned by ``PyZoneManager::new``.
+/// Per-event behavior:
+///
+/// - **hook registered** — acquires GIL, calls the hook with
+///   ``(parent_zone_id, mount_path, target_zone_id)``. If the hook
+///   raises, the exception is logged at ``error!`` with traceback and
+///   the consumer continues with the next event (one bad event must
+///   never poison the stream).
+/// - **hook not yet registered** — logs at ``warn!`` and drops. The
+///   ``set_mount_hook`` entry point runs a catch-up scan of every
+///   existing zone's DT_MOUNT entries, re-emitting them through the
+///   same channel, so early-startup events are always recovered.
+///
+/// Terminates when every ``MountEventTx`` clone has been dropped —
+/// typically only at ``PyZoneManager`` drop.
+#[cfg(all(feature = "grpc", has_protos))]
+async fn run_mount_event_consumer(
+    mut rx: tokio::sync::mpsc::UnboundedReceiver<crate::raft::MountEvent>,
+    hook: std::sync::Arc<parking_lot::RwLock<Option<Py<PyAny>>>>,
+) {
+    while let Some(event) = rx.recv().await {
+        // Snapshot the hook under the read lock; release the lock
+        // before acquiring the GIL so a concurrent set_mount_hook
+        // writer isn't blocked on whatever Python code the callback
+        // ends up running.
+        let snapshot: Option<Py<PyAny>> =
+            Python::attach(|py| hook.read().as_ref().map(|h| h.clone_ref(py)));
+        let Some(cb) = snapshot else {
+            tracing::warn!(
+                parent_zone = %event.parent_zone_id,
+                path = %event.mount_path,
+                target = %event.target_zone_id,
+                "mount-event: dropped (no hook registered yet); catch-up scan will recover",
+            );
+            continue;
+        };
+
+        Python::attach(|py| {
+            let args = (
+                event.parent_zone_id.clone(),
+                event.mount_path.clone(),
+                event.target_zone_id.clone(),
+            );
+            match cb.call1(py, args) {
+                Ok(_) => {}
+                Err(e) => {
+                    // Surface the traceback so the operator sees why a
+                    // real DT_MOUNT didn't wire up DLC on this node.
+                    e.clone_ref(py).print(py);
+                    tracing::error!(
+                        parent_zone = %event.parent_zone_id,
+                        path = %event.mount_path,
+                        target = %event.target_zone_id,
+                        error = %e,
+                        "mount-event: Python hook raised; DT_MOUNT DLC wiring skipped for this event",
+                    );
+                }
+            }
+        });
+    }
+    tracing::debug!("mount-event consumer: channel closed, consumer task exiting");
+}
+
+/// Scan every live zone's state machine for DT_MOUNT entries and push
+/// them onto the mount-event channel (R16.2 catch-up).
+///
+/// Called from ``set_mount_hook`` and after each ``create_zone`` so
+/// any DT_MOUNT the local node already has in state is re-surfaced to
+/// the newly-registered Python hook. Idempotent on the Python side —
+/// ``ZoneManager.mount()`` is a no-op when the entry is already a
+/// DT_MOUNT to the same target.
+#[cfg(all(feature = "grpc", has_protos))]
+async fn scan_existing_mounts(registry: std::sync::Arc<crate::raft::ZoneRaftRegistry>) {
+    use crate::transport::proto::nexus::core::FileMetadata as ProtoFileMetadata;
+    use prost::Message as ProstMessage;
+
+    let Some(tx) = registry.mount_event_tx() else {
+        // No sender installed → no one to consume; scan is a no-op.
+        return;
+    };
+
+    let mut emitted: usize = 0;
+    for zone_id in registry.list_zones() {
+        let Some(node) = registry.get_node(&zone_id) else {
+            continue;
+        };
+        let zone_id_inner = zone_id.clone();
+        let entries = node
+            .with_state_machine(move |sm| sm.list_metadata("/"))
+            .await;
+        let entries = match entries {
+            Ok(list) => list,
+            Err(e) => {
+                tracing::warn!(
+                    zone = %zone_id_inner,
+                    error = %e,
+                    "mount-event catch-up: list_metadata failed; skipping zone",
+                );
+                continue;
+            }
+        };
+        for (path, bytes) in entries {
+            let proto = match ProtoFileMetadata::decode(bytes.as_slice()) {
+                Ok(p) => p,
+                Err(_) => continue, // not a FileMetadata payload, skip
+            };
+            const DT_MOUNT: i32 = 2;
+            if proto.entry_type != DT_MOUNT || proto.target_zone_id.is_empty() {
+                continue;
+            }
+            let event = crate::raft::MountEvent {
+                parent_zone_id: zone_id.clone(),
+                mount_path: path,
+                target_zone_id: proto.target_zone_id,
+            };
+            if let Err(e) = tx.send(event) {
+                tracing::error!(
+                    zone = %zone_id,
+                    error = %e,
+                    "mount-event catch-up: send failed (consumer gone); aborting scan",
+                );
+                return;
+            }
+            emitted += 1;
+        }
+    }
+    if emitted > 0 {
+        tracing::info!(
+            emitted,
+            "mount-event catch-up: re-emitted DT_MOUNT entries to consumer",
+        );
+    }
+}
+
 /// Propose a ``Command::AdjustCounter`` through raft on the given node.
 /// Returns the new counter value.
 #[cfg(all(feature = "grpc", has_protos))]
@@ -804,6 +941,19 @@ pub struct PyZoneManager {
     shutdown_tx: Option<tokio::sync::watch::Sender<bool>>,
     node_id: u64,
     use_tls: bool,
+    /// Registered Python callback for DT_MOUNT apply events (R16.2).
+    ///
+    /// Consumer task reads under the lock per event. Starts ``None``
+    /// and gets populated when Python calls ``set_mount_hook``. While
+    /// ``None``, the consumer drops events with a ``warn!`` log; the
+    /// catch-up scan in ``set_mount_hook`` re-emits them through the
+    /// same channel once the hook is in place.
+    mount_hook: std::sync::Arc<parking_lot::RwLock<Option<Py<PyAny>>>>,
+    /// Handle to the consumer tokio task — dropped on shutdown so the
+    /// task stops when the mpsc sender is also dropped (the registry
+    /// holds a clone but this ``Drop`` calls ``clear_mount_event_tx``
+    /// implicitly via the runtime teardown).
+    _mount_consumer: Option<tokio::task::JoinHandle<()>>,
 }
 
 #[cfg(all(feature = "grpc", has_protos))]
@@ -898,6 +1048,21 @@ impl PyZoneManager {
             tls_config.clone(),
         ));
 
+        // R16.2: DT_MOUNT apply-event channel. Install the sender on
+        // the registry BEFORE open_existing_zones_from_disk so any
+        // zones reopened from disk at startup get the sender attached
+        // to their state machines. Events that fire before Python
+        // registers a hook are dropped by the consumer (logged at
+        // warn!); the catch-up scan in set_mount_hook re-emits every
+        // DT_MOUNT currently present in state, so startup replay is
+        // always covered once the hook arrives.
+        let (mount_event_tx, mount_event_rx) = tokio::sync::mpsc::unbounded_channel();
+        registry.set_mount_event_tx(mount_event_tx);
+        let mount_hook: std::sync::Arc<parking_lot::RwLock<Option<Py<PyAny>>>> =
+            std::sync::Arc::new(parking_lot::RwLock::new(None));
+        let consumer_handle =
+            runtime.spawn(run_mount_event_consumer(mount_event_rx, mount_hook.clone()));
+
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
         let config = ServerConfig {
@@ -971,6 +1136,8 @@ impl PyZoneManager {
             shutdown_tx: Some(shutdown_tx),
             node_id,
             use_tls,
+            mount_hook,
+            _mount_consumer: Some(consumer_handle),
         })
     }
 
@@ -1007,6 +1174,15 @@ impl PyZoneManager {
                     .create_zone(zone_id, peer_addrs, self.runtime.handle()),
             )
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to create zone: {}", e)))?;
+
+        // R16.2: re-emit DT_MOUNT events for any historic mounts in
+        // this zone (covers the case where the zone was opened via
+        // open_existing_zones_from_disk before a hook was registered,
+        // then re-created through this API after hook setup).
+        let registry = self.registry.clone();
+        self.runtime.spawn(async move {
+            scan_existing_mounts(registry).await;
+        });
 
         Ok(PyZoneHandle {
             node,
@@ -1050,6 +1226,13 @@ impl PyZoneManager {
             )
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to join zone: {}", e)))?;
 
+        // R16.2: see create_zone — trigger catch-up for any DT_MOUNT
+        // snapshot entries the joining zone may receive.
+        let registry = self.registry.clone();
+        self.runtime.spawn(async move {
+            scan_existing_mounts(registry).await;
+        });
+
         Ok(PyZoneHandle {
             node,
             runtime_handle: self.runtime.handle().clone(),
@@ -1074,6 +1257,40 @@ impl PyZoneManager {
         self.registry
             .remove_zone(zone_id)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to remove zone: {}", e)))
+    }
+
+    /// Register a Python callback invoked once per DT_MOUNT apply (R16.2).
+    ///
+    /// The callback receives ``(parent_zone_id: str, mount_path: str,
+    /// target_zone_id: str)`` and runs under the GIL on the manager's
+    /// tokio runtime thread — it should not block for long (delegate
+    /// heavy work to a thread if needed). Exceptions raised by the
+    /// callback are logged at ``error!`` with traceback but do not
+    /// stop the consumer; future events keep flowing.
+    ///
+    /// Calling ``set_mount_hook`` a second time replaces the callback
+    /// and re-runs the catch-up scan, so the new hook still observes
+    /// every DT_MOUNT currently in state. Replaces the Python
+    /// ``start_mount_reconciler`` polling thread.
+    pub fn set_mount_hook(&self, py: Python<'_>, callback: Py<PyAny>) -> PyResult<()> {
+        if !callback.bind(py).is_callable() {
+            return Err(PyRuntimeError::new_err(
+                "mount_hook must be callable (received non-callable object)",
+            ));
+        }
+        *self.mount_hook.write() = Some(callback);
+        let registry = self.registry.clone();
+        self.runtime.spawn(async move {
+            scan_existing_mounts(registry).await;
+        });
+        Ok(())
+    }
+
+    /// Remove the registered Python callback. Future DT_MOUNT events
+    /// are dropped with a ``warn!`` log until ``set_mount_hook`` is
+    /// called again.
+    pub fn clear_mount_hook(&self) {
+        *self.mount_hook.write() = None;
     }
 
     /// Mount a target zone at a path in a parent zone (NFS-style, strict).

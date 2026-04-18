@@ -40,6 +40,8 @@
 //! - [`RaftStorage`]: Persistent Raft log storage using sled
 
 mod error;
+#[cfg(feature = "grpc")]
+pub mod mount_event;
 pub mod replication_log;
 mod state_machine;
 
@@ -63,6 +65,9 @@ pub use node::{NodeRole, RaftConfig, RaftMsg, ZoneConsensus, ZoneConsensusDriver
 pub use storage::RaftStorage;
 #[cfg(all(feature = "grpc", has_protos))]
 pub use zone_registry::{SearchCapabilitiesInfo, ZoneRaftRegistry};
+
+#[cfg(feature = "grpc")]
+pub use mount_event::{MountEvent, MountEventTx};
 
 /// A proposal to be replicated through Raft.
 #[derive(Debug)]

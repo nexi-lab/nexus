@@ -51,14 +51,10 @@ class FederationRPCService:
             # Fallback: single-node (no peers)
             self._zone_manager.create_zone(zone_id)
         logger.info("Zone '%s' created via RPC", zone_id)
-        # Newly-created zone may be the target of a DT_MOUNT already
-        # committed to some parent zone on this node via raft replication
-        # (e.g. test_zones_visible_on_both_nodes runs after the mount on
-        # node-1). Reconcile to pick those up.
-        try:
-            self._zone_manager.reconcile_mounts_from_raft()
-        except Exception as exc:
-            logger.debug("[FED] create_zone reconcile skipped: %s", exc)
+        # R16.2: Rust ``PyZoneManager.create_zone`` triggers a catch-up
+        # scan of historic DT_MOUNT entries after the zone is opened;
+        # the apply-event hook picks up any mounts whose target is now
+        # local. No manual reconcile_mounts_from_raft call needed.
         return {"zone_id": zone_id, "created": True}
 
     @rpc_expose(admin_only=True, description="Remove a Raft zone")
@@ -114,13 +110,10 @@ class FederationRPCService:
             zone_path,
             parent_zone,
         )
-        # Run reconcile so any *other* replicated DT_MOUNT entries on this
-        # node also get pushed into DLC — catches up for mounts that
-        # happened on a peer before this node processed them.
-        try:
-            self._zone_manager.reconcile_mounts_from_raft()
-        except Exception as exc:
-            logger.debug("[FED] mount reconcile skipped: %s", exc)
+        # R16.2: the DT_MOUNT proposed by the mount() shim above fires
+        # a MountEvent on apply — both on this node and on every peer
+        # that replicates it. The consumer task wires DLC without a
+        # manual reconcile call here.
         return {
             "parent_zone_id": parent_zone,
             "mount_path": path,

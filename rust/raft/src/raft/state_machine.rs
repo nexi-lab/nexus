@@ -473,6 +473,27 @@ pub struct FullStateMachine {
     /// are idempotent under full replay (acquire/release cycles
     /// cancel out) so they ignore this guard and always apply.
     last_applied: u64,
+    /// DT_MOUNT apply-side event channel (R16.2).
+    ///
+    /// Populated by ``ZoneRaftRegistry::setup_zone`` via
+    /// ``set_mount_event_tx`` when the registry has been handed a
+    /// sender by ``PyZoneManager``. ``apply`` decodes each
+    /// ``Command::SetMetadata`` value after the write txn commits and,
+    /// if it describes a DT_MOUNT entry, sends one ``MountEvent`` on
+    /// this channel for the Python DLC consumer to pick up.
+    ///
+    /// ``None`` for state machines that aren't attached to a
+    /// ``PyZoneManager`` (tests, witness nodes, direct-drive
+    /// integration harnesses) — the send site is gated on
+    /// ``is_some()`` so apply remains a no-op for those.
+    #[cfg(feature = "grpc")]
+    mount_event_tx: Option<super::mount_event::MountEventTx>,
+    /// The zone this state machine belongs to. Populated when a
+    /// ``mount_event_tx`` is attached so the emitted event carries
+    /// the parent zone id without re-plumbing it through every
+    /// apply call site. ``String::new()`` when no tx is attached.
+    #[cfg(feature = "grpc")]
+    zone_id_for_events: String,
 }
 
 impl FullStateMachine {
@@ -508,7 +529,25 @@ impl FullStateMachine {
             metadata,
             advisory,
             last_applied,
+            #[cfg(feature = "grpc")]
+            mount_event_tx: None,
+            #[cfg(feature = "grpc")]
+            zone_id_for_events: String::new(),
         })
+    }
+
+    /// Attach a DT_MOUNT apply-event sender + owning zone id (R16.2).
+    ///
+    /// Called once by ``ZoneRaftRegistry::setup_zone`` after the SM is
+    /// constructed but before it's moved into ``ZoneConsensus``; only
+    /// takes effect if the registry was pre-configured with a sender
+    /// by ``PyZoneManager``. Idempotent: replacing an existing sender
+    /// just drops the previous handle — raft contract is preserved
+    /// because the send site never fails the apply path.
+    #[cfg(feature = "grpc")]
+    pub fn set_mount_event_tx(&mut self, zone_id: String, tx: super::mount_event::MountEventTx) {
+        self.mount_event_tx = Some(tx);
+        self.zone_id_for_events = zone_id;
     }
 
     /// Clone the shared advisory-lock handle. Used by the kernel's
@@ -531,6 +570,76 @@ impl FullStateMachine {
     fn apply_set_metadata(&self, key: &str, value: &[u8]) -> Result<CommandResult> {
         self.metadata.set(key.as_bytes(), value)?;
         Ok(CommandResult::Success)
+    }
+
+    /// Decode a committed ``Command::SetMetadata`` value and, if it
+    /// describes a DT_MOUNT entry with a non-empty ``target_zone_id``,
+    /// push a ``MountEvent`` onto the attached sender (R16.2).
+    ///
+    /// Failure modes never propagate out of ``apply``:
+    /// - no sender attached → no-op
+    /// - non-SetMetadata command → no-op
+    /// - proto decode fails → ``warn!`` (indicates upstream writer
+    ///   wrote garbage — a bug elsewhere, but apply can't reject
+    ///   committed entries)
+    /// - entry is not DT_MOUNT or has empty target → no-op (normal)
+    /// - channel closed → ``error!`` (consumer gone; PyZoneManager
+    ///   being torn down or the consumer task panicked — in both
+    ///   cases we've lost the DLC wiring side-effect, which is
+    ///   recoverable by restart but worth surfacing)
+    #[cfg(feature = "grpc")]
+    fn emit_mount_event(&self, command: &Command) {
+        use crate::transport::proto::nexus::core::FileMetadata as ProtoFileMetadata;
+        use prost::Message as ProstMessage;
+
+        let Some(tx) = self.mount_event_tx.as_ref() else {
+            return;
+        };
+        let (key, value) = match command {
+            Command::SetMetadata { key, value } => (key, value),
+            _ => return,
+        };
+
+        // DT_MOUNT entries are the only payloads we route. Decode is
+        // lenient: a decode failure here means some non-FileMetadata
+        // SetMetadata value sneaked in (e.g. an internal counter key
+        // overwritten via SetMetadata by a non-standard caller). Log
+        // once and move on — do NOT fail apply.
+        let proto = match ProtoFileMetadata::decode(value.as_slice()) {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::warn!(
+                    zone = %self.zone_id_for_events,
+                    path = %key,
+                    error = %e,
+                    "mount-event: FileMetadata decode failed on apply (non-FileMetadata SetMetadata?)",
+                );
+                return;
+            }
+        };
+
+        // Only DT_MOUNT (entry_type == 2) with a non-empty target
+        // drives DLC wiring. Every other entry_type (DT_REG, DT_DIR,
+        // DT_PIPE, DT_STREAM, DT_EXTERNAL_STORAGE) is ignored.
+        const DT_MOUNT: i32 = 2;
+        if proto.entry_type != DT_MOUNT || proto.target_zone_id.is_empty() {
+            return;
+        }
+
+        let event = super::mount_event::MountEvent {
+            parent_zone_id: self.zone_id_for_events.clone(),
+            mount_path: key.clone(),
+            target_zone_id: proto.target_zone_id,
+        };
+
+        if let Err(e) = tx.send(event) {
+            tracing::error!(
+                zone = %self.zone_id_for_events,
+                path = %key,
+                error = %e,
+                "mount-event: send failed (consumer gone); DT_MOUNT DLC wiring missed on this apply",
+            );
+        }
     }
 
     /// Apply AdjustCounter command — atomic read-modify-write in apply().
@@ -1153,6 +1262,13 @@ impl StateMachine for FullStateMachine {
         // Update in-memory state only after successful commit
         self.last_applied = index;
 
+        // R16.2: fire a DT_MOUNT apply event *after* commit. Any send
+        // failure is logged but never propagated — returning Err from
+        // apply poisons the state machine per raft's "apply must not
+        // fail" invariant, and the event is strictly a side-effect.
+        #[cfg(feature = "grpc")]
+        self.emit_mount_event(command);
+
         Ok(result)
     }
 
@@ -1306,6 +1422,112 @@ mod tests {
 
     /// Determinism regression test (Issue #3029 / Bug 1):
     /// Two state machines applying the same commands must produce byte-identical snapshots.
+    /// R16.2: applying a ``Command::SetMetadata`` whose value decodes to
+    /// a DT_MOUNT proto with a non-empty ``target_zone_id`` pushes one
+    /// ``MountEvent`` on the attached sender.
+    #[cfg(feature = "grpc")]
+    #[test]
+    fn test_apply_dt_mount_emits_mount_event() {
+        use crate::raft::mount_event::MountEvent;
+        use crate::transport::proto::nexus::core::FileMetadata as ProtoFileMetadata;
+        use prost::Message as ProstMessage;
+
+        let store = RedbStore::open_temporary().unwrap();
+        let mut sm = FullStateMachine::new(&store).unwrap();
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<MountEvent>();
+        sm.set_mount_event_tx("zone-a".to_string(), tx);
+
+        let proto = ProtoFileMetadata {
+            path: "/mnt/peer".to_string(),
+            backend_name: "mount".to_string(),
+            physical_path: String::new(),
+            entry_type: 2, // DT_MOUNT
+            zone_id: "zone-a".to_string(),
+            target_zone_id: "zone-b".to_string(),
+            ..Default::default()
+        };
+        let bytes = proto.encode_to_vec();
+
+        let cmd = Command::SetMetadata {
+            key: "/mnt/peer".into(),
+            value: bytes,
+        };
+        let res = sm.apply(1, &cmd).unwrap();
+        assert!(matches!(res, CommandResult::Success));
+
+        let event = rx
+            .try_recv()
+            .expect("DT_MOUNT apply must emit a MountEvent");
+        assert_eq!(event.parent_zone_id, "zone-a");
+        assert_eq!(event.mount_path, "/mnt/peer");
+        assert_eq!(event.target_zone_id, "zone-b");
+        // Only one event per apply.
+        assert!(
+            rx.try_recv().is_err(),
+            "apply should emit exactly one event"
+        );
+    }
+
+    /// R16.2: non-mount entries (DT_REG, DT_DIR) must not emit events
+    /// — guards the consumer from non-DLC traffic.
+    #[cfg(feature = "grpc")]
+    #[test]
+    fn test_apply_dt_dir_emits_no_mount_event() {
+        use crate::raft::mount_event::MountEvent;
+        use crate::transport::proto::nexus::core::FileMetadata as ProtoFileMetadata;
+        use prost::Message as ProstMessage;
+
+        let store = RedbStore::open_temporary().unwrap();
+        let mut sm = FullStateMachine::new(&store).unwrap();
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<MountEvent>();
+        sm.set_mount_event_tx("zone-a".to_string(), tx);
+
+        let proto = ProtoFileMetadata {
+            path: "/docs".to_string(),
+            backend_name: "local".to_string(),
+            entry_type: 1, // DT_DIR
+            zone_id: "zone-a".to_string(),
+            ..Default::default()
+        };
+        let cmd = Command::SetMetadata {
+            key: "/docs".into(),
+            value: proto.encode_to_vec(),
+        };
+        sm.apply(1, &cmd).unwrap();
+        assert!(rx.try_recv().is_err(), "DT_DIR must not emit a mount event");
+    }
+
+    /// R16.2: a state machine without a sender installed just applies
+    /// normally — no panics, no attempted sends.
+    #[cfg(feature = "grpc")]
+    #[test]
+    fn test_apply_dt_mount_without_tx_is_inert() {
+        use crate::transport::proto::nexus::core::FileMetadata as ProtoFileMetadata;
+        use prost::Message as ProstMessage;
+
+        let store = RedbStore::open_temporary().unwrap();
+        let mut sm = FullStateMachine::new(&store).unwrap();
+        // No set_mount_event_tx — mount_event_tx stays None.
+
+        let proto = ProtoFileMetadata {
+            path: "/mnt/peer".to_string(),
+            entry_type: 2, // DT_MOUNT
+            zone_id: "zone-a".to_string(),
+            target_zone_id: "zone-b".to_string(),
+            ..Default::default()
+        };
+        let cmd = Command::SetMetadata {
+            key: "/mnt/peer".into(),
+            value: proto.encode_to_vec(),
+        };
+        let res = sm.apply(1, &cmd).unwrap();
+        assert!(matches!(res, CommandResult::Success));
+        // The value is persisted normally — the hook is a pure side-effect.
+        assert_eq!(sm.last_applied_index(), 1);
+    }
+
     #[test]
     fn test_state_machine_determinism() {
         let store1 = RedbStore::open_temporary().unwrap();

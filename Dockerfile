@@ -74,17 +74,23 @@ ENV UV_HTTP_TIMEOUT=300
 # Default (full image): all,performance,compression,monitoring,docker,event-streaming,sentry,pay
 # Lean sandbox image:   sandbox
 ARG NEXUS_PROFILE_EXTRAS=all,performance,compression,monitoring,docker,event-streaming,sentry,pay
-# Pre-install torch before txtai[ann] to control the variant.
+# Pre-install torch ONLY when 'all' extras are selected — torch is ~300-2000 MB
+# and is only consumed by txtai, which itself is gated on 'all'. SANDBOX (Issue #3778)
+# and other lean extras skip it entirely.
 # TORCH_VARIANT=cpu  → CPU-only wheels (~300 MB, no CUDA)
 # TORCH_VARIANT=cuda → Default PyPI wheels with CUDA (~2 GB)
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=cache,target=/root/.cache/pip \
-    if [ "$TORCH_VARIANT" = "cpu" ]; then \
-        uv pip install --system --index-url https://download.pytorch.org/whl/cpu torch; \
-    else \
-        uv pip install --system -i $(cat /tmp/pip_index) torch; \
-    fi && \
     set -eux; \
+    case ",${NEXUS_PROFILE_EXTRAS}," in \
+      *,all,*) \
+        if [ "$TORCH_VARIANT" = "cpu" ]; then \
+            uv pip install --system --index-url https://download.pytorch.org/whl/cpu torch; \
+        else \
+            uv pip install --system -i "$(cat /tmp/pip_index)" torch; \
+        fi ;; \
+      *) echo "Skipping torch pre-install for extras: ${NEXUS_PROFILE_EXTRAS}" ;; \
+    esac; \
     uv pip install --system -i "$(cat /tmp/pip_index)" ".[${NEXUS_PROFILE_EXTRAS}]"; \
     case ",${NEXUS_PROFILE_EXTRAS}," in \
       *,all,*) \
@@ -200,22 +206,27 @@ ENV GLIBC_TUNABLES="glibc.rtld.optional_static_tls=16384"
 # ---------- CLI connectors: gws + gh (Issue #3148) ----------
 # gws: Google Workspace CLI for Gmail/Calendar/Drive/Sheets/Docs/Chat connectors
 # gh: GitHub CLI for GitHub connector
+# Skipped for SANDBOX (#3778) — these connectors aren't used in the sandbox profile.
 ARG TARGETARCH
 RUN set -eux; \
-    ARCH=$([ "${TARGETARCH}" = "arm64" ] && echo "aarch64" || echo "x86_64"); \
-    tmpdir="$(mktemp -d)"; \
-    trap 'rm -rf "$tmpdir"' EXIT; \
-    curl -fsSL "https://github.com/googleworkspace/cli/releases/latest/download/google-workspace-cli-${ARCH}-unknown-linux-gnu.tar.gz" \
-        | tar -xz -C "$tmpdir"; \
-    install -m 0755 "$tmpdir/gws" /usr/local/bin/gws; \
-    sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources; \
-    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-        | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && \
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
-        > /etc/apt/sources.list.d/github-cli.list && \
-    apt-get update && apt-get install -y --no-install-recommends git gh && \
-    rm -rf /var/lib/apt/lists/* && \
-    gws --version && gh --version
+    case ",${NEXUS_PROFILE_EXTRAS}," in \
+      *,all,*) \
+        ARCH=$([ "${TARGETARCH}" = "arm64" ] && echo "aarch64" || echo "x86_64"); \
+        tmpdir="$(mktemp -d)"; \
+        trap 'rm -rf "$tmpdir"' EXIT; \
+        curl -fsSL "https://github.com/googleworkspace/cli/releases/latest/download/google-workspace-cli-${ARCH}-unknown-linux-gnu.tar.gz" \
+            | tar -xz -C "$tmpdir"; \
+        install -m 0755 "$tmpdir/gws" /usr/local/bin/gws; \
+        sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources; \
+        curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+            | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && \
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+            > /etc/apt/sources.list.d/github-cli.list && \
+        apt-get update && apt-get install -y --no-install-recommends git gh && \
+        rm -rf /var/lib/apt/lists/* && \
+        gws --version && gh --version ;; \
+      *) echo "Skipping gws/gh CLI connectors for extras: ${NEXUS_PROFILE_EXTRAS}" ;; \
+    esac
 
 # ---------- Copy Python packages + Rust extensions ----------
 COPY --from=builder /usr/local/lib/python3.14/site-packages /usr/local/lib/python3.14/site-packages

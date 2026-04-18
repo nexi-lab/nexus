@@ -714,11 +714,12 @@ impl PyZoneManager {
     ///     ca_key_path: Path to CA private key file (read once at startup for server-side cert signing).
     ///     join_token_hash: SHA-256 hash of join token password (for JoinCluster verification).
     #[new]
-    #[pyo3(signature = (hostname, base_path, bind_addr="0.0.0.0:2126", tls_cert_path=None, tls_key_path=None, tls_ca_path=None, ca_key_path=None, join_token_hash=None))]
+    #[pyo3(signature = (hostname, base_path, peers, bind_addr="0.0.0.0:2126", tls_cert_path=None, tls_key_path=None, tls_ca_path=None, ca_key_path=None, join_token_hash=None))]
     #[allow(clippy::too_many_arguments)] // PyO3 constructor — Python API needs flat keyword args
     pub fn new(
         hostname: &str,
         base_path: &str,
+        peers: Vec<String>,
         bind_addr: &str,
         tls_cert_path: Option<&str>,
         tls_key_path: Option<&str>,
@@ -727,7 +728,7 @@ impl PyZoneManager {
         join_token_hash: Option<&str>,
     ) -> PyResult<Self> {
         use crate::raft::ZoneRaftRegistry;
-        use crate::transport::{RaftGrpcServer, ServerConfig, TlsConfig};
+        use crate::transport::{NodeAddress, RaftGrpcServer, ServerConfig, TlsConfig};
         use std::sync::Arc;
 
         let node_id = crate::transport::hostname_to_node_id(hostname);
@@ -795,6 +796,38 @@ impl PyZoneManager {
             ..Default::default()
         };
         let use_tls = tls_config.is_some();
+
+        // R15.e: enumerate local zone storage and reopen every
+        // previously-persisted zone BEFORE the gRPC server starts
+        // accepting RPCs. This is the etcd / CockroachDB / TiKV pattern
+        // — local storage is the source of truth for "which groups does
+        // this node host?", not the first inbound step_message. Without
+        // this, a vote/heartbeat arriving during the restart window would
+        // have been the only trigger to re-open the zone, and the
+        // now-deleted auto-reopen branch in step_message would have
+        // silently dropped messages (or worse, re-bootstrapped with
+        // peers=0) if it fired before the transport loop caught up.
+        let peer_addrs: Vec<NodeAddress> = peers
+            .iter()
+            .map(|s| {
+                NodeAddress::parse(s.trim(), use_tls)
+                    .map_err(|e| PyRuntimeError::new_err(format!("Invalid peer '{}': {}", s, e)))
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+        let enum_handle = runtime.handle().clone();
+        let enum_registry = registry.clone();
+        let enum_peers = peer_addrs.clone();
+        runtime
+            .handle()
+            .block_on(async move {
+                enum_registry
+                    .open_existing_zones_from_disk(enum_peers, &enum_handle)
+                    .await
+            })
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to enumerate zones on startup: {}", e))
+            })?;
+
         let mut server = RaftGrpcServer::new(registry.clone(), config);
         // Configure JoinCluster RPC support if join token is available.
         // Read CA key from disk once — held in memory for server-side cert signing.

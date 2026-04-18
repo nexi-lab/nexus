@@ -59,6 +59,7 @@ def _get_zone_manager(
     hostname: str,
     data_dir: str,
     bind_addr: str,
+    peers: list[str] | None = None,
 ) -> Any:
     """Create a ZoneManager from CLI options.
 
@@ -69,6 +70,7 @@ def _get_zone_manager(
     return ZoneManager(
         hostname=hostname,
         base_path=data_dir,
+        peers=peers or [],
         bind_addr=bind_addr,
     )
 
@@ -150,7 +152,7 @@ def create_zone_cmd(
             return
 
         peer_list = [p.strip() for p in peers.split(",")] if peers else []
-        mgr = _get_zone_manager(hostname, data_dir, bind)
+        mgr = _get_zone_manager(hostname, data_dir, bind, peers=peer_list)
 
         try:
             store = mgr.create_zone(zone_id, peers=peer_list)
@@ -227,7 +229,7 @@ def join_zone_cmd(
 
     try:
         peer_list = [p.strip() for p in peers.split(",")]
-        mgr = _get_zone_manager(hostname, data_dir, bind)
+        mgr = _get_zone_manager(hostname, data_dir, bind, peers=peer_list)
         store = mgr.join_zone(zone_id, peers=peer_list)
 
         console.print(f"[nexus.success]Joined zone '{zone_id}'[/nexus.success]")

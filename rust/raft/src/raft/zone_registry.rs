@@ -202,6 +202,87 @@ impl ZoneRaftRegistry {
             .await
     }
 
+    /// Open a previously-persisted zone from disk WITHOUT bootstrapping.
+    ///
+    /// Used by `open_existing_zones_from_disk` at startup. Unlike
+    /// `create_zone`, this uses `skip_bootstrap=true` so the ConfState
+    /// restored from `RaftStorage::initial_state()` is the authority —
+    /// no new voters are written and no campaign is triggered.
+    ///
+    /// R15.e: replaces the old `step_message` auto-reopen-from-disk
+    /// side-effect. Enumeration at startup runs before the gRPC server
+    /// accepts traffic, so by the time a vote/append arrives the zone
+    /// is already registered.
+    #[allow(clippy::result_large_err)]
+    pub async fn open_persisted_zone(
+        &self,
+        zone_id: &str,
+        peers: Vec<NodeAddress>,
+        runtime_handle: &tokio::runtime::Handle,
+    ) -> Result<ZoneConsensus<FullStateMachine>, TransportError> {
+        let config = RaftConfig {
+            id: self.node_id,
+            peers: vec![],
+            skip_bootstrap: true,
+            ..Default::default()
+        };
+        self.setup_zone(zone_id, config, peers, false, runtime_handle)
+            .await
+    }
+
+    /// Enumerate `base_path/*/raft/` and reopen every previously-persisted zone.
+    ///
+    /// Called once from `PyZoneManager::new` before the gRPC server starts
+    /// accepting RPCs. Subsequent step_message traffic for unknown zones
+    /// returns `NotFound` — dynamic zones arrive via `federation_create_zone`
+    /// or the leader's snapshot delivery, never via a side-effectful
+    /// step_message branch.
+    ///
+    /// This is the etcd / CockroachDB / TiKV pattern: local storage is the
+    /// source of truth for "which groups does this node host?".
+    ///
+    /// Idempotent — re-enumeration fast-paths zones already in `self.zones`.
+    #[allow(clippy::result_large_err)]
+    pub async fn open_existing_zones_from_disk(
+        &self,
+        peers: Vec<NodeAddress>,
+        runtime_handle: &tokio::runtime::Handle,
+    ) -> Result<usize, TransportError> {
+        if !self.base_path.exists() {
+            return Ok(0);
+        }
+        let entries = std::fs::read_dir(&self.base_path).map_err(|e| {
+            TransportError::Connection(format!(
+                "Failed to read base_path {}: {}",
+                self.base_path.display(),
+                e
+            ))
+        })?;
+        let mut count: usize = 0;
+        for entry in entries {
+            let entry = entry.map_err(|e| {
+                TransportError::Connection(format!("Failed to read dir entry: {}", e))
+            })?;
+            // Only consider directories: each zone lives under its own
+            // `{base_path}/{zone_id}/` subdir.
+            if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                continue;
+            }
+            // Existence check: if `{zone}/raft/` doesn't exist, this dir
+            // wasn't a persisted zone — skip. Matches the pattern used by
+            // RaftStorage::open (which creates this subdir).
+            let raft_dir = entry.path().join("raft");
+            if !raft_dir.exists() {
+                continue;
+            }
+            let zone_id = entry.file_name().to_string_lossy().into_owned();
+            self.open_persisted_zone(&zone_id, peers.clone(), runtime_handle)
+                .await?;
+            count += 1;
+        }
+        Ok(count)
+    }
+
     /// Internal: open sled, create ZoneConsensus + driver, spawn transport loop, register zone.
     #[allow(clippy::result_large_err)]
     async fn setup_zone(
@@ -581,5 +662,98 @@ impl ZoneRaftRegistry {
         }
         self.zones.clear();
         tracing::info!("All zones shut down");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[tokio::test]
+    async fn test_open_existing_zones_empty_base_path() {
+        // Empty (nonexistent) base_path returns Ok(0) — no zones to open.
+        let tmp = TempDir::new().unwrap();
+        let missing = tmp.path().join("does-not-exist");
+        let reg = ZoneRaftRegistry::new(missing, 1);
+        let n = reg
+            .open_existing_zones_from_disk(vec![], &tokio::runtime::Handle::current())
+            .await
+            .unwrap();
+        assert_eq!(n, 0);
+        assert!(reg.list_zones().is_empty());
+    }
+
+    /// Wait for a transport task's held Arc<RedbStore> to be released
+    /// after `shutdown_all`. The transport loop's tick period is ~100ms,
+    /// so 500ms is a generous margin. Test-only — production paths use
+    /// the explicit transport shutdown handshake, not a sleep.
+    async fn await_shutdown_cleanup() {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+
+    #[tokio::test]
+    async fn test_open_existing_zones_from_disk_restores_confstate() {
+        // Create a single-voter zone (campaign=true), confirm it's registered,
+        // drop the registry, reopen via open_existing_zones_from_disk, assert
+        // the zone is restored without a fresh campaign (skip_bootstrap=true)
+        // — the ConfState from RaftStorage::initial_state() is authoritative.
+        let tmp = TempDir::new().unwrap();
+        let base = tmp.path().to_path_buf();
+
+        let reg = ZoneRaftRegistry::new(base.clone(), 1);
+        reg.create_zone("corp-eng", vec![], &tokio::runtime::Handle::current())
+            .await
+            .unwrap();
+        assert_eq!(reg.list_zones(), vec!["corp-eng".to_string()]);
+        // Simulate process restart: shutdown tasks, release file locks.
+        reg.shutdown_all();
+        drop(reg);
+        await_shutdown_cleanup().await;
+
+        // New registry, same base_path — enumerate from disk.
+        let reg2 = ZoneRaftRegistry::new(base, 1);
+        let n = reg2
+            .open_existing_zones_from_disk(vec![], &tokio::runtime::Handle::current())
+            .await
+            .unwrap();
+        assert_eq!(n, 1);
+        let zones = reg2.list_zones();
+        assert_eq!(zones, vec!["corp-eng".to_string()]);
+        assert!(reg2.get_node("corp-eng").is_some());
+
+        reg2.shutdown_all();
+        await_shutdown_cleanup().await;
+    }
+
+    #[tokio::test]
+    async fn test_open_existing_zones_idempotent() {
+        // Second enumeration is a no-op: setup_zone fast-paths zones
+        // already registered in self.zones.
+        let tmp = TempDir::new().unwrap();
+        let base = tmp.path().to_path_buf();
+        let reg = ZoneRaftRegistry::new(base.clone(), 1);
+        reg.create_zone("zone-a", vec![], &tokio::runtime::Handle::current())
+            .await
+            .unwrap();
+        reg.shutdown_all();
+        drop(reg);
+        await_shutdown_cleanup().await;
+
+        let reg2 = ZoneRaftRegistry::new(base, 1);
+        let first = reg2
+            .open_existing_zones_from_disk(vec![], &tokio::runtime::Handle::current())
+            .await
+            .unwrap();
+        let second = reg2
+            .open_existing_zones_from_disk(vec![], &tokio::runtime::Handle::current())
+            .await
+            .unwrap();
+        assert_eq!(first, 1);
+        assert_eq!(second, 1);
+        assert_eq!(reg2.list_zones().len(), 1);
+
+        reg2.shutdown_all();
+        await_shutdown_cleanup().await;
     }
 }

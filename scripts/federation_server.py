@@ -6,6 +6,7 @@ Binds gRPC to WireGuard IP only (10.99.0.1:2126) to avoid public exposure.
 
 import os
 import signal
+import socket
 import sys
 import time
 from pathlib import Path
@@ -14,7 +15,6 @@ from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.raft.zone_manager import ZoneManager
 
 # ── Configuration ──────────────────────────────────────────────────────────────
-NODE_ID = 1
 WIREGUARD_IP = "10.99.0.1"
 GRPC_PORT = 2126
 BIND_ADDR = f"{WIREGUARD_IP}:{GRPC_PORT}"
@@ -33,7 +33,9 @@ def main() -> None:
     print("Nexus Federation Server — Node 1")
     print("=" * 60)
 
-    mgr = ZoneManager(node_id=NODE_ID, base_path=zones_dir, bind_addr=BIND_ADDR)
+    mgr = ZoneManager(
+        hostname=socket.gethostname(), base_path=zones_dir, peers=[], bind_addr=BIND_ADDR
+    )
     store = mgr.bootstrap(root_zone_id=ROOT_ZONE_ID)
 
     print(f"  is_leader: {store._engine.is_leader()}")

@@ -449,55 +449,20 @@ impl ZoneTransportService for ZoneTransportServiceImpl {
     /// Handle a raw raft-rs message forwarded from another node.
     ///
     /// Routes by zone_id to the correct Raft group's ZoneConsensus.
-    /// Auto-joins unknown zones (dynamic federation + node restart support).
+    /// Unknown zones return `NotFound` — the local storage enumeration at
+    /// `PyZoneManager::new` (R15.e) is the authority for which groups this
+    /// node hosts. New dynamic zones arrive via `federation_create_zone`;
+    /// new replicas of existing zones arrive via leader snapshot delivery
+    /// after the ConfChange commits. No side-effectful auto-reopen from
+    /// disk in the message hot path.
     async fn step_message(
         &self,
         request: Request<StepMessageRequest>,
     ) -> std::result::Result<Response<StepMessageResponse>, Status> {
         let req = request.into_inner();
-        let node = match get_zone_node(&self.registry, &req.zone_id) {
-            Ok(n) => n,
-            Err(_) => {
-                // Zone not found in memory — only reopen if data exists on disk
-                // (node restart scenario). For new dynamic zones, return not_found
-                // and let federation_create_zone RPC handle proper creation.
-                //
-                // Disk check contract: if `{zone_path}/raft` exists on disk, the
-                // zone was previously created and persisted Raft state (WAL + snapshots).
-                // This is the same recovery pattern as redb/sled: durable storage on
-                // disk is the source of truth for "has this zone ever been initialised".
-                // We re-open with the existing ConfState rather than bootstrapping
-                // a brand-new zone, which would corrupt the Raft log.
-                let zone_path = self.registry.base_path().join(&req.zone_id);
-                if !zone_path.join("raft").exists() {
-                    // No prior Raft data — this is genuinely a new zone.
-                    // Return not_found so the caller uses create_zone / federation RPC.
-                    return Err(Status::not_found(format!(
-                        "zone '{}' not found on this node",
-                        req.zone_id
-                    )));
-                }
-                // Restart recovery: zone data on disk, reopen with existing ConfState
-                let handle = tokio::runtime::Handle::current();
-                let peers = self.registry.get_all_peers();
-                match self
-                    .registry
-                    .create_zone(&req.zone_id, peers, &handle)
-                    .await
-                {
-                    Ok(n) => {
-                        tracing::info!("Fullnode auto-joined zone '{}'", req.zone_id);
-                        n
-                    }
-                    Err(e) => {
-                        return Err(Status::internal(format!(
-                            "Failed to auto-join zone '{}': {}",
-                            req.zone_id, e
-                        )));
-                    }
-                }
-            }
-        };
+        let node = get_zone_node(&self.registry, &req.zone_id).map_err(|_| {
+            Status::not_found(format!("zone '{}' not found on this node", req.zone_id))
+        })?;
 
         // Zone authorization: verify sender is a known zone member.
         // Parse once just to extract `from` for the membership check, then

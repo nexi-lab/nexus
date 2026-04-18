@@ -175,6 +175,7 @@ class NexusFederation:
                 zone_mgr = ZoneManager(
                     hostname=hostname,
                     base_path=zones_dir,
+                    peers=peers,
                     bind_addr=bind_addr,
                     advertise_addr=advertise_addr,
                 )

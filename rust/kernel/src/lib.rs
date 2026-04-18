@@ -26,6 +26,7 @@ mod cas_transport;
 mod dcache;
 mod dispatch;
 mod dlc;
+mod federation_client;
 mod file_watch;
 #[cfg(feature = "connectors")]
 mod gcs_backend;
@@ -211,6 +212,9 @@ fn nexus_kernel(m: &Bound<PyModule>) -> PyResult<()> {
         metadata_debug::file_metadata_to_proto_bytes,
         m
     )?)?;
+
+    // Federation peer gRPC client (R16.5b).
+    m.add_class::<federation_client::PyFederationClient>()?;
 
     // Register raft's PyO3 classes (ZoneManager, ZoneHandle, …) so
     // Python sees them under ``nexus_kernel`` alongside ``Kernel``.

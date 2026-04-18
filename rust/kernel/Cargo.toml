@@ -66,6 +66,7 @@ tonic-build = "0.13"
 
 [dev-dependencies]
 criterion = "0.5"
+rcgen = { version = "0.13", features = ["pem", "x509-parser"] }  # Self-signed CAs for federation_client tests
 tempfile = "3"
 
 [[bench]]

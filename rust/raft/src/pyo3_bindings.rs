@@ -2316,77 +2316,62 @@ pub fn register_python_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
 mod mount_helpers_tests {
     use super::*;
 
+    /// Mount + dir entries round-trip through encode/decode with the
+    /// expected field fidelity: DT_MOUNT keeps ``target_zone_id``,
+    /// DT_DIR carries empty ``target_zone_id``, and at a shared path
+    /// the two only differ in ``entry_type`` / ``backend_name`` /
+    /// ``target_zone_id`` (the identifying triplet).
     #[test]
-    fn encode_dt_mount_preserves_target_zone_id() {
-        let bytes = encode_file_metadata("/mnt/peer", "mount", "", DT_MOUNT, "zone-a", "zone-b");
-        let decoded = decode_file_metadata(&bytes).expect("decode must succeed");
-        assert_eq!(decoded.path, "/mnt/peer");
-        assert_eq!(decoded.backend_name, "mount");
-        assert_eq!(decoded.physical_path, "");
-        assert_eq!(decoded.entry_type, DT_MOUNT);
-        assert_eq!(decoded.zone_id, "zone-a");
-        assert_eq!(decoded.target_zone_id, "zone-b");
-    }
-
-    #[test]
-    fn encode_dt_dir_has_empty_target_zone_id() {
-        let bytes = encode_file_metadata("/mnt/peer", "virtual", "", DT_DIR, "zone-a", "");
-        let decoded = decode_file_metadata(&bytes).expect("decode must succeed");
-        assert_eq!(decoded.entry_type, DT_DIR);
-        assert_eq!(decoded.target_zone_id, "");
-        assert_eq!(decoded.zone_id, "zone-a");
-    }
-
-    /// Guard the exact byte shape: a mount entry and a dir entry at the
-    /// same path only differ in ``entry_type`` + ``backend_name`` +
-    /// ``target_zone_id`` — Python's ``MetadataMapper.to_proto`` output
-    /// for the same logical entry must decode identically.
-    #[test]
-    fn mount_and_dir_bytes_differ_only_in_expected_fields() {
+    fn encode_file_metadata_roundtrip_fidelity() {
         let mount_bytes = encode_file_metadata("/x", "mount", "", DT_MOUNT, "zone-a", "zone-b");
         let dir_bytes = encode_file_metadata("/x", "virtual", "", DT_DIR, "zone-a", "");
 
-        let mount_decoded = decode_file_metadata(&mount_bytes).unwrap();
-        let dir_decoded = decode_file_metadata(&dir_bytes).unwrap();
+        let m = decode_file_metadata(&mount_bytes).unwrap();
+        assert_eq!(m.path, "/x");
+        assert_eq!(m.entry_type, DT_MOUNT);
+        assert_eq!(m.backend_name, "mount");
+        assert_eq!(m.zone_id, "zone-a");
+        assert_eq!(m.target_zone_id, "zone-b");
 
-        assert_eq!(mount_decoded.path, dir_decoded.path);
-        assert_eq!(mount_decoded.zone_id, dir_decoded.zone_id);
-        assert_ne!(mount_decoded.entry_type, dir_decoded.entry_type);
-        assert_ne!(mount_decoded.backend_name, dir_decoded.backend_name);
-        assert_ne!(mount_decoded.target_zone_id, dir_decoded.target_zone_id);
+        let d = decode_file_metadata(&dir_bytes).unwrap();
+        assert_eq!(d.entry_type, DT_DIR);
+        assert_eq!(d.target_zone_id, "");
+
+        // Mount + dir at the same path differ only in the identifying triplet.
+        assert_eq!(m.path, d.path);
+        assert_eq!(m.zone_id, d.zone_id);
+        assert_ne!(m.entry_type, d.entry_type);
+        assert_ne!(m.backend_name, d.backend_name);
+        assert_ne!(m.target_zone_id, d.target_zone_id);
     }
 
-    /// R16.3: ``share_subtree`` must not bleed sibling paths into the
-    /// copy set — ``/usr/alice`` as the prefix must not match
-    /// ``/usr/alicebob``. This is the boundary-check guard that
-    /// ``path_matches_prefix`` provides on top of raw ``starts_with``.
+    /// R16.3 boundary: accepts self + descendants separated by ``/``,
+    /// rejects siblings with shared stems and non-descendants, matches
+    /// everything when the normalized prefix is empty (share-the-whole-
+    /// zone path). Covered in one table-driven test.
     #[test]
-    fn path_matches_prefix_rejects_sibling_with_shared_stem() {
-        assert!(!path_matches_prefix("/usr/alicebob", "/usr/alice"));
-        assert!(!path_matches_prefix("/usr/alice-temp", "/usr/alice"));
-    }
-
-    #[test]
-    fn path_matches_prefix_accepts_self_and_descendants() {
-        assert!(path_matches_prefix("/usr/alice", "/usr/alice"));
-        assert!(path_matches_prefix("/usr/alice/", "/usr/alice"));
-        assert!(path_matches_prefix("/usr/alice/foo", "/usr/alice"));
-        assert!(path_matches_prefix("/usr/alice/foo/bar", "/usr/alice"));
-    }
-
-    #[test]
-    fn path_matches_prefix_empty_prefix_matches_anything() {
-        // Empty normalized_prefix is only produced when the caller
-        // passed "/", meaning "share the whole zone".
-        assert!(path_matches_prefix("/", ""));
-        assert!(path_matches_prefix("/a", ""));
-        assert!(path_matches_prefix("/foo/bar", ""));
-    }
-
-    #[test]
-    fn path_matches_prefix_rejects_non_descendants() {
-        assert!(!path_matches_prefix("/usr", "/usr/alice"));
-        assert!(!path_matches_prefix("/etc/passwd", "/usr/alice"));
+    fn path_matches_prefix_matrix() {
+        let cases: &[(&str, &str, bool)] = &[
+            // (path, prefix, expected)
+            ("/usr/alice", "/usr/alice", true),         // self
+            ("/usr/alice/", "/usr/alice", true),        // trailing slash
+            ("/usr/alice/foo", "/usr/alice", true),     // direct child
+            ("/usr/alice/foo/bar", "/usr/alice", true), // grandchild
+            ("/usr/alicebob", "/usr/alice", false),     // sibling — shared stem
+            ("/usr/alice-temp", "/usr/alice", false),   // sibling — shared stem
+            ("/usr", "/usr/alice", false),              // ancestor, not descendant
+            ("/etc/passwd", "/usr/alice", false),       // unrelated
+            ("/", "", true),                            // empty prefix ≡ whole zone
+            ("/a", "", true),
+            ("/foo/bar", "", true),
+        ];
+        for (path, prefix, expected) in cases {
+            assert_eq!(
+                path_matches_prefix(path, prefix),
+                *expected,
+                "path_matches_prefix({path:?}, {prefix:?})",
+            );
+        }
     }
 
     #[test]

@@ -1064,57 +1064,55 @@ impl Metastore for RedbMetastore {
 mod tests {
     use super::*;
 
+    /// Binary serialize↔deserialize round-trip covers both a DT_REG
+    /// entry (target_zone_id = None) and a DT_MOUNT entry
+    /// (target_zone_id = Some, the R16.1a extension that the on-disk
+    /// format must preserve for federation mounts).
     #[test]
     fn test_serialize_roundtrip() {
-        let meta = FileMetadata {
-            path: "/test/file.txt".to_string(),
-            backend_name: "local".to_string(),
-            physical_path: "abc123".to_string(),
-            size: 1024,
-            etag: Some("hash123".to_string()),
-            version: 3,
-            entry_type: 0,
-            zone_id: Some("root".to_string()),
-            target_zone_id: None,
-            mime_type: None,
-            created_at_ms: None,
-            modified_at_ms: None,
-        };
-        let data = serialize_metadata(&meta);
-        let restored = deserialize_metadata(&data).unwrap();
-        assert_eq!(restored.path, meta.path);
-        assert_eq!(restored.backend_name, meta.backend_name);
-        assert_eq!(restored.physical_path, meta.physical_path);
-        assert_eq!(restored.size, meta.size);
-        assert_eq!(restored.etag, meta.etag);
-        assert_eq!(restored.version, meta.version);
-        assert_eq!(restored.entry_type, meta.entry_type);
-        assert_eq!(restored.zone_id, meta.zone_id);
-        assert_eq!(restored.target_zone_id, meta.target_zone_id);
-        assert_eq!(restored.mime_type, meta.mime_type);
-    }
-
-    #[test]
-    fn test_serialize_roundtrip_preserves_target_zone_id() {
-        let meta = FileMetadata {
-            path: "/mnt/peer".to_string(),
-            backend_name: "".to_string(),
-            physical_path: "".to_string(),
-            size: 0,
-            etag: None,
-            version: 1,
-            entry_type: 2, // DT_MOUNT
-            zone_id: Some("zone-a".to_string()),
-            target_zone_id: Some("zone-b".to_string()),
-            mime_type: None,
-            created_at_ms: None,
-            modified_at_ms: None,
-        };
-        let data = serialize_metadata(&meta);
-        let restored = deserialize_metadata(&data).unwrap();
-        assert_eq!(restored.target_zone_id, Some("zone-b".to_string()));
-        assert_eq!(restored.zone_id, Some("zone-a".to_string()));
-        assert_eq!(restored.entry_type, 2);
+        let cases = [
+            FileMetadata {
+                path: "/test/file.txt".to_string(),
+                backend_name: "local".to_string(),
+                physical_path: "abc123".to_string(),
+                size: 1024,
+                etag: Some("hash123".to_string()),
+                version: 3,
+                entry_type: 0, // DT_REG
+                zone_id: Some("root".to_string()),
+                target_zone_id: None,
+                mime_type: None,
+                created_at_ms: None,
+                modified_at_ms: None,
+            },
+            FileMetadata {
+                path: "/mnt/peer".to_string(),
+                backend_name: String::new(),
+                physical_path: String::new(),
+                size: 0,
+                etag: None,
+                version: 1,
+                entry_type: 2, // DT_MOUNT
+                zone_id: Some("zone-a".to_string()),
+                target_zone_id: Some("zone-b".to_string()),
+                mime_type: None,
+                created_at_ms: None,
+                modified_at_ms: None,
+            },
+        ];
+        for meta in &cases {
+            let restored = deserialize_metadata(&serialize_metadata(meta)).unwrap();
+            assert_eq!(restored.path, meta.path);
+            assert_eq!(restored.backend_name, meta.backend_name);
+            assert_eq!(restored.physical_path, meta.physical_path);
+            assert_eq!(restored.size, meta.size);
+            assert_eq!(restored.etag, meta.etag);
+            assert_eq!(restored.version, meta.version);
+            assert_eq!(restored.entry_type, meta.entry_type);
+            assert_eq!(restored.zone_id, meta.zone_id);
+            assert_eq!(restored.target_zone_id, meta.target_zone_id);
+            assert_eq!(restored.mime_type, meta.mime_type);
+        }
     }
 
     fn mk_meta(path: &str, version: u32) -> FileMetadata {

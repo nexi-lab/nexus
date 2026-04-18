@@ -460,164 +460,114 @@ mod tests {
         cert.pem().into_bytes()
     }
 
+    /// Operator-scale integration flow: first contact pins two zones
+    /// → fingerprint format sanity-check → re-verify accumulates peer
+    /// addresses without duplicates → lookup + list surface the
+    /// pinned entries → a rotated cert is rejected with the SSH-style
+    /// banner → forget-zone + re-pin cycles the entry back to
+    /// TrustedNew → build_ca_bundle stitches local CA + every pinned
+    /// zone CA into one PEM file. Covers every public method of
+    /// TofuTrustStore against real rcgen-generated certs.
     #[test]
-    fn verify_or_trust_new_zone_is_trusted_new() {
+    fn operator_trust_lifecycle() {
         let dir = tempfile::tempdir().unwrap();
         let mut store = TofuTrustStore::open(dir.path().join("known")).unwrap();
-        let ca = make_ca_pem("new-zone");
-        let r = store
-            .verify_or_trust("new-zone", &ca, "10.0.0.1:2126")
-            .unwrap();
-        assert_eq!(r, TofuResult::TrustedNew);
-    }
+        let ca_a = make_ca_pem("zone-a");
+        let ca_b = make_ca_pem("zone-b");
 
-    #[test]
-    fn verify_or_trust_same_cert_is_trusted_known() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut store = TofuTrustStore::open(dir.path().join("known")).unwrap();
-        let ca = make_ca_pem("known-zone");
-        store
-            .verify_or_trust("known-zone", &ca, "10.0.0.1:2126")
-            .unwrap();
-        let r = store
-            .verify_or_trust("known-zone", &ca, "10.0.0.1:2126")
-            .unwrap();
-        assert_eq!(r, TofuResult::TrustedKnown);
-    }
+        // First contact — TrustedNew, SSH-style fingerprint.
+        assert_eq!(
+            store
+                .verify_or_trust("zone-a", &ca_a, "10.0.0.1:2126")
+                .unwrap(),
+            TofuResult::TrustedNew,
+        );
+        let fp_a = store.list_trusted()[0].ca_fingerprint.clone();
+        assert!(fp_a.starts_with("SHA256:"));
+        assert_eq!(fp_a.len(), "SHA256:".len() + 43); // 32-byte hash → 43 base64 no-pad chars
+        assert!(!fp_a.contains('='));
 
-    #[test]
-    fn fingerprint_mismatch_raises_error_with_banner() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut store = TofuTrustStore::open(dir.path().join("known")).unwrap();
-        let ca1 = make_ca_pem("rotate-zone");
-        let ca2 = make_ca_pem("rotate-zone"); // new keypair → new fingerprint
+        // Second zone pins cleanly too.
         store
-            .verify_or_trust("rotate-zone", &ca1, "10.0.0.1:2126")
+            .verify_or_trust("zone-b", &ca_b, "10.0.0.2:2126")
             .unwrap();
-        let err = store
-            .verify_or_trust("rotate-zone", &ca2, "10.0.0.1:2126")
-            .unwrap_err();
-        match err {
-            TofuError::FingerprintMismatch { .. } => {
-                assert!(err.to_string().contains("ZONE CERTIFICATE CHANGED"));
-            }
-            _ => panic!("expected FingerprintMismatch, got {err:?}"),
-        }
-    }
 
-    #[test]
-    fn persistence_across_reload_preserves_pinned_fingerprint() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("known");
-        let ca = make_ca_pem("persist-zone");
-        let mut store1 = TofuTrustStore::open(&path).unwrap();
-        store1
-            .verify_or_trust("persist-zone", &ca, "10.0.0.1:2126")
+        // Re-verify from a new peer → TrustedKnown + accumulation.
+        // Duplicate peer address is de-duped.
+        assert_eq!(
+            store
+                .verify_or_trust("zone-a", &ca_a, "10.0.0.3:2126")
+                .unwrap(),
+            TofuResult::TrustedKnown,
+        );
+        store
+            .verify_or_trust("zone-a", &ca_a, "10.0.0.1:2126")
             .unwrap();
-        let mut store2 = TofuTrustStore::open(&path).unwrap();
-        let r = store2
-            .verify_or_trust("persist-zone", &ca, "10.0.0.2:2126")
-            .unwrap();
-        assert_eq!(r, TofuResult::TrustedKnown);
-    }
 
-    #[test]
-    fn remove_zone_allows_repinning_as_new() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut store = TofuTrustStore::open(dir.path().join("known")).unwrap();
-        let ca = make_ca_pem("rm-zone");
-        store
-            .verify_or_trust("rm-zone", &ca, "10.0.0.1:2126")
-            .unwrap();
-        assert!(store.remove("rm-zone").unwrap());
-        assert!(!store.remove("rm-zone").unwrap());
-        let r = store
-            .verify_or_trust("rm-zone", &ca, "10.0.0.1:2126")
-            .unwrap();
-        assert_eq!(r, TofuResult::TrustedNew);
-    }
-
-    #[test]
-    fn peer_addresses_accumulate_without_duplicates() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut store = TofuTrustStore::open(dir.path().join("known")).unwrap();
-        let ca = make_ca_pem("multi-peer");
-        store
-            .verify_or_trust("multi-peer", &ca, "10.0.0.1:2126")
-            .unwrap();
-        store
-            .verify_or_trust("multi-peer", &ca, "10.0.0.2:2126")
-            .unwrap();
-        store
-            .verify_or_trust("multi-peer", &ca, "10.0.0.1:2126")
-            .unwrap(); // dupe
-        let trusted = store.list_trusted();
-        assert_eq!(trusted.len(), 1);
-        let peers = &trusted[0].peer_addresses;
-        assert_eq!(peers.len(), 2);
-        assert!(peers.contains(&"10.0.0.1:2126".to_string()));
-        assert!(peers.contains(&"10.0.0.2:2126".to_string()));
-    }
-
-    #[test]
-    fn get_ca_pem_returns_bytes_for_known_and_none_for_unknown() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut store = TofuTrustStore::open(dir.path().join("known")).unwrap();
-        let ca = make_ca_pem("pem-zone");
-        store
-            .verify_or_trust("pem-zone", &ca, "10.0.0.1:2126")
-            .unwrap();
-        let got = store.ca_pem("pem-zone").expect("known");
-        assert!(got.contains("BEGIN CERTIFICATE"));
-        assert!(store.ca_pem("unknown").is_none());
-    }
-
-    #[test]
-    fn list_trusted_includes_every_pinned_zone() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut store = TofuTrustStore::open(dir.path().join("known")).unwrap();
-        store
-            .verify_or_trust("zone-a", &make_ca_pem("zone-a"), "a:2126")
-            .unwrap();
-        store
-            .verify_or_trust("zone-b", &make_ca_pem("zone-b"), "b:2126")
-            .unwrap();
-        let ids: std::collections::HashSet<String> = store
+        // Lookup + list.
+        assert!(store
+            .ca_pem("zone-a")
+            .unwrap()
+            .contains("BEGIN CERTIFICATE"));
+        assert!(store.ca_pem("nope").is_none());
+        let ids: Vec<_> = store
             .list_trusted()
             .into_iter()
             .map(|t| t.zone_id)
             .collect();
-        assert_eq!(ids.len(), 2);
-        assert!(ids.contains("zone-a"));
-        assert!(ids.contains("zone-b"));
-    }
-
-    #[test]
-    fn build_ca_bundle_concatenates_local_ca_then_zone_cas() {
-        let dir = tempfile::tempdir().unwrap();
-        let local_ca = dir.path().join("ca.pem");
-        let local_ca_bytes = make_ca_pem("local");
-        std::fs::write(&local_ca, &local_ca_bytes).unwrap();
-
-        let mut store = TofuTrustStore::open(dir.path().join("known")).unwrap();
-        store
-            .verify_or_trust("peer-a", &make_ca_pem("peer-a"), "a:2126")
+        assert!(ids.contains(&"zone-a".into()) && ids.contains(&"zone-b".into()));
+        let a = store
+            .list_trusted()
+            .into_iter()
+            .find(|t| t.zone_id == "zone-a")
             .unwrap();
+        assert_eq!(a.peer_addresses.len(), 2);
 
+        // Rotated cert → explicit mismatch with SSH banner.
+        let rotated = make_ca_pem("zone-a");
+        let err = store
+            .verify_or_trust("zone-a", &rotated, "10.0.0.1:2126")
+            .unwrap_err();
+        assert!(matches!(err, TofuError::FingerprintMismatch { .. }));
+        assert!(err.to_string().contains("ZONE CERTIFICATE CHANGED"));
+
+        // forget-zone + re-pin cycles back to TrustedNew.
+        assert!(store.remove("zone-a").unwrap());
+        assert!(!store.remove("zone-a").unwrap()); // second call: false
+        assert_eq!(
+            store
+                .verify_or_trust("zone-a", &ca_a, "10.0.0.1:2126")
+                .unwrap(),
+            TofuResult::TrustedNew,
+        );
+
+        // Build CA bundle: local CA + zone-a + zone-b = 3 blocks.
+        let local_ca = dir.path().join("ca.pem");
+        std::fs::write(&local_ca, make_ca_pem("local")).unwrap();
         let bundle_path = store.build_ca_bundle(&local_ca).unwrap();
         let bundle = std::fs::read_to_string(&bundle_path).unwrap();
-        assert_eq!(bundle.matches("BEGIN CERTIFICATE").count(), 2);
+        assert_eq!(bundle.matches("BEGIN CERTIFICATE").count(), 3);
     }
 
-    /// Guard the on-disk fingerprint shape: SSH-style
-    /// ``SHA256:{base64_no_padding}``, exactly 43 base64 chars after
-    /// the prefix (ceil(32*8/6) = 43), no ``=`` padding.
+    /// Cross-process lifecycle: a store opened, pinned, then dropped
+    /// must re-hydrate from JSONL so a second open sees the prior
+    /// fingerprint as TrustedKnown. Separate from the lifecycle test
+    /// above because this one explicitly closes/reopens the store to
+    /// exercise the disk serialization path.
     #[test]
-    fn fingerprint_format_is_ssh_style() {
-        let ca = make_ca_pem("fmt");
-        let fp = TofuTrustStore::fingerprint_pem(&ca).unwrap();
-        assert!(fp.starts_with("SHA256:"));
-        assert_eq!(fp.len(), "SHA256:".len() + 43);
-        assert!(!fp.contains('='));
+    fn persistence_across_process_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("known");
+        let ca = make_ca_pem("persist-zone");
+
+        TofuTrustStore::open(&path)
+            .unwrap()
+            .verify_or_trust("persist-zone", &ca, "10.0.0.1:2126")
+            .unwrap();
+        let r = TofuTrustStore::open(&path)
+            .unwrap()
+            .verify_or_trust("persist-zone", &ca, "10.0.0.2:2126")
+            .unwrap();
+        assert_eq!(r, TofuResult::TrustedKnown);
     }
 }

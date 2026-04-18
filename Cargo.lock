@@ -1345,6 +1345,7 @@ dependencies = [
  "pyo3",
  "raft 0.1.0",
  "rayon",
+ "rcgen",
  "redb",
  "regex",
  "reqwest",

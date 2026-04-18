@@ -6,21 +6,21 @@ client-server mode (REMOTE profile) or single-node standalone mode.
 
 Layering:
     NexusFederation (this file) — orchestration / service layer
-    ├── ZoneManager             — HAL (wraps PyO3 Rust driver)
-    └── gRPC (inline)           — peer communication (discovery + join)
+    ├── ZoneManager             — raft HAL (wraps PyO3 Rust driver)
+    └── FederationClient        — native Rust gRPC peer client
+                                  (nexus_kernel.FederationClient)
 
-No separate gRPC client class needed. Federation has exactly two RPCs:
+Two peer RPCs are exercised by this layer:
     1. NexusVFSService.Call("sys_stat") — discover zone_id from peer's DT_MOUNT
     2. ZoneApiService.JoinZone          — Raft ConfChange (add node to group)
 
 See: docs/architecture/federation-memo.md §6.9
 """
 
+import asyncio
 import logging
+import os
 from typing import TYPE_CHECKING, Any
-
-import grpc
-from grpc import aio as grpc_aio
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 
@@ -28,14 +28,6 @@ if TYPE_CHECKING:
     from nexus.security.tls.config import ZoneTlsConfig
 
 logger = logging.getLogger(__name__)
-
-# Channel options shared by all federation gRPC connections
-_CHANNEL_OPTIONS = [
-    ("grpc.keepalive_time_ms", 10000),
-    ("grpc.keepalive_timeout_ms", 5000),
-    ("grpc.keepalive_permit_without_calls", True),
-    ("grpc.http2.max_pings_without_data", 0),
-]
 
 
 class NexusFederation:
@@ -75,20 +67,29 @@ class NexusFederation:
         """
         self._mgr = zone_manager
         self._trust_store = trust_store
-        if trust_store is None:
-            tls_cfg = getattr(zone_manager, "tls_config", None)
-            if tls_cfg is not None:
-                from nexus_kernel import TofuTrustStore
+        tls_cfg: ZoneTlsConfig | None = getattr(zone_manager, "tls_config", None)
+        self._tls_config = tls_cfg
 
-                self._trust_store = TofuTrustStore(str(tls_cfg.known_zones_path))
+        if trust_store is None and tls_cfg is not None:
+            from nexus_kernel import TofuTrustStore
 
-        # Cache TLS credentials for gRPC connections.
-        self._tls_config: ZoneTlsConfig | None = getattr(zone_manager, "tls_config", None)
+            self._trust_store = TofuTrustStore(str(tls_cfg.known_zones_path))
+
+        # Build the Rust gRPC peer client. Plaintext fallback when
+        # tls_cfg is None (unit-test / single-node bootstrap path).
+        from nexus_kernel import FederationClient
+
+        if tls_cfg is not None:
+            self._client = FederationClient(
+                local_ca_pem=bytes(tls_cfg.ca_pem),
+                node_cert_pem=bytes(tls_cfg.node_cert_pem),
+                node_key_pem=bytes(tls_cfg.node_key_pem),
+                tofu_store_path=str(tls_cfg.known_zones_path),
+            )
+        else:
+            self._client = FederationClient()
 
         # Cluster peers (host:port) — read from NEXUS_PEERS env var (SSOT).
-        # Used by create_zone to include all peers in new Raft groups.
-        import os
-
         from nexus.raft.peer_address import PeerAddress
 
         peers_str = os.environ.get("NEXUS_PEERS", "")
@@ -121,7 +122,6 @@ class NexusFederation:
             ImportError: Rust extensions not available.
             RuntimeError: Raft bootstrap failed after retries.
         """
-        import os
         import socket
         import time as _time
         from pathlib import Path
@@ -229,12 +229,12 @@ class NexusFederation:
         if _root_store is None:
             raise RuntimeError("Root zone metastore not available after bootstrap")
 
-        # F2 C8: return a ``RustMetastoreProxy`` so every ``nfs.metadata``
-        # call (get/put/list/delete/exists) routes via
-        # ``Kernel::metastore_*`` which in turn routes via the kernel
-        # mount table to the correct per-mount ``ZoneMetastore``. The
-        # root zone handle is also attached at the ``/`` mount below so
-        # root-zone paths (e.g. ``/workspace/…``) hit raft as well.
+        # F2 C8: return a RustMetastoreProxy so every nfs.metadata call
+        # (get/put/list/delete/exists) routes via Kernel::metastore_* which
+        # in turn routes via the kernel mount table to the correct
+        # per-mount ZoneMetastore. The root zone handle is also attached
+        # at the "/" mount below so root-zone paths (e.g. /workspace/…)
+        # hit raft as well.
         metadata_store: Any
         if kernel is not None:
             from nexus.core.metastore import RustMetastoreProxy
@@ -248,7 +248,6 @@ class NexusFederation:
             # Set node gRPC VFS address so sys_write encodes origin in
             # backend_name (e.g. "cas-local@nexus-1:2028"). Enables
             # on-demand remote content fetch on follower nodes.
-            # Use hostname + gRPC port (not Raft port).
             _grpc_port = os.environ.get("NEXUS_GRPC_PORT", "2028")
             kernel.set_self_address(f"{hostname}:{_grpc_port}")
         else:
@@ -346,25 +345,20 @@ class NexusFederation:
             3. JoinZone RPC to peer — Raft ConfChange (auto-forwarded to leader)
             4. ZoneManager.mount(root, local_path, zone_id) — local DT_MOUNT
 
-        Only 1 discovery RPC + 1 join RPC. No separate leader discovery needed
-        (JoinZone auto-forwards to leader via RaftNotLeaderError).
-
-        Args:
-            peer_addr: Peer's gRPC address (e.g., "bob:2126").
-            remote_path: Path on peer to join (e.g., "/shared-projectA").
-            local_path: Local mount point (e.g., "/usr/charlie/shared").
-
-        Returns:
-            The joined zone's ID.
+        Both peer RPCs go through the native Rust ``FederationClient``;
+        this coroutine just offloads its blocking calls with
+        ``asyncio.to_thread`` so callers can await alongside other async
+        work.
 
         Raises:
-            ValueError: If remote_path is not a DT_MOUNT on peer.
+            ValueError: If remote_path is not a DT_MOUNT on peer, or the
+                local mount point is missing / already mounted.
             RuntimeError: If zone discovery or join fails.
         """
         root_zone = self._mgr.root_zone_id or ROOT_ZONE_ID
 
-        # Step 0: Validate local mount point before any remote operations.
-        # Fail fast so we don't join a Raft group we can't mount.
+        # Fail fast on the local mount point before touching the peer —
+        # we don't want to join a Raft group we can't subsequently mount.
         root_store = self._mgr.get_store(root_zone)
         if root_store is None:
             raise RuntimeError(f"Root zone '{root_zone}' not found locally")
@@ -377,18 +371,15 @@ class NexusFederation:
         if mount_point.is_mount:
             raise ValueError(f"Mount point '{local_path}' is already a DT_MOUNT. Unmount first.")
 
-        # Step 1: Discover zone via peer's DT_MOUNT (VFS layer: sys_stat)
-        metadata = await self._discover_mount(peer_addr, remote_path)
-
+        # Step 1: Discover zone via peer's DT_MOUNT (VFS sys_stat).
+        metadata = await asyncio.to_thread(self._client.discover_mount, peer_addr, remote_path)
         if metadata is None:
             raise ValueError(f"Path '{remote_path}' not found on peer {peer_addr}")
-
         if not metadata.get("is_mount") and metadata.get("entry_type") != 2:
             raise ValueError(
                 f"Path '{remote_path}' on peer {peer_addr} is not a "
                 f"DT_MOUNT (type={metadata.get('entry_type')})"
             )
-
         zone_id: str | None = metadata.get("target_zone_id")
         if not zone_id:
             raise ValueError(
@@ -397,133 +388,29 @@ class NexusFederation:
 
         logger.info("Discovered zone '%s' at %s:%s", zone_id, peer_addr, remote_path)
 
-        # Step 2: Create local Raft node (no bootstrap, joins existing group)
+        # Step 2: Create local Raft node (joins existing group; no bootstrap).
         self._mgr.join_zone(zone_id, peers=[peer_addr])
         logger.info("Joined zone '%s' locally, requesting membership", zone_id)
 
-        # Step 3: Request membership via JoinZone RPC (ConfChange)
-        # Auto-forwarded to leader if peer is a follower.
+        # Step 3: Request membership (Rust handles leader-redirect).
+        node_address = getattr(self._mgr, "advertise_addr", peer_addr)
         try:
-            await self._request_membership(
-                peer_addr=peer_addr,
-                zone_id=zone_id,
-                node_id=self._mgr.node_id,
-                node_address=getattr(self._mgr, "advertise_addr", peer_addr),
+            await asyncio.to_thread(
+                self._client.request_join_zone,
+                peer_addr,
+                zone_id,
+                self._mgr.node_id,
+                node_address,
             )
         except Exception:
-            # Rollback: remove local zone if membership request failed
             try:
                 self._mgr.remove_zone(zone_id, force=True)
             except Exception:
                 logger.warning("Failed to rollback zone '%s' after join failure", zone_id)
             raise
 
-        # Step 4: Mount in root zone (JoinZone handler already incremented i_links_count)
+        # Step 4: Mount in root zone (JoinZone handler already bumped i_links_count).
         self._mgr.mount(root_zone, local_path, zone_id, increment_links=False)
 
         logger.info("Zone '%s' mounted at '%s' — federation complete", zone_id, local_path)
         return zone_id
-
-    # =========================================================================
-    # Private: gRPC helpers (no external client class needed)
-    # =========================================================================
-
-    def _build_channel(self, address: str) -> grpc_aio.Channel:
-        """Create an async gRPC channel with optional mTLS.
-
-        Uses TOFU trust store CA bundle when available, so federation
-        works across zones with different CAs.
-        """
-        if self._tls_config is not None:
-            ca_pem = self._tls_config.ca_pem
-            # Use TOFU CA bundle if trust store has trusted zones
-            if self._trust_store is not None:
-                from pathlib import Path as _Path
-
-                bundle_path = self._trust_store.build_ca_bundle(str(self._tls_config.ca_cert_path))
-                ca_pem = _Path(bundle_path).read_bytes()
-            creds = grpc.ssl_channel_credentials(
-                root_certificates=ca_pem,
-                private_key=self._tls_config.node_key_pem,
-                certificate_chain=self._tls_config.node_cert_pem,
-            )
-            return grpc_aio.secure_channel(address, creds, options=_CHANNEL_OPTIONS)
-        return grpc_aio.insecure_channel(address, options=_CHANNEL_OPTIONS)
-
-    async def _discover_mount(self, peer_addr: str, path: str) -> dict | None:
-        """Discover a DT_MOUNT's target zone_id via VFS sys_stat on peer.
-
-        Uses NexusVFSService.Call("sys_stat") — the standard VFS metadata path.
-        """
-        from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc
-        from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
-
-        channel = self._build_channel(peer_addr)
-        try:
-            stub = vfs_pb2_grpc.NexusVFSServiceStub(channel)
-            payload = encode_rpc_message({"path": path})
-            request = vfs_pb2.CallRequest(method="sys_stat", payload=payload)
-
-            response = await stub.Call(request, timeout=10.0)
-
-            if response.is_error:
-                result = decode_rpc_message(response.payload)
-                logger.warning("sys_stat(%s) on %s failed: %s", path, peer_addr, result)
-                return None
-
-            return decode_rpc_message(response.payload)
-        except grpc.RpcError as e:
-            logger.error("Discovery RPC to %s failed: %s", peer_addr, e)
-            raise RuntimeError(f"Cannot reach peer {peer_addr}: {e}") from e
-        finally:
-            await channel.close()
-
-    async def _request_membership(
-        self,
-        peer_addr: str,
-        zone_id: str,
-        node_id: int,
-        node_address: str,
-    ) -> None:
-        """Send JoinZone ConfChange RPC to peer (auto-forwarded to leader).
-
-        Uses ZoneApiService.JoinZone — Raft protocol layer.
-        """
-        from nexus.raft import transport_pb2, transport_pb2_grpc
-
-        channel = self._build_channel(peer_addr)
-        try:
-            stub = transport_pb2_grpc.ZoneApiServiceStub(channel)
-            request = transport_pb2.JoinZoneRequest(
-                zone_id=zone_id,
-                node_id=node_id,
-                node_address=node_address,
-            )
-
-            response = await stub.JoinZone(request, timeout=10.0)
-
-            if not response.success and response.leader_address:
-                # Follower redirected us to leader — retry with leader
-                logger.info(
-                    "Redirected to leader %s for zone '%s'",
-                    response.leader_address,
-                    zone_id,
-                )
-                await channel.close()
-                await self._request_membership(
-                    peer_addr=response.leader_address,
-                    zone_id=zone_id,
-                    node_id=node_id,
-                    node_address=node_address,
-                )
-                return
-
-            if not response.success:
-                raise RuntimeError(f"JoinZone failed: {response.error}")
-
-            logger.info("Membership granted for zone '%s'", zone_id)
-        except grpc.RpcError as e:
-            logger.error("JoinZone RPC to %s failed: %s", peer_addr, e)
-            raise RuntimeError(f"Cannot join zone '{zone_id}' via {peer_addr}: {e}") from e
-        finally:
-            await channel.close()

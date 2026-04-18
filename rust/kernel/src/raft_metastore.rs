@@ -201,39 +201,34 @@ mod tests {
         }
     }
 
-    /// R16.1a byte-compat guard: a DT_MOUNT entry must preserve
-    /// ``target_zone_id`` across a proto encode→decode round-trip so
-    /// Rust-authored federation mounts don't silently drop the target
-    /// zone Python readers rely on.
+    /// R16.1a byte-compat guard: the proto encode↔decode round-trip
+    /// preserves every kernel-tracked field, notably ``target_zone_id``
+    /// for DT_MOUNT entries (Rust-authored federation mounts must not
+    /// silently drop the target zone) and ``None`` for DT_REG entries
+    /// (proto3 default maps back to ``None`` on the Python side).
     #[test]
-    fn roundtrip_mount_entry_preserves_target_zone_id() {
-        let original = mk_mount_entry();
-        let bytes = kernel_to_proto(&original);
-        let restored = proto_to_kernel(&bytes).expect("decode must succeed");
-
-        assert_eq!(restored.path, original.path);
-        assert_eq!(restored.backend_name, original.backend_name);
-        assert_eq!(restored.physical_path, original.physical_path);
-        assert_eq!(restored.size, original.size);
-        assert_eq!(restored.etag, original.etag);
-        assert_eq!(restored.version, original.version);
-        assert_eq!(restored.entry_type, original.entry_type);
-        assert_eq!(restored.zone_id, original.zone_id);
-        assert_eq!(restored.target_zone_id, original.target_zone_id);
-        assert_eq!(restored.mime_type, original.mime_type);
+    fn proto_roundtrip_preserves_kernel_fields() {
+        // DT_MOUNT keeps target_zone_id + every other tracked field.
+        let mount = mk_mount_entry();
+        let restored = proto_to_kernel(&kernel_to_proto(&mount)).unwrap();
+        assert_eq!(restored.path, mount.path);
+        assert_eq!(restored.backend_name, mount.backend_name);
+        assert_eq!(restored.physical_path, mount.physical_path);
+        assert_eq!(restored.size, mount.size);
+        assert_eq!(restored.etag, mount.etag);
+        assert_eq!(restored.version, mount.version);
+        assert_eq!(restored.entry_type, mount.entry_type);
+        assert_eq!(restored.zone_id, mount.zone_id);
+        assert_eq!(restored.target_zone_id, mount.target_zone_id);
+        assert_eq!(restored.mime_type, mount.mime_type);
         assert_eq!(restored.created_at_ms, None);
         assert_eq!(restored.modified_at_ms, None);
-    }
 
-    /// Empty ``target_zone_id`` maps to ``None`` (proto3 default),
-    /// matching ``MetadataMapper.from_proto`` on the Python side.
-    #[test]
-    fn roundtrip_non_mount_entry_has_none_target_zone_id() {
-        let mut meta = mk_mount_entry();
-        meta.entry_type = 0; // DT_REG
-        meta.target_zone_id = None;
-        let bytes = kernel_to_proto(&meta);
-        let restored = proto_to_kernel(&bytes).expect("decode must succeed");
+        // DT_REG with target_zone_id = None round-trips as None.
+        let mut non_mount = mk_mount_entry();
+        non_mount.entry_type = 0;
+        non_mount.target_zone_id = None;
+        let restored = proto_to_kernel(&kernel_to_proto(&non_mount)).unwrap();
         assert_eq!(restored.target_zone_id, None);
     }
 }

@@ -1420,113 +1420,77 @@ mod tests {
         }
     }
 
-    /// Determinism regression test (Issue #3029 / Bug 1):
-    /// Two state machines applying the same commands must produce byte-identical snapshots.
-    /// R16.2: applying a ``Command::SetMetadata`` whose value decodes to
-    /// a DT_MOUNT proto with a non-empty ``target_zone_id`` pushes one
-    /// ``MountEvent`` on the attached sender.
+    /// R16.2 apply-event hook — one flow covering every branch:
+    /// DT_MOUNT with a sender fires exactly one event with the right
+    /// payload; DT_DIR never fires; a state machine with no sender
+    /// applies normally (hook is pure side-effect — apply must be
+    /// unaffected).
     #[cfg(feature = "grpc")]
     #[test]
-    fn test_apply_dt_mount_emits_mount_event() {
+    fn apply_mount_event_hook_fires_only_on_dt_mount() {
         use crate::raft::mount_event::MountEvent;
         use crate::transport::proto::nexus::core::FileMetadata as ProtoFileMetadata;
         use prost::Message as ProstMessage;
 
+        fn encode(entry_type: i32, zone: &str, target: &str) -> Vec<u8> {
+            ProtoFileMetadata {
+                entry_type,
+                zone_id: zone.to_string(),
+                target_zone_id: target.to_string(),
+                ..Default::default()
+            }
+            .encode_to_vec()
+        }
+
+        // Sender attached: DT_MOUNT emits once with correct payload.
         let store = RedbStore::open_temporary().unwrap();
         let mut sm = FullStateMachine::new(&store).unwrap();
-
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<MountEvent>();
         sm.set_mount_event_tx("zone-a".to_string(), tx);
 
-        let proto = ProtoFileMetadata {
-            path: "/mnt/peer".to_string(),
-            backend_name: "mount".to_string(),
-            physical_path: String::new(),
-            entry_type: 2, // DT_MOUNT
-            zone_id: "zone-a".to_string(),
-            target_zone_id: "zone-b".to_string(),
-            ..Default::default()
-        };
-        let bytes = proto.encode_to_vec();
-
-        let cmd = Command::SetMetadata {
-            key: "/mnt/peer".into(),
-            value: bytes,
-        };
-        let res = sm.apply(1, &cmd).unwrap();
-        assert!(matches!(res, CommandResult::Success));
-
-        let event = rx
-            .try_recv()
-            .expect("DT_MOUNT apply must emit a MountEvent");
+        sm.apply(
+            1,
+            &Command::SetMetadata {
+                key: "/mnt/peer".into(),
+                value: encode(2, "zone-a", "zone-b"), // DT_MOUNT
+            },
+        )
+        .unwrap();
+        let event = rx.try_recv().expect("DT_MOUNT apply must emit");
         assert_eq!(event.parent_zone_id, "zone-a");
         assert_eq!(event.mount_path, "/mnt/peer");
         assert_eq!(event.target_zone_id, "zone-b");
-        // Only one event per apply.
-        assert!(
-            rx.try_recv().is_err(),
-            "apply should emit exactly one event"
-        );
-    }
+        assert!(rx.try_recv().is_err(), "only one event per apply");
 
-    /// R16.2: non-mount entries (DT_REG, DT_DIR) must not emit events
-    /// — guards the consumer from non-DLC traffic.
-    #[cfg(feature = "grpc")]
-    #[test]
-    fn test_apply_dt_dir_emits_no_mount_event() {
-        use crate::raft::mount_event::MountEvent;
-        use crate::transport::proto::nexus::core::FileMetadata as ProtoFileMetadata;
-        use prost::Message as ProstMessage;
-
-        let store = RedbStore::open_temporary().unwrap();
-        let mut sm = FullStateMachine::new(&store).unwrap();
-
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<MountEvent>();
-        sm.set_mount_event_tx("zone-a".to_string(), tx);
-
-        let proto = ProtoFileMetadata {
-            path: "/docs".to_string(),
-            backend_name: "local".to_string(),
-            entry_type: 1, // DT_DIR
-            zone_id: "zone-a".to_string(),
-            ..Default::default()
-        };
-        let cmd = Command::SetMetadata {
-            key: "/docs".into(),
-            value: proto.encode_to_vec(),
-        };
-        sm.apply(1, &cmd).unwrap();
+        // DT_DIR with the same sender → no event.
+        sm.apply(
+            2,
+            &Command::SetMetadata {
+                key: "/docs".into(),
+                value: encode(1, "zone-a", ""), // DT_DIR
+            },
+        )
+        .unwrap();
         assert!(rx.try_recv().is_err(), "DT_DIR must not emit a mount event");
-    }
 
-    /// R16.2: a state machine without a sender installed just applies
-    /// normally — no panics, no attempted sends.
-    #[cfg(feature = "grpc")]
-    #[test]
-    fn test_apply_dt_mount_without_tx_is_inert() {
-        use crate::transport::proto::nexus::core::FileMetadata as ProtoFileMetadata;
-        use prost::Message as ProstMessage;
-
-        let store = RedbStore::open_temporary().unwrap();
-        let mut sm = FullStateMachine::new(&store).unwrap();
-        // No set_mount_event_tx — mount_event_tx stays None.
-
-        let proto = ProtoFileMetadata {
-            path: "/mnt/peer".to_string(),
-            entry_type: 2, // DT_MOUNT
-            zone_id: "zone-a".to_string(),
-            target_zone_id: "zone-b".to_string(),
-            ..Default::default()
-        };
-        let cmd = Command::SetMetadata {
-            key: "/mnt/peer".into(),
-            value: proto.encode_to_vec(),
-        };
-        let res = sm.apply(1, &cmd).unwrap();
+        // No sender attached: DT_MOUNT applies normally, no panic.
+        let store2 = RedbStore::open_temporary().unwrap();
+        let mut sm2 = FullStateMachine::new(&store2).unwrap();
+        let res = sm2
+            .apply(
+                1,
+                &Command::SetMetadata {
+                    key: "/mnt/peer".into(),
+                    value: encode(2, "zone-a", "zone-b"),
+                },
+            )
+            .unwrap();
         assert!(matches!(res, CommandResult::Success));
-        // The value is persisted normally — the hook is a pure side-effect.
-        assert_eq!(sm.last_applied_index(), 1);
+        assert_eq!(sm2.last_applied_index(), 1, "apply unaffected without hook");
     }
+
+    /// Determinism regression test (Issue #3029 / Bug 1):
+    /// Two state machines applying the same commands must produce byte-identical snapshots.
 
     #[test]
     fn test_state_machine_determinism() {

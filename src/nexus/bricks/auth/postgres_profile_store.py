@@ -40,7 +40,7 @@ import secrets
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from typing import Any
 
@@ -59,6 +59,7 @@ from nexus.bricks.auth.envelope_metrics import (
     DEK_CACHE_MISSES,
     DEK_UNWRAP_ERRORS,
     DEK_UNWRAP_LATENCY,
+    KEK_ROTATE_ROWS,
 )
 from nexus.bricks.auth.profile import (
     RAW_ERROR_MAX_LEN,
@@ -1195,3 +1196,130 @@ class PostgresAuthProfileStore:
     def engine(self) -> Engine:
         """Underlying engine — exposed only for test helpers + migration."""
         return self._engine
+
+
+# ---------------------------------------------------------------------------
+# KEK rotation (issue #3803) — module-level admin helper
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class RotationReport:
+    """Result of a ``rotate_kek_for_tenant`` invocation."""
+
+    rows_rewrapped: int
+    rows_failed: int
+    rows_remaining: int
+    target_version: int
+
+
+def rotate_kek_for_tenant(
+    engine: Engine,
+    *,
+    tenant_id: uuid.UUID,
+    encryption_provider: EncryptionProvider,
+    batch_size: int = 100,
+    max_rows: int | None = None,
+) -> RotationReport:
+    """Rewrap every row in ``tenant_id`` whose ``kek_version`` is older than
+    the provider's current version.
+
+    Uses ``SELECT ... FOR UPDATE SKIP LOCKED`` so the helper is resumable and
+    does not block concurrent writers. Rewraps ``wrapped_dek`` + ``kek_version``
+    only; ``ciphertext``, ``nonce``, ``aad`` are untouched so a reader mid-
+    rotation decrypts successfully regardless of which version wrote.
+    """
+    target = encryption_provider.current_version(tenant_id=tenant_id)
+    rewrapped = 0
+    failed = 0
+    tenant_label = str(tenant_id)
+    while True:
+        if max_rows is not None and rewrapped + failed >= max_rows:
+            break
+        this_batch = batch_size
+        if max_rows is not None:
+            this_batch = min(this_batch, max_rows - (rewrapped + failed))
+        with engine.begin() as conn:
+            conn.execute(
+                text("SET LOCAL app.current_tenant = :tid"),
+                {"tid": str(tenant_id)},
+            )
+            rows = conn.execute(
+                text(
+                    "SELECT tenant_id, principal_id, id, wrapped_dek, aad, kek_version "
+                    "FROM auth_profiles "
+                    "WHERE tenant_id = :tid "
+                    "  AND ciphertext IS NOT NULL "
+                    "  AND kek_version < :target "
+                    "ORDER BY principal_id, id "
+                    "FOR UPDATE SKIP LOCKED "
+                    "LIMIT :lim"
+                ),
+                {"tid": tenant_id, "target": target, "lim": this_batch},
+            ).fetchall()
+            if not rows:
+                break
+            for row in rows:
+                try:
+                    dek = encryption_provider.unwrap_dek(
+                        bytes(row.wrapped_dek),
+                        tenant_id=tenant_id,
+                        aad=bytes(row.aad),
+                        kek_version=row.kek_version,
+                    )
+                    new_wrapped, new_version = encryption_provider.wrap_dek(
+                        dek, tenant_id=tenant_id, aad=bytes(row.aad)
+                    )
+                except Exception as exc:
+                    logger.error(
+                        "rotate_kek_for_tenant: per-row failure "
+                        "tenant=%s principal=%s profile=%s kek_version=%s cause=%s",
+                        tenant_id,
+                        row.principal_id,
+                        row.id,
+                        row.kek_version,
+                        type(exc).__name__,
+                    )
+                    failed += 1
+                    continue
+                conn.execute(
+                    text(
+                        "UPDATE auth_profiles SET "
+                        "    wrapped_dek = :wd, kek_version = :v, updated_at = NOW() "
+                        "WHERE tenant_id = :tid "
+                        "  AND principal_id = :pid AND id = :id"
+                    ),
+                    {
+                        "wd": new_wrapped,
+                        "v": new_version,
+                        "tid": tenant_id,
+                        "pid": row.principal_id,
+                        "id": row.id,
+                    },
+                )
+                KEK_ROTATE_ROWS.labels(
+                    tenant_id=tenant_label,
+                    from_version=str(row.kek_version),
+                    to_version=str(new_version),
+                ).inc()
+                rewrapped += 1
+    # Final remaining count
+    with engine.begin() as conn:
+        conn.execute(
+            text("SET LOCAL app.current_tenant = :tid"),
+            {"tid": str(tenant_id)},
+        )
+        remaining = conn.execute(
+            text(
+                "SELECT COUNT(*) FROM auth_profiles "
+                "WHERE tenant_id = :tid AND ciphertext IS NOT NULL "
+                "  AND kek_version < :target"
+            ),
+            {"tid": tenant_id, "target": target},
+        ).scalar_one()
+    return RotationReport(
+        rows_rewrapped=rewrapped,
+        rows_failed=failed,
+        rows_remaining=int(remaining),
+        target_version=target,
+    )

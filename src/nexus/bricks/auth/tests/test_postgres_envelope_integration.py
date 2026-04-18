@@ -346,3 +346,82 @@ class TestAADMismatch:
             )
         with pytest.raises(AADMismatch):
             pg_store_crypto.get_with_credential("aad-tamper")
+
+
+from nexus.bricks.auth.postgres_profile_store import (  # noqa: E402
+    rotate_kek_for_tenant,
+)
+
+
+class TestRotateKEKForTenant:
+    def test_noop_when_all_rows_current(
+        self,
+        pg_store_crypto: PostgresAuthProfileStore,
+        pg_engine: Engine,
+        tenant_id: uuid.UUID,
+        encryption_provider: InMemoryEncryptionProvider,
+    ) -> None:
+        pg_store_crypto.upsert_with_credential(
+            make_profile("current-1"),
+            ResolvedCredential(kind="api_key", api_key="k"),
+        )
+        report = rotate_kek_for_tenant(
+            pg_engine,
+            tenant_id=tenant_id,
+            encryption_provider=encryption_provider,
+        )
+        assert report.rows_rewrapped == 0
+        assert report.rows_remaining == 0
+
+    def test_rotates_stale_rows(
+        self,
+        pg_store_crypto: PostgresAuthProfileStore,
+        pg_engine: Engine,
+        tenant_id: uuid.UUID,
+        encryption_provider: InMemoryEncryptionProvider,
+    ) -> None:
+        pg_store_crypto.upsert_with_credential(
+            make_profile("a"),
+            ResolvedCredential(kind="api_key", api_key="k-a"),
+        )
+        pg_store_crypto.upsert_with_credential(
+            make_profile("b"),
+            ResolvedCredential(kind="api_key", api_key="k-b"),
+        )
+        encryption_provider.rotate()
+        report = rotate_kek_for_tenant(
+            pg_engine,
+            tenant_id=tenant_id,
+            encryption_provider=encryption_provider,
+            batch_size=1,
+        )
+        assert report.rows_rewrapped == 2
+        assert report.rows_remaining == 0
+        assert report.target_version == 2
+        a = pg_store_crypto.get_with_credential("a")
+        b = pg_store_crypto.get_with_credential("b")
+        assert a is not None and a[1] is not None and a[1].api_key == "k-a"
+        assert b is not None and b[1] is not None and b[1].api_key == "k-b"
+
+    def test_respects_max_rows(
+        self,
+        pg_store_crypto: PostgresAuthProfileStore,
+        pg_engine: Engine,
+        tenant_id: uuid.UUID,
+        encryption_provider: InMemoryEncryptionProvider,
+    ) -> None:
+        for i in range(3):
+            pg_store_crypto.upsert_with_credential(
+                make_profile(f"m-{i}"),
+                ResolvedCredential(kind="api_key", api_key=f"k{i}"),
+            )
+        encryption_provider.rotate()
+        report = rotate_kek_for_tenant(
+            pg_engine,
+            tenant_id=tenant_id,
+            encryption_provider=encryption_provider,
+            batch_size=2,
+            max_rows=2,
+        )
+        assert report.rows_rewrapped == 2
+        assert report.rows_remaining == 1

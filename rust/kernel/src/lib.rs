@@ -83,6 +83,7 @@ mod stream_observer;
 mod trigram;
 mod volume_engine;
 mod volume_index;
+mod wal_stream;
 
 use pyo3::prelude::*;
 
@@ -170,6 +171,8 @@ fn nexus_kernel(m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<shm_pipe::SharedMemoryPipeBackend>()?;
     #[cfg(unix)]
     m.add_class::<shm_stream::SharedMemoryStreamBackend>()?;
+    // Raft-backed durable stream (replaces Python `WALStreamBackend`).
+    m.add_class::<wal_stream::WalStreamBackend>()?;
     m.add_class::<semaphore::VFSSemaphore>()?;
     // CAS Volume Engine (Issue #3403)
     m.add_class::<volume_engine::VolumeEngine>()?;

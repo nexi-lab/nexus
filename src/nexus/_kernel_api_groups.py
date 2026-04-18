@@ -33,6 +33,7 @@ MODULE_CAPABILITY_GROUPS: dict[str, tuple[str, ...]] = {
     "ipc": (
         "SharedMemoryPipeBackend",
         "SharedMemoryStreamBackend",
+        "WalStreamBackend",
     ),
     "io": (
         "read_file",

@@ -114,6 +114,7 @@ CAPABILITY_GROUP_CONFIG: dict[str, tuple[str, ...]] = {
     "ipc": (
         "SharedMemoryPipeBackend",
         "SharedMemoryStreamBackend",
+        "WalStreamBackend",
     ),
     "io": ("read_file", "read_files_bulk"),
     "search": ("grep_bulk", "grep_files_mmap", "glob_match_bulk"),
@@ -163,6 +164,9 @@ RETURN_OVERRIDES: dict[str, str] = {
     "SharedMemoryStreamBackend.read_at": "bytes",
     "SharedMemoryStreamBackend.read_batch": "tuple[list[bytes], int]",
     "SharedMemoryStreamBackend.stats": "dict[str, Any]",
+    "WalStreamBackend.read_at": "tuple[bytes, int]",
+    "WalStreamBackend.read_batch": "tuple[list[bytes], int]",
+    "WalStreamBackend.stats": "dict[str, Any]",
     "Kernel.dcache_stats": "dict[str, Any]",
     "Kernel.dcache_get_full": "dict[str, Any] | None",
     "Kernel.route": "RustRouteResult",

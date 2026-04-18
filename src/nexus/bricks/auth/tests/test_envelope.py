@@ -2,9 +2,22 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
-from nexus.bricks.auth.envelope import AESGCMEnvelope, CiphertextCorrupted
+from nexus.bricks.auth.envelope import (
+    AADMismatch,
+    AESGCMEnvelope,
+    CiphertextCorrupted,
+    DecryptionFailed,
+    EnvelopeConfigurationError,
+    EnvelopeError,
+    WrappedDEKInvalid,
+)
+
+# Regex: any base64 or hex blob of 16+ bytes shouldn't appear in error text.
+_BLOB_RE = re.compile(r"(?:[A-Za-z0-9+/]{22,}={0,2}|[0-9a-fA-F]{32,})")
 
 
 class TestAESGCMEnvelope:
@@ -44,3 +57,29 @@ class TestAESGCMEnvelope:
         env = AESGCMEnvelope()
         with pytest.raises(ValueError):
             env.encrypt(b"\x00" * 16, b"x", aad=b"aad")
+
+
+class TestErrorReprDiscipline:
+    def test_all_errors_carry_context_not_secrets(self) -> None:
+        import uuid
+
+        tenant = uuid.uuid4()
+        pid = "google/alice"
+        for cls in (EnvelopeConfigurationError, DecryptionFailed, AADMismatch, WrappedDEKInvalid):
+            err = cls.from_row(
+                tenant_id=tenant, profile_id=pid, kek_version=7, cause="RuntimeError"
+            )
+            text = f"{err} || {err!r}"
+            assert str(tenant) in text
+            assert pid in text
+            assert "7" in text
+            assert "RuntimeError" in text
+            assert _BLOB_RE.search(text) is None, f"{cls.__name__} repr leaked a blob: {text!r}"
+
+    def test_envelope_error_root_is_catchable(self) -> None:
+        import uuid
+
+        with pytest.raises(EnvelopeError):
+            raise DecryptionFailed.from_row(
+                tenant_id=uuid.uuid4(), profile_id="x", kek_version=1, cause="y"
+            )

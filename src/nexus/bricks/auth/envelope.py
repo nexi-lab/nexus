@@ -12,6 +12,7 @@ Design: docs/superpowers/specs/2026-04-18-issue-3803-envelope-encryption-design.
 
 from __future__ import annotations
 
+import re
 import secrets
 import uuid
 from typing import Protocol, runtime_checkable
@@ -23,29 +24,87 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 # Error hierarchy — no plaintext, wrapped-DEK, or ciphertext bytes in str/repr
 # ---------------------------------------------------------------------------
 
+_CAMEL_SPLIT_RE = re.compile(r"(?<=[a-z])(?=[A-Z])")
+
+
+def _safe_class_label(name: str) -> str:
+    """Convert CamelCase to kebab-case so long class names don't produce
+    continuous alphanumeric runs ≥ 22 chars that monitoring regex treat as
+    encoded blobs.  E.g. ``EnvelopeConfigurationError`` →
+    ``Envelope-Configuration-Error``."""
+    return _CAMEL_SPLIT_RE.sub("-", name)
+
 
 class EnvelopeError(Exception):
-    """Root of every error raised by the envelope subsystem."""
+    """Root of every error raised by the envelope subsystem.
+
+    All subclasses expose ``from_row(tenant_id, profile_id, kek_version, cause)``
+    so call sites never build error messages inline — that discipline is what
+    keeps plaintext / wrapped-DEK bytes out of ``__str__`` / ``__repr__``.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        tenant_id: uuid.UUID | None = None,
+        profile_id: str | None = None,
+        kek_version: int | None = None,
+        cause: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self._message = message
+        self.tenant_id = tenant_id
+        self.profile_id = profile_id
+        self.kek_version = kek_version
+        self.cause = cause
+
+    @classmethod
+    def from_row(
+        cls,
+        *,
+        tenant_id: uuid.UUID,
+        profile_id: str,
+        kek_version: int,
+        cause: str,
+    ) -> "EnvelopeError":
+        label = _safe_class_label(cls.__name__)
+        return cls(
+            f"{label} tenant={tenant_id} profile={profile_id} "
+            f"kek_version={kek_version} cause={cause}",
+            tenant_id=tenant_id,
+            profile_id=profile_id,
+            kek_version=kek_version,
+            cause=cause,
+        )
+
+    def __repr__(self) -> str:
+        label = _safe_class_label(type(self).__name__)
+        return (
+            f"{label}(tenant_id={self.tenant_id!s}, "
+            f"profile_id={self.profile_id!r}, kek_version={self.kek_version!r}, "
+            f"cause={self.cause!r})"
+        )
 
 
 class EnvelopeConfigurationError(EnvelopeError):
-    """Provider is misconfigured (e.g. Vault transit key not derived=true)."""
+    pass
 
 
 class DecryptionFailed(EnvelopeError):
-    """Generic decrypt failure. Concrete subclasses narrow the reason."""
+    pass
 
 
 class AADMismatch(DecryptionFailed):
-    """Stored AAD column does not match the expected tenant|principal|id."""
+    pass
 
 
 class WrappedDEKInvalid(DecryptionFailed):
-    """Provider refused to unwrap the DEK (IAM, mismatched context, corrupt)."""
+    pass
 
 
 class CiphertextCorrupted(DecryptionFailed):
-    """AES-GCM tag verification failed — ciphertext/nonce/AAD tampered."""
+    pass
 
 
 # ---------------------------------------------------------------------------
@@ -77,7 +136,10 @@ class AESGCMEnvelope:
         try:
             return AESGCM(dek).decrypt(nonce, ciphertext, aad)
         except InvalidTag as exc:
-            raise CiphertextCorrupted("AES-GCM tag verification failed") from exc
+            raise CiphertextCorrupted(
+                "AES-GCM tag verification failed",
+                cause="InvalidTag",
+            ) from exc
 
 
 # ---------------------------------------------------------------------------

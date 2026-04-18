@@ -100,6 +100,15 @@ def pytest_collection_modifyitems(config, items):
             if "quarantine" in item.keywords:
                 item.add_marker(skip_quarantine)
 
+    # sandbox_memory tests are skipped by default (RSS sampling is flaky on
+    # shared CI runners).  Only run when explicitly selected: -m sandbox_memory
+    marker_expr = config.option.markexpr if hasattr(config.option, "markexpr") else ""
+    if "sandbox_memory" not in marker_expr:
+        skip_mem = pytest.mark.skip(reason="SANDBOX memory benchmark: run with -m sandbox_memory")
+        for item in items:
+            if "sandbox_memory" in item.keywords:
+                item.add_marker(skip_mem)
+
 
 # ---------------------------------------------------------------------------
 # Autouse fixtures for test isolation (reset module-level singletons)

@@ -36,6 +36,19 @@ from nexus.contracts.metadata import FileMetadata
 logger = logging.getLogger(__name__)
 
 
+def _is_direct_child(path: str, prefix: str) -> bool:
+    """Return True when ``path`` is an immediate child of ``prefix``.
+
+    Matches the Python-side filter ``RaftMetadataStore._list_iter_raw``
+    applies for ``recursive=False`` — strip the prefix, then drop any
+    entry whose remainder still contains a ``/`` (i.e. sits in a
+    deeper subdirectory). Used by ``KernelBackedMetastoreABC.list[/_iter]``
+    so recursive-vs-not semantics match across metastore impls.
+    """
+    rel = path[len(prefix) :].lstrip("/") if path.startswith(prefix) else path
+    return "/" not in rel
+
+
 def _sync_to_rust(kernel: Any, meta: FileMetadata) -> None:
     """Push a FileMetadata into the Rust DashMap (hot-path projection).
 
@@ -386,26 +399,40 @@ class RustMetastoreProxy(MetastoreABC):
     def list(
         self,
         prefix: str = "",
-        recursive: bool = True,  # noqa: ARG002
+        recursive: bool = True,
         **kwargs: Any,  # noqa: ARG002
     ) -> builtins.list[FileMetadata]:
-        """List metadata from Rust metastore."""
+        """List metadata from Rust metastore.
+
+        The Rust ``metastore_list`` is prefix-only — it returns every entry
+        whose path starts with ``prefix``. When the caller asks for
+        ``recursive=False`` we post-filter in Python to keep entries that
+        live directly under the prefix (no further ``/`` separator). This
+        matches the ``RaftMetadataStore._list_iter_raw`` contract and makes
+        ``sys_readdir(recursive=False, limit=N)`` return only the immediate
+        children it's supposed to.
+        """
         result: builtins.list[FileMetadata] = self._rust_kernel.metastore_list(prefix)
-        return result
+        if recursive:
+            return result
+        return [e for e in result if _is_direct_child(e.path, prefix)]
 
     def list_iter(
         self,
         prefix: str = "",
-        recursive: bool = True,  # noqa: ARG002
+        recursive: bool = True,
         **kwargs: Any,  # noqa: ARG002
     ) -> Iterator[FileMetadata]:
         """Iterate metadata from Rust metastore (bypasses Python dcache).
 
-        Issue #3706: like list(), delegates directly to Rust without populating
-        the Python-side _dcache, avoiding unbounded cache growth on repeated
-        large directory listings.
+        Issue #3706: like list(), delegates directly to Rust without
+        populating the Python-side _dcache. Honors ``recursive=False`` via
+        the same post-filter as list() — the Rust call returns everything
+        under ``prefix`` and we drop deeper entries here.
         """
-        yield from self._rust_kernel.metastore_list(prefix)
+        for e in self._rust_kernel.metastore_list(prefix):
+            if recursive or _is_direct_child(e.path, prefix):
+                yield e
 
     def dcache_evict_prefix(self, prefix: str) -> int:
         """Evict all dcache entries under prefix (Rust DCache only)."""

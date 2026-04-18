@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "nexus-kernel"
-version = "0.9.30"
+version = "0.9.31"
 description = "Fast Rust-based ReBAC permission computation for Nexus"
 requires-python = ">=3.14"
 classifiers = [

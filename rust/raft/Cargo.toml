@@ -24,6 +24,11 @@ name = "nexus-witness"
 path = "src/bin/witness.rs"
 required-features = ["grpc"]
 
+[[bin]]
+name = "nexus-federation-server"
+path = "src/bin/federation_server.rs"
+required-features = ["grpc"]
+
 [dependencies]
 # Cross-tier constants (ROOT_ZONE_ID, …) — mirror of
 # ``nexus.contracts.constants``. Pulled in so raft shares one source

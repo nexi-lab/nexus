@@ -943,7 +943,11 @@ class TestSearchTools:
         # Over-fetches limit*2 to allow has_more detection without a second round-trip.
         # #3778: handler now resolves SearchService via nx.service("search").
         mock_nx_with_search._mock_search.semantic_search.assert_called_once_with(
-            query="authentication code", path="/", search_mode="semantic", limit=10
+            query="authentication code",
+            path="/",
+            search_mode="semantic",
+            limit=10,
+            context=mock_nx_with_search._init_cred,
         )
 
     async def test_semantic_search_with_scoped_path(self, mock_nx_with_search):
@@ -956,7 +960,11 @@ class TestSearchTools:
         response = json.loads(result)
         assert "items" in response
         mock_nx_with_search._mock_search.semantic_search.assert_called_once_with(
-            query="auth", path="/workspace/src", search_mode="semantic", limit=10
+            query="auth",
+            path="/workspace/src",
+            search_mode="semantic",
+            limit=10,
+            context=mock_nx_with_search._init_cred,
         )
 
     async def test_semantic_search_with_search_mode(self, mock_nx_with_search):

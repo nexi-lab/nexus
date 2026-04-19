@@ -114,12 +114,14 @@ class TestAllProfilesHaveTuning:
             assert getattr(tuning.connector, field_name) > 0, (
                 f"{profile}.connector.{field_name} must be positive"
             )
-        for field_name in (
-            "asyncpg_min_size",
-            "asyncpg_max_size",
-            "httpx_max_connections",
-            "remote_pool_maxsize",
-        ):
+        # Issue #3778: SANDBOX is SQLite-only; asyncpg is never created
+        # (scheduler skips when database_url is unset). Allow zero asyncpg
+        # values on that profile — covered by the dedicated assertion in
+        # tests/unit/core/test_sandbox_profile.py::test_tuning_disables_asyncpg_pool.
+        _pool_fields = ("httpx_max_connections", "remote_pool_maxsize")
+        if profile != DeploymentProfile.SANDBOX:
+            _pool_fields = ("asyncpg_min_size", "asyncpg_max_size", *_pool_fields)
+        for field_name in _pool_fields:
             assert getattr(tuning.pool, field_name) > 0, (
                 f"{profile}.pool.{field_name} must be positive"
             )

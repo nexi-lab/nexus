@@ -936,6 +936,13 @@ fn path_matches_prefix(path: &str, normalized_prefix: &str) -> bool {
 /// on the federation mount path ignore the returned value, so
 /// treating "forwarded success" as "counter adjusted, value unknown"
 /// matches the intent without requiring a proto round-trip fix.
+///
+/// Retries with backoff on ``NotLeader{leader_hint: None}`` — this is
+/// the transient window right after zone creation where no leader has
+/// been elected yet, common when mount() runs immediately after
+/// create_zone for a multi-node target zone. Retries are safe because
+/// this error is pre-apply (the proposal never reaches the state
+/// machine), so we can't double-increment the counter.
 #[cfg(all(feature = "grpc", has_protos))]
 fn propose_adjust_counter(
     handle: &tokio::runtime::Handle,
@@ -943,26 +950,52 @@ fn propose_adjust_counter(
     key: &str,
     delta: i64,
 ) -> Result<i64, String> {
-    let cmd = Command::AdjustCounter {
-        key: key.to_string(),
-        delta,
-    };
-    match handle.block_on(node.propose(cmd)) {
-        Ok(CommandResult::Value(bytes)) => {
-            let arr: [u8; 8] = bytes
-                .try_into()
-                .map_err(|_| "invalid counter value encoding".to_string())?;
-            Ok(i64::from_be_bytes(arr))
+    // 8 retries with 100ms/200ms/.../12.8s exponential backoff caps at
+    // ~25s total — comfortably within the test's 30s zone-ready window
+    // and raft's election timeout range.
+    const MAX_ATTEMPTS: usize = 8;
+    let mut delay_ms: u64 = 100;
+
+    for attempt in 1..=MAX_ATTEMPTS {
+        let cmd = Command::AdjustCounter {
+            key: key.to_string(),
+            delta,
+        };
+        match handle.block_on(node.propose(cmd)) {
+            Ok(CommandResult::Value(bytes)) => {
+                let arr: [u8; 8] = bytes
+                    .try_into()
+                    .map_err(|_| "invalid counter value encoding".to_string())?;
+                return Ok(i64::from_be_bytes(arr));
+            }
+            // Forwarded to leader over gRPC: the RaftResponse proto drops
+            // the counter bytes, so the apply's ``Value(new_count)`` comes
+            // back flattened to ``Success``. The counter mutation did land
+            // in the state machine; we just don't know the new value.
+            Ok(CommandResult::Success) => return Ok(i64::MIN),
+            Ok(CommandResult::Error(e)) => return Err(e),
+            Ok(other) => return Err(format!("unexpected counter result: {:?}", other)),
+            Err(e) => {
+                let msg = e.to_string();
+                let is_transient_election = msg.contains("leader hint: None");
+                if is_transient_election && attempt < MAX_ATTEMPTS {
+                    tracing::debug!(
+                        key = %key,
+                        attempt = attempt,
+                        backoff_ms = delay_ms,
+                        "propose_adjust_counter: no leader yet, retrying",
+                    );
+                    handle.block_on(tokio::time::sleep(std::time::Duration::from_millis(
+                        delay_ms,
+                    )));
+                    delay_ms = (delay_ms * 2).min(12_800);
+                    continue;
+                }
+                return Err(msg);
+            }
         }
-        // Forwarded to leader over gRPC: the RaftResponse proto drops
-        // the counter bytes, so the apply's ``Value(new_count)`` comes
-        // back flattened to ``Success``. The counter mutation did land
-        // in the state machine; we just don't know the new value.
-        Ok(CommandResult::Success) => Ok(i64::MIN),
-        Ok(CommandResult::Error(e)) => Err(e),
-        Ok(other) => Err(format!("unexpected counter result: {:?}", other)),
-        Err(e) => Err(e.to_string()),
     }
+    unreachable!("loop either returns or breaks after MAX_ATTEMPTS");
 }
 
 // =============================================================================

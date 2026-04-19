@@ -30,8 +30,11 @@ services:
       --proactor_threads=1
       --logtostderr
       --cache_mode=true
-    ports:
-      - "${DRAGONFLY_PORT:-6379}:6379"
+    # No host port publish — the test cluster uses the internal
+    # dyn-nexus-network, and Windows Docker Desktop reserves 6339-6440
+    # (Hyper-V excluded range) which blocks the default 6379 bind.
+    expose:
+      - "6379"
     volumes:
       - dyn_dragonfly_data:/data
     networks:

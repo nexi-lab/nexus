@@ -13,17 +13,150 @@ from dataclasses import dataclass
 from typing import Any
 
 __all__ = [
+    "AccessParams",
     "AccessShareLinkParams",
+    "AcpCallParams",
+    "AcpGetEnabledSkillsParams",
+    "AcpGetSystemPromptParams",
+    "AcpHistoryParams",
+    "AcpKillParams",
+    "AcpListAgentsParams",
+    "AcpListProcessesParams",
+    "AcpSetEnabledSkillsParams",
+    "AcpSetSystemPromptParams",
+    "AddMountParams",
+    "AgentHeartbeatParams",
+    "AgentListByZoneParams",
+    "AgentTransitionParams",
+    "AppendParams",
+    "AuditExportParams",
+    "AuditListParams",
+    "BackfillDirectoryIndexParams",
     "CreateShareLinkParams",
+    "DeleteAgentParams",
+    "DeleteBatchParams",
+    "DeleteConnectorParams",
+    "DeleteSavedMountParams",
+    "DeprovisionUserParams",
+    "DiffVersionsParams",
+    "EditParams",
+    "EventsReplayParams",
+    "ExistsBatchParams",
+    "FederationClusterInfoParams",
+    "FederationCreateZoneParams",
+    "FederationJoinParams",
+    "FederationListZonesParams",
+    "FederationMountParams",
+    "FederationRemoveZoneParams",
+    "FederationShareParams",
+    "FederationUnmountParams",
+    "FlushWriteObserverParams",
+    "GetAgentParams",
+    "GetEtagParams",
+    "GetMountParams",
     "GetShareLinkAccessLogsParams",
     "GetShareLinkParams",
+    "GetTopLevelMountsParams",
+    "GetVersionParams",
+    "GetWorkspaceInfoParams",
+    "GlobBatchParams",
+    "GlobParams",
+    "GovernanceAlertsParams",
+    "GovernanceRingsParams",
+    "GovernanceStatusParams",
+    "GrepParams",
+    "HasMountParams",
+    "IsDirectoryParams",
+    "ListAgentsParams",
+    "ListConnectorsParams",
+    "ListIncomingSharesParams",
+    "ListMountsParams",
+    "ListOutgoingSharesParams",
+    "ListParams",
+    "ListSavedMountsParams",
     "ListShareLinksParams",
+    "ListVersionsParams",
+    "ListWorkspacesParams",
+    "LoadMountParams",
+    "LoadWorkspaceConfigParams",
+    "LockAcquireParams",
+    "MCPConnectParams",
+    "MCPListMountsParams",
+    "MCPListToolsParams",
+    "MCPMountParams",
+    "MCPSyncParams",
+    "MCPUnmountParams",
+    "MakePrivateParams",
+    "MakePublicParams",
+    "MetadataBatchParams",
+    "NamespaceDeleteParams",
+    "NamespaceListParams",
     "OAuthListCredentialsParams",
     "OAuthListProvidersParams",
     "OAuthRevokeCredentialParams",
     "OAuthTestCredentialParams",
+    "PayBalanceParams",
+    "PayHistoryParams",
+    "PayTransferParams",
+    "ProvisionUserParams",
+    "ReadBatchParams",
+    "ReadBulkParams",
+    "ReauthMountParams",
+    "RebacCheckParams",
+    "RebacCreateParams",
+    "RebacDeleteParams",
+    "RebacExpandParams",
+    "RebacExplainParams",
+    "RebacListObjectsParams",
+    "RebacListTuplesParams",
+    "RegisterAgentParams",
+    "RegisterWorkspaceParams",
+    "RemoveMountParams",
+    "RenameBatchParams",
+    "RevokeShareByIdParams",
     "RevokeShareLinkParams",
+    "RevokeShareParams",
+    "RollbackParams",
+    "SaveMountParams",
+    "SemanticSearchIndexParams",
+    "SemanticSearchParams",
+    "ShareWithUserParams",
+    "SnapshotBeginParams",
+    "SnapshotCommitParams",
+    "SnapshotCreateParams",
+    "SnapshotGetParams",
+    "SnapshotListEntriesParams",
+    "SnapshotListParams",
+    "SnapshotRestoreParams",
+    "SnapshotRollbackParams",
+    "StatBulkParams",
+    "StatParams",
+    "SysCopyParams",
+    "SysLockParams",
+    "SysReaddirParams",
+    "SysRenameParams",
+    "SysStatParams",
+    "SysUnlinkParams",
+    "SysUnlockParams",
+    "SysWatchParams",
+    "SysWriteParams",
+    "UnregisterWorkspaceParams",
+    "UpdateAgentParams",
+    "UpdateMountParams",
+    "UpdateWorkspaceParams",
+    "WorkspaceDiffParams",
+    "WorkspaceLogParams",
+    "WorkspaceRestoreParams",
+    "WorkspaceSnapshotParams",
+    "WriteBatchParams",
 ]
+
+
+@dataclass
+class AccessParams:
+    """Parameters for access(): Tier 2: check if path explicitly exists and is accessible."""
+
+    path: str
 
 
 @dataclass
@@ -37,6 +170,159 @@ class AccessShareLinkParams:
 
 
 @dataclass
+class AcpCallParams:
+    """Parameters for acp_call(): Call a coding agent and return the result."""
+
+    agent_id: str
+    prompt: str
+    cwd: str = "."
+    timeout: float = 300.0
+    session_id: str | None = None
+    context: dict | None = None
+
+
+@dataclass
+class AcpGetEnabledSkillsParams:
+    """Parameters for acp_get_enabled_skills(): Get the enabled skills for a coding agent."""
+
+    agent_id: str
+    context: dict | None = None
+
+
+@dataclass
+class AcpGetSystemPromptParams:
+    """Parameters for acp_get_system_prompt(): Get the system prompt for a coding agent."""
+
+    agent_id: str
+    context: dict | None = None
+
+
+@dataclass
+class AcpHistoryParams:
+    """Parameters for acp_history(): List past ACP call results."""
+
+    limit: int = 50
+    context: dict | None = None
+
+
+@dataclass
+class AcpKillParams:
+    """Parameters for acp_kill(): Kill a running ACP agent by PID."""
+
+    pid: str
+    context: dict | None = None
+
+
+@dataclass
+class AcpListAgentsParams:
+    """Parameters for acp_list_agents(): List agent configs from VFS (/{zone}/agents/*/agent.json)."""
+
+    context: dict | None = None
+
+
+@dataclass
+class AcpListProcessesParams:
+    """Parameters for acp_list_processes(): List ACP-managed processes from the AgentRegistry."""
+
+    context: dict | None = None
+
+
+@dataclass
+class AcpSetEnabledSkillsParams:
+    """Parameters for acp_set_enabled_skills(): Set the enabled skills for a coding agent."""
+
+    agent_id: str
+    skills: list[dict]
+    context: dict | None = None
+
+
+@dataclass
+class AcpSetSystemPromptParams:
+    """Parameters for acp_set_system_prompt(): Set the system prompt for a coding agent."""
+
+    agent_id: str
+    content: str
+    context: dict | None = None
+
+
+@dataclass
+class AddMountParams:
+    """Parameters for add_mount(): Add a dynamic backend mount to the filesystem."""
+
+    mount_point: str
+    backend_type: str
+    backend_config: dict[str, Any]
+    readonly: bool = False
+    io_profile: str = "balanced"
+
+
+@dataclass
+class AgentHeartbeatParams:
+    """Parameters for agent_heartbeat(): Record a heartbeat for an active agent."""
+
+    agent_id: str
+    context: dict | None = None
+
+
+@dataclass
+class AgentListByZoneParams:
+    """Parameters for agent_list_by_zone(): List agents in a zone, optionally filtered by state."""
+
+    zone_id: str
+    state: str | None = None
+    context: dict | None = None
+
+
+@dataclass
+class AgentTransitionParams:
+    """Parameters for agent_transition(): Transition an agent's lifecycle state with optimistic locking."""
+
+    agent_id: str
+    target_state: str
+    expected_generation: int | None = None
+    context: dict | None = None
+
+
+@dataclass
+class AppendParams:
+    """Parameters for append(): Append content to an existing file or create a new file if it doesn't exist."""
+
+    path: str
+    content: bytes | str
+    if_match: str | None = None
+    force: bool = False
+
+
+@dataclass
+class AuditExportParams:
+    """Parameters for audit_export() method."""
+
+    fmt: str = "json"
+    since: str | None = None
+    until: str | None = None
+
+
+@dataclass
+class AuditListParams:
+    """Parameters for audit_list() method."""
+
+    since: str | None = None
+    until: str | None = None
+    agent_id: str | None = None
+    action: str | None = None
+    limit: int = 50
+    cursor: str | None = None
+
+
+@dataclass
+class BackfillDirectoryIndexParams:
+    """Parameters for backfill_directory_index(): Backfill sparse directory index from existing files."""
+
+    prefix: str = "/"
+    zone_id: str | None = None
+
+
+@dataclass
 class CreateShareLinkParams:
     """Parameters for create_share_link(): Create a shareable link for a file or directory."""
 
@@ -45,6 +331,182 @@ class CreateShareLinkParams:
     expires_in_hours: int | None = None
     max_access_count: int | None = None
     password: str | None = None
+
+
+@dataclass
+class DeleteAgentParams:
+    """Parameters for delete_agent(): Delete a registered agent."""
+
+    agent_id: str
+
+
+@dataclass
+class DeleteBatchParams:
+    """Parameters for delete_batch(): Delete multiple files or directories in a single operation."""
+
+    paths: list[str]
+    recursive: bool = False
+
+
+@dataclass
+class DeleteConnectorParams:
+    """Parameters for delete_connector(): Delete a connector completely with bundled operations."""
+
+    mount_point: str
+    revoke_oauth: bool = False
+    provider: str | None = None
+    user_email: str | None = None
+
+
+@dataclass
+class DeleteSavedMountParams:
+    """Parameters for delete_saved_mount(): Delete a saved mount configuration from the database."""
+
+    mount_point: str
+
+
+@dataclass
+class DeprovisionUserParams:
+    """Parameters for deprovision_user(): Deprovision a user and remove all their resources."""
+
+    user_id: str
+    zone_id: str | None = None
+    delete_user_record: bool = False
+    force: bool = False
+
+
+@dataclass
+class DiffVersionsParams:
+    """Parameters for diff_versions(): Compare two versions of a file."""
+
+    path: str
+    v1: int
+    v2: int
+    mode: str = "metadata"
+
+
+@dataclass
+class EditParams:
+    """Parameters for edit(): Apply surgical search/replace edits to a file."""
+
+    path: str
+    edits: list[tuple[str, str]] | list[dict[str, Any]] | list[Any]
+    if_match: str | None = None
+    fuzzy_threshold: float = 0.85
+    preview: bool = False
+
+    def __post_init__(self) -> None:
+        """Convert lists to tuples (JSON deserializes tuples as lists)."""
+        if isinstance(self.edits, list):
+            object.__setattr__(self, "edits", tuple(self.edits))
+
+
+@dataclass
+class EventsReplayParams:
+    """Parameters for events_replay() method."""
+
+    since: str | None = None
+    event_type: str | None = None
+    path: str | None = None
+    limit: int = 50
+
+
+@dataclass
+class ExistsBatchParams:
+    """Parameters for exists_batch(): Check existence of multiple paths in a single call (Issue #859)."""
+
+    paths: list[str]
+
+
+@dataclass
+class FederationClusterInfoParams:
+    """Parameters for federation_cluster_info() method."""
+
+    zone_id: str
+
+
+@dataclass
+class FederationCreateZoneParams:
+    """Parameters for federation_create_zone() method."""
+
+    zone_id: str
+
+
+@dataclass
+class FederationJoinParams:
+    """Parameters for federation_join() method."""
+
+    peer_addr: str
+    remote_path: str
+    local_path: str
+
+
+@dataclass
+class FederationListZonesParams:
+    """Parameters for federation_list_zones() method."""
+
+    pass
+
+
+@dataclass
+class FederationMountParams:
+    """Parameters for federation_mount() method."""
+
+    parent_zone: str
+    path: str
+    target_zone: str
+
+
+@dataclass
+class FederationRemoveZoneParams:
+    """Parameters for federation_remove_zone() method."""
+
+    zone_id: str
+    force: bool = False
+
+
+@dataclass
+class FederationShareParams:
+    """Parameters for federation_share() method."""
+
+    local_path: str
+    zone_id: str | None = None
+
+
+@dataclass
+class FederationUnmountParams:
+    """Parameters for federation_unmount() method."""
+
+    parent_zone: str
+    path: str
+
+
+@dataclass
+class FlushWriteObserverParams:
+    """Parameters for flush_write_observer(): Flush the async write observer so pending version/audit records are committed."""
+
+    pass
+
+
+@dataclass
+class GetAgentParams:
+    """Parameters for get_agent(): Get information about a registered agent."""
+
+    agent_id: str
+
+
+@dataclass
+class GetEtagParams:
+    """Parameters for get_etag(): Get content hash for HTTP If-None-Match checks."""
+
+    path: str
+
+
+@dataclass
+class GetMountParams:
+    """Parameters for get_mount(): Get details about a specific mount."""
+
+    mount_point: str
 
 
 @dataclass
@@ -63,12 +525,313 @@ class GetShareLinkAccessLogsParams:
 
 
 @dataclass
+class GetTopLevelMountsParams:
+    """Parameters for get_top_level_mounts(): Return top-level mount names visible to the current user."""
+
+    pass
+
+
+@dataclass
+class GetVersionParams:
+    """Parameters for get_version(): Get a specific version of a file."""
+
+    path: str
+    version: int
+
+
+@dataclass
+class GetWorkspaceInfoParams:
+    """Parameters for get_workspace_info(): Get information about a registered workspace."""
+
+    path: str
+
+
+@dataclass
+class GlobParams:
+    """Parameters for glob(): Find files matching a glob pattern."""
+
+    pattern: str
+    path: str = "/"
+    context: Any = None
+    files: list[str] | None = None
+
+
+@dataclass
+class GlobBatchParams:
+    """Parameters for glob_batch(): Execute multiple glob patterns in a single call (Issue #859)."""
+
+    patterns: list[str]
+    path: str = "/"
+    context: Any = None
+
+
+@dataclass
+class GovernanceAlertsParams:
+    """Parameters for governance_alerts() method."""
+
+    severity: str | None = None
+    limit: int = 50
+
+
+@dataclass
+class GovernanceRingsParams:
+    """Parameters for governance_rings() method."""
+
+    pass
+
+
+@dataclass
+class GovernanceStatusParams:
+    """Parameters for governance_status() method."""
+
+    pass
+
+
+@dataclass
+class GrepParams:
+    """Parameters for grep(): Search file contents using regex patterns."""
+
+    pattern: str
+    path: str = "/"
+    file_pattern: str | None = None
+    ignore_case: bool = False
+    max_results: int = 100
+    search_mode: str = "auto"
+    context: Any = None
+    before_context: int = 0
+    after_context: int = 0
+    invert_match: bool = False
+    files: list[str] | None = None
+
+
+@dataclass
+class HasMountParams:
+    """Parameters for has_mount(): Check if a mount exists at the given path."""
+
+    mount_point: str
+
+
+@dataclass
+class IsDirectoryParams:
+    """Parameters for is_directory(): Tier 2: convenience wrapper — derives from sys_stat."""
+
+    path: str
+
+
+@dataclass
+class ListParams:
+    """Parameters for list(): List files in a directory."""
+
+    path: str = "/"
+    recursive: bool = True
+    details: bool = False
+    show_parsed: bool = True
+    context: Any = None
+    limit: int | None = None
+    cursor: str | None = None
+
+
+@dataclass
+class ListAgentsParams:
+    """Parameters for list_agents(): List all registered agents."""
+
+    pass
+
+
+@dataclass
+class ListConnectorsParams:
+    """Parameters for list_connectors(): List all available connector types that can be used with add_mount()."""
+
+    category: str | None = None
+
+
+@dataclass
+class ListIncomingSharesParams:
+    """Parameters for list_incoming_shares(): List all resources shared with a subject."""
+
+    subject: tuple[str, str]
+    object_type: str = "file"
+    zone_id: str | None = None
+
+    def __post_init__(self) -> None:
+        """Convert lists to tuples (JSON deserializes tuples as lists)."""
+        if isinstance(self.subject, list):
+            object.__setattr__(self, "subject", tuple(self.subject))
+
+
+@dataclass
+class ListMountsParams:
+    """Parameters for list_mounts(): List all active backend mounts that the user has permission to access."""
+
+    pass
+
+
+@dataclass
+class ListOutgoingSharesParams:
+    """Parameters for list_outgoing_shares(): List all shares granted on a resource."""
+
+    resource: tuple[str, str]
+    zone_id: str | None = None
+
+    def __post_init__(self) -> None:
+        """Convert lists to tuples (JSON deserializes tuples as lists)."""
+        if isinstance(self.resource, list):
+            object.__setattr__(self, "resource", tuple(self.resource))
+
+
+@dataclass
+class ListSavedMountsParams:
+    """Parameters for list_saved_mounts(): List mount configurations saved in the database."""
+
+    owner_user_id: str | None = None
+    zone_id: str | None = None
+
+
+@dataclass
 class ListShareLinksParams:
     """Parameters for list_share_links(): List share links created by the current user."""
 
     path: str | None = None
     include_revoked: bool = False
     include_expired: bool = False
+
+
+@dataclass
+class ListVersionsParams:
+    """Parameters for list_versions(): List all versions of a file."""
+
+    path: str
+
+
+@dataclass
+class ListWorkspacesParams:
+    """Parameters for list_workspaces(): List all registered workspaces for the current user."""
+
+    context: Any | None = None
+
+
+@dataclass
+class LoadMountParams:
+    """Parameters for load_mount(): Load a saved mount configuration and activate it."""
+
+    mount_point: str
+
+
+@dataclass
+class LoadWorkspaceConfigParams:
+    """Parameters for load_workspace_config(): Load workspaces from configuration."""
+
+    workspaces: list[dict] | None = None
+
+
+@dataclass
+class LockAcquireParams:
+    """Parameters for lock_acquire(): Tier 2: wraps sys_lock with dict return for gRPC Call RPC."""
+
+    path: str
+    mode: str = "exclusive"
+    ttl: float = 30.0
+    max_holders: int = 1
+
+
+@dataclass
+class MakePrivateParams:
+    """Parameters for make_private(): Remove public (wildcard) access from a resource."""
+
+    resource: tuple[str, str]
+    zone_id: str | None = None
+
+    def __post_init__(self) -> None:
+        """Convert lists to tuples (JSON deserializes tuples as lists)."""
+        if isinstance(self.resource, list):
+            object.__setattr__(self, "resource", tuple(self.resource))
+
+
+@dataclass
+class MakePublicParams:
+    """Parameters for make_public(): Make a resource publicly accessible (wildcard viewer)."""
+
+    resource: tuple[str, str]
+    zone_id: str | None = None
+
+    def __post_init__(self) -> None:
+        """Convert lists to tuples (JSON deserializes tuples as lists)."""
+        if isinstance(self.resource, list):
+            object.__setattr__(self, "resource", tuple(self.resource))
+
+
+@dataclass
+class MCPConnectParams:
+    """Parameters for mcp_connect(): Connect to an MCP provider using Klavis hosted OAuth."""
+
+    provider: str
+    redirect_url: str | None = None
+
+
+@dataclass
+class MCPListMountsParams:
+    """Parameters for mcp_list_mounts(): List MCP server mounts."""
+
+    tier: str | None = None
+    include_unmounted: bool = True
+
+
+@dataclass
+class MCPListToolsParams:
+    """Parameters for mcp_list_tools(): List tools from a specific MCP mount."""
+
+    name: str
+
+
+@dataclass
+class MCPMountParams:
+    """Parameters for mcp_mount(): Mount an MCP server."""
+
+    name: str
+    transport: str | None = None
+    command: str | None = None
+    url: str | None = None
+    args: list[str] | None = None
+    env: dict[str, str] | None = None
+    headers: dict[str, str] | None = None
+    description: str | None = None
+    tier: str = "system"
+
+
+@dataclass
+class MCPSyncParams:
+    """Parameters for mcp_sync(): Sync/refresh tools from an MCP server."""
+
+    name: str
+
+
+@dataclass
+class MCPUnmountParams:
+    """Parameters for mcp_unmount(): Unmount an MCP server."""
+
+    name: str
+
+
+@dataclass
+class MetadataBatchParams:
+    """Parameters for metadata_batch(): Get metadata for multiple paths in a single call (Issue #859)."""
+
+    paths: list[str]
+
+
+@dataclass
+class NamespaceDeleteParams:
+    """Parameters for namespace_delete(): Delete all tuples for a namespace's object type."""
+
+    object_type: str
+    zone_id: str | None = None
+
+
+@dataclass
+class NamespaceListParams:
+    """Parameters for namespace_list(): List all registered namespace configurations."""
+
+    pass
 
 
 @dataclass
@@ -103,21 +866,698 @@ class OAuthTestCredentialParams:
 
 
 @dataclass
+class PayBalanceParams:
+    """Parameters for pay_balance() method."""
+
+    agent_id: str | None = None
+
+
+@dataclass
+class PayHistoryParams:
+    """Parameters for pay_history() method."""
+
+    since: str | None = None
+    limit: int = 50
+    cursor: str | None = None
+
+
+@dataclass
+class PayTransferParams:
+    """Parameters for pay_transfer() method."""
+
+    to: str
+    amount: str
+    memo: str = ""
+    method: str = "auto"
+    from_agent: str = "anonymous"
+
+
+@dataclass
+class ProvisionUserParams:
+    """Parameters for provision_user(): Provision a new user with all default resources (Issue #820)."""
+
+    user_id: str
+    email: str
+    display_name: str | None = None
+    zone_id: str | None = None
+    zone_name: str | None = None
+    create_api_key: bool = True
+    api_key_name: str | None = None
+    api_key_expires_at: str | None = None
+    create_agents: bool = True
+    import_skills: bool = False
+
+
+@dataclass
+class ReadBatchParams:
+    """Parameters for read_batch(): Read multiple files in a single round-trip for improved performance."""
+
+    paths: list[str]
+    partial: bool = False
+
+
+@dataclass
+class ReadBulkParams:
+    """Parameters for read_bulk(): Read multiple files in a single RPC call for improved performance."""
+
+    paths: list[str]
+    return_metadata: bool = False
+    skip_errors: bool = True
+
+
+@dataclass
+class ReauthMountParams:
+    """Parameters for reauth_mount(): Refresh or rotate OAuth credentials for a mounted connector."""
+
+    mount_point: str
+    provider: str | None = None
+    user_email: str | None = None
+
+
+@dataclass
+class RebacCheckParams:
+    """Parameters for rebac_check(): Check if subject has permission on object."""
+
+    subject: tuple[str, str]
+    permission: str
+    object: tuple[str, str]
+    context: Any = None
+    zone_id: str | None = None
+
+    def __post_init__(self) -> None:
+        """Convert lists to tuples (JSON deserializes tuples as lists)."""
+        if isinstance(self.subject, list):
+            object.__setattr__(self, "subject", tuple(self.subject))
+        if isinstance(self.object, list):
+            object.__setattr__(self, "object", tuple(self.object))
+
+
+@dataclass
+class RebacCreateParams:
+    """Parameters for rebac_create(): Create a ReBAC relationship tuple (Issue #1081)."""
+
+    subject: tuple[str, str]
+    relation: str
+    object: tuple[str, str]
+    expires_at: str | None = None
+    zone_id: str | None = None
+    context: Any = None
+    column_config: dict[str, Any] | None = None
+    conditions: dict[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        """Convert lists to tuples (JSON deserializes tuples as lists)."""
+        if isinstance(self.subject, list):
+            object.__setattr__(self, "subject", tuple(self.subject))
+        if isinstance(self.object, list):
+            object.__setattr__(self, "object", tuple(self.object))
+
+
+@dataclass
+class RebacDeleteParams:
+    """Parameters for rebac_delete(): Delete a relationship tuple by ID."""
+
+    tuple_id: str
+
+
+@dataclass
+class RebacExpandParams:
+    """Parameters for rebac_expand(): Find all subjects that have a permission on an object."""
+
+    permission: str
+    object: tuple[str, str]
+    zone_id: str | None = None
+
+    def __post_init__(self) -> None:
+        """Convert lists to tuples (JSON deserializes tuples as lists)."""
+        if isinstance(self.object, list):
+            object.__setattr__(self, "object", tuple(self.object))
+
+
+@dataclass
+class RebacExplainParams:
+    """Parameters for rebac_explain(): Explain why a subject has or doesn't have permission."""
+
+    subject: tuple[str, str]
+    permission: str
+    object: tuple[str, str]
+    zone_id: str | None = None
+    context: Any = None
+
+    def __post_init__(self) -> None:
+        """Convert lists to tuples (JSON deserializes tuples as lists)."""
+        if isinstance(self.subject, list):
+            object.__setattr__(self, "subject", tuple(self.subject))
+        if isinstance(self.object, list):
+            object.__setattr__(self, "object", tuple(self.object))
+
+
+@dataclass
+class RebacListObjectsParams:
+    """Parameters for rebac_list_objects(): List objects that a subject has a given relation to."""
+
+    relation: str
+    subject: tuple[str, str]
+    zone_id: str | None = None
+
+    def __post_init__(self) -> None:
+        """Convert lists to tuples (JSON deserializes tuples as lists)."""
+        if isinstance(self.subject, list):
+            object.__setattr__(self, "subject", tuple(self.subject))
+
+
+@dataclass
+class RebacListTuplesParams:
+    """Parameters for rebac_list_tuples(): List relationship tuples with optional filters."""
+
+    subject: tuple[str, str] | None = None
+    relation: str | None = None
+    object: tuple[str, str] | None = None
+    relation_in: list[str] | None = None
+
+    def __post_init__(self) -> None:
+        """Convert lists to tuples (JSON deserializes tuples as lists)."""
+        if isinstance(self.subject, list):
+            object.__setattr__(self, "subject", tuple(self.subject))
+        if isinstance(self.object, list):
+            object.__setattr__(self, "object", tuple(self.object))
+
+
+@dataclass
+class RegisterAgentParams:
+    """Parameters for register_agent(): Register an AI agent."""
+
+    agent_id: str
+    name: str
+    description: str | None = None
+    generate_api_key: bool = False
+    metadata: dict | None = None
+    capabilities: list[str] | None = None
+    context: dict | None = None
+
+
+@dataclass
+class RegisterWorkspaceParams:
+    """Parameters for register_workspace(): Register a directory as a workspace."""
+
+    path: str
+    name: str | None = None
+    description: str | None = None
+    created_by: str | None = None
+    tags: list[str] | None = None
+    metadata: dict[str, Any] | None = None
+    session_id: str | None = None
+    ttl: str | None = None
+    context: Any | None = None
+
+
+@dataclass
+class RemoveMountParams:
+    """Parameters for remove_mount(): Remove a backend mount from the filesystem."""
+
+    mount_point: str
+
+
+@dataclass
+class RenameBatchParams:
+    """Parameters for rename_batch(): Rename/move multiple files in a single operation."""
+
+    renames: list[tuple[str, str]]
+
+    def __post_init__(self) -> None:
+        """Convert lists to tuples (JSON deserializes tuples as lists)."""
+        if isinstance(self.renames, list):
+            object.__setattr__(self, "renames", tuple(self.renames))
+
+
+@dataclass
+class RevokeShareParams:
+    """Parameters for revoke_share(): Revoke a specific share (find and delete the matching tuple)."""
+
+    resource: tuple[str, str]
+    target: tuple[str, str]
+    permission: str = "viewer"
+    zone_id: str | None = None
+    context: Any = None
+
+    def __post_init__(self) -> None:
+        """Convert lists to tuples (JSON deserializes tuples as lists)."""
+        if isinstance(self.resource, list):
+            object.__setattr__(self, "resource", tuple(self.resource))
+        if isinstance(self.target, list):
+            object.__setattr__(self, "target", tuple(self.target))
+
+
+@dataclass
+class RevokeShareByIdParams:
+    """Parameters for revoke_share_by_id(): Revoke a share by its tuple ID."""
+
+    tuple_id: str
+    context: Any = None
+
+
+@dataclass
 class RevokeShareLinkParams:
     """Parameters for revoke_share_link(): Revoke a share link, immediately disabling access."""
 
     link_id: str
 
 
+@dataclass
+class RollbackParams:
+    """Parameters for rollback(): Rollback file to a previous version."""
+
+    path: str
+    version: int
+
+
+@dataclass
+class SaveMountParams:
+    """Parameters for save_mount(): Save a mount configuration to the database for persistence."""
+
+    mount_point: str
+    backend_type: str
+    backend_config: dict[str, Any]
+    readonly: bool = False
+    io_profile: str = "balanced"
+    owner_user_id: str | None = None
+    zone_id: str | None = None
+    description: str | None = None
+
+
+@dataclass
+class SemanticSearchParams:
+    """Parameters for semantic_search(): Search documents using natural language queries."""
+
+    query: str
+    path: str = "/"
+    limit: int = 10
+    filters: dict[str, Any] | None = None
+    search_mode: str = "semantic"
+
+
+@dataclass
+class SemanticSearchIndexParams:
+    """Parameters for semantic_search_index(): Index documents for semantic search."""
+
+    path: str = "/"
+    recursive: bool = True
+
+
+@dataclass
+class ShareWithUserParams:
+    """Parameters for share_with_user(): Share a resource with a specific user."""
+
+    resource: tuple[str, str]
+    target_user: str
+    permission: str = "viewer"
+    zone_id: str | None = None
+    context: Any = None
+
+    def __post_init__(self) -> None:
+        """Convert lists to tuples (JSON deserializes tuples as lists)."""
+        if isinstance(self.resource, list):
+            object.__setattr__(self, "resource", tuple(self.resource))
+
+
+@dataclass
+class SnapshotBeginParams:
+    """Parameters for snapshot_begin(): Begin a transactional snapshot."""
+
+    agent_id: str | None = None
+    zone_id: str | None = None
+    description: str | None = None
+    ttl_seconds: int = 3600
+
+
+@dataclass
+class SnapshotCommitParams:
+    """Parameters for snapshot_commit() method."""
+
+    transaction_id: str
+
+
+@dataclass
+class SnapshotCreateParams:
+    """Parameters for snapshot_create() method."""
+
+    description: str | None = None
+    ttl_seconds: int = 3600
+
+
+@dataclass
+class SnapshotGetParams:
+    """Parameters for snapshot_get() method."""
+
+    transaction_id: str
+
+
+@dataclass
+class SnapshotListParams:
+    """Parameters for snapshot_list() method."""
+
+    pass
+
+
+@dataclass
+class SnapshotListEntriesParams:
+    """Parameters for snapshot_list_entries() method."""
+
+    transaction_id: str
+
+
+@dataclass
+class SnapshotRestoreParams:
+    """Parameters for snapshot_restore() method."""
+
+    txn_id: str
+
+
+@dataclass
+class SnapshotRollbackParams:
+    """Parameters for snapshot_rollback(): Rollback a snapshot — restore paths to pre-snapshot state."""
+
+    snapshot_id: str
+
+
+@dataclass
+class StatParams:
+    """Parameters for stat(): Get file metadata without reading the file content."""
+
+    path: str
+
+
+@dataclass
+class StatBulkParams:
+    """Parameters for stat_bulk(): Get metadata for multiple files in a single RPC call."""
+
+    paths: list[str]
+    skip_errors: bool = True
+
+
+@dataclass
+class SysCopyParams:
+    """Parameters for sys_copy(): Copy a file from src_path to dst_path."""
+
+    src_path: str
+    dst_path: str
+
+
+@dataclass
+class SysLockParams:
+    """Parameters for sys_lock(): Acquire or extend advisory lock (POSIX fcntl(F_SETLK))."""
+
+    path: str
+    mode: str = "exclusive"
+    ttl: float = 30.0
+    max_holders: int = 1
+    lock_id: str | None = None
+
+
+@dataclass
+class SysReaddirParams:
+    """Parameters for sys_readdir() method."""
+
+    path: str = "/"
+    recursive: bool = True
+    details: bool = False
+    show_parsed: bool = True
+    limit: int | None = None
+    cursor: str | None = None
+
+
+@dataclass
+class SysRenameParams:
+    """Parameters for sys_rename(): Rename/move a file by updating its path in metadata."""
+
+    old_path: str
+    new_path: str
+    force: bool = False
+
+
+@dataclass
+class SysStatParams:
+    """Parameters for sys_stat(): Get file metadata without reading content (FUSE getattr)."""
+
+    path: str
+    include_lock: bool = False
+
+
+@dataclass
+class SysUnlinkParams:
+    """Parameters for sys_unlink(): Remove a file or directory entry."""
+
+    path: str
+    recursive: bool = False
+
+
+@dataclass
+class SysUnlockParams:
+    """Parameters for sys_unlock(): Release advisory lock."""
+
+    path: str
+    lock_id: str | None = None
+    force: bool = False
+
+
+@dataclass
+class SysWatchParams:
+    """Parameters for sys_watch(): Wait for file changes (inotify(7)). Returns FileEvent dict or None on timeout."""
+
+    path: str
+    timeout: float = 30.0
+    recursive: bool = False
+
+
+@dataclass
+class SysWriteParams:
+    """Parameters for sys_write(): Write content to a file (POSIX write(2))."""
+
+    path: str
+    buf: bytes | str
+    count: int | None = None
+    offset: int = 0
+
+
+@dataclass
+class UnregisterWorkspaceParams:
+    """Parameters for unregister_workspace(): Unregister a workspace (does NOT delete files)."""
+
+    path: str
+
+
+@dataclass
+class UpdateAgentParams:
+    """Parameters for update_agent(): Update an existing agent's configuration."""
+
+    agent_id: str
+    name: str | None = None
+    description: str | None = None
+    metadata: dict | None = None
+    context: dict | None = None
+
+
+@dataclass
+class UpdateMountParams:
+    """Parameters for update_mount(): Update a mount's backend configuration without removing it."""
+
+    mount_point: str
+    backend_config: dict[str, Any]
+
+
+@dataclass
+class UpdateWorkspaceParams:
+    """Parameters for update_workspace(): Update an existing workspace configuration."""
+
+    path: str
+    name: str | None = None
+    description: str | None = None
+    metadata: dict | None = None
+
+
+@dataclass
+class WorkspaceDiffParams:
+    """Parameters for workspace_diff(): Compare two workspace snapshots."""
+
+    snapshot_1: int
+    snapshot_2: int
+    workspace_path: str | None = None
+
+
+@dataclass
+class WorkspaceLogParams:
+    """Parameters for workspace_log(): List snapshot history for workspace."""
+
+    workspace_path: str | None = None
+    limit: int = 100
+
+
+@dataclass
+class WorkspaceRestoreParams:
+    """Parameters for workspace_restore(): Restore workspace to a previous snapshot."""
+
+    snapshot_number: int
+    workspace_path: str | None = None
+
+
+@dataclass
+class WorkspaceSnapshotParams:
+    """Parameters for workspace_snapshot(): Create a snapshot of a registered workspace."""
+
+    workspace_path: str | None = None
+    description: str | None = None
+    tags: list[str] | None = None
+    created_by: str | None = None
+    context: dict | None = None
+
+
+@dataclass
+class WriteBatchParams:
+    """Parameters for write_batch(): Write multiple files in a single round-trip for improved performance."""
+
+    files: list[tuple[str, bytes]]
+
+    def __post_init__(self) -> None:
+        """Convert lists to tuples (JSON deserializes tuples as lists)."""
+        if isinstance(self.files, list):
+            object.__setattr__(self, "files", tuple(self.files))
+
+
 METHOD_PARAMS: dict[str, type] = {
+    "access": AccessParams,
     "access_share_link": AccessShareLinkParams,
+    "acp_call": AcpCallParams,
+    "acp_get_enabled_skills": AcpGetEnabledSkillsParams,
+    "acp_get_system_prompt": AcpGetSystemPromptParams,
+    "acp_history": AcpHistoryParams,
+    "acp_kill": AcpKillParams,
+    "acp_list_agents": AcpListAgentsParams,
+    "acp_list_processes": AcpListProcessesParams,
+    "acp_set_enabled_skills": AcpSetEnabledSkillsParams,
+    "acp_set_system_prompt": AcpSetSystemPromptParams,
+    "add_mount": AddMountParams,
+    "agent_heartbeat": AgentHeartbeatParams,
+    "agent_list_by_zone": AgentListByZoneParams,
+    "agent_transition": AgentTransitionParams,
+    "append": AppendParams,
+    "audit_export": AuditExportParams,
+    "audit_list": AuditListParams,
+    "backfill_directory_index": BackfillDirectoryIndexParams,
     "create_share_link": CreateShareLinkParams,
+    "delete_agent": DeleteAgentParams,
+    "delete_batch": DeleteBatchParams,
+    "delete_connector": DeleteConnectorParams,
+    "delete_saved_mount": DeleteSavedMountParams,
+    "deprovision_user": DeprovisionUserParams,
+    "diff_versions": DiffVersionsParams,
+    "edit": EditParams,
+    "events_replay": EventsReplayParams,
+    "exists_batch": ExistsBatchParams,
+    "federation_cluster_info": FederationClusterInfoParams,
+    "federation_create_zone": FederationCreateZoneParams,
+    "federation_join": FederationJoinParams,
+    "federation_list_zones": FederationListZonesParams,
+    "federation_mount": FederationMountParams,
+    "federation_remove_zone": FederationRemoveZoneParams,
+    "federation_share": FederationShareParams,
+    "federation_unmount": FederationUnmountParams,
+    "flush_write_observer": FlushWriteObserverParams,
+    "get_agent": GetAgentParams,
+    "get_etag": GetEtagParams,
+    "get_mount": GetMountParams,
     "get_share_link": GetShareLinkParams,
     "get_share_link_access_logs": GetShareLinkAccessLogsParams,
+    "get_top_level_mounts": GetTopLevelMountsParams,
+    "get_version": GetVersionParams,
+    "get_workspace_info": GetWorkspaceInfoParams,
+    "glob": GlobParams,
+    "glob_batch": GlobBatchParams,
+    "governance_alerts": GovernanceAlertsParams,
+    "governance_rings": GovernanceRingsParams,
+    "governance_status": GovernanceStatusParams,
+    "grep": GrepParams,
+    "has_mount": HasMountParams,
+    "is_directory": IsDirectoryParams,
+    "list": ListParams,
+    "list_agents": ListAgentsParams,
+    "list_connectors": ListConnectorsParams,
+    "list_incoming_shares": ListIncomingSharesParams,
+    "list_mounts": ListMountsParams,
+    "list_outgoing_shares": ListOutgoingSharesParams,
+    "list_saved_mounts": ListSavedMountsParams,
     "list_share_links": ListShareLinksParams,
+    "list_versions": ListVersionsParams,
+    "list_workspaces": ListWorkspacesParams,
+    "load_mount": LoadMountParams,
+    "load_workspace_config": LoadWorkspaceConfigParams,
+    "lock_acquire": LockAcquireParams,
+    "make_private": MakePrivateParams,
+    "make_public": MakePublicParams,
+    "mcp_connect": MCPConnectParams,
+    "mcp_list_mounts": MCPListMountsParams,
+    "mcp_list_tools": MCPListToolsParams,
+    "mcp_mount": MCPMountParams,
+    "mcp_sync": MCPSyncParams,
+    "mcp_unmount": MCPUnmountParams,
+    "metadata_batch": MetadataBatchParams,
+    "namespace_delete": NamespaceDeleteParams,
+    "namespace_list": NamespaceListParams,
     "oauth_list_credentials": OAuthListCredentialsParams,
     "oauth_list_providers": OAuthListProvidersParams,
     "oauth_revoke_credential": OAuthRevokeCredentialParams,
     "oauth_test_credential": OAuthTestCredentialParams,
+    "pay_balance": PayBalanceParams,
+    "pay_history": PayHistoryParams,
+    "pay_transfer": PayTransferParams,
+    "provision_user": ProvisionUserParams,
+    "read_batch": ReadBatchParams,
+    "read_bulk": ReadBulkParams,
+    "reauth_mount": ReauthMountParams,
+    "rebac_check": RebacCheckParams,
+    "rebac_create": RebacCreateParams,
+    "rebac_delete": RebacDeleteParams,
+    "rebac_expand": RebacExpandParams,
+    "rebac_explain": RebacExplainParams,
+    "rebac_list_objects": RebacListObjectsParams,
+    "rebac_list_tuples": RebacListTuplesParams,
+    "register_agent": RegisterAgentParams,
+    "register_workspace": RegisterWorkspaceParams,
+    "remove_mount": RemoveMountParams,
+    "rename_batch": RenameBatchParams,
+    "revoke_share": RevokeShareParams,
+    "revoke_share_by_id": RevokeShareByIdParams,
     "revoke_share_link": RevokeShareLinkParams,
+    "rollback": RollbackParams,
+    "save_mount": SaveMountParams,
+    "semantic_search": SemanticSearchParams,
+    "semantic_search_index": SemanticSearchIndexParams,
+    "share_with_user": ShareWithUserParams,
+    "snapshot_begin": SnapshotBeginParams,
+    "snapshot_commit": SnapshotCommitParams,
+    "snapshot_create": SnapshotCreateParams,
+    "snapshot_get": SnapshotGetParams,
+    "snapshot_list": SnapshotListParams,
+    "snapshot_list_entries": SnapshotListEntriesParams,
+    "snapshot_restore": SnapshotRestoreParams,
+    "snapshot_rollback": SnapshotRollbackParams,
+    "stat": StatParams,
+    "stat_bulk": StatBulkParams,
+    "sys_copy": SysCopyParams,
+    "sys_lock": SysLockParams,
+    "sys_readdir": SysReaddirParams,
+    "sys_rename": SysRenameParams,
+    "sys_stat": SysStatParams,
+    "sys_unlink": SysUnlinkParams,
+    "sys_unlock": SysUnlockParams,
+    "sys_watch": SysWatchParams,
+    "sys_write": SysWriteParams,
+    "unregister_workspace": UnregisterWorkspaceParams,
+    "update_agent": UpdateAgentParams,
+    "update_mount": UpdateMountParams,
+    "update_workspace": UpdateWorkspaceParams,
+    "workspace_diff": WorkspaceDiffParams,
+    "workspace_log": WorkspaceLogParams,
+    "workspace_restore": WorkspaceRestoreParams,
+    "workspace_snapshot": WorkspaceSnapshotParams,
+    "write_batch": WriteBatchParams,
 }

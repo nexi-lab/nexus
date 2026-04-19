@@ -1188,6 +1188,18 @@ async def create_mcp_server(
                 "Semantic search not available (search brick not loaded).",
             )
 
+        # R4 review: pass an authenticated OperationContext so SearchService
+        # can enforce ReBAC permission filtering on semantic results. Without
+        # it, broad SANDBOX degraded queries would return cross-zone hits to
+        # any MCP caller. Fail closed if identity can't be resolved while a
+        # per-request API key was set (#3731 pattern used in glob/grep).
+        op_context = _resolve_mcp_operation_context(nx_instance, auth_provider=auth_provider)
+        if op_context is None and _request_api_key.get():
+            return tool_error(
+                "unauthorized",
+                "Per-request API key could not be verified; semantic search denied.",
+            )
+
         try:
             # Over-fetch to allow has_more detection without a second round-trip
             fetch_limit = offset + limit * 2
@@ -1196,6 +1208,7 @@ async def create_mcp_server(
                 path=path,
                 search_mode=search_mode,
                 limit=fetch_limit,
+                context=op_context,
             )
         except Exception as e:
             if "not initialized" in str(e).lower() or "not available" in str(e).lower():

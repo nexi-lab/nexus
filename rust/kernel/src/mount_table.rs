@@ -293,21 +293,29 @@ impl MountTable {
         points
     }
 
-    /// User-facing mount points that currently target ``zone_id``.
+    /// User-facing mount points whose per-mount metastore is the given
+    /// ``Arc<dyn Metastore>``.
     ///
-    /// A single federation zone can be mounted at more than one path —
-    /// e.g. ``corp`` is mounted at both ``/corp`` (direct) and
-    /// ``/family/work`` (crosslink) in the standard test topology. The
-    /// DLC invalidation callback uses this to evict every stale dcache
-    /// entry after a committed metadata mutation, regardless of which
-    /// mount-point the original write went through.
-    pub fn mount_points_for_zone(&self, zone_id: &str) -> Vec<String> {
+    /// Keyed by Arc identity (``Arc::ptr_eq``) — the caller hands us the
+    /// metastore whose mounts it cares about, and we return every
+    /// surface that points at the *same allocation*. This is how a
+    /// single federation zone mounted at both ``/corp`` (direct) and
+    /// ``/family/work`` (crosslink) resolves to both mount points: both
+    /// ``MountEntry``s hold clones of the same ``ZoneMetastore`` Arc.
+    ///
+    /// Kernel stays federation-agnostic — it never learns "zone" ids or
+    /// any other federation concept. Apply-side cache coherence and
+    /// cascade-unmount both drive through this single primitive:
+    /// federation installs a callback closing over its own ZoneMetastore
+    /// Arc; that Arc is what identifies the mount set.
+    pub fn mount_points_for_metastore(&self, ms: &Arc<dyn Metastore>) -> Vec<String> {
         let mut points: Vec<String> = self
             .entries
             .iter()
             .filter_map(|e| {
-                let (zone, mp) = extract_zone_from_canonical(e.key());
-                (zone == zone_id).then_some(mp)
+                e.value().metastore.as_ref().and_then(|existing| {
+                    Arc::ptr_eq(existing, ms).then(|| extract_zone_from_canonical(e.key()).1)
+                })
             })
             .collect();
         points.sort();
@@ -780,5 +788,50 @@ mod tests {
         };
         let recovered = zone_to_global(&route.mount_point, &zone_path);
         assert_eq!(recovered, global);
+    }
+
+    /// Federation topology: one ``ZoneMetastore`` Arc surfaces at both a
+    /// direct mount (``/corp``) and a crosslink (``/family/work``).
+    /// ``mount_points_for_metastore`` must return both, and must NOT
+    /// match a different metastore Arc mounted under a sibling path.
+    #[test]
+    fn mount_points_for_metastore_finds_direct_and_crosslinks() {
+        use crate::metastore::MemoryMetastore;
+
+        let corp_ms: Arc<dyn Metastore> = Arc::new(MemoryMetastore::new());
+        let family_ms: Arc<dyn Metastore> = Arc::new(MemoryMetastore::new());
+
+        let table = MountTable::new();
+        table.add(
+            "/corp",
+            "root",
+            MountEntry::new(None, false, false, "balanced", "backend-corp")
+                .with_metastore(Arc::clone(&corp_ms)),
+        );
+        table.add(
+            "/family/work",
+            "root",
+            MountEntry::new(None, false, false, "balanced", "backend-corp-xlink")
+                .with_metastore(Arc::clone(&corp_ms)),
+        );
+        // Sibling mount with a *different* metastore — must NOT appear
+        // in the corp lookup.
+        table.add(
+            "/family",
+            "root",
+            MountEntry::new(None, false, false, "balanced", "backend-family")
+                .with_metastore(Arc::clone(&family_ms)),
+        );
+
+        let mut corp_points = table.mount_points_for_metastore(&corp_ms);
+        corp_points.sort();
+        assert_eq!(corp_points, vec!["/corp", "/family/work"]);
+
+        let family_points = table.mount_points_for_metastore(&family_ms);
+        assert_eq!(family_points, vec!["/family"]);
+
+        // A third Arc that was never installed returns empty.
+        let stranger: Arc<dyn Metastore> = Arc::new(MemoryMetastore::new());
+        assert!(table.mount_points_for_metastore(&stranger).is_empty());
     }
 }

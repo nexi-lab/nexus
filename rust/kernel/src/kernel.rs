@@ -1423,6 +1423,25 @@ impl Kernel {
         self.mount_table.canonical_keys()
     }
 
+    /// Global mount points whose per-mount metastore is the given
+    /// ``Arc<dyn Metastore>`` (direct mount + every crosslink). Consumers:
+    /// the apply-side dcache coherence callback and the cascade-unmount
+    /// path on ``remove_zone(force=True)`` — both federation-side
+    /// primitives that reach kernel through a metastore Arc they own.
+    ///
+    /// Kernel stays federation-agnostic: it keys by Arc identity
+    /// (``Arc::ptr_eq``), never by any federation field like ``zone_id``.
+    ///
+    /// Gains a caller in R20.5 (Python cascade) / R20.6 (federation
+    /// installs the dcache callback from its setup-zone path).
+    #[allow(dead_code)]
+    pub fn mount_points_for_metastore(
+        &self,
+        ms: &Arc<dyn crate::metastore::Metastore>,
+    ) -> Vec<String> {
+        self.mount_table.mount_points_for_metastore(ms)
+    }
+
     /// Syscall: set attributes on a path. Handles ALL filesystem entry types.
     ///
     /// - `entry_type == 2` (DT_MOUNT) → DLC mount lifecycle

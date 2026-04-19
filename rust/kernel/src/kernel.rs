@@ -1353,6 +1353,51 @@ impl Kernel {
         self.mount_table.mount_points_for_metastore(ms)
     }
 
+    /// Install the apply-side dcache invalidation callback for a
+    /// federation mount (R20.6).
+    ///
+    /// Fires on every committed metadata mutation on ``consensus``'s
+    /// state machine — evicts the corresponding DCache entry on every
+    /// current mount whose per-mount metastore shares ``Arc::ptr_eq``
+    /// with ``ms_for_cb`` (direct mount + every crosslink). Without
+    /// this, nodes that didn't originate a write (leader-forwarded
+    /// follower writes, catch-up replication) keep serving stale
+    /// ``sys_stat`` / ``sys_read`` from their local dcache after raft
+    /// applies the new state — a textbook distributed-cache-coherence
+    /// hole.
+    ///
+    /// Lives in kernel (rather than raft) because the closure captures
+    /// kernel primitives (DCache handle, MountTable reverse lookup);
+    /// raft's rlib cannot import kernel types without a cycle. The
+    /// trigger, however, is federation-specific: only the
+    /// ``sys_setattr(DT_MOUNT)`` dispatcher invokes this — DLC is
+    /// federation-unaware now (R20.6 move).
+    fn install_federation_dcache_coherence(
+        &self,
+        consensus: nexus_raft::prelude::ZoneConsensus<nexus_raft::prelude::FullStateMachine>,
+        ms_for_cb: Arc<dyn crate::metastore::Metastore>,
+    ) {
+        let Some(slot) = consensus.invalidate_cb_slot() else {
+            return;
+        };
+        let dcache = self.dcache_handle();
+        let mount_table = self.mount_table_handle();
+        let cb: Arc<dyn Fn(&str) + Send + Sync> = Arc::new(move |zone_relative_key: &str| {
+            let trimmed = zone_relative_key.trim_start_matches('/');
+            for mp in mount_table.mount_points_for_metastore(&ms_for_cb) {
+                let global = if trimmed.is_empty() {
+                    mp.clone()
+                } else if mp.ends_with('/') {
+                    format!("{}{}", mp, trimmed)
+                } else {
+                    format!("{}/{}", mp, trimmed)
+                };
+                dcache.evict(&global);
+            }
+        });
+        *slot.write() = Some(cb);
+    }
+
     /// Syscall: set attributes on a path. Handles ALL filesystem entry types.
     ///
     /// - `entry_type == 2` (DT_MOUNT) → DLC mount lifecycle
@@ -1392,7 +1437,18 @@ impl Kernel {
     ) -> Result<SysSetAttrResult, KernelError> {
         match entry_type {
             2 => {
-                // DT_MOUNT — full mount lifecycle via DLC
+                // DT_MOUNT — full mount lifecycle via DLC.
+                //
+                // R20.6: snapshot the raft handle + metastore Arc BEFORE
+                // they're consumed by ``dlc.mount`` so we can install the
+                // apply-side dcache coherence callback after routing is
+                // wired. Triggered here (not in DLC) so DLC stays
+                // federation-unaware — the install is specific to
+                // federation mounts (raft_backend present + per-mount
+                // metastore Arc to pin identity).
+                let consensus_for_cb = raft_backend.as_ref().map(|(c, _)| c.clone());
+                let ms_for_cb: Option<Arc<dyn crate::metastore::Metastore>> =
+                    metastore.as_ref().map(Arc::clone);
                 self.dlc.mount(
                     self,
                     path,
@@ -1406,6 +1462,9 @@ impl Kernel {
                     raft_backend,
                     is_external,
                 )?;
+                if let (Some(consensus), Some(ms_arc)) = (consensus_for_cb, ms_for_cb) {
+                    self.install_federation_dcache_coherence(consensus, ms_arc);
+                }
                 Ok(SysSetAttrResult {
                     path: path.to_string(),
                     created: true,

@@ -74,16 +74,16 @@ impl DriverLifecycleCoordinator {
         )>,
         is_external: bool,
     ) -> Result<(), KernelError> {
-        // Snapshot the consensus handle + metastore Arc before moving
-        // them into add_mount so we can install the dcache-invalidation
-        // callback after routing is wired. ZoneConsensus is Clone
-        // (wraps shared Arcs); the metastore Arc is a cheap ref bump
-        // and is the *identity* the reverse-lookup keys on.
-        let raft_snapshot = raft_backend.as_ref().map(|(c, _)| c.clone());
-        let ms_for_cb: Option<Arc<dyn crate::metastore::Metastore>> =
-            metastore.as_ref().map(Arc::clone);
-
         // 1. Routing table + per-mount metastore + lock manager upgrade
+        //
+        // R20.6: apply-side dcache coherence (the per-zone invalidate
+        // callback that fires on every committed metadata mutation) is
+        // no longer wired here — it's installed by the
+        // ``sys_setattr(DT_MOUNT)`` dispatcher via
+        // ``Kernel::install_federation_dcache_coherence`` AFTER this
+        // mount() returns. DLC stays federation-unaware; the install
+        // sees only kernel primitives (dcache handle + metastore Arc
+        // identity).
         kernel.add_mount(
             mount_point,
             zone_id,
@@ -96,45 +96,6 @@ impl DriverLifecycleCoordinator {
             raft_backend,
             is_external,
         )?;
-
-        // 1b. Apply-side cache coherence: install a callback on the zone's
-        // state machine that evicts the kernel DCache entry for each key
-        // mutated by a committed metadata command. Without this, nodes
-        // that didn't originate a write (leader-forwarded follower
-        // writes, catch-up replication) keep serving stale sys_stat /
-        // sys_read from their local dcache even after raft applies the
-        // new state — a textbook distributed-cache-coherence hole.
-        //
-        // A single federation zone can surface at multiple mount points
-        // (direct mount + crosslink, e.g. ``corp`` mounted at both
-        // ``/corp`` and ``/family/work``). The callback resolves ALL
-        // current mount points whose per-mount metastore is THIS Arc, so
-        // a write through one crosslink evicts the mirror entries cached
-        // under the other. Keying by ``Arc::ptr_eq`` (not caller zone_id
-        // or target zone_id) keeps the kernel primitive free of any
-        // federation concept — R20.6 will move the install itself out
-        // of DLC once federation-side wiring is plumbed.
-        if let (Some(consensus), Some(ms_arc)) = (raft_snapshot, ms_for_cb) {
-            if let Some(slot) = consensus.invalidate_cb_slot() {
-                let dcache = kernel.dcache_handle();
-                let mount_table = kernel.mount_table_handle();
-                let cb: Arc<dyn Fn(&str) + Send + Sync> =
-                    Arc::new(move |zone_relative_key: &str| {
-                        let trimmed = zone_relative_key.trim_start_matches('/');
-                        for mp in mount_table.mount_points_for_metastore(&ms_arc) {
-                            let global = if trimmed.is_empty() {
-                                mp.clone()
-                            } else if mp.ends_with('/') {
-                                format!("{}{}", mp, trimmed)
-                            } else {
-                                format!("{}/{}", mp, trimmed)
-                            };
-                            dcache.evict(&global);
-                        }
-                    });
-                *slot.write() = Some(cb);
-            }
-        }
 
         // 2. Write DT_MOUNT metadata entry (best-effort).
         // R20.3: the ZoneMetastore (per-mount) and LocalMetastore (global

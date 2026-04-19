@@ -137,16 +137,15 @@ impl DriverLifecycleCoordinator {
         }
 
         // 2. Write DT_MOUNT metadata entry (best-effort).
-        // Per-mount metastore (federation zone): key is "/" (zone-relative,
-        // like Linux per-superblock root inode). Global-fallback metastore:
-        // key is the full mount_point (otherwise every new mount would
-        // overwrite the global "/" entry). ``with_metastore_scoped`` hands
-        // us ``is_per_mount`` so we pick the correct key.
+        // R20.3: the ZoneMetastore (per-mount) and LocalMetastore (global
+        // fallback) both accept full paths at the trait boundary.
+        // ZoneMetastore translates to its zone-relative root "/" internally;
+        // LocalMetastore stores the full path directly. Either way the
+        // caller passes ``mount_point`` (the VFS-global DT_MOUNT key).
         let canonical = canonicalize(mount_point, zone_id);
-        kernel.with_metastore_scoped(&canonical, |ms, is_per_mount| {
-            let key = if is_per_mount { "/" } else { mount_point };
+        kernel.with_metastore(&canonical, |ms| {
             let meta = crate::metastore::FileMetadata {
-                path: key.to_string(),
+                path: mount_point.to_string(),
                 backend_name: backend_name.to_string(),
                 physical_path: String::new(),
                 size: 0,
@@ -158,7 +157,7 @@ impl DriverLifecycleCoordinator {
                 created_at_ms: None,
                 modified_at_ms: None,
             };
-            let _ = ms.put(key, meta);
+            let _ = ms.put(mount_point, meta);
         });
 
         // 3. DCache entry for mount point
@@ -200,10 +199,10 @@ impl DriverLifecycleCoordinator {
     pub fn unmount(&self, kernel: &Kernel, mount_point: &str, zone_id: &str) -> bool {
         let canonical = canonicalize(mount_point, zone_id);
 
-        // 1. Delete metastore entry (best-effort) — zone-relative key
-        // Mount point itself is always "/" in its own zone context.
+        // 1. Delete metastore entry (best-effort) — full path
+        // (ZoneMetastore translates internally to its zone-relative root).
         kernel.with_metastore(&canonical, |ms| {
-            let _ = ms.delete("/");
+            let _ = ms.delete(mount_point);
         });
 
         // 2. DCache evict — mount point + all children

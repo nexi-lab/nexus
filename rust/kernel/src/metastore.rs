@@ -81,6 +81,12 @@ pub struct PaginatedList {
 ///
 /// 5 abstract methods matching the Python ABC:
 ///   - get, put, delete, list, exists
+///
+/// **Key contract (R20.3)**: callers always pass full global paths —
+/// including the mount-point prefix. Impls that store zone-relative
+/// internally (``ZoneMetastore``) translate at their boundary so
+/// federation-layer concerns never leak up. Returned ``FileMetadata.path``
+/// values are likewise full paths.
 pub trait Metastore: Send + Sync {
     /// Get metadata for a path. Returns None if not found.
     fn get(&self, path: &str) -> Result<Option<FileMetadata>, MetastoreError>;

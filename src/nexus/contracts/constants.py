@@ -136,3 +136,15 @@ Every NexusFS instance has a zone_id. In standalone mode it defaults to
 ``"root"``. In federated mode each zone has a unique ID assigned by
 the Raft consensus layer.
 """
+
+VFS_ROOT = "/"
+"""Canonical VFS root path.
+
+Appears both as (a) the global filesystem root a user sees
+(``sys_stat("/")``) and as (b) the zone-relative root key a
+metastore stores the zone's own root-inode under — these happen to be
+the same literal because every metastore namespace starts at ``"/"``.
+
+Rust mirror: ``contracts::VFS_ROOT``
+(``rust/contracts/src/constants.rs``).
+"""

@@ -673,56 +673,36 @@ impl Kernel {
         self.metastore.as_ref().map(|ms| f(ms.as_ref()))
     }
 
-    /// Variant of ``with_metastore`` that reports whether the returned
-    /// metastore is per-mount or the global fallback. The caller uses this
-    /// to decide whether to store a zone-relative key (per-mount) or a
-    /// full global key (global fallback) — without the distinction, two
-    /// mounts that share the global metastore collide on zone-relative
-    /// paths like `/file.txt` (Issue #3765 Cat-8).
-    pub(crate) fn with_metastore_scoped<F, R>(&self, mount_point: &str, f: F) -> Option<R>
-    where
-        F: FnOnce(&dyn crate::metastore::Metastore, bool) -> R,
-    {
-        if let Some(entry) = self.mount_table.get_canonical(mount_point) {
-            if let Some(ms) = entry.metastore.as_ref() {
-                let ms_arc = Arc::clone(ms);
-                drop(entry);
-                return Some(f(ms_arc.as_ref(), true));
-            }
-        }
-        self.metastore.as_ref().map(|ms| f(ms.as_ref(), false))
+    // ── Metastore routing ────────────────────────────────────────────
+    //
+    // R20.3: the metastore abstraction owns key translation. Callers
+    // pass full global paths; per-mount ``ZoneMetastore`` impls translate
+    // to their zone-relative storage on the way in and back on the way
+    // out. The global fallback ``LocalMetastore`` stores full paths
+    // directly. There is no longer a kernel-side "is per-mount"
+    // branch — we just resolve the right metastore and forward.
+
+    /// Resolve the canonical mount point for a global path.
+    ///
+    /// Returns ``""`` when no mount covers the path (caller decides
+    /// whether to fall back to the global metastore).
+    fn resolve_mount_point(&self, path: &str, zone_id: &str) -> String {
+        self.mount_table
+            .route(path, zone_id, true, false)
+            .map(|r| r.mount_point)
+            .unwrap_or_default()
     }
 
-    // ── Zone-relative metastore key helpers ─────────────────────────────
-    //
-    // Per-zone metastores use zone-relative keys (like Linux per-superblock
-    // inode paths: ext4 stores `/foo`, not `/mnt/disk1/foo`).
-    //
-    // Global path `/corp/eng/foo.txt` under mount `/corp` → zone key `/eng/foo.txt`.
-    // DCache keeps global paths (correct — dcache spans all zones).
-
     /// Compute zone-relative metastore key from a route's `backend_path`.
+    ///
+    /// Still used by backend / dcache code paths that need the
+    /// zone-namespace key even though the metastore no longer does.
     #[inline]
     fn zone_key(backend_path: &str) -> String {
         if backend_path.is_empty() {
-            "/".to_string()
+            contracts::VFS_ROOT.to_string()
         } else {
             format!("/{}", backend_path)
-        }
-    }
-
-    /// Convert global path to zone-relative metastore key via routing.
-    ///
-    /// Returns `(mount_point, zone_relative_path)` where `mount_point` is
-    /// the zone-canonical key for `with_metastore()`, and
-    /// `zone_relative_path` is the key to use inside that metastore.
-    fn resolve_metastore_key(&self, path: &str, zone_id: &str) -> (String, String) {
-        match self.mount_table.route(path, zone_id, true, false) {
-            Ok(route) => {
-                let zone_path = Self::zone_key(&route.backend_path);
-                (route.mount_point, zone_path)
-            }
-            Err(_) => (String::new(), path.to_string()),
         }
     }
 
@@ -742,29 +722,11 @@ impl Kernel {
         &self,
         path: &str,
     ) -> Result<Option<crate::metastore::FileMetadata>, KernelError> {
-        let (mount_point, zone_path) = self.resolve_metastore_key(path, contracts::ROOT_ZONE_ID);
-        let global_path = path.to_string();
-        let mount_point_owned = mount_point.clone();
-        match self.with_metastore_scoped(&mount_point, |ms, is_per_mount| {
-            let key = if is_per_mount {
-                zone_path.as_str()
-            } else {
-                global_path.as_str()
-            };
-            (is_per_mount, ms.get(key))
-        }) {
-            Some((is_per_mount, result)) => result
-                .map(|opt| {
-                    opt.map(|mut m| {
-                        // Convert zone-relative path back to global for Python callers.
-                        if is_per_mount {
-                            m.path =
-                                crate::mount_table::zone_to_global(&mount_point_owned, &m.path);
-                        }
-                        m
-                    })
-                })
-                .map_err(|e| KernelError::IOError(format!("metastore_get({path}): {e:?}"))),
+        let mount_point = self.resolve_mount_point(path, contracts::ROOT_ZONE_ID);
+        match self.with_metastore(&mount_point, |ms| ms.get(path)) {
+            Some(result) => {
+                result.map_err(|e| KernelError::IOError(format!("metastore_get({path}): {e:?}")))
+            }
             None => Err(KernelError::IOError("no metastore wired".into())),
         }
     }
@@ -774,17 +736,9 @@ impl Kernel {
         path: &str,
         mut metadata: crate::metastore::FileMetadata,
     ) -> Result<(), KernelError> {
-        let (mount_point, zone_path) = self.resolve_metastore_key(path, contracts::ROOT_ZONE_ID);
-        let global_path = path.to_string();
-        match self.with_metastore_scoped(&mount_point, move |ms, is_per_mount| {
-            let key = if is_per_mount {
-                zone_path.clone()
-            } else {
-                global_path.clone()
-            };
-            metadata.path = key.clone();
-            ms.put(&key, metadata)
-        }) {
+        let mount_point = self.resolve_mount_point(path, contracts::ROOT_ZONE_ID);
+        metadata.path = path.to_string();
+        match self.with_metastore(&mount_point, move |ms| ms.put(path, metadata)) {
             Some(result) => {
                 result.map_err(|e| KernelError::IOError(format!("metastore_put({path}): {e:?}")))
             }
@@ -793,16 +747,8 @@ impl Kernel {
     }
 
     pub fn metastore_delete(&self, path: &str) -> Result<bool, KernelError> {
-        let (mount_point, zone_path) = self.resolve_metastore_key(path, contracts::ROOT_ZONE_ID);
-        let global_path = path.to_string();
-        match self.with_metastore_scoped(&mount_point, |ms, is_per_mount| {
-            let key = if is_per_mount {
-                zone_path.as_str()
-            } else {
-                global_path.as_str()
-            };
-            ms.delete(key)
-        }) {
+        let mount_point = self.resolve_mount_point(path, contracts::ROOT_ZONE_ID);
+        match self.with_metastore(&mount_point, |ms| ms.delete(path)) {
             Some(result) => {
                 result.map_err(|e| KernelError::IOError(format!("metastore_delete({path}): {e:?}")))
             }
@@ -814,67 +760,40 @@ impl Kernel {
         &self,
         prefix: &str,
     ) -> Result<Vec<crate::metastore::FileMetadata>, KernelError> {
-        let route_path = if prefix.is_empty() { "/" } else { prefix };
-        let (mount_point, zone_prefix) =
-            self.resolve_metastore_key(route_path, contracts::ROOT_ZONE_ID);
+        let route_path = if prefix.is_empty() {
+            contracts::VFS_ROOT
+        } else {
+            prefix
+        };
         let global_prefix = if prefix.is_empty() {
-            "/".to_string()
+            contracts::VFS_ROOT.to_string()
         } else {
             prefix.to_string()
         };
-        // Per-mount metastore → zone-relative prefix; global fallback →
-        // the caller's original (global) prefix so we don't spuriously match
-        // entries that were stored with full global keys (Cat-8).
-        let mount_point_for_conv = mount_point.clone();
-        let routed_mount = mount_point.clone();
-        let mut results: Vec<crate::metastore::FileMetadata> =
-            match self.with_metastore_scoped(&mount_point, |ms, is_per_mount| {
-                let list_prefix = if is_per_mount {
-                    if prefix.is_empty() {
-                        "/"
-                    } else {
-                        &zone_prefix
-                    }
-                } else {
-                    global_prefix.as_str()
-                };
-                (is_per_mount, ms.list(list_prefix))
-            }) {
-                Some((is_per_mount, inner)) => inner
-                    .map(|entries| {
-                        entries
-                            .into_iter()
-                            .map(|mut m| {
-                                if is_per_mount {
-                                    m.path = crate::mount_table::zone_to_global(
-                                        &mount_point_for_conv,
-                                        &m.path,
-                                    );
-                                }
-                                m
-                            })
-                            .collect::<Vec<_>>()
-                    })
-                    .map_err(|e| {
-                        KernelError::IOError(format!("metastore_list({prefix}): {e:?}"))
-                    })?,
-                None => return Err(KernelError::IOError("no metastore wired".into())),
-            };
+        let routed_mount = self.resolve_mount_point(route_path, contracts::ROOT_ZONE_ID);
+
+        let mut results: Vec<crate::metastore::FileMetadata> = match self
+            .with_metastore(&routed_mount, |ms| ms.list(&global_prefix))
+        {
+            Some(result) => result
+                .map_err(|e| KernelError::IOError(format!("metastore_list({prefix}): {e:?}")))?,
+            None => return Err(KernelError::IOError("no metastore wired".into())),
+        };
 
         // F2 C5 follow-up: when the user-facing prefix spans MULTIPLE mounts
         // (e.g. prefix=`/personal/` with a mount at `/personal/alice`), the
         // routed metastore above only returns entries rooted on the parent
         // mount. Merge in each child mount's own per-mount metastore so the
         // caller sees the full subtree — including the mount roots themselves,
-        // which are stored as zone-relative `/` inside each child metastore.
+        // which each metastore stores under its own mount-point key.
         let user_prefix = if prefix.is_empty() {
-            "/".to_string()
+            contracts::VFS_ROOT.to_string()
         } else if prefix.ends_with('/') {
             prefix.to_string()
         } else {
             format!("{}/", prefix)
         };
-        let user_prefix_trim = if user_prefix == "/" {
+        let user_prefix_trim = if user_prefix == contracts::VFS_ROOT {
             ""
         } else {
             user_prefix.trim_end_matches('/')
@@ -888,8 +807,8 @@ impl Kernel {
             // (`/`) sees every mount. Non-root prefix `/a` matches `/a/b` but
             // not `/a` itself (caller already has the DT_MOUNT entry from the
             // parent metastore, or gets it via a separate sys_stat).
-            let under_prefix = if user_prefix == "/" {
-                user_mp != "/"
+            let under_prefix = if user_prefix == contracts::VFS_ROOT {
+                user_mp != contracts::VFS_ROOT
             } else {
                 user_mp.starts_with(&user_prefix)
                     || user_mp == user_prefix_trim.to_string().as_str()
@@ -897,16 +816,12 @@ impl Kernel {
             if !under_prefix {
                 continue;
             }
-            if let Some(Ok(child_entries)) = self.with_metastore(&canonical, |ms| ms.list("/")) {
-                for mut meta in child_entries {
-                    meta.path = crate::mount_table::zone_to_global(&canonical, &meta.path);
-                    // `zone_to_global(mp, "/")` yields `"<mp>/"` which is the
-                    // mount-root inode — the caller expects the non-slashed
-                    // canonical mount point, so trim the trailing separator
-                    // (but keep root `/` as-is).
-                    if meta.path.len() > 1 && meta.path.ends_with('/') {
-                        meta.path.pop();
-                    }
+            // R20.3: ask the child metastore to list its own full-path
+            // root; it translates internally. Returned entries already
+            // carry full global paths, so no post-hoc translation needed.
+            if let Some(Ok(child_entries)) = self.with_metastore(&canonical, |ms| ms.list(&user_mp))
+            {
+                for meta in child_entries {
                     // Deduplicate — parent metastore may also carry a stub
                     // DT_DIR entry for the mount point path.
                     if !results.iter().any(|m| m.path == meta.path) {
@@ -919,16 +834,8 @@ impl Kernel {
     }
 
     pub fn metastore_exists(&self, path: &str) -> Result<bool, KernelError> {
-        let (mount_point, zone_path) = self.resolve_metastore_key(path, contracts::ROOT_ZONE_ID);
-        let global_path = path.to_string();
-        match self.with_metastore_scoped(&mount_point, |ms, is_per_mount| {
-            let key = if is_per_mount {
-                zone_path.as_str()
-            } else {
-                global_path.as_str()
-            };
-            ms.exists(key)
-        }) {
+        let mount_point = self.resolve_mount_point(path, contracts::ROOT_ZONE_ID);
+        match self.with_metastore(&mount_point, |ms| ms.exists(path)) {
             Some(result) => {
                 result.map_err(|e| KernelError::IOError(format!("metastore_exists({path}): {e:?}")))
             }
@@ -978,8 +885,10 @@ impl Kernel {
         expected_version: u32,
     ) -> Result<crate::metastore::PutIfVersionResult, KernelError> {
         let path = metadata.path.clone();
-        let (mount_point, zone_path) = self.resolve_metastore_key(&path, contracts::ROOT_ZONE_ID);
-        metadata.path = zone_path;
+        let mount_point = self.resolve_mount_point(&path, contracts::ROOT_ZONE_ID);
+        // Metadata.path stays at the full global path — ZoneMetastore
+        // translates internally now.
+        metadata.path = path.clone();
         match self.with_metastore(&mount_point, move |ms| {
             ms.put_if_version(metadata, expected_version)
         }) {
@@ -993,9 +902,8 @@ impl Kernel {
     /// Rename `old_path` → `new_path` (and prefix children). See
     /// `Metastore::rename_path`.
     pub fn metastore_rename_path(&self, old_path: &str, new_path: &str) -> Result<(), KernelError> {
-        let (old_mp, old_zp) = self.resolve_metastore_key(old_path, contracts::ROOT_ZONE_ID);
-        let (_new_mp, new_zp) = self.resolve_metastore_key(new_path, contracts::ROOT_ZONE_ID);
-        match self.with_metastore(&old_mp, |ms| ms.rename_path(&old_zp, &new_zp)) {
+        let old_mp = self.resolve_mount_point(old_path, contracts::ROOT_ZONE_ID);
+        match self.with_metastore(&old_mp, |ms| ms.rename_path(old_path, new_path)) {
             Some(result) => result.map_err(|e| {
                 KernelError::IOError(format!(
                     "metastore_rename_path({old_path} → {new_path}): {e:?}"
@@ -1011,9 +919,9 @@ impl Kernel {
         key: &str,
         value: String,
     ) -> Result<(), KernelError> {
-        let (mount_point, zone_path) = self.resolve_metastore_key(path, contracts::ROOT_ZONE_ID);
+        let mount_point = self.resolve_mount_point(path, contracts::ROOT_ZONE_ID);
         match self.with_metastore(&mount_point, move |ms| {
-            ms.set_file_metadata(&zone_path, key, value)
+            ms.set_file_metadata(path, key, value)
         }) {
             Some(result) => result.map_err(|e| {
                 KernelError::IOError(format!("metastore_set_file_metadata({path}, {key}): {e:?}"))
@@ -1027,8 +935,8 @@ impl Kernel {
         path: &str,
         key: &str,
     ) -> Result<Option<String>, KernelError> {
-        let (mount_point, zone_path) = self.resolve_metastore_key(path, contracts::ROOT_ZONE_ID);
-        match self.with_metastore(&mount_point, |ms| ms.get_file_metadata(&zone_path, key)) {
+        let mount_point = self.resolve_mount_point(path, contracts::ROOT_ZONE_ID);
+        match self.with_metastore(&mount_point, |ms| ms.get_file_metadata(path, key)) {
             Some(result) => result.map_err(|e| {
                 KernelError::IOError(format!("metastore_get_file_metadata({path}, {key}): {e:?}"))
             }),
@@ -1052,8 +960,8 @@ impl Kernel {
     }
 
     pub fn metastore_is_implicit_directory(&self, path: &str) -> Result<bool, KernelError> {
-        let (mount_point, zone_path) = self.resolve_metastore_key(path, contracts::ROOT_ZONE_ID);
-        match self.with_metastore(&mount_point, |ms| ms.is_implicit_directory(&zone_path)) {
+        let mount_point = self.resolve_mount_point(path, contracts::ROOT_ZONE_ID);
+        match self.with_metastore(&mount_point, |ms| ms.is_implicit_directory(path)) {
             Some(result) => result.map_err(|e| {
                 KernelError::IOError(format!("metastore_is_implicit_directory({path}): {e:?}"))
             }),
@@ -1068,26 +976,24 @@ impl Kernel {
         limit: usize,
         cursor: Option<&str>,
     ) -> Result<crate::metastore::PaginatedList, KernelError> {
-        let route_path = if prefix.is_empty() { "/" } else { prefix };
-        let (mount_point, zone_prefix) =
-            self.resolve_metastore_key(route_path, contracts::ROOT_ZONE_ID);
-        let list_prefix = if prefix.is_empty() { "/" } else { &zone_prefix };
-        // Cursor is a metastore-internal key, pass as-is (already zone-relative
-        // since cursors are produced by previous list calls on the same store).
+        let route_path = if prefix.is_empty() {
+            contracts::VFS_ROOT
+        } else {
+            prefix
+        };
+        let list_prefix = if prefix.is_empty() {
+            contracts::VFS_ROOT
+        } else {
+            prefix
+        };
+        let mount_point = self.resolve_mount_point(route_path, contracts::ROOT_ZONE_ID);
+        // Cursor is a metastore-internal key, pass as-is.
         match self.with_metastore(&mount_point, |ms| {
             ms.list_paginated(list_prefix, recursive, limit, cursor)
         }) {
-            Some(result) => result
-                .map(|mut page| {
-                    // Convert zone-relative paths back to global for Python callers.
-                    for m in &mut page.items {
-                        m.path = crate::mount_table::zone_to_global(&mount_point, &m.path);
-                    }
-                    page
-                })
-                .map_err(|e| {
-                    KernelError::IOError(format!("metastore_list_paginated({prefix}): {e:?}"))
-                }),
+            Some(result) => result.map_err(|e| {
+                KernelError::IOError(format!("metastore_list_paginated({prefix}): {e:?}"))
+            }),
             None => Err(KernelError::IOError("no metastore wired".into())),
         }
     }
@@ -1688,16 +1594,10 @@ impl Kernel {
     /// Write DT_PIPE inode to metastore + dcache (shared by create_pipe and SHM path).
     #[allow(dead_code)]
     fn write_pipe_inode(&self, path: &str, capacity: usize) {
-        let route = self
-            .mount_table
-            .route(path, contracts::ROOT_ZONE_ID, true, false);
-        let (mount_point, zone_path) = match &route {
-            Ok(r) => (r.mount_point.clone(), Self::zone_key(&r.backend_path)),
-            Err(_) => (String::new(), path.to_string()),
-        };
+        let mount_point = self.resolve_mount_point(path, contracts::ROOT_ZONE_ID);
         self.with_metastore(&mount_point, |ms| {
             let meta = crate::metastore::FileMetadata {
-                path: zone_path.clone(),
+                path: path.to_string(),
                 backend_name: "pipe".to_string(),
                 physical_path: "shm://".to_string(),
                 size: capacity as u64,
@@ -1709,7 +1609,7 @@ impl Kernel {
                 created_at_ms: None,
                 modified_at_ms: None,
             };
-            let _ = ms.put(&zone_path, meta);
+            let _ = ms.put(path, meta);
         });
         self.dcache.put(
             path,
@@ -1731,16 +1631,10 @@ impl Kernel {
     /// Write DT_STREAM inode to metastore + dcache (shared by create_stream and SHM path).
     #[allow(dead_code)]
     fn write_stream_inode(&self, path: &str, capacity: usize) {
-        let route = self
-            .mount_table
-            .route(path, contracts::ROOT_ZONE_ID, true, false);
-        let (mount_point, zone_path) = match &route {
-            Ok(r) => (r.mount_point.clone(), Self::zone_key(&r.backend_path)),
-            Err(_) => (String::new(), path.to_string()),
-        };
+        let mount_point = self.resolve_mount_point(path, contracts::ROOT_ZONE_ID);
         self.with_metastore(&mount_point, |ms| {
             let meta = crate::metastore::FileMetadata {
-                path: zone_path.clone(),
+                path: path.to_string(),
                 backend_name: "stream".to_string(),
                 physical_path: "shm://".to_string(),
                 size: capacity as u64,
@@ -1752,7 +1646,7 @@ impl Kernel {
                 created_at_ms: None,
                 modified_at_ms: None,
             };
-            let _ = ms.put(&zone_path, meta);
+            let _ = ms.put(path, meta);
         });
         self.dcache.put(
             path,
@@ -1777,15 +1671,15 @@ impl Kernel {
         path: &str,
         zone_id: &str,
     ) -> Result<SysSetAttrResult, KernelError> {
-        // Route first to get zone-relative key
-        let (mount_point, zone_path) = self.resolve_metastore_key(path, zone_id);
+        // Route first to locate the right per-mount metastore.
+        let mount_point = self.resolve_mount_point(path, zone_id);
 
         // Idempotent: if DT_DIR (or DT_MOUNT, which is directory-like since
         // a mount point IS a directory) already exists, no-op. This matches
         // ``mkdir(exist_ok=True)`` semantics — a mount creates the directory
         // slot, so a follow-up mkdir on the same path shouldn't fail.
         let existing = self
-            .with_metastore(&mount_point, |ms| ms.get(&zone_path).ok().flatten())
+            .with_metastore(&mount_point, |ms| ms.get(path).ok().flatten())
             .flatten();
         if let Some(meta) = existing {
             if meta.entry_type == DT_DIR || meta.entry_type == DT_MOUNT {
@@ -1813,7 +1707,7 @@ impl Kernel {
             .unwrap_or(0);
 
         let meta = crate::metastore::FileMetadata {
-            path: zone_path.clone(),
+            path: path.to_string(),
             backend_name: String::new(),
             physical_path: contracts::BLAKE3_EMPTY.to_string(),
             size: 0,
@@ -1826,9 +1720,10 @@ impl Kernel {
             modified_at_ms: Some(now_ms),
         };
 
-        // Write to metastore (routed via mount_point) — zone-relative key
+        // Write to metastore (routed via mount_point) — full path; any
+        // per-mount ZoneMetastore translates internally.
         self.with_metastore(&mount_point, |ms| {
-            let _ = ms.put(&zone_path, meta);
+            let _ = ms.put(path, meta);
         });
 
         // DCache entry
@@ -2210,16 +2105,10 @@ impl Kernel {
             .map_err(pipe_mgr_err)?;
 
         // Persist DT_PIPE inode (best-effort — metastore may not be wired in tests).
-        let route = self
-            .mount_table
-            .route(path, contracts::ROOT_ZONE_ID, true, false);
-        let (mount_point, zone_path) = match &route {
-            Ok(r) => (r.mount_point.clone(), Self::zone_key(&r.backend_path)),
-            Err(_) => (String::new(), path.to_string()),
-        };
+        let mount_point = self.resolve_mount_point(path, contracts::ROOT_ZONE_ID);
         self.with_metastore(&mount_point, |ms| {
             let meta = crate::metastore::FileMetadata {
-                path: zone_path.clone(),
+                path: path.to_string(),
                 backend_name: "pipe".to_string(),
                 physical_path: "mem://".to_string(),
                 size: capacity as u64,
@@ -2231,7 +2120,7 @@ impl Kernel {
                 created_at_ms: None,
                 modified_at_ms: None,
             };
-            let _ = ms.put(&zone_path, meta);
+            let _ = ms.put(path, meta);
         });
 
         self.dcache.put(
@@ -2257,10 +2146,11 @@ impl Kernel {
     pub fn destroy_pipe(&self, path: &str) -> Result<(), KernelError> {
         self.pipe_manager.destroy(path).map_err(pipe_mgr_err)?;
 
-        // Remove DT_PIPE inode (best-effort) — zone-relative key
-        let (mount_point, zone_path) = self.resolve_metastore_key(path, contracts::ROOT_ZONE_ID);
+        // Remove DT_PIPE inode (best-effort) — full path, translated by
+        // any per-mount ZoneMetastore at its boundary.
+        let mount_point = self.resolve_mount_point(path, contracts::ROOT_ZONE_ID);
         self.with_metastore(&mount_point, |ms| {
-            let _ = ms.delete(&zone_path);
+            let _ = ms.delete(path);
         });
         self.dcache.evict(path);
 
@@ -2316,16 +2206,10 @@ impl Kernel {
             .create(path, capacity)
             .map_err(stream_mgr_err)?;
 
-        let route = self
-            .mount_table
-            .route(path, contracts::ROOT_ZONE_ID, true, false);
-        let (mount_point, zone_path) = match &route {
-            Ok(r) => (r.mount_point.clone(), Self::zone_key(&r.backend_path)),
-            Err(_) => (String::new(), path.to_string()),
-        };
+        let mount_point = self.resolve_mount_point(path, contracts::ROOT_ZONE_ID);
         self.with_metastore(&mount_point, |ms| {
             let meta = crate::metastore::FileMetadata {
-                path: zone_path.clone(),
+                path: path.to_string(),
                 backend_name: "stream".to_string(),
                 physical_path: "mem://".to_string(),
                 size: capacity as u64,
@@ -2337,7 +2221,7 @@ impl Kernel {
                 created_at_ms: None,
                 modified_at_ms: None,
             };
-            let _ = ms.put(&zone_path, meta);
+            let _ = ms.put(path, meta);
         });
 
         self.dcache.put(
@@ -2363,10 +2247,10 @@ impl Kernel {
     pub fn destroy_stream(&self, path: &str) -> Result<(), KernelError> {
         self.stream_manager.destroy(path).map_err(stream_mgr_err)?;
 
-        // Remove DT_STREAM inode (best-effort) — zone-relative key
-        let (mount_point, zone_path) = self.resolve_metastore_key(path, contracts::ROOT_ZONE_ID);
+        // Remove DT_STREAM inode (best-effort) — full path.
+        let mount_point = self.resolve_mount_point(path, contracts::ROOT_ZONE_ID);
         self.with_metastore(&mount_point, |ms| {
-            let _ = ms.delete(&zone_path);
+            let _ = ms.delete(path);
         });
         self.dcache.evict(path);
 
@@ -2516,12 +2400,11 @@ impl Kernel {
         }
 
         // 3. DCache lookup — on miss, fallback to metastore (cold path)
-        let zone_path = Self::zone_key(&route.backend_path);
         let entry = match self.dcache.get_entry(path) {
             Some(e) => e,
             None => {
-                // Metastore fallback (per-mount first, then global) — zone-relative key
-                match self.with_metastore(&route.mount_point, |ms| ms.get(&zone_path)) {
+                // Metastore fallback (per-mount first, then global) — full path
+                match self.with_metastore(&route.mount_point, |ms| ms.get(path)) {
                     Some(Ok(Some(meta))) => {
                         // Populate dcache from metastore result
                         let cached = CachedEntry {
@@ -2836,7 +2719,6 @@ impl Kernel {
 
         // 5. Backend write (CasLocal or PyObjectStoreAdapter)
         //    Pass backend_path as content_id (CAS ignores it, PAS uses it as blob path).
-        let zone_path = Self::zone_key(&route.backend_path);
         let write_result = match self.mount_table.write_content(
             &route.mount_point,
             content,
@@ -2881,18 +2763,12 @@ impl Kernel {
                     .as_ref()
                     .and_then(|e| e.created_at_ms)
                     .or(Some(now_ms));
-                // When the mount has its own metastore, use the zone-relative
-                // key. When we fall back to the global metastore (Cat-8 bug
-                // — two un-federated mounts both hitting the single global
-                // store), use the full global path so the keys don't collide.
-                self.with_metastore_scoped(&route.mount_point, |ms, is_per_mount| {
-                    let key = if is_per_mount {
-                        zone_path.clone()
-                    } else {
-                        path.to_string()
-                    };
+                // R20.3: always pass the full global path. Per-mount
+                // ZoneMetastore translates at its boundary; the global
+                // fallback stores full paths directly.
+                self.with_metastore(&route.mount_point, |ms| {
                     let meta = crate::metastore::FileMetadata {
-                        path: key.clone(),
+                        path: path.to_string(),
                         backend_name: backend_display_name.clone(),
                         physical_path: wr.content_id.clone(),
                         size: wr.size,
@@ -2905,7 +2781,7 @@ impl Kernel {
                         modified_at_ms: Some(now_ms),
                     };
                     // Best-effort metastore.put -- error logged but doesn't fail write
-                    let _ = ms.put(&key, meta);
+                    let _ = ms.put(path, meta);
                 });
 
                 // Update dcache with new metadata
@@ -2980,13 +2856,12 @@ impl Kernel {
 
         // 4. DCache lookup. On miss, fall back to the per-mount metastore
         //    so federation zones see inodes that haven't been cached yet
-        //    (F2 C5 — matches sys_read's cold path). Zone-relative key.
-        let zone_path = Self::zone_key(&route.backend_path);
+        //    (F2 C5 — matches sys_read's cold path). Full path.
         let entry = match self.dcache.get_entry(path) {
             Some(e) => e,
             None => {
                 let meta = self
-                    .with_metastore(&route.mount_point, |ms| ms.get(&zone_path).ok().flatten())
+                    .with_metastore(&route.mount_point, |ms| ms.get(path).ok().flatten())
                     .flatten()?;
                 let cached = CachedEntry {
                     backend_name: meta.backend_name.clone(),
@@ -3094,12 +2969,11 @@ impl Kernel {
         };
 
         // 3. Get metadata (dcache or metastore — per-mount first, then global)
-        let zone_path = Self::zone_key(&route.backend_path);
         let meta = match self.dcache.get_entry(path) {
             Some(e) => Some(e),
             None => self
                 .with_metastore(&route.mount_point, |ms| {
-                    ms.get(&zone_path).ok().flatten().map(|m| CachedEntry {
+                    ms.get(path).ok().flatten().map(|m| CachedEntry {
                         backend_name: m.backend_name,
                         physical_path: m.physical_path,
                         size: m.size,
@@ -3160,9 +3034,9 @@ impl Kernel {
             return miss(entry.entry_type);
         }
 
-        // 6. Metastore delete (per-mount or global) — zone-relative key
+        // 6. Metastore delete (per-mount or global) — full path
         self.with_metastore(&route.mount_point, |ms| {
-            let _ = ms.delete(&zone_path);
+            let _ = ms.delete(path);
         });
 
         // 7. Backend delete (best-effort, PAS only)
@@ -3693,12 +3567,9 @@ impl Kernel {
             .mount_table
             .route(path, &ctx.zone_id, ctx.is_admin, true)?;
 
-        // 3. Existence check via metastore (per-mount or global) — zone-relative key
-        let zone_path = Self::zone_key(&route.backend_path);
+        // 3. Existence check via metastore (per-mount or global) — full path
         let exists = self
-            .with_metastore(&route.mount_point, |ms| {
-                ms.exists(&zone_path).unwrap_or(false)
-            })
+            .with_metastore(&route.mount_point, |ms| ms.exists(path).unwrap_or(false))
             .unwrap_or(false);
         if exists {
             if !exist_ok && !parents {
@@ -3708,7 +3579,7 @@ impl Kernel {
             }
             // Already exists — ensure parents and return
             if parents {
-                self.ensure_parent_directories(path, &zone_path, ctx, &route.mount_point)?;
+                self.ensure_parent_directories(path, ctx, &route.mount_point)?;
             }
             return Ok(SysMkdirResult {
                 hit: true,
@@ -3723,13 +3594,13 @@ impl Kernel {
 
         // 5. Ensure parent directories
         if parents {
-            self.ensure_parent_directories(path, &zone_path, ctx, &route.mount_point)?;
+            self.ensure_parent_directories(path, ctx, &route.mount_point)?;
         }
 
-        // 6. Create directory metadata in metastore (per-mount or global) — zone-relative key
+        // 6. Create directory metadata in metastore (per-mount or global) — full path
         self.with_metastore(&route.mount_point, |ms| {
             let meta = crate::metastore::FileMetadata {
-                path: zone_path.clone(),
+                path: path.to_string(),
                 backend_name: route.io_profile.clone(),
                 physical_path: String::new(),
                 size: 0,
@@ -3741,7 +3612,7 @@ impl Kernel {
                 created_at_ms: None,
                 modified_at_ms: None,
             };
-            let _ = ms.put(&zone_path, meta);
+            let _ = ms.put(path, meta);
         });
 
         // 7. DCache put
@@ -3776,43 +3647,32 @@ impl Kernel {
         })
     }
 
-    /// Walk up path creating missing parent directory metadata.
+    /// Walk up `path` creating missing parent directory metadata.
     ///
-    /// `zone_path` is the zone-relative path for metastore operations;
-    /// `path` is the global path for dcache operations. They share the
-    /// same suffix structure, so parent traversal stays in sync.
+    /// R20.3: metastore now keyed by full paths, so we walk the global
+    /// path directly — no separate zone_path traversal needed.
     fn ensure_parent_directories(
         &self,
         path: &str,
-        zone_path: &str,
         ctx: &OperationContext,
         mount_point: &str,
     ) -> Result<(), KernelError> {
-        // Walk up zone_path from parent to root, collecting missing dirs.
-        // Collect (zone_dir, global_dir) pairs.
-        let mut zp_cur = zone_path;
-        let mut gp_cur = path;
-        let mut to_create: Vec<(String, String)> = Vec::new();
+        // Walk up path from parent to root, collecting missing dirs.
+        let mut cur = path;
+        let mut to_create: Vec<String> = Vec::new();
         loop {
-            match zp_cur.rfind('/') {
+            match cur.rfind('/') {
                 Some(0) | None => break,
-                Some(zpos) => {
-                    // Suffix removed by this iter = current zp_cur tail length.
-                    // Must be computed against current zp_cur, not original
-                    // zone_path.len() — iter N already trimmed earlier suffixes
-                    // from gp_cur, so using zone_path.len() double-counts.
-                    let suffix_len = zp_cur.len() - zpos;
-                    zp_cur = &zone_path[..zpos];
-                    if zp_cur.is_empty() || zp_cur == "/" {
+                Some(pos) => {
+                    cur = &path[..pos];
+                    if cur.is_empty() || cur == contracts::VFS_ROOT {
                         break;
                     }
-                    let gpos = gp_cur.len() - suffix_len;
-                    gp_cur = &path[..gpos];
                     let exists = self
-                        .with_metastore(mount_point, |ms| ms.exists(zp_cur).unwrap_or(true))
+                        .with_metastore(mount_point, |ms| ms.exists(cur).unwrap_or(true))
                         .unwrap_or(true);
                     if !exists {
-                        to_create.push((zp_cur.to_string(), gp_cur.to_string()));
+                        to_create.push(cur.to_string());
                     } else {
                         break; // Existing parent found, stop
                     }
@@ -3821,10 +3681,11 @@ impl Kernel {
         }
 
         // Create from shallowest to deepest
-        for (zone_dir, global_dir) in to_create.into_iter().rev() {
+        for dir in to_create.into_iter().rev() {
+            let dir_ref = dir.as_str();
             self.with_metastore(mount_point, |ms| {
                 let meta = crate::metastore::FileMetadata {
-                    path: zone_dir.clone(),
+                    path: dir.clone(),
                     backend_name: String::new(),
                     physical_path: String::new(),
                     size: 0,
@@ -3836,10 +3697,10 @@ impl Kernel {
                     created_at_ms: None,
                     modified_at_ms: None,
                 };
-                let _ = ms.put(&zone_dir, meta);
+                let _ = ms.put(dir_ref, meta);
             });
             self.dcache.put(
-                &global_dir,
+                dir_ref,
                 CachedEntry {
                     backend_name: String::new(),
                     physical_path: String::new(),
@@ -3885,11 +3746,10 @@ impl Kernel {
             .mount_table
             .route(path, &ctx.zone_id, ctx.is_admin, true)?;
 
-        // 3. Get metadata (per-mount or global) — zone-relative key
-        let zone_path = Self::zone_key(&route.backend_path);
+        // 3. Get metadata (per-mount or global) — full path
         let entry_type = self
             .with_metastore(&route.mount_point, |ms| {
-                ms.get(&zone_path)
+                ms.get(path)
                     .ok()
                     .flatten()
                     .map(|m| m.entry_type)
@@ -3902,10 +3762,10 @@ impl Kernel {
             return miss();
         }
 
-        // 4. Check children (per-mount or global) — zone-relative prefix
+        // 4. Check children (per-mount or global) — full-path prefix
         let mut children_deleted = 0;
         if let Some(result) = self.with_metastore(&route.mount_point, |ms| {
-            let prefix = format!("{}/", zone_path.trim_end_matches('/'));
+            let prefix = format!("{}/", path.trim_end_matches('/'));
             let children = ms.list(&prefix).unwrap_or_default();
 
             if !children.is_empty() {
@@ -3928,9 +3788,9 @@ impl Kernel {
             .mount_table
             .rmdir(&route.mount_point, &route.backend_path, recursive);
 
-        // 7. Delete directory metadata (per-mount or global) — zone-relative key
+        // 7. Delete directory metadata (per-mount or global) — full path
         self.with_metastore(&route.mount_point, |ms| {
-            let _ = ms.delete(&zone_path);
+            let _ = ms.delete(path);
         });
 
         // 8. DCache evict + prefix evict
@@ -4070,12 +3930,11 @@ impl Kernel {
                 Some(wr) => {
                     let old_version = self.dcache.get_entry(path).map(|e| e.version).unwrap_or(0);
                     let new_version = old_version + 1;
-                    let zone_path = Self::zone_key(&route.backend_path);
 
                     // Collect metadata for batch put (instead of N individual puts)
                     let batch_backend_name = self.origin_backend_name(&route.io_profile);
                     let meta = crate::metastore::FileMetadata {
-                        path: zone_path.clone(),
+                        path: path.to_string(),
                         backend_name: batch_backend_name,
                         physical_path: wr.content_id.clone(),
                         size: wr.size,
@@ -4087,7 +3946,7 @@ impl Kernel {
                         created_at_ms: None,
                         modified_at_ms: None,
                     };
-                    batch_meta.push((route.mount_point.clone(), zone_path, meta));
+                    batch_meta.push((route.mount_point.clone(), path.to_string(), meta));
 
                     // DCache update
                     self.dcache.put(
@@ -4239,32 +4098,25 @@ impl Kernel {
             Err(_) => return Vec::new(),
         };
 
-        let global_prefix = if normalized == "/" {
-            "/".to_string()
+        let global_prefix = if normalized == contracts::VFS_ROOT {
+            contracts::VFS_ROOT.to_string()
         } else {
             format!("{}/", normalized)
         };
 
-        // Zone-relative prefix for metastore list (R7: zone-relative keys).
-        let zone_parent = Self::zone_key(&route.backend_path);
-        let zone_prefix = if zone_parent == "/" {
-            "/".to_string()
-        } else {
-            format!("{}/", zone_parent)
-        };
-
-        // Merge dcache children (zone-relative basenames; we re-prefix with
-        // the global parent path below) with per-mount metastore list
-        // (zone-relative full paths converted to global) so federation zones
-        // see entries that haven't been warmed into the dcache (F2 C5).
+        // Merge dcache children (basenames; we re-prefix with the
+        // global parent path below) with per-mount metastore list
+        // (R20.3: full global paths end-to-end) so federation zones
+        // see entries that haven't been warmed into the dcache
+        // (F2 C5).
         //
-        // ``dcache.list_children(prefix)`` strips the common prefix and
-        // returns the remaining *basename* for each immediate child (e.g.
-        // for prefix ``/mnt/`` it returns ``gcs_demo``). To satisfy the
-        // ``sys_readdir`` contract which returns global paths, splice the
-        // parent back on here.
+        // ``dcache.list_children(prefix)`` strips the common prefix
+        // and returns the remaining *basename* for each immediate
+        // child (e.g. for prefix ``/mnt/`` it returns ``gcs_demo``).
+        // To satisfy the ``sys_readdir`` contract which returns
+        // global paths, splice the parent back on here.
         let mut seen: std::collections::BTreeMap<String, u8> = std::collections::BTreeMap::new();
-        let parent_for_join = if parent_path == "/" {
+        let parent_for_join = if parent_path == contracts::VFS_ROOT {
             ""
         } else {
             parent_path.trim_end_matches('/')
@@ -4275,21 +4127,18 @@ impl Kernel {
         }
 
         if let Some(ms_children) =
-            self.with_metastore(&route.mount_point, |ms| ms.list(&zone_prefix).ok())
+            self.with_metastore(&route.mount_point, |ms| ms.list(&global_prefix).ok())
         {
-            let parent_depth = zone_prefix.matches('/').count();
+            let parent_depth = global_prefix.matches('/').count();
             for meta in ms_children.into_iter().flatten() {
                 // Direct children only: same depth as prefix + 1 segment.
                 if meta.path.matches('/').count() != parent_depth {
                     continue;
                 }
-                if !meta.path.starts_with(&zone_prefix) {
+                if !meta.path.starts_with(&global_prefix) {
                     continue;
                 }
-                // Convert zone-relative path back to global for the seen map.
-                let global_path =
-                    crate::mount_table::zone_to_global(&route.mount_point, &meta.path);
-                seen.entry(global_path).or_insert(meta.entry_type);
+                seen.entry(meta.path).or_insert(meta.entry_type);
             }
         }
 
@@ -4941,7 +4790,13 @@ mod tests {
         }
     }
 
-    // ── R7: zone-relative metastore key tests ───────────────────────
+    // ── R20.3 metastore-key tests ──────────────────────────────────────
+    //
+    // Post-R20.3 the kernel passes full global paths to the metastore
+    // trait. ZoneMetastore (the federation impl) internalizes the
+    // translation to zone-relative — see rust/kernel/src/raft_metastore.rs
+    // for that coverage. These tests use RedbMetastore (full-path store)
+    // so they exercise the kernel call path without any translation.
 
     use crate::metastore::Metastore as MetastoreTrait;
 
@@ -4953,10 +4808,11 @@ mod tests {
     }
 
     #[test]
-    fn sys_setattr_dir_stores_zone_relative_key() {
+    fn sys_setattr_dir_stores_full_path_key() {
         // Mount "/data" in zone "root" with a shared metastore.
-        // DT_DIR at "/data/sub" should store metastore key "/sub" (zone-relative),
-        // not "/data/sub" (global).
+        // DT_DIR at "/data/sub" now stores metastore key "/data/sub"
+        // (full global path) — R20.3 moved zone-relative translation
+        // into ZoneMetastore, so generic full-path stores see full keys.
         let k = Kernel::new();
         let ms = temp_metastore();
         k.add_mount(
@@ -4996,106 +4852,15 @@ mod tests {
             .unwrap();
         assert!(r.created);
 
-        // Verify metastore stores zone-relative key "/sub", not global "/data/sub"
+        // R20.3: key is the full global path.
         assert!(
-            ms.get("/sub").unwrap().is_some(),
-            "zone-relative key /sub must exist"
+            ms.get("/data/sub").unwrap().is_some(),
+            "full path /data/sub must exist"
         );
         assert!(
-            ms.get("/data/sub").unwrap().is_none(),
-            "global key /data/sub must NOT exist"
+            ms.get("/sub").unwrap().is_none(),
+            "old zone-relative key /sub must NOT exist post-R20.3"
         );
-    }
-
-    #[test]
-    fn crosslink_metastore_shares_zone_relative_keys() {
-        // Crosslink scenario: two mounts share the same per-zone metastore.
-        // "/corp" and "/family/work" both point to the corp zone store.
-        // Write via /corp/file → read via /family/work/file must succeed.
-        let k = Kernel::new();
-        let corp_ms = temp_metastore();
-
-        // Mount "/corp" with the corp metastore
-        k.add_mount(
-            "/corp",
-            "root",
-            false,
-            false,
-            "balanced",
-            "corp-backend",
-            None,
-            Some(corp_ms.clone()),
-            None,
-            false,
-        )
-        .unwrap();
-        // Mount "/family/work" with the SAME corp metastore (crosslink)
-        k.add_mount(
-            "/family/work",
-            "root",
-            false,
-            false,
-            "balanced",
-            "corp-backend",
-            None,
-            Some(corp_ms.clone()),
-            None,
-            false,
-        )
-        .unwrap();
-
-        // Need /family mount first for routing to work
-        k.add_mount(
-            "/family",
-            "root",
-            false,
-            false,
-            "balanced",
-            "family-backend",
-            None,
-            None,
-            None,
-            false,
-        )
-        .unwrap();
-
-        // Create DT_DIR at /corp/docs
-        let r = k
-            .sys_setattr(
-                "/corp/docs",
-                1,
-                "",
-                None,
-                None,
-                None,
-                false,
-                false,
-                "balanced",
-                "root",
-                false,
-                0,
-                None,
-                None,
-                None,
-                None,
-            )
-            .unwrap();
-        assert!(r.created, "DT_DIR at /corp/docs should be created");
-
-        // Metastore should store zone-relative key "/docs"
-        assert!(corp_ms.get("/docs").unwrap().is_some());
-
-        // sys_stat via the crosslink path "/family/work/docs" should find it
-        // because both mounts share the same metastore and zone-relative key is "/docs".
-        let stat = k.sys_stat("/family/work/docs", "root", true);
-        assert!(
-            stat.is_some(),
-            "crosslink stat /family/work/docs must find /docs in shared metastore"
-        );
-        let stat = stat.unwrap();
-        assert!(stat.is_directory);
-        // StatResult.path should be the global path (user-facing)
-        assert_eq!(stat.path, "/family/work/docs");
     }
 
     #[test]

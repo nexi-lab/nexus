@@ -11,6 +11,21 @@
 /// ``nexus.contracts.constants.ROOT_ZONE_ID``.
 pub const ROOT_ZONE_ID: &str = "root";
 
+/// Canonical VFS root path.
+///
+/// Appears both as (a) the global filesystem root a user sees
+/// (``sys_stat("/")``) and as (b) the zone-relative root key a
+/// metastore stores the zone's own root-inode under — these happen
+/// to be the same literal because every metastore namespace starts
+/// at ``"/"``.
+///
+/// Use this constant at semantic sites (mount-point comparisons,
+/// zone-key root detection, translation boundary in
+/// ``ZoneMetastore``). The literal ``"/"`` is still fine for
+/// unambiguous string-splitting / delimiter uses where readers
+/// aren't asked to disambiguate "which root?".
+pub const VFS_ROOT: &str = "/";
+
 /// BLAKE3 hash of the empty byte string — used as the canonical ETag
 /// for zero-content inodes (DT_DIR, empty files). Mirrors the Python
 /// ``nexus.core.hash_utils.BLAKE3_EMPTY`` constant.

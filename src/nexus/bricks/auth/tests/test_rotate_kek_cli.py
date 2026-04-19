@@ -238,6 +238,113 @@ class TestRotateKekCLI:
         assert called["kms_region"] == "us-east-1"
         assert called["kms_config_version"] == 3
 
+    def test_rejects_non_positive_batch_size(
+        self,
+        seeded_tenant: tuple[uuid.UUID, InMemoryEncryptionProvider],
+        pg_engine: Engine,
+    ) -> None:
+        """--batch-size must be >= 1 (click.IntRange)."""
+        t, prov = seeded_tenant
+        from nexus.bricks.auth.cli_commands import _TEST_PROVIDER_REGISTRY
+
+        _TEST_PROVIDER_REGISTRY["inmem"] = lambda: prov
+        os.environ["NEXUS_AUTH_ROTATE_KEK_TEST_PROVIDER_ID"] = "inmem"
+        try:
+            runner = CliRunner()
+            result = runner.invoke(
+                auth,
+                [
+                    "rotate-kek",
+                    "--db-url",
+                    PG_URL,
+                    "--tenant",
+                    _tenant_name(pg_engine, t),
+                    "--batch-size",
+                    "0",
+                    "--apply",
+                ],
+            )
+            assert result.exit_code != 0
+            assert "batch-size" in result.output.lower() or "0" in result.output
+        finally:
+            os.environ.pop("NEXUS_AUTH_ROTATE_KEK_TEST_PROVIDER_ID", None)
+            _TEST_PROVIDER_REGISTRY.pop("inmem", None)
+
+    def test_preflight_fails_when_envelope_columns_missing(
+        self,
+        seeded_tenant: tuple[uuid.UUID, InMemoryEncryptionProvider],
+        pg_engine: Engine,
+    ) -> None:
+        """Rotation does not run DDL; it only reads information_schema.
+
+        Regression for Codex round 3: operators should get a clear migration-
+        required error instead of rotate-kek silently running ALTER TABLE
+        under a potentially under-privileged DB role.
+        """
+        t, prov = seeded_tenant
+        from nexus.bricks.auth.cli_commands import _TEST_PROVIDER_REGISTRY
+
+        _TEST_PROVIDER_REGISTRY["inmem"] = lambda: prov
+        os.environ["NEXUS_AUTH_ROTATE_KEK_TEST_PROVIDER_ID"] = "inmem"
+        try:
+            with pg_engine.begin() as conn:
+                conn.execute(text("ALTER TABLE auth_profiles DROP COLUMN IF EXISTS kek_version"))
+            try:
+                runner = CliRunner()
+                result = runner.invoke(
+                    auth,
+                    [
+                        "rotate-kek",
+                        "--db-url",
+                        PG_URL,
+                        "--tenant",
+                        _tenant_name(pg_engine, t),
+                    ],
+                )
+                assert result.exit_code != 0
+                assert "kek_version" in result.output or "envelope columns" in result.output
+            finally:
+                with pg_engine.begin() as conn:
+                    conn.execute(
+                        text(
+                            "ALTER TABLE auth_profiles ADD COLUMN IF NOT EXISTS kek_version INTEGER"
+                        )
+                    )
+        finally:
+            os.environ.pop("NEXUS_AUTH_ROTATE_KEK_TEST_PROVIDER_ID", None)
+            _TEST_PROVIDER_REGISTRY.pop("inmem", None)
+
+    def test_rejects_non_positive_max_rows(
+        self,
+        seeded_tenant: tuple[uuid.UUID, InMemoryEncryptionProvider],
+        pg_engine: Engine,
+    ) -> None:
+        """--max-rows must be >= 1 (click.IntRange)."""
+        t, prov = seeded_tenant
+        from nexus.bricks.auth.cli_commands import _TEST_PROVIDER_REGISTRY
+
+        _TEST_PROVIDER_REGISTRY["inmem"] = lambda: prov
+        os.environ["NEXUS_AUTH_ROTATE_KEK_TEST_PROVIDER_ID"] = "inmem"
+        try:
+            runner = CliRunner()
+            result = runner.invoke(
+                auth,
+                [
+                    "rotate-kek",
+                    "--db-url",
+                    PG_URL,
+                    "--tenant",
+                    _tenant_name(pg_engine, t),
+                    "--max-rows",
+                    "-5",
+                    "--apply",
+                ],
+            )
+            assert result.exit_code != 0
+        finally:
+            os.environ.pop("NEXUS_AUTH_ROTATE_KEK_TEST_PROVIDER_ID", None)
+            _TEST_PROVIDER_REGISTRY.pop("inmem", None)
+
     def test_no_provider_and_no_env_errors(
         self,
         seeded_tenant: tuple[uuid.UUID, InMemoryEncryptionProvider],

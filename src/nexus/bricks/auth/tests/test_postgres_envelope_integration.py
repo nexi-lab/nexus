@@ -488,6 +488,36 @@ class TestRotateKEKFailures:
         assert report.rows_failed == 1
         assert report.rows_remaining == 1
 
+    def test_rejects_non_positive_batch_size(
+        self,
+        pg_engine: Engine,
+        tenant_id: uuid.UUID,
+        encryption_provider: InMemoryEncryptionProvider,
+    ) -> None:
+        """Defensive guard: batch_size <= 0 raises ValueError."""
+        with pytest.raises(ValueError, match="batch_size must be >= 1"):
+            rotate_kek_for_tenant(
+                pg_engine,
+                tenant_id=tenant_id,
+                encryption_provider=encryption_provider,
+                batch_size=0,
+            )
+
+    def test_rejects_non_positive_max_rows(
+        self,
+        pg_engine: Engine,
+        tenant_id: uuid.UUID,
+        encryption_provider: InMemoryEncryptionProvider,
+    ) -> None:
+        """Defensive guard: max_rows <= 0 raises ValueError."""
+        with pytest.raises(ValueError, match="max_rows must be >= 1"):
+            rotate_kek_for_tenant(
+                pg_engine,
+                tenant_id=tenant_id,
+                encryption_provider=encryption_provider,
+                max_rows=0,
+            )
+
     def test_aad_tampered_row_fails_rotation(
         self,
         pg_store_crypto: PostgresAuthProfileStore,

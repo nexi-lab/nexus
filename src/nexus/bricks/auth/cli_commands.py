@@ -961,11 +961,17 @@ def _build_kms_provider(
 @click.option(
     "--apply", is_flag=True, default=False, help="Actually rewrap rows (default: dry-run)."
 )
-@click.option("--batch-size", default=100, show_default=True, help="Rows per batch.")
+@click.option(
+    "--batch-size",
+    default=100,
+    show_default=True,
+    type=click.IntRange(min=1),
+    help="Rows per batch (must be >= 1).",
+)
 @click.option(
     "--max-rows",
     default=None,
-    type=int,
+    type=click.IntRange(min=1),
     help="Upper bound on rows rewrapped across all batches (omit for no cap).",
 )
 @click.option(
@@ -987,8 +993,8 @@ def _build_kms_provider(
     "--kms-config-version",
     default=1,
     show_default=True,
-    type=int,
-    help="Provider config version to stamp into wrap ciphertexts.",
+    type=click.IntRange(min=1),
+    help="Provider config version to stamp into wrap ciphertexts (>= 1).",
 )
 def auth_rotate_kek(
     db_url: str,
@@ -1016,9 +1022,34 @@ def auth_rotate_kek(
     from sqlalchemy import create_engine, text
 
     from nexus.bricks.auth.postgres_profile_store import (
-        ensure_schema,
         rotate_kek_for_tenant,
     )
+
+    _REQUIRED_ENVELOPE_COLUMNS = {
+        "ciphertext",
+        "wrapped_dek",
+        "nonce",
+        "aad",
+        "kek_version",
+    }
+
+    def _preflight_schema(conn: Any) -> None:
+        cols = {
+            r[0]
+            for r in conn.execute(
+                text(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_name = 'auth_profiles'"
+                )
+            ).fetchall()
+        }
+        missing = _REQUIRED_ENVELOPE_COLUMNS - cols
+        if missing:
+            raise click.ClickException(
+                "auth_profiles is missing envelope columns "
+                f"{sorted(missing)!r}. Run schema migrations first "
+                "(ensure_schema) with a role that has ALTER privileges."
+            )
 
     encryption_provider: EncryptionProvider
     test_provider_id = os.environ.get("NEXUS_AUTH_ROTATE_KEK_TEST_PROVIDER_ID")
@@ -1049,8 +1080,8 @@ def auth_rotate_kek(
 
     engine = create_engine(db_url, future=True)
     try:
-        ensure_schema(engine)
         with engine.begin() as conn:
+            _preflight_schema(conn)
             row = conn.execute(
                 text("SELECT id FROM tenants WHERE name = :n"), {"n": tenant}
             ).fetchone()

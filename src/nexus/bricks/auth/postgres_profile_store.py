@@ -1229,6 +1229,10 @@ def rotate_kek_for_tenant(
     only; ``ciphertext``, ``nonce``, ``aad`` are untouched so a reader mid-
     rotation decrypts successfully regardless of which version wrote.
     """
+    if batch_size < 1:
+        raise ValueError(f"batch_size must be >= 1, got {batch_size}")
+    if max_rows is not None and max_rows < 1:
+        raise ValueError(f"max_rows must be >= 1 when set, got {max_rows}")
     target = encryption_provider.current_version(tenant_id=tenant_id)
     rewrapped = 0
     failed = 0

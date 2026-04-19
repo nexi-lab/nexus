@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from nexus.security.tls.certgen import (
     cert_fingerprint,
     generate_node_cert,

@@ -11,9 +11,13 @@ import importlib
 import logging
 import os
 import re
-from typing import Any
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 import click
+
+if TYPE_CHECKING:
+    from nexus.bricks.auth.envelope import EncryptionProvider
 from rich.table import Table
 
 from nexus.cli.theme import console
@@ -882,6 +886,345 @@ def auth_migrate_to_postgres(
         finally:
             source.close()
             target.close()
+    finally:
+        engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# auth rotate-kek (issue #3803 — envelope KEK rotation)
+# ---------------------------------------------------------------------------
+
+# Test hook: lets test modules register a provider factory without building
+# real Vault/KMS wiring. Production code paths never use this registry — they
+# construct a provider from CLI args (lands with the Phase D consumer).
+_TEST_PROVIDER_REGISTRY: dict[str, Callable[[], "EncryptionProvider"]] = {}
+
+
+def _build_vault_provider(
+    *,
+    vault_addr: str | None,
+    vault_token: str | None,
+    vault_key: str | None,
+    vault_mount: str,
+) -> "EncryptionProvider":  # noqa: F821
+    if not vault_key:
+        raise click.ClickException("--vault-key is required for --provider=vault")
+    addr = vault_addr or os.environ.get("VAULT_ADDR")
+    token = vault_token or os.environ.get("VAULT_TOKEN")
+    if not addr:
+        raise click.ClickException("--vault-addr or VAULT_ADDR env var is required")
+    if not token:
+        raise click.ClickException("--vault-token or VAULT_TOKEN env var is required")
+    try:
+        import hvac
+    except ImportError as exc:
+        raise click.ClickException(
+            "hvac not installed. Install with: pip install 'nexus[vault]'"
+        ) from exc
+    from nexus.bricks.auth.envelope_providers.vault_transit import VaultTransitProvider
+
+    client = hvac.Client(url=addr, token=token)
+    return VaultTransitProvider(client, key_name=vault_key, mount_point=vault_mount)
+
+
+def _build_kms_provider(
+    *,
+    kms_key_id: str | None,
+    kms_region: str | None,
+    kms_config_version: int,
+) -> "EncryptionProvider":  # noqa: F821
+    if not kms_key_id:
+        raise click.ClickException("--kms-key-id is required for --provider=aws-kms")
+    try:
+        import boto3
+    except ImportError as exc:
+        raise click.ClickException(
+            "boto3 not installed. Install with: pip install 'nexus[aws]'"
+        ) from exc
+    from nexus.bricks.auth.envelope_providers.aws_kms import AwsKmsProvider
+
+    client = boto3.client("kms", region_name=kms_region) if kms_region else boto3.client("kms")
+    return AwsKmsProvider(client, key_id=kms_key_id, config_version=kms_config_version)
+
+
+@auth.command("rotate-kek")
+@click.option(
+    "--db-url",
+    required=True,
+    help="PostgreSQL URL (e.g. postgresql+psycopg2://user:pw@host:5432/db).",
+)
+@click.option(
+    "--tenant",
+    default=None,
+    help="Tenant name (requires a DB role that can read tenants.name — typically "
+    "BYPASSRLS). For least-privilege roles, pass --tenant-id instead.",
+)
+@click.option(
+    "--tenant-id",
+    "tenant_id_opt",
+    default=None,
+    help="Tenant UUID. Preferred for least-privilege roles: skips the tenants "
+    "table lookup that FORCE RLS blocks for non-BYPASSRLS roles.",
+)
+@click.option(
+    "--apply", is_flag=True, default=False, help="Actually rewrap rows (default: dry-run)."
+)
+@click.option(
+    "--allow-failures",
+    is_flag=True,
+    default=False,
+    help="Exit 0 even when rows_failed > 0 (default: non-zero exit on any failed row).",
+)
+@click.option(
+    "--allow-partial",
+    is_flag=True,
+    default=False,
+    help="Exit 0 even when rows_remaining > 0 after apply "
+    "(default: non-zero; use this flag when intentionally batching under --max-rows).",
+)
+@click.option(
+    "--batch-size",
+    default=100,
+    show_default=True,
+    type=click.IntRange(min=1),
+    help="Rows per batch (must be >= 1).",
+)
+@click.option(
+    "--max-rows",
+    default=None,
+    type=click.IntRange(min=1),
+    help="Upper bound on rows rewrapped across all batches (omit for no cap).",
+)
+@click.option(
+    "--provider",
+    type=click.Choice(["vault", "aws-kms"]),
+    default=None,
+    help="Encryption provider to construct (vault|aws-kms). Required unless "
+    "NEXUS_AUTH_ROTATE_KEK_TEST_PROVIDER_ID is set.",
+)
+@click.option("--vault-addr", default=None, help="Vault URL (falls back to VAULT_ADDR env).")
+@click.option("--vault-token", default=None, help="Vault token (falls back to VAULT_TOKEN env).")
+@click.option("--vault-key", default=None, help="Vault transit key name (derived=true required).")
+@click.option(
+    "--vault-mount", default="transit", show_default=True, help="Vault transit mount point."
+)
+@click.option("--kms-key-id", default=None, help="AWS KMS key id, alias, or ARN.")
+@click.option("--kms-region", default=None, help="AWS region (falls back to boto3 default chain).")
+@click.option(
+    "--kms-config-version",
+    default=1,
+    show_default=True,
+    type=click.IntRange(min=1),
+    help="Provider config version to stamp into wrap ciphertexts (>= 1).",
+)
+def auth_rotate_kek(
+    db_url: str,
+    tenant: str | None,
+    tenant_id_opt: str | None,
+    apply: bool,
+    allow_failures: bool,
+    allow_partial: bool,
+    batch_size: int,
+    max_rows: int | None,
+    provider: str | None,
+    vault_addr: str | None,
+    vault_token: str | None,
+    vault_key: str | None,
+    vault_mount: str,
+    kms_key_id: str | None,
+    kms_region: str | None,
+    kms_config_version: int,
+) -> None:
+    """Rewrap auth_profiles rows at the current provider KEK version.
+
+    Dry-run by default. Operator promotes the provider version out-of-band
+    (Vault: ``vault write -f transit/keys/<name>/rotate``; AWS KMS: managed);
+    then runs this command to sweep rows stuck at older versions.
+    """
+    import uuid as _uuid
+
+    from sqlalchemy import create_engine, text
+
+    from nexus.bricks.auth.postgres_profile_store import (
+        VersionSkewError,
+        rotate_kek_for_tenant,
+    )
+
+    _REQUIRED_ENVELOPE_COLUMNS = {
+        "ciphertext",
+        "wrapped_dek",
+        "nonce",
+        "aad",
+        "kek_version",
+    }
+
+    def _preflight_schema(conn: Any) -> None:
+        cols = {
+            r[0]
+            for r in conn.execute(
+                text(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_name = 'auth_profiles' "
+                    "  AND table_schema = CURRENT_SCHEMA() "
+                    "  AND table_catalog = CURRENT_DATABASE()"
+                )
+            ).fetchall()
+        }
+        if not cols:
+            raise click.ClickException(
+                "auth_profiles table not found in the active schema. "
+                "Run schema migrations first (ensure_schema) with a role "
+                "that has ALTER privileges."
+            )
+        missing = _REQUIRED_ENVELOPE_COLUMNS - cols
+        if missing:
+            raise click.ClickException(
+                "auth_profiles is missing envelope columns "
+                f"{sorted(missing)!r}. Run schema migrations first "
+                "(ensure_schema) with a role that has ALTER privileges."
+            )
+
+    encryption_provider: EncryptionProvider
+    test_provider_id = os.environ.get("NEXUS_AUTH_ROTATE_KEK_TEST_PROVIDER_ID")
+    if test_provider_id:
+        factory = _TEST_PROVIDER_REGISTRY.get(test_provider_id)
+        if factory is None:
+            raise click.ClickException(f"Test provider id {test_provider_id!r} not registered")
+        assert callable(factory)
+        encryption_provider = factory()
+    elif provider == "vault":
+        encryption_provider = _build_vault_provider(
+            vault_addr=vault_addr,
+            vault_token=vault_token,
+            vault_key=vault_key,
+            vault_mount=vault_mount,
+        )
+    elif provider == "aws-kms":
+        encryption_provider = _build_kms_provider(
+            kms_key_id=kms_key_id,
+            kms_region=kms_region,
+            kms_config_version=kms_config_version,
+        )
+    else:
+        raise click.ClickException(
+            "--provider is required (vault|aws-kms) unless "
+            "NEXUS_AUTH_ROTATE_KEK_TEST_PROVIDER_ID is set."
+        )
+
+    if (tenant is None) == (tenant_id_opt is None):
+        raise click.ClickException("Pass exactly one of --tenant or --tenant-id.")
+
+    engine = create_engine(db_url, future=True)
+    try:
+        if tenant_id_opt is not None:
+            try:
+                tenant_id = _uuid.UUID(tenant_id_opt)
+            except ValueError as exc:
+                raise click.ClickException(
+                    f"--tenant-id must be a UUID, got {tenant_id_opt!r}"
+                ) from exc
+            with engine.begin() as conn:
+                _preflight_schema(conn)
+                # RLS-safe existence check: setting app.current_tenant to the
+                # caller-supplied value grants read access via the tenant-
+                # isolation policy, so this lookup works for least-privilege
+                # roles and still refuses mistyped UUIDs.
+                conn.execute(text("SET LOCAL app.current_tenant = :tid"), {"tid": str(tenant_id)})
+                exists = conn.execute(
+                    text("SELECT 1 FROM tenants WHERE id = :tid"),
+                    {"tid": tenant_id},
+                ).fetchone()
+            if exists is None:
+                raise click.ClickException(f"Tenant {tenant_id!s} not found (check --tenant-id).")
+        else:
+            with engine.begin() as conn:
+                _preflight_schema(conn)
+                row = conn.execute(
+                    text("SELECT id FROM tenants WHERE name = :n"), {"n": tenant}
+                ).fetchone()
+            if row is None:
+                raise click.ClickException(
+                    f"Tenant {tenant!r} not found. If using a least-privilege "
+                    "DB role (FORCE RLS prevents reading tenants.name), pass "
+                    "--tenant-id <uuid> instead."
+                )
+            tenant_id = _uuid.UUID(str(row[0]))
+
+        target = encryption_provider.current_version(tenant_id=tenant_id)
+
+        # Version-skew check: any row at kek_version > target means the
+        # provider config is older than data already written. Operator
+        # likely passed the wrong --kms-config-version or is pointing at a
+        # rolled-back provider.
+        with engine.begin() as conn:
+            conn.execute(text("SET LOCAL app.current_tenant = :tid"), {"tid": str(tenant_id)})
+            skew = conn.execute(
+                text(
+                    "SELECT COUNT(*) FROM auth_profiles "
+                    "WHERE tenant_id = :tid AND ciphertext IS NOT NULL "
+                    "  AND kek_version > :target"
+                ),
+                {"tid": tenant_id, "target": target},
+            ).scalar_one()
+        if skew:
+            raise click.ClickException(
+                f"{skew} rows have kek_version > target ({target}). The provider "
+                "is pointing at an older version than rows already written. "
+                "Refusing to rotate. For aws-kms, check --kms-config-version."
+            )
+
+        if not apply:
+            with engine.begin() as conn:
+                conn.execute(text("SET LOCAL app.current_tenant = :tid"), {"tid": str(tenant_id)})
+                stale = conn.execute(
+                    text(
+                        "SELECT kek_version, COUNT(*) FROM auth_profiles "
+                        "WHERE tenant_id = :tid AND ciphertext IS NOT NULL "
+                        "  AND kek_version < :target "
+                        "GROUP BY kek_version ORDER BY kek_version"
+                    ),
+                    {"tid": tenant_id, "target": target},
+                ).fetchall()
+            total = sum(r[1] for r in stale)
+            click.echo(f"dry-run: target_version={target}, stale_rows={total}")
+            for version, count in stale:
+                click.echo(f"  kek_version={version}: {count} rows")
+            click.echo("Pass --apply to rewrap.")
+            return
+
+        try:
+            report = rotate_kek_for_tenant(
+                engine,
+                tenant_id=tenant_id,
+                encryption_provider=encryption_provider,
+                batch_size=batch_size,
+                max_rows=max_rows,
+            )
+        except VersionSkewError as exc:
+            raise click.ClickException(str(exc)) from exc
+        click.echo(
+            f"rewrapped={report.rows_rewrapped} "
+            f"failed={report.rows_failed} "
+            f"remaining={report.rows_remaining} "
+            f"target_version={report.target_version}"
+        )
+        exit_nonzero = False
+        if report.rows_failed:
+            click.echo(
+                f"WARNING: {report.rows_failed} rows failed to rewrap — see logs for details",
+                err=True,
+            )
+            if not allow_failures:
+                exit_nonzero = True
+        if report.rows_remaining and not allow_partial:
+            click.echo(
+                f"WARNING: {report.rows_remaining} rows remain stuck at older "
+                "versions — run again to continue, or pass --allow-partial.",
+                err=True,
+            )
+            exit_nonzero = True
+        if exit_nonzero:
+            raise click.exceptions.Exit(1)
     finally:
         engine.dispose()
 

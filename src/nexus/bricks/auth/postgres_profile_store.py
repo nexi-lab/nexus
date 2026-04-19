@@ -22,9 +22,10 @@ is no in-memory LRU cache — Postgres is multi-writer, so per-process caching
 would be stale in the presence of other daemons. Local read-through caching
 is deferred to the client-side nexus-bot daemon (epic #3788 Phase D).
 
-Crypto columns (ciphertext, wrapped_dek, nonce, kek_version, aad) are
-deliberately NOT added in this PR — they land in #3788 Phase C. This store
-persists routing metadata only, matching the current AuthProfile contract.
+Crypto columns (ciphertext, wrapped_dek, nonce, aad, kek_version) are added
+in this PR (#3803, Phase C). Rows written without an ``encryption_provider``
+leave those columns NULL and remain readable; rows written with
+``upsert_with_credential`` carry the full envelope tuple.
 
 Feature gate: instantiated only when ``NEXUS_AUTH_STORE=postgres``. Default
 remains SqliteAuthProfileStore until downstream consumers migrate.
@@ -33,15 +34,34 @@ remains SqliteAuthProfileStore until downstream consumers migrate.
 from __future__ import annotations
 
 import builtins
+import json
 import logging
+import secrets
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import asdict, dataclass
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Connection, Engine
 
+from nexus.bricks.auth.credential_backend import ResolvedCredential
+from nexus.bricks.auth.envelope import (
+    AADMismatch,
+    AESGCMEnvelope,
+    DEKCache,
+    EncryptionProvider,
+    EnvelopeError,
+)
+from nexus.bricks.auth.envelope_metrics import (
+    DEK_CACHE_HITS,
+    DEK_CACHE_MISSES,
+    DEK_UNWRAP_ERRORS,
+    DEK_UNWRAP_LATENCY,
+    KEK_ROTATE_ROWS,
+)
 from nexus.bricks.auth.profile import (
     RAW_ERROR_MAX_LEN,
     AuthProfile,
@@ -135,11 +155,22 @@ _TABLE_STATEMENTS: tuple[str, ...] = (
         cooldown_reason    TEXT,
         disabled_until     TIMESTAMPTZ,
         raw_error          TEXT,
+        ciphertext         BYTEA,
+        wrapped_dek        BYTEA,
+        nonce              BYTEA,
+        aad                BYTEA,
+        kek_version        INTEGER,
         created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         PRIMARY KEY (tenant_id, principal_id, id),
         FOREIGN KEY (principal_id, tenant_id)
-            REFERENCES principals(id, tenant_id) ON DELETE CASCADE
+            REFERENCES principals(id, tenant_id) ON DELETE CASCADE,
+        CONSTRAINT auth_profiles_envelope_all_or_none CHECK (
+            (ciphertext IS NULL) = (wrapped_dek IS NULL)
+            AND (ciphertext IS NULL) = (nonce IS NULL)
+            AND (ciphertext IS NULL) = (aad IS NULL)
+            AND (ciphertext IS NULL) = (kek_version IS NULL)
+        )
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_auth_profiles_provider ON auth_profiles(tenant_id, principal_id, provider)",
@@ -394,6 +425,33 @@ def _upgrade_shape_in_place(conn: Connection) -> None:
             )
         )
 
+    # --- auth_profiles: envelope encryption columns (issue #3803) ---
+    for col, decl in (
+        ("ciphertext", "BYTEA"),
+        ("wrapped_dek", "BYTEA"),
+        ("nonce", "BYTEA"),
+        ("aad", "BYTEA"),
+        ("kek_version", "INTEGER"),
+    ):
+        conn.execute(text(f"ALTER TABLE auth_profiles ADD COLUMN IF NOT EXISTS {col} {decl}"))
+    # CHECK constraint. Use DROP ... IF EXISTS + ADD for idempotency.
+    conn.execute(
+        text(
+            "ALTER TABLE auth_profiles DROP CONSTRAINT IF EXISTS auth_profiles_envelope_all_or_none"
+        )
+    )
+    conn.execute(
+        text(
+            "ALTER TABLE auth_profiles "
+            "ADD CONSTRAINT auth_profiles_envelope_all_or_none CHECK ("
+            "    (ciphertext IS NULL) = (wrapped_dek IS NULL)"
+            "    AND (ciphertext IS NULL) = (nonce IS NULL)"
+            "    AND (ciphertext IS NULL) = (aad IS NULL)"
+            "    AND (ciphertext IS NULL) = (kek_version IS NULL)"
+            ")"
+        )
+    )
+
 
 def drop_schema(engine: Engine) -> None:
     """Drop every table created by ``ensure_schema`` (test teardown helper)."""
@@ -530,6 +588,46 @@ ON CONFLICT (tenant_id, principal_id, id) DO UPDATE SET
     updated_at         = NOW()
 """
 
+_UPSERT_WITH_CREDENTIAL_SQL = """
+INSERT INTO auth_profiles (
+    tenant_id, principal_id, id,
+    provider, account_identifier, backend, backend_key,
+    last_synced_at, sync_ttl_seconds,
+    last_used_at, success_count, failure_count,
+    cooldown_until, cooldown_reason, disabled_until, raw_error,
+    ciphertext, wrapped_dek, nonce, aad, kek_version,
+    updated_at
+) VALUES (
+    :tenant_id, :principal_id, :id,
+    :provider, :account_identifier, :backend, :backend_key,
+    :last_synced_at, :sync_ttl_seconds,
+    :last_used_at, :success_count, :failure_count,
+    :cooldown_until, :cooldown_reason, :disabled_until, :raw_error,
+    :ciphertext, :wrapped_dek, :nonce, :aad, :kek_version,
+    NOW()
+)
+ON CONFLICT (tenant_id, principal_id, id) DO UPDATE SET
+    provider           = EXCLUDED.provider,
+    account_identifier = EXCLUDED.account_identifier,
+    backend            = EXCLUDED.backend,
+    backend_key        = EXCLUDED.backend_key,
+    last_synced_at     = EXCLUDED.last_synced_at,
+    sync_ttl_seconds   = EXCLUDED.sync_ttl_seconds,
+    last_used_at       = EXCLUDED.last_used_at,
+    success_count      = EXCLUDED.success_count,
+    failure_count      = EXCLUDED.failure_count,
+    cooldown_until     = EXCLUDED.cooldown_until,
+    cooldown_reason    = EXCLUDED.cooldown_reason,
+    disabled_until     = EXCLUDED.disabled_until,
+    raw_error          = EXCLUDED.raw_error,
+    ciphertext         = EXCLUDED.ciphertext,
+    wrapped_dek        = EXCLUDED.wrapped_dek,
+    nonce              = EXCLUDED.nonce,
+    aad                = EXCLUDED.aad,
+    kek_version        = EXCLUDED.kek_version,
+    updated_at         = NOW()
+"""
+
 
 def _reason_to_str(reason: AuthProfileFailureReason | None) -> str | None:
     return reason.value if reason else None
@@ -626,6 +724,8 @@ class PostgresAuthProfileStore:
         principal_id: uuid.UUID | str,
         engine: Engine | None = None,
         pool_size: int = 5,
+        encryption_provider: EncryptionProvider | None = None,
+        dek_cache: DEKCache | None = None,
     ) -> None:
         self._tenant_id = uuid.UUID(str(tenant_id))
         self._principal_id = uuid.UUID(str(principal_id))
@@ -641,6 +741,9 @@ class PostgresAuthProfileStore:
         else:
             self._engine = engine
             self._owns_engine = False
+        self._encryption_provider = encryption_provider
+        self._aesgcm = AESGCMEnvelope()
+        self._dek_cache = dek_cache or DEKCache()
 
     # ------------------------------------------------------------------
     # Internal: scoped-transaction helper
@@ -724,7 +827,44 @@ class PostgresAuthProfileStore:
                 text("SELECT pg_advisory_xact_lock(hashtextextended(:k, 0))"),
                 {"k": lock_key},
             )
+            self._reject_if_routing_change_on_encrypted(conn, profile)
             conn.execute(text(_UPSERT_SQL), params)
+
+    def _reject_if_routing_change_on_encrypted(
+        self, conn: Connection, profile: AuthProfile
+    ) -> None:
+        """Guard: plain upsert on an encrypted row is allowed ONLY when the
+        routing columns (provider / account_identifier / backend / backend_key)
+        are unchanged. Otherwise ``backend_key`` could diverge from the still-
+        stored ciphertext and ``get_with_credential`` would return a credential
+        that no longer matches the routing pointer.
+
+        Stats-only updates from ``CredentialPool.mark_success/mark_failure``
+        pass through cleanly because they re-emit the same routing values.
+        """
+        row = conn.execute(
+            text(
+                "SELECT provider, account_identifier, backend, backend_key "
+                "FROM auth_profiles "
+                "WHERE tenant_id = :tid AND principal_id = :pid AND id = :id "
+                "  AND ciphertext IS NOT NULL"
+            ),
+            {"tid": self._tenant_id, "pid": self._principal_id, "id": profile.id},
+        ).fetchone()
+        if row is None:
+            return
+        if (
+            row.provider != profile.provider
+            or row.account_identifier != profile.account_identifier
+            or row.backend != profile.backend
+            or row.backend_key != profile.backend_key
+        ):
+            raise ValueError(
+                f"auth_profiles row ({self._tenant_id}, {self._principal_id}, "
+                f"{profile.id!r}) has encrypted credentials and this plain "
+                "upsert would change routing metadata; use "
+                "upsert_with_credential() or delete() first."
+            )
 
     def delete(self, profile_id: str) -> None:
         with self._scoped() as conn:
@@ -763,6 +903,42 @@ class PostgresAuthProfileStore:
                     text("SELECT pg_advisory_xact_lock(hashtextextended(:k, 0))"),
                     {"k": key},
                 )
+            if upserts:
+                # Same invariant as plain upsert/upsert_strict: only reject
+                # when routing metadata would actually change for an encrypted
+                # row. Stats-only re-upserts (same provider/backend/backend_key)
+                # remain legal so the existing sync and pool flows keep working
+                # against rows already upgraded to carry encrypted credentials.
+                by_id = {p.id: p for p in upserts}
+                existing = conn.execute(
+                    text(
+                        "SELECT id, provider, account_identifier, backend, backend_key "
+                        "FROM auth_profiles "
+                        "WHERE tenant_id = :tid AND principal_id = :pid "
+                        "  AND id = ANY(:ids) AND ciphertext IS NOT NULL"
+                    ),
+                    {
+                        "tid": self._tenant_id,
+                        "pid": self._principal_id,
+                        "ids": list(by_id.keys()),
+                    },
+                ).fetchall()
+                conflicts = [
+                    r.id
+                    for r in existing
+                    if (
+                        r.provider != by_id[r.id].provider
+                        or r.account_identifier != by_id[r.id].account_identifier
+                        or r.backend != by_id[r.id].backend
+                        or r.backend_key != by_id[r.id].backend_key
+                    )
+                ]
+                if conflicts:
+                    raise ValueError(
+                        f"replace_owned_subset would overwrite routing metadata "
+                        f"on encrypted rows: {sorted(conflicts)!r}. "
+                        "Use upsert_with_credential() or delete() for these rows first."
+                    )
             for p in upserts:
                 conn.execute(
                     text(_UPSERT_SQL),
@@ -856,6 +1032,133 @@ class PostgresAuthProfileStore:
             )
 
     # ------------------------------------------------------------------
+    # Envelope encryption (issue #3803)
+    # ------------------------------------------------------------------
+
+    def _require_provider(self) -> EncryptionProvider:
+        if self._encryption_provider is None:
+            raise RuntimeError(
+                "encryption_provider is required for upsert_with_credential / "
+                "get_with_credential — construct PostgresAuthProfileStore(..., "
+                "encryption_provider=...)"
+            )
+        return self._encryption_provider
+
+    def _aad_for(self, profile_id: str) -> bytes:
+        return f"{self._tenant_id}|{self._principal_id}|{profile_id}".encode()
+
+    @staticmethod
+    def _serialize_credential(cred: ResolvedCredential) -> bytes:
+        # Canonical JSON: sorted keys, compact separators. Deterministic for
+        # rotation rewrap; any change here breaks existing ciphertext readability.
+        payload = asdict(cred)
+        expires_at: datetime | None = cred.expires_at
+        if expires_at is not None:
+            payload["expires_at"] = expires_at.isoformat()
+        payload["scopes"] = list(cred.scopes)
+        return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+    @staticmethod
+    def _deserialize_credential(data: bytes) -> ResolvedCredential:
+        raw = json.loads(data.decode("utf-8"))
+        expires_at = raw.get("expires_at")
+        if isinstance(expires_at, str):
+            expires_at = datetime.fromisoformat(expires_at)
+        return ResolvedCredential(
+            kind=raw["kind"],
+            api_key=raw.get("api_key"),
+            access_token=raw.get("access_token"),
+            expires_at=expires_at,
+            scopes=tuple(raw.get("scopes", ())),
+            metadata=raw.get("metadata", {}) or {},
+        )
+
+    def upsert_with_credential(self, profile: AuthProfile, credential: ResolvedCredential) -> None:
+        provider = self._require_provider()
+        aad = self._aad_for(profile.id)
+        dek = secrets.token_bytes(32)
+        nonce, ciphertext = self._aesgcm.encrypt(
+            dek, self._serialize_credential(credential), aad=aad
+        )
+        wrapped_dek, kek_version = provider.wrap_dek(dek, tenant_id=self._tenant_id, aad=aad)
+        params = _profile_params(
+            profile, tenant_id=self._tenant_id, principal_id=self._principal_id
+        )
+        params.update(
+            ciphertext=ciphertext,
+            wrapped_dek=wrapped_dek,
+            nonce=nonce,
+            aad=aad,
+            kek_version=kek_version,
+        )
+        lock_key = f"{self._tenant_id}/{profile.id}"
+        with self._scoped() as conn:
+            conn.execute(
+                text("SELECT pg_advisory_xact_lock(hashtextextended(:k, 0))"),
+                {"k": lock_key},
+            )
+            conn.execute(text(_UPSERT_WITH_CREDENTIAL_SQL), params)
+
+    def get_with_credential(
+        self, profile_id: str
+    ) -> tuple[AuthProfile, ResolvedCredential | None] | None:
+        provider = self._require_provider()
+        with self._scoped() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT * FROM auth_profiles "
+                    "WHERE tenant_id = :tid AND principal_id = :pid AND id = :id"
+                ),
+                {
+                    "tid": self._tenant_id,
+                    "pid": self._principal_id,
+                    "id": profile_id,
+                },
+            ).fetchone()
+        if row is None:
+            return None
+        profile = _row_to_profile(row)
+        if row.ciphertext is None:
+            return profile, None
+        expected_aad = self._aad_for(profile_id)
+        if bytes(row.aad) != expected_aad:
+            raise AADMismatch.from_row(
+                tenant_id=self._tenant_id,
+                profile_id=profile_id,
+                kek_version=row.kek_version,
+                cause="stored AAD does not match tenant|principal|profile_id",
+            )
+        cache_key = self._dek_cache.make_key(
+            tenant_id=self._tenant_id,
+            kek_version=row.kek_version,
+            wrapped_dek=bytes(row.wrapped_dek),
+        )
+        tenant_label = str(self._tenant_id)
+        dek = self._dek_cache.get(cache_key)
+        if dek is None:
+            DEK_CACHE_MISSES.labels(tenant_id=tenant_label).inc()
+            try:
+                with DEK_UNWRAP_LATENCY.labels(tenant_id=tenant_label).time():
+                    dek = provider.unwrap_dek(
+                        bytes(row.wrapped_dek),
+                        tenant_id=self._tenant_id,
+                        aad=expected_aad,
+                        kek_version=row.kek_version,
+                    )
+            except Exception as exc:
+                DEK_UNWRAP_ERRORS.labels(
+                    tenant_id=tenant_label, error_class=type(exc).__name__
+                ).inc()
+                raise
+            self._dek_cache.put(cache_key, dek)
+        else:
+            DEK_CACHE_HITS.labels(tenant_id=tenant_label).inc()
+        plaintext = self._aesgcm.decrypt(
+            dek, bytes(row.nonce), bytes(row.ciphertext), aad=expected_aad
+        )
+        return profile, self._deserialize_credential(plaintext)
+
+    # ------------------------------------------------------------------
     # Tenant-wide helpers (migration/admin only — outside normal Protocol)
     # ------------------------------------------------------------------
 
@@ -905,6 +1208,7 @@ class PostgresAuthProfileStore:
                     profile_id=profile.id,
                     foreign_principals=sorted(row[0] for row in foreign),
                 )
+            self._reject_if_routing_change_on_encrypted(conn, profile)
             conn.execute(
                 text(_UPSERT_SQL),
                 _profile_params(
@@ -966,3 +1270,284 @@ class PostgresAuthProfileStore:
     def engine(self) -> Engine:
         """Underlying engine — exposed only for test helpers + migration."""
         return self._engine
+
+
+# ---------------------------------------------------------------------------
+# KEK rotation (issue #3803) — module-level admin helper
+# ---------------------------------------------------------------------------
+
+
+class VersionSkewError(Exception):
+    """Raised by ``rotate_kek_for_tenant`` when rows already exist at a
+    ``kek_version`` greater than the provider's current version.
+
+    Indicates the provider is pointing at an older config than data already
+    written — typically a misconfigured ``--kms-config-version`` or a rolled-
+    back provider. Refusing to rotate prevents a silent false-success report.
+    """
+
+    def __init__(self, *, rows_ahead: int, target_version: int):
+        self.rows_ahead = rows_ahead
+        self.target_version = target_version
+        super().__init__(f"{rows_ahead} rows have kek_version > target ({target_version})")
+
+
+@dataclass(frozen=True, slots=True)
+class RotationReport:
+    """Result of a ``rotate_kek_for_tenant`` invocation."""
+
+    rows_rewrapped: int
+    rows_failed: int
+    rows_remaining: int
+    target_version: int
+
+
+def rotate_kek_for_tenant(
+    engine: Engine,
+    *,
+    tenant_id: uuid.UUID,
+    encryption_provider: EncryptionProvider,
+    batch_size: int = 100,
+    max_rows: int | None = None,
+    allow_skew: bool = False,
+) -> RotationReport:
+    """Rewrap every row in ``tenant_id`` whose ``kek_version`` is older than
+    the provider's current version.
+
+    Uses ``SELECT ... FOR UPDATE SKIP LOCKED`` so the helper is resumable and
+    does not block concurrent writers. Rewraps ``wrapped_dek`` + ``kek_version``
+    only; ``ciphertext``, ``nonce``, ``aad`` are untouched so a reader mid-
+    rotation decrypts successfully regardless of which version wrote.
+
+    Raises ``VersionSkewError`` by default if any row has
+    ``kek_version > target``. Callers who are intentionally rolling back can
+    pass ``allow_skew=True`` to suppress the check, but the helper then only
+    processes rows with ``kek_version < target`` — ahead-of-target rows remain
+    untouched.
+    """
+    if batch_size < 1:
+        raise ValueError(f"batch_size must be >= 1, got {batch_size}")
+    if max_rows is not None and max_rows < 1:
+        raise ValueError(f"max_rows must be >= 1 when set, got {max_rows}")
+    target = encryption_provider.current_version(tenant_id=tenant_id)
+    if not allow_skew:
+        with engine.begin() as conn:
+            conn.execute(
+                text("SET LOCAL app.current_tenant = :tid"),
+                {"tid": str(tenant_id)},
+            )
+            ahead = conn.execute(
+                text(
+                    "SELECT COUNT(*) FROM auth_profiles "
+                    "WHERE tenant_id = :tid AND ciphertext IS NOT NULL "
+                    "  AND kek_version > :target"
+                ),
+                {"tid": tenant_id, "target": target},
+            ).scalar_one()
+        if ahead:
+            raise VersionSkewError(rows_ahead=int(ahead), target_version=target)
+    rewrapped = 0
+    failed = 0
+    tenant_label = str(tenant_id)
+    # Track (principal_id, id) pairs that failed this run so they are not
+    # re-selected on subsequent batch iterations, preventing an infinite retry
+    # loop. The table PK is (tenant_id, principal_id, id) so the same profile
+    # id can exist under multiple principals — keying failures on ``id`` alone
+    # would starve healthy rows that share an id with a failing one.
+    _failed_keys: list[tuple[uuid.UUID, str]] = []
+    # Bound CAS-miss churn: if the same (principal_id, id) repeatedly loses
+    # the compare-and-swap race (because a concurrent writer keeps bumping the
+    # row), promote it to _failed_keys after this many attempts so the loop
+    # terminates instead of livelocking on provider calls.
+    _cas_misses: dict[tuple[uuid.UUID, str], int] = {}
+    _MAX_CAS_MISSES = 3
+    while True:
+        # max_rows caps SUCCESSFUL rewraps only. Counting failures toward the
+        # budget would let a handful of deterministically failing rows starve
+        # healthy rows out of a controlled batch.
+        if max_rows is not None and rewrapped >= max_rows:
+            break
+        this_batch = batch_size
+        if max_rows is not None:
+            this_batch = min(this_batch, max_rows - rewrapped)
+
+        # 1) Snapshot a batch of candidates in a short read-only tx. No
+        # FOR UPDATE: holding row locks across Vault/KMS calls would block
+        # concurrent upsert_with_credential writers for the full provider
+        # RTT. We trade those locks for an optimistic CAS at UPDATE time.
+        with engine.begin() as conn:
+            conn.execute(
+                text("SET LOCAL app.current_tenant = :tid"),
+                {"tid": str(tenant_id)},
+            )
+            # Exclude rows that already failed so the loop terminates.
+            # Postgres has no native tuple-ANY operator across mixed types,
+            # so we unzip into two parallel arrays and do a row-subscript test.
+            if _failed_keys:
+                skip_principals = [p for p, _ in _failed_keys]
+                skip_ids = [i for _, i in _failed_keys]
+                exclude_clause = (
+                    " AND NOT EXISTS (SELECT 1 FROM unnest("
+                    "CAST(:skip_principals AS UUID[]), :skip_ids) "
+                    "AS sk(p, i) WHERE sk.p = principal_id AND sk.i = id)"
+                )
+                params: dict[str, builtins.object] = {
+                    "tid": tenant_id,
+                    "target": target,
+                    "lim": this_batch,
+                    "skip_principals": skip_principals,
+                    "skip_ids": skip_ids,
+                }
+            else:
+                exclude_clause = ""
+                params = {"tid": tenant_id, "target": target, "lim": this_batch}
+            rows = conn.execute(
+                text(
+                    "SELECT tenant_id, principal_id, id, wrapped_dek, aad, kek_version "
+                    "FROM auth_profiles "
+                    "WHERE tenant_id = :tid "
+                    "  AND ciphertext IS NOT NULL "
+                    "  AND kek_version < :target" + exclude_clause + " ORDER BY principal_id, id "
+                    "LIMIT :lim"
+                ),
+                params,
+            ).fetchall()
+        if not rows:
+            break
+
+        # 2) Provider calls happen OUTSIDE any open transaction. Validate AAD
+        # first; unwrap failures are per-row, wrap failures are fatal. Results
+        # get staged for a single CAS batch below.
+        staged: list[tuple[Any, bytes, int]] = []  # (row, new_wrapped, new_version)
+        for row in rows:
+            expected_aad = f"{tenant_id}|{row.principal_id}|{row.id}".encode()
+            if bytes(row.aad) != expected_aad:
+                logger.error(
+                    "rotate_kek_for_tenant: AAD mismatch "
+                    "tenant=%s principal=%s profile=%s kek_version=%s",
+                    tenant_id,
+                    row.principal_id,
+                    row.id,
+                    row.kek_version,
+                )
+                _failed_keys.append((uuid.UUID(str(row.principal_id)), row.id))
+                failed += 1
+                continue
+            try:
+                dek = encryption_provider.unwrap_dek(
+                    bytes(row.wrapped_dek),
+                    tenant_id=tenant_id,
+                    aad=bytes(row.aad),
+                    kek_version=row.kek_version,
+                )
+            except EnvelopeError as exc:
+                logger.error(
+                    "rotate_kek_for_tenant: per-row unwrap failure "
+                    "tenant=%s principal=%s profile=%s kek_version=%s cause=%s",
+                    tenant_id,
+                    row.principal_id,
+                    row.id,
+                    row.kek_version,
+                    type(exc).__name__,
+                )
+                _failed_keys.append((uuid.UUID(str(row.principal_id)), row.id))
+                failed += 1
+                continue
+            # Wrap at target version is FATAL to the batch rather than per-row.
+            # A wrap error at the new version means the target KEK is unusable
+            # (wrong key, IAM issue, etc.); continuing would leave a partially-
+            # rotated tenant with rows split across versions.
+            try:
+                new_wrapped, new_version = encryption_provider.wrap_dek(
+                    dek, tenant_id=tenant_id, aad=bytes(row.aad)
+                )
+            except EnvelopeError as exc:
+                logger.error(
+                    "rotate_kek_for_tenant: wrap-at-target failed; aborting "
+                    "batch tenant=%s target=%s cause=%s",
+                    tenant_id,
+                    target,
+                    type(exc).__name__,
+                )
+                raise
+            staged.append((row, new_wrapped, new_version))
+
+        # 3) Apply all CAS updates in one short tx. Each UPDATE includes the
+        # original (wrapped_dek, kek_version) as a predicate, so a concurrent
+        # upsert_with_credential that raced ahead of us simply sees 0 rows
+        # affected and we skip that row without counting it as rewrapped.
+        if staged:
+            with engine.begin() as conn:
+                conn.execute(
+                    text("SET LOCAL app.current_tenant = :tid"),
+                    {"tid": str(tenant_id)},
+                )
+                for row, new_wrapped, new_version in staged:
+                    result = conn.execute(
+                        text(
+                            "UPDATE auth_profiles SET "
+                            "    wrapped_dek = :new_wd, "
+                            "    kek_version = :new_v, "
+                            "    updated_at = NOW() "
+                            "WHERE tenant_id = :tid "
+                            "  AND principal_id = :pid "
+                            "  AND id = :id "
+                            "  AND wrapped_dek = :old_wd "
+                            "  AND kek_version = :old_v"
+                        ),
+                        {
+                            "new_wd": new_wrapped,
+                            "new_v": new_version,
+                            "tid": tenant_id,
+                            "pid": row.principal_id,
+                            "id": row.id,
+                            "old_wd": bytes(row.wrapped_dek),
+                            "old_v": row.kek_version,
+                        },
+                    )
+                    if result.rowcount == 1:
+                        KEK_ROTATE_ROWS.labels(
+                            tenant_id=tenant_label,
+                            from_version=str(row.kek_version),
+                            to_version=str(new_version),
+                        ).inc()
+                        rewrapped += 1
+                        _cas_misses.pop((uuid.UUID(str(row.principal_id)), row.id), None)
+                    else:
+                        # Concurrent writer won. Allow a few retries — on
+                        # repeated misses treat as failed so we don't livelock
+                        # on a perpetually-contended row.
+                        key = (uuid.UUID(str(row.principal_id)), row.id)
+                        _cas_misses[key] = _cas_misses.get(key, 0) + 1
+                        if _cas_misses[key] >= _MAX_CAS_MISSES:
+                            logger.error(
+                                "rotate_kek_for_tenant: CAS-miss threshold "
+                                "exceeded tenant=%s principal=%s profile=%s "
+                                "misses=%d",
+                                tenant_id,
+                                row.principal_id,
+                                row.id,
+                                _cas_misses[key],
+                            )
+                            _failed_keys.append(key)
+                            failed += 1
+    # Final remaining count
+    with engine.begin() as conn:
+        conn.execute(
+            text("SET LOCAL app.current_tenant = :tid"),
+            {"tid": str(tenant_id)},
+        )
+        remaining = conn.execute(
+            text(
+                "SELECT COUNT(*) FROM auth_profiles "
+                "WHERE tenant_id = :tid AND ciphertext IS NOT NULL "
+                "  AND kek_version < :target"
+            ),
+            {"tid": tenant_id, "target": target},
+        ).scalar_one()
+    return RotationReport(
+        rows_rewrapped=rewrapped,
+        rows_failed=failed,
+        rows_remaining=int(remaining),
+        target_version=target,
+    )

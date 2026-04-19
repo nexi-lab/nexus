@@ -163,6 +163,38 @@ class AuthProfileStore(Protocol):
 
 
 # ---------------------------------------------------------------------------
+# CredentialCarryingProfileStore sub-protocol (issue #3803)
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class CredentialCarryingProfileStore(AuthProfileStore, Protocol):
+    """Sub-protocol for stores that additionally hold encrypted credentials.
+
+    Only ``PostgresAuthProfileStore`` implements this today. Consumers that
+    need the resolved credential inline (rather than via a ``CredentialBackend``
+    pointer) type-annotate against this protocol instead of the base one.
+
+    Rows written via plain ``upsert`` are compatible: ``get_with_credential``
+    returns ``(profile, None)`` in that case.
+    """
+
+    def upsert_with_credential(self, profile: AuthProfile, credential: ResolvedCredential) -> None:
+        """Insert or update ``profile`` and store ``credential`` encrypted."""
+        ...
+
+    def get_with_credential(
+        self, profile_id: str
+    ) -> tuple[AuthProfile, ResolvedCredential | None] | None:
+        """Return ``(profile, credential | None)`` or ``None`` if absent.
+
+        ``credential`` is ``None`` when the row has no ciphertext columns (PR 1
+        routing-only rows).
+        """
+        ...
+
+
+# ---------------------------------------------------------------------------
 # In-memory store — tests and pre-SQLite fallback
 # ---------------------------------------------------------------------------
 

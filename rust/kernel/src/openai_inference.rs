@@ -8,6 +8,42 @@
 
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
+use std::sync::OnceLock;
+use std::time::Duration;
+
+/// Default per-request timeout for OpenAI-compatible endpoints. Chosen to
+/// be longer than most hosted models' p99 latency but short enough that a
+/// stuck endpoint cannot deadlock a Python caller forever (§ review fix #8).
+const DEFAULT_HTTP_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Lazily-initialized multi-thread tokio runtime. Reused across every call
+/// instead of building a fresh single-threaded runtime per request (which
+/// previously cost ~milliseconds and defeated the GIL-free goal).
+fn runtime() -> &'static tokio::runtime::Runtime {
+    static RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+    RT.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .thread_name("nexus-openai")
+            .build()
+            .expect("failed to build tokio runtime for openai_inference")
+    })
+}
+
+/// Shared `reqwest::Client` — reuses TLS sessions and HTTP/2 connections
+/// across calls. Constructing a client per call was prohibitively expensive.
+fn http_client() -> &'static reqwest::Client {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .pool_idle_timeout(Duration::from_secs(90))
+            .tcp_keepalive(Duration::from_secs(30))
+            .timeout(DEFAULT_HTTP_TIMEOUT)
+            .build()
+            .expect("failed to build reqwest client for openai_inference")
+    })
+}
 
 /// Synchronous OpenAI chat completion — releases GIL during HTTP.
 ///
@@ -30,12 +66,7 @@ pub fn openai_chat_completion<'py>(
     let model = model.to_string();
 
     let result = py.detach(move || -> Result<Vec<u8>, String> {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| format!("tokio: {e}"))?;
-
-        rt.block_on(async {
+        runtime().block_on(async {
             let messages: serde_json::Value =
                 serde_json::from_slice(&msgs).map_err(|e| format!("JSON parse: {e}"))?;
 
@@ -51,8 +82,7 @@ pub fn openai_chat_completion<'py>(
                 body["max_tokens"] = serde_json::json!(mt);
             }
 
-            let client = reqwest::Client::new();
-            let resp = client
+            let resp = http_client()
                 .post(&url)
                 .header("Authorization", format!("Bearer {api_key}"))
                 .header("Content-Type", "application/json")
@@ -101,12 +131,9 @@ pub fn openai_chat_completion_stream(
     let model = model.to_string();
 
     let result = py.detach(move || -> Result<String, String> {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| format!("tokio: {e}"))?;
+        runtime().block_on(async {
+            use futures_util::StreamExt;
 
-        rt.block_on(async {
             let messages: serde_json::Value =
                 serde_json::from_slice(&msgs).map_err(|e| format!("JSON parse: {e}"))?;
 
@@ -122,8 +149,7 @@ pub fn openai_chat_completion_stream(
                 body["max_tokens"] = serde_json::json!(mt);
             }
 
-            let client = reqwest::Client::new();
-            let resp = client
+            let resp = http_client()
                 .post(&url)
                 .header("Authorization", format!("Bearer {api_key}"))
                 .header("Content-Type", "application/json")
@@ -138,16 +164,37 @@ pub fn openai_chat_completion_stream(
                 return Err(format!("OpenAI API {status}: {text}"));
             }
 
-            let body_text = resp.text().await.map_err(|e| format!("read: {e}"))?;
+            // True streaming: parse SSE chunks as they arrive instead of
+            // buffering the whole response (§ review fix #8).
             let mut collected = String::new();
-
-            for line in body_text.lines() {
-                if let Some(data) = line.strip_prefix("data: ") {
-                    if data == "[DONE]" {
-                        break;
+            let mut pending: Vec<u8> = Vec::new();
+            let mut stream = resp.bytes_stream();
+            'outer: while let Some(chunk) = stream.next().await {
+                let bytes = chunk.map_err(|e| format!("stream: {e}"))?;
+                pending.extend_from_slice(&bytes);
+                // Process complete lines; keep any trailing partial.
+                while let Some(nl) = pending.iter().position(|&b| b == b'\n') {
+                    let mut line_bytes: Vec<u8> = pending.drain(..=nl).collect();
+                    // Drop trailing '\n' (and optional '\r') from this line.
+                    if line_bytes.last() == Some(&b'\n') {
+                        line_bytes.pop();
                     }
-                    if let Ok(chunk) = serde_json::from_str::<serde_json::Value>(data) {
-                        if let Some(content) = chunk
+                    if line_bytes.last() == Some(&b'\r') {
+                        line_bytes.pop();
+                    }
+                    let line = match std::str::from_utf8(&line_bytes) {
+                        Ok(s) => s,
+                        Err(_) => continue,
+                    };
+                    let data = match line.strip_prefix("data: ") {
+                        Some(d) => d,
+                        None => continue,
+                    };
+                    if data == "[DONE]" {
+                        break 'outer;
+                    }
+                    if let Ok(chunk_json) = serde_json::from_str::<serde_json::Value>(data) {
+                        if let Some(content) = chunk_json
                             .get("choices")
                             .and_then(|c| c.get(0))
                             .and_then(|c| c.get("delta"))

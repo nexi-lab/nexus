@@ -1292,6 +1292,7 @@ dependencies = [
  "criterion",
  "dashmap",
  "encoding_rs",
+ "futures-util",
  "globset",
  "hmac",
  "libc",

@@ -1649,17 +1649,37 @@ impl VolumeEngine {
     fn put_impl(&self, hash_hex: &str, data: &[u8], expiry: f64) -> PyResult<bool> {
         let hash = hex_to_hash(hash_hex)?;
 
-        // Dedup check: O(1) via in-memory index (Issue #3404)
-        // Use lookup_raw to bypass expiry check — we want to dedup even against expired entries
-        // that haven't been swept yet (content is still physically present).
-        if self.mem_index.read().lookup_raw(&hash).is_some() {
+        // Dedup check must be atomic with the subsequent append + index
+        // insert — otherwise two concurrent `put`s with the same hash can
+        // both pass the read check and both append, wasting space and
+        // breaking the CAS dedup guarantee (§ review fix #20).
+        //
+        // We hold the mem_index write lock across the entire append so
+        // exactly one writer wins and the loser is a cheap early-return.
+        let mut idx = self.mem_index.write();
+        // Use lookup_raw to bypass expiry — the blob is still physically
+        // present even if its TTL has elapsed.
+        if idx.lookup_raw(&hash).is_some() {
             return Ok(false);
         }
 
-        // Append to active volume
+        // Append to active volume (may seal + open a new volume).
         let (volume_id, offset) = self.append_to_active(&hash, data)?;
 
-        // Buffer index entry (not committed to redb yet)
+        // Update in-memory index while still holding the write lock so
+        // racing `exists`/`get` callers see a consistent view.
+        idx.insert(
+            hash,
+            MemIndexEntry {
+                volume_id,
+                offset,
+                size: data.len() as u32,
+                expiry,
+            },
+        );
+        drop(idx);
+
+        // Buffer index entry (not committed to redb yet).
         let entry = IndexEntry {
             volume_id,
             offset,
@@ -1673,17 +1693,6 @@ impl VolumeEngine {
             pending.push((hash, entry));
             pending.len() >= self.index_batch_size
         };
-
-        // Update in-memory index for O(1) reads (Issue #3404)
-        self.mem_index.write().insert(
-            hash,
-            MemIndexEntry {
-                volume_id,
-                offset,
-                size: data.len() as u32,
-                expiry,
-            },
-        );
 
         // Track per-volume max expiry for volume-level TTL (Issue #3405)
         if expiry > 0.0 {

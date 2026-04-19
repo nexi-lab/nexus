@@ -193,28 +193,22 @@ impl AgentRegistry {
 
 /// PathResolver for /{zone}/proc/{pid}/status — reads from kernel AgentRegistry.
 ///
-/// Registered in Kernel's Trie at boot time.
-/// try_read returns JSON-serialized agent status.
+/// Registered in Kernel's Trie at boot time. `try_read` returns JSON-serialized
+/// agent status. Ownership is shared via `Arc`, so the resolver remains
+/// valid for as long as any caller holds it, independent of the Kernel's
+/// lifetime or field layout (§ review fix #4).
 pub(crate) struct AgentStatusResolver {
-    registry: *const AgentRegistry,
+    registry: std::sync::Arc<AgentRegistry>,
 }
 
-// Safety: AgentRegistry is behind DashMap (Send+Sync). The pointer is stable
-// because AgentRegistry lives inside Kernel which is heap-pinned by PyKernel.
-unsafe impl Send for AgentStatusResolver {}
-unsafe impl Sync for AgentStatusResolver {}
-
 impl AgentStatusResolver {
-    /// Create resolver pointing to kernel's agent registry.
-    ///
-    /// # Safety
-    /// The registry pointer must remain valid for the lifetime of this resolver.
-    pub(crate) unsafe fn new(registry: *const AgentRegistry) -> Self {
+    /// Create resolver sharing ownership of an agent registry.
+    pub(crate) fn new(registry: std::sync::Arc<AgentRegistry>) -> Self {
         Self { registry }
     }
 
     fn registry(&self) -> &AgentRegistry {
-        unsafe { &*self.registry }
+        &self.registry
     }
 }
 
@@ -227,19 +221,24 @@ impl PathResolver for AgentStatusResolver {
         }
         let pid = segments[2];
         let desc = self.registry().get(pid)?;
-        // Serialize to JSON
-        let json = format!(
-            r#"{{"pid":"{}","name":"{}","kind":"{}","state":"{}","owner_id":"{}","zone_id":"{}","created_at_ms":{},"exit_code":{}}}"#,
-            desc.pid,
-            desc.name,
-            desc.kind.as_str(),
-            desc.state.as_str(),
-            desc.owner_id,
-            desc.zone_id,
-            desc.created_at_ms,
-            desc.exit_code.map_or("null".to_string(), |c| c.to_string()),
-        );
-        Some(json.into_bytes())
+
+        // Use serde_json so any special character in a user-controlled field
+        // (pid, name, owner_id, zone_id) is escaped correctly instead of
+        // producing syntactically invalid JSON (§ review fix #6).
+        let value = serde_json::json!({
+            "pid": desc.pid,
+            "name": desc.name,
+            "kind": desc.kind.as_str(),
+            "state": desc.state.as_str(),
+            "owner_id": desc.owner_id,
+            "zone_id": desc.zone_id,
+            "created_at_ms": desc.created_at_ms,
+            "exit_code": desc.exit_code,
+        });
+        Some(
+            serde_json::to_vec(&value)
+                .unwrap_or_else(|_| b"{\"error\":\"serialization failed\"}".to_vec()),
+        )
     }
 
     fn try_write(&self, _path: &str, _content: &[u8]) -> Option<()> {
@@ -399,9 +398,9 @@ mod tests {
 
     #[test]
     fn test_agent_status_resolver() {
-        let reg = AgentRegistry::new();
+        let reg = std::sync::Arc::new(AgentRegistry::new());
         reg.register(make_desc("abc123", "test-agent"));
-        let resolver = unsafe { AgentStatusResolver::new(&reg as *const AgentRegistry) };
+        let resolver = AgentStatusResolver::new(std::sync::Arc::clone(&reg));
         let data = resolver.try_read("/zone1/proc/abc123/status").unwrap();
         let json = String::from_utf8(data).unwrap();
         assert!(json.contains("\"pid\":\"abc123\""));

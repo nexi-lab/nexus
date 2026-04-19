@@ -82,6 +82,7 @@ impl HookRegistry {
     }
 
     /// Register a hook for the given operation.
+    #[cfg(feature = "py-hook-adapters")]
     pub(crate) fn register(
         &mut self,
         op: &str,

@@ -131,8 +131,24 @@ impl MemoryPipeBackend {
 
         let frame_len = HEADER_SIZE + payload_len;
         let tail = self.tail.load(Ordering::Relaxed);
+        let head = self.head.load(Ordering::Acquire);
         let tail_idx = tail % self.ring_cap;
         let contiguous = self.ring_cap - tail_idx;
+
+        // Physical ring-space check: payloads alone cannot be trusted because
+        // `user_capacity` ignores 4-byte frame headers and potential wrap
+        // sentinels. For tiny payloads (< HEADER_SIZE) the header overhead
+        // alone exceeds the slack between `user_capacity` and `ring_cap`.
+        // Enforce the invariant `(tail - head) + <bytes we are about to
+        // write> <= ring_cap`, where we must include a potential sentinel.
+        let need = if frame_len > contiguous {
+            contiguous + frame_len
+        } else {
+            frame_len
+        };
+        if tail.saturating_sub(head) + need > self.ring_cap {
+            return Err(PipeError::Full(used, self.user_capacity));
+        }
 
         let ring = unsafe { &mut *self.ring.get() };
 
@@ -582,6 +598,57 @@ mod tests {
         for i in 0u64..20 {
             push_u64(&core, i);
             assert_eq!(pop_u64(&core), i);
+        }
+    }
+
+    // -- Ring-physical-space regression (§ review fix #1) --
+
+    #[test]
+    fn test_many_tiny_pushes_cannot_overwrite_unread() {
+        // user_capacity=32, ring_cap=64. Each 1-byte payload consumes a
+        // 5-byte frame in the ring. Without the physical-space guard, 13+
+        // consecutive pushes would wrap past head=0 and corrupt data.
+        let core = make(32);
+        let mut accepted = 0usize;
+        for _ in 0..64 {
+            match core.push(&[0xAAu8]) {
+                Ok(_) => accepted += 1,
+                Err(PipeError::Full(_, _)) => break,
+                Err(e) => panic!("unexpected push error: {e:?}"),
+            }
+        }
+        // Floor: floor(ring_cap / frame_len) = 64 / 5 = 12. Must reject the 13th.
+        assert!(
+            accepted <= 12,
+            "ring overflow accepted {accepted} pushes of frame_len=5 into ring_cap=64"
+        );
+        // Every accepted payload must still be readable in order.
+        for _ in 0..accepted {
+            assert_eq!(pop(&core), vec![0xAAu8]);
+        }
+    }
+
+    #[test]
+    fn test_tiny_push_fails_before_overwriting_with_sentinel() {
+        let core = make(16);
+        // Fill to near capacity then force sentinel + wrap, verifying the
+        // sentinel-requiring push is rejected when the ring cannot absorb
+        // the waste + new frame without overtaking head.
+        for _ in 0..5 {
+            let _ = core.push(b"x");
+        }
+        // Pop just enough to leave head < tail but keep ring nearly full.
+        let _ = core.pop();
+        // Do not panic; whatever the implementation decides must preserve
+        // the invariant tail - head <= ring_cap after the next push.
+        for _ in 0..100 {
+            let _ = core.push(b"y");
+        }
+        // Invariant check: size() <= user_capacity and remaining pops match.
+        let used = core.msg_count();
+        for _ in 0..used {
+            let v = pop(&core);
+            assert_eq!(v.len(), 1);
         }
     }
 

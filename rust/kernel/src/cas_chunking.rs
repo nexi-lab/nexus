@@ -73,8 +73,12 @@ impl ChunkAssembler for ChunkedManifestAssembler {
 }
 
 /// Reassemble CDC chunks from manifest chunk array.
+///
+/// Validates that chunks cover `[0, total)` exactly — no gaps, no overlaps,
+/// no negative offsets (§ review fix #7). A malformed manifest that once
+/// produced silently corrupt content now surfaces as `CASError::IOError`.
 fn reassemble_chunks(chunks: &[Value], transport: &LocalCASTransport) -> Result<Vec<u8>, CASError> {
-    let mut parts: Vec<(i64, Vec<u8>)> = Vec::with_capacity(chunks.len());
+    let mut parts: Vec<(u64, Vec<u8>)> = Vec::with_capacity(chunks.len());
     for chunk in chunks {
         let hash = chunk
             .get("chunk_hash")
@@ -86,15 +90,48 @@ fn reassemble_chunks(chunks: &[Value], transport: &LocalCASTransport) -> Result<
                 ))
             })?;
         let offset = chunk.get("offset").and_then(|o| o.as_i64()).unwrap_or(0);
+        if offset < 0 {
+            return Err(CASError::IOError(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("negative chunk offset {offset} for {hash}"),
+            )));
+        }
         let data = transport.read_blob(hash).map_err(|e| match e.kind() {
             std::io::ErrorKind::NotFound => CASError::NotFound(hash.to_string()),
             _ => CASError::IOError(e),
         })?;
-        parts.push((offset, data));
+        parts.push((offset as u64, data));
     }
 
     parts.sort_by_key(|(offset, _)| *offset);
-    let total: usize = parts.iter().map(|(_, d)| d.len()).sum();
+
+    // Reject gaps / overlaps. We require chunks to start at 0 and each
+    // subsequent chunk to begin exactly where the previous chunk ended.
+    let mut expected: u64 = 0;
+    for (offset, data) in &parts {
+        if *offset != expected {
+            return Err(CASError::IOError(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "chunked manifest has {} at offset {offset} (expected {expected})",
+                    if *offset > expected { "gap" } else { "overlap" },
+                ),
+            )));
+        }
+        expected = offset.checked_add(data.len() as u64).ok_or_else(|| {
+            CASError::IOError(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "chunked manifest total size overflows u64",
+            ))
+        })?;
+    }
+
+    let total: usize = expected.try_into().map_err(|_| {
+        CASError::IOError(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "chunked manifest total size exceeds addressable memory",
+        ))
+    })?;
     let mut result = Vec::with_capacity(total);
     for (_, data) in parts {
         result.extend_from_slice(&data);

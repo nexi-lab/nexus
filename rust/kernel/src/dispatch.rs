@@ -143,51 +143,58 @@ pub(crate) struct FileEvent {
 #[allow(dead_code)]
 impl FileEvent {
     /// Serialize to compact JSON for DT_STREAM / audit trail.
+    ///
+    /// Uses `serde_json` so arbitrary control characters in path/new_path
+    /// (e.g. `\n`, `\0`) produce valid JSON (§ review fix #6). Unset
+    /// `Option` fields are omitted to match the previous wire shape; scalar
+    /// fields continue to use the compact ordering the Python parsers expect.
     pub(crate) fn to_json(&self) -> String {
-        let mut s = String::with_capacity(256);
-        s.push('{');
-        s.push_str(&format!(
-            "\"type\":\"{}\",\"path\":\"{}\"",
-            self.event_type.as_str(),
-            self.path.replace('\\', "\\\\").replace('"', "\\\"")
-        ));
-        s.push_str(&format!(",\"event_id\":\"{}\"", self.event_id));
-        s.push_str(&format!(",\"timestamp\":\"{}\"", self.timestamp));
+        let mut map = serde_json::Map::with_capacity(12);
+        map.insert(
+            "type".to_string(),
+            serde_json::Value::String(self.event_type.as_str().to_string()),
+        );
+        map.insert(
+            "path".to_string(),
+            serde_json::Value::String(self.path.clone()),
+        );
+        map.insert(
+            "event_id".to_string(),
+            serde_json::Value::String(self.event_id.clone()),
+        );
+        map.insert(
+            "timestamp".to_string(),
+            serde_json::Value::String(self.timestamp.clone()),
+        );
         if let Some(ref v) = self.zone_id {
-            s.push_str(&format!(",\"zone_id\":\"{v}\""));
+            map.insert("zone_id".to_string(), serde_json::Value::String(v.clone()));
         }
         if let Some(ref v) = self.agent_id {
-            s.push_str(&format!(",\"agent_id\":\"{v}\""));
+            map.insert("agent_id".to_string(), serde_json::Value::String(v.clone()));
         }
         if let Some(ref v) = self.user_id {
-            s.push_str(&format!(",\"user_id\":\"{v}\""));
+            map.insert("user_id".to_string(), serde_json::Value::String(v.clone()));
         }
         if let Some(ref v) = self.etag {
-            s.push_str(&format!(",\"etag\":\"{v}\""));
+            map.insert("etag".to_string(), serde_json::Value::String(v.clone()));
         }
         if let Some(v) = self.size {
-            s.push_str(&format!(",\"size\":{v}"));
+            map.insert("size".to_string(), serde_json::Value::from(v));
         }
         if let Some(v) = self.version {
-            s.push_str(&format!(",\"version\":{v}"));
+            map.insert("version".to_string(), serde_json::Value::from(v));
         }
         if self.is_new {
-            s.push_str(",\"is_new\":true");
+            map.insert("is_new".to_string(), serde_json::Value::Bool(true));
         }
         if let Some(ref v) = self.old_path {
-            s.push_str(&format!(
-                ",\"old_path\":\"{}\"",
-                v.replace('\\', "\\\\").replace('"', "\\\"")
-            ));
+            map.insert("old_path".to_string(), serde_json::Value::String(v.clone()));
         }
         if let Some(ref v) = self.new_path {
-            s.push_str(&format!(
-                ",\"new_path\":\"{}\"",
-                v.replace('\\', "\\\\").replace('"', "\\\"")
-            ));
+            map.insert("new_path".to_string(), serde_json::Value::String(v.clone()));
         }
-        s.push('}');
-        s
+        serde_json::to_string(&serde_json::Value::Object(map))
+            .unwrap_or_else(|_| String::from("{\"error\":\"serialization failed\"}"))
     }
 
     /// Minimal-constructor convenience for sys_* call sites that only

@@ -654,6 +654,7 @@ INSERT INTO auth_profiles (
     last_used_at, success_count, failure_count,
     cooldown_until, cooldown_reason, disabled_until, raw_error,
     ciphertext, wrapped_dek, nonce, aad, kek_version,
+    source_file_hash, daemon_version, machine_id,
     updated_at
 ) VALUES (
     :tenant_id, :principal_id, :id,
@@ -662,6 +663,7 @@ INSERT INTO auth_profiles (
     :last_used_at, :success_count, :failure_count,
     :cooldown_until, :cooldown_reason, :disabled_until, :raw_error,
     :ciphertext, :wrapped_dek, :nonce, :aad, :kek_version,
+    :source_file_hash, :daemon_version, :machine_id,
     NOW()
 )
 ON CONFLICT (tenant_id, principal_id, id) DO UPDATE SET
@@ -683,6 +685,9 @@ ON CONFLICT (tenant_id, principal_id, id) DO UPDATE SET
     nonce              = EXCLUDED.nonce,
     aad                = EXCLUDED.aad,
     kek_version        = EXCLUDED.kek_version,
+    source_file_hash   = EXCLUDED.source_file_hash,
+    daemon_version     = EXCLUDED.daemon_version,
+    machine_id         = EXCLUDED.machine_id,
     updated_at         = NOW()
 """
 
@@ -1131,7 +1136,15 @@ class PostgresAuthProfileStore:
             metadata=raw.get("metadata", {}) or {},
         )
 
-    def upsert_with_credential(self, profile: AuthProfile, credential: ResolvedCredential) -> None:
+    def upsert_with_credential(
+        self,
+        profile: AuthProfile,
+        credential: ResolvedCredential,
+        *,
+        source_file_hash: str | None = None,
+        daemon_version: str | None = None,
+        machine_id: uuid.UUID | None = None,
+    ) -> None:
         provider = self._require_provider()
         aad = self._aad_for(profile.id)
         dek = secrets.token_bytes(32)
@@ -1148,6 +1161,9 @@ class PostgresAuthProfileStore:
             nonce=nonce,
             aad=aad,
             kek_version=kek_version,
+            source_file_hash=source_file_hash,
+            daemon_version=daemon_version,
+            machine_id=machine_id,
         )
         lock_key = f"{self._tenant_id}/{profile.id}"
         with self._scoped() as conn:

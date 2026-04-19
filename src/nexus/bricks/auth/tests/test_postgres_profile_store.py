@@ -29,6 +29,8 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
+from nexus.bricks.auth.credential_backend import ResolvedCredential
+from nexus.bricks.auth.envelope_providers.in_memory import InMemoryEncryptionProvider
 from nexus.bricks.auth.postgres_profile_store import (
     PostgresAuthProfileStore,
     drop_schema,
@@ -761,3 +763,40 @@ class TestDaemonSchema:
             conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(other_tenant)})
             rows = conn.execute(text("SELECT COUNT(*) FROM daemon_machines")).scalar()
         assert rows == 0, "RLS did not isolate daemon_machines across tenants"
+
+    def test_upsert_with_credential_stamps_audit_fields(
+        self, pg_engine: Engine, tenant_id: uuid.UUID, principal_id: uuid.UUID
+    ) -> None:
+        store = PostgresAuthProfileStore(
+            PG_URL,
+            tenant_id=tenant_id,
+            principal_id=principal_id,
+            engine=pg_engine,
+            encryption_provider=InMemoryEncryptionProvider(),
+        )
+        profile = make_profile("google/user@example.com", provider="google")
+        cred = ResolvedCredential(
+            kind="bearer_token",
+            access_token="ya29.fake",
+        )
+        machine_id = uuid.uuid4()
+        store.upsert_with_credential(
+            profile,
+            cred,
+            source_file_hash="deadbeef" * 8,
+            daemon_version="0.9.20",
+            machine_id=machine_id,
+        )
+        with pg_engine.begin() as conn:
+            conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(tenant_id)})
+            row = conn.execute(
+                text(
+                    "SELECT source_file_hash, daemon_version, machine_id "
+                    "FROM auth_profiles WHERE id = :pid"
+                ),
+                {"pid": profile.id},
+            ).fetchone()
+        assert row is not None
+        assert row.source_file_hash == "deadbeef" * 8
+        assert row.daemon_version == "0.9.20"
+        assert row.machine_id == machine_id

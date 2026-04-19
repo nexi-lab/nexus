@@ -310,6 +310,14 @@ impl LockManager {
         self.advisory_state.read().clone()
     }
 
+    /// True once ``install_locks`` has been called. Fast-path gate
+    /// for install-site idempotency — callers avoid constructing a
+    /// fresh backend (which may block on an async state-machine read)
+    /// on every replayed mount.
+    pub fn locks_installed(&self) -> bool {
+        self.installed.load(Ordering::Acquire)
+    }
+
     fn locks_backend(&self) -> Arc<dyn Locks> {
         self.locks.read().clone()
     }

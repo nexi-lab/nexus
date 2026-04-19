@@ -1080,19 +1080,21 @@ impl Kernel {
 
     /// Install a federation advisory-lock backend (R20.7 DI).
     ///
-    /// Replaces the old ``upgrade_lock_manager``. Builds a
-    /// ``DistributedLocks`` that shares the state machine's advisory
-    /// map, migrates existing kernel-local holders, and swaps the
-    /// kernel's ``LockManager`` backend. First-wins per process: a
-    /// second call is a no-op (federation picks ONE zone for the
-    /// lock backend; mid-flight swaps would orphan raft-committed
-    /// holders).
+    /// Replaces the old ``upgrade_lock_manager``. First-wins per
+    /// process: subsequent calls short-circuit BEFORE constructing a
+    /// new ``DistributedLocks`` (which does a ``runtime.block_on``).
+    /// Keeping the no-op fast matters for bootstrap paths that replay
+    /// every mount — each replay would otherwise pay the block_on
+    /// cost on the main thread.
     #[allow(dead_code)]
     pub fn install_federation_locks(
         &self,
         node: nexus_raft::prelude::ZoneConsensus<nexus_raft::prelude::FullStateMachine>,
         runtime: tokio::runtime::Handle,
     ) {
+        if self.lock_manager.locks_installed() {
+            return;
+        }
         let kernel_state = self.lock_manager.advisory_state_arc();
         let (backend, shared_state) =
             nexus_raft::federation::DistributedLocks::new(node, runtime, kernel_state);

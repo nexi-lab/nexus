@@ -39,6 +39,15 @@ class AgentProvisioner:
         self._vfs = vfs
         self._zone_id = zone_id
 
+    @property
+    def zone_id(self) -> str:
+        """Public accessor for the provisioner's zone id.
+
+        Consumers (lifespan wiring, TTL sweeper, federation) use this to
+        derive their own zone context so all IPC paths agree on one zone.
+        """
+        return self._zone_id
+
     def _ctx(self) -> Any:
         from nexus.contracts.types import OperationContext
 

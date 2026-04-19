@@ -535,17 +535,32 @@ def _initialize_wired_ipc(nx: Any, services: dict[str, Any]) -> None:
     """
     _ipc_zone_id = services.get("ipc_zone_id")
     if _ipc_zone_id is None:
-        # Brick-disabled profiles never register ipc_zone_id — silent skip is correct.
-        # But if the brick IS registered yet missing from `services`, the caller
-        # forgot to thread it through — that's a wiring bug, warn loudly.
+        # If the IPC brick isn't registered at all, the profile has disabled
+        # it — skip IPC init entirely (fail-closed). Only fall back when the
+        # brick DID register the zone but the value was lost on its way into
+        # the services dict (the upstream wiring bug this patch addresses).
         _svc_fn = getattr(nx, "service", None)
-        if _svc_fn is not None and _svc_fn("ipc_zone_id") is not None:
-            logger.warning(
-                "[BOOT:WIRED] IPC init skipped: ipc_zone_id registered but not "
-                "threaded into services dict — /api/v2/ipc/* will return 503. "
-                "Check caller in _lifecycle.py."
+        _registered = _svc_fn("ipc_zone_id") if _svc_fn is not None else None
+        if _registered is None:
+            return
+        # Use the actual registered value — unwrap ServiceRef proxy if present.
+        # Do not fall back to nx._zone_id, which can diverge from the brick's
+        # registered zone in multi-zone/federated setups.
+        _resolved = getattr(_registered, "_service_instance", _registered)
+        if not isinstance(_resolved, str) or not _resolved:
+            logger.error(
+                "[BOOT:WIRED] IPC init: registered ipc_zone_id has invalid type/"
+                "value (%r); skipping IPC wiring to avoid cross-zone leak.",
+                _resolved,
             )
-        return
+            return
+        _ipc_zone_id = _resolved
+        logger.warning(
+            "[BOOT:WIRED] IPC init: ipc_zone_id registered but not threaded "
+            "through services dict — recovered from service registry (%r). "
+            "Caller in _lifecycle.py should thread the value explicitly.",
+            _ipc_zone_id,
+        )
 
     try:
         # Mount a LocalConnector at /agents for IPC file storage
@@ -558,22 +573,40 @@ def _initialize_wired_ipc(nx: Any, services: dict[str, Any]) -> None:
         _ipc_connector = LocalConnectorBackend(local_path=_ipc_data_dir)
         nx._driver_coordinator.mount("/agents", _ipc_connector)
 
-        # Ensure the /agents metadata entry has target_zone_id set
+        # Ensure the /agents metadata entry has target_zone_id set.
+        # Single source of truth = _ipc_zone_id. Using nx._zone_id here would
+        # make mount metadata disagree with AgentProvisioner in federated /
+        # multi-zone setups where the two can legitimately diverge.
+        # Reconcile on mismatch — legacy deployments may have persisted a
+        # stale value (e.g. nx._zone_id) from before this patch.
         try:
-            from nexus.core.metadata import DT_DIR, DT_MOUNT
+            from nexus.core.metadata import DT_MOUNT
 
-            _zone_id = getattr(nx, "_zone_id", None) or "root"
             existing = nx.metadata.get("/agents")
-            if existing is not None and not existing.target_zone_id:
+            if existing is not None and existing.target_zone_id != _ipc_zone_id:
                 from dataclasses import replace as _replace
 
+                _prior = existing.target_zone_id
+                # DT_REG/DT_DIR/DT_MOUNT/DT_PIPE are enum values (0..3), not
+                # bitflags — ``DT_DIR | DT_MOUNT`` would produce DT_PIPE (=3)
+                # and corrupt the /agents inode.
                 updated = _replace(
                     existing,
-                    entry_type=DT_DIR | DT_MOUNT,
-                    target_zone_id=_zone_id,
+                    entry_type=DT_MOUNT,
+                    target_zone_id=_ipc_zone_id,
                 )
                 nx.metadata.put(updated)
-                logger.debug("[BOOT:WIRED] Set target_zone_id=%s on /agents mount", _zone_id)
+                if _prior:
+                    logger.warning(
+                        "[BOOT:WIRED] /agents mount target_zone_id reconciled: "
+                        "%r → %r (matches AgentProvisioner zone)",
+                        _prior,
+                        _ipc_zone_id,
+                    )
+                else:
+                    logger.debug(
+                        "[BOOT:WIRED] Set target_zone_id=%s on /agents mount", _ipc_zone_id
+                    )
         except Exception as e:
             logger.debug("[BOOT:WIRED] Could not set /agents target_zone_id: %s", e)
 
@@ -585,6 +618,17 @@ def _initialize_wired_ipc(nx: Any, services: dict[str, Any]) -> None:
             zone_id=_ipc_zone_id,
         )
         services["ipc_provisioner"] = _provisioner
+
+        # Also register with the service registry so lifespan/ipc.py can
+        # resolve it via nx.service("ipc_provisioner"). Without this the
+        # provisioner only lives in the local services dict and the FastAPI
+        # lifespan hook never wires it onto app.state.ipc_nexus_fs.
+        _registry = nx._service_registry
+        if _registry.service("ipc_provisioner") is not None:
+            # Already registered (e.g. re-entry on hot-reload) — swap atomically.
+            _registry.replace_service("ipc_provisioner", _provisioner)
+        else:
+            _registry.register_service("ipc_provisioner", _provisioner)
 
         # Wire provisioner into AgentRegistry so register → provision is automatic
         _agent_reg_svc = nx._service_registry.service("agent_registry")

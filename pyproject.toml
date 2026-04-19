@@ -59,7 +59,7 @@ dependencies = [
     # File watching (cross-platform, Rust-backed via notify crate)
     "watchfiles>=1.0.0",
     # Database
-    "sqlalchemy>=2.0.44",
+    "sqlalchemy>=2.0.49",
     "alembic>=1.13.0",
     "greenlet>=3.0.0", # Required for SQLAlchemy async (run_sync in async context)
     "psycopg2-binary>=2.9.10", # PostgreSQL driver (sync)

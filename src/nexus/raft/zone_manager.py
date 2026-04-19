@@ -55,17 +55,31 @@ def _make_py_zone_manager(
     ca_key_path: str | None,
     join_token_hash: str | None,
 ) -> Any:
-    """Construct the PyO3 ZoneManager.
+    """Construct the PyO3 ZoneManager across hostname/node_id API variants.
 
-    `peers` is forwarded to the Rust side so the registry can enumerate
-    pre-existing zones from disk at construction time (R15.e). The
-    enumeration runs before the gRPC server starts accepting traffic,
-    eliminating the race where an inbound vote/append arrives for a
-    zone that has on-disk state but has not yet been reloaded into
-    memory.
+    Current Rust builds take ``hostname`` as the first positional arg and
+    derive the node ID internally. Older extension builds exposed
+    ``node_id`` directly, so we inspect the signature and pass whichever
+    shape the loaded binding expects — lets the same Python deploy against
+    mixed wheel vintages.
+
+    ``peers`` is forwarded so the Rust registry can enumerate pre-existing
+    zones from disk at construction time (R15.e) before the gRPC server
+    accepts traffic.
     """
+    from inspect import signature
+
+    from nexus.raft.peer_address import hostname_to_node_id
+
+    try:
+        first_param = next(iter(signature(py_zone_manager).parameters.values())).name
+    except (TypeError, ValueError, StopIteration):
+        first_param = "hostname"
+
+    first_arg: str | int = hostname_to_node_id(hostname) if first_param == "node_id" else hostname
+
     return py_zone_manager(
-        hostname,
+        first_arg,
         base_path,
         peers,
         bind_addr=bind_addr,

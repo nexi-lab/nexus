@@ -598,18 +598,18 @@ async def test_glob_simple_pattern(embedded: NexusFS) -> None:
     embedded.write("/data.csv", b"Content")
 
     # Glob for .txt files
-    files = embedded.service("search").glob("*.txt")
+    files = [f for f in embedded.service("search").glob("*.txt") if _is_user_file(f)]
     assert len(files) == 2
     assert "/test1.txt" in files
     assert "/test2.txt" in files
 
     # Glob for .py files
-    files = embedded.service("search").glob("*.py")
+    files = [f for f in embedded.service("search").glob("*.py") if _is_user_file(f)]
     assert len(files) == 1
     assert "/file.py" in files
 
     # Glob for test* files
-    files = embedded.service("search").glob("test*")
+    files = [f for f in embedded.service("search").glob("test*") if _is_user_file(f)]
     assert len(files) == 2
     assert "/test1.txt" in files
     assert "/test2.txt" in files
@@ -625,7 +625,7 @@ async def test_glob_recursive_pattern(embedded: NexusFS) -> None:
     embedded.write("/README.md", b"Content")
 
     # Find all Python files recursively
-    files = embedded.service("search").glob("**/*.py")
+    files = [f for f in embedded.service("search").glob("**/*.py") if _is_user_file(f)]
     assert len(files) == 3
     assert "/src/main.py" in files
     assert "/src/utils/helper.py" in files

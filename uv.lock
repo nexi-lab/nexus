@@ -2435,6 +2435,7 @@ dependencies = [
     { name = "types-cachetools" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "uvloop", marker = "sys_platform != 'win32'" },
+    { name = "watchdog" },
     { name = "watchfiles" },
 ]
 
@@ -2725,6 +2726,7 @@ requires-dist = [
     { name = "types-requests", marker = "extra == 'dev'", specifier = ">=2.31.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.38.0" },
     { name = "uvloop", marker = "sys_platform != 'win32'", specifier = ">=0.22.1" },
+    { name = "watchdog", specifier = ">=4.0.0" },
     { name = "watchfiles", specifier = ">=1.0.0" },
 ]
 provides-extras = ["performance", "pay", "monitoring", "mobile", "sandbox-monty", "sandbox", "sentry", "profiling", "vault", "aws", "dev", "test", "fuse", "postgres", "cloud-sql", "semantic-search", "semantic-search-remote", "e2b", "docker", "kafka", "nats-export", "pubsub", "sse", "event-streaming", "all"]

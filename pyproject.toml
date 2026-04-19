@@ -57,6 +57,7 @@ dependencies = [
     "uvicorn[standard]>=0.38.0", # ASGI server
     "uvloop>=0.22.1; sys_platform != 'win32'", # Fast event loop (Unix only, 2-4x faster)
     # File watching (cross-platform, Rust-backed via notify crate)
+    "watchdog>=4.0.0",  # fsnotify wrapper for daemon source watchers (#3804)
     "watchfiles>=1.0.0",
     # Database
     "sqlalchemy>=2.0.49",

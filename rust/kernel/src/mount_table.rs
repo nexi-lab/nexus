@@ -293,6 +293,27 @@ impl MountTable {
         points
     }
 
+    /// User-facing mount points that currently target ``zone_id``.
+    ///
+    /// A single federation zone can be mounted at more than one path —
+    /// e.g. ``corp`` is mounted at both ``/corp`` (direct) and
+    /// ``/family/work`` (crosslink) in the standard test topology. The
+    /// DLC invalidation callback uses this to evict every stale dcache
+    /// entry after a committed metadata mutation, regardless of which
+    /// mount-point the original write went through.
+    pub fn mount_points_for_zone(&self, zone_id: &str) -> Vec<String> {
+        let mut points: Vec<String> = self
+            .entries
+            .iter()
+            .filter_map(|e| {
+                let (zone, mp) = extract_zone_from_canonical(e.key());
+                (zone == zone_id).then_some(mp)
+            })
+            .collect();
+        points.sort();
+        points
+    }
+
     /// Number of mounted entries.
     pub fn len(&self) -> usize {
         self.entries.len()

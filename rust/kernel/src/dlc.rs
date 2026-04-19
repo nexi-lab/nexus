@@ -74,6 +74,12 @@ impl DriverLifecycleCoordinator {
         )>,
         is_external: bool,
     ) -> Result<(), KernelError> {
+        // Snapshot the consensus handle before moving it into add_mount so
+        // we can install the dcache-invalidation callback after routing
+        // is wired. ZoneConsensus is Clone (wraps shared Arcs), so the
+        // snapshot is cheap.
+        let raft_snapshot = raft_backend.as_ref().map(|(c, _)| c.clone());
+
         // 1. Routing table + per-mount metastore + lock manager upgrade
         kernel.add_mount(
             mount_point,
@@ -87,6 +93,45 @@ impl DriverLifecycleCoordinator {
             raft_backend,
             is_external,
         )?;
+
+        // 1b. Apply-side cache coherence: install a callback on the zone's
+        // state machine that evicts the kernel DCache entry for each key
+        // mutated by a committed metadata command. Without this, nodes
+        // that didn't originate a write (leader-forwarded follower
+        // writes, catch-up replication) keep serving stale sys_stat /
+        // sys_read from their local dcache even after raft applies the
+        // new state — a textbook distributed-cache-coherence hole.
+        //
+        // A single zone can surface at multiple mount points (direct
+        // mount + crosslink, e.g. ``corp`` mounted at both ``/corp`` and
+        // ``/family/work``). The callback resolves ALL current mount
+        // points for the zone at invalidation time so a write through one
+        // crosslink evicts the mirror entries cached under the other. We
+        // look up mount points on every apply — mounts are O(1..dozens)
+        // per zone, dashmap iteration is constant-time, and the budget
+        // is already tokio-scale (one callback per committed mutation).
+        if let Some(consensus) = raft_snapshot {
+            if let Some(slot) = consensus.invalidate_cb_slot() {
+                let dcache = kernel.dcache_handle();
+                let mount_table = kernel.mount_table_handle();
+                let zone_id_owned = zone_id.to_string();
+                let cb: Arc<dyn Fn(&str) + Send + Sync> =
+                    Arc::new(move |zone_relative_key: &str| {
+                        let trimmed = zone_relative_key.trim_start_matches('/');
+                        for mp in mount_table.mount_points_for_zone(&zone_id_owned) {
+                            let global = if trimmed.is_empty() {
+                                mp.clone()
+                            } else if mp.ends_with('/') {
+                                format!("{}{}", mp, trimmed)
+                            } else {
+                                format!("{}/{}", mp, trimmed)
+                            };
+                            dcache.evict(&global);
+                        }
+                    });
+                *slot.write() = Some(cb);
+            }
+        }
 
         // 2. Write DT_MOUNT metadata entry (best-effort).
         // Per-mount metastore (federation zone): key is "/" (zone-relative,

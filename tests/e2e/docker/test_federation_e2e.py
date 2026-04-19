@@ -1972,7 +1972,16 @@ class TestDayAtTheOffice:
             timeout=15,
             msg="spec.md not replicated to follower",
         )
-        r = _grpc_call(grpc2, "read", {"path": spec}, api_key=api_key)
+        # _wait_replicated only confirms the path exists on the follower — it
+        # returns as soon as the first write's entry is visible in list().
+        # The subsequent versions may still be mid-apply. Poll for content
+        # convergence before asserting (apply lag is bounded by raft RTT).
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            r = _grpc_call(grpc2, "read", {"path": spec}, api_key=api_key)
+            if "error" not in r and _decode_content(r) == versions[-1]:
+                break
+            time.sleep(0.2)
         assert "error" not in r, f"read on follower failed: {r}"
         assert _decode_content(r) == versions[-1]
 
@@ -1998,7 +2007,9 @@ class TestDayAtTheOffice:
         deadline = time.time() + 20
         while time.time() < deadline:
             rr = _grpc_call(grpc2, "sys_stat", {"path": spec}, api_key=api_key)
-            if "error" in rr or rr.get("result") is None:
+            # sys_stat on a missing path returns ``{"result": {"metadata": None}}``
+            # (not an "error" field, and result itself is the outer dict).
+            if "error" in rr or rr.get("result", {}).get("metadata") is None:
                 return
             time.sleep(0.5)
         pytest.fail("spec.md still visible on follower after delete")
@@ -2125,7 +2136,10 @@ class TestCrossZoneDailyWorkflow:
         rr: dict = {}
         while time.time() < deadline:
             rr = _grpc_call(grpc1, "sys_stat", {"path": work_path}, api_key=api_key)
-            if "error" in rr or rr.get("result") is None:
+            # sys_stat returns ``{"result": {"metadata": None}}`` for a
+            # missing path — the outer "result" dict is still present,
+            # we must drill into "metadata" to see the miss.
+            if "error" in rr or rr.get("result", {}).get("metadata") is None:
                 return
             time.sleep(0.3)
         pytest.fail(f"File still visible at work path after crosslink unlink: {rr}")

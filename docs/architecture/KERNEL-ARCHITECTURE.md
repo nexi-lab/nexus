@@ -396,7 +396,7 @@ with them indirectly through syscalls. See §2.2 for per-syscall usage.
 | **PipeManager + StreamManager** | `rust/kernel/src/pipe_manager.rs` + `rust/kernel/src/stream_manager.rs` | `pipe(2)` + append-only log | VFS named IPC. DT_PIPE: destructive FIFO (MemoryPipeBackend / SharedMemoryPipeBackend). DT_STREAM: non-destructive offset reads. Details in §4.2 |
 | **FileWatcher + FileEvent** | `core.file_watcher` + `core.file_events` | `inotify(7)` + `fsnotify_event` | File change notification + immutable mutation records. Local OBSERVE waiters + optional RemoteWatchProtocol. Details in §4.3 |
 | **ServiceRegistry** | `core.service_registry` | `init/main.c` + `module.c` | Kernel-owned symbol table + lifecycle orchestration (enlist/swap/shutdown). PersistentService + duck-typed hook_spec() |
-| **DriverLifecycleCoordinator** | `rust/kernel/src/dlc.rs` + `core.driver_lifecycle_coordinator` | `register_filesystem` + `kern_mount` | Rust DLC: routing table + metastore + dcache + lock manager upgrade. Python DLC: backend refs (`_PyMountInfo`) + event dispatch |
+| **DriverLifecycleCoordinator** | `rust/kernel/src/dlc.rs` + `core.driver_lifecycle_coordinator` | `register_filesystem` + `kern_mount` | Rust DLC: routing table + metastore + dcache + lock manager upgrade + **federation dcache-coherence callback** (installs a per-mount invalidator on the zone's state machine so committed metadata mutations evict stale dcache entries on every voter). Python DLC: backend refs (`_PyMountInfo`) + event dispatch |
 
 ### 4.1 Unified LockManager — I/O Lock + Advisory Lock
 

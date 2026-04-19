@@ -110,9 +110,12 @@ Per-operation parameter (`consistency="sc"` or `"ec"`), not per-zone. SC uses Ra
 5.2 Raft Local:         Client → NexusFS.write() → RaftMetadataStore (PyO3 ~5us) → redb → Backend
 5.3 Raft Distributed:   Client → NexusFS.write() → ZoneConsensus.propose() → gRPC replicate
                                                   → Majority ACK → StateMachine.apply() on all → redb
+                                                  → per-voter dcache.evict(key)  ← cache coherence
 ```
 
 raft-rs only handles consensus (log replication, election). Transport (gRPC) is our responsibility.
+
+Cache coherence: every voter's `StateMachine.apply` fires the invalidation callback the kernel DLC installed at mount time (see KERNEL-ARCHITECTURE §4 DLC row), so a leader-forwarded follower write — or any replicated mutation — evicts stale dcache entries on nodes that didn't originate the write. Without this step, `sys_stat` / `sys_read` on non-writer voters would keep returning the pre-write `etag` from local dcache even after raft applied the new state.
 
 ---
 

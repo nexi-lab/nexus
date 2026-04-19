@@ -314,6 +314,13 @@ pub struct ZoneConsensus<S: StateMachine + 'static> {
     /// None in embedded/single-node mode.
     #[cfg(all(feature = "grpc", has_protos))]
     forward_ctx: Option<ForwardContext>,
+    /// Apply-side dcache invalidation slot — cached at construction so
+    /// sync callers (kernel ``DLC::mount``) can install / replace the
+    /// callback without holding the state-machine's async RwLock. The
+    /// slot itself is ``Arc<parking_lot::RwLock<Option<Arc<Fn>>>>``;
+    /// only ``Option<Arc<Fn>>`` swaps serialize through the inner lock.
+    #[allow(clippy::type_complexity)]
+    invalidate_cb_slot: Option<Arc<parking_lot::RwLock<Option<Arc<dyn Fn(&str) + Send + Sync>>>>>,
 }
 
 impl<S: StateMachine + 'static> Clone for ZoneConsensus<S> {
@@ -328,6 +335,7 @@ impl<S: StateMachine + 'static> Clone for ZoneConsensus<S> {
             replication_log: self.replication_log.clone(),
             #[cfg(all(feature = "grpc", has_protos))]
             forward_ctx: self.forward_ctx.clone(),
+            invalidate_cb_slot: self.invalidate_cb_slot.clone(),
         }
     }
 }
@@ -503,6 +511,12 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
         let raw_node = RawNode::new(&raft_config, storage, &logger)
             .map_err(|e| RaftError::Raft(e.to_string()))?;
 
+        // Capture the apply-side invalidation slot BEFORE moving
+        // state_machine into the async RwLock — once inside, only
+        // async callers can touch it, but ``ZoneConsensus::invalidate_cb_slot``
+        // is called from sync contexts (kernel DLC::mount).
+        let invalidate_cb_slot = state_machine.invalidate_cb_slot();
+
         // Shared state
         let state_machine = Arc::new(RwLock::new(state_machine));
         let proposal_id = Arc::new(AtomicU64::new(0));
@@ -523,6 +537,7 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
             replication_log,
             #[cfg(all(feature = "grpc", has_protos))]
             forward_ctx: None,
+            invalidate_cb_slot,
         };
 
         let driver = ZoneConsensusDriver {
@@ -607,6 +622,19 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
     /// Get the current term (atomic read, no channel).
     pub fn term(&self) -> u64 {
         self.cached_term.load(Ordering::Relaxed)
+    }
+
+    /// Clone the state-machine's apply-side invalidation slot so the
+    /// kernel (which owns the DCache) can install a callback that fires
+    /// on every committed metadata mutation. Returns ``None`` for
+    /// state machines that don't expose a slot (e.g. witness) — kernel
+    /// callers should treat ``None`` as "cache coherence is caller's
+    /// responsibility" and skip the install.
+    #[allow(clippy::type_complexity)]
+    pub fn invalidate_cb_slot(
+        &self,
+    ) -> Option<Arc<parking_lot::RwLock<Option<Arc<dyn Fn(&str) + Send + Sync>>>>> {
+        self.invalidate_cb_slot.clone()
     }
 
     /// Execute a read-only closure against the state machine.

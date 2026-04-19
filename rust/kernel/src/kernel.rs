@@ -453,12 +453,18 @@ impl ZoneRevisionEntry {
 pub struct Kernel {
     // DriverLifecycleCoordinator — owns mount lifecycle (routing + metastore + dcache).
     pub(crate) dlc: crate::dlc::DriverLifecycleCoordinator,
-    // DCache (owned)
-    dcache: DCache,
+    // DCache — ``Arc`` so federation apply-event callbacks can hold a
+    // shared reference that outlives the kernel's call frames (the
+    // state machine's invalidate_cb closure runs on the raft driver
+    // thread, not the kernel's Python-binding thread).
+    dcache: Arc<DCache>,
     // Mount table — owns backend + per-mount metastore + access flags.
     // Replaces the old `router: PathRouter` + `mount_metastores: DashMap`
-    // split; both lookups now go through `MountTable` (F2 C2).
-    pub(crate) mount_table: MountTable,
+    // split; both lookups now go through `MountTable` (F2 C2). Wrapped
+    // in ``Arc`` so federation apply-event callbacks can look up the
+    // current set of mounts-for-zone at invalidation time (a zone can
+    // be mounted under multiple paths — direct + crosslink).
+    pub(crate) mount_table: Arc<MountTable>,
     // PathTrie (owned)
     trie: Trie,
     // Unified lock manager: I/O lock + advisory lock + optional Raft.
@@ -557,8 +563,8 @@ impl Kernel {
         ));
         Self {
             dlc: crate::dlc::DriverLifecycleCoordinator::new(),
-            dcache: DCache::new(),
-            mount_table: MountTable::new(),
+            dcache: Arc::new(DCache::new()),
+            mount_table: Arc::new(MountTable::new()),
             trie: Trie::new(),
             lock_manager: Arc::new(LockManager::new()),
             // Bare kernels boot with an in-memory metastore so tests,
@@ -1228,6 +1234,22 @@ impl Kernel {
     /// Evict a single path.
     pub fn dcache_evict(&self, path: &str) -> bool {
         self.dcache.evict(path)
+    }
+
+    /// Clone the shared DCache ``Arc`` for federation apply-event
+    /// callbacks. Consumer holds its own reference so the callback
+    /// stays valid even if the kernel's invoking call frame has
+    /// returned — the cache itself lives as long as *any* holder.
+    pub(crate) fn dcache_handle(&self) -> Arc<DCache> {
+        Arc::clone(&self.dcache)
+    }
+
+    /// Clone the shared MountTable ``Arc`` for federation apply-event
+    /// callbacks that need to look up mount-points-for-zone at
+    /// invalidation time. See ``dcache_handle`` for the lifetime
+    /// rationale — same contract.
+    pub(crate) fn mount_table_handle(&self) -> Arc<MountTable> {
+        Arc::clone(&self.mount_table)
     }
 
     /// Evict all entries with given prefix.

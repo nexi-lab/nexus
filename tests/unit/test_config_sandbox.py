@@ -23,10 +23,12 @@ class TestApplySandboxDefaults:
         assert result.backend == cfg.backend
 
     def test_sandbox_sets_local_backend_when_at_system_default(self) -> None:
-        # backend NOT provided — not in model_fields_set — should get sandbox default
+        # backend NOT provided — not in model_fields_set — should get sandbox default.
+        # R1 review (#3778): sandbox uses path_local (direct FS) not local (CAS) —
+        # CAS has hash-store overhead that defeats the "lightweight sandbox" intent.
         cfg = NexusConfig(profile="sandbox")
         result = _apply_sandbox_defaults(cfg)
-        assert result.backend == "local"
+        assert result.backend == "path_local"
 
     def test_sandbox_sets_data_dir(self) -> None:
         # data_dir NOT provided — not in model_fields_set — should get sandbox default

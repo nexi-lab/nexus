@@ -73,7 +73,7 @@ ENV UV_HTTP_TIMEOUT=300
 # Select which pip extras to install at build time.
 # Default (full image): all,performance,compression,monitoring,docker,event-streaming,sentry,pay
 # Lean sandbox image:   sandbox
-ARG NEXUS_PROFILE_EXTRAS=all,performance,compression,monitoring,docker,event-streaming,sentry,pay
+ARG NEXUS_PROFILE_EXTRAS=all,performance,monitoring,docker,event-streaming,sentry,pay
 # Pre-install torch ONLY when 'all' extras are selected — torch is ~300-2000 MB
 # and is only consumed by txtai, which itself is gated on 'all'. SANDBOX (Issue #3778)
 # and other lean extras skip it entirely.
@@ -95,7 +95,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     case ",${NEXUS_PROFILE_EXTRAS}," in \
       *,all,*) \
         uv pip install --system -i "$(cat /tmp/pip_index)" "txtai[ann]>=9.0"; \
-        if [ -z "$TARGETPLATFORM" ] || [ "$TARGETPLATFORM" = "linux/amd64" ]; then \
+        if [ -z "${TARGETPLATFORM:-}" ] || [ "${TARGETPLATFORM:-}" = "linux/amd64" ]; then \
           uv pip install --system -i "$(cat /tmp/pip_index)" "sentence-transformers>=5.3"; \
         fi ;; \
       *) echo "Skipping txtai/sentence-transformers for profile extras: ${NEXUS_PROFILE_EXTRAS}" ;; \
@@ -166,7 +166,7 @@ FROM python:3.14-slim
 ARG USE_CHINA_MIRROR
 ARG TARGETARCH
 # Re-declare in stage-2 so smoke tests and conditional logic can read it.
-ARG NEXUS_PROFILE_EXTRAS=all,performance,compression,monitoring,docker,event-streaming,sentry,pay
+ARG NEXUS_PROFILE_EXTRAS=all,performance,monitoring,docker,event-streaming,sentry,pay
 ENV USE_CHINA_MIRROR=${USE_CHINA_MIRROR}
 ENV NEXUS_PROFILE_EXTRAS=${NEXUS_PROFILE_EXTRAS}
 

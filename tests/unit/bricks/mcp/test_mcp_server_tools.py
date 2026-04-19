@@ -968,8 +968,14 @@ class TestSearchTools:
 
         response = json.loads(result)
         assert "items" in response
+        # R4 review (#3778): MCP now threads an authenticated OperationContext
+        # into semantic_search. The mock resolver returns the mock's _init_cred.
         mock_nx_with_search._mock_search.semantic_search.assert_called_once_with(
-            query="token refresh", path="/", search_mode="hybrid", limit=10
+            query="token refresh",
+            path="/",
+            search_mode="hybrid",
+            limit=10,
+            context=mock_nx_with_search._init_cred,
         )
 
     async def test_semantic_search_not_available(self, mock_nx_basic):

@@ -561,8 +561,13 @@ _SANDBOX_TUNING = ProfileTuning(
     resiliency=_LITE_TUNING.resiliency,
     connector=_LITE_TUNING.connector,
     pool=PoolTuning(
-        asyncpg_min_size=0,
-        asyncpg_max_size=0,  # SQLite, no asyncpg
+        # SANDBOX is SQLite-only; asyncpg is never created (scheduler skips when
+        # database_url is unset). Values kept at 1/1 to satisfy the universal
+        # "tuning values must be positive" invariant in tests/unit/core/
+        # test_performance_tuning.py — zero would be accurate but breaks the shared
+        # validator and these values are never read at runtime on SANDBOX.
+        asyncpg_min_size=1,
+        asyncpg_max_size=1,
         httpx_max_connections=10,
         remote_pool_maxsize=10,
     ),

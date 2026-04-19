@@ -160,6 +160,9 @@ _TABLE_STATEMENTS: tuple[str, ...] = (
         nonce              BYTEA,
         aad                BYTEA,
         kek_version        INTEGER,
+        source_file_hash   TEXT,      -- #3804 audit stamp
+        daemon_version     TEXT,      -- #3804 audit stamp
+        machine_id         UUID,      -- #3804 audit stamp
         created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         PRIMARY KEY (tenant_id, principal_id, id),
@@ -175,6 +178,37 @@ _TABLE_STATEMENTS: tuple[str, ...] = (
     """,
     "CREATE INDEX IF NOT EXISTS idx_auth_profiles_provider ON auth_profiles(tenant_id, principal_id, provider)",
     "CREATE INDEX IF NOT EXISTS idx_auth_profiles_tenant_id_only ON auth_profiles(tenant_id, id)",
+    """
+    CREATE TABLE IF NOT EXISTS daemon_machines (
+        id                         UUID PRIMARY KEY,
+        tenant_id                  UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+        principal_id               UUID NOT NULL,
+        pubkey                     BYTEA NOT NULL,
+        daemon_version_last_seen   TEXT,
+        enrolled_at                TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        last_seen_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        revoked_at                 TIMESTAMPTZ,
+        hostname                   TEXT,
+        FOREIGN KEY (principal_id, tenant_id)
+            REFERENCES principals(id, tenant_id) ON DELETE CASCADE
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_daemon_machines_tenant_principal "
+    "ON daemon_machines(tenant_id, principal_id)",
+    """
+    CREATE TABLE IF NOT EXISTS daemon_enroll_tokens (
+        jti              UUID PRIMARY KEY,
+        tenant_id        UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+        principal_id     UUID NOT NULL,
+        issued_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        expires_at       TIMESTAMPTZ NOT NULL,
+        used_at          TIMESTAMPTZ,
+        FOREIGN KEY (principal_id, tenant_id)
+            REFERENCES principals(id, tenant_id) ON DELETE CASCADE
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_daemon_enroll_tokens_expires "
+    "ON daemon_enroll_tokens(expires_at)",
 )
 
 # RLS statements. Run LAST so the backfill in _upgrade_shape_in_place is not
@@ -188,6 +222,10 @@ _RLS_STATEMENTS: tuple[str, ...] = (
     "ALTER TABLE principal_aliases FORCE ROW LEVEL SECURITY",
     "ALTER TABLE auth_profiles ENABLE ROW LEVEL SECURITY",
     "ALTER TABLE auth_profiles FORCE ROW LEVEL SECURITY",
+    "ALTER TABLE daemon_machines ENABLE ROW LEVEL SECURITY",
+    "ALTER TABLE daemon_machines FORCE ROW LEVEL SECURITY",
+    "ALTER TABLE daemon_enroll_tokens ENABLE ROW LEVEL SECURITY",
+    "ALTER TABLE daemon_enroll_tokens FORCE ROW LEVEL SECURITY",
 )
 
 # Policies are separate because ``CREATE POLICY`` lacks IF NOT EXISTS in
@@ -211,6 +249,16 @@ _POLICY_STATEMENTS: tuple[str, ...] = (
     "DROP POLICY IF EXISTS tenant_isolation_auth_profiles ON auth_profiles",
     """
     CREATE POLICY tenant_isolation_auth_profiles ON auth_profiles
+        USING (tenant_id = current_setting('app.current_tenant', true)::UUID)
+    """,
+    "DROP POLICY IF EXISTS tenant_isolation_daemon_machines ON daemon_machines",
+    """
+    CREATE POLICY tenant_isolation_daemon_machines ON daemon_machines
+        USING (tenant_id = current_setting('app.current_tenant', true)::UUID)
+    """,
+    "DROP POLICY IF EXISTS tenant_isolation_daemon_enroll_tokens ON daemon_enroll_tokens",
+    """
+    CREATE POLICY tenant_isolation_daemon_enroll_tokens ON daemon_enroll_tokens
         USING (tenant_id = current_setting('app.current_tenant', true)::UUID)
     """,
 )
@@ -432,6 +480,9 @@ def _upgrade_shape_in_place(conn: Connection) -> None:
         ("nonce", "BYTEA"),
         ("aad", "BYTEA"),
         ("kek_version", "INTEGER"),
+        ("source_file_hash", "TEXT"),  # #3804 audit stamp
+        ("daemon_version", "TEXT"),  # #3804 audit stamp
+        ("machine_id", "UUID"),  # #3804 audit stamp (fk to daemon_machines.id)
     ):
         conn.execute(text(f"ALTER TABLE auth_profiles ADD COLUMN IF NOT EXISTS {col} {decl}"))
     # CHECK constraint. Use DROP ... IF EXISTS + ADD for idempotency.
@@ -456,7 +507,14 @@ def _upgrade_shape_in_place(conn: Connection) -> None:
 def drop_schema(engine: Engine) -> None:
     """Drop every table created by ``ensure_schema`` (test teardown helper)."""
     with engine.begin() as conn:
-        for tbl in ("auth_profiles", "principal_aliases", "principals", "tenants"):
+        for tbl in (
+            "daemon_enroll_tokens",
+            "daemon_machines",
+            "auth_profiles",
+            "principal_aliases",
+            "principals",
+            "tenants",
+        ):
             conn.execute(text(f"DROP TABLE IF EXISTS {tbl} CASCADE"))
 
 

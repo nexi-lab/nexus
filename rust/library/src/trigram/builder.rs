@@ -107,12 +107,18 @@ impl TrigramIndexBuilder {
 
     /// Number of files in the index.
     pub fn file_count(&self) -> u32 {
-        self.files.len() as u32
+        self.files
+            .len()
+            .try_into()
+            .expect("trigram index has more than u32::MAX files")
     }
 
     /// Number of unique trigrams in the index.
     pub fn trigram_count(&self) -> u32 {
-        self.posting_lists.len() as u32
+        self.posting_lists
+            .len()
+            .try_into()
+            .expect("trigram index has more than u32::MAX unique trigrams")
     }
 
     /// Get the file entries (for serialization).

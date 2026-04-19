@@ -19,12 +19,38 @@ pub fn write_index(builder: &TrigramIndexBuilder) -> Result<Vec<u8>, TrigramErro
     // File table: entries + concatenated path bytes.
     let mut path_bytes_total: usize = 0;
     for f in files {
-        path_bytes_total += f.path.len();
+        path_bytes_total = path_bytes_total.checked_add(f.path.len()).ok_or_else(|| {
+            TrigramError::CorruptIndex {
+                reason: "File table path bytes overflow".to_string(),
+            }
+        })?;
     }
-    let file_table_size = files.len() * FILE_ENTRY_SIZE + path_bytes_total + 4; // +4 for section CRC32
+    let file_entries_size =
+        files
+            .len()
+            .checked_mul(FILE_ENTRY_SIZE)
+            .ok_or_else(|| TrigramError::CorruptIndex {
+                reason: "File table entries overflow".to_string(),
+            })?;
+    let file_table_size = file_entries_size
+        .checked_add(path_bytes_total)
+        .and_then(|v| v.checked_add(4))
+        .ok_or_else(|| TrigramError::CorruptIndex {
+            reason: "File table size overflow".to_string(),
+        })?; // +4 for section CRC32
 
     // Trigram table: sorted entries.
-    let trigram_table_size = sorted_postings.len() * TRIGRAM_ENTRY_SIZE + 4; // +4 for section CRC32
+    let trigram_entries_size = sorted_postings
+        .len()
+        .checked_mul(TRIGRAM_ENTRY_SIZE)
+        .ok_or_else(|| TrigramError::CorruptIndex {
+            reason: "Trigram table entries overflow".to_string(),
+        })?;
+    let trigram_table_size = trigram_entries_size
+        .checked_add(4)
+        .ok_or_else(|| TrigramError::CorruptIndex {
+            reason: "Trigram table size overflow".to_string(),
+        })?; // +4 for section CRC32
 
     // Posting lists: serialize each Roaring bitmap.
     let mut serialized_postings: Vec<Vec<u8>> = Vec::with_capacity(sorted_postings.len());
@@ -36,16 +62,39 @@ pub fn write_index(builder: &TrigramIndexBuilder) -> Result<Vec<u8>, TrigramErro
             .map_err(|e| TrigramError::CorruptIndex {
                 reason: format!("Failed to serialize posting list: {}", e),
             })?;
-        posting_data_size += buf.len();
+        posting_data_size = posting_data_size
+            .checked_add(buf.len())
+            .ok_or_else(|| TrigramError::CorruptIndex {
+                reason: "Posting section size overflow".to_string(),
+            })?;
         serialized_postings.push(buf);
     }
-    let posting_section_size = posting_data_size + 4; // +4 for section CRC32
+    let posting_section_size =
+        posting_data_size
+            .checked_add(4)
+            .ok_or_else(|| TrigramError::CorruptIndex {
+                reason: "Posting section size overflow".to_string(),
+            })?; // +4 for section CRC32
 
     // Phase 2: Compute offsets.
     let file_table_offset = HEADER_SIZE as u64;
-    let trigram_table_offset = file_table_offset + file_table_size as u64;
-    let posting_offset = trigram_table_offset + trigram_table_size as u64;
-    let total_size = HEADER_SIZE + file_table_size + trigram_table_size + posting_section_size;
+    let trigram_table_offset = file_table_offset.checked_add(file_table_size as u64).ok_or_else(|| {
+        TrigramError::CorruptIndex {
+            reason: "trigram_table_offset overflow".to_string(),
+        }
+    })?;
+    let posting_offset = trigram_table_offset
+        .checked_add(trigram_table_size as u64)
+        .ok_or_else(|| TrigramError::CorruptIndex {
+            reason: "posting_offset overflow".to_string(),
+        })?;
+    let total_size = HEADER_SIZE
+        .checked_add(file_table_size)
+        .and_then(|v| v.checked_add(trigram_table_size))
+        .and_then(|v| v.checked_add(posting_section_size))
+        .ok_or_else(|| TrigramError::CorruptIndex {
+            reason: "Index total_size overflow".to_string(),
+        })?;
 
     let mut output = Vec::with_capacity(total_size);
 
@@ -63,7 +112,12 @@ pub fn write_index(builder: &TrigramIndexBuilder) -> Result<Vec<u8>, TrigramErro
 
     // Phase 4: Write file table.
     let file_table_start = output.len();
-    let mut path_offset: u32 = (files.len() * FILE_ENTRY_SIZE) as u32;
+    let mut path_offset: u32 =
+        file_entries_size
+            .try_into()
+            .map_err(|_| TrigramError::CorruptIndex {
+                reason: "File table entry bytes exceed u32 offset space".to_string(),
+            })?;
     let mut all_paths = Vec::new();
     for f in files {
         let path_len: u16 = f
@@ -82,7 +136,11 @@ pub fn write_index(builder: &TrigramIndexBuilder) -> Result<Vec<u8>, TrigramErro
         output.extend_from_slice(&path_offset.to_le_bytes());
         output.extend_from_slice(&path_len.to_le_bytes());
         all_paths.extend_from_slice(f.path.as_bytes());
-        path_offset += path_len as u32;
+        path_offset = path_offset
+            .checked_add(path_len as u32)
+            .ok_or_else(|| TrigramError::CorruptIndex {
+                reason: "File table path offset overflow".to_string(),
+            })?;
     }
     output.extend_from_slice(&all_paths);
     // File table CRC32.
@@ -95,9 +153,19 @@ pub fn write_index(builder: &TrigramIndexBuilder) -> Result<Vec<u8>, TrigramErro
     for (i, (trigram, _)) in sorted_postings.iter().enumerate() {
         output.extend_from_slice(trigram);
         output.extend_from_slice(&current_posting_offset.to_le_bytes());
-        let posting_len = serialized_postings[i].len() as u32;
+        let posting_len: u32 =
+            serialized_postings[i]
+                .len()
+                .try_into()
+                .map_err(|_| TrigramError::CorruptIndex {
+                    reason: "Posting list exceeds u32 length field".to_string(),
+                })?;
         output.extend_from_slice(&posting_len.to_le_bytes());
-        current_posting_offset += posting_len;
+        current_posting_offset = current_posting_offset
+            .checked_add(posting_len)
+            .ok_or_else(|| TrigramError::CorruptIndex {
+                reason: "Posting offset overflow".to_string(),
+            })?;
     }
     // Trigram table CRC32.
     let trigram_table_crc = crc32fast::hash(&output[trigram_table_start..]);

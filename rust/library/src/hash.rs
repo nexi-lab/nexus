@@ -35,8 +35,9 @@ pub fn hash_content_smart(content: &[u8]) -> String {
         // Last 64KB
         hasher.update(&content[content.len() - SAMPLE_SIZE..]);
 
-        // Include file size to differentiate files with same samples
-        hasher.update(&content.len().to_le_bytes());
+        // Include file size to differentiate files with same samples.
+        // Use fixed-width u64 bytes for cross-architecture determinism.
+        hasher.update(&(content.len() as u64).to_le_bytes());
 
         hasher.finalize().to_hex().to_string()
     }
@@ -83,5 +84,21 @@ mod tests {
         let h1 = hash_content_smart(&large);
         let h2 = hash_content_smart(&large);
         assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn smart_hash_uses_u64_size_marker() {
+        let content = vec![7u8; 512 * 1024];
+        let mut hasher = blake3::Hasher::new();
+        const SAMPLE_SIZE: usize = 64 * 1024;
+
+        hasher.update(&content[..SAMPLE_SIZE]);
+        let mid_start = content.len() / 2 - SAMPLE_SIZE / 2;
+        hasher.update(&content[mid_start..mid_start + SAMPLE_SIZE]);
+        hasher.update(&content[content.len() - SAMPLE_SIZE..]);
+        hasher.update(&(content.len() as u64).to_le_bytes());
+
+        let expected = hasher.finalize().to_hex().to_string();
+        assert_eq!(hash_content_smart(&content), expected);
     }
 }

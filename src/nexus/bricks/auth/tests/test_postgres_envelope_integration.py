@@ -488,6 +488,128 @@ class TestRotateKEKFailures:
         assert report.rows_failed == 1
         assert report.rows_remaining == 1
 
+    def test_wrap_at_target_failure_aborts_batch(
+        self,
+        pg_store_crypto: PostgresAuthProfileStore,
+        pg_engine: Engine,
+        tenant_id: uuid.UUID,
+        encryption_provider: InMemoryEncryptionProvider,
+    ) -> None:
+        """Regression: a wrap failure at the target version must abort the
+        batch rather than continue per-row. Otherwise a misconfigured target
+        KEK leaves the tenant with rows split across versions.
+        """
+        from nexus.bricks.auth.envelope import EnvelopeConfigurationError
+
+        for i in range(3):
+            pg_store_crypto.upsert_with_credential(
+                make_profile(f"wrap-{i}"),
+                ResolvedCredential(kind="api_key", api_key=f"k{i}"),
+            )
+        encryption_provider.rotate()
+
+        real = encryption_provider
+
+        class _WrapFailsProvider:
+            def current_version(self, *, tenant_id):
+                return real.current_version(tenant_id=tenant_id)
+
+            def wrap_dek(self, dek, *, tenant_id, aad):  # noqa: ARG002
+                raise EnvelopeConfigurationError("simulated bad target KEK")
+
+            def unwrap_dek(self, wrapped, *, tenant_id, aad, kek_version):
+                return real.unwrap_dek(
+                    wrapped, tenant_id=tenant_id, aad=aad, kek_version=kek_version
+                )
+
+        with pytest.raises(EnvelopeConfigurationError):
+            rotate_kek_for_tenant(
+                pg_engine,
+                tenant_id=tenant_id,
+                encryption_provider=_WrapFailsProvider(),
+            )
+
+        # No rows should be committed: every row must still be at v1.
+        with pg_engine.begin() as conn:
+            conn.execute(text("SET LOCAL app.current_tenant = :tid"), {"tid": str(tenant_id)})
+            versions = [
+                r[0]
+                for r in conn.execute(
+                    text(
+                        "SELECT DISTINCT kek_version FROM auth_profiles "
+                        "WHERE tenant_id = :tid AND ciphertext IS NOT NULL"
+                    ),
+                    {"tid": tenant_id},
+                ).fetchall()
+            ]
+        assert versions == [1], "wrap-fatal must not leave partial rewraps committed"
+
+    def test_concurrent_writer_does_not_block_on_slow_provider(
+        self,
+        pg_store_crypto: PostgresAuthProfileStore,
+        pg_engine: Engine,
+        tenant_id: uuid.UUID,
+        encryption_provider: InMemoryEncryptionProvider,
+    ) -> None:
+        """Regression: rotation must not hold row locks across provider calls.
+
+        Simulates a slow KMS/Vault call by sleeping inside wrap_dek. A
+        concurrent upsert_with_credential on the same row must be able to
+        commit without waiting for the provider RTT to finish.
+        """
+        import threading
+        import time
+
+        pg_store_crypto.upsert_with_credential(
+            make_profile("slow-provider"),
+            ResolvedCredential(kind="api_key", api_key="v1"),
+        )
+        encryption_provider.rotate()
+
+        real = encryption_provider
+        rotation_started = threading.Event()
+
+        class _SlowProvider:
+            def current_version(self, *, tenant_id):
+                return real.current_version(tenant_id=tenant_id)
+
+            def wrap_dek(self, dek, *, tenant_id, aad):
+                rotation_started.set()
+                time.sleep(2.0)  # simulate a slow KMS RTT
+                return real.wrap_dek(dek, tenant_id=tenant_id, aad=aad)
+
+            def unwrap_dek(self, wrapped, *, tenant_id, aad, kek_version):
+                return real.unwrap_dek(
+                    wrapped, tenant_id=tenant_id, aad=aad, kek_version=kek_version
+                )
+
+        def _rotate() -> None:
+            rotate_kek_for_tenant(
+                pg_engine,
+                tenant_id=tenant_id,
+                encryption_provider=_SlowProvider(),
+            )
+
+        t = threading.Thread(target=_rotate)
+        t.start()
+        try:
+            assert rotation_started.wait(timeout=5.0), "rotation failed to start"
+            # Rotation is now inside the slow wrap_dek. A concurrent write
+            # must not block on row locks; it should commit in well under the
+            # provider delay.
+            write_start = time.monotonic()
+            pg_store_crypto.upsert_with_credential(
+                make_profile("slow-provider"),
+                ResolvedCredential(kind="api_key", api_key="v2"),
+            )
+            write_elapsed = time.monotonic() - write_start
+            assert write_elapsed < 1.0, (
+                f"concurrent write took {write_elapsed:.2f}s while rotation held "
+                "locks across the provider call — lock scope too wide"
+            )
+        finally:
+            t.join(timeout=10)
+
     def test_max_rows_does_not_count_failures(
         self,
         pg_store_crypto: PostgresAuthProfileStore,

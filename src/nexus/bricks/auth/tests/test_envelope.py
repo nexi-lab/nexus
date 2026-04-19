@@ -71,6 +71,21 @@ class TestAESGCMEnvelope:
         with pytest.raises(ValueError):
             env.encrypt(b"\x00" * 16, b"x", aad=b"aad")
 
+    def test_malformed_nonce_raises_ciphertext_corrupted(self) -> None:
+        """Regression for Codex round 8: malformed nonce/ciphertext shapes
+        must surface as CiphertextCorrupted (typed envelope error), not as
+        raw ValueError from AESGCM internals.
+        """
+        env = AESGCMEnvelope()
+        dek = b"\x07" * 32
+        nonce, ct = env.encrypt(dek, b"secret", aad=b"a")
+        # Truncated nonce (AESGCM requires exactly 12 bytes).
+        with pytest.raises(CiphertextCorrupted):
+            env.decrypt(dek, nonce[:4], ct, aad=b"a")
+        # Ciphertext too short to carry a GCM tag.
+        with pytest.raises(CiphertextCorrupted):
+            env.decrypt(dek, nonce, b"too-short", aad=b"a")
+
 
 class TestErrorReprDiscipline:
     def test_all_errors_carry_context_not_secrets(self) -> None:

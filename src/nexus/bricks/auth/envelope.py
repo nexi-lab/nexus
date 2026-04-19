@@ -132,6 +132,15 @@ class AESGCMEnvelope:
                 "AES-GCM tag verification failed",
                 cause="InvalidTag",
             ) from exc
+        except ValueError as exc:
+            # Malformed nonce/ciphertext shape (e.g. truncated bytes, wrong
+            # nonce length). Surface as CiphertextCorrupted so callers get a
+            # typed envelope error rather than a raw ValueError leaking the
+            # underlying AESGCM implementation detail.
+            raise CiphertextCorrupted(
+                "AES-GCM rejected input shape",
+                cause=f"ValueError: {type(exc).__name__}",
+            ) from exc
 
 
 # ---------------------------------------------------------------------------

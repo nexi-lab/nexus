@@ -1338,6 +1338,11 @@ def rotate_kek_for_tenant(
         this_batch = batch_size
         if max_rows is not None:
             this_batch = min(this_batch, max_rows - rewrapped)
+
+        # 1) Snapshot a batch of candidates in a short read-only tx. No
+        # FOR UPDATE: holding row locks across Vault/KMS calls would block
+        # concurrent upsert_with_credential writers for the full provider
+        # RTT. We trade those locks for an optimistic CAS at UPDATE time.
         with engine.begin() as conn:
             conn.execute(
                 text("SET LOCAL app.current_tenant = :tid"),
@@ -1371,79 +1376,113 @@ def rotate_kek_for_tenant(
                     "WHERE tenant_id = :tid "
                     "  AND ciphertext IS NOT NULL "
                     "  AND kek_version < :target" + exclude_clause + " ORDER BY principal_id, id "
-                    "FOR UPDATE SKIP LOCKED "
                     "LIMIT :lim"
                 ),
                 params,
             ).fetchall()
-            if not rows:
-                break
-            for row in rows:
-                # Validate stored AAD matches the current row identity before
-                # rewrapping. Vault Transit does not cross-check AAD, so an
-                # attacker who tampered the aad column can roundtrip wrap/unwrap
-                # at the new kek_version — the row would land in rows_rewrapped
-                # but still fail later at AESGCMEnvelope.decrypt with AADMismatch.
-                expected_aad = f"{tenant_id}|{row.principal_id}|{row.id}".encode()
-                if bytes(row.aad) != expected_aad:
-                    logger.error(
-                        "rotate_kek_for_tenant: AAD mismatch "
-                        "tenant=%s principal=%s profile=%s kek_version=%s",
-                        tenant_id,
-                        row.principal_id,
-                        row.id,
-                        row.kek_version,
-                    )
-                    _failed_keys.append((uuid.UUID(str(row.principal_id)), row.id))
-                    failed += 1
-                    continue
-                try:
-                    dek = encryption_provider.unwrap_dek(
-                        bytes(row.wrapped_dek),
-                        tenant_id=tenant_id,
-                        aad=bytes(row.aad),
-                        kek_version=row.kek_version,
-                    )
-                    new_wrapped, new_version = encryption_provider.wrap_dek(
-                        dek, tenant_id=tenant_id, aad=bytes(row.aad)
-                    )
-                except EnvelopeError as exc:
-                    # Narrow to EnvelopeError: a genuine programming bug inside
-                    # the rotation loop (TypeError, KeyError, ...) must crash
-                    # loud rather than be silently counted as a rotation failure.
-                    logger.error(
-                        "rotate_kek_for_tenant: per-row failure "
-                        "tenant=%s principal=%s profile=%s kek_version=%s cause=%s",
-                        tenant_id,
-                        row.principal_id,
-                        row.id,
-                        row.kek_version,
-                        type(exc).__name__,
-                    )
-                    _failed_keys.append((uuid.UUID(str(row.principal_id)), row.id))
-                    failed += 1
-                    continue
-                conn.execute(
-                    text(
-                        "UPDATE auth_profiles SET "
-                        "    wrapped_dek = :wd, kek_version = :v, updated_at = NOW() "
-                        "WHERE tenant_id = :tid "
-                        "  AND principal_id = :pid AND id = :id"
-                    ),
-                    {
-                        "wd": new_wrapped,
-                        "v": new_version,
-                        "tid": tenant_id,
-                        "pid": row.principal_id,
-                        "id": row.id,
-                    },
+        if not rows:
+            break
+
+        # 2) Provider calls happen OUTSIDE any open transaction. Validate AAD
+        # first; unwrap failures are per-row, wrap failures are fatal. Results
+        # get staged for a single CAS batch below.
+        staged: list[tuple[Any, bytes, int]] = []  # (row, new_wrapped, new_version)
+        for row in rows:
+            expected_aad = f"{tenant_id}|{row.principal_id}|{row.id}".encode()
+            if bytes(row.aad) != expected_aad:
+                logger.error(
+                    "rotate_kek_for_tenant: AAD mismatch "
+                    "tenant=%s principal=%s profile=%s kek_version=%s",
+                    tenant_id,
+                    row.principal_id,
+                    row.id,
+                    row.kek_version,
                 )
-                KEK_ROTATE_ROWS.labels(
-                    tenant_id=tenant_label,
-                    from_version=str(row.kek_version),
-                    to_version=str(new_version),
-                ).inc()
-                rewrapped += 1
+                _failed_keys.append((uuid.UUID(str(row.principal_id)), row.id))
+                failed += 1
+                continue
+            try:
+                dek = encryption_provider.unwrap_dek(
+                    bytes(row.wrapped_dek),
+                    tenant_id=tenant_id,
+                    aad=bytes(row.aad),
+                    kek_version=row.kek_version,
+                )
+            except EnvelopeError as exc:
+                logger.error(
+                    "rotate_kek_for_tenant: per-row unwrap failure "
+                    "tenant=%s principal=%s profile=%s kek_version=%s cause=%s",
+                    tenant_id,
+                    row.principal_id,
+                    row.id,
+                    row.kek_version,
+                    type(exc).__name__,
+                )
+                _failed_keys.append((uuid.UUID(str(row.principal_id)), row.id))
+                failed += 1
+                continue
+            # Wrap at target version is FATAL to the batch rather than per-row.
+            # A wrap error at the new version means the target KEK is unusable
+            # (wrong key, IAM issue, etc.); continuing would leave a partially-
+            # rotated tenant with rows split across versions.
+            try:
+                new_wrapped, new_version = encryption_provider.wrap_dek(
+                    dek, tenant_id=tenant_id, aad=bytes(row.aad)
+                )
+            except EnvelopeError as exc:
+                logger.error(
+                    "rotate_kek_for_tenant: wrap-at-target failed; aborting "
+                    "batch tenant=%s target=%s cause=%s",
+                    tenant_id,
+                    target,
+                    type(exc).__name__,
+                )
+                raise
+            staged.append((row, new_wrapped, new_version))
+
+        # 3) Apply all CAS updates in one short tx. Each UPDATE includes the
+        # original (wrapped_dek, kek_version) as a predicate, so a concurrent
+        # upsert_with_credential that raced ahead of us simply sees 0 rows
+        # affected and we skip that row without counting it as rewrapped.
+        if staged:
+            with engine.begin() as conn:
+                conn.execute(
+                    text("SET LOCAL app.current_tenant = :tid"),
+                    {"tid": str(tenant_id)},
+                )
+                for row, new_wrapped, new_version in staged:
+                    result = conn.execute(
+                        text(
+                            "UPDATE auth_profiles SET "
+                            "    wrapped_dek = :new_wd, "
+                            "    kek_version = :new_v, "
+                            "    updated_at = NOW() "
+                            "WHERE tenant_id = :tid "
+                            "  AND principal_id = :pid "
+                            "  AND id = :id "
+                            "  AND wrapped_dek = :old_wd "
+                            "  AND kek_version = :old_v"
+                        ),
+                        {
+                            "new_wd": new_wrapped,
+                            "new_v": new_version,
+                            "tid": tenant_id,
+                            "pid": row.principal_id,
+                            "id": row.id,
+                            "old_wd": bytes(row.wrapped_dek),
+                            "old_v": row.kek_version,
+                        },
+                    )
+                    if result.rowcount == 1:
+                        KEK_ROTATE_ROWS.labels(
+                            tenant_id=tenant_label,
+                            from_version=str(row.kek_version),
+                            to_version=str(new_version),
+                        ).inc()
+                        rewrapped += 1
+                    # rowcount == 0: concurrent writer won. Don't count as
+                    # success or failure — next loop iteration will pick up
+                    # any row still at < target.
     # Final remaining count
     with engine.begin() as conn:
         conn.execute(

@@ -134,20 +134,29 @@ def consume_enroll_token(
             text("SET LOCAL app.current_tenant = :t"),
             {"t": str(tid)},
         )
-        row = conn.execute(
-            text("SELECT used_at FROM daemon_enroll_tokens WHERE jti = :jti AND tenant_id = :tid"),
-            {"jti": str(jti), "tid": str(tid)},
-        ).fetchone()
-        if row is None:
-            raise EnrollTokenError("enroll_token_invalid")
-        if row.used_at is not None:
-            raise EnrollTokenError("enroll_token_reused")
-        conn.execute(
+        # Atomic claim: succeeds only if used_at was NULL at UPDATE time.
+        # Guards against concurrent consumers under READ COMMITTED isolation.
+        claimed = conn.execute(
             text(
                 "UPDATE daemon_enroll_tokens SET used_at = NOW() "
-                "WHERE jti = :jti AND tenant_id = :tid"
+                "WHERE jti = :jti AND tenant_id = :tid AND used_at IS NULL "
+                "RETURNING jti"
             ),
             {"jti": str(jti), "tid": str(tid)},
-        )
+        ).fetchone()
+        if claimed is None:
+            # Either row didn't exist, or already used. Distinguish for error
+            # taxonomy (probe is stale for reporting only, not for correctness
+            # — the claim above is already atomic).
+            probe = conn.execute(
+                text(
+                    "SELECT used_at FROM daemon_enroll_tokens WHERE jti = :jti AND tenant_id = :tid"
+                ),
+                {"jti": str(jti), "tid": str(tid)},
+            ).fetchone()
+            if probe is None:
+                raise EnrollTokenError("enroll_token_invalid")
+            # Row exists, used_at was non-null at claim time → reused.
+            raise EnrollTokenError("enroll_token_reused")
 
     return EnrollClaims(jti=jti, tenant_id=tid, principal_id=pid, exp=exp)

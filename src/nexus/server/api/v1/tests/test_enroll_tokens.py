@@ -99,3 +99,37 @@ def test_wrong_secret_rejected(pg_engine: Engine) -> None:
     other = b"other-enroll-secret-32bytes-abcdef"
     with pytest.raises(EnrollTokenError, match="invalid"):
         consume_enroll_token(engine=pg_engine, secret=other, token=token)
+
+
+def test_concurrent_consume_exactly_one_wins(pg_engine: Engine) -> None:
+    """Two simultaneous consumers of the same token → exactly one wins."""
+    import threading
+
+    t, p = _setup(pg_engine)
+    token = issue_enroll_token(
+        engine=pg_engine,
+        secret=SECRET,
+        tenant_id=t,
+        principal_id=p,
+        ttl=timedelta(minutes=15),
+    )
+    results: list[str | None] = [None, None]
+
+    def worker(i: int) -> None:
+        try:
+            consume_enroll_token(engine=pg_engine, secret=SECRET, token=token)
+            results[i] = "success"
+        except EnrollTokenError as exc:
+            results[i] = exc.args[0] if exc.args else "error"
+
+    t1 = threading.Thread(target=worker, args=(0,))
+    t2 = threading.Thread(target=worker, args=(1,))
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
+    success_count = sum(1 for r in results if r == "success")
+    reused_count = sum(1 for r in results if r == "enroll_token_reused")
+    assert success_count == 1, f"expected exactly one winner, got {results}"
+    assert reused_count == 1, f"loser should report 'reused', got {results}"

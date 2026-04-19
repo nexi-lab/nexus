@@ -2,6 +2,14 @@
 
 Handles daemon onboarding (single-use enroll token → persistent machine row +
 ES256 JWT) and periodic refresh (Ed25519-signed request → fresh JWT).
+
+Refresh uses a *sign-raw* wire contract: the client sends the pre-canonicalized
+JSON string (``body_raw``) alongside an Ed25519 signature over ``body_raw``'s
+UTF-8 bytes. The server never re-serializes — it verifies over the exact bytes
+the client sent, so cross-language / serializer-drift mismatches are impossible.
+The signed body includes ``tenant_id`` so the server can ``SET LOCAL
+app.current_tenant`` before any ``daemon_machines`` lookup, keeping the path
+RLS-safe by default (no ``BYPASSRLS`` reliance).
 """
 
 from __future__ import annotations
@@ -42,13 +50,16 @@ class EnrollResponse(BaseModel):
     server_pubkey_pem: str
 
 
-class RefreshBody(BaseModel):
-    machine_id: uuid.UUID
-    timestamp_utc: datetime
-
-
 class RefreshRequest(BaseModel):
-    body: RefreshBody
+    """Sign-raw refresh payload.
+
+    ``body_raw`` is the client-canonicalized JSON string, e.g.
+    ``{"machine_id":"...","tenant_id":"...","timestamp_utc":"..."}``.
+    ``sig_b64`` is the base64 of the Ed25519 signature over
+    ``body_raw.encode("utf-8")``.
+    """
+
+    body_raw: str
     sig_b64: str
 
 
@@ -139,47 +150,73 @@ def make_daemon_router(
 
     @router.post("/refresh", response_model=RefreshResponse)
     def refresh(req: RefreshRequest) -> RefreshResponse:
-        # Cross-tenant lookup: ``/refresh`` only knows ``machine_id`` and must
-        # resolve ``tenant_id`` from it to honour RLS on subsequent writes.
-        # MVP assumption: the server's DB role has ``BYPASSRLS`` (production)
-        # or connects as the superuser (dev / tests). A production hardening
-        # follow-up will introduce a dedicated ``nexus_daemon_lookup`` role
-        # with ``SELECT`` only on the columns we need here and
-        # ``BYPASSRLS`` — see TODO(#3804-followup).
+        # ---- Parse the sign-raw payload ---------------------------------
+        # Decode the signature first — a malformed b64 means we can't verify
+        # anything, so short-circuit as signature_invalid.
+        try:
+            sig = base64.b64decode(req.sig_b64, validate=True)
+        except Exception as exc:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="signature_invalid") from exc
+
+        # Parse ``body_raw`` to extract fields, but do NOT re-serialize —
+        # we will verify the signature over the exact bytes the client sent.
+        try:
+            parsed = json.loads(req.body_raw)
+        except Exception as exc:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="body_malformed") from exc
+        if not isinstance(parsed, dict):
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="body_malformed")
+
+        raw_machine_id = parsed.get("machine_id")
+        raw_tenant_id = parsed.get("tenant_id")
+        raw_timestamp = parsed.get("timestamp_utc")
+        if (
+            not isinstance(raw_machine_id, str)
+            or not isinstance(raw_tenant_id, str)
+            or not isinstance(raw_timestamp, str)
+        ):
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="body_malformed")
+
+        try:
+            machine_id = uuid.UUID(raw_machine_id)
+            tenant_id = uuid.UUID(raw_tenant_id)
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="body_malformed") from exc
+
+        # Validate timestamp: ISO 8601 + tz-aware.
+        try:
+            ts = datetime.fromisoformat(raw_timestamp)
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="body_malformed") from exc
+        if ts.tzinfo is None:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="body_malformed")
+
+        # ---- Tenant-scoped lookup (RLS-safe) ----------------------------
+        # Set the tenant GUC *before* the SELECT so RLS gates the read to the
+        # claimed tenant. Defense-in-depth: also filter by tenant_id in SQL.
         with engine.begin() as conn:
+            conn.execute(
+                text("SET LOCAL app.current_tenant = :t"),
+                {"t": str(tenant_id)},
+            )
             row = conn.execute(
                 text(
                     "SELECT tenant_id, principal_id, pubkey, revoked_at "
-                    "FROM daemon_machines WHERE id = :m"
+                    "FROM daemon_machines WHERE id = :m AND tenant_id = :t"
                 ),
-                {"m": str(req.body.machine_id)},
+                {"m": str(machine_id), "t": str(tenant_id)},
             ).fetchone()
         if row is None:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="machine_unknown")
         if row.revoked_at is not None:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="machine_revoked")
 
+        # ---- Clock skew -------------------------------------------------
         now = datetime.now(UTC)
-        ts = req.body.timestamp_utc
-        if ts.tzinfo is None:
-            ts = ts.replace(tzinfo=UTC)
         if abs(now - ts) > _REFRESH_SKEW:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="clock_skew")
 
-        try:
-            sig = base64.b64decode(req.sig_b64)
-        except Exception as exc:
-            raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="signature_invalid") from exc
-
-        body_bytes = json.dumps(
-            {
-                "machine_id": str(req.body.machine_id),
-                "timestamp_utc": ts.isoformat(),
-            },
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode()
-
+        # ---- Signature verification over raw bytes ----------------------
         try:
             pub = serialization.load_der_public_key(row.pubkey)
         except Exception as exc:
@@ -187,25 +224,25 @@ def make_daemon_router(
         if not isinstance(pub, Ed25519PublicKey):
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="signature_invalid")
         try:
-            pub.verify(sig, body_bytes)
+            pub.verify(sig, req.body_raw.encode("utf-8"))
         except InvalidSignature as exc:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="signature_invalid") from exc
 
-        # Defence-in-depth: writes after lookup run under the resolved tenant.
+        # ---- Refresh last_seen_at (same tenant) -------------------------
         with engine.begin() as conn:
             conn.execute(
                 text("SET LOCAL app.current_tenant = :t"),
-                {"t": str(row.tenant_id)},
+                {"t": str(tenant_id)},
             )
             conn.execute(
                 text("UPDATE daemon_machines SET last_seen_at = NOW() WHERE id = :m"),
-                {"m": str(req.body.machine_id)},
+                {"m": str(machine_id)},
             )
 
         daemon_claims = DaemonClaims(
             tenant_id=row.tenant_id,
             principal_id=row.principal_id,
-            machine_id=req.body.machine_id,
+            machine_id=machine_id,
         )
         return RefreshResponse(jwt=signer.sign(daemon_claims, ttl=_JWT_TTL))
 

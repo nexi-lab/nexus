@@ -73,6 +73,19 @@ def _machine_keypair() -> tuple[Ed25519PrivateKey, bytes]:
     return priv, pub_pem
 
 
+def _canonical_body(*, machine_id: str, tenant_id: str, timestamp_utc: str) -> str:
+    """Client-side canonicalization shared by all refresh tests."""
+    return json.dumps(
+        {
+            "machine_id": machine_id,
+            "tenant_id": tenant_id,
+            "timestamp_utc": timestamp_utc,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
 def test_enroll_happy_path(
     client: TestClient,
     pg_engine: Engine,
@@ -178,15 +191,15 @@ def test_refresh_happy_path(
         },
     )
     machine_id = r.json()["machine_id"]
-    body = {
-        "machine_id": machine_id,
-        "timestamp_utc": datetime.now(UTC).isoformat(),
-    }
-    body_bytes = json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
-    sig = priv.sign(body_bytes)
+    body_raw = _canonical_body(
+        machine_id=machine_id,
+        tenant_id=str(t),
+        timestamp_utc=datetime.now(UTC).isoformat(),
+    )
+    sig = priv.sign(body_raw.encode("utf-8"))
     r2 = client.post(
         "/v1/daemon/refresh",
-        json={"body": body, "sig_b64": base64.b64encode(sig).decode()},
+        json={"body_raw": body_raw, "sig_b64": base64.b64encode(sig).decode()},
     )
     assert r2.status_code == 200, r2.text
     assert "jwt" in r2.json()
@@ -216,19 +229,20 @@ def test_refresh_signature_mismatch(
         },
     )
     machine_id = r.json()["machine_id"]
-    body = {
-        "machine_id": machine_id,
-        "timestamp_utc": datetime.now(UTC).isoformat(),
-    }
+    body_raw = _canonical_body(
+        machine_id=machine_id,
+        tenant_id=str(t),
+        timestamp_utc=datetime.now(UTC).isoformat(),
+    )
     # Forge a signature with a different key
     other = ed25519.Ed25519PrivateKey.generate()
-    body_bytes = json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
-    sig = other.sign(body_bytes)
+    sig = other.sign(body_raw.encode("utf-8"))
     r2 = client.post(
         "/v1/daemon/refresh",
-        json={"body": body, "sig_b64": base64.b64encode(sig).decode()},
+        json={"body_raw": body_raw, "sig_b64": base64.b64encode(sig).decode()},
     )
     assert r2.status_code == 401
+    assert "signature_invalid" in r2.text
 
 
 def test_refresh_skew_rejected(
@@ -257,12 +271,15 @@ def test_refresh_skew_rejected(
     machine_id = r.json()["machine_id"]
     # Timestamp 10 minutes in the past — outside +/-60s window
     skewed = datetime.now(UTC) - timedelta(minutes=10)
-    body = {"machine_id": machine_id, "timestamp_utc": skewed.isoformat()}
-    body_bytes = json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
-    sig = priv.sign(body_bytes)
+    body_raw = _canonical_body(
+        machine_id=machine_id,
+        tenant_id=str(t),
+        timestamp_utc=skewed.isoformat(),
+    )
+    sig = priv.sign(body_raw.encode("utf-8"))
     r2 = client.post(
         "/v1/daemon/refresh",
-        json={"body": body, "sig_b64": base64.b64encode(sig).decode()},
+        json={"body_raw": body_raw, "sig_b64": base64.b64encode(sig).decode()},
     )
     assert r2.status_code == 401
     assert "skew" in r2.text.lower()
@@ -298,15 +315,70 @@ def test_refresh_revoked_machine(
             text("UPDATE daemon_machines SET revoked_at = NOW() WHERE id = :m"),
             {"m": machine_id},
         )
-    body = {
-        "machine_id": machine_id,
-        "timestamp_utc": datetime.now(UTC).isoformat(),
-    }
-    body_bytes = json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
-    sig = priv.sign(body_bytes)
+    body_raw = _canonical_body(
+        machine_id=machine_id,
+        tenant_id=str(t),
+        timestamp_utc=datetime.now(UTC).isoformat(),
+    )
+    sig = priv.sign(body_raw.encode("utf-8"))
     r2 = client.post(
         "/v1/daemon/refresh",
-        json={"body": body, "sig_b64": base64.b64encode(sig).decode()},
+        json={"body_raw": body_raw, "sig_b64": base64.b64encode(sig).decode()},
     )
     assert r2.status_code == 401
     assert "revoked" in r2.text.lower()
+
+
+def test_refresh_bad_body_raw_json(client: TestClient) -> None:
+    """Non-JSON ``body_raw`` → 401 body_malformed."""
+    priv = ed25519.Ed25519PrivateKey.generate()
+    body_raw = "not-json"
+    sig = priv.sign(body_raw.encode("utf-8"))
+    r = client.post(
+        "/v1/daemon/refresh",
+        json={"body_raw": body_raw, "sig_b64": base64.b64encode(sig).decode()},
+    )
+    assert r.status_code == 401
+    assert "body_malformed" in r.text
+
+
+def test_refresh_tenant_mismatch(
+    client: TestClient,
+    pg_engine: Engine,
+    tenant_principal: tuple[uuid.UUID, uuid.UUID],
+) -> None:
+    """A ``body_raw`` claiming a different tenant than the machine's real tenant
+    → 401 machine_unknown (tenant-scoped SELECT finds nothing)."""
+    t, p = tenant_principal
+    tok = issue_enroll_token(
+        engine=pg_engine,
+        secret=SECRET,
+        tenant_id=t,
+        principal_id=p,
+        ttl=timedelta(minutes=15),
+    )
+    priv, pub_pem = _machine_keypair()
+    r = client.post(
+        "/v1/daemon/enroll",
+        json={
+            "enroll_token": tok,
+            "pubkey_pem": pub_pem.decode(),
+            "daemon_version": "0.9.20",
+            "hostname": "x",
+        },
+    )
+    machine_id = r.json()["machine_id"]
+    # Forge: sign with the legit machine key but claim a *different* tenant.
+    bogus_tenant = uuid.uuid4()
+    body_raw = _canonical_body(
+        machine_id=machine_id,
+        tenant_id=str(bogus_tenant),
+        timestamp_utc=datetime.now(UTC).isoformat(),
+    )
+    sig = priv.sign(body_raw.encode("utf-8"))
+    r2 = client.post(
+        "/v1/daemon/refresh",
+        json={"body_raw": body_raw, "sig_b64": base64.b64encode(sig).decode()},
+    )
+    assert r2.status_code == 401
+    assert "machine_unknown" in r2.text

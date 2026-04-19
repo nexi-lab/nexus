@@ -426,25 +426,39 @@ def _find_pyo3_sig_above(text: str, pos: int) -> dict[str, str]:
 
 
 def _find_decorators_above(text: str, pos: int) -> list[str]:
-    """Look for Rust attributes immediately preceding a fn definition."""
+    """Look for Rust attributes immediately preceding a fn definition.
+
+    Handles multi-line attributes such as::
+
+        #[new]
+        #[pyo3(signature = (
+            a=None,
+            b=None,
+        ))]
+        pub fn py_new(...)
+
+    The naive per-line walk would stop at the ``))]`` / ``a=None,`` lines
+    that aren't themselves ``#[...]`` starters, missing the earlier
+    ``#[new]``. We instead scan the whole preceding region for bare
+    ``#[new]`` / ``#[getter]`` / ``#[staticmethod]`` tokens, which is
+    both simpler and robust to attribute formatting changes.
+    """
     region = text[max(0, pos - 500) : pos]
-    lines = region.rstrip().split("\n")
+
+    # Trim anything before the previous fn / end-of-block so we don't
+    # pick up a decorator from a different method.
+    for stop_marker in ("\n    }", "\n}", "pub fn ", " fn "):
+        idx = region.rfind(stop_marker)
+        if idx != -1:
+            region = region[idx + len(stop_marker) :]
 
     decorators: list[str] = []
-    # Walk backward through lines, collecting #[...] attributes
-    for line in reversed(lines):
-        stripped = line.strip()
-        if stripped.startswith("#["):
-            if "#[new]" in stripped:
-                decorators.append("new")
-            if "#[getter]" in stripped:
-                decorators.append("getter")
-            if "#[staticmethod]" in stripped:
-                decorators.append("staticmethod")
-        elif stripped.startswith("///") or stripped.startswith("//") or stripped == "":
-            continue  # doc comments and blank lines are fine
-        else:
-            break  # hit code from previous fn — stop
+    if "#[new]" in region:
+        decorators.append("new")
+    if "#[getter]" in region:
+        decorators.append("getter")
+    if "#[staticmethod]" in region:
+        decorators.append("staticmethod")
     return decorators
 
 
@@ -722,7 +736,7 @@ def generate_stubs(
         "Re-run: python scripts/codegen_kernel_abi.py",
         '"""',
         "",
-        "from typing import Any, Self",
+        "from typing import Any, Self  # noqa: F401  (Self used by codegen-emitted classes)",
         "",
     ]
 
@@ -738,6 +752,7 @@ def generate_stubs(
         "bitmap": "Tiger Cache Bitmap (bitmap.rs)",
         "simd": "SIMD vector similarity (simd.rs)",
         "trigram": "Trigram Index (trigram.rs)",
+        "metadata_debug": "FileMetadata proto codec (metadata_debug.rs)",
     }
 
     MODULE_ORDER = [
@@ -751,6 +766,7 @@ def generate_stubs(
         "bitmap",
         "simd",
         "trigram",
+        "metadata_debug",
     ]
 
     for mod_name in MODULE_ORDER:
@@ -812,6 +828,37 @@ def generate_stubs(
             lines.append("    ...")
 
         lines.append("")
+
+    # ------------------------------------------------------------------
+    # Symbols registered by nexus-raft's ``register_python_classes`` —
+    # the ``nexus_kernel`` module re-exports them, but the codegen's
+    # ``lib.rs`` parser only sees kernel-side ``add_class!`` /
+    # ``wrap_pyfunction!`` calls. Until the parser is extended to follow
+    # ``register_python_classes``, declare these by hand so mypy can
+    # type-check imports like::
+    #
+    #     from nexus_kernel import TofuTrustStore, hostname_to_node_id
+    # ------------------------------------------------------------------
+    lines.append("# " + "-" * 75)
+    lines.append("# Raft-side classes re-exported via nexus_kernel")
+    lines.append("# (rust/raft/src/federation/tofu.rs, rust/raft/src/pyo3_bindings.rs)")
+    lines.append("# " + "-" * 75)
+    lines.append("")
+    lines.append("class TrustedZone:")
+    lines.append("    zone_id: str")
+    lines.append("    fingerprint_sha256: str")
+    lines.append("    first_seen_unix: int")
+    lines.append("    last_seen_unix: int")
+    lines.append("")
+    lines.append("class TofuTrustStore:")
+    lines.append("    def __init__(self, path: str) -> None: ...")
+    lines.append("    def verify_or_trust(self, zone_id: str, cert_der_or_pem: bytes) -> str: ...")
+    lines.append("    def list_trusted(self) -> list[TrustedZone]: ...")
+    lines.append("    def remove(self, zone_id: str) -> bool: ...")
+    lines.append("    def path(self) -> str: ...")
+    lines.append("")
+    lines.append("def hostname_to_node_id(hostname: str) -> int: ...")
+    lines.append("")
 
     return "\n".join(lines)
 

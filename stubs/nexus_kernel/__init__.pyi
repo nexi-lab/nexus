@@ -7,7 +7,7 @@ Auto-generated from rust/kernel/src/*.rs exports.
 Re-run: python scripts/codegen_kernel_abi.py
 """
 
-from typing import Any, Self
+from typing import Any, Self  # noqa: F401  (Self used by codegen-emitted classes)
 
 # ---------------------------------------------------------------------------
 # Path utilities (path_utils.rs)
@@ -150,6 +150,24 @@ def trigram_search_candidates(
 ) -> list[str]: ...
 def trigram_index_stats(index_path: str) -> dict[str, Any]: ...
 def invalidate_trigram_cache(index_path: str) -> None: ...
+
+# ---------------------------------------------------------------------------
+# FileMetadata proto codec (metadata_debug.rs)
+# ---------------------------------------------------------------------------
+
+def file_metadata_from_proto_bytes(bytes: bytes) -> dict[str, Any]: ...
+def file_metadata_to_proto_bytes(
+    path: str,
+    backend_name: str,
+    physical_path: str,
+    size: int,
+    version: int,
+    entry_type: int,
+    etag: str | None = None,
+    zone_id: str | None = None,
+    target_zone_id: str | None = None,
+    mime_type: str | None = None,
+) -> bytes: ...
 
 # ---------------------------------------------------------------------------
 # Classes
@@ -542,14 +560,34 @@ class SysReadResult: ...
 class SysWriteResult: ...
 
 class FederationClient:
-    def py_new(
+    def __init__(
         self,
         local_ca_pem: bytes | None = None,
         node_cert_pem: bytes | None = None,
         node_key_pem: bytes | None = None,
         tofu_store_path: str | None = None,
-    ) -> Self: ...
+    ) -> None: ...
     def discover_mount(self, peer_addr: str, path: str) -> dict[str, Any]: ...
     def request_join_zone(
         self, peer_addr: str, zone_id: str, node_id: int, node_address: str
     ) -> None: ...
+
+# ---------------------------------------------------------------------------
+# Raft-side classes re-exported via nexus_kernel
+# (rust/raft/src/federation/tofu.rs, rust/raft/src/pyo3_bindings.rs)
+# ---------------------------------------------------------------------------
+
+class TrustedZone:
+    zone_id: str
+    fingerprint_sha256: str
+    first_seen_unix: int
+    last_seen_unix: int
+
+class TofuTrustStore:
+    def __init__(self, path: str) -> None: ...
+    def verify_or_trust(self, zone_id: str, cert_der_or_pem: bytes) -> str: ...
+    def list_trusted(self) -> list[TrustedZone]: ...
+    def remove(self, zone_id: str) -> bool: ...
+    def path(self) -> str: ...
+
+def hostname_to_node_id(hostname: str) -> int: ...

@@ -11,27 +11,35 @@ through the in-process SDK (``nexus.connect(profile="sandbox")``) and
 Sections:
     1.  Infra + status (boot, enabled bricks)
     2.  File CRUD (write, sys_read)
-    3.  Grep (local keyword)
+    3.  Grep (local file scan)
     4.  Edit (exact, fuzzy, preview, OCC)
-    5.  Version history
-    6.  HERB quality gate (hit rate >= 7/8)
-    7.  Permission enforcement (skipped — SANDBOX is single-tenant)
+    5.  Version history (skipped — BRICK_VERSIONING not in SANDBOX)
+    6.  HERB retrieval-quality gate (vector, hit rate >= 7/8)
+    7.  Permission enforcement (ReBAC wiring only)
     8.  In-process RPC latency
-    9.  Auto-index on edit
-    10. Delete → stale index removal
+    9.  Edit → reindex → search (indexed-path freshness)
+    10. Delete → deindex → search (indexed-path invalidation)
 
 Usage::
 
+    # Full run (retrieval-quality sections enabled)
+    OPENAI_API_KEY=sk-... python3 scripts/test_sandbox_perf_e2e.py
+
+    # Fast mode (no key): skips 6/9/10
     python3 scripts/test_sandbox_perf_e2e.py
 
-Exits 0 on success, 1 on any failure. No network, no API keys required
-(semantic search is not exercised here — BM25S keyword is sufficient
-for the hit-rate test and matches what SANDBOX ships enabled by default).
+Exits 0 on success, 1 on any failure.
+
+Retrieval-quality sections (6/9/10) require a real embedding API because
+SANDBOX's retrieval path is ``SqliteVecBackend`` + ``litellm``. Without
+a key those sections cleanly skip — the rest (infra / CRUD / grep / edit
+/ latency / permissions) still exercise SANDBOX's default config.
 """
 
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 import tempfile
 import time
@@ -42,6 +50,7 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 
 import nexus  # noqa: E402
 from nexus.cli.commands.demo_data import HERB_CORPUS, HERB_QA_SET  # noqa: E402
+from nexus.contracts.constants import ROOT_ZONE_ID  # noqa: E402
 
 passed = 0
 failed = 0
@@ -76,38 +85,58 @@ async def _svc_grep(
     return await svc.grep(pattern, path=path, max_results=max_results)
 
 
-async def _svc_reindex(search_svc, path: str = "/workspace/demo") -> None:
-    """Explicitly index everything under *path*.
+def _resolve_vec_backend(search_svc):
+    """Return the wired ``SqliteVecBackend`` instance, or ``None``.
 
-    SANDBOX has no background refresh daemon (FULL profile feature); tests
-    invoke the indexer directly after write/edit/unlink and then search.
+    Requires the SANDBOX connect() to have been called with
+    ``enable_vector_search=True`` and the optional deps (sqlite-vec,
+    litellm) importable. Otherwise returns None and retrieval-quality
+    sections skip.
     """
     svc = search_svc._service_instance
-    await svc.semantic_search_index(path, recursive=True)
+    return getattr(svc, "_sqlite_vec_backend", None)
 
 
-async def _svc_keyword_search(
-    search_svc, query: str, path: str = "/workspace/demo", limit: int = 5
-) -> list[dict]:
-    """Keyword-mode search via SearchService (BM25S / SQL-ILIKE fallback).
+async def _vec_upsert_file(vec_backend, nx, path: str) -> None:
+    """Read a file from SANDBOX and upsert its text as a single chunk.
 
-    Returns raw hit dicts with "path" / "chunk_text" / "score".
+    SANDBOX has no background auto-indexer (FULL-profile feature), so
+    callers explicitly surface updated content into the vector backend.
     """
-    svc = search_svc._service_instance
-    return await svc.semantic_search(query, path=path, limit=limit, search_mode="keyword")
+    body = nx.sys_read(path).decode("utf-8", errors="replace")
+    await vec_backend.upsert(
+        [{"path": path, "chunk_index": 0, "text": body}],
+        zone_id=ROOT_ZONE_ID,
+    )
+
+
+async def _vec_search_paths(vec_backend, query: str, limit: int = 5) -> list[str]:
+    """Query the vector backend and return the ranked top-K paths."""
+    hits = await vec_backend.search(query, limit=limit, zone_id=ROOT_ZONE_ID)
+    return [h.path for h in hits]
 
 
 async def main() -> int:
     global passed, failed
 
+    has_openai = bool(os.environ.get("OPENAI_API_KEY"))
+    if has_openai:
+        print("    [mode] OPENAI_API_KEY present — retrieval-quality sections enabled")
+    else:
+        print("    [mode] no OPENAI_API_KEY — sections 6/9/10 will skip")
+
     with tempfile.TemporaryDirectory(prefix="sandbox-e2e-") as tmp:
         # =================================================================
-        print("=== 1. INFRA & STATUS ===")
+        print("\n=== 1. INFRA & STATUS ===")
         # =================================================================
         t0 = time.monotonic()
-        nx = await nexus.connect(
-            config={"profile": "sandbox", "data_dir": str(Path(tmp) / "nexus")}
-        )
+        cfg: dict = {
+            "profile": "sandbox",
+            "data_dir": str(Path(tmp) / "nexus"),
+        }
+        if has_openai:
+            cfg["enable_vector_search"] = True
+        nx = await nexus.connect(config=cfg)
         boot_ms = (time.monotonic() - t0) * 1000
         print(f"    Boot time: {boot_ms:.0f} ms")
         check("SANDBOX boots", nx is not None)
@@ -243,41 +272,58 @@ async def main() -> int:
             print("    (skipped — BRICK_VERSIONING not enabled in SANDBOX)")
 
             # =============================================================
-            print("\n=== 6. HERB QUALITY GATE (grep over live files) ===")
+            print("\n=== 6. HERB RETRIEVAL-QUALITY GATE (vector) ===")
             # =============================================================
-            # SANDBOX ships no keyword-index daemon — semantic_search's
-            # SQL-ILIKE fallback has no populated chunk table. The wired
-            # search surface is grep(), which reads live files. Each HERB
-            # question has an expected_substring that uniquely anchors the
-            # correct file; grep'ing that anchor gives a faithful
-            # "retrieval" test for the SANDBOX surface.
-            hits_count = 0
-            per_q: list[tuple[str, bool, list[str]]] = []
-            for qa in HERB_QA_SET:
-                q = qa["question"]
-                expected = qa["expected_file"]
-                anchor = qa["expected_substring"]
-                try:
-                    grep_hits = await _svc_grep(search_svc, anchor, max_results=10)
-                except Exception as e:
-                    per_q.append((q, False, [f"error: {e}"]))
-                    continue
-                paths = [h.get("path") or h.get("file") or "" for h in grep_hits]
-                if any(p == expected for p in paths):
-                    hits_count += 1
-                    per_q.append((q, True, paths[:5]))
-                else:
-                    per_q.append((q, False, paths[:5]))
-            for q, ok, paths in per_q:
-                mark = "\u2713" if ok else "\u2717"
-                print(f"    {mark} {q[:56]}")
-                if not ok:
-                    print(f"        top-5 paths: {paths}")
-            check(
-                f"HERB hit rate {hits_count}/8 >= 7/8",
-                hits_count >= 7,
-                f"{hits_count}/8 ({hits_count * 100 // 8}%)",
-            )
+            # Retrieval quality on SANDBOX goes through the SqliteVecBackend
+            # path. Queries are the HERB natural-language **questions**
+            # (not the answer anchors) so ranking / query-understanding
+            # regressions would be caught.
+            vec_backend = _resolve_vec_backend(search_svc) if has_openai else None
+            if vec_backend is None:
+                print(
+                    "    (skipped — requires OPENAI_API_KEY + enable_vector_search; "
+                    "SANDBOX ships no keyword-index daemon out-of-box)"
+                )
+            else:
+                # Populate the vector backend from HERB files. One chunk per
+                # file — HERB records are short enough that this matches the
+                # structure SANDBOX produces when a user calls upsert once
+                # per document.
+                docs = []
+                for path, body, _desc in HERB_CORPUS:
+                    docs.append({"path": path, "chunk_index": 0, "text": body})
+                t_ing = time.perf_counter()
+                n_written = await vec_backend.upsert(docs, zone_id=ROOT_ZONE_ID)
+                print(
+                    f"    Ingested {n_written} HERB files into vec backend "
+                    f"({(time.perf_counter() - t_ing) * 1000:.0f} ms)"
+                )
+
+                hits_count = 0
+                per_q: list[tuple[str, bool, list[str]]] = []
+                for qa in HERB_QA_SET:
+                    q = qa["question"]
+                    expected = qa["expected_file"]
+                    try:
+                        paths = await _vec_search_paths(vec_backend, q, limit=5)
+                    except Exception as e:
+                        per_q.append((q, False, [f"error: {e}"]))
+                        continue
+                    if expected in paths:
+                        hits_count += 1
+                        per_q.append((q, True, paths))
+                    else:
+                        per_q.append((q, False, paths))
+                for q, ok, paths in per_q:
+                    mark = "\u2713" if ok else "\u2717"
+                    print(f"    {mark} {q[:56]}")
+                    if not ok:
+                        print(f"        top-5: {paths}")
+                check(
+                    f"HERB retrieval {hits_count}/8 >= 7/8",
+                    hits_count >= 7,
+                    f"{hits_count}/8 ({hits_count * 100 // 8}%)",
+                )
 
             # =============================================================
             print("\n=== 7. PERMISSION ENFORCEMENT ===")
@@ -310,46 +356,66 @@ async def main() -> int:
             print(f"    p50={p50:.1f}ms  p95={p95:.1f}ms")
 
             # =============================================================
-            print("\n=== 9. SEARCH-AFTER-EDIT (live-file grep) ===")
+            print("\n=== 9. EDIT → REINDEX → INDEXED SEARCH ===")
             # =============================================================
-            # SANDBOX has no background refresh daemon (FULL-profile
-            # feature). grep() reads live file contents, so an edit is
-            # visible immediately without any index invalidation.
-            nx.edit(
-                "/workspace/demo/plan.md",
-                [("Deploy to production", "Deploy using Kubernetes orchestration")],
-            )
-            hits = await _svc_grep(search_svc, "Kubernetes orchestration")
-            check(
-                "post-edit content is searchable",
-                any("plan.md" in (h.get("path") or h.get("file") or "") for h in hits),
-                f"got paths: {[h.get('path') for h in hits]}",
-            )
-            # Restore for idempotence
-            nx.edit(
-                "/workspace/demo/plan.md",
-                [("Deploy using Kubernetes orchestration", "Deploy to production")],
-                fuzzy_threshold=0.8,
-            )
+            # Exercise the real index-freshness invariant: after a write,
+            # the updated text must be findable via indexed search after
+            # the user re-upserts the file. SANDBOX ships no background
+            # refresh daemon; this captures the explicit-reindex contract.
+            if vec_backend is None:
+                print("    (skipped — requires OPENAI_API_KEY + enable_vector_search)")
+            else:
+                nx.edit(
+                    "/workspace/demo/plan.md",
+                    [("Deploy to production", "Deploy using Kubernetes orchestration")],
+                )
+                await _vec_upsert_file(vec_backend, nx, "/workspace/demo/plan.md")
+                paths = await _vec_search_paths(vec_backend, "Kubernetes orchestration", limit=5)
+                check(
+                    "post-edit reindex — new content is top-K indexed",
+                    "/workspace/demo/plan.md" in paths,
+                    f"top-5: {paths}",
+                )
+                # Restore + reindex for idempotence
+                nx.edit(
+                    "/workspace/demo/plan.md",
+                    [
+                        (
+                            "Deploy using Kubernetes orchestration",
+                            "Deploy to production",
+                        )
+                    ],
+                    fuzzy_threshold=0.8,
+                )
+                await _vec_upsert_file(vec_backend, nx, "/workspace/demo/plan.md")
 
             # =============================================================
-            print("\n=== 10. SEARCH-AFTER-DELETE (stale-entry check) ===")
+            print("\n=== 10. DELETE → DEINDEX → INDEXED SEARCH ===")
             # =============================================================
-            nx.write(
-                "/workspace/demo/delete-test.md",
-                b"Quantum entanglement teleportation\n",
-            )
-            hits = await _svc_grep(search_svc, "Quantum entanglement")
-            check(
-                "pre-delete file is grep-able",
-                any("delete-test" in (h.get("path") or h.get("file") or "") for h in hits),
-            )
+            # After unlink + explicit vec_backend.delete, the deleted path
+            # must NOT appear in indexed-search results. Tests the
+            # deletion half of the index-invalidation contract.
+            if vec_backend is None:
+                print("    (skipped — requires OPENAI_API_KEY + enable_vector_search)")
+            else:
+                del_path = "/workspace/demo/delete-test.md"
+                nx.write(del_path, b"Quantum entanglement teleportation\n")
+                await _vec_upsert_file(vec_backend, nx, del_path)
+                paths = await _vec_search_paths(vec_backend, "Quantum entanglement", limit=5)
+                check(
+                    "pre-delete file is index-searchable",
+                    del_path in paths,
+                    f"top-5: {paths}",
+                )
 
-            nx.sys_unlink("/workspace/demo/delete-test.md")
-            # grep walks the live filesystem — unlinked paths can't appear.
-            hits = await _svc_grep(search_svc, "Quantum entanglement")
-            gone = not any("delete-test" in (h.get("path") or h.get("file") or "") for h in hits)
-            check("post-delete result is absent from search", gone)
+                nx.sys_unlink(del_path)
+                deleted_rows = await vec_backend.delete([del_path], zone_id=ROOT_ZONE_ID)
+                paths = await _vec_search_paths(vec_backend, "Quantum entanglement", limit=5)
+                check(
+                    f"post-delete vec row purged (rows={deleted_rows})",
+                    del_path not in paths,
+                    f"top-5 still includes it: {paths}",
+                )
 
         finally:
             nx.close()

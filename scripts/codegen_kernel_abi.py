@@ -752,7 +752,6 @@ def generate_stubs(
         "bitmap": "Tiger Cache Bitmap (bitmap.rs)",
         "simd": "SIMD vector similarity (simd.rs)",
         "trigram": "Trigram Index (trigram.rs)",
-        "metadata_debug": "FileMetadata proto codec (metadata_debug.rs)",
     }
 
     MODULE_ORDER = [
@@ -766,7 +765,6 @@ def generate_stubs(
         "bitmap",
         "simd",
         "trigram",
-        "metadata_debug",
     ]
 
     for mod_name in MODULE_ORDER:
@@ -1384,7 +1382,6 @@ def generate_pillar_adapters(traits: list[TraitDef]) -> str:
         "            .and_then(|v| v.extract::<u8>())",
         '            .map_err(|e| MetastoreError::IOError(format!("field entry_type: {e}")))?,',
         '        zone_id: get_opt_str("zone_id")?,',
-        '        target_zone_id: get_opt_str("target_zone_id")?,',
         '        mime_type: get_opt_str("mime_type")?,',
         '        created_at_ms: extract_opt_datetime_ms(obj, "created_at"),',
         '        modified_at_ms: extract_opt_datetime_ms(obj, "modified_at"),',
@@ -1432,9 +1429,6 @@ def generate_pillar_adapters(traits: list[TraitDef]) -> str:
         "        .map_err(err)?;",
         "    kwargs",
         '        .set_item("zone_id", meta.zone_id.as_deref())',
-        "        .map_err(err)?;",
-        "    kwargs",
-        '        .set_item("target_zone_id", meta.target_zone_id.as_deref())',
         "        .map_err(err)?;",
         "    kwargs",
         '        .set_item("mime_type", meta.mime_type.as_deref())',
@@ -2257,7 +2251,6 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "            .and_then(|v| v.extract::<u8>())",
             '            .map_err(|e| MetastoreError::IOError(format!("field entry_type: {e}")))?,',
             '        zone_id: get_opt_str("zone_id")?,',
-            '        target_zone_id: get_opt_str("target_zone_id")?,',
             '        mime_type: get_opt_str("mime_type")?,',
             '        created_at_ms: extract_opt_datetime_ms(obj, "created_at"),',
             '        modified_at_ms: extract_opt_datetime_ms(obj, "modified_at"),',
@@ -2305,9 +2298,6 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "        .map_err(err)?;",
             "    kwargs",
             '        .set_item("zone_id", meta.zone_id.as_deref())',
-            "        .map_err(err)?;",
-            "    kwargs",
-            '        .set_item("target_zone_id", meta.target_zone_id.as_deref())',
             "        .map_err(err)?;",
             "    kwargs",
             '        .set_item("mime_type", meta.mime_type.as_deref())',

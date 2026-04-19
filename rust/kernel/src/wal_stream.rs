@@ -69,7 +69,6 @@ impl WalStreamCore {
             version: 0,
             entry_type: 0,
             zone_id: None,
-            target_zone_id: None,
             mime_type: None,
             created_at_ms: None,
             modified_at_ms: None,

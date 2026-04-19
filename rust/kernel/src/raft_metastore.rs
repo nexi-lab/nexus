@@ -15,14 +15,15 @@
 //!
 //! Field fidelity note: the kernel ``FileMetadata`` struct tracks a
 //! subset of the proto fields (path/backend_name/physical_path/size/etag/
-//! version/entry_type/zone_id/target_zone_id/mime_type). ``target_zone_id``
-//! was added in R16.1a so DT_MOUNT entries round-trip through Rust; the
-//! remaining missing fields (``owner_id``, ``ttl_seconds`` and the
+//! version/entry_type/zone_id/mime_type). ``target_zone_id`` lives on the
+//! proto (used by federation's state machine to emit mount events) but
+//! is intentionally NOT on the kernel struct — DT_MOUNT writes come
+//! from federation, which authors the proto directly. Remaining missing
+//! fields (``owner_id``, ``ttl_seconds`` and the
 //! ``created_at``/``modified_at`` ISO-8601 strings — distinct from the
 //! ``created_at_ms``/``modified_at_ms`` epoch fields already tracked)
 //! still round-trip through Python-side writes fine but are defaulted on
-//! kernel-only writes. Widening ``kernel::metastore::FileMetadata`` to
-//! cover those is tracked by follow-up #16.
+//! kernel-only writes. Widening the kernel struct is tracked by #18.
 
 use std::sync::Arc;
 
@@ -74,11 +75,6 @@ pub(crate) fn proto_to_kernel(bytes: &[u8]) -> Result<KernelFileMetadata, Metast
         } else {
             Some(proto.zone_id)
         },
-        target_zone_id: if proto.target_zone_id.is_empty() {
-            None
-        } else {
-            Some(proto.target_zone_id)
-        },
         mime_type: if proto.mime_type.is_empty() {
             None
         } else {
@@ -90,6 +86,11 @@ pub(crate) fn proto_to_kernel(bytes: &[u8]) -> Result<KernelFileMetadata, Metast
 }
 
 pub(crate) fn kernel_to_proto(meta: &KernelFileMetadata) -> Vec<u8> {
+    // ``target_zone_id`` is intentionally left at the proto default ("")
+    // — the kernel struct does not carry it. DT_MOUNT writes that need
+    // a target come from federation (``rust/raft/src/pyo3_bindings.rs``
+    // constructs the proto directly); entries written through
+    // ``ZoneMetastore`` are non-mount kinds whose target is always "".
     let proto = ProtoFileMetadata {
         path: meta.path.clone(),
         backend_name: meta.backend_name.clone(),
@@ -99,7 +100,6 @@ pub(crate) fn kernel_to_proto(meta: &KernelFileMetadata) -> Vec<u8> {
         version: meta.version as i32,
         entry_type: meta.entry_type as i32,
         zone_id: meta.zone_id.clone().unwrap_or_default(),
-        target_zone_id: meta.target_zone_id.clone().unwrap_or_default(),
         mime_type: meta.mime_type.clone().unwrap_or_default(),
         ..Default::default()
     };
@@ -184,51 +184,38 @@ impl Metastore for ZoneMetastore {
 mod tests {
     use super::*;
 
-    fn mk_mount_entry() -> KernelFileMetadata {
-        KernelFileMetadata {
-            path: "/mnt/peer".to_string(),
-            backend_name: "federation".to_string(),
-            physical_path: String::new(),
-            size: 0,
-            etag: None,
-            version: 1,
-            entry_type: 2, // DT_MOUNT
-            zone_id: Some("zone-a".to_string()),
-            target_zone_id: Some("zone-b".to_string()),
-            mime_type: None,
-            created_at_ms: None,
-            modified_at_ms: None,
-        }
-    }
-
-    /// R16.1a byte-compat guard: the proto encode↔decode round-trip
-    /// preserves every kernel-tracked field, notably ``target_zone_id``
-    /// for DT_MOUNT entries (Rust-authored federation mounts must not
-    /// silently drop the target zone) and ``None`` for DT_REG entries
-    /// (proto3 default maps back to ``None`` on the Python side).
+    /// Proto encode↔decode preserves every field the kernel struct
+    /// tracks. ``target_zone_id`` deliberately not asserted here —
+    /// R20.1 removed it from the kernel struct on the principle that
+    /// federation (which authors DT_MOUNT entries) operates on the
+    /// proto directly, so dropping the field from the kernel-side
+    /// mapper is correct.
     #[test]
     fn proto_roundtrip_preserves_kernel_fields() {
-        // DT_MOUNT keeps target_zone_id + every other tracked field.
-        let mount = mk_mount_entry();
-        let restored = proto_to_kernel(&kernel_to_proto(&mount)).unwrap();
-        assert_eq!(restored.path, mount.path);
-        assert_eq!(restored.backend_name, mount.backend_name);
-        assert_eq!(restored.physical_path, mount.physical_path);
-        assert_eq!(restored.size, mount.size);
-        assert_eq!(restored.etag, mount.etag);
-        assert_eq!(restored.version, mount.version);
-        assert_eq!(restored.entry_type, mount.entry_type);
-        assert_eq!(restored.zone_id, mount.zone_id);
-        assert_eq!(restored.target_zone_id, mount.target_zone_id);
-        assert_eq!(restored.mime_type, mount.mime_type);
+        let meta = KernelFileMetadata {
+            path: "/docs/readme.md".to_string(),
+            backend_name: "local".to_string(),
+            physical_path: "abc123".to_string(),
+            size: 1024,
+            etag: Some("hash".to_string()),
+            version: 3,
+            entry_type: 0, // DT_REG
+            zone_id: Some("zone-a".to_string()),
+            mime_type: Some("text/markdown".to_string()),
+            created_at_ms: None,
+            modified_at_ms: None,
+        };
+        let restored = proto_to_kernel(&kernel_to_proto(&meta)).unwrap();
+        assert_eq!(restored.path, meta.path);
+        assert_eq!(restored.backend_name, meta.backend_name);
+        assert_eq!(restored.physical_path, meta.physical_path);
+        assert_eq!(restored.size, meta.size);
+        assert_eq!(restored.etag, meta.etag);
+        assert_eq!(restored.version, meta.version);
+        assert_eq!(restored.entry_type, meta.entry_type);
+        assert_eq!(restored.zone_id, meta.zone_id);
+        assert_eq!(restored.mime_type, meta.mime_type);
         assert_eq!(restored.created_at_ms, None);
         assert_eq!(restored.modified_at_ms, None);
-
-        // DT_REG with target_zone_id = None round-trips as None.
-        let mut non_mount = mk_mount_entry();
-        non_mount.entry_type = 0;
-        non_mount.target_zone_id = None;
-        let restored = proto_to_kernel(&kernel_to_proto(&non_mount)).unwrap();
-        assert_eq!(restored.target_zone_id, None);
     }
 }

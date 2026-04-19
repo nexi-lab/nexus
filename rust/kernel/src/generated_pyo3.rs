@@ -247,7 +247,6 @@ fn extract_metadata(
             .and_then(|v| v.extract::<u8>())
             .map_err(|e| MetastoreError::IOError(format!("field entry_type: {e}")))?,
         zone_id: get_opt_str("zone_id")?,
-        target_zone_id: get_opt_str("target_zone_id")?,
         mime_type: get_opt_str("mime_type")?,
         created_at_ms: extract_opt_datetime_ms(obj, "created_at"),
         modified_at_ms: extract_opt_datetime_ms(obj, "modified_at"),
@@ -295,9 +294,6 @@ fn to_python_metadata<'py>(
         .map_err(err)?;
     kwargs
         .set_item("zone_id", meta.zone_id.as_deref())
-        .map_err(err)?;
-    kwargs
-        .set_item("target_zone_id", meta.target_zone_id.as_deref())
         .map_err(err)?;
     kwargs
         .set_item("mime_type", meta.mime_type.as_deref())

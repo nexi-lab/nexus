@@ -40,7 +40,6 @@ mod hook_registry;
 mod io;
 mod kernel;
 pub mod lock_manager;
-mod metadata_debug;
 pub mod metastore;
 // Mount table (kernel SSOT for mount entries — backend + per-mount
 // metastore + access flags). Mirrors Python `nexus.core.mount_table`.
@@ -201,17 +200,6 @@ fn nexus_kernel(m: &Bound<PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(path_utils::unscope_internal_path, m)?)?;
     m.add_function(wrap_pyfunction!(path_utils::canonicalize_path, m)?)?;
     m.add_function(wrap_pyfunction!(path_utils::extract_zone_id, m)?)?;
-
-    // FileMetadata proto round-trip (R16.1a) — debug surface for
-    // cross-language byte-compat tests. Not a production API.
-    m.add_function(wrap_pyfunction!(
-        metadata_debug::file_metadata_from_proto_bytes,
-        m
-    )?)?;
-    m.add_function(wrap_pyfunction!(
-        metadata_debug::file_metadata_to_proto_bytes,
-        m
-    )?)?;
 
     // Federation peer gRPC client (R16.5b).
     m.add_class::<federation_client::PyFederationClient>()?;

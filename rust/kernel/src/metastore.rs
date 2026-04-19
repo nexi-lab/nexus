@@ -22,12 +22,6 @@ pub struct FileMetadata {
     pub version: u32,
     pub entry_type: u8,
     pub zone_id: Option<String>,
-    /// Mount target zone (DT_MOUNT entries only). Mirrors
-    /// ``FileMetadata.target_zone_id`` in the proto / Python dataclass.
-    /// Federation mounts need this to round-trip through Rust — without
-    /// it, a DT_MOUNT entry written Python-side loses its target when
-    /// Rust proposes/applies it via raft.
-    pub target_zone_id: Option<String>,
     pub mime_type: Option<String>,
     /// Creation timestamp (Unix epoch milliseconds). Populated by
     /// ``kernel::sys_write`` on first write; subsequent overwrites preserve
@@ -528,14 +522,14 @@ fn fm_composite_key(path: &str, key: &str) -> String {
 ///         [has_mime_type:u8][mime_type_len:u32][mime_type]
 ///         [has_created_at:u8][created_at:i64]
 ///         [has_modified_at:u8][modified_at:i64]
-///         [has_target_zone_id:u8][target_zone_id_len:u32][target_zone_id]
+///         [optional trailing bytes — tolerated for forward-compat]
 ///
 /// version_tag distinguishes v1 (no timestamps) from v2 (timestamps appended).
 /// v1 has no leading tag; the first byte is the path length, which always
 /// has a high byte of 0 for paths shorter than 16M, while v2 starts with 2.
-/// ``target_zone_id`` is appended at the end as a v2 extension — records
-/// written before the field existed are read back with ``None`` (tolerated
-/// at EOF in ``deserialize_metadata``).
+/// Older redb files that carry a trailing ``target_zone_id`` extension
+/// (R16.1a, reverted in R20.1) deserialize fine — the reader stops at the
+/// last tracked field and ignores any remaining bytes.
 fn serialize_metadata(meta: &FileMetadata) -> Vec<u8> {
     let mut buf = Vec::with_capacity(280);
 
@@ -574,7 +568,6 @@ fn serialize_metadata(meta: &FileMetadata) -> Vec<u8> {
     write_opt_str(&mut buf, &meta.mime_type);
     write_opt_i64(&mut buf, meta.created_at_ms);
     write_opt_i64(&mut buf, meta.modified_at_ms);
-    write_opt_str(&mut buf, &meta.target_zone_id);
 
     buf
 }
@@ -670,13 +663,10 @@ fn deserialize_metadata(data: &[u8]) -> Result<FileMetadata, MetastoreError> {
         (None, None)
     };
 
-    // ``target_zone_id`` is a late addition to v2; tolerate truncation
-    // for records written before the field existed.
-    let target_zone_id = if pos < data.len() {
-        read_opt_str(data, &mut pos)?
-    } else {
-        None
-    };
+    // Any remaining bytes belong to retired trailing fields (R16.1a's
+    // ``target_zone_id`` — removed in R20.1). Ignored for forward-compat
+    // with redbs written before the retirement.
+    let _ = pos;
 
     Ok(FileMetadata {
         path,
@@ -687,7 +677,6 @@ fn deserialize_metadata(data: &[u8]) -> Result<FileMetadata, MetastoreError> {
         version,
         entry_type,
         zone_id,
-        target_zone_id,
         mime_type,
         created_at_ms,
         modified_at_ms,
@@ -1065,9 +1054,10 @@ mod tests {
     use super::*;
 
     /// Binary serialize↔deserialize round-trip covers both a DT_REG
-    /// entry (target_zone_id = None) and a DT_MOUNT entry
-    /// (target_zone_id = Some, the R16.1a extension that the on-disk
-    /// format must preserve for federation mounts).
+    /// entry and a DT_MOUNT entry so entry_type survives intact. Target
+    /// zone is never carried by the kernel struct (federation-only —
+    /// lives on the raft proto itself), so we only assert the fields
+    /// the kernel tracks.
     #[test]
     fn test_serialize_roundtrip() {
         let cases = [
@@ -1080,7 +1070,6 @@ mod tests {
                 version: 3,
                 entry_type: 0, // DT_REG
                 zone_id: Some("root".to_string()),
-                target_zone_id: None,
                 mime_type: None,
                 created_at_ms: None,
                 modified_at_ms: None,
@@ -1094,7 +1083,6 @@ mod tests {
                 version: 1,
                 entry_type: 2, // DT_MOUNT
                 zone_id: Some("zone-a".to_string()),
-                target_zone_id: Some("zone-b".to_string()),
                 mime_type: None,
                 created_at_ms: None,
                 modified_at_ms: None,
@@ -1110,7 +1098,6 @@ mod tests {
             assert_eq!(restored.version, meta.version);
             assert_eq!(restored.entry_type, meta.entry_type);
             assert_eq!(restored.zone_id, meta.zone_id);
-            assert_eq!(restored.target_zone_id, meta.target_zone_id);
             assert_eq!(restored.mime_type, meta.mime_type);
         }
     }
@@ -1125,7 +1112,6 @@ mod tests {
             version,
             entry_type: 0,
             zone_id: None,
-            target_zone_id: None,
             mime_type: None,
             created_at_ms: None,
             modified_at_ms: None,
@@ -1235,7 +1221,6 @@ mod tests {
             version: 1,
             entry_type: 0,
             zone_id: None,
-            target_zone_id: None,
             mime_type: None,
             created_at_ms: None,
             modified_at_ms: None,

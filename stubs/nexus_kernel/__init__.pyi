@@ -152,24 +152,6 @@ def trigram_index_stats(index_path: str) -> dict[str, Any]: ...
 def invalidate_trigram_cache(index_path: str) -> None: ...
 
 # ---------------------------------------------------------------------------
-# FileMetadata proto codec (metadata_debug.rs)
-# ---------------------------------------------------------------------------
-
-def file_metadata_from_proto_bytes(bytes: bytes) -> dict[str, Any]: ...
-def file_metadata_to_proto_bytes(
-    path: str,
-    backend_name: str,
-    physical_path: str,
-    size: int,
-    version: int,
-    entry_type: int,
-    etag: str | None = None,
-    zone_id: str | None = None,
-    target_zone_id: str | None = None,
-    mime_type: str | None = None,
-) -> bytes: ...
-
-# ---------------------------------------------------------------------------
 # Classes
 # ---------------------------------------------------------------------------
 

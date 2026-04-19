@@ -1,18 +1,12 @@
-//! Durable DT_STREAM backed by Raft-replicated metastore entries.
+//! Durable DT_STREAM backed by Raft-replicated stream entries (R19.1b').
 //!
-//! 1:1 behavior port of the Python `WALStreamBackend` (src/nexus/core/wal_stream.py).
-//! Each `write_nowait(data)` stores data under `/__wal_stream__/<stream_id>/<seq>`
-//! as a `FileMetadata` entry, with the raw bytes hex-encoded in `physical_path`.
-//! The raft transport replicates entries to peers; readers decode by sequence.
+//! Writes go through a dedicated ``Command::AppendStreamEntry`` — the
+//! payload is raw bytes on the wire and in the state machine's
+//! ``sm_stream_entries`` redb table. No ``FileMetadata`` round-trip,
+//! no hex encoding, no overlap with file-metadata scans.
 //!
-//! Same caveats as the Python original (noted for future R19.1b' improvement):
-//!   - Entries are stored as metadata records (hex-encoded payload in
-//!     `physical_path`). A dedicated `Command::AppendStreamEntry` raft variant
-//!     would be cleaner but is out of scope for this port.
-//!   - Sequential read only (no random access within a message).
-//!
-//! Python wiring: `from nexus_kernel import WalStreamBackend;
-//! WalStreamBackend(zone_handle, "stream-id")`.
+//! Python wiring: ``from nexus_kernel import WalStreamBackend;
+//! WalStreamBackend(zone_handle, "stream-id")``.
 
 use pyo3::exceptions::{PyRuntimeError, PyStopIteration};
 use pyo3::prelude::*;
@@ -20,15 +14,58 @@ use pyo3::types::{PyBytes, PyDict, PyList};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
-use crate::metastore::{FileMetadata, Metastore};
-use crate::raft_metastore::ZoneMetastore;
+use nexus_raft::prelude::{Command, CommandResult, FullStateMachine, ZoneConsensus};
 
-/// Rust core — wraps an `Arc<dyn Metastore>` and tracks per-stream state.
-///
-/// The PyO3 class below delegates here. Splitting keeps the Python binding
-/// thin and unit-testable with any `Metastore` impl (not just `ZoneMetastore`).
+/// Minimal consensus surface the WAL needs — lets unit tests swap in
+/// a mock without spinning up a full raft runtime.
+pub trait WalConsensus: Send + Sync {
+    fn append(&self, key: &str, data: &[u8]) -> Result<(), String>;
+    fn get(&self, key: &str) -> Result<Option<Vec<u8>>, String>;
+}
+
+/// Real raft-backed consensus — the production path.
+pub struct RaftWalConsensus {
+    node: ZoneConsensus<FullStateMachine>,
+    runtime: tokio::runtime::Handle,
+}
+
+impl RaftWalConsensus {
+    pub fn new(node: ZoneConsensus<FullStateMachine>, runtime: tokio::runtime::Handle) -> Self {
+        Self { node, runtime }
+    }
+}
+
+impl WalConsensus for RaftWalConsensus {
+    fn append(&self, key: &str, data: &[u8]) -> Result<(), String> {
+        let cmd = Command::AppendStreamEntry {
+            key: key.to_string(),
+            data: data.to_vec(),
+        };
+        let result = self
+            .runtime
+            .block_on(self.node.propose(cmd))
+            .map_err(|e| format!("WAL propose({key}): {e}"))?;
+        match result {
+            CommandResult::Success => Ok(()),
+            CommandResult::Error(e) => Err(format!("WAL apply({key}) rejected: {e}")),
+            _ => Ok(()),
+        }
+    }
+
+    fn get(&self, key: &str) -> Result<Option<Vec<u8>>, String> {
+        let key_owned = key.to_string();
+        let fut = self
+            .node
+            .with_state_machine(move |sm: &FullStateMachine| sm.get_stream_entry(&key_owned));
+        self.runtime
+            .block_on(fut)
+            .map_err(|e| format!("WAL get({key}): {e}"))
+    }
+}
+
+/// Rust core — wraps a ``WalConsensus`` and tracks per-stream state.
 pub struct WalStreamCore {
-    metastore: Arc<dyn Metastore>,
+    consensus: Arc<dyn WalConsensus>,
     stream_id: String,
     prefix: String,
     next_seq: AtomicU64,
@@ -36,10 +73,10 @@ pub struct WalStreamCore {
 }
 
 impl WalStreamCore {
-    pub fn new(metastore: Arc<dyn Metastore>, stream_id: String) -> Self {
+    pub fn new(consensus: Arc<dyn WalConsensus>, stream_id: String) -> Self {
         let prefix = format!("/__wal_stream__/{stream_id}/");
         Self {
-            metastore,
+            consensus,
             stream_id,
             prefix,
             next_seq: AtomicU64::new(0),
@@ -55,43 +92,23 @@ impl WalStreamCore {
         if self.closed.load(Ordering::Acquire) {
             return Err(format!("WAL stream {} is closed", self.stream_id));
         }
-        // Atomic fetch_add: if two concurrent writers race, each gets a
-        // unique seq. The raft metastore put is single-writer per key
-        // (no overwrite race because seqs differ).
+        // Atomic fetch_add: if two concurrent writers race, each gets
+        // a unique seq. The raft apply is single-writer per key (no
+        // overwrite race because seqs differ).
         let seq = self.next_seq.fetch_add(1, Ordering::AcqRel);
         let key = self.key(seq);
-        let meta = FileMetadata {
-            path: key.clone(),
-            backend_name: "wal_stream".to_string(),
-            physical_path: hex_encode(data),
-            size: data.len() as u64,
-            etag: Some(key.clone()),
-            version: 0,
-            entry_type: 0,
-            zone_id: None,
-            mime_type: None,
-            created_at_ms: None,
-            modified_at_ms: None,
-        };
-        self.metastore
-            .put(&key, meta)
-            .map_err(|e| format!("WAL put({key}): {e:?}"))?;
+        self.consensus.append(&key, data)?;
         Ok(seq)
     }
 
-    /// Read entry at `seq`. Returns `Ok(Some(bytes))` if present,
-    /// `Ok(None)` if not yet written (non-terminal), or `Err` if the
-    /// stream is closed and no more data will arrive at this offset.
+    /// Read entry at ``seq``. ``Ok(Some(bytes))`` if present;
+    /// ``Ok(None)`` if not yet written; ``Err`` if the stream is
+    /// closed and no more data will arrive at this offset.
     pub fn read_at(&self, seq: u64) -> Result<Option<Vec<u8>>, String> {
         let key = self.key(seq);
-        let meta = self
-            .metastore
-            .get(&key)
-            .map_err(|e| format!("WAL get({key}): {e:?}"))?;
-        match meta {
-            Some(m) => hex_decode(&m.physical_path)
-                .map(Some)
-                .map_err(|e| format!("WAL hex decode({key}): {e}")),
+        let bytes_opt = self.consensus.get(&key)?;
+        match bytes_opt {
+            Some(bytes) => Ok(Some(bytes)),
             None => {
                 if self.closed.load(Ordering::Acquire) {
                     Err(format!("WAL stream {} closed at seq {seq}", self.stream_id))
@@ -137,43 +154,6 @@ impl WalStreamCore {
 }
 
 // ---------------------------------------------------------------------------
-// Hex encoding (match Python's bytes.hex() / bytes.fromhex()).
-// ---------------------------------------------------------------------------
-
-fn hex_encode(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut s = String::with_capacity(bytes.len() * 2);
-    for &b in bytes {
-        s.push(HEX[(b >> 4) as usize] as char);
-        s.push(HEX[(b & 0x0f) as usize] as char);
-    }
-    s
-}
-
-fn hex_decode(s: &str) -> Result<Vec<u8>, &'static str> {
-    if !s.len().is_multiple_of(2) {
-        return Err("odd-length hex string");
-    }
-    let bytes = s.as_bytes();
-    let mut out = Vec::with_capacity(s.len() / 2);
-    for chunk in bytes.chunks_exact(2) {
-        let hi = hex_nibble(chunk[0])?;
-        let lo = hex_nibble(chunk[1])?;
-        out.push((hi << 4) | lo);
-    }
-    Ok(out)
-}
-
-fn hex_nibble(c: u8) -> Result<u8, &'static str> {
-    match c {
-        b'0'..=b'9' => Ok(c - b'0'),
-        b'a'..=b'f' => Ok(c - b'a' + 10),
-        b'A'..=b'F' => Ok(c - b'A' + 10),
-        _ => Err("invalid hex char"),
-    }
-}
-
-// ---------------------------------------------------------------------------
 // PyO3 binding: WalStreamBackend
 // ---------------------------------------------------------------------------
 
@@ -202,11 +182,12 @@ impl WalStreamBackend {
                 pyo3::exceptions::PyTypeError::new_err(format!("expected ZoneHandle, got: {e}"))
             })?;
         let zh = zh_ref.borrow();
-        let consensus = zh.consensus_node();
-        let handle = zh.runtime_handle();
-        let metastore: Arc<dyn Metastore> = ZoneMetastore::new_arc(consensus, handle);
+        let consensus: Arc<dyn WalConsensus> = Arc::new(RaftWalConsensus::new(
+            zh.consensus_node(),
+            zh.runtime_handle(),
+        ));
         Ok(Self {
-            core: Arc::new(WalStreamCore::new(metastore, stream_id)),
+            core: Arc::new(WalStreamCore::new(consensus, stream_id)),
         })
     }
 
@@ -293,76 +274,42 @@ impl WalStreamBackend {
 }
 
 // ---------------------------------------------------------------------------
-// Unit tests (in-memory Metastore stub — no raft runtime needed)
+// Unit tests — in-memory WalConsensus mock, no raft runtime needed.
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metastore::{MetastoreError, PutIfVersionResult};
+    use std::collections::BTreeMap;
     use std::sync::Mutex;
 
-    /// Minimal in-memory Metastore for tests. Covers get/put/delete/list/exists.
-    struct MemoryMetastore {
-        inner: Mutex<std::collections::BTreeMap<String, FileMetadata>>,
+    struct MemConsensus {
+        inner: Mutex<BTreeMap<String, Vec<u8>>>,
     }
 
-    impl MemoryMetastore {
+    impl MemConsensus {
         fn new() -> Self {
             Self {
-                inner: Mutex::new(std::collections::BTreeMap::new()),
+                inner: Mutex::new(BTreeMap::new()),
             }
         }
     }
 
-    impl Metastore for MemoryMetastore {
-        fn get(&self, path: &str) -> Result<Option<FileMetadata>, MetastoreError> {
-            Ok(self.inner.lock().unwrap().get(path).cloned())
-        }
-        fn put(&self, path: &str, meta: FileMetadata) -> Result<(), MetastoreError> {
-            self.inner.lock().unwrap().insert(path.to_string(), meta);
-            Ok(())
-        }
-        fn delete(&self, path: &str) -> Result<bool, MetastoreError> {
-            Ok(self.inner.lock().unwrap().remove(path).is_some())
-        }
-        fn list(&self, prefix: &str) -> Result<Vec<FileMetadata>, MetastoreError> {
-            Ok(self
-                .inner
+    impl WalConsensus for MemConsensus {
+        fn append(&self, key: &str, data: &[u8]) -> Result<(), String> {
+            self.inner
                 .lock()
                 .unwrap()
-                .range(prefix.to_string()..)
-                .take_while(|(k, _)| k.starts_with(prefix))
-                .map(|(_, v)| v.clone())
-                .collect())
+                .insert(key.to_string(), data.to_vec());
+            Ok(())
         }
-        fn exists(&self, path: &str) -> Result<bool, MetastoreError> {
-            Ok(self.inner.lock().unwrap().contains_key(path))
-        }
-        fn put_if_version(
-            &self,
-            metadata: FileMetadata,
-            expected_version: u32,
-        ) -> Result<PutIfVersionResult, MetastoreError> {
-            let _ = (metadata, expected_version);
-            Err(MetastoreError::IOError("not used".into()))
+        fn get(&self, key: &str) -> Result<Option<Vec<u8>>, String> {
+            Ok(self.inner.lock().unwrap().get(key).cloned())
         }
     }
 
     fn core() -> WalStreamCore {
-        WalStreamCore::new(Arc::new(MemoryMetastore::new()), "test".into())
-    }
-
-    #[test]
-    fn hex_roundtrip() {
-        for data in [
-            b"".as_slice(),
-            b"hello".as_slice(),
-            &[0u8, 255, 1, 2, 3, 0, 0xde, 0xad, 0xbe, 0xef][..],
-        ] {
-            let encoded = hex_encode(data);
-            assert_eq!(hex_decode(&encoded).unwrap(), data);
-        }
+        WalStreamCore::new(Arc::new(MemConsensus::new()), "test".into())
     }
 
     #[test]
@@ -453,6 +400,17 @@ mod tests {
     fn binary_data_roundtrip_with_nullbytes() {
         let c = core();
         let payload = vec![0u8, 1, 0, 2, 0, 3, 0xff, 0x00, 0xfe];
+        c.write_nowait(&payload).unwrap();
+        assert_eq!(c.read_at(0).unwrap(), Some(payload));
+    }
+
+    /// Raw-byte roundtrip for arbitrary binary — no hex intermediate
+    /// should remain (was a hot-path perf cost in the pre-R19.1b'
+    /// design).
+    #[test]
+    fn binary_data_full_byte_range() {
+        let c = core();
+        let payload: Vec<u8> = (0u8..=255).collect();
         c.write_nowait(&payload).unwrap();
         assert_eq!(c.read_at(0).unwrap(), Some(payload));
     }

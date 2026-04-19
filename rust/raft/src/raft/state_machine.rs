@@ -130,6 +130,26 @@ pub enum Command {
         path: String,
     },
 
+    /// Append a raw-byte entry to a dedicated stream table (R19.1b').
+    ///
+    /// Used by the kernel's WAL stream backend to persist ordered
+    /// stream entries without shoehorning the payload through the
+    /// ``FileMetadata`` proto. Stored in ``TREE_STREAM_ENTRIES``
+    /// (distinct from ``TREE_METADATA``) so list scans and snapshot
+    /// walkers do not confuse stream payload with file metadata.
+    AppendStreamEntry {
+        /// Full stream key (typically ``/__wal_stream__/<id>/<seq>``).
+        key: String,
+        /// Raw payload bytes — no encoding applied.
+        data: Vec<u8>,
+    },
+
+    /// Delete a single stream entry by key (R19.1b').
+    DeleteStreamEntry {
+        /// Stream key to remove.
+        key: String,
+    },
+
     /// No-op command (used for leader election confirmation).
     Noop,
 }
@@ -395,6 +415,14 @@ impl StateMachine for WitnessStateMachine {
 
 // Tree names for FullStateMachine
 const TREE_METADATA: &str = "sm_metadata";
+/// Dedicated redb tree for raw-byte stream entries (R19.1b').
+///
+/// Holds ``Command::AppendStreamEntry`` payloads separate from
+/// ``TREE_METADATA`` so the WAL stream backend does not pollute file
+/// metadata scans / snapshots with hex-encoded payload rows. Keys are
+/// opaque strings (the kernel picks a ``/__wal_stream__/<id>/<seq>``
+/// convention); values are raw bytes.
+const TREE_STREAM_ENTRIES: &str = "sm_stream_entries";
 const KEY_LAST_APPLIED: &[u8] = b"__last_applied__";
 
 // R14: Advisory locks no longer have a redb tree. The BTreeMap in
@@ -481,6 +509,11 @@ fn decode_modified_at_unix(bytes: &[u8]) -> u64 {
 pub struct FullStateMachine {
     /// Metadata tree: path -> serialized FileMetadata.
     metadata: RedbTree,
+    /// Raw-byte stream entries tree (R19.1b') — key -> opaque bytes.
+    ///
+    /// Distinct from ``metadata`` so WAL stream payloads never appear
+    /// in file-listing scans / snapshots that walk ``sm_metadata``.
+    stream_entries: RedbTree,
     /// Advisory lock SSOT — shared with the kernel's `LockManager`.
     advisory: Arc<Mutex<LockState>>,
     /// Last applied metadata/Noop log index (persisted to redb).
@@ -549,6 +582,7 @@ impl FullStateMachine {
     /// state.
     pub fn with_advisory(store: &RedbStore, advisory: Arc<Mutex<LockState>>) -> Result<Self> {
         let metadata = store.tree(TREE_METADATA)?;
+        let stream_entries = store.tree(TREE_STREAM_ENTRIES)?;
 
         // Load last_applied from metadata tree.
         let last_applied = match metadata.get(KEY_LAST_APPLIED)? {
@@ -563,6 +597,7 @@ impl FullStateMachine {
 
         Ok(Self {
             metadata,
+            stream_entries,
             advisory,
             last_applied,
             #[cfg(feature = "grpc")]
@@ -977,6 +1012,69 @@ impl FullStateMachine {
         Ok(result)
     }
 
+    /// Get a stream entry by key (R19.1b').
+    ///
+    /// Looks up the opaque bytes previously stored by
+    /// ``Command::AppendStreamEntry``. Returns ``Ok(None)`` if absent.
+    pub fn get_stream_entry(&self, key: &str) -> Result<Option<Vec<u8>>> {
+        Ok(self.stream_entries.get(key.as_bytes())?)
+    }
+
+    /// Delete every stream entry whose key begins with ``prefix`` (R19.1b').
+    ///
+    /// Returns the number of rows removed. Used when a WAL stream is
+    /// closed-and-dropped en masse — lets the caller avoid issuing
+    /// one ``DeleteStreamEntry`` per seq.
+    ///
+    /// This reads the current keys under the prefix, then deletes
+    /// each one — all inside a single redb write transaction. Not
+    /// routed through raft because callers (snapshot prune, cleanup)
+    /// handle replication separately; for raft-driven deletion use
+    /// ``Command::DeleteStreamEntry`` per key.
+    pub fn delete_stream_prefix(&self, prefix: &str) -> Result<u64> {
+        let db = self.stream_entries.raw_db();
+        let table_def = redb::TableDefinition::<&[u8], &[u8]>::new(self.stream_entries.name());
+        let write_txn = db
+            .begin_write()
+            .map_err(|e| super::RaftError::Storage(e.to_string()))?;
+        let mut removed: u64 = 0;
+        {
+            let mut table = write_txn
+                .open_table(table_def)
+                .map_err(|e| super::RaftError::Storage(e.to_string()))?;
+
+            // Collect matching keys first — redb does not allow
+            // delete-while-iterating on the same table handle.
+            let mut keys: Vec<Vec<u8>> = Vec::new();
+            {
+                let iter = table
+                    .range::<&[u8]>(prefix.as_bytes()..)
+                    .map_err(|e| super::RaftError::Storage(e.to_string()))?;
+                for entry in iter {
+                    let (k, _v) = entry.map_err(|e| super::RaftError::Storage(e.to_string()))?;
+                    let kb = k.value().to_vec();
+                    if !kb.starts_with(prefix.as_bytes()) {
+                        break;
+                    }
+                    keys.push(kb);
+                }
+            }
+            for k in keys {
+                if table
+                    .remove(k.as_slice())
+                    .map_err(|e| super::RaftError::Storage(e.to_string()))?
+                    .is_some()
+                {
+                    removed += 1;
+                }
+            }
+        }
+        write_txn
+            .commit()
+            .map_err(|e| super::RaftError::Storage(e.to_string()))?;
+        Ok(removed)
+    }
+
     /// Get lock info by path (reads the shared advisory map).
     pub fn get_lock(&self, path: &str) -> Result<Option<LockInfo>> {
         Ok(self.advisory.lock().get_lock(path))
@@ -989,10 +1087,17 @@ impl FullStateMachine {
 }
 
 /// Snapshot format for FullStateMachine.
+///
+/// ``stream_entries`` is serialized with a ``#[serde(default)]`` so
+/// snapshots produced before R19.1b' (no stream table) still restore —
+/// absent entries become an empty map on the target replica.
 #[derive(Debug, Serialize, Deserialize)]
 struct Snapshot {
     /// All metadata entries.
     metadata: HashMap<String, Vec<u8>>,
+    /// All stream entries (R19.1b').
+    #[serde(default)]
+    stream_entries: HashMap<String, Vec<u8>>,
     /// Advisory lock SSOT at snapshot time (clone of the BTreeMap).
     advisory: LockState,
     /// Last applied index.
@@ -1042,6 +1147,14 @@ impl FullStateMachine {
                 now_secs,
             } => self.apply_extend_lock(path, lock_id, *new_ttl_secs, *now_secs),
             Command::AdjustCounter { key, delta } => self.apply_adjust_counter(key, *delta),
+            Command::AppendStreamEntry { key, data } => {
+                self.stream_entries.set(key.as_bytes(), data)?;
+                Ok(CommandResult::Success)
+            }
+            Command::DeleteStreamEntry { key } => {
+                self.stream_entries.delete(key.as_bytes())?;
+                Ok(CommandResult::Success)
+            }
             Command::Noop => Ok(CommandResult::Success),
         }
     }
@@ -1131,6 +1244,30 @@ impl FullStateMachine {
                 Ok(CommandResult::Value(new_val.to_be_bytes().to_vec()))
             }
 
+            Command::AppendStreamEntry { key, data } => {
+                let stream_def =
+                    redb::TableDefinition::<&[u8], &[u8]>::new(self.stream_entries.name());
+                let mut table = txn
+                    .open_table(stream_def)
+                    .map_err(|e| super::RaftError::Storage(format!("open stream_entries: {e}")))?;
+                table
+                    .insert(key.as_bytes(), data.as_slice())
+                    .map_err(|e| super::RaftError::Storage(format!("insert stream_entry: {e}")))?;
+                Ok(CommandResult::Success)
+            }
+
+            Command::DeleteStreamEntry { key } => {
+                let stream_def =
+                    redb::TableDefinition::<&[u8], &[u8]>::new(self.stream_entries.name());
+                let mut table = txn
+                    .open_table(stream_def)
+                    .map_err(|e| super::RaftError::Storage(format!("open stream_entries: {e}")))?;
+                table
+                    .remove(key.as_bytes())
+                    .map_err(|e| super::RaftError::Storage(format!("remove stream_entry: {e}")))?;
+                Ok(CommandResult::Success)
+            }
+
             Command::Noop => Ok(CommandResult::Success),
 
             // Lock commands never flow here.
@@ -1159,7 +1296,9 @@ impl StateMachine for FullStateMachine {
         match command {
             Command::SetMetadata { .. }
             | Command::CasSetMetadata { .. }
-            | Command::DeleteMetadata { .. } => self.execute(command),
+            | Command::DeleteMetadata { .. }
+            | Command::AppendStreamEntry { .. }
+            | Command::DeleteStreamEntry { .. } => self.execute(command),
             _ => Err(super::RaftError::InvalidState(
                 "Only metadata operations (set/delete) support EC local writes".into(),
             )),
@@ -1365,6 +1504,17 @@ impl StateMachine for FullStateMachine {
             }
         }
 
+        // R19.1b': serialize stream_entries as its own map. Keys are
+        // opaque so no ``__``-prefix filtering here; consumers rely on
+        // the dedicated tree to keep them separate from file metadata.
+        let mut stream_entries = HashMap::new();
+        for item in self.stream_entries.iter() {
+            let (key, value) = item?;
+            if let Ok(k) = String::from_utf8(key) {
+                stream_entries.insert(k, value);
+            }
+        }
+
         // Snapshot the advisory map under its own mutex. One clone of
         // the BTreeMap is cheap (shallow tree copy) and lets us drop
         // the mutex before bincoding.
@@ -1372,6 +1522,7 @@ impl StateMachine for FullStateMachine {
 
         let snapshot = Snapshot {
             metadata,
+            stream_entries,
             advisory,
             last_applied: self.last_applied,
         };
@@ -1392,6 +1543,8 @@ impl StateMachine for FullStateMachine {
             super::RaftError::Storage(format!("begin_write for snapshot restore: {e}"))
         })?;
 
+        let stream_def = redb::TableDefinition::<&[u8], &[u8]>::new(self.stream_entries.name());
+
         {
             write_txn
                 .delete_table(meta_def)
@@ -1411,6 +1564,24 @@ impl StateMachine for FullStateMachine {
                     snapshot.last_applied.to_be_bytes().as_slice(),
                 )
                 .map_err(|e| super::RaftError::Storage(format!("insert last_applied: {e}")))?;
+
+            // R19.1b': same atomic transaction restores stream_entries.
+            // ``delete_table`` wipes the previous state; then reinsert
+            // the snapshot contents. Pre-R19.1b' snapshots carry an
+            // empty map here (serde(default)), so the table ends up
+            // empty — matching pre-R19.1b' behavior where it did not
+            // exist.
+            write_txn.delete_table(stream_def).map_err(|e| {
+                super::RaftError::Storage(format!("delete stream_entries table: {e}"))
+            })?;
+            let mut stream_table = write_txn.open_table(stream_def).map_err(|e| {
+                super::RaftError::Storage(format!("open stream_entries table: {e}"))
+            })?;
+            for (key, value) in &snapshot.stream_entries {
+                stream_table
+                    .insert(key.as_bytes(), value.as_slice())
+                    .map_err(|e| super::RaftError::Storage(format!("insert stream_entry: {e}")))?;
+            }
         }
 
         write_txn
@@ -3025,5 +3196,127 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// R19.1b' — ``AppendStreamEntry`` stores raw bytes in the
+    /// dedicated ``sm_stream_entries`` tree (not ``sm_metadata``),
+    /// and ``get_stream_entry`` reads them back untouched.
+    #[test]
+    fn stream_entry_roundtrip_raw_bytes() {
+        let store = RedbStore::open_temporary().unwrap();
+        let mut sm = FullStateMachine::new(&store).unwrap();
+
+        let payload: Vec<u8> = (0u8..=255).collect();
+        sm.apply(
+            1,
+            &Command::AppendStreamEntry {
+                key: "/__wal_stream__/s/0".into(),
+                data: payload.clone(),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            sm.get_stream_entry("/__wal_stream__/s/0").unwrap(),
+            Some(payload)
+        );
+        // Stream entries do NOT appear in list_metadata — different
+        // redb tree. Confirms no pollution of file-metadata scans.
+        assert!(sm.list_metadata("/__wal_stream__/").unwrap().is_empty());
+    }
+
+    /// ``DeleteStreamEntry`` removes the row; subsequent get returns
+    /// ``None``.
+    #[test]
+    fn stream_entry_delete_by_key() {
+        let store = RedbStore::open_temporary().unwrap();
+        let mut sm = FullStateMachine::new(&store).unwrap();
+        sm.apply(
+            1,
+            &Command::AppendStreamEntry {
+                key: "/s/0".into(),
+                data: b"hello".to_vec(),
+            },
+        )
+        .unwrap();
+        assert!(sm.get_stream_entry("/s/0").unwrap().is_some());
+        sm.apply(2, &Command::DeleteStreamEntry { key: "/s/0".into() })
+            .unwrap();
+        assert!(sm.get_stream_entry("/s/0").unwrap().is_none());
+    }
+
+    /// ``delete_stream_prefix`` drops every row under the prefix and
+    /// leaves others alone.
+    #[test]
+    fn stream_entry_delete_prefix_scopes_correctly() {
+        let store = RedbStore::open_temporary().unwrap();
+        let mut sm = FullStateMachine::new(&store).unwrap();
+        for i in 0..5 {
+            sm.apply(
+                i + 1,
+                &Command::AppendStreamEntry {
+                    key: format!("/__wal_stream__/a/{i}"),
+                    data: vec![i as u8],
+                },
+            )
+            .unwrap();
+        }
+        sm.apply(
+            10,
+            &Command::AppendStreamEntry {
+                key: "/__wal_stream__/b/0".into(),
+                data: b"keep".to_vec(),
+            },
+        )
+        .unwrap();
+
+        let removed = sm.delete_stream_prefix("/__wal_stream__/a/").unwrap();
+        assert_eq!(removed, 5);
+        assert!(sm
+            .get_stream_entry("/__wal_stream__/a/0")
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            sm.get_stream_entry("/__wal_stream__/b/0").unwrap(),
+            Some(b"keep".to_vec())
+        );
+    }
+
+    /// Snapshot + restore round-trips stream entries intact.
+    #[test]
+    fn stream_entry_snapshot_restore_roundtrip() {
+        let store = RedbStore::open_temporary().unwrap();
+        let mut sm = FullStateMachine::new(&store).unwrap();
+        sm.apply(
+            1,
+            &Command::AppendStreamEntry {
+                key: "/s/0".into(),
+                data: vec![0xde, 0xad, 0xbe, 0xef],
+            },
+        )
+        .unwrap();
+        sm.apply(
+            2,
+            &Command::AppendStreamEntry {
+                key: "/s/1".into(),
+                data: vec![0x00, 0xff],
+            },
+        )
+        .unwrap();
+
+        let snap_bytes = sm.snapshot().unwrap();
+
+        let store2 = RedbStore::open_temporary().unwrap();
+        let mut sm2 = FullStateMachine::new(&store2).unwrap();
+        sm2.restore_snapshot(&snap_bytes).unwrap();
+
+        assert_eq!(
+            sm2.get_stream_entry("/s/0").unwrap(),
+            Some(vec![0xde, 0xad, 0xbe, 0xef])
+        );
+        assert_eq!(
+            sm2.get_stream_entry("/s/1").unwrap(),
+            Some(vec![0x00, 0xff])
+        );
     }
 }

@@ -437,7 +437,11 @@ def _apply_sandbox_defaults(cfg: "NexusConfig") -> "NexusConfig":
     updates: dict[str, _Any] = {}
 
     if "backend" not in user_set:
-        updates["backend"] = "local"
+        # Direct filesystem (no CAS hash-store overhead). Edits/read/write
+        # operate on real files at `data_dir` — matches SANDBOX's
+        # "lightweight single-process" intent. "local" in this codebase
+        # means CAS, which is not what sandbox needs.
+        updates["backend"] = "path_local"
 
     if "data_dir" not in user_set:
         updates["data_dir"] = str(_Path.home() / ".nexus" / "sandbox")
@@ -499,37 +503,21 @@ def load_config(
 
 
 def _load_from_dict(config_dict: dict[str, Any]) -> NexusConfig:
-    """Load configuration from dictionary."""
-    # Merge with environment variables
-    merged = _load_from_environment()
-    merged_dict = merged.model_dump()
+    """Load configuration from dictionary.
+
+    Preserves provenance (Issue #3778, R1 review): only explicitly supplied
+    keys from env or the input dict are passed to NexusConfig, so
+    `model_fields_set` reflects user intent and SANDBOX defaults apply only
+    to fields the user did NOT set.
+    """
+    # Environment-sourced overrides (no model_dump round-trip — preserves
+    # per-field provenance so _apply_sandbox_defaults can see what was set).
+    merged_dict = _build_env_overrides()
     merged_dict.update(config_dict)
 
     # Convert oauth dict to OAuthConfig if present
     if "oauth" in merged_dict and isinstance(merged_dict["oauth"], dict):
         merged_dict["oauth"] = OAuthConfig(**merged_dict["oauth"])
-
-    # Sandbox roundtrip fix (Issue #3778, Task-14 wiring gap):
-    # _load_from_environment() may have already run _apply_sandbox_defaults,
-    # stamping db_path / metastore_path / record_store_path with paths derived
-    # from a *different* data_dir (e.g. the default ~/.nexus/sandbox).
-    # After model_dump() those stale stamped paths land in merged_dict as if
-    # they were user values; when the user supplies a custom data_dir but NOT
-    # explicit path fields, _apply_sandbox_defaults sees all three path fields
-    # already present in model_fields_set and skips re-deriving them.
-    #
-    # Fix: if the profile is sandbox AND the user supplied data_dir in
-    # config_dict but did NOT supply the path fields themselves, strip the
-    # stale path values from merged_dict so that _apply_sandbox_defaults can
-    # re-derive them correctly from the user's data_dir.
-    _SANDBOX_DERIVED_PATHS = ("db_path", "metastore_path", "record_store_path")
-    if (
-        merged_dict.get("profile") == "sandbox"
-        and "data_dir" in config_dict
-        and not any(k in config_dict for k in _SANDBOX_DERIVED_PATHS)
-    ):
-        for _k in _SANDBOX_DERIVED_PATHS:
-            merged_dict.pop(_k, None)
 
     return _apply_sandbox_defaults(NexusConfig(**merged_dict))
 
@@ -548,8 +536,13 @@ def _load_from_file(path: Path) -> NexusConfig:
     return _load_from_dict(config_dict)
 
 
-def _load_from_environment() -> NexusConfig:
-    """Load configuration from environment variables."""
+def _build_env_overrides() -> dict[str, Any]:
+    """Return a dict of only the config fields explicitly set via env vars.
+
+    Unlike `_load_from_environment()`, this does NOT construct a NexusConfig
+    or apply defaults — so the caller can preserve per-field provenance
+    (`model_fields_set`) when layering additional sources on top (Issue #3778).
+    """
     env_config: dict[str, Any] = {}
 
     # Map environment variables to config fields
@@ -683,7 +676,12 @@ def _load_from_environment() -> NexusConfig:
     if parse_providers:
         env_config["parse_providers"] = parse_providers
 
-    return _apply_sandbox_defaults(NexusConfig(**env_config))
+    return env_config
+
+
+def _load_from_environment() -> NexusConfig:
+    """Load configuration from environment variables."""
+    return _apply_sandbox_defaults(NexusConfig(**_build_env_overrides()))
 
 
 def _auto_discover() -> NexusConfig:

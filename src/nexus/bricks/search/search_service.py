@@ -204,6 +204,7 @@ class SearchService:
         zoekt_client: Any | None = None,
         deployment_profile: str | None = None,
         sqlite_vec_backend: Any | None = None,
+        federation_dispatcher: Any | None = None,
     ):
         """Initialize search service.
 
@@ -276,6 +277,13 @@ class SearchService:
         # first and only falls back to federation/BM25S when it returns
         # empty (or raises).
         self._sqlite_vec_backend = sqlite_vec_backend
+
+        # Issue #3778 (R1 review): optional real federation dispatcher. When
+        # set, SANDBOX semantic fallback routes through it instead of
+        # fabricating an empty "no-peers" FederatedSearchResponse — so if a
+        # future deployment wires a dispatcher into a sandbox-profile server
+        # the real federation attempt is made before BM25 degradation.
+        self._federation_dispatcher = federation_dispatcher
 
         logger.info("[SearchService] Initialized")
 
@@ -3432,17 +3440,48 @@ class SearchService:
         if local is not None:
             return local
 
-        # Step 2 + 3 — synthesise an empty FederatedSearchResponse so the
+        # Step 2 + 3 — try a real federation dispatcher when one is wired;
+        # otherwise synthesise an empty FederatedSearchResponse so the
         # shared fallback wrapper invokes the BM25S callable and stamps
         # ``semantic_degraded=True`` on every result.
         from nexus.bricks.search.federated_search import (
             FederatedSearchResponse,
+            ZoneFailure,
         )
 
         async def _fed_call() -> FederatedSearchResponse:
-            # No federation dispatcher in SANDBOX — synthesise a "no peers"
-            # response so is_all_peers_failed returns True and the wrapper
-            # invokes the BM25S callable below.
+            dispatcher = self._federation_dispatcher
+            if dispatcher is not None:
+                # R1 review: real dispatcher present — invoke it so we don't
+                # silently bypass remote peers and return keyword fallback
+                # when semantic retrieval is actually reachable. The wrapper
+                # only degrades when all peers fail.
+                try:
+                    subject = (
+                        (getattr(context, "subject_type", None) or "user"),
+                        (getattr(context, "user_id", None) or ""),
+                    )
+                    return await dispatcher.search(
+                        query=query,
+                        subject=subject,
+                        search_type="semantic",
+                        limit=limit,
+                    )
+                except Exception as exc:
+                    # Real dispatch failed — treat as all-peers-failed so the
+                    # wrapper triggers BM25 fallback with semantic_degraded.
+                    logger.warning(
+                        "[SANDBOX semantic] federation dispatch raised; degrading to BM25S: %s",
+                        exc,
+                    )
+                    return FederatedSearchResponse(
+                        results=[],
+                        zones_searched=[],
+                        zones_failed=[ZoneFailure(zone_id="<dispatcher>", error=str(exc))],
+                    )
+
+            # No dispatcher wired (true SANDBOX case) — is_all_peers_failed
+            # returns True and the wrapper invokes the BM25S callable below.
             return FederatedSearchResponse(
                 results=[],
                 zones_searched=[],

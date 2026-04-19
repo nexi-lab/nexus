@@ -88,6 +88,12 @@ class SqliteVecBackend:
         self._api_key = api_key  # optional; litellm reads env by default
         self._conn: sqlite3.Connection | None = None
         self._lock = asyncio.Lock()
+        # R1 review: serialize DB ops on the shared connection. sqlite3
+        # Connection created with ``check_same_thread=False`` is not safe
+        # against concurrent use from multiple threadpool workers; we wrap
+        # every data op in this lock to prevent interleaving. Separate from
+        # ``_lock`` (startup/shutdown) to avoid deadlock on shutdown.
+        self._op_lock = asyncio.Lock()
         self._started = False
 
     # ------------------------------------------------------------------
@@ -261,7 +267,8 @@ class SqliteVecBackend:
                 )
             return len(rows)
 
-        return await asyncio.to_thread(_write)
+        async with self._op_lock:
+            return await asyncio.to_thread(_write)
 
     async def index(self, documents: list[dict[str, Any]], *, zone_id: str) -> int:
         """Full-rebuild for *zone_id*: drop the zone's rows, then upsert all."""
@@ -275,7 +282,8 @@ class SqliteVecBackend:
                     (zone_id,),
                 )
 
-        await asyncio.to_thread(_wipe)
+        async with self._op_lock:
+            await asyncio.to_thread(_wipe)
         return await self.upsert(documents, zone_id=zone_id)
 
     async def delete(self, ids: list[str], *, zone_id: str) -> int:
@@ -298,7 +306,8 @@ class SqliteVecBackend:
                 )
                 return cur.rowcount or 0
 
-        return await asyncio.to_thread(_delete)
+        async with self._op_lock:
+            return await asyncio.to_thread(_delete)
 
     async def search(
         self,
@@ -357,7 +366,8 @@ class SqliteVecBackend:
             cur = conn.execute(sql, (qbytes, zone_id, fetch_k))
             return list(cur.fetchall())
 
-        rows = await asyncio.to_thread(_query)
+        async with self._op_lock:
+            rows = await asyncio.to_thread(_query)
         if path_filter:
             prefix = path_filter.rstrip("/")
             # ``prefix`` matches itself and any descendant path. Treat the

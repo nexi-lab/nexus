@@ -249,26 +249,35 @@ async def connect(
     # Load configuration
     cfg = load_config(config)
 
-    # Issue #3778: propagate selected config fields to env so the boot
-    # tiers (orchestrator, _wired.py) — which read env vars directly,
-    # not the as-yet-unattached ``nx._config`` — see them.  We only set
-    # values that are NOT already present in env so explicit env wins.
+    # Issue #3778: propagate resolved config fields to env so the boot tiers
+    # (orchestrator, _wired.py) — which read env vars directly, not the
+    # as-yet-unattached ``nx._config`` — see them.
     #
-    # ``enable_vector_search`` is propagated only when the user *explicitly*
-    # set it in their input dict (not when the schema default leaks through
-    # the ``model_dump`` roundtrip in ``_load_from_dict``). This keeps the
-    # SANDBOX default off-by-default — users opt in via either an explicit
-    # dict key or the ``NEXUS_ENABLE_VECTOR_SEARCH`` env var.
-    if not os.environ.get("NEXUS_PROFILE"):
-        _profile_val = getattr(cfg, "profile", None)
-        if _profile_val:
-            os.environ["NEXUS_PROFILE"] = str(_profile_val)
-    if not os.environ.get("NEXUS_ENABLE_VECTOR_SEARCH"):
-        _user_evs: bool | None = None
-        if isinstance(config, dict) and "enable_vector_search" in config:
-            _user_evs = bool(config["enable_vector_search"])
-        if _user_evs is not None:
-            os.environ["NEXUS_ENABLE_VECTOR_SEARCH"] = "true" if _user_evs else "false"
+    # R1 fix: ALWAYS overwrite env from resolved cfg (was: only when unset).
+    # Otherwise the first connect() in a process would stamp env and later
+    # connect() calls with different configs would silently read the stale
+    # values, making runtime behavior diverge from the requested config.
+    # Prior env values are snapshotted and restored after the factory runs,
+    # so env is only a transient side-channel for in-process boot wiring.
+    _env_to_restore: dict[str, str | None] = {}
+
+    def _set_env_transient(key: str, value: str | None) -> None:
+        _env_to_restore.setdefault(key, os.environ.get(key))
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
+
+    _profile_val = getattr(cfg, "profile", None)
+    if _profile_val:
+        _set_env_transient("NEXUS_PROFILE", str(_profile_val))
+
+    # For enable_vector_search, propagate the resolved flag from cfg so SANDBOX
+    # stays off-by-default unless the user opted in explicitly (dict key, env,
+    # or YAML). Because _apply_sandbox_defaults forces False only when the
+    # user did NOT set it, cfg.enable_vector_search is authoritative here.
+    _evs_val = bool(getattr(cfg, "enable_vector_search", False))
+    _set_env_transient("NEXUS_ENABLE_VECTOR_SEARCH", "true" if _evs_val else "false")
 
     # ── Profile: remote ──────────────────────────────────────────────
     if cfg.profile == "remote":
@@ -632,19 +641,28 @@ async def connect(
     # Create NexusFS via factory
     from nexus.factory import create_nexus_fs
 
-    nx_fs = await create_nexus_fs(
-        backend=backend,
-        metadata_store=metadata_store,
-        record_store=record_store,
-        is_admin=cfg.is_admin,
-        cache=cache_cfg,
-        permissions=perm_cfg,
-        distributed=dist_cfg,
-        parsing=parse_cfg,
-        enabled_bricks=enabled_bricks,
-        audit=audit_cfg,
-        federation=federation,
-    )
+    try:
+        nx_fs = await create_nexus_fs(
+            backend=backend,
+            metadata_store=metadata_store,
+            record_store=record_store,
+            is_admin=cfg.is_admin,
+            cache=cache_cfg,
+            permissions=perm_cfg,
+            distributed=dist_cfg,
+            parsing=parse_cfg,
+            enabled_bricks=enabled_bricks,
+            audit=audit_cfg,
+            federation=federation,
+        )
+    finally:
+        # R1 fix (Issue #3778): restore any env vars we mutated during boot
+        # so they don't leak across connect() calls in the same process.
+        for _k, _prior in _env_to_restore.items():
+            if _prior is None:
+                os.environ.pop(_k, None)
+            else:
+                os.environ[_k] = _prior
 
     # Set memory config for Memory API
     if cfg.zone_id or cfg.user_id or cfg.agent_id:

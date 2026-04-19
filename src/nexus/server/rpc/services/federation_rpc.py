@@ -133,12 +133,23 @@ class FederationRPCService:
         }
 
     def _to_zone_relative(self, zone_id: str, global_path: str) -> str:
-        """Convert global path to zone-relative path.
+        """Convert global path to zone-relative path (R20.6'' fix).
 
-        For root zone, global and zone-relative are the same.
-        For non-root zones, strip the mount prefix.
+        For the root zone, global and zone-relative are the same.
+        For non-root zones, strip the zone's known global mount prefix.
+        We read the mount from ``ZoneManager._mounts_by_target`` (R20.5
+        bookkeeping), which already tracks every zone's global VFS
+        mount — no extra walking required, and the lookup works for
+        both root-level and deeply-nested zones.
 
-        Example: zone="corp" mounted at "/corp" → "/corp/eng" becomes "/eng"
+        Example: ``corp`` mounted at ``/corp`` → ``/corp/eng`` → ``/eng``.
+        ``corp-eng`` mounted at ``/eng`` in corp (which is at ``/corp``
+        in root, so globally at ``/corp/eng``) →
+        ``/corp/eng/team-x`` → ``/team-x``.
+
+        Fallback (zone not yet mounted locally) returns ``global_path``
+        unchanged — preserves the pre-R20.6'' behavior for untranslatable
+        paths so the originator's own DLC path still works.
         """
         from nexus.contracts.constants import ROOT_ZONE_ID
 
@@ -146,20 +157,11 @@ class FederationRPCService:
         if zone_id == root_zone:
             return global_path
 
-        # Find where this zone is mounted by scanning root zone's metastore
-        root_store = self._zone_manager.get_store(root_zone)
-        if root_store is None:
+        mount_point = self._zone_manager._global_mount_of(zone_id)
+        if mount_point is None:
             return global_path
-
-        # Walk path prefixes to find mount point for this zone
-        parts = global_path.strip("/").split("/")
-        for i in range(len(parts)):
-            prefix = "/" + "/".join(parts[: i + 1])
-            meta = root_store.get(prefix)
-            if meta is not None and meta.is_mount and meta.target_zone_id == zone_id:
-                # Strip mount prefix
-                relative = global_path[len(prefix) :]
-                return relative if relative else "/"
-
-        # No mount found — assume path is already zone-relative
+        if global_path == mount_point:
+            return "/"
+        if global_path.startswith(mount_point + "/"):
+            return global_path[len(mount_point) :]
         return global_path

@@ -494,18 +494,41 @@ class ZoneManager:
             # via the Rust catch-up scan once the local zone appears.
             return
 
-        # Reconstruct the global DLC path: replicated DT_MOUNT entries
-        # only carry the zone-relative local_path, so for non-root
-        # parent zones we prepend the parent zone id to match the
-        # originating node's DLC key (e.g. zone='corp', local='/eng' →
-        # global='/corp/eng').
-        global_path = mount_path
-        if (
-            parent_zone_id != self._root_zone_id
-            and parent_zone_id
-            and not mount_path.startswith(f"/{parent_zone_id}")
-        ):
-            global_path = f"/{parent_zone_id}{mount_path}"
+        # Reconstruct the global DLC path for this mount.
+        #
+        # Replicated DT_MOUNT entries carry only ``mount_path`` — which
+        # may be zone-relative (common) or, for nested zones whose
+        # ``_to_zone_relative`` couldn't resolve them on the originator,
+        # the full global path. We handle both cases by looking up the
+        # parent zone's own global mount in ``_mounts_by_target`` (R20.5
+        # bookkeeping populated by every successful ``mount()``) and
+        # only prepending it when ``mount_path`` isn't already global.
+        #
+        # Pre-R20.6'' this assumed ``parent_zone_id`` == parent's path
+        # segment (e.g. ``corp-eng`` → ``/corp-eng``), which broke any
+        # zone whose VFS mount differs from its id — the canonical case
+        # being ``corp-eng`` mounted at ``/corp/eng``.
+        if parent_zone_id == self._root_zone_id or not parent_zone_id:
+            global_path = mount_path
+        else:
+            parent_global = self._global_mount_of(parent_zone_id)
+            if parent_global is None:
+                # Parent's own mount event hasn't arrived here yet.
+                # A catch-up scan will re-emit this event after the
+                # parent is wired up.
+                logger.debug(
+                    "mount-event: parent zone %s not yet mounted locally;"
+                    " deferring DLC wiring for %s",
+                    parent_zone_id,
+                    mount_path,
+                )
+                return
+            if mount_path.startswith(parent_global + "/") or mount_path == parent_global:
+                # Originator stored full global path (``_to_zone_relative``
+                # fell through). Use as-is.
+                global_path = mount_path
+            else:
+                global_path = parent_global + mount_path if mount_path != "/" else parent_global
 
         try:
             self.mount(
@@ -526,6 +549,22 @@ class ZoneManager:
                 target_zone_id,
                 exc,
             )
+
+    def _global_mount_of(self, zone_id: str) -> str | None:
+        """Return one global VFS mount path where ``zone_id`` is
+        currently mounted on this node, or ``None``.
+
+        Reads the R20.5 ``_mounts_by_target`` index, populated by
+        every successful ``mount()``. Crosslinks populate multiple
+        entries for the same zone — any one works as a prefix since
+        all surfaces share the same zone-relative key space.
+        """
+        entries = self._mounts_by_target.get(zone_id)
+        if not entries:
+            return None
+        # Any entry works; take the lexicographically smallest for
+        # deterministic behavior across tests.
+        return min(dlc_global for (_parent, _mpath, dlc_global) in entries)
 
     def install_mount_hook(self) -> None:
         """Register the DT_MOUNT apply-event callback with Rust (R16.2).

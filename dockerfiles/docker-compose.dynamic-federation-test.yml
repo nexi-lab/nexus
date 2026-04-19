@@ -86,9 +86,14 @@ services:
       # Runtime
       NEXUS_USE_UVLOOP: "true"
       RUST_LOG: info,nexus_raft=debug
-    ports:
-      - "${NEXUS_PORT:-2026}:2026"
-      - "2126:2126"
+    # Local workaround: host ports commented out because Windows Docker
+    # Desktop's Hyper-V reserves 2085-2184 after boot (random on each
+    # restart). E2E tests use internal dyn-nexus-network hostnames
+    # (nexus-1:2026, nexus-1:2028) from the in-compose `test` service,
+    # so host publishing is not required.
+    # ports:
+    #   - "${NEXUS_PORT:-2026}:2026"
+    #   - "2126:2126"
     volumes:
       - dyn_nexus1_data:/app/data
     networks:
@@ -129,9 +134,10 @@ services:
       NEXUS_BACKEND: ${NEXUS_BACKEND:-local}
       NEXUS_USE_UVLOOP: "true"
       RUST_LOG: info,nexus_raft=debug
-    ports:
-      - "2027:2026"
-      - "2127:2126"
+    # Local workaround (see nexus-1 note): host publish commented out.
+    # ports:
+    #   - "2027:2026"
+    #   - "2127:2126"
     volumes:
       - dyn_nexus2_data:/app/data
     networks:
@@ -161,8 +167,12 @@ services:
       NEXUS_PEERS: "nexus-1:2126,nexus-2:2126,witness:2126"
       NEXUS_DATA_DIR: /home/nexus/data
       RUST_LOG: info,nexus_raft=debug
-    ports:
-      - "2128:2126"
+    # Local workaround: host port publish commented out because Windows
+    # Docker Desktop reserves 2085-2184 in Hyper-V excluded-range after
+    # boot (random on each restart). Witness is only reached via the
+    # internal dyn-nexus-network — tests do not hit it from host.
+    # ports:
+    #   - "2128:2126"
     volumes:
       - dyn_witness_data:/home/nexus/data
     networks:

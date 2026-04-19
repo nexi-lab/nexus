@@ -91,7 +91,7 @@ def _resolve_vec_backend(search_svc):
     Used *only* for setup: SANDBOX ships no background auto-indexer, so
     tests must explicitly surface content into the vec backend after
     write / edit / unlink. Retrieval assertions still go through the
-    public ``semantic_search`` entrypoint — see ``_public_search_paths``.
+    public ``semantic_search`` entrypoint — see ``_public_semantic_hits``.
 
     Returns None when connect() was not called with
     ``enable_vector_search=True`` or the optional deps (sqlite-vec,
@@ -136,19 +136,28 @@ def _count_vec_rows(vec_backend, path: str, chunk_index: int = 0) -> int:
     return int(row[0]) if row else 0
 
 
-async def _public_search_paths(
+async def _public_semantic_hits(
     search_svc, query: str, path: str = "/workspace/demo", limit: int = 5
-) -> list[str]:
+) -> list[dict]:
     """Retrieval via the public ``SearchService.semantic_search`` path.
 
     On SANDBOX this routes through ``_semantic_search_sandbox`` →
-    local sqlite-vec → federation → BM25S. That's the exact surface
-    users hit (MCP ``nexus_semantic_search``, HTTP
-    ``/api/v2/search/query``), so a regression in wiring, zone
-    filtering, or fallback behaviour is caught here.
+    local sqlite-vec → federation → BM25S. Returns the full hit dicts
+    (including ``semantic_degraded`` on fallback) so callers can
+    distinguish a real semantic match from a BM25S fallback — the
+    retrieval-quality gate must fail when the vector path silently
+    degrades.
     """
     svc = search_svc._service_instance
-    hits = await svc.semantic_search(query, path=path, limit=limit, search_mode="semantic")
+    return await svc.semantic_search(query, path=path, limit=limit, search_mode="semantic")
+
+
+def _hits_degraded(hits: list[dict]) -> bool:
+    """True iff any hit carries ``semantic_degraded=True`` (BM25 fallback)."""
+    return any(bool(h.get("semantic_degraded")) for h in hits)
+
+
+def _paths(hits: list[dict]) -> list[str]:
     return [h.get("path", "") for h in hits]
 
 
@@ -355,29 +364,41 @@ async def main() -> int:
                 )
 
                 hits_count = 0
-                per_q: list[tuple[str, bool, list[str]]] = []
+                degraded_count = 0
+                per_q: list[tuple[str, bool, list[str], bool]] = []
                 for qa in HERB_QA_SET:
                     q = qa["question"]
                     expected = qa["expected_file"]
                     try:
-                        # Public path — goes through semantic_search →
-                        # _semantic_search_sandbox → local sqlite-vec.
-                        paths = await _public_search_paths(search_svc, q, limit=5)
+                        hits = await _public_semantic_hits(search_svc, q, limit=5)
                     except Exception as e:
-                        per_q.append((q, False, [f"error: {e}"]))
+                        per_q.append((q, False, [f"error: {e}"], False))
                         continue
-                    if expected in paths:
+                    paths = _paths(hits)
+                    degraded = _hits_degraded(hits)
+                    if degraded:
+                        degraded_count += 1
+                    if expected in paths and not degraded:
+                        # Count as a hit ONLY when the vector path served
+                        # the query — a BM25 fallback hit is a silent
+                        # degradation, not a retrieval-quality win.
                         hits_count += 1
-                        per_q.append((q, True, paths))
+                        per_q.append((q, True, paths, degraded))
                     else:
-                        per_q.append((q, False, paths))
-                for q, ok, paths in per_q:
+                        per_q.append((q, False, paths, degraded))
+                for q, ok, paths, degraded in per_q:
                     mark = "\u2713" if ok else "\u2717"
-                    print(f"    {mark} {q[:56]}")
+                    deg_note = " [degraded→BM25]" if degraded else ""
+                    print(f"    {mark} {q[:56]}{deg_note}")
                     if not ok:
                         print(f"        top-5: {paths}")
                 check(
-                    f"HERB retrieval {hits_count}/8 >= 7/8",
+                    "no semantic_degraded results in vector mode",
+                    degraded_count == 0,
+                    f"{degraded_count}/8 queries fell back to BM25 — vector path is broken",
+                )
+                check(
+                    f"HERB retrieval {hits_count}/8 >= 7/8 (non-degraded)",
                     hits_count >= 7,
                     f"{hits_count}/8 ({hits_count * 100 // 8}%)",
                 )
@@ -438,9 +459,15 @@ async def main() -> int:
                 rows = await _vec_upsert_file(vec_backend, nx, "/workspace/demo/plan.md")
                 check("re-upsert wrote >= 1 row", rows >= 1, f"rows={rows}")
 
-                new_paths = await _public_search_paths(
+                fresh_hits = await _public_semantic_hits(
                     search_svc, "Kubernetes orchestration", limit=5
                 )
+                check(
+                    "freshness query not degraded (vector path served)",
+                    not _hits_degraded(fresh_hits),
+                    "semantic_degraded=True — fell back to BM25",
+                )
+                new_paths = _paths(fresh_hits)
                 check(
                     "freshness — new content is top-K via semantic_search",
                     "/workspace/demo/plan.md" in new_paths,
@@ -492,7 +519,13 @@ async def main() -> int:
                 upserted = await _vec_upsert_file(vec_backend, nx, del_path)
                 check("pre-delete upsert wrote row", upserted >= 1, f"rows={upserted}")
 
-                paths = await _public_search_paths(search_svc, "Quantum entanglement", limit=5)
+                pre_hits = await _public_semantic_hits(search_svc, "Quantum entanglement", limit=5)
+                check(
+                    "pre-delete query not degraded (vector path served)",
+                    not _hits_degraded(pre_hits),
+                    "semantic_degraded=True — fell back to BM25",
+                )
+                paths = _paths(pre_hits)
                 check(
                     "pre-delete file surfaces via semantic_search",
                     del_path in paths,
@@ -518,9 +551,10 @@ async def main() -> int:
 
                 # Wider window via the public path — catches stale rows
                 # that a top-5 ranking quirk could otherwise hide.
-                wide_paths = await _public_search_paths(
+                wide_hits = await _public_semantic_hits(
                     search_svc, "Quantum entanglement", limit=20
                 )
+                wide_paths = _paths(wide_hits)
                 check(
                     "post-delete deleted path absent from top-20",
                     del_path not in wide_paths,

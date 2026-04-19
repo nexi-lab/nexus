@@ -12,9 +12,12 @@ import logging
 import os
 import re
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import click
+
+if TYPE_CHECKING:
+    from nexus.bricks.auth.envelope import EncryptionProvider
 from rich.table import Table
 
 from nexus.cli.theme import console
@@ -894,7 +897,54 @@ def auth_migrate_to_postgres(
 # Test hook: lets test modules register a provider factory without building
 # real Vault/KMS wiring. Production code paths never use this registry — they
 # construct a provider from CLI args (lands with the Phase D consumer).
-_TEST_PROVIDER_REGISTRY: dict[str, Callable[[], object]] = {}
+_TEST_PROVIDER_REGISTRY: dict[str, Callable[[], "EncryptionProvider"]] = {}
+
+
+def _build_vault_provider(
+    *,
+    vault_addr: str | None,
+    vault_token: str | None,
+    vault_key: str | None,
+    vault_mount: str,
+) -> "EncryptionProvider":  # noqa: F821
+    if not vault_key:
+        raise click.ClickException("--vault-key is required for --provider=vault")
+    addr = vault_addr or os.environ.get("VAULT_ADDR")
+    token = vault_token or os.environ.get("VAULT_TOKEN")
+    if not addr:
+        raise click.ClickException("--vault-addr or VAULT_ADDR env var is required")
+    if not token:
+        raise click.ClickException("--vault-token or VAULT_TOKEN env var is required")
+    try:
+        import hvac
+    except ImportError as exc:
+        raise click.ClickException(
+            "hvac not installed. Install with: pip install 'nexus[vault]'"
+        ) from exc
+    from nexus.bricks.auth.envelope_providers.vault_transit import VaultTransitProvider
+
+    client = hvac.Client(url=addr, token=token)
+    return VaultTransitProvider(client, key_name=vault_key, mount_point=vault_mount)
+
+
+def _build_kms_provider(
+    *,
+    kms_key_id: str | None,
+    kms_region: str | None,
+    kms_config_version: int,
+) -> "EncryptionProvider":  # noqa: F821
+    if not kms_key_id:
+        raise click.ClickException("--kms-key-id is required for --provider=aws-kms")
+    try:
+        import boto3
+    except ImportError as exc:
+        raise click.ClickException(
+            "boto3 not installed. Install with: pip install 'nexus[aws]'"
+        ) from exc
+    from nexus.bricks.auth.envelope_providers.aws_kms import AwsKmsProvider
+
+    client = boto3.client("kms", region_name=kms_region) if kms_region else boto3.client("kms")
+    return AwsKmsProvider(client, key_id=kms_key_id, config_version=kms_config_version)
 
 
 @auth.command("rotate-kek")
@@ -918,12 +968,42 @@ _TEST_PROVIDER_REGISTRY: dict[str, Callable[[], object]] = {}
     type=int,
     help="Upper bound on rows rewrapped across all batches (omit for no cap).",
 )
+@click.option(
+    "--provider",
+    type=click.Choice(["vault", "aws-kms"]),
+    default=None,
+    help="Encryption provider to construct (vault|aws-kms). Required unless "
+    "NEXUS_AUTH_ROTATE_KEK_TEST_PROVIDER_ID is set.",
+)
+@click.option("--vault-addr", default=None, help="Vault URL (falls back to VAULT_ADDR env).")
+@click.option("--vault-token", default=None, help="Vault token (falls back to VAULT_TOKEN env).")
+@click.option("--vault-key", default=None, help="Vault transit key name (derived=true required).")
+@click.option(
+    "--vault-mount", default="transit", show_default=True, help="Vault transit mount point."
+)
+@click.option("--kms-key-id", default=None, help="AWS KMS key id, alias, or ARN.")
+@click.option("--kms-region", default=None, help="AWS region (falls back to boto3 default chain).")
+@click.option(
+    "--kms-config-version",
+    default=1,
+    show_default=True,
+    type=int,
+    help="Provider config version to stamp into wrap ciphertexts.",
+)
 def auth_rotate_kek(
     db_url: str,
     tenant: str,
     apply: bool,
     batch_size: int,
     max_rows: int | None,
+    provider: str | None,
+    vault_addr: str | None,
+    vault_token: str | None,
+    vault_key: str | None,
+    vault_mount: str,
+    kms_key_id: str | None,
+    kms_region: str | None,
+    kms_config_version: int,
 ) -> None:
     """Rewrap auth_profiles rows at the current provider KEK version.
 
@@ -940,18 +1020,31 @@ def auth_rotate_kek(
         rotate_kek_for_tenant,
     )
 
+    encryption_provider: EncryptionProvider
     test_provider_id = os.environ.get("NEXUS_AUTH_ROTATE_KEK_TEST_PROVIDER_ID")
     if test_provider_id:
         factory = _TEST_PROVIDER_REGISTRY.get(test_provider_id)
         if factory is None:
             raise click.ClickException(f"Test provider id {test_provider_id!r} not registered")
         assert callable(factory)
-        provider = factory()
+        encryption_provider = factory()
+    elif provider == "vault":
+        encryption_provider = _build_vault_provider(
+            vault_addr=vault_addr,
+            vault_token=vault_token,
+            vault_key=vault_key,
+            vault_mount=vault_mount,
+        )
+    elif provider == "aws-kms":
+        encryption_provider = _build_kms_provider(
+            kms_key_id=kms_key_id,
+            kms_region=kms_region,
+            kms_config_version=kms_config_version,
+        )
     else:
         raise click.ClickException(
-            "No production provider wiring yet. This command is consumer-driven "
-            "— Phase D wires a real EncryptionProvider factory. Tests use "
-            "NEXUS_AUTH_ROTATE_KEK_TEST_PROVIDER_ID."
+            "--provider is required (vault|aws-kms) unless "
+            "NEXUS_AUTH_ROTATE_KEK_TEST_PROVIDER_ID is set."
         )
 
     engine = create_engine(db_url, future=True)
@@ -966,7 +1059,7 @@ def auth_rotate_kek(
         tenant_id = _uuid.UUID(str(row[0]))
 
         if not apply:
-            target = provider.current_version(tenant_id=tenant_id)
+            target = encryption_provider.current_version(tenant_id=tenant_id)
             with engine.begin() as conn:
                 conn.execute(text("SET LOCAL app.current_tenant = :tid"), {"tid": str(tenant_id)})
                 stale = conn.execute(
@@ -988,7 +1081,7 @@ def auth_rotate_kek(
         report = rotate_kek_for_tenant(
             engine,
             tenant_id=tenant_id,
-            encryption_provider=provider,
+            encryption_provider=encryption_provider,
             batch_size=batch_size,
             max_rows=max_rows,
         )

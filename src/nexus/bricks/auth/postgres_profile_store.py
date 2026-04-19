@@ -1233,10 +1233,12 @@ def rotate_kek_for_tenant(
     rewrapped = 0
     failed = 0
     tenant_label = str(tenant_id)
-    # Track profile ids that failed this run so they are not re-selected on
-    # subsequent batch iterations, preventing an infinite retry loop.
-    # ``id`` is unique per tenant (PK is (tenant_id, id)).
-    _failed_ids: list[str] = []
+    # Track (principal_id, id) pairs that failed this run so they are not
+    # re-selected on subsequent batch iterations, preventing an infinite retry
+    # loop. The table PK is (tenant_id, principal_id, id) so the same profile
+    # id can exist under multiple principals — keying failures on ``id`` alone
+    # would starve healthy rows that share an id with a failing one.
+    _failed_keys: list[tuple[uuid.UUID, str]] = []
     while True:
         if max_rows is not None and rewrapped + failed >= max_rows:
             break
@@ -1249,13 +1251,22 @@ def rotate_kek_for_tenant(
                 {"tid": str(tenant_id)},
             )
             # Exclude rows that already failed so the loop terminates.
-            if _failed_ids:
-                exclude_clause = " AND id != ALL(:skip_ids)"
+            # Postgres has no native tuple-ANY operator across mixed types,
+            # so we unzip into two parallel arrays and do a row-subscript test.
+            if _failed_keys:
+                skip_principals = [p for p, _ in _failed_keys]
+                skip_ids = [i for _, i in _failed_keys]
+                exclude_clause = (
+                    " AND NOT EXISTS (SELECT 1 FROM unnest("
+                    "CAST(:skip_principals AS UUID[]), :skip_ids) "
+                    "AS sk(p, i) WHERE sk.p = principal_id AND sk.i = id)"
+                )
                 params: dict[str, builtins.object] = {
                     "tid": tenant_id,
                     "target": target,
                     "lim": this_batch,
-                    "skip_ids": _failed_ids,
+                    "skip_principals": skip_principals,
+                    "skip_ids": skip_ids,
                 }
             else:
                 exclude_clause = ""
@@ -1298,7 +1309,7 @@ def rotate_kek_for_tenant(
                         row.kek_version,
                         type(exc).__name__,
                     )
-                    _failed_ids.append(row.id)
+                    _failed_keys.append((uuid.UUID(str(row.principal_id)), row.id))
                     failed += 1
                     continue
                 conn.execute(

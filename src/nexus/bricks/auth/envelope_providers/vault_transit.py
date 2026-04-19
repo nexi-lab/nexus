@@ -94,10 +94,33 @@ class VaultTransitProvider(EncryptionProvider):
         aad: bytes,  # noqa: ARG002
         kek_version: int,
     ) -> bytes:
+        # Verify the blob's embedded version matches the claimed kek_version.
+        # Vault ciphertext format is "vault:v<N>:<base64>"; decrypt_data uses
+        # the version from the blob itself, so a DB-column tamper that forges
+        # kek_version would silently decrypt without this check.
+        try:
+            blob_str = wrapped.decode("utf-8")
+            blob_version = int(blob_str.split(":", 2)[1].lstrip("v"))
+        except (UnicodeDecodeError, IndexError, ValueError) as exc:
+            raise WrappedDEKInvalid.from_row(
+                tenant_id=tenant_id,
+                profile_id="<unknown>",
+                kek_version=kek_version,
+                cause=f"Vault transit ciphertext malformed: {type(exc).__name__}",
+            ) from exc
+        if blob_version != kek_version:
+            raise WrappedDEKInvalid.from_row(
+                tenant_id=tenant_id,
+                profile_id="<unknown>",
+                kek_version=kek_version,
+                cause=(
+                    f"claimed kek_version={kek_version} does not match blob version={blob_version}"
+                ),
+            )
         try:
             resp = self._client.secrets.transit.decrypt_data(
                 name=self._key_name,
-                ciphertext=wrapped.decode("utf-8"),
+                ciphertext=blob_str,
                 context=self._context_b64(tenant_id),
                 mount_point=self._mount,
             )

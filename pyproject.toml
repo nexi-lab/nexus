@@ -178,6 +178,16 @@ profiling = [
     "pyroscope-io>=0.8.16",
     "pyroscope-otel",
 ]
+
+vault = [
+    # HashiCorp Vault client for VaultTransitProvider envelope encryption (Issue #3803)
+    "hvac>=1.2.0",
+]
+
+aws = [
+    # AWS SDK for AwsKmsProvider envelope encryption (Issue #3803)
+    "boto3>=1.34.0",
+]
 dev = [
     # Testing
     "pytest>=9.0.2",

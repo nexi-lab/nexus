@@ -4,8 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import re
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from nexus.bricks.auth.envelope_providers.vault_transit import (
+        VaultTransitProvider,
+    )
 
 from nexus.bricks.auth.envelope import (
     AADMismatch,
@@ -302,6 +308,59 @@ class TestInMemoryEncryptionProvider:
         with pytest.raises(WrappedDEKInvalid):
             prov.unwrap_dek(w, tenant_id=uuid.uuid4(), aad=b"a", kek_version=v)
         assert prov.unwrap_count == 1
+
+
+class TestVaultBlobVersionMismatch:
+    """Regression test for Codex finding: a forged `kek_version` column must
+    not allow decrypt when the Vault blob actually embeds a different version.
+    """
+
+    def _make_provider_without_init(self) -> VaultTransitProvider:
+        from nexus.bricks.auth.envelope_providers.vault_transit import (
+            VaultTransitProvider,
+        )
+
+        provider = VaultTransitProvider.__new__(VaultTransitProvider)
+        provider._client = None
+        provider._key_name = "k"
+        provider._mount = "transit"
+        return provider
+
+    def test_blob_version_mismatch_raises_wrapped_dek_invalid(self) -> None:
+        import uuid
+
+        prov = self._make_provider_without_init()
+        wrapped = b"vault:v1:ZmFrZWNpcGhlcnRleHQ="
+        tid = uuid.uuid4()
+        with pytest.raises(WrappedDEKInvalid) as exc_info:
+            prov.unwrap_dek(wrapped, tenant_id=tid, aad=b"a", kek_version=2)
+        assert "blob version=1" in str(exc_info.value) or "version=1" in repr(exc_info.value)
+
+    def test_malformed_blob_raises_wrapped_dek_invalid(self) -> None:
+        import uuid
+
+        prov = self._make_provider_without_init()
+        tid = uuid.uuid4()
+        with pytest.raises(WrappedDEKInvalid):
+            prov.unwrap_dek(b"not-a-vault-blob", tenant_id=tid, aad=b"a", kek_version=1)
+
+
+class TestKmsEncryptionContextIncludesVersion:
+    """Regression test for Codex finding: AWS KMS EncryptionContext must bind
+    `kek_version`, otherwise a tampered kek_version column decrypts silently.
+    """
+
+    def test_context_includes_kek_version(self) -> None:
+        from nexus.bricks.auth.envelope_providers.aws_kms import AwsKmsProvider
+
+        ctx = AwsKmsProvider._context(
+            __import__("uuid").UUID("00000000-0000-0000-0000-000000000001"),
+            b"aad-bytes",
+            kek_version=7,
+        )
+        assert ctx["kek_version"] == "7"
+        assert ctx["tenant_id"] == "00000000-0000-0000-0000-000000000001"
+        assert "aad_fingerprint" in ctx
 
 
 class TestMetricsImport:

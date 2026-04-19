@@ -1603,6 +1603,18 @@ wheels = [
 ]
 
 [[package]]
+name = "hvac"
+version = "2.4.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e2/57/b46c397fb3842cfb02a44609aa834c887f38dd75f290c2fc5a34da4b2fee/hvac-2.4.0.tar.gz", hash = "sha256:e0056ad9064e7923e874e6769015b032580b639e29246f5ab1044f7959c1c7e0", size = 332543 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/55/33/71e45a6bd6875f44a26f99da31c63b6840123e88bedf2c0b1ce429b8be12/hvac-2.4.0-py3-none-any.whl", hash = "sha256:008db5efd8c2f77bd37d2368ea5f713edceae1c65f11fd608393179478649e0f", size = 155921 },
+]
+
+[[package]]
 name = "hyperframe"
 version = "6.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2435,6 +2447,9 @@ all = [
     { name = "sqlite-vec" },
     { name = "txtai", extra = ["database", "graph"], marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'" },
 ]
+aws = [
+    { name = "boto3" },
+]
 cloud-sql = [
     { name = "cloud-sql-python-connector", extra = ["asyncpg"] },
 ]
@@ -2537,6 +2552,9 @@ test = [
     { name = "pytest-mock" },
     { name = "pytest-xdist" },
 ]
+vault = [
+    { name = "hvac" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -2565,6 +2583,7 @@ requires-dist = [
     { name = "blake3", specifier = ">=1.0.0" },
     { name = "bm25s", specifier = ">=0.2.0" },
     { name = "boto3", specifier = ">=1.42.4" },
+    { name = "boto3", marker = "extra == 'aws'", specifier = ">=1.34.0" },
     { name = "bsdiff4", specifier = ">=1.2.0" },
     { name = "cachebox", specifier = ">=4.0.0" },
     { name = "cachetools", specifier = ">=6.2.2" },
@@ -2596,6 +2615,7 @@ requires-dist = [
     { name = "greenlet", specifier = ">=3.0.0" },
     { name = "grpcio", specifier = ">=1.78.0" },
     { name = "httpx", extras = ["http2"], specifier = ">=0.28.1" },
+    { name = "hvac", marker = "extra == 'vault'", specifier = ">=1.2.0" },
     { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.0.0" },
     { name = "hypothesis", marker = "extra == 'test'", specifier = ">=6.0.0" },
     { name = "import-linter", marker = "extra == 'dev'", specifier = ">=2.0" },
@@ -2691,7 +2711,7 @@ requires-dist = [
     { name = "uvloop", marker = "sys_platform != 'win32'", specifier = ">=0.22.1" },
     { name = "watchfiles", specifier = ">=1.0.0" },
 ]
-provides-extras = ["performance", "pay", "monitoring", "mobile", "sandbox-monty", "sentry", "profiling", "dev", "test", "fuse", "postgres", "cloud-sql", "semantic-search", "semantic-search-remote", "e2b", "docker", "kafka", "nats-export", "pubsub", "sse", "event-streaming", "all"]
+provides-extras = ["performance", "pay", "monitoring", "mobile", "sandbox-monty", "sentry", "profiling", "vault", "aws", "dev", "test", "fuse", "postgres", "cloud-sql", "semantic-search", "semantic-search-remote", "e2b", "docker", "kafka", "nats-export", "pubsub", "sse", "event-streaming", "all"]
 
 [package.metadata.requires-dev]
 dev = [

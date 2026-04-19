@@ -487,3 +487,105 @@ class TestRotateKEKFailures:
         assert report.rows_rewrapped == 2
         assert report.rows_failed == 1
         assert report.rows_remaining == 1
+
+    def test_skiplist_uses_composite_principal_id_and_id(
+        self,
+        pg_engine: Engine,
+        tenant_id: uuid.UUID,
+        encryption_provider: InMemoryEncryptionProvider,
+    ) -> None:
+        """Regression for Codex finding: skip-list must key on (principal_id, id).
+
+        Two principals in the same tenant each own a profile with the same
+        ``id="shared"``. If the failing row is skipped by ``id`` alone, the
+        *other* principal's row with the same id is also hidden from the next
+        SELECT and never rotates.
+        """
+        from nexus.bricks.auth.envelope import WrappedDEKInvalid
+
+        p_a = ensure_principal(
+            pg_engine,
+            tenant_id=tenant_id,
+            kind="human",
+            external_sub=f"skip-a-{uuid.uuid4()}",
+            auth_method="test",
+        )
+        p_b = ensure_principal(
+            pg_engine,
+            tenant_id=tenant_id,
+            kind="human",
+            external_sub=f"skip-b-{uuid.uuid4()}",
+            auth_method="test",
+        )
+
+        store_a = PostgresAuthProfileStore(
+            PG_URL,
+            tenant_id=tenant_id,
+            principal_id=p_a,
+            engine=pg_engine,
+            encryption_provider=encryption_provider,
+        )
+        store_b = PostgresAuthProfileStore(
+            PG_URL,
+            tenant_id=tenant_id,
+            principal_id=p_b,
+            engine=pg_engine,
+            encryption_provider=encryption_provider,
+        )
+
+        store_a.upsert_with_credential(
+            make_profile("shared-id"),
+            ResolvedCredential(kind="api_key", api_key="secret-a"),
+        )
+        store_b.upsert_with_credential(
+            make_profile("shared-id"),
+            ResolvedCredential(kind="api_key", api_key="secret-b"),
+        )
+
+        encryption_provider.rotate()
+
+        with pg_engine.begin() as conn:
+            conn.execute(text("SET LOCAL app.current_tenant = :tid"), {"tid": str(tenant_id)})
+            row = conn.execute(
+                text(
+                    "SELECT wrapped_dek FROM auth_profiles WHERE tenant_id = :tid "
+                    "AND principal_id = :pid AND id = 'shared-id'"
+                ),
+                {"tid": tenant_id, "pid": p_a},
+            ).fetchone()
+            assert row is not None
+            bad_wrapped = bytes(row.wrapped_dek)
+
+        real = encryption_provider
+
+        class _FlakyForPrincipalA:
+            def current_version(self, *, tenant_id):
+                return real.current_version(tenant_id=tenant_id)
+
+            def wrap_dek(self, dek, *, tenant_id, aad):
+                return real.wrap_dek(dek, tenant_id=tenant_id, aad=aad)
+
+            def unwrap_dek(self, wrapped, *, tenant_id, aad, kek_version):
+                if wrapped == bad_wrapped:
+                    raise WrappedDEKInvalid.from_row(
+                        tenant_id=tenant_id,
+                        profile_id="shared-id",
+                        kek_version=kek_version,
+                        cause="simulated principal-a failure",
+                    )
+                return real.unwrap_dek(
+                    wrapped, tenant_id=tenant_id, aad=aad, kek_version=kek_version
+                )
+
+        report = rotate_kek_for_tenant(
+            pg_engine,
+            tenant_id=tenant_id,
+            encryption_provider=_FlakyForPrincipalA(),
+            batch_size=1,
+        )
+
+        assert report.rows_failed == 1
+        assert report.rows_rewrapped == 1, (
+            "principal_b's row with the same id must rotate; skip-list keyed "
+            "on id alone would hide it after principal_a's failure"
+        )

@@ -722,7 +722,7 @@ def generate_stubs(
         "Re-run: python scripts/codegen_kernel_abi.py",
         '"""',
         "",
-        "from typing import Any",
+        "from typing import Any, Self",
         "",
     ]
 

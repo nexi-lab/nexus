@@ -7,7 +7,7 @@ Auto-generated from rust/kernel/src/*.rs exports.
 Re-run: python scripts/codegen_kernel_abi.py
 """
 
-from typing import Any
+from typing import Any, Self
 
 # ---------------------------------------------------------------------------
 # Path utilities (path_utils.rs)

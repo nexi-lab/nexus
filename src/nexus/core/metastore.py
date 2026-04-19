@@ -345,7 +345,7 @@ class MetastoreABC(ABC):
 
 
 class RustMetastoreProxy(MetastoreABC):
-    """MetastoreABC implementation backed by Rust RedbMetastore.
+    """MetastoreABC implementation backed by Rust LocalMetastore.
 
     Delegates all operations to the Rust kernel's metastore via PyKernel
     methods (metastore_get, metastore_put, etc.). Rust kernel exclusively

@@ -3,7 +3,7 @@
 //! Rust equivalent of Python `MetastoreABC` (one of the Four Storage Pillars).
 //! Provides ordered key-value storage for file metadata (inodes, config, topology).
 //!
-//! Local impl: RedbMetastore (redb crate, ~5μs reads).
+//! Local impl: LocalMetastore (redb crate, ~5μs reads).
 //! Remote impl: gRPC client (existing network boundary).
 //!
 //! Issue #1868: Pure Rust ABI — no PyO3 dependency.
@@ -455,7 +455,12 @@ impl Metastore for MemoryMetastore {
     }
 }
 
-// ── RedbMetastore — pure Rust metastore using redb ──────────────────────
+// ── LocalMetastore — single-node redb-backed metastore ──────────────────
+//
+// Historic name: RedbMetastore. Renamed R20.4 because "redb" is a
+// shared implementation detail — the Raft state machine also uses
+// redb underneath. The distinguishing axis is "single-node vs
+// raft-replicated", captured by the Local / Zone naming pair.
 
 use redb::{Database, ReadableTable, TableDefinition};
 use std::path::Path;
@@ -473,15 +478,16 @@ const METADATA_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("metad
 /// keys for a given path.
 const FILE_METADATA_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("file_metadata");
 
-/// Pure Rust metastore backed by redb — ~5μs reads, zero GIL.
+/// Single-node (non-replicated) Metastore backed by redb — ~5μs reads,
+/// zero GIL.
 ///
-/// Replaces PyMetastoreAdapter on the hot path. The Rust kernel opens
-/// the redb database directly; Python no longer owns the metastore.
-pub(crate) struct RedbMetastore {
+/// Used by standalone deployments; federation mounts install a
+/// ``ZoneMetastore`` instead (same on-disk crate, raft-replicated).
+pub(crate) struct LocalMetastore {
     db: Arc<Database>,
 }
 
-impl RedbMetastore {
+impl LocalMetastore {
     /// Open or create a redb database at the given path.
     pub fn open(path: &Path) -> Result<Self, MetastoreError> {
         if let Some(parent) = path.parent() {
@@ -689,7 +695,7 @@ fn deserialize_metadata(data: &[u8]) -> Result<FileMetadata, MetastoreError> {
     })
 }
 
-impl Metastore for RedbMetastore {
+impl Metastore for LocalMetastore {
     fn get(&self, path: &str) -> Result<Option<FileMetadata>, MetastoreError> {
         let txn = self
             .db

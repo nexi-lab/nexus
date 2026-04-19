@@ -1079,7 +1079,7 @@ impl PyKernel {
 
     // ── Metastore wiring ──────────────────────────────────────────────
 
-    /// Wire RedbMetastore by path — Rust kernel opens redb directly.
+    /// Wire LocalMetastore by path — Rust kernel opens redb directly.
     /// Eliminates GIL crossing on every metastore.get/put.
     fn set_metastore_path(&mut self, path: &str) -> PyResult<()> {
         self.inner.set_metastore_path(path).map_err(Into::into)
@@ -1885,7 +1885,7 @@ impl PyKernel {
         };
 
         // Metastore resolution: py_zone_handle -> ZoneMetastore + raft_backend
-        //                       metastore_path -> RedbMetastore
+        //                       metastore_path -> LocalMetastore
         let (metastore, raft_backend) = if let Some(zh) = py_zone_handle {
             let zh_ref = zh
                 .cast::<nexus_raft::pyo3_bindings::PyZoneHandle>()
@@ -1906,9 +1906,10 @@ impl PyKernel {
                 );
             (Some(ms), Some((consensus, handle)))
         } else if let Some(ms_path) = metastore_path {
-            let ms = crate::metastore::RedbMetastore::open(std::path::Path::new(ms_path)).map_err(
-                |e| pyo3::exceptions::PyIOError::new_err(format!("RedbMetastore: {e:?}")),
-            )?;
+            let ms = crate::metastore::LocalMetastore::open(std::path::Path::new(ms_path))
+                .map_err(|e| {
+                    pyo3::exceptions::PyIOError::new_err(format!("LocalMetastore: {e:?}"))
+                })?;
             (
                 Some(Arc::new(ms) as Arc<dyn crate::metastore::Metastore>),
                 None,

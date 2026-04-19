@@ -1039,7 +1039,7 @@ PILLAR_ADAPTERS: dict[str, dict[str, str]] = {
         # holds a `dyn LlmStreamingBackend` trait object that can't be FromPyObject-extracted.
         "skip_methods": {"as_cas", "as_llm_streaming"},
     },
-    # PyMetastoreAdapter removed (Phase 9) — Rust kernel uses RedbMetastore directly.
+    # PyMetastoreAdapter removed (Phase 9) — Rust kernel uses LocalMetastore directly.
     # set_metastore_path() opens redb; no Python metastore fallback needed.
     # "Metastore": { ... },
 }
@@ -2660,7 +2660,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "",
             "    // ── Metastore wiring ──────────────────────────────────────────────",
             "",
-            "    /// Wire RedbMetastore by path — Rust kernel opens redb directly.",
+            "    /// Wire LocalMetastore by path — Rust kernel opens redb directly.",
             "    /// Eliminates GIL crossing on every metastore.get/put.",
             "    fn set_metastore_path(&mut self, path: &str) -> PyResult<()> {",
             "        self.inner.set_metastore_path(path).map_err(Into::into)",
@@ -3431,7 +3431,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "        };",
             "",
             "        // Metastore resolution: py_zone_handle -> ZoneMetastore + raft_backend",
-            "        //                       metastore_path -> RedbMetastore",
+            "        //                       metastore_path -> LocalMetastore",
             "        let (metastore, raft_backend) = if let Some(zh) = py_zone_handle {",
             "            let zh_ref = zh.cast::<nexus_raft::pyo3_bindings::PyZoneHandle>()",
             '                .map_err(|e| pyo3::exceptions::PyTypeError::new_err(format!("expected ZoneHandle: {e}")))?;',
@@ -3449,8 +3449,8 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "                );",
             "            (Some(ms), Some((consensus, handle)))",
             "        } else if let Some(ms_path) = metastore_path {",
-            "            let ms = crate::metastore::RedbMetastore::open(std::path::Path::new(ms_path))",
-            '                .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("RedbMetastore: {e:?}")))?;',
+            "            let ms = crate::metastore::LocalMetastore::open(std::path::Path::new(ms_path))",
+            '                .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("LocalMetastore: {e:?}")))?;',
             "            (Some(Arc::new(ms) as Arc<dyn crate::metastore::Metastore>), None)",
             "        } else {",
             "            (None, None)",

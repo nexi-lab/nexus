@@ -17,7 +17,7 @@ use crate::dcache::{CachedEntry, DCache, DT_DIR, DT_MOUNT, DT_PIPE, DT_REG, DT_S
 use crate::dispatch::{FileEvent, FileEventType, MutationObserver, Trie};
 use crate::file_watch::FileWatcher;
 use crate::lock_manager::{LockManager, LockMode};
-use crate::metastore::RedbMetastore;
+use crate::metastore::LocalMetastore;
 use crate::mount_table::{
     canonicalize_mount_path as canonicalize, MountTable, RouteError, RustRouteResult,
 };
@@ -628,11 +628,11 @@ impl Kernel {
 
     // ── Metastore wiring ──────────────────────────────────────────────
 
-    /// Wire RedbMetastore by path — Rust kernel opens redb directly.
+    /// Wire LocalMetastore by path — Rust kernel opens redb directly.
     /// Only metastore wiring method (PyMetastoreAdapter removed in Phase 9).
     pub fn set_metastore_path(&mut self, path: &str) -> Result<(), KernelError> {
-        let ms = RedbMetastore::open(std::path::Path::new(path))
-            .map_err(|e| KernelError::IOError(format!("RedbMetastore: {e:?}")))?;
+        let ms = LocalMetastore::open(std::path::Path::new(path))
+            .map_err(|e| KernelError::IOError(format!("LocalMetastore: {e:?}")))?;
         self.metastore = Some(Box::new(ms));
         Ok(())
     }
@@ -1204,7 +1204,7 @@ impl Kernel {
     ///   - `backend` is None → no backend (sys_read returns miss).
     ///
     /// Caller provides an optional pre-built `Metastore` impl (e.g.
-    /// `RedbMetastore` for standalone, `ZoneMetastore` for federation).
+    /// `LocalMetastore` for standalone, `ZoneMetastore` for federation).
     /// Kernel just installs it — it doesn't know or care which impl.
     ///
     /// When `raft_backend` is `Some` **and** `zone_id` is the root zone,
@@ -4795,16 +4795,16 @@ mod tests {
     // Post-R20.3 the kernel passes full global paths to the metastore
     // trait. ZoneMetastore (the federation impl) internalizes the
     // translation to zone-relative — see rust/kernel/src/raft_metastore.rs
-    // for that coverage. These tests use RedbMetastore (full-path store)
+    // for that coverage. These tests use LocalMetastore (full-path store)
     // so they exercise the kernel call path without any translation.
 
     use crate::metastore::Metastore as MetastoreTrait;
 
-    /// Create a temporary RedbMetastore for testing.
-    fn temp_metastore() -> Arc<crate::metastore::RedbMetastore> {
+    /// Create a temporary LocalMetastore for testing.
+    fn temp_metastore() -> Arc<crate::metastore::LocalMetastore> {
         let dir = std::env::temp_dir().join(format!("nexus-test-ms-{}", uuid::Uuid::new_v4()));
         let path = dir.join("meta.redb");
-        Arc::new(crate::metastore::RedbMetastore::open(&path).unwrap())
+        Arc::new(crate::metastore::LocalMetastore::open(&path).unwrap())
     }
 
     #[test]

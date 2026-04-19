@@ -54,7 +54,7 @@ impl DriverLifecycleCoordinator {
     /// - `readonly`, `admin_only`, `io_profile` — access flags
     /// - `backend_name` — backend identifier string
     /// - `backend` — optional Rust backend (None = Python-side backend)
-    /// - `metastore` — optional per-mount metastore (ZoneMetastore or RedbMetastore)
+    /// - `metastore` — optional per-mount metastore (ZoneMetastore or LocalMetastore)
     /// - `raft_backend` — optional (ZoneConsensus, Handle) for federation DI
     #[allow(clippy::too_many_arguments)]
     pub fn mount(

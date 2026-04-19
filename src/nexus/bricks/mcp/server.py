@@ -1170,20 +1170,48 @@ async def create_mcp_server(
             Next page: nexus_semantic_search("machine learning algorithms", limit=10, offset=10)
         """
         nx_instance = _get_nexus_instance(ctx)
-        if not hasattr(nx_instance, "semantic_search"):
+
+        # Resolve SearchService via the kernel service registry (Issue #3778).
+        # NexusFS does not expose ``semantic_search`` as a direct attribute —
+        # the method lives on SearchService, reached through ``nx.service("search")``.
+        search_service: Any = None
+        try:
+            svc_fn = getattr(nx_instance, "service", None)
+            if svc_fn is not None:
+                search_service = svc_fn("search")
+        except Exception:
+            search_service = None
+
+        if search_service is None or not hasattr(search_service, "semantic_search"):
             return tool_error(
                 "unavailable",
-                "Semantic search not available (requires NexusFS with semantic search initialized).",
+                "Semantic search not available (search brick not loaded).",
+            )
+
+        # R4 review: pass an authenticated OperationContext so SearchService
+        # can enforce ReBAC permission filtering on semantic results. Without
+        # it, broad SANDBOX degraded queries would return cross-zone hits to
+        # any MCP caller. Fail closed if identity can't be resolved while a
+        # per-request API key was set (#3731 pattern used in glob/grep).
+        op_context = _resolve_mcp_operation_context(nx_instance, auth_provider=auth_provider)
+        if op_context is None and _request_api_key.get():
+            return tool_error(
+                "unauthorized",
+                "Per-request API key could not be verified; semantic search denied.",
             )
 
         try:
             # Over-fetch to allow has_more detection without a second round-trip
             fetch_limit = offset + limit * 2
-            all_results = await nx_instance.semantic_search(
-                query, path=path, search_mode=search_mode, limit=fetch_limit
+            all_results = await search_service.semantic_search(
+                query=query,
+                path=path,
+                search_mode=search_mode,
+                limit=fetch_limit,
+                context=op_context,
             )
         except Exception as e:
-            if "not initialized" in str(e).lower():
+            if "not initialized" in str(e).lower() or "not available" in str(e).lower():
                 return tool_error("unavailable", "Semantic search not available (not initialized).")
             return tool_error("internal", f"Error in semantic search: {e}", str(e))
 
@@ -1191,7 +1219,22 @@ async def create_mcp_server(
         paginated_results = all_results[offset : offset + limit]
         has_more = (offset + limit) < total
 
-        result = {
+        # Issue #3778: surface the SANDBOX BM25S-fallback flag at the envelope
+        # level so clients can display a "degraded" indicator without having
+        # to scan every item. Two sources:
+        #   1. Per-item stamp (``semantic_degraded`` on a result dict) — works
+        #      when fallback returned at least one hit.
+        #   2. Per-request contextvar (LAST_SEMANTIC_DEGRADED) set inside the
+        #      SearchService fallback — works even when fallback returned
+        #      zero results, so an outage is still distinguishable from a
+        #      genuine no-hit query (R2 review).
+        from nexus.contracts.search_types import LAST_SEMANTIC_DEGRADED
+
+        degraded = LAST_SEMANTIC_DEGRADED.get() or any(
+            isinstance(r, dict) and r.get("semantic_degraded") is True for r in paginated_results
+        )
+
+        result: dict[str, Any] = {
             "total": total,
             "count": len(paginated_results),
             "offset": offset,
@@ -1199,6 +1242,8 @@ async def create_mcp_server(
             "has_more": has_more,
             "next_offset": offset + limit if has_more else None,
         }
+        if degraded:
+            result["semantic_degraded"] = True
 
         return format_response(result, response_format)
 

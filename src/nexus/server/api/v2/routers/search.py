@@ -381,8 +381,16 @@ async def _handle_federated_search(
 
     Delegates to FederatedSearchDispatcher which fans out search
     across all accessible zones and fuses results via raw score merge.
+
+    Issue #3778: when the active deployment profile is SANDBOX and every
+    federated peer reports unreachable, delegates to
+    ``SearchService._semantic_with_sandbox_fallback`` so the response
+    surfaces BM25S results stamped with ``semantic_degraded=True``.
     """
-    from nexus.bricks.search.federated_search import FederatedSearchDispatcher
+    from nexus.bricks.search.federated_search import (
+        FederatedSearchDispatcher,
+        is_all_peers_failed,
+    )
 
     # Resolve ReBAC service
     rebac = getattr(request.app.state, "rebac_service", None)
@@ -419,6 +427,46 @@ async def _handle_federated_search(
         fusion_method=fusion_method,
     )
 
+    # Issue #3778: SANDBOX profile — degrade semantic federation to local
+    # BM25S when every peer is unreachable.  Stamp results with
+    # ``semantic_degraded=True`` so callers can distinguish degraded pages.
+    semantic_degraded = False
+    profile = (getattr(request.app.state, "deployment_profile", "") or "").lower()
+    if (
+        profile == "sandbox"
+        and search_type in ("semantic", "hybrid")
+        and is_all_peers_failed(fed_response)
+    ):
+        nexus_fs = getattr(request.app.state, "nexus_fs", None)
+        search_service = None
+        if nexus_fs is not None:
+            try:
+                search_service = nexus_fs.service("search")
+            except Exception:
+                search_service = None
+
+        if search_service is not None:
+            from nexus.server.dependencies import get_operation_context
+
+            op_context = get_operation_context(auth_result)
+            bm25s_results = await search_service.semantic_search(
+                query=q,
+                path=path_filter or "/",
+                limit=limit,
+                search_mode="semantic",  # triggers SANDBOX fallback inside SearchService
+                context=op_context,
+            )
+            # semantic_search stamped semantic_degraded=True on each dict
+            # AND sets LAST_SEMANTIC_DEGRADED for this task — we prefer the
+            # contextvar so an empty BM25S result still surfaces degradation
+            # (R2 review).
+            fed_response.results = list(bm25s_results)
+            from nexus.contracts.search_types import LAST_SEMANTIC_DEGRADED
+
+            semantic_degraded = LAST_SEMANTIC_DEGRADED.get() or any(
+                isinstance(r, dict) and r.get("semantic_degraded") is True for r in bm25s_results
+            )
+
     response_dict: dict[str, Any] = {
         "query": q,
         "search_type": search_type,
@@ -436,6 +484,8 @@ async def _handle_federated_search(
         response_dict["zones_skipped"] = fed_response.zones_skipped
     if fed_response.cached:
         response_dict["cached"] = True
+    if semantic_degraded:
+        response_dict["semantic_degraded"] = True
     return response_dict
 
 

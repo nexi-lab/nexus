@@ -1,7 +1,7 @@
 # Nexus AI Filesystem
 [project]
 name = "nexus-ai-fs"
-version = "0.9.30"
+version = "0.9.31"
 description = "Nexus = filesystem/context plane."
 readme = "README.md"
 requires-python = ">=3.14"
@@ -166,6 +166,20 @@ mobile = [
 sandbox-monty = [
     # Pydantic Monty — lightweight in-process Python sandbox (Issue #1316)
     "pydantic-monty>=0.0.4",
+]
+
+sandbox = [
+    # Issue #3778: SANDBOX profile — agent sandbox runtime (zero external services)
+    # pdf-inspector comes from core deps (see top of file) when Python 3.12
+    "bm25s>=0.2",
+    "cachetools>=5.0",
+    "tokenizers>=0.15",
+    # Local vector storage (sqlite-vec = SQLite extension, ~3 MB wheel).
+    # Loaded into the same nexus.db file via conn.enable_load_extension().
+    "sqlite-vec>=0.1",
+    # Remote embeddings via any provider (OpenAI / Cohere / Azure / etc.).
+    # BYO API key — picked up from the standard env vars by litellm.
+    "litellm>=1.74.0",
 ]
 
 sentry = [
@@ -379,6 +393,7 @@ markers = [
     "benchmark_ci: critical benchmarks run on every PR",
     "vault: marks tests that require a running Vault dev server (opt-in, see docs/guides/auth-envelope-encryption.md)",
     "kms: marks tests that require a reachable AWS KMS endpoint (opt-in, real AWS or LocalStack)",
+    "sandbox_memory: SANDBOX memory benchmark (skipped by default; run with -m sandbox_memory)",
 ]
 
 [tool.coverage.run]

@@ -26,7 +26,7 @@ concurrency:
 
 jobs:
   docker-build-smoke:
-    name: Docker Build Smoke Test
+    name: Docker Build — latest
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -41,13 +41,24 @@ jobs:
           context: .
           push: false
           target: builder
+          build-args: |
+            NEXUS_PROFILE_EXTRAS=all,performance,monitoring,docker,event-streaming,sentry,pay
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Build Docker image (full)
+      - name: Build Docker image (full — latest)
         uses: docker/build-push-action@v6
         with:
           context: .
           push: false
+          tags: ghcr.io/nexi-lab/nexus:latest
+          build-args: |
+            NEXUS_PROFILE_EXTRAS=all,performance,monitoring,docker,event-streaming,sentry,pay
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # Issue #3778: the `sandbox` Docker variant was dropped — SANDBOX
+          # profile is distributed via `pip install nexus-ai-fs[sandbox]`
+          # (single-process pypi install). Users wanting a containerized
+          # sandbox can trivially build their own `FROM python:3.14-slim +
+          # pip install nexus-ai-fs[sandbox]`. Revisit shipping a lean
+          # image only after core [project.dependencies] is slimmed.

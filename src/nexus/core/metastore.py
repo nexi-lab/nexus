@@ -26,11 +26,14 @@ This ABC defines the *operations* over those fields.
 from __future__ import annotations
 
 import builtins
+import logging
 from abc import ABC, abstractmethod
 from collections.abc import Iterator, Sequence
 from typing import Any
 
 from nexus.contracts.metadata import FileMetadata
+
+logger = logging.getLogger(__name__)
 
 
 def _sync_to_rust(kernel: Any, meta: FileMetadata) -> None:
@@ -461,6 +464,34 @@ class RustMetastoreProxy(MetastoreABC):
 
     def close(self) -> None:
         """No-op — Rust kernel manages redb lifecycle."""
+
+    # Pre-existing gap: RustMetastoreProxy has no xattr surface, so
+    # parsed_text (set by the auto_parse hook on other metastores for
+    # binary docs like .pdf/.docx) is not available here. grep then
+    # falls back to raw-byte reads, which skip non-UTF8 content. The
+    # shims below return empty so SearchService can hasattr-check
+    # uniformly; a one-time WARNING surfaces the limitation to operators
+    # rather than letting the silent-empty behaviour mask the gap.
+    _PARSED_TEXT_WARNING_EMITTED = False
+
+    def _warn_parsed_text_unavailable_once(self) -> None:
+        if not RustMetastoreProxy._PARSED_TEXT_WARNING_EMITTED:
+            RustMetastoreProxy._PARSED_TEXT_WARNING_EMITTED = True
+            logger.warning(
+                "[RustMetastoreProxy] parsed_text xattr cache is not "
+                "available on the Rust metastore — grep/index calls for "
+                "parseable binaries (.pdf/.docx/.xlsx) will fall back to "
+                "raw bytes and skip non-UTF8 payloads. Tracked as a "
+                "SANDBOX follow-up."
+            )
+
+    def get_searchable_text(self, path: str) -> str | None:  # noqa: ARG002
+        self._warn_parsed_text_unavailable_once()
+        return None
+
+    def get_searchable_text_bulk(self, paths: Sequence[str]) -> dict[str, str]:  # noqa: ARG002
+        self._warn_parsed_text_unavailable_once()
+        return {}
 
     @property
     def cache_stats(self) -> dict[str, Any]:

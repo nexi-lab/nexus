@@ -142,16 +142,27 @@ def mock_nx_with_workflows():
 
 @pytest.fixture
 def mock_nx_with_search():
-    """Create mock NexusFS with semantic search."""
+    """Create mock NexusFS with semantic search.
+
+    Issue #3778: semantic search flows through ``nx.service("search").semantic_search``
+    (not a direct attribute on NexusFS) since the MCP handler resolves
+    SearchService from the kernel service registry.
+    """
     nx = Mock()
     nx.sys_read = Mock(return_value=b"test")
     nx.sys_write = Mock()
 
-    # Add async semantic_search method
     async def mock_semantic_search(query, path="/", search_mode="semantic", limit=10, **kwargs):
         return [{"path": "/file1.txt", "score": 0.95, "snippet": "relevant content"}]
 
-    nx.semantic_search = AsyncMock(side_effect=mock_semantic_search)
+    _mock_search = Mock()
+    _mock_search.semantic_search = AsyncMock(side_effect=mock_semantic_search)
+    # Alias kept for legacy assertions that target the search service callable.
+    nx.semantic_search = _mock_search.semantic_search
+
+    _service_map = {"search": _mock_search}
+    nx.service = Mock(side_effect=lambda name: _service_map.get(name))
+    nx._mock_search = _mock_search
 
     return nx
 
@@ -929,9 +940,14 @@ class TestSearchTools:
         assert "items" in response
         assert "total" in response
         assert isinstance(response["items"], list)
-        # Over-fetches limit*2 to allow has_more detection without a second round-trip
-        mock_nx_with_search.semantic_search.assert_called_once_with(
-            "authentication code", path="/", search_mode="semantic", limit=10
+        # Over-fetches limit*2 to allow has_more detection without a second round-trip.
+        # #3778: handler now resolves SearchService via nx.service("search").
+        mock_nx_with_search._mock_search.semantic_search.assert_called_once_with(
+            query="authentication code",
+            path="/",
+            search_mode="semantic",
+            limit=10,
+            context=mock_nx_with_search._init_cred,
         )
 
     async def test_semantic_search_with_scoped_path(self, mock_nx_with_search):
@@ -943,8 +959,12 @@ class TestSearchTools:
 
         response = json.loads(result)
         assert "items" in response
-        mock_nx_with_search.semantic_search.assert_called_once_with(
-            "auth", path="/workspace/src", search_mode="semantic", limit=10
+        mock_nx_with_search._mock_search.semantic_search.assert_called_once_with(
+            query="auth",
+            path="/workspace/src",
+            search_mode="semantic",
+            limit=10,
+            context=mock_nx_with_search._init_cred,
         )
 
     async def test_semantic_search_with_search_mode(self, mock_nx_with_search):
@@ -956,15 +976,26 @@ class TestSearchTools:
 
         response = json.loads(result)
         assert "items" in response
-        mock_nx_with_search.semantic_search.assert_called_once_with(
-            "token refresh", path="/", search_mode="hybrid", limit=10
+        # R4 review (#3778): MCP now threads an authenticated OperationContext
+        # into semantic_search. The mock resolver returns the mock's _init_cred.
+        mock_nx_with_search._mock_search.semantic_search.assert_called_once_with(
+            query="token refresh",
+            path="/",
+            search_mode="hybrid",
+            limit=10,
+            context=mock_nx_with_search._init_cred,
         )
 
     async def test_semantic_search_not_available(self, mock_nx_basic):
-        """Test semantic search when not available."""
-        # Remove semantic_search method
-        if hasattr(mock_nx_basic, "semantic_search"):
-            delattr(mock_nx_basic, "semantic_search")
+        """Test semantic search when the search brick is not loaded.
+
+        #3778: the MCP handler resolves SearchService via ``nx.service("search")``.
+        When the search service is absent (``nx.service("search")`` returns
+        None), the tool should surface an ``unavailable`` error.
+        """
+        # Override the service lookup to return None — simulates a NexusFS
+        # with no search brick registered.
+        mock_nx_basic.service = Mock(return_value=None)
 
         server = await create_mcp_server(nx=mock_nx_basic)
 
@@ -975,7 +1006,9 @@ class TestSearchTools:
 
     async def test_semantic_search_error(self, mock_nx_with_search):
         """Test semantic search error handling."""
-        mock_nx_with_search.semantic_search.side_effect = RuntimeError("Search service down")
+        mock_nx_with_search._mock_search.semantic_search.side_effect = RuntimeError(
+            "Search service down"
+        )
         server = await create_mcp_server(nx=mock_nx_with_search)
 
         search_tool = get_tool(server, "nexus_semantic_search")

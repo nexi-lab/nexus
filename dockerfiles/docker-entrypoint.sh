@@ -65,6 +65,17 @@ if [ ! -d /usr/local/cuda ] && [ -z "${LD_PRELOAD:-}" ]; then
     unset _gomp
 fi
 
+# When torch is installed (non-SANDBOX builds), also preload libc10 to
+# avoid "cannot allocate memory in static TLS block" (Issue #2946).
+# SANDBOX builds (Issue #3778) don't install torch → no libc10 symlink →
+# this block is a no-op.
+if [ ! -d /usr/local/cuda ] && [ -e /usr/lib/libc10.so ]; then
+    case ":${LD_PRELOAD:-}:" in
+        *:/usr/lib/libc10.so:*) ;;  # already present
+        *) export LD_PRELOAD="${LD_PRELOAD:+$LD_PRELOAD }/usr/lib/libc10.so" ;;
+    esac
+fi
+
 # Load helpers (same directory as this script)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=dockerfiles/entrypoint-helpers.sh

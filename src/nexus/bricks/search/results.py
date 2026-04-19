@@ -40,6 +40,7 @@ class BaseSearchResult:
     zone_id: str | None = None  # Source zone for cross-zone federated results
     # Issue #3773: admin-configured path description for LLM consumers
     context: str | None = None
+    semantic_degraded: bool | None = None  # Issue #3778: federation fell back to BM25S
 
     @property
     def zone_qualified_path(self) -> str | None:

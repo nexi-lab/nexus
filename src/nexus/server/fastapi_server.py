@@ -37,6 +37,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from starlette.middleware.gzip import GZipMiddleware
+from starlette.routing import Route as _StarletteRoute
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import (
@@ -114,6 +115,40 @@ async def to_thread_with_timeout(
         )
     except TimeoutError:
         raise TimeoutError(f"Operation timed out after {effective_timeout}s") from None
+
+
+# ============================================================================
+# Issue #3778: SANDBOX HTTP allowlist
+# ============================================================================
+
+SANDBOX_HTTP_ALLOWLIST: frozenset[str] = frozenset(
+    {
+        # Issue #3778: SANDBOX HTTP surface
+        "/health",
+        "/api/v2/features",
+        # FastAPI built-ins
+        "/openapi.json",
+        "/docs",
+        "/docs/oauth2-redirect",
+        "/redoc",
+    }
+)
+
+
+def _filter_routes_for_sandbox(app: "FastAPI") -> None:
+    """Issue #3778: remove every `Route` not in SANDBOX_HTTP_ALLOWLIST.
+
+    Idempotent. Leaves `Mount`s, `WebSocketRoute`s, and startup/shutdown
+    event handlers untouched — only path-bound `Route` instances are
+    filtered. Called once after all routers have been included, when the
+    profile is sandbox.
+    """
+    kept = []
+    for r in app.router.routes:
+        if isinstance(r, _StarletteRoute) and r.path not in SANDBOX_HTTP_ALLOWLIST:
+            continue
+        kept.append(r)
+    app.router.routes = kept
 
 
 # ============================================================================
@@ -198,10 +233,21 @@ def create_app(
         if isinstance(auth_provider, AuthBrickProtocol):
             app.state.brick_container.register(AuthBrickProtocol, auth_provider)
 
-    # Deployment profile (Issue #1389, #1708): resolve enabled bricks from NEXUS_PROFILE env
+    # Deployment profile (Issue #1389, #1708, #3778 R3):
+    # Resolve from the NexusFS's attached `_config.profile` when available so
+    # the SANDBOX route allowlist is enforced even when the caller selected
+    # sandbox via the config object/CLI without exporting NEXUS_PROFILE into
+    # env. Env is used only as a fallback when no config is attached.
     from nexus.contracts.deployment_profile import DeploymentProfile, resolve_enabled_bricks
 
-    _profile_str = os.environ.get("NEXUS_PROFILE", "full")
+    _cfg_profile = None
+    _nx_cfg_for_profile = getattr(nexus_fs, "_config", None)
+    if _nx_cfg_for_profile is not None:
+        _cfg_profile_val = getattr(_nx_cfg_for_profile, "profile", None)
+        if _cfg_profile_val:
+            _cfg_profile = str(_cfg_profile_val)
+
+    _profile_str = _cfg_profile or os.environ.get("NEXUS_PROFILE", "full")
     if _profile_str == "auto":
         from nexus.lib.device_capabilities import detect_capabilities, suggest_profile
 
@@ -604,6 +650,13 @@ def create_app(
         instrument_fastapi_app(app)
     except ImportError:
         pass
+
+    # Issue #3778: SANDBOX profile restricts HTTP surface. Gate on the
+    # resolved enum (not the raw string) so invalid/unknown env values that
+    # fell through to DeploymentProfile.FULL above don't accidentally enable
+    # or skip the allowlist.
+    if _profile == DeploymentProfile.SANDBOX:
+        _filter_routes_for_sandbox(app)
 
     return app
 

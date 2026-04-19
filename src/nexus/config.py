@@ -359,13 +359,14 @@ class NexusConfig(BaseModel):
     def validate_profile(cls, v: str) -> str:
         """Validate deployment profile.
 
-        Valid profiles: slim, cluster, embedded, lite, full, cloud, innovation, remote, auto
+        Valid profiles: slim, cluster, embedded, lite, sandbox, full, cloud, remote, auto
         """
         allowed = [
             "slim",
             "cluster",
             "embedded",
             "lite",
+            "sandbox",
             "full",
             "cloud",
             "remote",
@@ -413,6 +414,58 @@ class NexusConfig(BaseModel):
     )
 
 
+def _apply_sandbox_defaults(cfg: "NexusConfig") -> "NexusConfig":
+    """Apply SANDBOX profile defaults (Issue #3778).
+
+    When profile=sandbox, fill in fields the user did NOT explicitly set
+    with lightweight values (local backend, SQLite paths under
+    ~/.nexus/sandbox/, small cache, no vector search).
+
+    "Explicitly set" = present in `cfg.model_fields_set`. User values
+    always win, even if their value happens to equal a non-sandbox default.
+
+    This runs after env/YAML merge so user overrides are visible via
+    `model_fields_set`.
+    """
+    from pathlib import Path as _Path
+    from typing import Any as _Any
+
+    if cfg.profile != "sandbox":
+        return cfg
+
+    user_set = cfg.model_fields_set
+    updates: dict[str, _Any] = {}
+
+    if "backend" not in user_set:
+        # Direct filesystem (no CAS hash-store overhead). Edits/read/write
+        # operate on real files at `data_dir` — matches SANDBOX's
+        # "lightweight single-process" intent. "local" in this codebase
+        # means CAS, which is not what sandbox needs.
+        updates["backend"] = "path_local"
+
+    if "data_dir" not in user_set:
+        updates["data_dir"] = str(_Path.home() / ".nexus" / "sandbox")
+    data_dir = updates.get("data_dir", cfg.data_dir)
+
+    db_path = f"{data_dir}/nexus.db"
+    if "db_path" not in user_set:
+        updates["db_path"] = db_path
+    if "metastore_path" not in user_set:
+        updates["metastore_path"] = db_path
+    if "record_store_path" not in user_set:
+        updates["record_store_path"] = db_path
+
+    if "cache_size_mb" not in user_set:
+        updates["cache_size_mb"] = 64
+
+    if "enable_vector_search" not in user_set:
+        updates["enable_vector_search"] = False
+
+    if not updates:
+        return cfg
+    return cfg.model_copy(update=updates)
+
+
 def load_config(
     config: str | Path | dict[str, Any] | NexusConfig | None = None,
 ) -> NexusConfig:
@@ -450,17 +503,23 @@ def load_config(
 
 
 def _load_from_dict(config_dict: dict[str, Any]) -> NexusConfig:
-    """Load configuration from dictionary."""
-    # Merge with environment variables
-    merged = _load_from_environment()
-    merged_dict = merged.model_dump()
+    """Load configuration from dictionary.
+
+    Preserves provenance (Issue #3778, R1 review): only explicitly supplied
+    keys from env or the input dict are passed to NexusConfig, so
+    `model_fields_set` reflects user intent and SANDBOX defaults apply only
+    to fields the user did NOT set.
+    """
+    # Environment-sourced overrides (no model_dump round-trip — preserves
+    # per-field provenance so _apply_sandbox_defaults can see what was set).
+    merged_dict = _build_env_overrides()
     merged_dict.update(config_dict)
 
     # Convert oauth dict to OAuthConfig if present
     if "oauth" in merged_dict and isinstance(merged_dict["oauth"], dict):
         merged_dict["oauth"] = OAuthConfig(**merged_dict["oauth"])
 
-    return NexusConfig(**merged_dict)
+    return _apply_sandbox_defaults(NexusConfig(**merged_dict))
 
 
 def _load_from_file(path: Path) -> NexusConfig:
@@ -477,8 +536,13 @@ def _load_from_file(path: Path) -> NexusConfig:
     return _load_from_dict(config_dict)
 
 
-def _load_from_environment() -> NexusConfig:
-    """Load configuration from environment variables."""
+def _build_env_overrides() -> dict[str, Any]:
+    """Return a dict of only the config fields explicitly set via env vars.
+
+    Unlike `_load_from_environment()`, this does NOT construct a NexusConfig
+    or apply defaults — so the caller can preserve per-field provenance
+    (`model_fields_set`) when layering additional sources on top (Issue #3778).
+    """
     env_config: dict[str, Any] = {}
 
     # Map environment variables to config fields
@@ -612,7 +676,12 @@ def _load_from_environment() -> NexusConfig:
     if parse_providers:
         env_config["parse_providers"] = parse_providers
 
-    return NexusConfig(**env_config)
+    return env_config
+
+
+def _load_from_environment() -> NexusConfig:
+    """Load configuration from environment variables."""
+    return _apply_sandbox_defaults(NexusConfig(**_build_env_overrides()))
 
 
 def _auto_discover() -> NexusConfig:

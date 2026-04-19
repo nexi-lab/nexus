@@ -123,6 +123,16 @@ class CacheFactory:
             )
             return
 
+        # Issue #3778: explicit inmem backend for SANDBOX profile (zero external services)
+        if self._settings.cache_backend == "inmem":
+            from nexus.contracts.cache_store import InMemoryCacheStore
+
+            self._cache_store = InMemoryCacheStore()
+            self._has_cache_store = True
+            self._initialized = True
+            logger.info("Cache factory initialized with InMemoryCacheStore (SANDBOX)")
+            return
+
         # Auto-create from settings
         dragonfly_ok = False
 

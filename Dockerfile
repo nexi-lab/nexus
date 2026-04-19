@@ -70,26 +70,36 @@ COPY pyproject.toml uv.lock* README.md Cargo.toml Cargo.lock ./
 # Create minimal package stub so setuptools can discover the package
 RUN mkdir -p src/nexus && echo '__version__ = "0.0.0"' > src/nexus/__init__.py
 ENV UV_HTTP_TIMEOUT=300
-# Pre-install torch before txtai[ann] to control the variant.
+# Select which pip extras to install at build time.
+# Default (full image): all,performance,compression,monitoring,docker,event-streaming,sentry,pay
+# Lean sandbox image:   sandbox
+ARG NEXUS_PROFILE_EXTRAS=all,performance,monitoring,docker,event-streaming,sentry,pay
+# Pre-install torch ONLY when 'all' extras are selected — torch is ~300-2000 MB
+# and is only consumed by txtai, which itself is gated on 'all'. SANDBOX (Issue #3778)
+# and other lean extras skip it entirely.
 # TORCH_VARIANT=cpu  → CPU-only wheels (~300 MB, no CUDA)
 # TORCH_VARIANT=cuda → Default PyPI wheels with CUDA (~2 GB)
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=cache,target=/root/.cache/pip \
-    if [ "$TORCH_VARIANT" = "cpu" ]; then \
-        uv pip install --system --index-url https://download.pytorch.org/whl/cpu torch; \
-    else \
-        uv pip install --system -i $(cat /tmp/pip_index) torch; \
-    fi && \
-    if [ "$NEXUS_TXTAI_USE_API_EMBEDDINGS" = "true" ]; then \
-        uv pip install --system -i $(cat /tmp/pip_index) \
-            ".[all,performance,compression,monitoring,docker,event-streaming,sentry,pay]" \
-            "txtai[ann]>=9.0"; \
-    else \
-        uv pip install --system -i $(cat /tmp/pip_index) \
-            ".[all,performance,compression,monitoring,docker,event-streaming,sentry,pay]" \
-            "txtai[ann]>=9.0" \
-            "sentence-transformers>=5.3"; \
-    fi
+    set -eux; \
+    case ",${NEXUS_PROFILE_EXTRAS}," in \
+      *,all,*) \
+        if [ "$TORCH_VARIANT" = "cpu" ]; then \
+            uv pip install --system --index-url https://download.pytorch.org/whl/cpu torch; \
+        else \
+            uv pip install --system -i "$(cat /tmp/pip_index)" torch; \
+        fi ;; \
+      *) echo "Skipping torch pre-install for extras: ${NEXUS_PROFILE_EXTRAS}" ;; \
+    esac; \
+    uv pip install --system -i "$(cat /tmp/pip_index)" ".[${NEXUS_PROFILE_EXTRAS}]"; \
+    case ",${NEXUS_PROFILE_EXTRAS}," in \
+      *,all,*) \
+        uv pip install --system -i "$(cat /tmp/pip_index)" "txtai[ann]>=9.0"; \
+        if [ -z "${TARGETPLATFORM:-}" ] || [ "${TARGETPLATFORM:-}" = "linux/amd64" ]; then \
+          uv pip install --system -i "$(cat /tmp/pip_index)" "sentence-transformers>=5.3"; \
+        fi ;; \
+      *) echo "Skipping txtai/sentence-transformers for profile extras: ${NEXUS_PROFILE_EXTRAS}" ;; \
+    esac
 
 # NOTE: hnswlib removal moved to after the final pip install (line ~121)
 # to ensure it's not re-introduced by any subsequent install step.
@@ -155,7 +165,10 @@ FROM python:3.14-slim
 
 ARG USE_CHINA_MIRROR
 ARG TARGETARCH
+# Re-declare in stage-2 so smoke tests and conditional logic can read it.
+ARG NEXUS_PROFILE_EXTRAS=all,performance,monitoring,docker,event-streaming,sentry,pay
 ENV USE_CHINA_MIRROR=${USE_CHINA_MIRROR}
+ENV NEXUS_PROFILE_EXTRAS=${NEXUS_PROFILE_EXTRAS}
 
 # ---------- Runtime dependencies ----------
 # libgomp1: OpenMP runtime required by txtai, scikit-learn, numpy (Issue #2946)
@@ -180,30 +193,40 @@ RUN set -eux; \
         ln -sf /usr/lib/aarch64-linux-gnu/libgomp.so.1 /usr/lib/libgomp.so.1; \
     elif [ "${TARGETARCH}" = "amd64" ]; then \
         ln -sf /usr/lib/x86_64-linux-gnu/libgomp.so.1 /usr/lib/libgomp.so.1; \
-    fi && \
-    ln -sf /usr/local/lib/python3.14/site-packages/torch/lib/libc10.so /usr/lib/libc10.so
-ENV LD_PRELOAD="/usr/lib/libgomp.so.1 /usr/lib/libc10.so"
+    fi; \
+    # torch is only installed when extras include 'all' — skip symlink on SANDBOX (#3778).
+    if [ -f /usr/local/lib/python3.14/site-packages/torch/lib/libc10.so ]; then \
+        ln -sf /usr/local/lib/python3.14/site-packages/torch/lib/libc10.so /usr/lib/libc10.so; \
+    fi
+# LD_PRELOAD: libgomp only (always safe). When torch is installed, the entrypoint
+# extends LD_PRELOAD to include libc10.so (see docker-entrypoint.sh).
+ENV LD_PRELOAD="/usr/lib/libgomp.so.1"
 ENV GLIBC_TUNABLES="glibc.rtld.optional_static_tls=16384"
 
 # ---------- CLI connectors: gws + gh (Issue #3148) ----------
 # gws: Google Workspace CLI for Gmail/Calendar/Drive/Sheets/Docs/Chat connectors
 # gh: GitHub CLI for GitHub connector
+# Skipped for SANDBOX (#3778) — these connectors aren't used in the sandbox profile.
 ARG TARGETARCH
 RUN set -eux; \
-    ARCH=$([ "${TARGETARCH}" = "arm64" ] && echo "aarch64" || echo "x86_64"); \
-    tmpdir="$(mktemp -d)"; \
-    trap 'rm -rf "$tmpdir"' EXIT; \
-    curl -fsSL "https://github.com/googleworkspace/cli/releases/latest/download/google-workspace-cli-${ARCH}-unknown-linux-gnu.tar.gz" \
-        | tar -xz -C "$tmpdir"; \
-    install -m 0755 "$tmpdir/gws" /usr/local/bin/gws; \
-    sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources; \
-    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-        | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && \
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
-        > /etc/apt/sources.list.d/github-cli.list && \
-    apt-get update && apt-get install -y --no-install-recommends git gh && \
-    rm -rf /var/lib/apt/lists/* && \
-    gws --version && gh --version
+    case ",${NEXUS_PROFILE_EXTRAS}," in \
+      *,all,*) \
+        ARCH=$([ "${TARGETARCH}" = "arm64" ] && echo "aarch64" || echo "x86_64"); \
+        tmpdir="$(mktemp -d)"; \
+        trap 'rm -rf "$tmpdir"' EXIT; \
+        curl -fsSL "https://github.com/googleworkspace/cli/releases/latest/download/google-workspace-cli-${ARCH}-unknown-linux-gnu.tar.gz" \
+            | tar -xz -C "$tmpdir"; \
+        install -m 0755 "$tmpdir/gws" /usr/local/bin/gws; \
+        sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources; \
+        curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+            | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && \
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+            > /etc/apt/sources.list.d/github-cli.list && \
+        apt-get update && apt-get install -y --no-install-recommends git gh && \
+        rm -rf /var/lib/apt/lists/* && \
+        gws --version && gh --version ;; \
+      *) echo "Skipping gws/gh CLI connectors for extras: ${NEXUS_PROFILE_EXTRAS}" ;; \
+    esac
 
 # ---------- Copy Python packages + Rust extensions ----------
 COPY --from=builder /usr/local/lib/python3.14/site-packages /usr/local/lib/python3.14/site-packages
@@ -226,14 +249,19 @@ COPY --from=zoekt-builder /go/bin/zoekt-webserver /usr/local/bin/zoekt-webserver
 # This does NOT affect runtime (the server starts fine); it only affects
 # this build-time import check. We split the check: non-torch imports
 # are fatal, torch-dependent imports (txtai) are best-effort on ARM64.
+# Always verifiable (present regardless of extras): Rust extensions.
 RUN python3 -c "\
 import nexus_kernel; \
 from _nexus_raft import Metastore; \
-import pgvector; \
-import docker; \
-import fastembed; \
-import psutil; \
-print('✓ Core imports passed')"
+print('✓ Core imports passed (always-present subset)')"
+# Extras-gated imports.
+# SANDBOX profile deliberately excludes pgvector/docker/fastembed/psutil (Issue #3778).
+RUN set -eux; \
+    case ",${NEXUS_PROFILE_EXTRAS}," in \
+      *,all,*) \
+        python3 -c "import pgvector; import docker; import fastembed; import psutil; print('✓ all-extras imports passed')" ;; \
+      *) echo "Skipping pgvector/docker/fastembed/psutil smoke test for extras: ${NEXUS_PROFILE_EXTRAS}" ;; \
+    esac
 RUN python3 -c "\
 from nexus_kernel import cosine_similarity_f32, dot_product_f32; \
 s = cosine_similarity_f32([1.0, 0.0, 0.0], [1.0, 0.0, 0.0]); \

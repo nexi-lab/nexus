@@ -205,3 +205,5 @@ nav:
     - Grove Async Agent Graph: proposals/grove-async-agent-graph.md
   - Guides:
     - User Guide: guides/user-guide.md
+  - Deployment:
+    - SANDBOX Profile: deployment/sandbox-profile.md

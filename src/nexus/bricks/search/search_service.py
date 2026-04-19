@@ -33,6 +33,7 @@ from nexus.contracts.search_types import (
     GREP_SEQUENTIAL_THRESHOLD,
     GREP_TRIGRAM_THRESHOLD,
     GREP_ZOEKT_THRESHOLD,
+    LAST_SEMANTIC_DEGRADED,
     GlobStrategy,
     SearchStrategy,
 )
@@ -202,6 +203,9 @@ class SearchService:
         grep_parallel_workers: int = GREP_PARALLEL_WORKERS,
         file_cache: Any | None = None,
         zoekt_client: Any | None = None,
+        deployment_profile: str | None = None,
+        sqlite_vec_backend: Any | None = None,
+        federation_dispatcher: Any | None = None,
     ):
         """Initialize search service.
 
@@ -215,6 +219,17 @@ class SearchService:
             record_store: RecordStoreABC for SQL engine (needed for semantic search)
             gateway: NexusFSGateway for file ops, routing, and dependency tracking
             zoekt_client: Injected ZoektClient instance (Issue #2188).
+            deployment_profile: Active deployment profile name (Issue #3778).
+                When set to ``"sandbox"``, a semantic search that goes through
+                ``_semantic_with_sandbox_fallback`` will degrade gracefully to
+                local BM25S when federation reports all peers unreachable.
+            sqlite_vec_backend: Optional ``SqliteVecBackend`` instance
+                (Issue #3778). When supplied, SANDBOX-profile semantic search
+                tries this local vector backend first; a non-empty result set
+                short-circuits the federation/BM25S fallback chain. The
+                factory only wires this when ``profile=sandbox`` AND
+                ``cfg.enable_vector_search`` AND both ``sqlite-vec`` +
+                ``litellm`` are importable.
         """
         self.metadata = metadata_store
         self._record_store = record_store
@@ -252,6 +267,24 @@ class SearchService:
         self._cross_zone_cache: TTLCache[tuple[str, ...], builtins.list[str]] = TTLCache(
             maxsize=1024, ttl=5.0
         )
+
+        # Issue #3778: SANDBOX profile — degrade semantic search to BM25S when
+        # federation reports all peers unreachable. The warn-once flag lives on
+        # the instance so a long-running sandbox doesn't spam the log.
+        self._deployment_profile = (deployment_profile or "").lower() or None
+        self._sandbox_fallback_warned = False
+        # Issue #3778: optional local vector backend (sqlite-vec + litellm).
+        # When non-None on SANDBOX, semantic search tries the local backend
+        # first and only falls back to federation/BM25S when it returns
+        # empty (or raises).
+        self._sqlite_vec_backend = sqlite_vec_backend
+
+        # Issue #3778 (R1 review): optional real federation dispatcher. When
+        # set, SANDBOX semantic fallback routes through it instead of
+        # fabricating an empty "no-peers" FederatedSearchResponse — so if a
+        # future deployment wires a dispatcher into a sandbox-profile server
+        # the real federation attempt is made before BM25 degradation.
+        self._federation_dispatcher = federation_dispatcher
 
         logger.info("[SearchService] Initialized")
 
@@ -3233,6 +3266,309 @@ class SearchService:
         self._indexing_pipeline = components.indexing_pipeline
         self._pipeline_indexer = components.pipeline_indexer
 
+    async def _semantic_with_sandbox_fallback(
+        self,
+        federation_call: "Any",
+        bm25s_call: "Any",
+    ) -> "builtins.list[Any]":
+        """Run federated semantic search with SANDBOX-profile BM25S fallback.
+
+        Issue #3778. When the active profile is SANDBOX and federation reports
+        that every peer failed (see ``is_all_peers_failed``), we fall back to
+        the local BM25S callable and stamp each result with
+        ``semantic_degraded=True``. A WARNING is logged only on the first
+        fallback per ``SearchService`` instance; subsequent fallbacks are
+        silent to avoid flooding a long-running sandbox's logs.
+
+        The callables are supplied by the caller so this method is easy to
+        test and has no hard dependency on specific federation / BM25S
+        constructor shapes.
+
+        Args:
+            federation_call: zero-arg awaitable that returns a
+                ``FederatedSearchResponse``. Wrap the real dispatcher's
+                ``.search(...)`` with functools.partial or a lambda.
+            bm25s_call: zero-arg awaitable that returns a list of
+                ``BaseSearchResult`` (or any object with ``semantic_degraded``
+                assignable). Executed only when federation reports all peers
+                failed AND the profile is SANDBOX.
+
+        Returns:
+            A list of results. When the SANDBOX fallback kicks in, each item
+            has ``semantic_degraded = True``. Otherwise the federation's
+            results are returned as-is (``semantic_degraded`` unset).
+        """
+        # Defer imports so the main code path doesn't pay for them.
+        from nexus.bricks.search.federated_search import is_all_peers_failed
+
+        fed_response = await federation_call()
+
+        is_sandbox = self._deployment_profile == "sandbox"
+        if not is_sandbox:
+            return list(fed_response.results)
+
+        if not is_all_peers_failed(fed_response):
+            return list(fed_response.results)
+
+        # Record degradation in the contextvar so envelope builders (MCP/HTTP)
+        # can detect it even if the BM25S fallback returned zero items.
+        LAST_SEMANTIC_DEGRADED.set(True)
+
+        # SANDBOX + all peers failed → fall back to local BM25S.
+        if not self._sandbox_fallback_warned:
+            logger.warning(
+                "[SearchService] SANDBOX: federation unreachable (zones_searched=%d, "
+                "zones_failed=%d) — degrading semantic search to local BM25S. "
+                "Results will be marked semantic_degraded=True. Further occurrences "
+                "will be logged at DEBUG.",
+                len(fed_response.zones_searched),
+                len(fed_response.zones_failed),
+            )
+            self._sandbox_fallback_warned = True
+        else:
+            logger.debug("[SearchService] SANDBOX semantic fallback to BM25S (already warned once)")
+
+        import contextlib
+
+        bm25s_results = await bm25s_call()
+        stamped: builtins.list[Any] = []
+        for r in bm25s_results:
+            # Result may not accept the attribute (e.g. a plain dict / frozen
+            # dataclass) — in that case skip stamping but still return it so
+            # the caller gets *something*.
+            with contextlib.suppress(AttributeError):
+                r.semantic_degraded = True
+            stamped.append(r)
+        return stamped
+
+    async def _try_sqlite_vec_sandbox(
+        self,
+        *,
+        query: str,
+        path: str,
+        limit: int,
+        context: "OperationContext | None",
+    ) -> builtins.list[dict[str, Any]] | None:
+        """Issue #3778: try the local sqlite-vec backend first on SANDBOX.
+
+        Returns:
+            * a non-empty list of dict results when the backend is wired and
+              KNN returned hits — caller should NOT stamp ``semantic_degraded``
+              because this is a *real* semantic match.
+            * ``None`` when the backend is absent, errored, or returned no
+              hits — caller falls through to the federation/BM25S chain.
+        """
+        backend = self._sqlite_vec_backend
+        if backend is None:
+            return None
+
+        zone_id = getattr(context, "zone_id", None) if context else None
+        if not zone_id:
+            zone_id = ROOT_ZONE_ID
+
+        try:
+            from nexus.server.path_utils import unscope_internal_path as _unscope
+
+            db_path = _unscope(path) if path != "/" else None
+            fetch_limit = limit * 3 if self._permission_enforcer else limit
+            results = await backend.search(
+                query=query,
+                limit=fetch_limit,
+                zone_id=zone_id,
+                search_type="hybrid",
+                path_filter=db_path,
+            )
+        except Exception as exc:
+            logger.warning(
+                "[SearchService] SANDBOX local sqlite-vec search failed (%s); "
+                "falling back to federation/BM25S chain",
+                exc,
+            )
+            return None
+
+        if not results:
+            return None
+
+        hits: builtins.list[dict[str, Any]] = []
+        for r in results:
+            entry: dict[str, Any] = {
+                "path": r.path,
+                "chunk_text": getattr(r, "chunk_text", ""),
+                "score": round(r.score, 4),
+                "chunk_index": getattr(r, "chunk_index", 0),
+                "start_offset": getattr(r, "start_offset", 0) or 0,
+                "end_offset": getattr(r, "end_offset", 0) or 0,
+                "line_start": getattr(r, "line_start", 0) or 0,
+                "line_end": getattr(r, "line_end", 0) or 0,
+            }
+            ctx_val = getattr(r, "context", None)
+            if ctx_val is not None:
+                entry["context"] = ctx_val
+            hits.append(entry)
+
+        if self._permission_enforcer and hits and context is not None:
+            all_paths = [h["path"] for h in hits]
+            accessible = set(self._permission_enforcer.filter_list(all_paths, context))
+            hits = [h for h in hits if h["path"] in accessible]
+
+        return hits[:limit] if hits else None
+
+    async def _semantic_search_sandbox(
+        self,
+        *,
+        query: str,
+        path: str,
+        limit: int,
+        context: "OperationContext | None",
+    ) -> builtins.list[dict[str, Any]]:
+        """SANDBOX-profile semantic_search: local vec → federation → BM25S.
+
+        Issue #3778. The fallback chain on SANDBOX is:
+
+        1. **Local sqlite-vec** (``self._sqlite_vec_backend``). When wired
+           and the KNN query returns hits, those hits are returned directly
+           and ``semantic_degraded`` is NOT set (this is a real semantic
+           match, just on a local store rather than a federated peer).
+        2. **Federation**: SANDBOX never has peers configured, so the
+           ``FederatedSearchResponse`` is synthesised as "no peers" — that
+           causes ``_semantic_with_sandbox_fallback`` to invoke the BM25S
+           callable.
+        3. **BM25S** (via the local SearchDaemon's keyword path), or the
+           SQL chunk search when no daemon is wired. Results carry
+           ``semantic_degraded=True`` so MCP / HTTP clients can warn users
+           that the answer is keyword-only.
+        """
+        # Reset the degraded flag at the entry point of a SANDBOX search so
+        # callers read a value that reflects THIS call only. The contextvar
+        # is then set to True inside _semantic_with_sandbox_fallback when
+        # fallback actually fires.
+        LAST_SEMANTIC_DEGRADED.set(False)
+
+        # Step 1 — try the local vector backend first.
+        local = await self._try_sqlite_vec_sandbox(
+            query=query, path=path, limit=limit, context=context
+        )
+        if local is not None:
+            return local
+
+        # Step 2 + 3 — try a real federation dispatcher when one is wired;
+        # otherwise synthesise an empty FederatedSearchResponse so the
+        # shared fallback wrapper invokes the BM25S callable and stamps
+        # ``semantic_degraded=True`` on every result.
+        from nexus.bricks.search.federated_search import (
+            FederatedSearchResponse,
+            ZoneFailure,
+        )
+
+        async def _fed_call() -> FederatedSearchResponse:
+            dispatcher = self._federation_dispatcher
+            if dispatcher is not None:
+                # R1 review: real dispatcher present — invoke it so we don't
+                # silently bypass remote peers and return keyword fallback
+                # when semantic retrieval is actually reachable. The wrapper
+                # only degrades when all peers fail.
+                try:
+                    subject = (
+                        (getattr(context, "subject_type", None) or "user"),
+                        (getattr(context, "user_id", None) or ""),
+                    )
+                    return await dispatcher.search(
+                        query=query,
+                        subject=subject,
+                        search_type="semantic",
+                        limit=limit,
+                    )
+                except Exception as exc:
+                    # Real dispatch failed — treat as all-peers-failed so the
+                    # wrapper triggers BM25 fallback with semantic_degraded.
+                    logger.warning(
+                        "[SANDBOX semantic] federation dispatch raised; degrading to BM25S: %s",
+                        exc,
+                    )
+                    return FederatedSearchResponse(
+                        results=[],
+                        zones_searched=[],
+                        zones_failed=[ZoneFailure(zone_id="<dispatcher>", error=str(exc))],
+                    )
+
+            # No dispatcher wired (true SANDBOX case) — is_all_peers_failed
+            # returns True and the wrapper invokes the BM25S callable below.
+            return FederatedSearchResponse(
+                results=[],
+                zones_searched=[],
+                zones_failed=[],
+            )
+
+        async def _bm25s_call() -> builtins.list[dict[str, Any]]:
+            # Prefer the daemon's keyword path (BM25S when available).
+            daemon = getattr(self, "_search_daemon", None)
+            if daemon is not None and getattr(daemon, "_backend", None) is not None:
+                fetch_limit = limit * 3 if self._permission_enforcer else limit
+                zone_id = getattr(context, "zone_id", None) if context else None
+                from nexus.server.path_utils import unscope_internal_path as _unscope
+
+                db_path = _unscope(path) if path != "/" else None
+                daemon_results = await daemon.search(
+                    query=query,
+                    search_type="keyword",
+                    limit=fetch_limit,
+                    path_filter=db_path,
+                    zone_id=zone_id,
+                )
+                hits: builtins.list[dict[str, Any]] = []
+                for r in daemon_results:
+                    entry: dict[str, Any] = {
+                        "path": r.path,
+                        "chunk_text": getattr(r, "chunk_text", ""),
+                        "score": round(r.score, 4),
+                        "chunk_index": getattr(r, "chunk_index", 0),
+                        "start_offset": getattr(r, "start_offset", 0) or 0,
+                        "end_offset": getattr(r, "end_offset", 0) or 0,
+                        "line_start": getattr(r, "line_start", 0) or 0,
+                        "line_end": getattr(r, "line_end", 0) or 0,
+                    }
+                    ctx_val = getattr(r, "context", None)
+                    if ctx_val is not None:
+                        entry["context"] = ctx_val
+                    hits.append(entry)
+
+                if self._permission_enforcer and hits and context is not None:
+                    all_paths = [h["path"] for h in hits]
+                    accessible = set(self._permission_enforcer.filter_list(all_paths, context))
+                    hits = [h for h in hits if h["path"] in accessible]
+
+                return hits[:limit]
+
+            # No daemon wired — fall back to the SQL chunk search so SANDBOX
+            # still returns *something* when a RecordStore is present.
+            if self._record_store is not None:
+                return await self._sql_chunk_search(query, path, limit, context=context)
+
+            return []
+
+        stamped = await self._semantic_with_sandbox_fallback(_fed_call, _bm25s_call)
+        # Only mark items degraded when the fallback actually ran. If a real
+        # federation dispatcher returned reachable-peer results, the helper
+        # returns them directly without setting LAST_SEMANTIC_DEGRADED, and
+        # stamping them here would trigger false "degraded" warnings in
+        # downstream envelopes (R3 review).
+        degraded = LAST_SEMANTIC_DEGRADED.get()
+        out: builtins.list[dict[str, Any]] = []
+        for r in stamped:
+            if isinstance(r, dict):
+                if degraded:
+                    r["semantic_degraded"] = True
+                out.append(r)
+            else:
+                # _bm25s_call emits dicts; non-dict can come from a real
+                # federation result (BaseSearchResult). Preserve path and
+                # only stamp when degraded.
+                entry: dict[str, Any] = {"path": getattr(r, "path", "")}
+                if degraded:
+                    entry["semantic_degraded"] = True
+                out.append(entry)
+        return out
+
     @rpc_expose(description="Search documents using natural language queries")
     async def semantic_search(
         self,
@@ -3255,6 +3591,19 @@ class SearchService:
         Raises:
             ValueError: If semantic search is not initialized
         """
+        # Issue #3778: SANDBOX profile has no federated peers — any semantic
+        # request must degrade to local BM25S (via daemon keyword search)
+        # and stamp ``semantic_degraded=True`` on every result.  We delegate
+        # the "no-peers" detection + stamping to _semantic_with_sandbox_fallback
+        # so the fallback logic is shared with any future federation caller.
+        if self._deployment_profile == "sandbox" and search_mode in ("semantic", "hybrid"):
+            return await self._semantic_search_sandbox(
+                query=query,
+                path=path,
+                limit=limit,
+                context=context,
+            )
+
         # Issue #2663: _query_service was removed (txtai handles search via
         # SearchDaemon).  When available, delegate to it; otherwise fall back
         # to a simple SQL ILIKE search on document_chunks.
@@ -3313,7 +3662,7 @@ class SearchService:
             return hits[:limit]
 
         if self._record_store is not None:
-            return await self._sql_chunk_search(query, path, limit)
+            return await self._sql_chunk_search(query, path, limit, context=context)
 
         raise ValueError(
             "Semantic search is not available. No query service or record store configured."
@@ -3324,6 +3673,7 @@ class SearchService:
         query: str,
         path: str,
         limit: int,
+        context: "OperationContext | None" = None,
     ) -> builtins.list[dict[str, Any]]:
         """Fallback search via SQL LIKE on document_chunks (Issue #2663).
 
@@ -3332,6 +3682,12 @@ class SearchService:
         The *path* may arrive zone-scoped (``/zone/<id>/…``) from the gRPC
         dispatcher.  We strip the zone prefix and use the inner path for the
         LIKE filter so it matches stored ``virtual_path`` values.
+
+        R5 review (Issue #3778): applies ReBAC permission filtering on the
+        returned rows when ``context`` is provided AND an enforcer is wired.
+        When permissions are enforced but context is missing, returns no
+        results — fail closed so the SANDBOX degraded path can't leak
+        chunks the caller shouldn't see.
         """
         if self._record_store is None:
             return []
@@ -3433,6 +3789,23 @@ class SearchService:
                     "line_end": row.line_end if hasattr(row, "line_end") else row[5],
                 }
             )
+
+        # R5 review: ReBAC-filter the results when an enforcer is wired.
+        # Fail closed when permissions must be enforced but no valid context
+        # was supplied — callers that can legitimately bypass (admin/internal)
+        # use ``enforce_permissions=False`` at SearchService construction.
+        if self._permission_enforcer is not None and hits:
+            if context is None:
+                if self._enforce_permissions:
+                    logger.warning(
+                        "[SearchService] SQL chunk fallback called without OperationContext "
+                        "while permissions are enforced — returning empty result (fail-closed)."
+                    )
+                    return []
+            else:
+                all_paths = [h["path"] for h in hits]
+                accessible = set(self._permission_enforcer.filter_list(all_paths, context))
+                hits = [h for h in hits if h["path"] in accessible]
         return hits
 
     @rpc_expose(description="Index documents for semantic search")

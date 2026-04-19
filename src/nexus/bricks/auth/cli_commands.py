@@ -955,11 +955,25 @@ def _build_kms_provider(
 )
 @click.option(
     "--tenant",
-    required=True,
-    help="Tenant name whose rows should be rewrapped at the provider's current version.",
+    default=None,
+    help="Tenant name (requires a DB role that can read tenants.name — typically "
+    "BYPASSRLS). For least-privilege roles, pass --tenant-id instead.",
+)
+@click.option(
+    "--tenant-id",
+    "tenant_id_opt",
+    default=None,
+    help="Tenant UUID. Preferred for least-privilege roles: skips the tenants "
+    "table lookup that FORCE RLS blocks for non-BYPASSRLS roles.",
 )
 @click.option(
     "--apply", is_flag=True, default=False, help="Actually rewrap rows (default: dry-run)."
+)
+@click.option(
+    "--allow-failures",
+    is_flag=True,
+    default=False,
+    help="Exit 0 even when rows_failed > 0 (default: non-zero exit on any failed row).",
 )
 @click.option(
     "--batch-size",
@@ -998,8 +1012,10 @@ def _build_kms_provider(
 )
 def auth_rotate_kek(
     db_url: str,
-    tenant: str,
+    tenant: str | None,
+    tenant_id_opt: str | None,
     apply: bool,
+    allow_failures: bool,
     batch_size: int,
     max_rows: int | None,
     provider: str | None,
@@ -1039,10 +1055,18 @@ def auth_rotate_kek(
             for r in conn.execute(
                 text(
                     "SELECT column_name FROM information_schema.columns "
-                    "WHERE table_name = 'auth_profiles'"
+                    "WHERE table_name = 'auth_profiles' "
+                    "  AND table_schema = CURRENT_SCHEMA() "
+                    "  AND table_catalog = CURRENT_DATABASE()"
                 )
             ).fetchall()
         }
+        if not cols:
+            raise click.ClickException(
+                "auth_profiles table not found in the active schema. "
+                "Run schema migrations first (ensure_schema) with a role "
+                "that has ALTER privileges."
+            )
         missing = _REQUIRED_ENVELOPE_COLUMNS - cols
         if missing:
             raise click.ClickException(
@@ -1078,16 +1102,33 @@ def auth_rotate_kek(
             "NEXUS_AUTH_ROTATE_KEK_TEST_PROVIDER_ID is set."
         )
 
+    if (tenant is None) == (tenant_id_opt is None):
+        raise click.ClickException("Pass exactly one of --tenant or --tenant-id.")
+
     engine = create_engine(db_url, future=True)
     try:
-        with engine.begin() as conn:
-            _preflight_schema(conn)
-            row = conn.execute(
-                text("SELECT id FROM tenants WHERE name = :n"), {"n": tenant}
-            ).fetchone()
-        if row is None:
-            raise click.ClickException(f"Tenant {tenant!r} not found")
-        tenant_id = _uuid.UUID(str(row[0]))
+        if tenant_id_opt is not None:
+            try:
+                tenant_id = _uuid.UUID(tenant_id_opt)
+            except ValueError as exc:
+                raise click.ClickException(
+                    f"--tenant-id must be a UUID, got {tenant_id_opt!r}"
+                ) from exc
+            with engine.begin() as conn:
+                _preflight_schema(conn)
+        else:
+            with engine.begin() as conn:
+                _preflight_schema(conn)
+                row = conn.execute(
+                    text("SELECT id FROM tenants WHERE name = :n"), {"n": tenant}
+                ).fetchone()
+            if row is None:
+                raise click.ClickException(
+                    f"Tenant {tenant!r} not found. If using a least-privilege "
+                    "DB role (FORCE RLS prevents reading tenants.name), pass "
+                    "--tenant-id <uuid> instead."
+                )
+            tenant_id = _uuid.UUID(str(row[0]))
 
         if not apply:
             target = encryption_provider.current_version(tenant_id=tenant_id)
@@ -1127,6 +1168,8 @@ def auth_rotate_kek(
                 f"WARNING: {report.rows_failed} rows failed to rewrap — see logs for details",
                 err=True,
             )
+            if not allow_failures:
+                raise click.exceptions.Exit(1)
     finally:
         engine.dispose()
 

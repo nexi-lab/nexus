@@ -345,6 +345,136 @@ class TestRotateKekCLI:
             os.environ.pop("NEXUS_AUTH_ROTATE_KEK_TEST_PROVIDER_ID", None)
             _TEST_PROVIDER_REGISTRY.pop("inmem", None)
 
+    def test_tenant_id_flag_bypasses_name_lookup(
+        self,
+        seeded_tenant: tuple[uuid.UUID, InMemoryEncryptionProvider],
+        pg_engine: Engine,  # noqa: ARG002 — fixture triggers schema+seed
+    ) -> None:
+        """--tenant-id skips the tenants.name SELECT (which FORCE RLS can block
+        for least-privilege roles).
+        """
+        t, prov = seeded_tenant
+        from nexus.bricks.auth.cli_commands import _TEST_PROVIDER_REGISTRY
+
+        _TEST_PROVIDER_REGISTRY["inmem"] = lambda: prov
+        os.environ["NEXUS_AUTH_ROTATE_KEK_TEST_PROVIDER_ID"] = "inmem"
+        try:
+            runner = CliRunner()
+            result = runner.invoke(
+                auth,
+                [
+                    "rotate-kek",
+                    "--db-url",
+                    PG_URL,
+                    "--tenant-id",
+                    str(t),
+                ],
+            )
+            assert result.exit_code == 0, result.output
+            assert "dry-run" in result.output.lower()
+        finally:
+            os.environ.pop("NEXUS_AUTH_ROTATE_KEK_TEST_PROVIDER_ID", None)
+            _TEST_PROVIDER_REGISTRY.pop("inmem", None)
+
+    def test_requires_exactly_one_tenant_identifier(
+        self,
+        seeded_tenant: tuple[uuid.UUID, InMemoryEncryptionProvider],
+        pg_engine: Engine,  # noqa: ARG002
+    ) -> None:
+        """Exactly one of --tenant / --tenant-id must be supplied."""
+        _t, prov = seeded_tenant
+        from nexus.bricks.auth.cli_commands import _TEST_PROVIDER_REGISTRY
+
+        _TEST_PROVIDER_REGISTRY["inmem"] = lambda: prov
+        os.environ["NEXUS_AUTH_ROTATE_KEK_TEST_PROVIDER_ID"] = "inmem"
+        try:
+            runner = CliRunner()
+            result = runner.invoke(auth, ["rotate-kek", "--db-url", PG_URL])
+            assert result.exit_code != 0
+            assert "exactly one" in result.output.lower()
+
+            result2 = runner.invoke(
+                auth,
+                [
+                    "rotate-kek",
+                    "--db-url",
+                    PG_URL,
+                    "--tenant",
+                    "x",
+                    "--tenant-id",
+                    "00000000-0000-0000-0000-000000000001",
+                ],
+            )
+            assert result2.exit_code != 0
+        finally:
+            os.environ.pop("NEXUS_AUTH_ROTATE_KEK_TEST_PROVIDER_ID", None)
+            _TEST_PROVIDER_REGISTRY.pop("inmem", None)
+
+    def test_apply_exits_nonzero_on_failed_rows(
+        self,
+        seeded_tenant: tuple[uuid.UUID, InMemoryEncryptionProvider],
+        pg_engine: Engine,  # noqa: ARG002
+    ) -> None:
+        """rows_failed > 0 must produce exit code 1 unless --allow-failures."""
+        from nexus.bricks.auth.cli_commands import _TEST_PROVIDER_REGISTRY
+
+        t, real = seeded_tenant
+
+        # Flaky provider that always fails unwrap (turns every row into failure)
+        class _AllFailProvider:
+            def current_version(self, *, tenant_id):
+                return real.current_version(tenant_id=tenant_id)
+
+            def wrap_dek(self, dek, *, tenant_id, aad):
+                return real.wrap_dek(dek, tenant_id=tenant_id, aad=aad)
+
+            def unwrap_dek(self, wrapped, *, tenant_id, aad, kek_version):  # noqa: ARG002
+                from nexus.bricks.auth.envelope import WrappedDEKInvalid
+
+                raise WrappedDEKInvalid.from_row(
+                    tenant_id=tenant_id,
+                    profile_id="x",
+                    kek_version=kek_version,
+                    cause="forced-failure",
+                )
+
+        _TEST_PROVIDER_REGISTRY["allfail"] = _AllFailProvider
+        os.environ["NEXUS_AUTH_ROTATE_KEK_TEST_PROVIDER_ID"] = "allfail"
+        try:
+            runner = CliRunner()
+            result = runner.invoke(
+                auth,
+                [
+                    "rotate-kek",
+                    "--db-url",
+                    PG_URL,
+                    "--tenant-id",
+                    str(t),
+                    "--apply",
+                ],
+            )
+            assert result.exit_code == 1, result.output
+            assert "failed" in result.output.lower()
+
+            # With --allow-failures, exit 0 even with failed rows
+            # (Re-seed isn't needed; same rows are still at v1)
+            result2 = runner.invoke(
+                auth,
+                [
+                    "rotate-kek",
+                    "--db-url",
+                    PG_URL,
+                    "--tenant-id",
+                    str(t),
+                    "--apply",
+                    "--allow-failures",
+                ],
+            )
+            assert result2.exit_code == 0, result2.output
+        finally:
+            os.environ.pop("NEXUS_AUTH_ROTATE_KEK_TEST_PROVIDER_ID", None)
+            _TEST_PROVIDER_REGISTRY.pop("allfail", None)
+
     def test_no_provider_and_no_env_errors(
         self,
         seeded_tenant: tuple[uuid.UUID, InMemoryEncryptionProvider],

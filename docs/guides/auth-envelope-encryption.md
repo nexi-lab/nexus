@@ -34,10 +34,16 @@ Rotation: AWS rotates the underlying key material annually with `EnableKeyRotati
 ## Rotation CLI
 
 ```
-nexus auth rotate-kek --db-url <url> --tenant <name> [--apply] [--batch-size 100] [--max-rows N]
+nexus auth rotate-kek --db-url <url> (--tenant <name>|--tenant-id <uuid>) \
+  --provider (vault|aws-kms) [provider options] \
+  [--apply] [--allow-failures] [--batch-size 100] [--max-rows N]
 ```
 
-Dry-run by default: reports how many rows are stuck at old `kek_version`. `--apply` rewraps them in `SKIP LOCKED` batches — resumable, doesn't block concurrent writers. Per-row unwrap failures continue the batch; operator investigates and re-runs. Wrap failures at the new version abort the batch (zero rows mutated, non-zero exit).
+Dry-run by default: reports how many rows are stuck at old `kek_version`. `--apply` rewraps them in `SKIP LOCKED` batches — resumable, doesn't block concurrent writers. Per-row unwrap failures continue the batch; the command exits non-zero when any row fails unless `--allow-failures` is set. Wrap failures at the new version abort the batch (zero rows mutated, non-zero exit).
+
+**Tenant identifier:** pass `--tenant-id <uuid>` under least-privilege DB roles. `--tenant <name>` requires read access to `tenants.name`, which FORCE RLS blocks for non-BYPASSRLS roles.
+
+**Schema preflight:** rotation is read-only for DDL. Run `ensure_schema()` once at deploy time under a role with ALTER privileges; rotation then works under the least-privilege role.
 
 ## Metrics
 

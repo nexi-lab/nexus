@@ -9,8 +9,12 @@
 //! - (R16.5c — pending) ``NexusFederation`` orchestrator composing the
 //!   above with the ``ZoneManager`` for share() / join() flows.
 
+pub mod distributed_locks;
+
 #[cfg(feature = "grpc")]
 pub mod tofu;
+
+pub use distributed_locks::DistributedLocks;
 
 #[cfg(feature = "grpc")]
 pub use tofu::{TofuError, TofuResult, TofuTrustStore, TrustedZone};

@@ -9,4 +9,6 @@ pub mod constants;
 pub mod lock_state;
 
 pub use constants::{BLAKE3_EMPTY, MAX_GRPC_MESSAGE_BYTES, ROOT_ZONE_ID, VFS_ROOT};
-pub use lock_state::{HolderInfo, LockAcquireResult, LockEntry, LockInfo, LockMode, LockState};
+pub use lock_state::{
+    HolderInfo, LockAcquireResult, LockEntry, LockInfo, LockMode, LockState, Locks,
+};

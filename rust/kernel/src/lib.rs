@@ -40,6 +40,7 @@ mod hook_registry;
 mod io;
 mod kernel;
 pub mod lock_manager;
+pub mod locks;
 pub mod metastore;
 // Mount table (kernel SSOT for mount entries — backend + per-mount
 // metastore + access flags). Mirrors Python `nexus.core.mount_table`.

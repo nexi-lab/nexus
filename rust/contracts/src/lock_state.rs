@@ -345,6 +345,59 @@ impl LockState {
     }
 }
 
+// ── Locks backend trait (R20.7) ─────────────────────────────────────
+//
+// The kernel's ``LockManager`` dispatches advisory-lock operations
+// through this trait instead of holding a concrete
+// ``ZoneConsensus<FullStateMachine>``. Two concrete impls live in the
+// tree:
+//
+//   - ``nexus_kernel::locks::LocalLocks`` — mutates the shared
+//     ``Arc<Mutex<LockState>>`` directly (pre-federation default,
+//     single-node deployments).
+//   - ``nexus_raft::federation::DistributedLocks`` — proposes a
+//     ``Command::{Acquire,Release,Force,Extend}Lock`` through a raft
+//     consensus node; apply writes into the shared ``LockState``.
+//
+// The trait lives in ``contracts`` because both kernel and raft crates
+// depend on ``contracts`` already, and the trait avoids a cyclic
+// dependency that would arise if kernel owned a raft type or raft
+// owned a kernel trait.
+//
+// Errors use ``String`` rather than a crate-specific enum — both impls
+// already translate their internal errors (``RaftError``, locked map
+// corruption) into string form at the API boundary, and keeping the
+// trait error type simple means contracts stays tier-neutral.
+pub trait Locks: Send + Sync {
+    /// Try to acquire a lock. Returns ``Ok(true)`` if the caller
+    /// became (or already was) a holder, ``Ok(false)`` on conflict.
+    #[allow(clippy::too_many_arguments)]
+    fn acquire(
+        &self,
+        path: &str,
+        lock_id: &str,
+        mode: LockMode,
+        max_holders: u32,
+        ttl_secs: u32,
+        holder_info: &str,
+    ) -> Result<bool, String>;
+
+    /// Release a specific holder. Returns ``Ok(true)`` if found.
+    fn release(&self, path: &str, lock_id: &str) -> Result<bool, String>;
+
+    /// Force-release ALL holders on ``path`` (admin override).
+    fn force_release(&self, path: &str) -> Result<bool, String>;
+
+    /// Extend a holder's TTL. Returns ``Ok(true)`` if extended.
+    fn extend(&self, path: &str, lock_id: &str, ttl_secs: u32) -> Result<bool, String>;
+
+    /// Read the full advisory lock record (or ``None`` if unlocked).
+    fn get_lock(&self, path: &str) -> Option<LockInfo>;
+
+    /// Enumerate locks under ``prefix``, capped at ``limit``.
+    fn list_locks(&self, prefix: &str, limit: usize) -> Vec<LockInfo>;
+}
+
 // ── Tests ───────────────────────────────────────────────────────────
 
 #[cfg(test)]

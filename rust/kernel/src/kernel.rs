@@ -1078,15 +1078,27 @@ impl Kernel {
             .map_err(|e| KernelError::IOError(format!("metastore_list_locks({prefix}): {e}")))
     }
 
-    /// Upgrade lock manager to distributed mode (federation DI).
-    /// Sets Raft backend for advisory lock operations; I/O locks stay local.
+    /// Install a federation advisory-lock backend (R20.7 DI).
+    ///
+    /// Replaces the old ``upgrade_lock_manager``. Builds a
+    /// ``DistributedLocks`` that shares the state machine's advisory
+    /// map, migrates existing kernel-local holders, and swaps the
+    /// kernel's ``LockManager`` backend. First-wins per process: a
+    /// second call is a no-op (federation picks ONE zone for the
+    /// lock backend; mid-flight swaps would orphan raft-committed
+    /// holders).
     #[allow(dead_code)]
-    pub fn upgrade_lock_manager(
+    pub fn install_federation_locks(
         &self,
         node: nexus_raft::prelude::ZoneConsensus<nexus_raft::prelude::FullStateMachine>,
         runtime: tokio::runtime::Handle,
     ) {
-        self.lock_manager.upgrade_to_distributed(node, runtime);
+        let kernel_state = self.lock_manager.advisory_state_arc();
+        let (backend, shared_state) =
+            nexus_raft::federation::DistributedLocks::new(node, runtime, kernel_state);
+        let _installed = self
+            .lock_manager
+            .install_locks(Arc::new(backend), shared_state);
     }
 
     // ── DCache proxy methods ───────────────────────────────────────────
@@ -1268,7 +1280,7 @@ impl Kernel {
         // — so that branch never fired in production and the whole
         // cluster stayed in local-lock mode.
         if let Some((node, runtime)) = raft_backend {
-            self.lock_manager.upgrade_to_distributed(node, runtime);
+            self.install_federation_locks(node, runtime);
         }
         Ok(())
     }

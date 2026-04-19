@@ -28,9 +28,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use contracts::lock_state::{
-    HolderInfo as SharedHolderInfo, LockMode as SharedLockMode, LockState as SharedLockState,
+    HolderInfo as SharedHolderInfo, LockMode as SharedLockMode, LockState as SharedLockState, Locks,
 };
-use nexus_raft::prelude::{Command, CommandResult, FullStateMachine, ZoneConsensus};
 
 // ── Lock types (advisory) ───────────────────────────────────────────
 
@@ -149,7 +148,7 @@ fn ancestors(path: &str) -> Vec<&str> {
     result
 }
 
-pub(crate) fn lock_now_secs() -> u64 {
+pub fn lock_now_secs() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -212,25 +211,37 @@ impl std::fmt::Display for LockError {
 
 /// Unified lock manager: I/O lock + advisory lock + optional Raft.
 ///
-/// I/O locks live in a local `Mutex<IOLockState>` — they never
-/// replicate. Advisory locks live in a shared
-/// `Arc<Mutex<contracts::LockState>>` which is adopted from the raft
-/// state machine once `upgrade_to_distributed` fires, so the kernel
-/// and the raft apply path mutate exactly the same BTreeMap under
-/// exactly one mutex.
+/// I/O locks live in a local ``Mutex<IOLockState>`` — they never
+/// replicate. Advisory locks go through an ``Arc<dyn Locks>`` backend
+/// (R20.7) — the kernel's default ``LocalLocks`` mutates a shared
+/// ``Arc<Mutex<LockState>>`` directly; federation DI swaps in
+/// ``nexus_raft::federation::DistributedLocks`` via
+/// ``Kernel::install_locks`` (idempotent, first-wins per process).
 ///
-/// The outer `RwLock` wraps the Arc only so `upgrade_to_distributed`
-/// can swap it. Readers take the RwLock for a short snapshot, clone
-/// the Arc, then lock the inner mutex — the cost is one atomic plus
-/// one Arc clone per operation, amortized invisibly.
+/// Previous design held a concrete
+/// ``Mutex<Option<(ZoneConsensus<FullStateMachine>, Handle)>>`` —
+/// removed to eliminate the kernel's dependency on any raft concrete
+/// type (R20.7 / pre-R20.8).
 ///
-/// Shared via `Arc` between Kernel and VFSLockManager PyO3 wrapper.
+/// Shared via ``Arc`` between Kernel and VFSLockManager PyO3 wrapper.
 pub struct LockManager {
     io_state: Mutex<IOLockState>,
-    advisory: RwLock<Arc<Mutex<SharedLockState>>>,
+    /// Advisory backend (``LocalLocks`` by default; ``DistributedLocks``
+    /// after federation DI). Wrapped in ``RwLock`` so ``install_locks``
+    /// can swap atomically without blocking concurrent readers beyond
+    /// one Arc clone.
+    locks: RwLock<Arc<dyn Locks>>,
+    /// Shared advisory state Arc. Owned here so the kernel controls
+    /// the mutex discipline and so federation-side migration can pull
+    /// the current holders BEFORE swapping backends (the federation
+    /// path adopts the state machine's Arc and merges into it under
+    /// its own mutex).
+    advisory_state: RwLock<Arc<Mutex<SharedLockState>>>,
+    /// First-wins guard for ``install_locks``. Once the federation
+    /// backend is wired, further installs are no-ops.
+    installed: std::sync::atomic::AtomicBool,
     notify: Condvar,        // for blocking I/O acquire (paired with io_state)
     next_handle: AtomicU64, // for auto-generated I/O lock handles
-    raft: Mutex<Option<(ZoneConsensus<FullStateMachine>, tokio::runtime::Handle)>>,
 
     // Metrics (relaxed atomics — approximate counters)
     acquire_count: AtomicU64,
@@ -242,12 +253,16 @@ pub struct LockManager {
 
 impl LockManager {
     pub fn new() -> Self {
+        let state = Arc::new(Mutex::new(SharedLockState::new()));
+        let default_backend: Arc<dyn Locks> =
+            Arc::new(crate::locks::LocalLocks::new(state.clone()));
         Self {
             io_state: Mutex::new(IOLockState::default()),
-            advisory: RwLock::new(Arc::new(Mutex::new(SharedLockState::new()))),
+            locks: RwLock::new(default_backend),
+            advisory_state: RwLock::new(state),
+            installed: std::sync::atomic::AtomicBool::new(false),
             notify: Condvar::new(),
             next_handle: AtomicU64::new(0),
-            raft: Mutex::new(None),
             acquire_count: AtomicU64::new(0),
             release_count: AtomicU64::new(0),
             contention_count: AtomicU64::new(0),
@@ -256,93 +271,47 @@ impl LockManager {
         }
     }
 
-    /// Upgrade to distributed mode (federation DI). Sets Raft backend
-    /// for advisory lock operations. I/O locks remain local always.
+    /// Install a new advisory backend (federation DI, R20.7).
     ///
-    /// Idempotent: the **first** caller installs the backend; subsequent
-    /// callers are no-ops. This matters in federation — lock state lives
-    /// in one specific zone's state machine (the first replicated mount
-    /// the kernel sees), and swapping the backend mid-flight would orphan
-    /// holders committed through the previous zone's Raft log. All nodes
-    /// must converge on the same backend zone; since `add_mount` fires in
-    /// the same deterministic order on every peer (driven by replicated
-    /// mount topology), first-wins is cluster-consistent.
+    /// Idempotent by caller discipline: federation's ``setup_zone``
+    /// drives exactly one install per process — the ``installed``
+    /// flag guards against a second caller racing in. Mirrors the old
+    /// ``upgrade_to_distributed`` first-wins contract: lock state
+    /// lives in ONE specific zone's state machine (the first
+    /// replicated mount the kernel sees); swapping backends
+    /// mid-flight would orphan raft-committed holders.
     ///
-    /// The upgrade also migrates existing local advisory holders into
-    /// the state machine's shared `Arc<Mutex<LockState>>` and adopts
-    /// that Arc — from this point on, both the kernel and the raft
-    /// apply path mutate the same BTreeMap under the same mutex, so
-    /// there is no divergence window between writers and readers.
-    pub fn upgrade_to_distributed(
+    /// ``new_state`` becomes the kernel's new authoritative advisory
+    /// state Arc — callers (federation) are responsible for merging
+    /// any existing local holders into it BEFORE the swap (the
+    /// federation path does this inside ``DistributedLocks::new``).
+    ///
+    /// Returns ``true`` if the backend was installed, ``false`` if a
+    /// previous backend was already in place.
+    pub fn install_locks(
         &self,
-        node: ZoneConsensus<FullStateMachine>,
-        runtime: tokio::runtime::Handle,
-    ) {
-        let mut raft = self.raft.lock();
-        if raft.is_some() {
-            return;
+        backend: Arc<dyn Locks>,
+        new_state: Arc<Mutex<SharedLockState>>,
+    ) -> bool {
+        let mut slot = self.locks.write();
+        if self.installed.swap(true, Ordering::AcqRel) {
+            return false;
         }
-
-        // Adopt the state machine's advisory Arc so reads, kernel-local
-        // acquires (before any raft-applied entry arrives) and raft
-        // apply all hit the same mutex.
-        let shared_advisory = {
-            // Briefly block to fetch the Arc. We use the runtime's
-            // block_on because upgrade_to_distributed is called from a
-            // sync context (kernel::add_mount on the Python side).
-            runtime.block_on(async {
-                node.with_state_machine(|sm: &FullStateMachine| sm.advisory_state())
-                    .await
-            })
-        };
-
-        // Transfer any kernel-local advisory holders into the shared
-        // map. In practice there won't be any on a fresh upgrade
-        // (add_mount fires on startup, before users can acquire), but
-        // the safety we owe is: never overwrite state the raft apply
-        // path already wrote into the shared map. Raft may have
-        // started replaying committed entries the moment the state
-        // machine was constructed, so we treat raft's state as
-        // authoritative and only fill in paths that the shared map
-        // doesn't already own.
-        //
-        // We then swap kernel's own Arc pointer to the shared one so
-        // subsequent local acquires and reads hit the same BTreeMap
-        // the raft apply path mutates.
-        {
-            let mut dst = shared_advisory.lock();
-            let mut slot = self.advisory.write();
-            let old = std::mem::replace(&mut *slot, shared_advisory.clone());
-            drop(slot);
-            let src = old.lock();
-            let mut migrated = 0usize;
-            let mut skipped = 0usize;
-            for (path, entry) in &src.locks {
-                if entry.holders.is_empty() {
-                    continue;
-                }
-                if dst.locks.contains_key(path) {
-                    // Raft apply already wrote this path — authoritative.
-                    skipped += 1;
-                    continue;
-                }
-                dst.locks.insert(path.clone(), entry.clone());
-                migrated += 1;
-            }
-            if migrated > 0 || skipped > 0 {
-                tracing::info!(
-                    migrated = migrated,
-                    skipped_because_raft_owns = skipped,
-                    "LockManager.upgrade_to_distributed: migrated local advisory holders into shared state machine map",
-                );
-            }
-        }
-
-        *raft = Some((node, runtime));
+        let mut state_slot = self.advisory_state.write();
+        *state_slot = new_state;
+        *slot = backend;
+        true
     }
 
-    fn advisory(&self) -> Arc<Mutex<SharedLockState>> {
-        self.advisory.read().clone()
+    /// Snapshot the current advisory-state Arc (federation setup
+    /// calls this to merge local holders into the state machine's
+    /// map before swapping backends).
+    pub fn advisory_state_arc(&self) -> Arc<Mutex<SharedLockState>> {
+        self.advisory_state.read().clone()
+    }
+
+    fn locks_backend(&self) -> Arc<dyn Locks> {
+        self.locks.read().clone()
     }
 
     // ── I/O lock: blocking acquire ──────────────────────────────────
@@ -601,15 +570,16 @@ impl LockManager {
 
     // ── Advisory lock: public API ───────────────────────────────────
 
-    /// Try to acquire an advisory lock. Returns `Ok(true)` when the caller
-    /// became (or already was) a holder, `Ok(false)` on conflict.
+    /// Try to acquire an advisory lock. Returns ``Ok(true)`` when the
+    /// caller became (or already was) a holder, ``Ok(false)`` on
+    /// conflict.
     ///
-    /// When the raft backend is installed, the write flows through
-    /// `node.propose()` so it reaches consensus; the apply path then
-    /// mutates the same `Arc<Mutex<LockState>>` this manager holds.
-    /// When raft is not installed, the mutation happens directly on
-    /// the shared map. Either way, there is one state transition and
-    /// one mutex acquisition.
+    /// All four mutation methods delegate to the installed ``Locks``
+    /// backend — ``LocalLocks`` (default) mutates the shared map
+    /// directly; ``DistributedLocks`` (federation) proposes through
+    /// ``ZoneConsensus`` and apply-path writes into the same shared
+    /// map. Either way, there is one state transition and one mutex
+    /// acquisition observed from outside.
     pub fn acquire_lock(
         &self,
         path: &str,
@@ -619,156 +589,62 @@ impl LockManager {
         ttl_secs: u64,
         holder_info: &str,
     ) -> Result<bool, LockError> {
-        let raft_guard = self.raft.lock();
-        if let Some((ref node, ref runtime)) = *raft_guard {
-            let cmd = Command::AcquireLock {
-                path: path.to_string(),
-                lock_id: lock_id.to_string(),
+        self.locks_backend()
+            .acquire(
+                path,
+                lock_id,
+                kernel_to_shared_mode(mode),
                 max_holders,
-                ttl_secs: ttl_secs.min(u32::MAX as u64) as u32,
-                holder_info: holder_info.to_string(),
-                mode: kernel_to_shared_mode(mode),
-                now_secs: FullStateMachine::now(),
-            };
-            let result = runtime.block_on(node.propose(cmd)).map_err(|e| {
-                LockError::IOError(format!("LockManager.acquire_lock({path}): {e}"))
-            })?;
-            match result {
-                CommandResult::LockResult(state) => Ok(state.acquired),
-                CommandResult::Error(e) => Err(LockError::IOError(format!(
-                    "LockManager.acquire_lock({path}) rejected: {e}"
-                ))),
-                _ => Err(LockError::IOError(
-                    "LockManager.acquire_lock: unexpected result type".into(),
-                )),
-            }
-        } else {
-            drop(raft_guard);
-            self.apply_acquire(path, lock_id, mode, max_holders, ttl_secs, holder_info)
-        }
+                ttl_secs.min(u32::MAX as u64) as u32,
+                holder_info,
+            )
+            .map_err(|e| LockError::IOError(format!("LockManager.acquire_lock({path}): {e}")))
     }
 
-    /// Local advisory lock acquire (pre-raft path). Delegates to
-    /// `contracts::LockState::apply_acquire` under the shared mutex —
-    /// exactly the same state transition the raft apply path runs.
-    fn apply_acquire(
-        &self,
-        path: &str,
-        lock_id: &str,
-        mode: KernelLockMode,
-        max_holders: u32,
-        ttl_secs: u64,
-        holder_info: &str,
-    ) -> Result<bool, LockError> {
-        let now = lock_now_secs();
-        let advisory = self.advisory();
-        let mut guard = advisory.lock();
-        let result = guard.apply_acquire(
-            path,
-            lock_id,
-            max_holders,
-            ttl_secs.min(u32::MAX as u64) as u32,
-            holder_info,
-            kernel_to_shared_mode(mode),
-            now,
-        );
-        Ok(result.acquired)
-    }
-
-    /// Release a specific advisory lock holder. Returns `Ok(true)` if found.
+    /// Release a specific advisory lock holder. Returns ``Ok(true)`` if found.
     pub fn release_lock(&self, path: &str, lock_id: &str) -> Result<bool, LockError> {
-        let raft_guard = self.raft.lock();
-        if let Some((ref node, ref runtime)) = *raft_guard {
-            let cmd = Command::ReleaseLock {
-                path: path.to_string(),
-                lock_id: lock_id.to_string(),
-            };
-            let result = runtime.block_on(node.propose(cmd)).map_err(|e| {
-                LockError::IOError(format!("LockManager.release_lock({path}): {e}"))
-            })?;
-            Ok(matches!(result, CommandResult::Success))
-        } else {
-            drop(raft_guard);
-            Ok(self.apply_release(path, lock_id))
-        }
+        self.locks_backend()
+            .release(path, lock_id)
+            .map_err(|e| LockError::IOError(format!("LockManager.release_lock({path}): {e}")))
     }
 
-    fn apply_release(&self, path: &str, lock_id: &str) -> bool {
-        let advisory = self.advisory();
-        let result = advisory.lock().apply_release(path, lock_id);
-        result
-    }
-
-    /// Force-release ALL advisory holders on `path` (admin override).
+    /// Force-release ALL advisory holders on ``path`` (admin override).
     pub fn force_release_lock(&self, path: &str) -> Result<bool, LockError> {
-        let raft_guard = self.raft.lock();
-        if let Some((ref node, ref runtime)) = *raft_guard {
-            let cmd = Command::ForceReleaseLock {
-                path: path.to_string(),
-            };
-            let result = runtime.block_on(node.propose(cmd)).map_err(|e| {
-                LockError::IOError(format!("LockManager.force_release_lock({path}): {e}"))
-            })?;
-            Ok(matches!(result, CommandResult::Success))
-        } else {
-            drop(raft_guard);
-            Ok(self.apply_force_release(path))
-        }
+        self.locks_backend()
+            .force_release(path)
+            .map_err(|e| LockError::IOError(format!("LockManager.force_release_lock({path}): {e}")))
     }
 
-    fn apply_force_release(&self, path: &str) -> bool {
-        let advisory = self.advisory();
-        let result = advisory.lock().apply_force_release(path);
-        result
-    }
-
-    /// Extend a holder's TTL. Returns `Ok(true)` if extended.
+    /// Extend a holder's TTL. Returns ``Ok(true)`` if extended.
     pub fn extend_lock(&self, path: &str, lock_id: &str, ttl_secs: u64) -> Result<bool, LockError> {
-        let raft_guard = self.raft.lock();
-        if let Some((ref node, ref runtime)) = *raft_guard {
-            let cmd = Command::ExtendLock {
-                path: path.to_string(),
-                lock_id: lock_id.to_string(),
-                new_ttl_secs: ttl_secs.min(u32::MAX as u64) as u32,
-                now_secs: FullStateMachine::now(),
-            };
-            let result = runtime
-                .block_on(node.propose(cmd))
-                .map_err(|e| LockError::IOError(format!("LockManager.extend_lock({path}): {e}")))?;
-            Ok(matches!(result, CommandResult::Success))
-        } else {
-            drop(raft_guard);
-            Ok(self.apply_extend(path, lock_id, ttl_secs))
-        }
+        self.locks_backend()
+            .extend(path, lock_id, ttl_secs.min(u32::MAX as u64) as u32)
+            .map_err(|e| LockError::IOError(format!("LockManager.extend_lock({path}): {e}")))
     }
 
-    fn apply_extend(&self, path: &str, lock_id: &str, ttl_secs: u64) -> bool {
-        let advisory = self.advisory();
-        let now = lock_now_secs();
-        let result =
-            advisory
-                .lock()
-                .apply_extend(path, lock_id, ttl_secs.min(u32::MAX as u64) as u32, now);
-        result
-    }
-
-    /// Read the full advisory lock record for a path (or `None` if unlocked).
+    /// Read the full advisory lock record for a path (or ``None`` if
+    /// unlocked).
     ///
-    /// Post-R14 this always reads from the local shared map — which is
-    /// the same Arc as the state machine's apply path on this node. A
-    /// committed write is visible here as soon as apply returns, so no
-    /// ReadIndex round-trip is needed.
+    /// Reads always go through the current backend. Both ``LocalLocks``
+    /// and ``DistributedLocks`` read from the same shared
+    /// ``Arc<Mutex<LockState>>`` — a committed raft write is visible
+    /// here as soon as apply returns, so no ReadIndex round-trip is
+    /// needed.
     pub fn get_lock_info(&self, path: &str) -> Result<Option<KernelLockInfo>, LockError> {
-        let advisory = self.advisory();
-        let result = advisory.lock().get_lock(path).map(shared_lock_to_kernel);
-        Ok(result)
+        Ok(self
+            .locks_backend()
+            .get_lock(path)
+            .map(shared_lock_to_kernel))
     }
 
-    /// Enumerate advisory locks with a given path prefix, capped at `limit`.
+    /// Enumerate advisory locks with a given path prefix, capped at ``limit``.
     pub fn list_locks(&self, prefix: &str, limit: usize) -> Result<Vec<KernelLockInfo>, LockError> {
-        let advisory = self.advisory();
-        let locks = advisory.lock().list_locks(prefix, limit);
-        Ok(locks.into_iter().map(shared_lock_to_kernel).collect())
+        Ok(self
+            .locks_backend()
+            .list_locks(prefix, limit)
+            .into_iter()
+            .map(shared_lock_to_kernel)
+            .collect())
     }
 }
 

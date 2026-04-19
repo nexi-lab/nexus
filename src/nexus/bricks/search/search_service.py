@@ -3542,7 +3542,7 @@ class SearchService:
             # No daemon wired — fall back to the SQL chunk search so SANDBOX
             # still returns *something* when a RecordStore is present.
             if self._record_store is not None:
-                return await self._sql_chunk_search(query, path, limit)
+                return await self._sql_chunk_search(query, path, limit, context=context)
 
             return []
 
@@ -3662,7 +3662,7 @@ class SearchService:
             return hits[:limit]
 
         if self._record_store is not None:
-            return await self._sql_chunk_search(query, path, limit)
+            return await self._sql_chunk_search(query, path, limit, context=context)
 
         raise ValueError(
             "Semantic search is not available. No query service or record store configured."
@@ -3673,6 +3673,7 @@ class SearchService:
         query: str,
         path: str,
         limit: int,
+        context: "OperationContext | None" = None,
     ) -> builtins.list[dict[str, Any]]:
         """Fallback search via SQL LIKE on document_chunks (Issue #2663).
 
@@ -3681,6 +3682,12 @@ class SearchService:
         The *path* may arrive zone-scoped (``/zone/<id>/…``) from the gRPC
         dispatcher.  We strip the zone prefix and use the inner path for the
         LIKE filter so it matches stored ``virtual_path`` values.
+
+        R5 review (Issue #3778): applies ReBAC permission filtering on the
+        returned rows when ``context`` is provided AND an enforcer is wired.
+        When permissions are enforced but context is missing, returns no
+        results — fail closed so the SANDBOX degraded path can't leak
+        chunks the caller shouldn't see.
         """
         if self._record_store is None:
             return []
@@ -3782,6 +3789,23 @@ class SearchService:
                     "line_end": row.line_end if hasattr(row, "line_end") else row[5],
                 }
             )
+
+        # R5 review: ReBAC-filter the results when an enforcer is wired.
+        # Fail closed when permissions must be enforced but no valid context
+        # was supplied — callers that can legitimately bypass (admin/internal)
+        # use ``enforce_permissions=False`` at SearchService construction.
+        if self._permission_enforcer is not None and hits:
+            if context is None:
+                if self._enforce_permissions:
+                    logger.warning(
+                        "[SearchService] SQL chunk fallback called without OperationContext "
+                        "while permissions are enforced — returning empty result (fail-closed)."
+                    )
+                    return []
+            else:
+                all_paths = [h["path"] for h in hits]
+                accessible = set(self._permission_enforcer.filter_list(all_paths, context))
+                hits = [h for h in hits if h["path"] in accessible]
         return hits
 
     @rpc_expose(description="Index documents for semantic search")

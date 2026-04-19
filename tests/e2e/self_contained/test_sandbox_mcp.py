@@ -91,7 +91,9 @@ async def test_sandbox_mcp_semantic_search_includes_degraded_flag(
 
     # Patch the SQL fallback to return synthetic hits so the test can assert
     # the degraded-flag stamping end-to-end.
-    async def _fake_sql(query: str, path: str, limit: int) -> list[dict[str, Any]]:
+    async def _fake_sql(
+        query: str, path: str, limit: int, context: Any = None
+    ) -> list[dict[str, Any]]:
         return [
             {
                 "path": "/README.md",

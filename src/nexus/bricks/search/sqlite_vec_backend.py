@@ -271,20 +271,60 @@ class SqliteVecBackend:
             return await asyncio.to_thread(_write)
 
     async def index(self, documents: list[dict[str, Any]], *, zone_id: str) -> int:
-        """Full-rebuild for *zone_id*: drop the zone's rows, then upsert all."""
+        """Full-rebuild for *zone_id*: drop the zone's rows, then upsert all.
+
+        R5 review (Issue #3778): compute embeddings BEFORE the destructive
+        wipe, then do the delete + insert atomically in a single SQL
+        transaction. If the remote embedding API fails mid-flight, the
+        existing zone index remains intact instead of being left empty.
+        """
+        if not documents:
+            return 0
         await self.startup()
         conn = self._require_conn()
 
-        def _wipe() -> None:
+        # Phase 1: embed outside the lock / transaction. If this raises,
+        # the existing zone index is unaffected.
+        texts = [str(doc.get("text") or doc.get("chunk_text") or "") for doc in documents]
+        vectors = await self._embed_many(texts)
+        if len(vectors) != len(documents):
+            raise RuntimeError(
+                f"Embedding count mismatch: got {len(vectors)} vectors for "
+                f"{len(documents)} documents (model={self._embedding_model})"
+            )
+
+        rows: list[tuple[int, bytes, str, str, str, int]] = []
+        for doc, vec in zip(documents, vectors, strict=True):
+            path = str(doc.get("path", ""))
+            chunk_index = int(doc.get("chunk_index", 0) or 0)
+            chunk_text = str(doc.get("text") or doc.get("chunk_text") or "")
+            if len(vec) != self._embedding_dim:
+                raise RuntimeError(
+                    f"Embedding dim mismatch: got {len(vec)} expected "
+                    f"{self._embedding_dim} (model={self._embedding_model}, path={path})"
+                )
+            rowid = self._stable_rowid(zone_id, path, chunk_index)
+            rows.append((rowid, self._pack_vector(vec), zone_id, path, chunk_text, chunk_index))
+
+        # Phase 2: atomic delete+insert in a single transaction. sqlite3's
+        # `with conn:` uses BEGIN/COMMIT/ROLLBACK, so if executemany fails
+        # the DELETE rolls back and the prior zone index is preserved.
+        def _swap() -> int:
             with conn:
                 conn.execute(
                     f"DELETE FROM {_VEC_TABLE} WHERE zone_id = ?",
                     (zone_id,),
                 )
+                conn.executemany(
+                    f"INSERT INTO {_VEC_TABLE}"
+                    f"(rowid, embedding, zone_id, path, chunk_text, chunk_index) "
+                    f"VALUES (?, ?, ?, ?, ?, ?)",
+                    rows,
+                )
+            return len(rows)
 
         async with self._op_lock:
-            await asyncio.to_thread(_wipe)
-        return await self.upsert(documents, zone_id=zone_id)
+            return await asyncio.to_thread(_swap)
 
     async def delete(self, ids: list[str], *, zone_id: str) -> int:
         """Delete rows by document id within *zone_id*.

@@ -261,390 +261,393 @@ async def connect(
 
     from nexus.config import NexusConfig, load_config
 
-    # Load configuration
-    cfg = load_config(config)
+    async with _get_connect_boot_lock():
+        cfg = load_config(config)
 
-    # ── Profile: remote ──────────────────────────────────────────────
-    if cfg.profile == "remote":
-        from urllib.parse import urlparse
+        # ── Profile: remote ──────────────────────────────────────────────
+        if cfg.profile == "remote":
+            from urllib.parse import urlparse
 
-        server_url = cfg.url or os.getenv("NEXUS_URL")
-        if not server_url:
-            raise ValueError(
-                "profile='remote' requires a server URL. "
-                "Set 'url' in config or NEXUS_URL environment variable."
-            )
-        api_key = cfg.api_key or os.getenv("NEXUS_API_KEY")
-        timeout = int(cfg.timeout) if hasattr(cfg, "timeout") else 30
-        connect_timeout = int(cfg.connect_timeout) if hasattr(cfg, "connect_timeout") else 5
+            server_url = cfg.url or os.getenv("NEXUS_URL")
+            if not server_url:
+                raise ValueError(
+                    "profile='remote' requires a server URL. "
+                    "Set 'url' in config or NEXUS_URL environment variable."
+                )
+            api_key = cfg.api_key or os.getenv("NEXUS_API_KEY")
+            timeout = int(cfg.timeout) if hasattr(cfg, "timeout") else 30
+            connect_timeout = int(cfg.connect_timeout) if hasattr(cfg, "connect_timeout") else 5
 
-        # Build gRPC address from NEXUS_URL hostname + gRPC port.
-        # Port precedence: NEXUS_GRPC_PORT env > nexus.yaml ports.grpc > default 2028
-        _grpc_port_str = os.getenv("NEXUS_GRPC_PORT")
-        if not _grpc_port_str:
-            try:
-                import yaml as _yaml
-
-                _pf = Path("nexus.yaml")
-                if _pf.exists():
-                    with open(_pf) as _f:
-                        _pc = _yaml.safe_load(_f) or {}
-                    _grpc_port_str = str(_pc.get("ports", {}).get("grpc", ""))
-            except Exception:
-                pass
-        grpc_port = int(_grpc_port_str) if _grpc_port_str else 2028
-        parsed = urlparse(server_url)
-        grpc_address = f"{parsed.hostname}:{grpc_port}"
-
-        # Single shared RPCTransport (gRPC channel) for all remote proxies.
-        from nexus.remote.rpc_transport import RPCTransport
-
-        # TLS: NEXUS_GRPC_TLS env var overrides all other TLS signals.
-        #   true  → force TLS
-        #   false → force insecure
-        #   unset → fall back to nexus.yaml tls / NEXUS_DATA_DIR auto-detect
-        _tls_config = None
-        _grpc_tls_env = os.getenv("NEXUS_GRPC_TLS", "").lower()
-        _tls_enabled = _grpc_tls_env in ("true", "1", "yes")
-        _tls_disabled = _grpc_tls_env in ("false", "0", "no")
-        _tls_from_config = False  # set when nexus.yaml explicitly enables TLS
-        _data_dir = os.getenv("NEXUS_DATA_DIR")
-        if _data_dir and not _tls_disabled:
-            _tls_enabled = True  # Auto-detect from NEXUS_DATA_DIR (backward compat)
-        if not _data_dir:
-            _project_yaml = Path("nexus.yaml")
-            if _project_yaml.exists():
+            # Build gRPC address from NEXUS_URL hostname + gRPC port.
+            # Port precedence: NEXUS_GRPC_PORT env > nexus.yaml ports.grpc > default 2028
+            _grpc_port_str = os.getenv("NEXUS_GRPC_PORT")
+            if not _grpc_port_str:
                 try:
                     import yaml as _yaml
 
-                    with open(_project_yaml) as _f:
-                        _project_cfg = _yaml.safe_load(_f) or {}
-                    _data_dir = _project_cfg.get("data_dir")
-                    # nexus.yaml tls: only used when env var is unset
-                    if not _grpc_tls_env:
-                        _tls_from_config = bool(_project_cfg.get("tls"))
-                        _tls_enabled = _tls_from_config
+                    _pf = Path("nexus.yaml")
+                    if _pf.exists():
+                        with open(_pf) as _f:
+                            _pc = _yaml.safe_load(_f) or {}
+                        _grpc_port_str = str(_pc.get("ports", {}).get("grpc", ""))
                 except Exception:
                     pass
-        if not _data_dir:
-            _data_dir = getattr(cfg, "data_dir", None)
+            grpc_port = int(_grpc_port_str) if _grpc_port_str else 2028
+            parsed = urlparse(server_url)
+            grpc_address = f"{parsed.hostname}:{grpc_port}"
 
-        if _data_dir and _tls_enabled:
-            from nexus.security.tls.config import ZoneTlsConfig
+            # Single shared RPCTransport (gRPC channel) for all remote proxies.
+            from nexus.remote.rpc_transport import RPCTransport
 
-            # TLS explicitly requested (env var or config) → check both layouts
-            # NEXUS_DATA_DIR auto-detect only → Raft-only (backward compat)
-            _tls_intentional = _grpc_tls_env in ("true", "1", "yes") or _tls_from_config
-            _tls_config = (
-                ZoneTlsConfig.from_data_dir_any(_data_dir)
-                if _tls_intentional
-                else ZoneTlsConfig.from_data_dir(_data_dir)
-            )
+            # TLS: NEXUS_GRPC_TLS env var overrides all other TLS signals.
+            #   true  → force TLS
+            #   false → force insecure
+            #   unset → fall back to nexus.yaml tls / NEXUS_DATA_DIR auto-detect
+            _tls_config = None
+            _grpc_tls_env = os.getenv("NEXUS_GRPC_TLS", "").lower()
+            _tls_enabled = _grpc_tls_env in ("true", "1", "yes")
+            _tls_disabled = _grpc_tls_env in ("false", "0", "no")
+            _tls_from_config = False  # set when nexus.yaml explicitly enables TLS
+            _data_dir = os.getenv("NEXUS_DATA_DIR")
+            if _data_dir and not _tls_disabled:
+                _tls_enabled = True  # Auto-detect from NEXUS_DATA_DIR (backward compat)
+            if not _data_dir:
+                _project_yaml = Path("nexus.yaml")
+                if _project_yaml.exists():
+                    try:
+                        import yaml as _yaml
 
-        # Fail closed: NEXUS_GRPC_TLS=true but no certs resolved.
-        # As a last resort, check NEXUS_TLS_* env vars — but only when
-        # TLS was explicitly requested, to avoid stale env vars from a
-        # previous session flipping a plaintext stack onto mTLS.
-        _tls_explicit = _grpc_tls_env in ("true", "1", "yes")
-        if _tls_explicit and _tls_config is None and os.getenv("NEXUS_TLS_CERT"):
-            import contextlib
+                        with open(_project_yaml) as _f:
+                            _project_cfg = _yaml.safe_load(_f) or {}
+                        _data_dir = _project_cfg.get("data_dir")
+                        # nexus.yaml tls: only used when env var is unset
+                        if not _grpc_tls_env:
+                            _tls_from_config = bool(_project_cfg.get("tls"))
+                            _tls_enabled = _tls_from_config
+                    except Exception:
+                        pass
+            if not _data_dir:
+                _data_dir = getattr(cfg, "data_dir", None)
 
-            from nexus.security.tls.config import ZoneTlsConfig
+            if _data_dir and _tls_enabled:
+                from nexus.security.tls.config import ZoneTlsConfig
 
-            with contextlib.suppress(Exception):
-                _tls_config = ZoneTlsConfig.from_env()
-        if _tls_explicit and _tls_config is None:
-            raise RuntimeError(
-                "NEXUS_GRPC_TLS=true but no TLS certificates found. "
-                "Provide certs via NEXUS_TLS_CERT/KEY/CA, "
-                "in {data_dir}/tls/, or set data_dir in nexus.yaml."
-            )
-
-        transport = RPCTransport(
-            server_address=grpc_address,
-            auth_token=api_key,
-            timeout=float(timeout),
-            connect_timeout=float(connect_timeout),
-            tls_config=_tls_config,
-        )
-
-        # RemoteBackend + RemoteMetastore — stateless proxies, server is SSOT.
-        from nexus.backends.storage.remote import RemoteBackend
-        from nexus.storage.remote_metastore import RemoteMetastore
-
-        remote_backend = RemoteBackend(transport)
-        remote_metastore = RemoteMetastore(transport)
-
-        # Build a lightweight NexusFS directly — no factory, no bricks.
-        # Server is SSOT; client just proxies calls via gRPC.
-        # No parser registries — remote delegates all parsing to the server.
-        from nexus.core.config import PermissionConfig as _PermissionConfig
-        from nexus.core.mount_table import MountTable as _MountTable
-        from nexus.core.nexus_fs import NexusFS as _RemoteNexusFS
-        from nexus.core.router import PathRouter as _PathRouter
-
-        _mount_table = _MountTable(remote_metastore)
-        _router = _PathRouter(_mount_table)
-
-        from nexus.contracts.types import OperationContext as _RemoteOC
-
-        nfs = _RemoteNexusFS(
-            metadata_store=remote_metastore,
-            permissions=_PermissionConfig(enforce=False),
-            router=_router,
-            init_cred=_RemoteOC(user_id="remote", groups=[], is_admin=False),
-        )
-
-        # Mount after NexusFS construction so the Kernel is already wired into
-        # _mount_table (_mount_table._kernel is set by NexusFS.__init__).
-        # If add() is called before the kernel is wired, the kernel's route table
-        # stays empty and self._kernel.sys_mkdir() raises PathNotMountedError.
-        _mount_table.add("/", remote_backend)
-
-        # Wire service proxies for REMOTE profile (Issue #1171).
-        # Fills all 25+ service slots with RemoteServiceProxy — forwards
-        # method calls to the server via gRPC.
-        from nexus.factory._remote import (
-            _boot_remote_services,
-            install_remote_kernel_rpc_overrides,
-        )
-
-        await _boot_remote_services(nfs, call_rpc=transport.call_rpc)
-        install_remote_kernel_rpc_overrides(nfs, transport)
-        nfs._register_runtime_closeable(transport)
-
-        return nfs
-
-    # ── Local node (single-node or federated, auto-detected) ────────
-    # Heavy imports for local profiles
-    from nexus.backends.base.backend import Backend
-    from nexus.backends.storage.cas_local import CASLocalBackend
-    from nexus.core.nexus_fs import NexusFS
-
-    # Create backend based on configuration
-    backend: Backend
-    if cfg.backend == "gcs":
-        from nexus.backends.storage.cas_gcs import CASGCSBackend
-
-        if not cfg.gcs_bucket_name:
-            raise ValueError(
-                "gcs_bucket_name is required when backend='gcs'. "
-                "Set gcs_bucket_name in your config or NEXUS_GCS_BUCKET_NAME environment variable."
-            )
-        backend = CASGCSBackend(
-            bucket_name=cfg.gcs_bucket_name,
-            project_id=cfg.gcs_project_id,
-            credentials_path=cfg.gcs_credentials_path,
-        )
-        nexus_root = NEXUS_STATE_DIR
-        data_dir = str(Path(nexus_root) / "data")
-    else:
-        data_dir = cfg.data_dir if cfg.data_dir is not None else str(Path(NEXUS_STATE_DIR) / "data")
-        # nexus_root hosts sibling state directories (metastore, record_store).
-        # When data_dir is explicitly provided (e.g. --data-dir /some/path), USE
-        # data_dir itself as nexus_root so metastore goes inside it — this avoids
-        # polluting the parent directory (which could be /tmp or /) and ensures
-        # each data_dir is fully self-contained.  When data_dir is the default
-        # (~/.nexus/data), the parent (~/.nexus) is still used as nexus_root
-        # for backward compatibility.
-        nexus_root = data_dir if cfg.data_dir is not None else str(Path(data_dir).parent)
-        if cfg.backend == "path_local":
-            from nexus.backends.storage.path_local import PathLocalBackend
-
-            backend = PathLocalBackend(root_path=Path(data_dir).resolve())
-        else:
-            # Parse tiering config from YAML if present (Issue #3406)
-            tiering_cfg = None
-            if cfg.tiering and cfg.tiering.get("enabled"):
-                from nexus.core.config import TieringConfig
-
-                t = cfg.tiering
-                tiering_cfg = TieringConfig(
-                    enabled=True,
-                    quiet_period_seconds=float(t.get("quiet_period", 3600)),
-                    min_volume_size_bytes=int(t.get("min_volume_size", 100 * 1024 * 1024)),
-                    cloud_backend=str(t.get("cloud_backend", "gcs")),
-                    cloud_bucket=str(t.get("cloud_bucket", "")),
-                    upload_rate_limit_bytes=int(t.get("upload_rate_limit", 25 * 1024 * 1024)),
-                    sweep_interval_seconds=float(t.get("sweep_interval", 60)),
-                    local_cache_size_bytes=int(t.get("local_cache_size", 10 * 1024 * 1024 * 1024)),
-                    burst_read_threshold=int(t.get("burst_read_threshold", 5)),
-                    burst_read_window_seconds=float(t.get("burst_read_window", 60)),
+                # TLS explicitly requested (env var or config) → check both layouts
+                # NEXUS_DATA_DIR auto-detect only → Raft-only (backward compat)
+                _tls_intentional = _grpc_tls_env in ("true", "1", "yes") or _tls_from_config
+                _tls_config = (
+                    ZoneTlsConfig.from_data_dir_any(_data_dir)
+                    if _tls_intentional
+                    else ZoneTlsConfig.from_data_dir(_data_dir)
                 )
-            backend = CASLocalBackend(
-                root_path=Path(data_dir).resolve(),
-                tiering_config=tiering_cfg,
+
+            # Fail closed: NEXUS_GRPC_TLS=true but no certs resolved.
+            # As a last resort, check NEXUS_TLS_* env vars — but only when
+            # TLS was explicitly requested, to avoid stale env vars from a
+            # previous session flipping a plaintext stack onto mTLS.
+            _tls_explicit = _grpc_tls_env in ("true", "1", "yes")
+            if _tls_explicit and _tls_config is None and os.getenv("NEXUS_TLS_CERT"):
+                import contextlib
+
+                from nexus.security.tls.config import ZoneTlsConfig
+
+                with contextlib.suppress(Exception):
+                    _tls_config = ZoneTlsConfig.from_env()
+            if _tls_explicit and _tls_config is None:
+                raise RuntimeError(
+                    "NEXUS_GRPC_TLS=true but no TLS certificates found. "
+                    "Provide certs via NEXUS_TLS_CERT/KEY/CA, "
+                    "in {data_dir}/tls/, or set data_dir in nexus.yaml."
+                )
+
+            transport = RPCTransport(
+                server_address=grpc_address,
+                auth_token=api_key,
+                timeout=float(timeout),
+                connect_timeout=float(connect_timeout),
+                tls_config=_tls_config,
             )
 
-    # Resolve paths — new fields take precedence, db_path is legacy fallback
-    metadata_path = cfg.metastore_path or cfg.db_path or str(Path(nexus_root) / "metastore")
-    record_store_path = cfg.record_store_path or None
+            # RemoteBackend + RemoteMetastore — stateless proxies, server is SSOT.
+            from nexus.backends.storage.remote import RemoteBackend
+            from nexus.storage.remote_metastore import RemoteMetastore
 
-    # --- Profile resolution (Issue #1708, moved before metadata store for federation gating) ---
-    from nexus.contracts.deployment_profile import DeploymentProfile, resolve_enabled_bricks
+            remote_backend = RemoteBackend(transport)
+            remote_metastore = RemoteMetastore(transport)
 
-    if cfg.profile == "auto":
-        from nexus.lib.device_capabilities import detect_capabilities, suggest_profile
+            # Build a lightweight NexusFS directly — no factory, no bricks.
+            # Server is SSOT; client just proxies calls via gRPC.
+            # No parser registries — remote delegates all parsing to the server.
+            from nexus.core.config import PermissionConfig as _PermissionConfig
+            from nexus.core.mount_table import MountTable as _MountTable
+            from nexus.core.nexus_fs import NexusFS as _RemoteNexusFS
+            from nexus.core.router import PathRouter as _PathRouter
 
-        caps = detect_capabilities()
-        resolved_profile = suggest_profile(caps)
-        logger.info(
-            "Auto-detected profile: %s (RAM=%dMB, GPU=%s, cores=%d)",
-            resolved_profile,
-            caps.memory_mb,
-            caps.has_gpu,
-            caps.cpu_cores,
-        )
-    else:
-        resolved_profile = DeploymentProfile(cfg.profile)
-        # Warn if explicit profile may exceed device capabilities
-        from nexus.lib.device_capabilities import (
-            detect_capabilities,
-            warn_if_profile_exceeds_device,
-        )
+            _mount_table = _MountTable(remote_metastore)
+            _router = _PathRouter(_mount_table)
 
-        caps = detect_capabilities()
-        warn_if_profile_exceeds_device(resolved_profile, caps)
+            from nexus.contracts.types import OperationContext as _RemoteOC
 
-    # Apply FeaturesConfig overrides (Issue #1389)
-    overrides = cfg.features.to_overrides() if cfg.features else {}
-    enabled_bricks = resolve_enabled_bricks(resolved_profile, overrides=overrides)
-
-    # Create Rust kernel early so RustMetastoreProxy can use it.
-    # Route through _rust_compat so stale binaries (missing Kernel methods)
-    # are caught here and never passed to RustMetastoreProxy (Issue #3712).
-    _early_kernel = None
-    try:
-        from nexus._rust_compat import RUST_AVAILABLE as _RUST_AVAILABLE
-        from nexus._rust_compat import Kernel as _Kernel
-
-        if _RUST_AVAILABLE and _Kernel is not None:
-            _early_kernel = _Kernel()
-    except Exception:
-        pass
-
-    # Create metadata store — profile-gated federation (PR #3371 Phase 2)
-    metadata_store: MetastoreABC
-    federation = None
-
-    # Federation: attempt only when the FEDERATION brick is explicitly enabled.
-    # LITE and SANDBOX both include IPC but must NOT start Raft (no external
-    # services).  Only CLUSTER and CLOUD include BRICK_FEDERATION.
-    if "federation" in enabled_bricks:
-        try:
-            from nexus.raft.federation import NexusFederation
-
-            federation, metadata_store = NexusFederation.bootstrap(metadata_path=metadata_path)
-        except ImportError:
-            logger.warning("Federation brick enabled but Rust extensions unavailable")
-            federation = None
-            metadata_store = _open_local_metastore(metadata_path, kernel=_early_kernel)
-        except RuntimeError as exc:
-            if "ZoneManager requires PyO3 build with --features full" not in str(exc):
-                raise
-            logger.info(
-                "Federation extensions unavailable for local connect(); "
-                "falling back to single-node metadata store"
+            nfs = _RemoteNexusFS(
+                metadata_store=remote_metastore,
+                permissions=_PermissionConfig(enforce=False),
+                router=_router,
+                init_cred=_RemoteOC(user_id="remote", groups=[], is_admin=False),
             )
-            federation = None
-            metadata_store = _open_local_metastore(metadata_path, kernel=_early_kernel)
-    else:
-        metadata_store = _open_local_metastore(metadata_path, kernel=_early_kernel)
 
-    # Permission defaults: standalone without explicit config → permissive
-    enforce_permissions = cfg.enforce_permissions
-    if config is None or isinstance(config, dict) and "enforce_permissions" not in config:
-        enforce_permissions = False
+            # Mount after NexusFS construction so the Kernel is already wired into
+            # _mount_table (_mount_table._kernel is set by NexusFS.__init__).
+            # If add() is called before the kernel is wired, the kernel's route table
+            # stays empty and self._kernel.sys_mkdir() raises PathNotMountedError.
+            _mount_table.add("/", remote_backend)
 
-    # Zone isolation: default enabled for security
-    enforce_zone_isolation = cfg.enforce_zone_isolation
-    if config is None or isinstance(config, dict) and "enforce_zone_isolation" not in config:
-        enforce_zone_isolation = True
+            # Wire service proxies for REMOTE profile (Issue #1171).
+            # Fills all 25+ service slots with RemoteServiceProxy — forwards
+            # method calls to the server via gRPC.
+            from nexus.factory._remote import (
+                _boot_remote_services,
+                install_remote_kernel_rpc_overrides,
+            )
 
-    # Tiger Cache
-    enable_tiger_cache_env = os.getenv("NEXUS_ENABLE_TIGER_CACHE", "true").lower()
-    enable_tiger_cache = enable_tiger_cache_env in ("true", "1", "yes")
+            await _boot_remote_services(nfs, call_rpc=transport.call_rpc)
+            install_remote_kernel_rpc_overrides(nfs, transport)
+            nfs._register_runtime_closeable(transport)
 
-    # RecordStore (Four Pillars) — created from NEXUS_RECORD_STORE_PATH or
-    # NEXUS_DATABASE_URL.  Passing None gives a bare kernel (storage-only)
-    # where all service-layer features (audit log, versioning, ReBAC, Memory
-    # API, etc.) are skipped.  The factory handles record_store=None gracefully.
-    _database_url = os.environ.get("NEXUS_DATABASE_URL")
-    if record_store_path:
-        from nexus.storage.record_store import SQLAlchemyRecordStore
+            return nfs
 
-        record_store = SQLAlchemyRecordStore(db_path=record_store_path)
-    elif _database_url:
-        from nexus.storage.record_store import SQLAlchemyRecordStore
+        # ── Local node (single-node or federated, auto-detected) ────────
+        # Heavy imports for local profiles
+        from nexus.backends.base.backend import Backend
+        from nexus.backends.storage.cas_local import CASLocalBackend
+        from nexus.core.nexus_fs import NexusFS
 
-        record_store = SQLAlchemyRecordStore(db_url=_database_url)
-    else:
-        record_store = None
+        # Create backend based on configuration
+        backend: Backend
+        if cfg.backend == "gcs":
+            from nexus.backends.storage.cas_gcs import CASGCSBackend
 
-    # Build config objects from NexusConfig fields (Issue #1391)
-    from nexus.core.config import (
-        CacheConfig,
-        DistributedConfig,
-        ParseConfig,
-        PermissionConfig,
-    )
-
-    cache_cfg = CacheConfig(
-        path_size=cfg.cache_path_size,
-        list_size=cfg.cache_list_size,
-        kv_size=cfg.cache_kv_size,
-        exists_size=cfg.cache_exists_size,
-        ttl_seconds=cfg.cache_ttl_seconds,
-    )
-
-    perm_cfg = PermissionConfig(
-        enforce=enforce_permissions,
-        allow_admin_bypass=cfg.allow_admin_bypass,
-        enforce_zone_isolation=enforce_zone_isolation,
-        enable_tiger_cache=enable_tiger_cache,
-    )
-
-    dist_cfg = DistributedConfig(
-        enable_workflows=cfg.enable_workflows,
-    )
-
-    parse_cfg = ParseConfig(
-        auto_parse=cfg.auto_parse,
-        providers=tuple(cfg.parse_providers) if cfg.parse_providers else None,
-    )
-
-    # Audit strict mode: env var override (default True for compliance)
-    from nexus.contracts.types import AuditConfig
-
-    _audit_strict = os.environ.get("NEXUS_AUDIT_STRICT_MODE", "true").lower() not in (
-        "false",
-        "0",
-        "no",
-    )
-    audit_cfg = AuditConfig(strict_mode=_audit_strict)
-
-    # Create NexusFS via factory
-    from nexus.factory import create_nexus_fs
-
-    # Issue #3778 (R2 review): propagate resolved config fields to env so the
-    # factory boot tiers (orchestrator, _wired.py) — which read env vars
-    # directly, not the as-yet-unattached ``nx._config`` — see them. We scope
-    # the mutation tightly around the factory call and restore in finally so
-    # env cannot leak across connect() calls (including the remote-profile
-    # branch above, which never reaches this block).
-    _env_to_restore: dict[str, str | None] = {}
-
-    def _set_env_transient(key: str, value: str | None) -> None:
-        _env_to_restore.setdefault(key, os.environ.get(key))
-        if value is None:
-            os.environ.pop(key, None)
+            if not cfg.gcs_bucket_name:
+                raise ValueError(
+                    "gcs_bucket_name is required when backend='gcs'. "
+                    "Set gcs_bucket_name in your config or NEXUS_GCS_BUCKET_NAME environment variable."
+                )
+            backend = CASGCSBackend(
+                bucket_name=cfg.gcs_bucket_name,
+                project_id=cfg.gcs_project_id,
+                credentials_path=cfg.gcs_credentials_path,
+            )
+            nexus_root = NEXUS_STATE_DIR
+            data_dir = str(Path(nexus_root) / "data")
         else:
-            os.environ[key] = value
+            data_dir = (
+                cfg.data_dir if cfg.data_dir is not None else str(Path(NEXUS_STATE_DIR) / "data")
+            )
+            # nexus_root hosts sibling state directories (metastore, record_store).
+            # When data_dir is explicitly provided (e.g. --data-dir /some/path), USE
+            # data_dir itself as nexus_root so metastore goes inside it — this avoids
+            # polluting the parent directory (which could be /tmp or /) and ensures
+            # each data_dir is fully self-contained.  When data_dir is the default
+            # (~/.nexus/data), the parent (~/.nexus) is still used as nexus_root
+            # for backward compatibility.
+            nexus_root = data_dir if cfg.data_dir is not None else str(Path(data_dir).parent)
+            if cfg.backend == "path_local":
+                from nexus.backends.storage.path_local import PathLocalBackend
 
-    _profile_val = getattr(cfg, "profile", None)
-    _evs_val = bool(getattr(cfg, "enable_vector_search", False))
+                backend = PathLocalBackend(root_path=Path(data_dir).resolve())
+            else:
+                # Parse tiering config from YAML if present (Issue #3406)
+                tiering_cfg = None
+                if cfg.tiering and cfg.tiering.get("enabled"):
+                    from nexus.core.config import TieringConfig
 
-    async with _get_connect_boot_lock():
+                    t = cfg.tiering
+                    tiering_cfg = TieringConfig(
+                        enabled=True,
+                        quiet_period_seconds=float(t.get("quiet_period", 3600)),
+                        min_volume_size_bytes=int(t.get("min_volume_size", 100 * 1024 * 1024)),
+                        cloud_backend=str(t.get("cloud_backend", "gcs")),
+                        cloud_bucket=str(t.get("cloud_bucket", "")),
+                        upload_rate_limit_bytes=int(t.get("upload_rate_limit", 25 * 1024 * 1024)),
+                        sweep_interval_seconds=float(t.get("sweep_interval", 60)),
+                        local_cache_size_bytes=int(
+                            t.get("local_cache_size", 10 * 1024 * 1024 * 1024)
+                        ),
+                        burst_read_threshold=int(t.get("burst_read_threshold", 5)),
+                        burst_read_window_seconds=float(t.get("burst_read_window", 60)),
+                    )
+                backend = CASLocalBackend(
+                    root_path=Path(data_dir).resolve(),
+                    tiering_config=tiering_cfg,
+                )
+
+        # Resolve paths — new fields take precedence, db_path is legacy fallback
+        metadata_path = cfg.metastore_path or cfg.db_path or str(Path(nexus_root) / "metastore")
+        record_store_path = cfg.record_store_path or None
+
+        # --- Profile resolution (Issue #1708, moved before metadata store for federation gating) ---
+        from nexus.contracts.deployment_profile import DeploymentProfile, resolve_enabled_bricks
+
+        if cfg.profile == "auto":
+            from nexus.lib.device_capabilities import detect_capabilities, suggest_profile
+
+            caps = detect_capabilities()
+            resolved_profile = suggest_profile(caps)
+            logger.info(
+                "Auto-detected profile: %s (RAM=%dMB, GPU=%s, cores=%d)",
+                resolved_profile,
+                caps.memory_mb,
+                caps.has_gpu,
+                caps.cpu_cores,
+            )
+        else:
+            resolved_profile = DeploymentProfile(cfg.profile)
+            # Warn if explicit profile may exceed device capabilities
+            from nexus.lib.device_capabilities import (
+                detect_capabilities,
+                warn_if_profile_exceeds_device,
+            )
+
+            caps = detect_capabilities()
+            warn_if_profile_exceeds_device(resolved_profile, caps)
+
+        # Apply FeaturesConfig overrides (Issue #1389)
+        overrides = cfg.features.to_overrides() if cfg.features else {}
+        enabled_bricks = resolve_enabled_bricks(resolved_profile, overrides=overrides)
+
+        # Create Rust kernel early so RustMetastoreProxy can use it.
+        # Route through _rust_compat so stale binaries (missing Kernel methods)
+        # are caught here and never passed to RustMetastoreProxy (Issue #3712).
+        _early_kernel = None
+        try:
+            from nexus._rust_compat import RUST_AVAILABLE as _RUST_AVAILABLE
+            from nexus._rust_compat import Kernel as _Kernel
+
+            if _RUST_AVAILABLE and _Kernel is not None:
+                _early_kernel = _Kernel()
+        except Exception:
+            pass
+
+        # Create metadata store — profile-gated federation (PR #3371 Phase 2)
+        metadata_store: MetastoreABC
+        federation = None
+
+        # Federation: attempt only when the FEDERATION brick is explicitly enabled.
+        # LITE and SANDBOX both include IPC but must NOT start Raft (no external
+        # services).  Only CLUSTER and CLOUD include BRICK_FEDERATION.
+        if "federation" in enabled_bricks:
+            try:
+                from nexus.raft.federation import NexusFederation
+
+                federation, metadata_store = NexusFederation.bootstrap(metadata_path=metadata_path)
+            except ImportError:
+                logger.warning("Federation brick enabled but Rust extensions unavailable")
+                federation = None
+                metadata_store = _open_local_metastore(metadata_path, kernel=_early_kernel)
+            except RuntimeError as exc:
+                if "ZoneManager requires PyO3 build with --features full" not in str(exc):
+                    raise
+                logger.info(
+                    "Federation extensions unavailable for local connect(); "
+                    "falling back to single-node metadata store"
+                )
+                federation = None
+                metadata_store = _open_local_metastore(metadata_path, kernel=_early_kernel)
+        else:
+            metadata_store = _open_local_metastore(metadata_path, kernel=_early_kernel)
+
+        # Permission defaults: standalone without explicit config → permissive
+        enforce_permissions = cfg.enforce_permissions
+        if config is None or isinstance(config, dict) and "enforce_permissions" not in config:
+            enforce_permissions = False
+
+        # Zone isolation: default enabled for security
+        enforce_zone_isolation = cfg.enforce_zone_isolation
+        if config is None or isinstance(config, dict) and "enforce_zone_isolation" not in config:
+            enforce_zone_isolation = True
+
+        # Tiger Cache
+        enable_tiger_cache_env = os.getenv("NEXUS_ENABLE_TIGER_CACHE", "true").lower()
+        enable_tiger_cache = enable_tiger_cache_env in ("true", "1", "yes")
+
+        # RecordStore (Four Pillars) — created from NEXUS_RECORD_STORE_PATH or
+        # NEXUS_DATABASE_URL.  Passing None gives a bare kernel (storage-only)
+        # where all service-layer features (audit log, versioning, ReBAC, Memory
+        # API, etc.) are skipped.  The factory handles record_store=None gracefully.
+        _database_url = os.environ.get("NEXUS_DATABASE_URL")
+        if record_store_path:
+            from nexus.storage.record_store import SQLAlchemyRecordStore
+
+            record_store = SQLAlchemyRecordStore(db_path=record_store_path)
+        elif _database_url:
+            from nexus.storage.record_store import SQLAlchemyRecordStore
+
+            record_store = SQLAlchemyRecordStore(db_url=_database_url)
+        else:
+            record_store = None
+
+        # Build config objects from NexusConfig fields (Issue #1391)
+        from nexus.core.config import (
+            CacheConfig,
+            DistributedConfig,
+            ParseConfig,
+            PermissionConfig,
+        )
+
+        cache_cfg = CacheConfig(
+            path_size=cfg.cache_path_size,
+            list_size=cfg.cache_list_size,
+            kv_size=cfg.cache_kv_size,
+            exists_size=cfg.cache_exists_size,
+            ttl_seconds=cfg.cache_ttl_seconds,
+        )
+
+        perm_cfg = PermissionConfig(
+            enforce=enforce_permissions,
+            allow_admin_bypass=cfg.allow_admin_bypass,
+            enforce_zone_isolation=enforce_zone_isolation,
+            enable_tiger_cache=enable_tiger_cache,
+        )
+
+        dist_cfg = DistributedConfig(
+            enable_workflows=cfg.enable_workflows,
+        )
+
+        parse_cfg = ParseConfig(
+            auto_parse=cfg.auto_parse,
+            providers=tuple(cfg.parse_providers) if cfg.parse_providers else None,
+        )
+
+        # Audit strict mode: env var override (default True for compliance)
+        from nexus.contracts.types import AuditConfig
+
+        _audit_strict = os.environ.get("NEXUS_AUDIT_STRICT_MODE", "true").lower() not in (
+            "false",
+            "0",
+            "no",
+        )
+        audit_cfg = AuditConfig(strict_mode=_audit_strict)
+
+        # Create NexusFS via factory
+        from nexus.factory import create_nexus_fs
+
+        # Issue #3778 (R2 review): propagate resolved config fields to env so the
+        # factory boot tiers (orchestrator, _wired.py) — which read env vars
+        # directly, not the as-yet-unattached ``nx._config`` — see them. We scope
+        # the mutation tightly around the factory call and restore in finally so
+        # env cannot leak across connect() calls (including the remote-profile
+        # branch above, which never reaches this block).
+        _env_to_restore: dict[str, str | None] = {}
+
+        def _set_env_transient(key: str, value: str | None) -> None:
+            _env_to_restore.setdefault(key, os.environ.get(key))
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+        _profile_val = getattr(cfg, "profile", None)
+        _evs_val = bool(getattr(cfg, "enable_vector_search", False))
+
         if _profile_val:
             _set_env_transient("NEXUS_PROFILE", str(_profile_val))
         _set_env_transient("NEXUS_ENABLE_VECTOR_SEARCH", "true" if _evs_val else "false")
@@ -670,27 +673,27 @@ async def connect(
                 else:
                     os.environ[_k] = _prior
 
-    # Set memory config for Memory API
-    if cfg.zone_id or cfg.user_id or cfg.agent_id:
-        nx_fs._memory_config = {
-            "zone_id": cfg.zone_id,
-            "user_id": cfg.user_id,
-            "agent_id": cfg.agent_id,
-        }
+        # Set memory config for Memory API
+        if cfg.zone_id or cfg.user_id or cfg.agent_id:
+            nx_fs._memory_config = {
+                "zone_id": cfg.zone_id,
+                "user_id": cfg.user_id,
+                "agent_id": cfg.agent_id,
+            }
 
-    # Store config for OAuth factory and other components that need it
-    nx_fs._config = cfg
+        # Store config for OAuth factory and other components that need it
+        nx_fs._config = cfg
 
-    # Register federation content resolver (PRE-DISPATCH, Issue #163)
-    # Registered LAST so Pipe/Memory/VirtualView resolvers get priority.
-    # Federation is already enlisted in ServiceRegistry by _wire_services().
-    if federation is not None:
-        await _register_federation_resolver(nx_fs, federation, backend)
+        # Register federation content resolver (PRE-DISPATCH, Issue #163)
+        # Registered LAST so Pipe/Memory/VirtualView resolvers get priority.
+        # Federation is already enlisted in ServiceRegistry by _wire_services().
+        if federation is not None:
+            await _register_federation_resolver(nx_fs, federation, backend)
 
-    # Restore saved mounts (application-layer startup I/O)
-    await _restore_mounts(nx_fs)
+        # Restore saved mounts (application-layer startup I/O)
+        await _restore_mounts(nx_fs)
 
-    return nx_fs
+        return nx_fs
 
 
 async def _register_federation_resolver(nx_fs: "NexusFS", federation: Any, backend: Any) -> None:

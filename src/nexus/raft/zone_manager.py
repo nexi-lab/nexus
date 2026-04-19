@@ -200,6 +200,11 @@ class ZoneManager:
         # under a changed mount point become stale).
         self._dcache_proxy: Any | None = None
         self._coordinator: Any | None = None  # late-bound: DriverLifecycleCoordinator
+        # R20.5: target_zone_id -> set of (parent_zone_id, mount_path, global_path)
+        # tuples so ``remove_zone(force=True)`` can cascade-unmount every
+        # mount pointing at the departing zone. Populated by ``mount()``
+        # + ``_on_mount_event`` (catch-up replays), cleared by ``unmount()``.
+        self._mounts_by_target: dict[str, set[tuple[str, str, str]]] = {}
 
     @property
     def tls_config(self) -> "ZoneTlsConfig | None":
@@ -406,12 +411,21 @@ class ZoneManager:
         i_links_count == 0 (no remaining references). Use force=True
         to bypass this check.
 
+        R20.5: when ``force=True`` is used to tear down a zone that still
+        has active mounts, cascade-unmount every mount pointing at this
+        zone FIRST — otherwise the DLC keeps dangling mount entries
+        whose ZoneMetastore wraps a destroyed Raft group, and subsequent
+        reads at those paths observe corruption instead of a clean
+        "zone gone" error. Snapshot of mounts taken before the loop so
+        ``unmount()``'s own bookkeeping update doesn't mutate under us.
+
         Args:
             zone_id: Zone to remove.
-            force: If True, skip i_links_count check.
+            force: If True, skip i_links_count check and cascade-unmount.
 
         Raises:
-            ValueError: If zone still has references (i_links_count > 0).
+            ValueError: If zone still has references (i_links_count > 0)
+                and ``force`` is False.
         """
         if not force:
             store = self.get_store(zone_id)
@@ -423,6 +437,24 @@ class ZoneManager:
                         f"(i_links_count > 0). Unmount all references first, "
                         f"or use force=True."
                     )
+        else:
+            # R20.5 cascade: copy the set so unmount() can delete from it.
+            for parent_zone_id, mount_path, dlc_global in list(
+                self._mounts_by_target.get(zone_id, set())
+            ):
+                try:
+                    self.unmount(parent_zone_id, mount_path, global_path=dlc_global)
+                except Exception as exc:
+                    # Best-effort cascade: log and keep going so one stuck
+                    # mount doesn't block the others from being cleaned up.
+                    logger.warning(
+                        "cascade unmount of %s in %s (target=%s) failed: %s",
+                        mount_path,
+                        parent_zone_id,
+                        zone_id,
+                        exc,
+                    )
+            self._mounts_by_target.pop(zone_id, None)
 
         self._py_mgr.remove_zone(zone_id)
         self._stores.pop(zone_id, None)
@@ -617,6 +649,13 @@ class ZoneManager:
         if self._dcache_proxy is not None:
             self._dcache_proxy._dcache.clear()
 
+        # R20.5: register for cascade-unmount on remove_zone. Idempotent
+        # under catch-up replays because tuple insertion into a set dedupes.
+        dlc_global = global_path or mount_path
+        self._mounts_by_target.setdefault(target_zone_id, set()).add(
+            (parent_zone_id, mount_path, dlc_global)
+        )
+
         logger.info(
             "Mounted zone '%s' at '%s' in zone '%s'",
             target_zone_id,
@@ -646,6 +685,15 @@ class ZoneManager:
         # point would still resolve into the now-unmounted zone.
         if self._dcache_proxy is not None:
             self._dcache_proxy._dcache.clear()
+
+        # R20.5: drop the cascade registration. ``target_zone_id`` is
+        # the one returned by Rust ``unmount`` (authoritative).
+        dlc_global = global_path or mount_path
+        bucket = self._mounts_by_target.get(target_zone_id)
+        if bucket is not None:
+            bucket.discard((parent_zone_id, mount_path, dlc_global))
+            if not bucket:
+                self._mounts_by_target.pop(target_zone_id, None)
 
         logger.info(
             "Unmounted '%s' from zone '%s' (target=%s)",

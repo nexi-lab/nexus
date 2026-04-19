@@ -1210,8 +1210,13 @@ impl Kernel {
     /// When `raft_backend` is `Some` **and** `zone_id` is the root zone,
     /// the kernel automatically upgrades its `LockManager` to distributed
     /// mode (federation DI).
+    ///
+    /// Visibility: ``pub(crate)`` — ``DLC::mount`` is the sole intended
+    /// caller (R20.5). Python-driven mounts flow ``sys_setattr(DT_MOUNT)
+    /// → DLC::mount → add_mount``; bypassing DLC skips the metastore
+    /// DT_MOUNT write + dcache seed + mount-info bookkeeping.
     #[allow(clippy::too_many_arguments)]
-    pub fn add_mount(
+    pub(crate) fn add_mount(
         &self,
         mount_point: &str,
         zone_id: &str,

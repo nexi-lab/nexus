@@ -1286,6 +1286,24 @@ def rotate_kek_for_tenant(
             if not rows:
                 break
             for row in rows:
+                # Validate stored AAD matches the current row identity before
+                # rewrapping. Vault Transit does not cross-check AAD, so an
+                # attacker who tampered the aad column can roundtrip wrap/unwrap
+                # at the new kek_version — the row would land in rows_rewrapped
+                # but still fail later at AESGCMEnvelope.decrypt with AADMismatch.
+                expected_aad = f"{tenant_id}|{row.principal_id}|{row.id}".encode()
+                if bytes(row.aad) != expected_aad:
+                    logger.error(
+                        "rotate_kek_for_tenant: AAD mismatch "
+                        "tenant=%s principal=%s profile=%s kek_version=%s",
+                        tenant_id,
+                        row.principal_id,
+                        row.id,
+                        row.kek_version,
+                    )
+                    _failed_keys.append((uuid.UUID(str(row.principal_id)), row.id))
+                    failed += 1
+                    continue
                 try:
                     dek = encryption_provider.unwrap_dek(
                         bytes(row.wrapped_dek),

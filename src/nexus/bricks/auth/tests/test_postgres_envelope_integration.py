@@ -488,6 +488,60 @@ class TestRotateKEKFailures:
         assert report.rows_failed == 1
         assert report.rows_remaining == 1
 
+    def test_aad_tampered_row_fails_rotation(
+        self,
+        pg_store_crypto: PostgresAuthProfileStore,
+        pg_engine: Engine,
+        tenant_id: uuid.UUID,
+        encryption_provider: InMemoryEncryptionProvider,
+    ) -> None:
+        """Regression: a provider like Vault Transit ignores AAD bytes during
+        unwrap/wrap, so an attacker who tampered the ``aad`` column could
+        silently rotate to the new version and only fail later at the AESGCM
+        read path. Rotation must independently re-validate AAD against
+        ``(tenant_id, principal_id, id)``.
+        """
+        pg_store_crypto.upsert_with_credential(
+            make_profile("aad-rotate"),
+            ResolvedCredential(kind="api_key", api_key="secret"),
+        )
+        encryption_provider.rotate()
+
+        with pg_engine.begin() as conn:
+            conn.execute(text("SET LOCAL app.current_tenant = :tid"), {"tid": str(tenant_id)})
+            conn.execute(
+                text(
+                    "UPDATE auth_profiles SET aad = :aad "
+                    "WHERE tenant_id = :tid AND id = 'aad-rotate'"
+                ),
+                {"tid": tenant_id, "aad": b"tampered-aad"},
+            )
+
+        real = encryption_provider
+
+        class _AadIgnoringProvider:
+            """Mimics Vault Transit: ignores aad bytes entirely during un/wrap."""
+
+            def current_version(self, *, tenant_id):
+                return real.current_version(tenant_id=tenant_id)
+
+            def wrap_dek(self, dek, *, tenant_id, aad):  # noqa: ARG002
+                return real.wrap_dek(dek, tenant_id=tenant_id, aad=b"")
+
+            def unwrap_dek(self, wrapped, *, tenant_id, aad, kek_version):  # noqa: ARG002
+                return real.unwrap_dek(
+                    wrapped, tenant_id=tenant_id, aad=b"", kek_version=kek_version
+                )
+
+        report = rotate_kek_for_tenant(
+            pg_engine,
+            tenant_id=tenant_id,
+            encryption_provider=_AadIgnoringProvider(),
+        )
+
+        assert report.rows_rewrapped == 0, "AAD-tampered row must not rotate"
+        assert report.rows_failed == 1, "AAD-tampered row must be counted as failed"
+
     def test_skiplist_uses_composite_principal_id_and_id(
         self,
         pg_engine: Engine,

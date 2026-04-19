@@ -94,7 +94,7 @@ def _tenant_name(engine: Engine, tenant_id: uuid.UUID) -> str:
             text("SELECT name FROM tenants WHERE id = :tid"), {"tid": tenant_id}
         ).fetchone()
     assert row is not None
-    return row[0]
+    return str(row[0])
 
 
 class TestRotateKekCLI:
@@ -140,6 +140,125 @@ class TestRotateKekCLI:
         finally:
             os.environ.pop("NEXUS_AUTH_ROTATE_KEK_TEST_PROVIDER_ID", None)
             _TEST_PROVIDER_REGISTRY.pop("inmem", None)
+
+    def test_apply_with_provider_vault_invokes_builder(
+        self,
+        seeded_tenant: tuple[uuid.UUID, InMemoryEncryptionProvider],
+        pg_engine: Engine,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """--provider vault constructs a VaultTransitProvider via the builder.
+
+        Regression for Codex round 2: the production wiring branches were
+        never exercised by tests, so option plumbing bugs could ship.
+        """
+        t, prov = seeded_tenant
+        called: dict[str, object] = {}
+
+        def fake_builder(
+            *, vault_addr, vault_token, vault_key, vault_mount
+        ) -> InMemoryEncryptionProvider:
+            called["vault_addr"] = vault_addr
+            called["vault_token"] = vault_token
+            called["vault_key"] = vault_key
+            called["vault_mount"] = vault_mount
+            return prov
+
+        monkeypatch.setattr("nexus.bricks.auth.cli_commands._build_vault_provider", fake_builder)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            auth,
+            [
+                "rotate-kek",
+                "--db-url",
+                PG_URL,
+                "--tenant",
+                _tenant_name(pg_engine, t),
+                "--provider",
+                "vault",
+                "--vault-addr",
+                "http://vault.example:8200",
+                "--vault-token",
+                "s.dummy",
+                "--vault-key",
+                "nexus",
+                "--apply",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert called["vault_addr"] == "http://vault.example:8200"
+        assert called["vault_token"] == "s.dummy"
+        assert called["vault_key"] == "nexus"
+        assert called["vault_mount"] == "transit"
+
+    def test_apply_with_provider_aws_kms_invokes_builder(
+        self,
+        seeded_tenant: tuple[uuid.UUID, InMemoryEncryptionProvider],
+        pg_engine: Engine,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """--provider aws-kms constructs an AwsKmsProvider via the builder."""
+        t, prov = seeded_tenant
+        called: dict[str, object] = {}
+
+        def fake_builder(
+            *, kms_key_id, kms_region, kms_config_version
+        ) -> InMemoryEncryptionProvider:
+            called["kms_key_id"] = kms_key_id
+            called["kms_region"] = kms_region
+            called["kms_config_version"] = kms_config_version
+            return prov
+
+        monkeypatch.setattr("nexus.bricks.auth.cli_commands._build_kms_provider", fake_builder)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            auth,
+            [
+                "rotate-kek",
+                "--db-url",
+                PG_URL,
+                "--tenant",
+                _tenant_name(pg_engine, t),
+                "--provider",
+                "aws-kms",
+                "--kms-key-id",
+                "arn:aws:kms:us-east-1:000000000000:key/abc",
+                "--kms-region",
+                "us-east-1",
+                "--kms-config-version",
+                "3",
+                "--apply",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        kms_key_id = called["kms_key_id"]
+        assert isinstance(kms_key_id, str) and kms_key_id.startswith("arn:aws:kms:")
+        assert called["kms_region"] == "us-east-1"
+        assert called["kms_config_version"] == 3
+
+    def test_no_provider_and_no_env_errors(
+        self,
+        seeded_tenant: tuple[uuid.UUID, InMemoryEncryptionProvider],
+        pg_engine: Engine,
+    ) -> None:
+        """Omitting --provider without the test env var must fail cleanly."""
+        t, _ = seeded_tenant
+        os.environ.pop("NEXUS_AUTH_ROTATE_KEK_TEST_PROVIDER_ID", None)
+        runner = CliRunner()
+        result = runner.invoke(
+            auth,
+            [
+                "rotate-kek",
+                "--db-url",
+                PG_URL,
+                "--tenant",
+                _tenant_name(pg_engine, t),
+            ],
+        )
+        assert result.exit_code != 0
+        assert "--provider is required" in result.output
 
     def test_apply_rewraps_all(
         self,

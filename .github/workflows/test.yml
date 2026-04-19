@@ -288,6 +288,18 @@ jobs:
           uv run pytest tests/e2e/postgres/ --ignore=tests/e2e/postgres/migrations -v --timeout=120 -o "addopts="
         timeout-minutes: 10
 
+      - name: Run auth envelope-encryption tests (#3803)
+        env:
+          TEST_POSTGRES_URL: postgresql+psycopg2://nexus_test:nexus_test@localhost:5432/nexus_test
+        run: |
+          uv run pytest \
+            src/nexus/bricks/auth/tests/test_envelope.py \
+            src/nexus/bricks/auth/tests/test_envelope_contract.py \
+            src/nexus/bricks/auth/tests/test_postgres_envelope_integration.py \
+            src/nexus/bricks/auth/tests/test_rotate_kek_cli.py \
+            -v --timeout=60 -o "addopts="
+        timeout-minutes: 10
+
   e2e-redis:
     name: E2E Tests (Redis)
     needs: build-rust

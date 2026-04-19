@@ -1329,6 +1329,12 @@ def rotate_kek_for_tenant(
     # id can exist under multiple principals — keying failures on ``id`` alone
     # would starve healthy rows that share an id with a failing one.
     _failed_keys: list[tuple[uuid.UUID, str]] = []
+    # Bound CAS-miss churn: if the same (principal_id, id) repeatedly loses
+    # the compare-and-swap race (because a concurrent writer keeps bumping the
+    # row), promote it to _failed_keys after this many attempts so the loop
+    # terminates instead of livelocking on provider calls.
+    _cas_misses: dict[tuple[uuid.UUID, str], int] = {}
+    _MAX_CAS_MISSES = 3
     while True:
         # max_rows caps SUCCESSFUL rewraps only. Counting failures toward the
         # budget would let a handful of deterministically failing rows starve
@@ -1480,9 +1486,25 @@ def rotate_kek_for_tenant(
                             to_version=str(new_version),
                         ).inc()
                         rewrapped += 1
-                    # rowcount == 0: concurrent writer won. Don't count as
-                    # success or failure — next loop iteration will pick up
-                    # any row still at < target.
+                        _cas_misses.pop((uuid.UUID(str(row.principal_id)), row.id), None)
+                    else:
+                        # Concurrent writer won. Allow a few retries — on
+                        # repeated misses treat as failed so we don't livelock
+                        # on a perpetually-contended row.
+                        key = (uuid.UUID(str(row.principal_id)), row.id)
+                        _cas_misses[key] = _cas_misses.get(key, 0) + 1
+                        if _cas_misses[key] >= _MAX_CAS_MISSES:
+                            logger.error(
+                                "rotate_kek_for_tenant: CAS-miss threshold "
+                                "exceeded tenant=%s principal=%s profile=%s "
+                                "misses=%d",
+                                tenant_id,
+                                row.principal_id,
+                                row.id,
+                                _cas_misses[key],
+                            )
+                            _failed_keys.append(key)
+                            failed += 1
     # Final remaining count
     with engine.begin() as conn:
         conn.execute(

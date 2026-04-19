@@ -544,6 +544,66 @@ class TestRotateKEKFailures:
             ]
         assert versions == [1], "wrap-fatal must not leave partial rewraps committed"
 
+    def test_perpetual_cas_miss_eventually_fails_row(
+        self,
+        pg_store_crypto: PostgresAuthProfileStore,
+        pg_engine: Engine,
+        tenant_id: uuid.UUID,
+        encryption_provider: InMemoryEncryptionProvider,
+    ) -> None:
+        """Regression: a row whose CAS predicate never matches (because a
+        perpetual concurrent writer keeps bumping it) must not livelock the
+        rotation loop. After N misses the row gets promoted to rows_failed
+        and the run terminates.
+        """
+        pg_store_crypto.upsert_with_credential(
+            make_profile("perpetual"),
+            ResolvedCredential(kind="api_key", api_key="v0"),
+        )
+        encryption_provider.rotate()
+
+        real = encryption_provider
+
+        class _AlwaysRaceProvider:
+            """Between our SELECT snapshot and our CAS UPDATE, this wrapper
+            writes a new wrapped_dek to the same row so the CAS always misses.
+            """
+
+            def current_version(self, *, tenant_id):
+                return real.current_version(tenant_id=tenant_id)
+
+            def wrap_dek(self, dek, *, tenant_id, aad):
+                # Simulate a concurrent writer: patch the row at v1 with a
+                # fresh wrapped blob, invalidating our snapshot.
+                new_dek = b"\x11" * 32
+                # Re-wrap under the real provider's v1 semantics.
+                with pg_engine.begin() as conn:
+                    conn.execute(
+                        text("SET LOCAL app.current_tenant = :tid"),
+                        {"tid": str(tenant_id)},
+                    )
+                    conn.execute(
+                        text(
+                            "UPDATE auth_profiles SET wrapped_dek = :wd "
+                            "WHERE tenant_id = :tid AND id = 'perpetual'"
+                        ),
+                        {"tid": tenant_id, "wd": new_dek},
+                    )
+                return real.wrap_dek(dek, tenant_id=tenant_id, aad=aad)
+
+            def unwrap_dek(self, wrapped, *, tenant_id, aad, kek_version):
+                return real.unwrap_dek(
+                    wrapped, tenant_id=tenant_id, aad=aad, kek_version=kek_version
+                )
+
+        report = rotate_kek_for_tenant(
+            pg_engine,
+            tenant_id=tenant_id,
+            encryption_provider=_AlwaysRaceProvider(),
+        )
+        assert report.rows_rewrapped == 0
+        assert report.rows_failed == 1, "CAS-miss bound must eventually fail the row"
+
     def test_concurrent_writer_does_not_block_on_slow_provider(
         self,
         pg_store_crypto: PostgresAuthProfileStore,

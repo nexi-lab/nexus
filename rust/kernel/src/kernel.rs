@@ -1348,57 +1348,45 @@ impl Kernel {
         self.mount_table.canonical_keys()
     }
 
-    /// Global mount points whose per-mount metastore is the given
-    /// ``Arc<dyn Metastore>`` (direct mount + every crosslink). Consumers:
-    /// the apply-side dcache coherence callback and the cascade-unmount
-    /// path on ``remove_zone(force=True)`` — both federation-side
-    /// primitives that reach kernel through a metastore Arc they own.
-    ///
-    /// Kernel stays federation-agnostic: it keys by Arc identity
-    /// (``Arc::ptr_eq``), never by any federation field like ``zone_id``.
-    ///
-    /// Gains a caller in R20.5 (Python cascade) / R20.6 (federation
-    /// installs the dcache callback from its setup-zone path).
-    #[allow(dead_code)]
-    pub fn mount_points_for_metastore(
-        &self,
-        ms: &Arc<dyn crate::metastore::Metastore>,
-    ) -> Vec<String> {
-        self.mount_table.mount_points_for_metastore(ms)
-    }
-
     /// Install the apply-side dcache invalidation callback for a
-    /// federation mount (R20.6).
+    /// federation mount (R20.6 option B — coherence-key fanout).
     ///
     /// Fires on every committed metadata mutation on ``consensus``'s
     /// state machine — evicts the corresponding DCache entry on every
-    /// current mount whose per-mount metastore shares ``Arc::ptr_eq``
-    /// with ``ms_for_cb`` (direct mount + every crosslink). Without
-    /// this, nodes that didn't originate a write (leader-forwarded
-    /// follower writes, catch-up replication) keep serving stale
-    /// ``sys_stat`` / ``sys_read`` from their local dcache after raft
-    /// applies the new state — a textbook distributed-cache-coherence
-    /// hole.
+    /// current mount whose metastore reports the same ``coherence_key``
+    /// (direct mount + every crosslink). Without this, nodes that
+    /// didn't originate a write (leader-forwarded follower writes,
+    /// catch-up replication) keep serving stale ``sys_stat`` /
+    /// ``sys_read`` from their local dcache after raft applies the
+    /// new state — a textbook distributed-cache-coherence hole.
     ///
-    /// Lives in kernel (rather than raft) because the closure captures
-    /// kernel primitives (DCache handle, MountTable reverse lookup);
-    /// raft's rlib cannot import kernel types without a cycle. The
-    /// trigger, however, is federation-specific: only the
-    /// ``sys_setattr(DT_MOUNT)`` dispatcher invokes this — DLC is
-    /// federation-unaware now (R20.6 move).
+    /// Why coherence_key and not Arc identity: R20.3 gave every
+    /// crosslink its own ``ZoneMetastore`` Arc (different
+    /// ``mount_point``), so Arc::ptr_eq groups just one surface per
+    /// zone. ``coherence_key`` is the state-machine Arc's pointer
+    /// (same value across every crosslink), so a single invalidate
+    /// on the raft side correctly fans out to every VFS surface.
+    ///
+    /// Install is idempotent: the slot's ``write().replace()`` is fine
+    /// because every install for the same state machine captures the
+    /// SAME ``coherence_key``, so overwriting is a no-op semantically —
+    /// kernel gates further installs via
+    /// ``LockManager::locks_installed``-style atomic to avoid the
+    /// ``runtime.block_on`` cost, but correctness does not depend on
+    /// it.
     fn install_federation_dcache_coherence(
         &self,
         consensus: nexus_raft::prelude::ZoneConsensus<nexus_raft::prelude::FullStateMachine>,
-        ms_for_cb: Arc<dyn crate::metastore::Metastore>,
     ) {
         let Some(slot) = consensus.invalidate_cb_slot() else {
             return;
         };
+        let coherence_key = consensus.coherence_id();
         let dcache = self.dcache_handle();
         let mount_table = self.mount_table_handle();
         let cb: Arc<dyn Fn(&str) + Send + Sync> = Arc::new(move |zone_relative_key: &str| {
             let trimmed = zone_relative_key.trim_start_matches('/');
-            for mp in mount_table.mount_points_for_metastore(&ms_for_cb) {
+            for mp in mount_table.mount_points_for_coherence_key(coherence_key) {
                 let global = if trimmed.is_empty() {
                     mp.clone()
                 } else if mp.ends_with('/') {
@@ -1453,16 +1441,15 @@ impl Kernel {
             2 => {
                 // DT_MOUNT — full mount lifecycle via DLC.
                 //
-                // R20.6: snapshot the raft handle + metastore Arc BEFORE
-                // they're consumed by ``dlc.mount`` so we can install the
+                // R20.6 option B: snapshot the raft handle BEFORE it's
+                // consumed by ``dlc.mount`` so we can install the
                 // apply-side dcache coherence callback after routing is
-                // wired. Triggered here (not in DLC) so DLC stays
-                // federation-unaware — the install is specific to
-                // federation mounts (raft_backend present + per-mount
-                // metastore Arc to pin identity).
+                // wired. Install is keyed on the state machine's
+                // ``coherence_id``, not on the per-mount Metastore Arc,
+                // so crosslinks of the same zone share one callback
+                // that fans out across every surface via MountTable's
+                // reverse lookup.
                 let consensus_for_cb = raft_backend.as_ref().map(|(c, _)| c.clone());
-                let ms_for_cb: Option<Arc<dyn crate::metastore::Metastore>> =
-                    metastore.as_ref().map(Arc::clone);
                 self.dlc.mount(
                     self,
                     path,
@@ -1476,8 +1463,8 @@ impl Kernel {
                     raft_backend,
                     is_external,
                 )?;
-                if let (Some(consensus), Some(ms_arc)) = (consensus_for_cb, ms_for_cb) {
-                    self.install_federation_dcache_coherence(consensus, ms_arc);
+                if let Some(consensus) = consensus_for_cb {
+                    self.install_federation_dcache_coherence(consensus);
                 }
                 Ok(SysSetAttrResult {
                     path: path.to_string(),

@@ -284,6 +284,28 @@ pub trait Metastore: Send + Sync {
         }
         Ok(out)
     }
+
+    /// Opaque identity for "stores backed by the SAME underlying state"
+    /// (R20.6 option B).
+    ///
+    /// Two ``Arc<dyn Metastore>`` can correspond to different VFS mount
+    /// points yet share the same physical storage — the canonical case
+    /// is a single federation zone surfaced under ``/corp`` AND
+    /// ``/family/work`` (crosslink). R20.3 gave each crosslink its own
+    /// ``ZoneMetastore`` (different ``mount_point``), so ``Arc::ptr_eq``
+    /// no longer suffices to find every mount that shares the same zone.
+    ///
+    /// Return ``Some(usize)`` with a stable integer key for all
+    /// metastores that share physical storage (``Arc::as_ptr`` of the
+    /// shared handle works well — integer comparison, no lifetime
+    /// entanglement). Return ``None`` when the metastore is standalone
+    /// (``LocalMetastore``) — the default.
+    ///
+    /// Used by ``MountTable::mount_points_for_coherence_key`` to fan
+    /// out apply-side dcache invalidation across crosslinks.
+    fn coherence_key(&self) -> Option<usize> {
+        None
+    }
 }
 
 // PyMetastoreAdapter + conversion helpers (extract_metadata, to_python_metadata)

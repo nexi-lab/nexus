@@ -37,10 +37,18 @@ use crate::metastore::{FileMetadata as KernelFileMetadata, Metastore, MetastoreE
 /// exposed under (e.g. ``/corp``). It is used to translate between
 /// caller-facing full paths and state-machine zone-relative keys —
 /// never surfaced through the trait API.
+///
+/// ``coherence_id`` is a stable integer identity of the underlying
+/// state machine (``ZoneConsensus::coherence_id``). Every crosslink
+/// mount of the same zone has a different ``mount_point`` but shares
+/// the SAME ``coherence_id``, which is how
+/// ``MountTable::mount_points_for_coherence_key`` fans out apply-side
+/// dcache invalidation across all surfaces of the zone (R20.6 option B).
 pub struct ZoneMetastore {
     node: ZoneConsensus<FullStateMachine>,
     runtime: tokio::runtime::Handle,
     mount_point: String,
+    coherence_id: usize,
 }
 
 impl ZoneMetastore {
@@ -57,10 +65,12 @@ impl ZoneMetastore {
         runtime: tokio::runtime::Handle,
         mount_point: String,
     ) -> Self {
+        let coherence_id = node.coherence_id();
         Self {
             node,
             runtime,
             mount_point,
+            coherence_id,
         }
     }
 
@@ -251,6 +261,10 @@ impl Metastore for ZoneMetastore {
 
     fn exists(&self, path: &str) -> Result<bool, MetastoreError> {
         self.get(path).map(|m| m.is_some())
+    }
+
+    fn coherence_key(&self) -> Option<usize> {
+        Some(self.coherence_id)
     }
 }
 

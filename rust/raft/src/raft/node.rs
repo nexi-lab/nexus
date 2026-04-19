@@ -637,6 +637,23 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
         self.invalidate_cb_slot.clone()
     }
 
+    /// Stable integer identity of the state machine backing this
+    /// ``ZoneConsensus`` (R20.6 option B — dcache coherence fanout).
+    ///
+    /// Every ``Clone`` of a ``ZoneConsensus`` shares the same state
+    /// machine Arc, so this value is equal across clones.
+    /// Distinct state machines always yield distinct values (we use
+    /// ``Arc::as_ptr`` of the state-machine RwLock — a pointer unique
+    /// to the allocation and stable for its lifetime).
+    ///
+    /// Used by the kernel as the ``coherence_key`` of every
+    /// ``ZoneMetastore`` wrapping this consensus, so apply-side
+    /// dcache invalidation can fan out across every crosslink mount
+    /// of the same zone.
+    pub fn coherence_id(&self) -> usize {
+        Arc::as_ptr(&self.state_machine) as *const () as usize
+    }
+
     /// Execute a read-only closure against the state machine.
     ///
     /// This provides safe read access for query operations (e.g., get_metadata)

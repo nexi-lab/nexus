@@ -293,28 +293,31 @@ impl MountTable {
         points
     }
 
-    /// User-facing mount points whose per-mount metastore is the given
-    /// ``Arc<dyn Metastore>``.
+    /// User-facing mount points whose per-mount metastore reports the
+    /// given ``coherence_key`` (R20.6 option B).
     ///
-    /// Keyed by Arc identity (``Arc::ptr_eq``) — the caller hands us the
-    /// metastore whose mounts it cares about, and we return every
-    /// surface that points at the *same allocation*. This is how a
-    /// single federation zone mounted at both ``/corp`` (direct) and
-    /// ``/family/work`` (crosslink) resolves to both mount points: both
-    /// ``MountEntry``s hold clones of the same ``ZoneMetastore`` Arc.
+    /// Prior impl (``mount_points_for_metastore``) keyed by
+    /// ``Arc::ptr_eq`` on ``Arc<dyn Metastore>``. R20.3 gave every
+    /// crosslink its own ``ZoneMetastore`` allocation so Arc identity
+    /// no longer groups crosslinks of the same zone — each zone needs
+    /// a storage-level identity that survives per-mount wrapping.
+    /// ``Metastore::coherence_key`` exposes that identity (stable
+    /// integer; state-machine Arc pointer for raft-backed zones,
+    /// ``None`` for standalone ``LocalMetastore``).
     ///
-    /// Kernel stays federation-agnostic — it never learns "zone" ids or
-    /// any other federation concept. Apply-side cache coherence and
-    /// cascade-unmount both drive through this single primitive:
-    /// federation installs a callback closing over its own ZoneMetastore
-    /// Arc; that Arc is what identifies the mount set.
-    pub fn mount_points_for_metastore(&self, ms: &Arc<dyn Metastore>) -> Vec<String> {
+    /// Kernel stays federation-agnostic — ``coherence_key`` is just an
+    /// opaque ``usize``; the kernel never learns "zone id" or any other
+    /// federation concept. Apply-side cache coherence fans out through
+    /// this primitive: federation passes the state-machine identity,
+    /// kernel returns every surface currently bound to it.
+    pub fn mount_points_for_coherence_key(&self, key: usize) -> Vec<String> {
         let mut points: Vec<String> = self
             .entries
             .iter()
             .filter_map(|e| {
                 e.value().metastore.as_ref().and_then(|existing| {
-                    Arc::ptr_eq(existing, ms).then(|| extract_zone_from_canonical(e.key()).1)
+                    (existing.coherence_key() == Some(key))
+                        .then(|| extract_zone_from_canonical(e.key()).1)
                 })
             })
             .collect();
@@ -790,48 +793,93 @@ mod tests {
         assert_eq!(recovered, global);
     }
 
-    /// Federation topology: one ``ZoneMetastore`` Arc surfaces at both a
-    /// direct mount (``/corp``) and a crosslink (``/family/work``).
-    /// ``mount_points_for_metastore`` must return both, and must NOT
-    /// match a different metastore Arc mounted under a sibling path.
+    /// Federation topology: two DISTINCT ``ZoneMetastore`` Arcs (with
+    /// different ``mount_point``s) can back the same zone's state
+    /// machine — they share the same ``coherence_key``. The reverse
+    /// lookup must return every surface with that key, and must NOT
+    /// match a metastore with a different key (or ``None`` — single-node).
     #[test]
-    fn mount_points_for_metastore_finds_direct_and_crosslinks() {
-        use crate::metastore::MemoryMetastore;
+    fn mount_points_for_coherence_key_finds_direct_and_crosslinks() {
+        /// Test stub — reports a caller-configured coherence key.
+        /// R20.6 option B keys on ``usize``, not ``Arc`` identity, so
+        /// two distinct Arcs that report the same key represent two
+        /// surfaces of the same underlying storage.
+        struct KeyedStub {
+            key: Option<usize>,
+        }
+        impl crate::metastore::Metastore for KeyedStub {
+            fn get(
+                &self,
+                _: &str,
+            ) -> Result<Option<crate::metastore::FileMetadata>, crate::metastore::MetastoreError>
+            {
+                Ok(None)
+            }
+            fn put(
+                &self,
+                _: &str,
+                _: crate::metastore::FileMetadata,
+            ) -> Result<(), crate::metastore::MetastoreError> {
+                Ok(())
+            }
+            fn delete(&self, _: &str) -> Result<bool, crate::metastore::MetastoreError> {
+                Ok(false)
+            }
+            fn list(
+                &self,
+                _: &str,
+            ) -> Result<Vec<crate::metastore::FileMetadata>, crate::metastore::MetastoreError>
+            {
+                Ok(Vec::new())
+            }
+            fn exists(&self, _: &str) -> Result<bool, crate::metastore::MetastoreError> {
+                Ok(false)
+            }
+            fn coherence_key(&self) -> Option<usize> {
+                self.key
+            }
+        }
 
-        let corp_ms: Arc<dyn Metastore> = Arc::new(MemoryMetastore::new());
-        let family_ms: Arc<dyn Metastore> = Arc::new(MemoryMetastore::new());
+        const CORP_KEY: usize = 0xC0;
+        const FAMILY_KEY: usize = 0xFA;
+
+        let corp_a: Arc<dyn Metastore> = Arc::new(KeyedStub {
+            key: Some(CORP_KEY),
+        });
+        let corp_b: Arc<dyn Metastore> = Arc::new(KeyedStub {
+            key: Some(CORP_KEY),
+        }); // DISTINCT Arc, same coherence key — crosslink of the same zone.
+        let family: Arc<dyn Metastore> = Arc::new(KeyedStub {
+            key: Some(FAMILY_KEY),
+        });
 
         let table = MountTable::new();
         table.add(
             "/corp",
             "root",
-            MountEntry::new(None, false, false, "balanced", "backend-corp")
-                .with_metastore(Arc::clone(&corp_ms)),
+            MountEntry::new(None, false, false, "balanced", "backend-corp").with_metastore(corp_a),
         );
         table.add(
             "/family/work",
             "root",
             MountEntry::new(None, false, false, "balanced", "backend-corp-xlink")
-                .with_metastore(Arc::clone(&corp_ms)),
+                .with_metastore(corp_b),
         );
-        // Sibling mount with a *different* metastore — must NOT appear
-        // in the corp lookup.
         table.add(
             "/family",
             "root",
             MountEntry::new(None, false, false, "balanced", "backend-family")
-                .with_metastore(Arc::clone(&family_ms)),
+                .with_metastore(family),
         );
 
-        let mut corp_points = table.mount_points_for_metastore(&corp_ms);
+        let mut corp_points = table.mount_points_for_coherence_key(CORP_KEY);
         corp_points.sort();
         assert_eq!(corp_points, vec!["/corp", "/family/work"]);
 
-        let family_points = table.mount_points_for_metastore(&family_ms);
+        let family_points = table.mount_points_for_coherence_key(FAMILY_KEY);
         assert_eq!(family_points, vec!["/family"]);
 
-        // A third Arc that was never installed returns empty.
-        let stranger: Arc<dyn Metastore> = Arc::new(MemoryMetastore::new());
-        assert!(table.mount_points_for_metastore(&stranger).is_empty());
+        // Unknown key → empty.
+        assert!(table.mount_points_for_coherence_key(0xDEAD).is_empty());
     }
 }

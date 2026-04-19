@@ -3547,18 +3547,26 @@ class SearchService:
             return []
 
         stamped = await self._semantic_with_sandbox_fallback(_fed_call, _bm25s_call)
-        # Ensure every dict in the returned list carries the degraded flag so
-        # the MCP / HTTP response envelopes can surface it without a second
-        # traversal.  _semantic_with_sandbox_fallback stamps attribute-style
-        # results; dict results need explicit key assignment.
+        # Only mark items degraded when the fallback actually ran. If a real
+        # federation dispatcher returned reachable-peer results, the helper
+        # returns them directly without setting LAST_SEMANTIC_DEGRADED, and
+        # stamping them here would trigger false "degraded" warnings in
+        # downstream envelopes (R3 review).
+        degraded = LAST_SEMANTIC_DEGRADED.get()
         out: builtins.list[dict[str, Any]] = []
         for r in stamped:
             if isinstance(r, dict):
-                r["semantic_degraded"] = True
+                if degraded:
+                    r["semantic_degraded"] = True
                 out.append(r)
             else:
-                # Shouldn't happen from _bm25s_call (we emit dicts) but be safe.
-                out.append({"path": getattr(r, "path", ""), "semantic_degraded": True})
+                # _bm25s_call emits dicts; non-dict can come from a real
+                # federation result (BaseSearchResult). Preserve path and
+                # only stamp when degraded.
+                entry: dict[str, Any] = {"path": getattr(r, "path", "")}
+                if degraded:
+                    entry["semantic_degraded"] = True
+                out.append(entry)
         return out
 
     @rpc_expose(description="Search documents using natural language queries")

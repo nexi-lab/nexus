@@ -456,8 +456,8 @@ class TestRotateKekCLI:
             assert result.exit_code == 1, result.output
             assert "failed" in result.output.lower()
 
-            # With --allow-failures, exit 0 even with failed rows
-            # (Re-seed isn't needed; same rows are still at v1)
+            # With --allow-failures and --allow-partial, exit 0 even when
+            # rows still fail to rotate (they also count as "remaining").
             result2 = runner.invoke(
                 auth,
                 [
@@ -468,12 +468,163 @@ class TestRotateKekCLI:
                     str(t),
                     "--apply",
                     "--allow-failures",
+                    "--allow-partial",
                 ],
             )
             assert result2.exit_code == 0, result2.output
         finally:
             os.environ.pop("NEXUS_AUTH_ROTATE_KEK_TEST_PROVIDER_ID", None)
             _TEST_PROVIDER_REGISTRY.pop("allfail", None)
+
+    def test_tenant_id_not_found_errors(
+        self,
+        pg_engine: Engine,  # noqa: ARG002 — fixture triggers schema setup
+    ) -> None:
+        """A syntactically valid but nonexistent --tenant-id must fail, not
+        silently no-op.
+        """
+        from nexus.bricks.auth.cli_commands import _TEST_PROVIDER_REGISTRY
+
+        prov = InMemoryEncryptionProvider()
+        _TEST_PROVIDER_REGISTRY["inmem"] = lambda: prov
+        os.environ["NEXUS_AUTH_ROTATE_KEK_TEST_PROVIDER_ID"] = "inmem"
+        try:
+            runner = CliRunner()
+            result = runner.invoke(
+                auth,
+                [
+                    "rotate-kek",
+                    "--db-url",
+                    PG_URL,
+                    "--tenant-id",
+                    "00000000-0000-0000-0000-ffffffffffff",
+                ],
+            )
+            assert result.exit_code != 0
+            assert "not found" in result.output.lower()
+        finally:
+            os.environ.pop("NEXUS_AUTH_ROTATE_KEK_TEST_PROVIDER_ID", None)
+            _TEST_PROVIDER_REGISTRY.pop("inmem", None)
+
+    def test_version_skew_fails_fast(
+        self,
+        pg_engine: Engine,
+    ) -> None:
+        """Rows with kek_version > target (provider downgrade) must fail fast."""
+        from nexus.bricks.auth.cli_commands import _TEST_PROVIDER_REGISTRY
+
+        # Seed a row at v1, then hand-edit kek_version to v99 to simulate skew.
+        t = ensure_tenant(pg_engine, f"skew-{uuid.uuid4()}")
+        p = ensure_principal(
+            pg_engine, tenant_id=t, external_sub=f"s-{uuid.uuid4()}", auth_method="t"
+        )
+        prov = InMemoryEncryptionProvider()
+        store = PostgresAuthProfileStore(
+            PG_URL, tenant_id=t, principal_id=p, engine=pg_engine, encryption_provider=prov
+        )
+        try:
+            store.upsert_with_credential(
+                make_profile("skew"), ResolvedCredential(kind="api_key", api_key="k")
+            )
+        finally:
+            store.close()
+
+        with pg_engine.begin() as conn:
+            conn.execute(text("SET LOCAL app.current_tenant = :tid"), {"tid": str(t)})
+            conn.execute(
+                text(
+                    "UPDATE auth_profiles SET kek_version = 99 "
+                    "WHERE tenant_id = :tid AND id = 'skew'"
+                ),
+                {"tid": t},
+            )
+
+        _TEST_PROVIDER_REGISTRY["inmem"] = lambda: prov
+        os.environ["NEXUS_AUTH_ROTATE_KEK_TEST_PROVIDER_ID"] = "inmem"
+        try:
+            runner = CliRunner()
+            result = runner.invoke(
+                auth,
+                [
+                    "rotate-kek",
+                    "--db-url",
+                    PG_URL,
+                    "--tenant-id",
+                    str(t),
+                ],
+            )
+            assert result.exit_code != 0
+            assert "older version" in result.output.lower() or "> target" in result.output
+        finally:
+            os.environ.pop("NEXUS_AUTH_ROTATE_KEK_TEST_PROVIDER_ID", None)
+            _TEST_PROVIDER_REGISTRY.pop("inmem", None)
+
+    def test_apply_exits_nonzero_on_remaining_rows(
+        self,
+        pg_engine: Engine,
+    ) -> None:
+        """After apply, rows_remaining > 0 must produce exit 1 unless
+        --allow-partial is set."""
+        from nexus.bricks.auth.cli_commands import _TEST_PROVIDER_REGISTRY
+
+        t = ensure_tenant(pg_engine, f"partial-{uuid.uuid4()}")
+        p = ensure_principal(
+            pg_engine, tenant_id=t, external_sub=f"s-{uuid.uuid4()}", auth_method="t"
+        )
+        prov = InMemoryEncryptionProvider()
+        store = PostgresAuthProfileStore(
+            PG_URL, tenant_id=t, principal_id=p, engine=pg_engine, encryption_provider=prov
+        )
+        try:
+            for i in range(3):
+                store.upsert_with_credential(
+                    make_profile(f"p-{i}"),
+                    ResolvedCredential(kind="api_key", api_key=f"k{i}"),
+                )
+        finally:
+            store.close()
+        prov.rotate()
+
+        _TEST_PROVIDER_REGISTRY["inmem"] = lambda: prov
+        os.environ["NEXUS_AUTH_ROTATE_KEK_TEST_PROVIDER_ID"] = "inmem"
+        try:
+            runner = CliRunner()
+            # --max-rows=1 means only 1 row rotates; 2 remain.
+            result = runner.invoke(
+                auth,
+                [
+                    "rotate-kek",
+                    "--db-url",
+                    PG_URL,
+                    "--tenant-id",
+                    str(t),
+                    "--apply",
+                    "--max-rows",
+                    "1",
+                ],
+            )
+            assert result.exit_code == 1, result.output
+            assert "remain" in result.output.lower()
+
+            # --allow-partial should tolerate remaining rows.
+            result2 = runner.invoke(
+                auth,
+                [
+                    "rotate-kek",
+                    "--db-url",
+                    PG_URL,
+                    "--tenant-id",
+                    str(t),
+                    "--apply",
+                    "--max-rows",
+                    "1",
+                    "--allow-partial",
+                ],
+            )
+            assert result2.exit_code == 0, result2.output
+        finally:
+            os.environ.pop("NEXUS_AUTH_ROTATE_KEK_TEST_PROVIDER_ID", None)
+            _TEST_PROVIDER_REGISTRY.pop("inmem", None)
 
     def test_no_provider_and_no_env_errors(
         self,

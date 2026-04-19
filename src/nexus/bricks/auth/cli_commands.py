@@ -976,6 +976,13 @@ def _build_kms_provider(
     help="Exit 0 even when rows_failed > 0 (default: non-zero exit on any failed row).",
 )
 @click.option(
+    "--allow-partial",
+    is_flag=True,
+    default=False,
+    help="Exit 0 even when rows_remaining > 0 after apply "
+    "(default: non-zero; use this flag when intentionally batching under --max-rows).",
+)
+@click.option(
     "--batch-size",
     default=100,
     show_default=True,
@@ -1016,6 +1023,7 @@ def auth_rotate_kek(
     tenant_id_opt: str | None,
     apply: bool,
     allow_failures: bool,
+    allow_partial: bool,
     batch_size: int,
     max_rows: int | None,
     provider: str | None,
@@ -1116,6 +1124,17 @@ def auth_rotate_kek(
                 ) from exc
             with engine.begin() as conn:
                 _preflight_schema(conn)
+                # RLS-safe existence check: setting app.current_tenant to the
+                # caller-supplied value grants read access via the tenant-
+                # isolation policy, so this lookup works for least-privilege
+                # roles and still refuses mistyped UUIDs.
+                conn.execute(text("SET LOCAL app.current_tenant = :tid"), {"tid": str(tenant_id)})
+                exists = conn.execute(
+                    text("SELECT 1 FROM tenants WHERE id = :tid"),
+                    {"tid": tenant_id},
+                ).fetchone()
+            if exists is None:
+                raise click.ClickException(f"Tenant {tenant_id!s} not found (check --tenant-id).")
         else:
             with engine.begin() as conn:
                 _preflight_schema(conn)
@@ -1130,8 +1149,30 @@ def auth_rotate_kek(
                 )
             tenant_id = _uuid.UUID(str(row[0]))
 
+        target = encryption_provider.current_version(tenant_id=tenant_id)
+
+        # Version-skew check: any row at kek_version > target means the
+        # provider config is older than data already written. Operator
+        # likely passed the wrong --kms-config-version or is pointing at a
+        # rolled-back provider.
+        with engine.begin() as conn:
+            conn.execute(text("SET LOCAL app.current_tenant = :tid"), {"tid": str(tenant_id)})
+            skew = conn.execute(
+                text(
+                    "SELECT COUNT(*) FROM auth_profiles "
+                    "WHERE tenant_id = :tid AND ciphertext IS NOT NULL "
+                    "  AND kek_version > :target"
+                ),
+                {"tid": tenant_id, "target": target},
+            ).scalar_one()
+        if skew:
+            raise click.ClickException(
+                f"{skew} rows have kek_version > target ({target}). The provider "
+                "is pointing at an older version than rows already written. "
+                "Refusing to rotate. For aws-kms, check --kms-config-version."
+            )
+
         if not apply:
-            target = encryption_provider.current_version(tenant_id=tenant_id)
             with engine.begin() as conn:
                 conn.execute(text("SET LOCAL app.current_tenant = :tid"), {"tid": str(tenant_id)})
                 stale = conn.execute(
@@ -1163,13 +1204,23 @@ def auth_rotate_kek(
             f"remaining={report.rows_remaining} "
             f"target_version={report.target_version}"
         )
+        exit_nonzero = False
         if report.rows_failed:
             click.echo(
                 f"WARNING: {report.rows_failed} rows failed to rewrap — see logs for details",
                 err=True,
             )
             if not allow_failures:
-                raise click.exceptions.Exit(1)
+                exit_nonzero = True
+        if report.rows_remaining and not allow_partial:
+            click.echo(
+                f"WARNING: {report.rows_remaining} rows remain stuck at older "
+                "versions — run again to continue, or pass --allow-partial.",
+                err=True,
+            )
+            exit_nonzero = True
+        if exit_nonzero:
+            raise click.exceptions.Exit(1)
     finally:
         engine.dispose()
 

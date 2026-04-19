@@ -2036,11 +2036,16 @@ class TestNewTeamOnboarding:
         mount_path = f"/corp/eng/team-x-{uid}"
         mk = _grpc_call(grpc1, "mkdir", {"path": mount_path, "parents": True}, api_key=api_key)
         assert "error" not in mk
+        # Raise timeout: federation_mount on a freshly-created zone may
+        # wait for election to complete before the i_links_count bump
+        # lands. Default 10s is tight for 3-voter elections + propose
+        # commit when tests wake zone-ready back-to-back.
         mnt = _grpc_call(
             grpc1,
             "federation_mount",
             {"parent_zone": "corp-eng", "path": mount_path, "target_zone": zone_id},
             api_key=api_key,
+            timeout=30,
         )
         assert "error" not in mnt, f"mount failed: {mnt}"
 

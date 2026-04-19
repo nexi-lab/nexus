@@ -33,6 +33,7 @@ from nexus.contracts.search_types import (
     GREP_SEQUENTIAL_THRESHOLD,
     GREP_TRIGRAM_THRESHOLD,
     GREP_ZOEKT_THRESHOLD,
+    LAST_SEMANTIC_DEGRADED,
     GlobStrategy,
     SearchStrategy,
 )
@@ -3309,6 +3310,10 @@ class SearchService:
         if not is_all_peers_failed(fed_response):
             return list(fed_response.results)
 
+        # Record degradation in the contextvar so envelope builders (MCP/HTTP)
+        # can detect it even if the BM25S fallback returned zero items.
+        LAST_SEMANTIC_DEGRADED.set(True)
+
         # SANDBOX + all peers failed → fall back to local BM25S.
         if not self._sandbox_fallback_warned:
             logger.warning(
@@ -3433,6 +3438,12 @@ class SearchService:
            ``semantic_degraded=True`` so MCP / HTTP clients can warn users
            that the answer is keyword-only.
         """
+        # Reset the degraded flag at the entry point of a SANDBOX search so
+        # callers read a value that reflects THIS call only. The contextvar
+        # is then set to True inside _semantic_with_sandbox_fallback when
+        # fallback actually fires.
+        LAST_SEMANTIC_DEGRADED.set(False)
+
         # Step 1 — try the local vector backend first.
         local = await self._try_sqlite_vec_sandbox(
             query=query, path=path, limit=limit, context=context

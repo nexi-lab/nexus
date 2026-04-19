@@ -1208,10 +1208,16 @@ async def create_mcp_server(
 
         # Issue #3778: surface the SANDBOX BM25S-fallback flag at the envelope
         # level so clients can display a "degraded" indicator without having
-        # to scan every item.  ``semantic_degraded`` is stamped on each item
-        # dict when the fallback ran; we propagate it to the envelope when
-        # at least one item carries it.
-        degraded = any(
+        # to scan every item. Two sources:
+        #   1. Per-item stamp (``semantic_degraded`` on a result dict) — works
+        #      when fallback returned at least one hit.
+        #   2. Per-request contextvar (LAST_SEMANTIC_DEGRADED) set inside the
+        #      SearchService fallback — works even when fallback returned
+        #      zero results, so an outage is still distinguishable from a
+        #      genuine no-hit query (R2 review).
+        from nexus.contracts.search_types import LAST_SEMANTIC_DEGRADED
+
+        degraded = LAST_SEMANTIC_DEGRADED.get() or any(
             isinstance(r, dict) and r.get("semantic_degraded") is True for r in paginated_results
         )
 

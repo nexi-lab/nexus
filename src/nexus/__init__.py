@@ -95,6 +95,21 @@ NEXUS_STATE_DIR = _os.path.expanduser("~/.nexus")
 logger = logging.getLogger(__name__)
 
 # Module-level cache for lazy imports
+# Serializes the env-mutation + factory-boot region in connect() so concurrent
+# connect() calls cannot read each other's transient NEXUS_PROFILE /
+# NEXUS_ENABLE_VECTOR_SEARCH state (Issue #3778 R2 review).
+_CONNECT_BOOT_LOCK: "Any" = None
+
+
+def _get_connect_boot_lock() -> Any:
+    global _CONNECT_BOOT_LOCK
+    if _CONNECT_BOOT_LOCK is None:
+        import asyncio as _asyncio
+
+        _CONNECT_BOOT_LOCK = _asyncio.Lock()
+    return _CONNECT_BOOT_LOCK
+
+
 _lazy_imports_cache: dict[str, Any] = {}
 
 # Mapping of attribute names to their import paths
@@ -248,36 +263,6 @@ async def connect(
 
     # Load configuration
     cfg = load_config(config)
-
-    # Issue #3778: propagate resolved config fields to env so the boot tiers
-    # (orchestrator, _wired.py) — which read env vars directly, not the
-    # as-yet-unattached ``nx._config`` — see them.
-    #
-    # R1 fix: ALWAYS overwrite env from resolved cfg (was: only when unset).
-    # Otherwise the first connect() in a process would stamp env and later
-    # connect() calls with different configs would silently read the stale
-    # values, making runtime behavior diverge from the requested config.
-    # Prior env values are snapshotted and restored after the factory runs,
-    # so env is only a transient side-channel for in-process boot wiring.
-    _env_to_restore: dict[str, str | None] = {}
-
-    def _set_env_transient(key: str, value: str | None) -> None:
-        _env_to_restore.setdefault(key, os.environ.get(key))
-        if value is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = value
-
-    _profile_val = getattr(cfg, "profile", None)
-    if _profile_val:
-        _set_env_transient("NEXUS_PROFILE", str(_profile_val))
-
-    # For enable_vector_search, propagate the resolved flag from cfg so SANDBOX
-    # stays off-by-default unless the user opted in explicitly (dict key, env,
-    # or YAML). Because _apply_sandbox_defaults forces False only when the
-    # user did NOT set it, cfg.enable_vector_search is authoritative here.
-    _evs_val = bool(getattr(cfg, "enable_vector_search", False))
-    _set_env_transient("NEXUS_ENABLE_VECTOR_SEARCH", "true" if _evs_val else "false")
 
     # ── Profile: remote ──────────────────────────────────────────────
     if cfg.profile == "remote":
@@ -641,28 +626,49 @@ async def connect(
     # Create NexusFS via factory
     from nexus.factory import create_nexus_fs
 
-    try:
-        nx_fs = await create_nexus_fs(
-            backend=backend,
-            metadata_store=metadata_store,
-            record_store=record_store,
-            is_admin=cfg.is_admin,
-            cache=cache_cfg,
-            permissions=perm_cfg,
-            distributed=dist_cfg,
-            parsing=parse_cfg,
-            enabled_bricks=enabled_bricks,
-            audit=audit_cfg,
-            federation=federation,
-        )
-    finally:
-        # R1 fix (Issue #3778): restore any env vars we mutated during boot
-        # so they don't leak across connect() calls in the same process.
-        for _k, _prior in _env_to_restore.items():
-            if _prior is None:
-                os.environ.pop(_k, None)
-            else:
-                os.environ[_k] = _prior
+    # Issue #3778 (R2 review): propagate resolved config fields to env so the
+    # factory boot tiers (orchestrator, _wired.py) — which read env vars
+    # directly, not the as-yet-unattached ``nx._config`` — see them. We scope
+    # the mutation tightly around the factory call and restore in finally so
+    # env cannot leak across connect() calls (including the remote-profile
+    # branch above, which never reaches this block).
+    _env_to_restore: dict[str, str | None] = {}
+
+    def _set_env_transient(key: str, value: str | None) -> None:
+        _env_to_restore.setdefault(key, os.environ.get(key))
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
+
+    _profile_val = getattr(cfg, "profile", None)
+    _evs_val = bool(getattr(cfg, "enable_vector_search", False))
+
+    async with _get_connect_boot_lock():
+        if _profile_val:
+            _set_env_transient("NEXUS_PROFILE", str(_profile_val))
+        _set_env_transient("NEXUS_ENABLE_VECTOR_SEARCH", "true" if _evs_val else "false")
+
+        try:
+            nx_fs = await create_nexus_fs(
+                backend=backend,
+                metadata_store=metadata_store,
+                record_store=record_store,
+                is_admin=cfg.is_admin,
+                cache=cache_cfg,
+                permissions=perm_cfg,
+                distributed=dist_cfg,
+                parsing=parse_cfg,
+                enabled_bricks=enabled_bricks,
+                audit=audit_cfg,
+                federation=federation,
+            )
+        finally:
+            for _k, _prior in _env_to_restore.items():
+                if _prior is None:
+                    os.environ.pop(_k, None)
+                else:
+                    os.environ[_k] = _prior
 
     # Set memory config for Memory API
     if cfg.zone_id or cfg.user_id or cfg.agent_id:

@@ -456,9 +456,14 @@ async def _handle_federated_search(
                 search_mode="semantic",  # triggers SANDBOX fallback inside SearchService
                 context=op_context,
             )
-            # semantic_search stamped semantic_degraded=True on each dict.
+            # semantic_search stamped semantic_degraded=True on each dict
+            # AND sets LAST_SEMANTIC_DEGRADED for this task — we prefer the
+            # contextvar so an empty BM25S result still surfaces degradation
+            # (R2 review).
             fed_response.results = list(bm25s_results)
-            semantic_degraded = any(
+            from nexus.contracts.search_types import LAST_SEMANTIC_DEGRADED
+
+            semantic_degraded = LAST_SEMANTIC_DEGRADED.get() or any(
                 isinstance(r, dict) and r.get("semantic_degraded") is True for r in bm25s_results
             )
 

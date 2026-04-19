@@ -244,6 +244,19 @@ async def _boot_post_kernel_services(
                     exc,
                 )
 
+        # Issue #3778 (R2 review): look up an already-constructed federation
+        # dispatcher on the ServiceRegistry / NexusFS if one is available, so
+        # the SANDBOX semantic path actually dispatches when the deployment
+        # wired federation in from outside (non-default, but not impossible).
+        # The canonical construction site for dispatchers is the HTTP router
+        # (server/api/v2/routers/search.py); factory-level boot does not
+        # build one. For true SANDBOX (single-process, no peers) this stays
+        # None and the semantic path falls through the "no-peers" synth
+        # FederatedSearchResponse → BM25S degradation, which is correct.
+        _federation_dispatcher = getattr(nx, "_federation_dispatcher", None) or services.get(
+            "federation_dispatcher"
+        )
+
         search_service = SearchService(
             metadata_store=nx.metadata,
             permission_enforcer=services.get("permission_enforcer"),
@@ -255,6 +268,7 @@ async def _boot_post_kernel_services(
             gateway=gateway,
             deployment_profile=_profile,
             sqlite_vec_backend=_sqlite_vec_backend,
+            federation_dispatcher=_federation_dispatcher,
         )
         logger.debug(
             "[BOOT:WIRED] SearchService created (kernel-level, profile=%s, sqlite_vec=%s)",

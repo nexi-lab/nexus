@@ -889,6 +889,30 @@ class PostgresAuthProfileStore:
                     text("SELECT pg_advisory_xact_lock(hashtextextended(:k, 0))"),
                     {"k": key},
                 )
+            if upserts:
+                # Same invariant as plain upsert/upsert_strict: routing
+                # metadata must not be rewritten on rows that already carry
+                # encrypted credentials, or ciphertext would diverge from
+                # backend_key. One batched SELECT under the locks detects
+                # any conflict atomically before any write lands.
+                conflicts = conn.execute(
+                    text(
+                        "SELECT id FROM auth_profiles "
+                        "WHERE tenant_id = :tid AND principal_id = :pid "
+                        "  AND id = ANY(:ids) AND ciphertext IS NOT NULL"
+                    ),
+                    {
+                        "tid": self._tenant_id,
+                        "pid": self._principal_id,
+                        "ids": [p.id for p in upserts],
+                    },
+                ).fetchall()
+                if conflicts:
+                    raise ValueError(
+                        f"replace_owned_subset would overwrite routing metadata "
+                        f"on encrypted rows: {sorted(c[0] for c in conflicts)!r}. "
+                        "Use upsert_with_credential() or delete() for these rows first."
+                    )
             for p in upserts:
                 conn.execute(
                     text(_UPSERT_SQL),

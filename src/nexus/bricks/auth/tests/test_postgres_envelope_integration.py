@@ -598,6 +598,33 @@ class TestRotateKEKFailures:
         assert report.rows_rewrapped == 0  # nothing to rewrap — only ahead row exists
         assert report.rows_remaining == 0
 
+    def test_replace_owned_subset_rejects_encrypted_row(
+        self,
+        pg_store_crypto: PostgresAuthProfileStore,
+        pg_engine: Engine,  # noqa: ARG002
+        tenant_id: uuid.UUID,
+        principal_id: uuid.UUID,
+    ) -> None:
+        """Regression: replace_owned_subset shares the UPSERT path with plain
+        upsert, so it must enforce the same encrypted-row guard. Otherwise a
+        sync path (used by external_sync.registry) could rewrite backend_key
+        while leaving old ciphertext stored.
+        """
+        pg_store_crypto.upsert_with_credential(
+            make_profile("sync-row"),
+            ResolvedCredential(kind="api_key", api_key="s"),
+        )
+        new_profile = make_profile("sync-row", backend_key="secret://different")
+
+        plain_store = PostgresAuthProfileStore(
+            PG_URL, tenant_id=tenant_id, principal_id=principal_id
+        )
+        try:
+            with pytest.raises(ValueError, match="encrypted"):
+                plain_store.replace_owned_subset(upserts=[new_profile], deletes=[])
+        finally:
+            plain_store.close()
+
     def test_plain_upsert_rejects_encrypted_row(
         self,
         pg_store_crypto: PostgresAuthProfileStore,

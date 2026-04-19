@@ -113,6 +113,34 @@ async def _vec_upsert_file(vec_backend, nx, path: str) -> int:
     )
 
 
+class _VecSearchCounter:
+    """Wraps ``vec_backend.search`` to count calls.
+
+    Direct proof that a query reached the vector path — ``semantic_degraded``
+    covers the stamped-dict case, but a transport/shape regression that
+    drops the flag would still be caught here because the counter would
+    stay at zero.
+    """
+
+    def __init__(self, vec_backend):
+        self._backend = vec_backend
+        self._original = vec_backend.search
+        self.calls = 0
+        # setattr bypasses the strict method-binding check — we only need
+        # to intercept calls at runtime for the duration of this test.
+        vec_backend.search = self._wrap
+
+    async def _wrap(self, *args, **kwargs):
+        self.calls += 1
+        return await self._original(*args, **kwargs)
+
+    def reset(self) -> None:
+        self.calls = 0
+
+    def restore(self) -> None:
+        self._backend.search = self._original
+
+
 def _count_vec_rows(vec_backend, path: str, chunk_index: int = 0) -> int:
     """Count rows in the sqlite-vec table for ``(path, chunk_index, zone)``.
 
@@ -293,20 +321,33 @@ async def main() -> int:
                 str(r.get("errors") or r),
             )
 
-            # OCC conflict — wrong etag must raise or report error
-            occ_ok = False
+            # OCC conflict — wrong etag must produce a *specific* conflict
+            # signal (not any-failure-counts), AND the file must be
+            # unchanged afterward. Accepting generic failures would hide
+            # unrelated write-path breakages behind a green OCC check.
+            pre_occ_body = nx.sys_read("/workspace/demo/plan.md")
+            occ_is_conflict = False
             try:
                 r = nx.edit(
                     "/workspace/demo/plan.md",
                     [("Phase 1", "P1")],
                     if_match="wrong-etag",
                 )
-                # Some implementations return error dict rather than raising.
-                if not r.get("success") or "conflict" in str(r.get("errors") or "").lower():
-                    occ_ok = True
+                errors_text = str(r.get("errors") or "").lower()
+                # Accept only on explicit conflict-family signal.
+                occ_is_conflict = bool(r.get("success")) is False and (
+                    "conflict" in errors_text or "etag" in errors_text
+                )
             except Exception as e:
-                occ_ok = "conflict" in str(e).lower() or "etag" in str(e).lower()
-            check("edit (OCC conflict)", occ_ok)
+                msg = str(e).lower()
+                occ_is_conflict = "conflict" in msg or "etag" in msg
+            check("edit (OCC conflict signal)", occ_is_conflict)
+            post_occ_body = nx.sys_read("/workspace/demo/plan.md")
+            check(
+                "OCC-rejected write did not mutate file",
+                pre_occ_body == post_occ_body,
+                "file content changed after rejected edit",
+            )
 
             # =============================================================
             print("\n=== 5. VERSION HISTORY ===")
@@ -363,6 +404,19 @@ async def main() -> int:
                     f"({(time.perf_counter() - t_ing) * 1000:.0f} ms)"
                 )
 
+                # Wrap the backend's search method so we can *prove* each
+                # HERB query actually executed through the vector path.
+                # Combined with the degraded-flag check below this gives
+                # two-factor provenance: (1) the vector path was called,
+                # (2) it returned non-degraded results.
+                #
+                # Note: a traditional "negative-control" query (nonsense
+                # terms that should return nothing) doesn't work here —
+                # KNN on an 11-doc corpus always returns top-K, so the
+                # score floor doesn't mean "no match". Counter + degraded
+                # flag together are the right provenance signal for a
+                # pure-vector retrieval stack.
+                counter = _VecSearchCounter(vec_backend)
                 hits_count = 0
                 degraded_count = 0
                 per_q: list[tuple[str, bool, list[str], bool]] = []
@@ -379,9 +433,6 @@ async def main() -> int:
                     if degraded:
                         degraded_count += 1
                     if expected in paths and not degraded:
-                        # Count as a hit ONLY when the vector path served
-                        # the query — a BM25 fallback hit is a silent
-                        # degradation, not a retrieval-quality win.
                         hits_count += 1
                         per_q.append((q, True, paths, degraded))
                     else:
@@ -392,6 +443,16 @@ async def main() -> int:
                     print(f"    {mark} {q[:56]}{deg_note}")
                     if not ok:
                         print(f"        top-5: {paths}")
+
+                # Provenance: every HERB query must have hit the vector
+                # backend. Zero calls here = semantic_search short-
+                # circuited to fallback without the degraded flag.
+                check(
+                    f"vector backend called for all {len(HERB_QA_SET)} HERB queries "
+                    f"(actual={counter.calls})",
+                    counter.calls == len(HERB_QA_SET),
+                    "vector path was not executed for some queries",
+                )
                 check(
                     "no semantic_degraded results in vector mode",
                     degraded_count == 0,
@@ -402,6 +463,10 @@ async def main() -> int:
                     hits_count >= 7,
                     f"{hits_count}/8 ({hits_count * 100 // 8}%)",
                 )
+
+                # Restore wrapper so downstream sections see the original
+                # method object.
+                counter.restore()
 
             # =============================================================
             print("\n=== 7. PERMISSION ENFORCEMENT ===")

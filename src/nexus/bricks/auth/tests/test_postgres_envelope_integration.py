@@ -807,6 +807,40 @@ class TestRotateKEKFailures:
         finally:
             plain_store.close()
 
+    def test_plain_upsert_allows_stats_only_update_on_encrypted_row(
+        self,
+        pg_store_crypto: PostgresAuthProfileStore,
+        pg_engine: Engine,  # noqa: ARG002
+        tenant_id: uuid.UUID,
+        principal_id: uuid.UUID,
+    ) -> None:
+        """Regression: CredentialPool.mark_success/mark_failure call
+        store.upsert(profile) to persist cooldown/stats. The encrypted-row
+        guard must allow re-upsert when routing columns are unchanged.
+        """
+        profile = make_profile("stats-row")
+        pg_store_crypto.upsert_with_credential(
+            profile,
+            ResolvedCredential(kind="api_key", api_key="s"),
+        )
+
+        stats_store = PostgresAuthProfileStore(
+            PG_URL, tenant_id=tenant_id, principal_id=principal_id
+        )
+        try:
+            updated = make_profile(
+                "stats-row",
+                success_count=5,
+                failure_count=1,
+                backend=profile.backend,
+                backend_key=profile.backend_key,
+                provider=profile.provider,
+                account_identifier=profile.account_identifier,
+            )
+            stats_store.upsert(updated)
+        finally:
+            stats_store.close()
+
     def test_plain_upsert_rejects_encrypted_row(
         self,
         pg_store_crypto: PostgresAuthProfileStore,

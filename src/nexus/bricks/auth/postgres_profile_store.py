@@ -827,29 +827,43 @@ class PostgresAuthProfileStore:
                 text("SELECT pg_advisory_xact_lock(hashtextextended(:k, 0))"),
                 {"k": lock_key},
             )
-            self._reject_if_encrypted(conn, profile.id)
+            self._reject_if_routing_change_on_encrypted(conn, profile)
             conn.execute(text(_UPSERT_SQL), params)
 
-    def _reject_if_encrypted(self, conn: Connection, profile_id: str) -> None:
-        """Guard: plain upsert must not mutate routing metadata on a row that
-        already carries encrypted credentials. Otherwise ``backend``/
-        ``backend_key`` could diverge from the still-stored ciphertext, and
-        ``get_with_credential`` would return a credential that no longer
-        matches the routing pointer.
+    def _reject_if_routing_change_on_encrypted(
+        self, conn: Connection, profile: AuthProfile
+    ) -> None:
+        """Guard: plain upsert on an encrypted row is allowed ONLY when the
+        routing columns (provider / account_identifier / backend / backend_key)
+        are unchanged. Otherwise ``backend_key`` could diverge from the still-
+        stored ciphertext and ``get_with_credential`` would return a credential
+        that no longer matches the routing pointer.
+
+        Stats-only updates from ``CredentialPool.mark_success/mark_failure``
+        pass through cleanly because they re-emit the same routing values.
         """
         row = conn.execute(
             text(
-                "SELECT 1 FROM auth_profiles "
+                "SELECT provider, account_identifier, backend, backend_key "
+                "FROM auth_profiles "
                 "WHERE tenant_id = :tid AND principal_id = :pid AND id = :id "
                 "  AND ciphertext IS NOT NULL"
             ),
-            {"tid": self._tenant_id, "pid": self._principal_id, "id": profile_id},
+            {"tid": self._tenant_id, "pid": self._principal_id, "id": profile.id},
         ).fetchone()
-        if row is not None:
+        if row is None:
+            return
+        if (
+            row.provider != profile.provider
+            or row.account_identifier != profile.account_identifier
+            or row.backend != profile.backend
+            or row.backend_key != profile.backend_key
+        ):
             raise ValueError(
                 f"auth_profiles row ({self._tenant_id}, {self._principal_id}, "
-                f"{profile_id!r}) has encrypted credentials; use "
-                "upsert_with_credential() or delete() before plain upsert()."
+                f"{profile.id!r}) has encrypted credentials and this plain "
+                "upsert would change routing metadata; use "
+                "upsert_with_credential() or delete() first."
             )
 
     def delete(self, profile_id: str) -> None:
@@ -890,27 +904,39 @@ class PostgresAuthProfileStore:
                     {"k": key},
                 )
             if upserts:
-                # Same invariant as plain upsert/upsert_strict: routing
-                # metadata must not be rewritten on rows that already carry
-                # encrypted credentials, or ciphertext would diverge from
-                # backend_key. One batched SELECT under the locks detects
-                # any conflict atomically before any write lands.
-                conflicts = conn.execute(
+                # Same invariant as plain upsert/upsert_strict: only reject
+                # when routing metadata would actually change for an encrypted
+                # row. Stats-only re-upserts (same provider/backend/backend_key)
+                # remain legal so the existing sync and pool flows keep working
+                # against rows already upgraded to carry encrypted credentials.
+                by_id = {p.id: p for p in upserts}
+                existing = conn.execute(
                     text(
-                        "SELECT id FROM auth_profiles "
+                        "SELECT id, provider, account_identifier, backend, backend_key "
+                        "FROM auth_profiles "
                         "WHERE tenant_id = :tid AND principal_id = :pid "
                         "  AND id = ANY(:ids) AND ciphertext IS NOT NULL"
                     ),
                     {
                         "tid": self._tenant_id,
                         "pid": self._principal_id,
-                        "ids": [p.id for p in upserts],
+                        "ids": list(by_id.keys()),
                     },
                 ).fetchall()
+                conflicts = [
+                    r.id
+                    for r in existing
+                    if (
+                        r.provider != by_id[r.id].provider
+                        or r.account_identifier != by_id[r.id].account_identifier
+                        or r.backend != by_id[r.id].backend
+                        or r.backend_key != by_id[r.id].backend_key
+                    )
+                ]
                 if conflicts:
                     raise ValueError(
                         f"replace_owned_subset would overwrite routing metadata "
-                        f"on encrypted rows: {sorted(c[0] for c in conflicts)!r}. "
+                        f"on encrypted rows: {sorted(conflicts)!r}. "
                         "Use upsert_with_credential() or delete() for these rows first."
                     )
             for p in upserts:
@@ -1182,7 +1208,7 @@ class PostgresAuthProfileStore:
                     profile_id=profile.id,
                     foreign_principals=sorted(row[0] for row in foreign),
                 )
-            self._reject_if_encrypted(conn, profile.id)
+            self._reject_if_routing_change_on_encrypted(conn, profile)
             conn.execute(
                 text(_UPSERT_SQL),
                 _profile_params(

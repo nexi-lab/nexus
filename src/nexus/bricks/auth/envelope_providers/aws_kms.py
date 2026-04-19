@@ -79,7 +79,14 @@ class AwsKmsProvider(EncryptionProvider):
         kek_version: int,
     ) -> bytes:
         try:
+            # Pin decrypt to the configured CMK. Without KeyId, KMS would use
+            # whichever key is embedded in the ciphertext blob as long as IAM
+            # permits it — a ciphertext crafted under a different CMK (that
+            # the caller's role also happens to have Decrypt on) would
+            # silently succeed. Passing KeyId forces KMS to refuse blobs
+            # encrypted with a different key.
             resp = self._kms.decrypt(
+                KeyId=self._key_id,
                 CiphertextBlob=wrapped,
                 EncryptionContext=self._context(tenant_id, aad, kek_version),
             )

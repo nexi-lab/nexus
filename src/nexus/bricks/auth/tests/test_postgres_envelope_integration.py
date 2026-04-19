@@ -488,6 +488,144 @@ class TestRotateKEKFailures:
         assert report.rows_failed == 1
         assert report.rows_remaining == 1
 
+    def test_max_rows_does_not_count_failures(
+        self,
+        pg_store_crypto: PostgresAuthProfileStore,
+        pg_engine: Engine,
+        tenant_id: uuid.UUID,
+        encryption_provider: InMemoryEncryptionProvider,
+    ) -> None:
+        """Regression: --max-rows caps successful rewraps, not total rows seen.
+
+        Previously ``max_rows=1`` would exit after one failure (rewrapped=0,
+        failed=1), starving healthy rows. Now failures are tracked separately
+        and the budget applies only to successful rewraps.
+        """
+        from nexus.bricks.auth.envelope import WrappedDEKInvalid
+
+        for i in range(3):
+            pg_store_crypto.upsert_with_credential(
+                make_profile(f"budget-{i}"),
+                ResolvedCredential(kind="api_key", api_key=f"k{i}"),
+            )
+        encryption_provider.rotate()
+
+        with pg_engine.begin() as conn:
+            conn.execute(text("SET LOCAL app.current_tenant = :tid"), {"tid": str(tenant_id)})
+            row = conn.execute(
+                text(
+                    "SELECT wrapped_dek FROM auth_profiles "
+                    "WHERE tenant_id = :tid AND id = 'budget-0'"
+                ),
+                {"tid": tenant_id},
+            ).fetchone()
+            assert row is not None
+            bad_wrapped = bytes(row.wrapped_dek)
+
+        real = encryption_provider
+
+        class _FailFirst:
+            def current_version(self, *, tenant_id):
+                return real.current_version(tenant_id=tenant_id)
+
+            def wrap_dek(self, dek, *, tenant_id, aad):
+                return real.wrap_dek(dek, tenant_id=tenant_id, aad=aad)
+
+            def unwrap_dek(self, wrapped, *, tenant_id, aad, kek_version):
+                if wrapped == bad_wrapped:
+                    raise WrappedDEKInvalid.from_row(
+                        tenant_id=tenant_id,
+                        profile_id="budget-0",
+                        kek_version=kek_version,
+                        cause="simulated",
+                    )
+                return real.unwrap_dek(
+                    wrapped, tenant_id=tenant_id, aad=aad, kek_version=kek_version
+                )
+
+        report = rotate_kek_for_tenant(
+            pg_engine,
+            tenant_id=tenant_id,
+            encryption_provider=_FailFirst(),
+            batch_size=1,
+            max_rows=1,
+        )
+        assert report.rows_rewrapped == 1, "one healthy row must rewrap within budget"
+        assert report.rows_failed == 1, "failure observed but does not consume budget"
+
+    def test_version_skew_raises_by_default(
+        self,
+        pg_store_crypto: PostgresAuthProfileStore,
+        pg_engine: Engine,
+        tenant_id: uuid.UUID,
+        encryption_provider: InMemoryEncryptionProvider,
+    ) -> None:
+        """Regression: helper must raise VersionSkewError when rows exist at a
+        higher version than the provider's current, not silently report
+        success.
+        """
+        from nexus.bricks.auth.postgres_profile_store import VersionSkewError
+
+        pg_store_crypto.upsert_with_credential(
+            make_profile("skew-helper"),
+            ResolvedCredential(kind="api_key", api_key="s"),
+        )
+        with pg_engine.begin() as conn:
+            conn.execute(text("SET LOCAL app.current_tenant = :tid"), {"tid": str(tenant_id)})
+            conn.execute(
+                text(
+                    "UPDATE auth_profiles SET kek_version = 99 "
+                    "WHERE tenant_id = :tid AND id = 'skew-helper'"
+                ),
+                {"tid": tenant_id},
+            )
+
+        with pytest.raises(VersionSkewError) as exc_info:
+            rotate_kek_for_tenant(
+                pg_engine,
+                tenant_id=tenant_id,
+                encryption_provider=encryption_provider,
+            )
+        assert exc_info.value.rows_ahead == 1
+
+        # allow_skew=True suppresses the check
+        report = rotate_kek_for_tenant(
+            pg_engine,
+            tenant_id=tenant_id,
+            encryption_provider=encryption_provider,
+            allow_skew=True,
+        )
+        assert report.rows_rewrapped == 0  # nothing to rewrap — only ahead row exists
+        assert report.rows_remaining == 0
+
+    def test_plain_upsert_rejects_encrypted_row(
+        self,
+        pg_store_crypto: PostgresAuthProfileStore,
+        pg_engine: Engine,  # noqa: ARG002
+        tenant_id: uuid.UUID,
+        principal_id: uuid.UUID,
+    ) -> None:
+        """Regression: plain upsert() cannot mutate routing metadata on a row
+        that already carries encrypted credentials, because the old ciphertext
+        would no longer match the updated backend_key.
+        """
+        pg_store_crypto.upsert_with_credential(
+            make_profile("enc-row"),
+            ResolvedCredential(kind="api_key", api_key="s"),
+        )
+        new_profile = make_profile("enc-row", backend_key="secret://different")
+
+        # Use a non-crypto store pointing at the same row — simulates a
+        # pre-envelope caller still holding the plain upsert path.
+        plain_store = PostgresAuthProfileStore(
+            PG_URL, tenant_id=tenant_id, principal_id=principal_id
+        )
+        try:
+            with pytest.raises(ValueError, match="encrypted credentials"):
+                plain_store.upsert(new_profile)
+        finally:
+            plain_store.close()
+
     def test_rejects_non_positive_batch_size(
         self,
         pg_engine: Engine,

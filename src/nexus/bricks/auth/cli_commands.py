@@ -1046,6 +1046,7 @@ def auth_rotate_kek(
     from sqlalchemy import create_engine, text
 
     from nexus.bricks.auth.postgres_profile_store import (
+        VersionSkewError,
         rotate_kek_for_tenant,
     )
 
@@ -1191,13 +1192,16 @@ def auth_rotate_kek(
             click.echo("Pass --apply to rewrap.")
             return
 
-        report = rotate_kek_for_tenant(
-            engine,
-            tenant_id=tenant_id,
-            encryption_provider=encryption_provider,
-            batch_size=batch_size,
-            max_rows=max_rows,
-        )
+        try:
+            report = rotate_kek_for_tenant(
+                engine,
+                tenant_id=tenant_id,
+                encryption_provider=encryption_provider,
+                batch_size=batch_size,
+                max_rows=max_rows,
+            )
+        except VersionSkewError as exc:
+            raise click.ClickException(str(exc)) from exc
         click.echo(
             f"rewrapped={report.rows_rewrapped} "
             f"failed={report.rows_failed} "

@@ -827,7 +827,30 @@ class PostgresAuthProfileStore:
                 text("SELECT pg_advisory_xact_lock(hashtextextended(:k, 0))"),
                 {"k": lock_key},
             )
+            self._reject_if_encrypted(conn, profile.id)
             conn.execute(text(_UPSERT_SQL), params)
+
+    def _reject_if_encrypted(self, conn: Connection, profile_id: str) -> None:
+        """Guard: plain upsert must not mutate routing metadata on a row that
+        already carries encrypted credentials. Otherwise ``backend``/
+        ``backend_key`` could diverge from the still-stored ciphertext, and
+        ``get_with_credential`` would return a credential that no longer
+        matches the routing pointer.
+        """
+        row = conn.execute(
+            text(
+                "SELECT 1 FROM auth_profiles "
+                "WHERE tenant_id = :tid AND principal_id = :pid AND id = :id "
+                "  AND ciphertext IS NOT NULL"
+            ),
+            {"tid": self._tenant_id, "pid": self._principal_id, "id": profile_id},
+        ).fetchone()
+        if row is not None:
+            raise ValueError(
+                f"auth_profiles row ({self._tenant_id}, {self._principal_id}, "
+                f"{profile_id!r}) has encrypted credentials; use "
+                "upsert_with_credential() or delete() before plain upsert()."
+            )
 
     def delete(self, profile_id: str) -> None:
         with self._scoped() as conn:
@@ -1135,6 +1158,7 @@ class PostgresAuthProfileStore:
                     profile_id=profile.id,
                     foreign_principals=sorted(row[0] for row in foreign),
                 )
+            self._reject_if_encrypted(conn, profile.id)
             conn.execute(
                 text(_UPSERT_SQL),
                 _profile_params(
@@ -1203,6 +1227,21 @@ class PostgresAuthProfileStore:
 # ---------------------------------------------------------------------------
 
 
+class VersionSkewError(Exception):
+    """Raised by ``rotate_kek_for_tenant`` when rows already exist at a
+    ``kek_version`` greater than the provider's current version.
+
+    Indicates the provider is pointing at an older config than data already
+    written — typically a misconfigured ``--kms-config-version`` or a rolled-
+    back provider. Refusing to rotate prevents a silent false-success report.
+    """
+
+    def __init__(self, *, rows_ahead: int, target_version: int):
+        self.rows_ahead = rows_ahead
+        self.target_version = target_version
+        super().__init__(f"{rows_ahead} rows have kek_version > target ({target_version})")
+
+
 @dataclass(frozen=True, slots=True)
 class RotationReport:
     """Result of a ``rotate_kek_for_tenant`` invocation."""
@@ -1220,6 +1259,7 @@ def rotate_kek_for_tenant(
     encryption_provider: EncryptionProvider,
     batch_size: int = 100,
     max_rows: int | None = None,
+    allow_skew: bool = False,
 ) -> RotationReport:
     """Rewrap every row in ``tenant_id`` whose ``kek_version`` is older than
     the provider's current version.
@@ -1228,12 +1268,34 @@ def rotate_kek_for_tenant(
     does not block concurrent writers. Rewraps ``wrapped_dek`` + ``kek_version``
     only; ``ciphertext``, ``nonce``, ``aad`` are untouched so a reader mid-
     rotation decrypts successfully regardless of which version wrote.
+
+    Raises ``VersionSkewError`` by default if any row has
+    ``kek_version > target``. Callers who are intentionally rolling back can
+    pass ``allow_skew=True`` to suppress the check, but the helper then only
+    processes rows with ``kek_version < target`` — ahead-of-target rows remain
+    untouched.
     """
     if batch_size < 1:
         raise ValueError(f"batch_size must be >= 1, got {batch_size}")
     if max_rows is not None and max_rows < 1:
         raise ValueError(f"max_rows must be >= 1 when set, got {max_rows}")
     target = encryption_provider.current_version(tenant_id=tenant_id)
+    if not allow_skew:
+        with engine.begin() as conn:
+            conn.execute(
+                text("SET LOCAL app.current_tenant = :tid"),
+                {"tid": str(tenant_id)},
+            )
+            ahead = conn.execute(
+                text(
+                    "SELECT COUNT(*) FROM auth_profiles "
+                    "WHERE tenant_id = :tid AND ciphertext IS NOT NULL "
+                    "  AND kek_version > :target"
+                ),
+                {"tid": tenant_id, "target": target},
+            ).scalar_one()
+        if ahead:
+            raise VersionSkewError(rows_ahead=int(ahead), target_version=target)
     rewrapped = 0
     failed = 0
     tenant_label = str(tenant_id)
@@ -1244,11 +1306,14 @@ def rotate_kek_for_tenant(
     # would starve healthy rows that share an id with a failing one.
     _failed_keys: list[tuple[uuid.UUID, str]] = []
     while True:
-        if max_rows is not None and rewrapped + failed >= max_rows:
+        # max_rows caps SUCCESSFUL rewraps only. Counting failures toward the
+        # budget would let a handful of deterministically failing rows starve
+        # healthy rows out of a controlled batch.
+        if max_rows is not None and rewrapped >= max_rows:
             break
         this_batch = batch_size
         if max_rows is not None:
-            this_batch = min(this_batch, max_rows - (rewrapped + failed))
+            this_batch = min(this_batch, max_rows - rewrapped)
         with engine.begin() as conn:
             conn.execute(
                 text("SET LOCAL app.current_tenant = :tid"),

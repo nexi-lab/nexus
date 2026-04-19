@@ -48,6 +48,27 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _handle_asyncpg_protocol_error(ctx: Any) -> None:
+    """Mark asyncpg.InternalClientError as a disconnect so the pool discards the conn.
+
+    Backports SQLAlchemy #13241 (unreleased as of 2.0.49) and addresses issue #3807.
+    asyncpg raises InternalClientError ("got result for unknown protocol state N" or
+    "cannot switch to state X; another operation (Y) is in progress") when a query
+    races with task cancellation or a server-side session termination. SQLAlchemy's
+    asyncpg dialect does not classify these as disconnects, so the poisoned
+    connection is returned to the pool and the next checkout cascades into either
+    a hang or the same error. Setting ``is_disconnect = True`` forces pool
+    invalidation and a fresh connect on next checkout.
+    """
+    try:
+        import asyncpg
+    except ImportError:
+        return
+
+    if isinstance(ctx.original_exception, asyncpg.InternalClientError):
+        ctx.is_disconnect = True
+
+
 class RecordStoreABC(ABC):
     """Abstract base class for relational data storage (the "Truth" pillar).
 
@@ -360,6 +381,90 @@ class SQLAlchemyRecordStore(RecordStoreABC):
         return kwargs
 
     @staticmethod
+    def _build_async_pool_kwargs(
+        *,
+        prefix: str = "NEXUS_DB",
+        default_pool_size: int = 20,
+        default_max_overflow: int = 30,
+    ) -> dict[str, Any]:
+        """Pool kwargs for the asyncpg engine.
+
+        Uses ``NullPool`` to eliminate the class of cross-event-loop corruption
+        bugs (issues #3807, #3775): with asyncpg, a cached Connection is tied
+        to the event loop that opened it. Reusing that connection from a
+        different loop (PortalRunner vs uvicorn vs SearchDaemon) triggers
+        ``Future attached to a different loop`` errors, which poison the pool.
+        NullPool opens a fresh connection on the current loop per checkout and
+        closes it on return, so state never leaks across loops.
+
+        Trade-off: without pool_size / max_overflow, bursty async traffic can
+        open up to one connection per concurrent request. Operators must
+        size PostgreSQL's ``max_connections`` (and any upstream pooler like
+        PgBouncer) to at least ``threadpool_size × replicas + headroom``.
+        Under-provisioning manifests as ``asyncpg.TooManyConnectionsError``
+        — observable in logs/metrics and fixable by raising PG limits or
+        opting into the bounded pool below. The previous behaviour (pool
+        corruption under cancellation) was silent.
+
+        Override with ``<prefix>_ASYNC_USE_POOL=1`` to restore the pooled
+        queue (for single-loop deployments where the overhead matters). The
+        primary engine's toggle is ``NEXUS_DB_ASYNC_USE_POOL``; the
+        read-replica's is ``NEXUS_READ_REPLICA_ASYNC_USE_POOL``. The primary
+        toggle is also honoured as a fallback so existing deployments that
+        only set ``NEXUS_DB_ASYNC_USE_POOL`` behave unchanged.
+
+        Pool-size / max-overflow / recycle are read from ``<prefix>_POOL_*``
+        when pooled mode is active.
+        """
+        _truthy = ("1", "true", "yes")
+        _falsy = ("0", "false", "no", "")
+        # Prefix-specific toggle takes precedence. Only consult the legacy
+        # global toggle when the prefix-specific one is genuinely absent,
+        # so operators can explicitly disable pooled mode on the replica
+        # with ``NEXUS_READ_REPLICA_ASYNC_USE_POOL=0`` even if
+        # ``NEXUS_DB_ASYNC_USE_POOL=1`` is set. Whitespace is stripped.
+        _prefix_raw = os.environ.get(f"{prefix}_ASYNC_USE_POOL")
+        if _prefix_raw is not None:
+            _val = _prefix_raw.strip().lower()
+            if _val in _truthy:
+                _use_pool = True
+            elif _val in _falsy:
+                _use_pool = False
+            else:
+                # Present but invalid — fail closed to the safe default.
+                logger.warning(
+                    "%s_ASYNC_USE_POOL=%r is not a recognized boolean "
+                    "(expected 1/0/true/false/yes/no); defaulting to NullPool.",
+                    prefix,
+                    _prefix_raw,
+                )
+                _use_pool = False
+        else:
+            _global_val = os.environ.get("NEXUS_DB_ASYNC_USE_POOL", "").strip().lower()
+            _use_pool = _global_val in _truthy
+        if _use_pool:
+            return SQLAlchemyRecordStore._build_pool_kwargs(
+                prefix=prefix,
+                is_async=True,
+                default_pool_size=default_pool_size,
+                default_max_overflow=default_max_overflow,
+            )
+        from sqlalchemy.pool import NullPool
+
+        return {"poolclass": NullPool}
+
+    @staticmethod
+    def _attach_asyncpg_protocol_error_handler(engine: Any) -> None:
+        """Attach a handle_error listener that invalidates on asyncpg protocol errors.
+
+        Must be attached to a sync Engine (or an AsyncEngine's ``sync_engine``).
+        Paired with :func:`_handle_asyncpg_protocol_error` above.
+        """
+        from sqlalchemy import event
+
+        event.listen(engine, "handle_error", _handle_asyncpg_protocol_error)
+
+    @staticmethod
     def _attach_plan_cache_mode_listener(engine: Any) -> None:
         """Attach a pool-level listener to SET plan_cache_mode on connect.
 
@@ -438,9 +543,8 @@ class SQLAlchemyRecordStore(RecordStoreABC):
                     engine_kwargs: dict[str, Any] = {}
                     if "postgresql" in async_url:
                         engine_kwargs.update(
-                            self._build_pool_kwargs(
+                            self._build_async_pool_kwargs(
                                 prefix="NEXUS_DB",
-                                is_async=True,
                                 default_pool_size=10 if self._has_read_replica else 20,
                                 default_max_overflow=10 if self._has_read_replica else 30,
                             )
@@ -455,15 +559,40 @@ class SQLAlchemyRecordStore(RecordStoreABC):
                     # Set plan_cache_mode on async engine for PostgreSQL
                     if self._is_postgresql:
                         self._attach_plan_cache_mode_listener(self._async_engine.sync_engine)
+                        # Issue #3807: force pool discard on asyncpg InternalClientError
+                        self._attach_asyncpg_protocol_error_handler(self._async_engine.sync_engine)
 
                     self._async_session_factory_instance = async_sessionmaker(
                         self._async_engine, class_=AsyncSession, expire_on_commit=False
                     )
                     pool_info = {k: v for k, v in engine_kwargs.items() if k.startswith("pool_")}
+                    _poolclass = engine_kwargs.get("poolclass")
+                    _strategy = (
+                        _poolclass.__name__
+                        if _poolclass is not None
+                        else (str(pool_info) if pool_info else "default")
+                    )
+                    _is_pg = "postgresql" in async_url
+                    if _strategy == "NullPool" and _is_pg:
+                        _advisory = (
+                            " NullPool opens a fresh connection per checkout to prevent "
+                            "cross-event-loop corruption (#3807); ensure PostgreSQL "
+                            "max_connections covers peak concurrent async traffic."
+                        )
+                    elif _is_pg and pool_info:
+                        _advisory = (
+                            " Pooled mode active (NEXUS_DB_ASYNC_USE_POOL=1); "
+                            "connections may be reused across event loops — "
+                            "monitor for asyncpg InternalClientError under burst load (#3807)."
+                        )
+                    else:
+                        _advisory = ""
                     logger.info(
-                        "Async session factory initialized: %s (pool=%s)",
+                        "Async session factory initialized: %s (strategy=%s, pool_kwargs=%s).%s",
                         async_url.split("@")[-1],
-                        pool_info or "default",
+                        _strategy,
+                        pool_info or "{}",
+                        _advisory,
                     )
 
         return self._async_session_factory_instance
@@ -515,9 +644,8 @@ class SQLAlchemyRecordStore(RecordStoreABC):
 
                     assert self._read_replica_url is not None  # guarded by _has_read_replica
                     async_url = self._to_async_url(self._read_replica_url)
-                    engine_kwargs = self._build_pool_kwargs(
+                    engine_kwargs = self._build_async_pool_kwargs(
                         prefix="NEXUS_READ_REPLICA",
-                        is_async=True,
                         default_pool_size=20,
                         default_max_overflow=25,
                     )
@@ -530,15 +658,26 @@ class SQLAlchemyRecordStore(RecordStoreABC):
                     # Set plan_cache_mode on async read replica engine for PostgreSQL
                     if self._is_postgresql:
                         self._attach_plan_cache_mode_listener(self._async_read_engine.sync_engine)
+                        # Issue #3807: force pool discard on asyncpg InternalClientError
+                        self._attach_asyncpg_protocol_error_handler(
+                            self._async_read_engine.sync_engine
+                        )
 
                     self._async_read_session_factory_instance = async_sessionmaker(
                         self._async_read_engine, class_=AsyncSession, expire_on_commit=False
                     )
                     pool_info = {k: v for k, v in engine_kwargs.items() if k.startswith("pool_")}
+                    _poolclass = engine_kwargs.get("poolclass")
+                    _strategy = (
+                        _poolclass.__name__
+                        if _poolclass is not None
+                        else (str(pool_info) if pool_info else "default")
+                    )
                     logger.info(
-                        "Async read session factory initialized: %s (pool=%s)",
+                        "Async read session factory initialized: %s (strategy=%s, pool_kwargs=%s).",
                         async_url.split("@")[-1],
-                        pool_info or "default",
+                        _strategy,
+                        pool_info or "{}",
                     )
 
         return self._async_read_session_factory_instance

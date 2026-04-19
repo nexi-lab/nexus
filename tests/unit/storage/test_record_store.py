@@ -284,6 +284,7 @@ class TestRecordStoreCreatorParams:
             patch("sqlalchemy.ext.asyncio.create_async_engine") as mock_async_create,
             patch("sqlalchemy.ext.asyncio.async_sessionmaker") as mock_asm,
             patch.object(SQLAlchemyRecordStore, "_attach_plan_cache_mode_listener"),
+            patch.object(SQLAlchemyRecordStore, "_attach_asyncpg_protocol_error_handler"),
         ):
             mock_async_create.return_value = MagicMock()
             mock_asm.return_value = MagicMock()
@@ -729,3 +730,92 @@ class TestRecordStoreSessionContextManager:
                 assert result.scalar() == 1
         finally:
             store.close()
+
+
+class TestAsyncpgProtocolErrorHandler:
+    """Backport SQLAlchemy #13241: mark asyncpg.InternalClientError as disconnect.
+
+    Under sustained VFS write load with client-side cancellation, asyncpg raises
+    `InternalClientError: got result for unknown protocol state ...` (or
+    `cannot switch to state X; another operation (Y) is in progress`). SQLAlchemy's
+    asyncpg dialect does not classify these as disconnects, so the poisoned
+    connection is returned to the pool and the next checkout hangs or repeats
+    the failure. The fix: set `ctx.is_disconnect = True` so the pool discards it.
+    """
+
+    def test_internal_client_error_marked_as_disconnect(self):
+        """asyncpg.InternalClientError should flip is_disconnect to True."""
+        import asyncpg
+
+        from nexus.storage.record_store import _handle_asyncpg_protocol_error
+
+        ctx = MagicMock()
+        ctx.original_exception = asyncpg.InternalClientError(
+            "got result for unknown protocol state 3"
+        )
+        ctx.is_disconnect = False
+
+        _handle_asyncpg_protocol_error(ctx)
+
+        assert ctx.is_disconnect is True
+
+    def test_protocol_state_switch_error_marked_as_disconnect(self):
+        """'cannot switch to state X' variant also maps to InternalClientError."""
+        import asyncpg
+
+        from nexus.storage.record_store import _handle_asyncpg_protocol_error
+
+        ctx = MagicMock()
+        ctx.original_exception = asyncpg.InternalClientError(
+            "cannot switch to state 12; another operation (2) is in progress"
+        )
+        ctx.is_disconnect = False
+
+        _handle_asyncpg_protocol_error(ctx)
+
+        assert ctx.is_disconnect is True
+
+    def test_unrelated_exception_not_marked_as_disconnect(self):
+        """Generic exceptions should not flip is_disconnect."""
+        from nexus.storage.record_store import _handle_asyncpg_protocol_error
+
+        ctx = MagicMock()
+        ctx.original_exception = ValueError("unrelated error")
+        ctx.is_disconnect = False
+
+        _handle_asyncpg_protocol_error(ctx)
+
+        assert ctx.is_disconnect is False
+
+    def test_preserves_existing_disconnect_flag(self):
+        """Handler must not clear an already-set is_disconnect flag."""
+        from nexus.storage.record_store import _handle_asyncpg_protocol_error
+
+        ctx = MagicMock()
+        ctx.original_exception = ValueError("unrelated error")
+        ctx.is_disconnect = True  # already flagged by SA's own classifier
+
+        _handle_asyncpg_protocol_error(ctx)
+
+        assert ctx.is_disconnect is True
+
+    def test_handler_attached_to_async_engine(self):
+        """_attach_asyncpg_protocol_error_handler registers the handle_error listener."""
+        import asyncio
+
+        from sqlalchemy import event
+        from sqlalchemy.ext.asyncio import create_async_engine
+
+        from nexus.storage.record_store import (
+            SQLAlchemyRecordStore,
+            _handle_asyncpg_protocol_error,
+        )
+
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        try:
+            SQLAlchemyRecordStore._attach_asyncpg_protocol_error_handler(engine.sync_engine)
+            assert event.contains(
+                engine.sync_engine, "handle_error", _handle_asyncpg_protocol_error
+            )
+        finally:
+            asyncio.run(engine.dispose())

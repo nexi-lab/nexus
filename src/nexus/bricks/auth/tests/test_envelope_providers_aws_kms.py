@@ -53,6 +53,7 @@ def provider_factory() -> Callable[[], EncryptionProvider]:
     from nexus.bricks.auth.envelope_providers.aws_kms import AwsKmsProvider
 
     def _make() -> EncryptionProvider:
+        assert KMS_KEY_ID is not None  # gated by _kms_available() skipif above
         kwargs: dict = {"region_name": KMS_REGION}
         if KMS_ENDPOINT:
             kwargs["endpoint_url"] = KMS_ENDPOINT

@@ -438,7 +438,12 @@ class ZoneManager:
             # DLC not wired in on this node yet — defer to the catch-up
             # scan that fires again after set_mount_hook is called.
             return
-        if target_zone_id not in self._stores:
+        # After a process restart Rust re-opens persisted zones directly
+        # from disk without going through Python's create_zone / join_zone,
+        # so self._stores starts empty. get_store() lazily populates it
+        # from the Rust registry, so fall through to that check rather
+        # than reading _stores raw.
+        if self.get_store(target_zone_id) is None:
             # Target zone not local yet. create_zone() re-emits events
             # via the Rust catch-up scan once the local zone appears.
             return

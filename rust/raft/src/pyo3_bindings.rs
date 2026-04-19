@@ -1761,9 +1761,28 @@ impl PyZoneManager {
 #[cfg(all(feature = "grpc", has_protos))]
 impl Drop for PyZoneManager {
     fn drop(&mut self) {
+        // Clear the mount-event hook first so the consumer task that's
+        // blocked inside ``spawn_blocking`` for a Python callback can
+        // no longer invoke arbitrary Python on its way out.
+        *self.mount_hook.write() = None;
+
+        // Shut the raft zones down — the transport loops, their gRPC
+        // clients, and all ``FullStateMachine`` senders go with them.
         self.registry.shutdown_all();
+
         if let Some(tx) = self.shutdown_tx.take() {
             let _ = tx.send(true);
+        }
+
+        // Explicitly abort the mount-event consumer so the runtime
+        // drop below doesn't wait on ``rx.recv().await``. Without this
+        // the Python interpreter's shutdown path blocks on the runtime
+        // which blocks on a live task — on Windows Docker Desktop that
+        // leaves the container in a dirty "stopping" state, and the
+        // Hyper-V namespace teardown then stalls the *next* container
+        // start for minutes.
+        if let Some(handle) = self._mount_consumer.take() {
+            handle.abort();
         }
     }
 }

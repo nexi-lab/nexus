@@ -88,32 +88,68 @@ async def _svc_grep(
 def _resolve_vec_backend(search_svc):
     """Return the wired ``SqliteVecBackend`` instance, or ``None``.
 
-    Requires the SANDBOX connect() to have been called with
-    ``enable_vector_search=True`` and the optional deps (sqlite-vec,
-    litellm) importable. Otherwise returns None and retrieval-quality
-    sections skip.
+    Used *only* for setup: SANDBOX ships no background auto-indexer, so
+    tests must explicitly surface content into the vec backend after
+    write / edit / unlink. Retrieval assertions still go through the
+    public ``semantic_search`` entrypoint — see ``_public_search_paths``.
+
+    Returns None when connect() was not called with
+    ``enable_vector_search=True`` or the optional deps (sqlite-vec,
+    litellm) are missing.
     """
     svc = search_svc._service_instance
     return getattr(svc, "_sqlite_vec_backend", None)
 
 
-async def _vec_upsert_file(vec_backend, nx, path: str) -> None:
-    """Read a file from SANDBOX and upsert its text as a single chunk.
+async def _vec_upsert_file(vec_backend, nx, path: str) -> int:
+    """Read a file from SANDBOX and upsert its text into the vec backend.
 
-    SANDBOX has no background auto-indexer (FULL-profile feature), so
-    callers explicitly surface updated content into the vector backend.
+    Returns the number of rows written. Callers assert ``>= 1``.
     """
     body = nx.sys_read(path).decode("utf-8", errors="replace")
-    await vec_backend.upsert(
+    return await vec_backend.upsert(
         [{"path": path, "chunk_index": 0, "text": body}],
         zone_id=ROOT_ZONE_ID,
     )
 
 
-async def _vec_search_paths(vec_backend, query: str, limit: int = 5) -> list[str]:
-    """Query the vector backend and return the ranked top-K paths."""
-    hits = await vec_backend.search(query, limit=limit, zone_id=ROOT_ZONE_ID)
-    return [h.path for h in hits]
+def _count_vec_rows(vec_backend, path: str, chunk_index: int = 0) -> int:
+    """Count rows in the sqlite-vec table for ``(path, chunk_index, zone)``.
+
+    Read-only verification that ``upsert``'s delete-before-insert
+    semantics left exactly one row per stable key — a count of 2 would
+    indicate either a rowid collision or a write race. Goes behind the
+    ``_conn`` / ``_VEC_TABLE`` private surface because these are
+    implementation invariants with no public read path, and using
+    ``semantic_search`` for this would conflate row-count with
+    embedding similarity.
+    """
+    from nexus.bricks.search.sqlite_vec_backend import _VEC_TABLE
+
+    conn = vec_backend._conn
+    if conn is None:
+        return -1
+    row = conn.execute(
+        f"SELECT COUNT(*) FROM {_VEC_TABLE} WHERE path = ? AND chunk_index = ? AND zone_id = ?",
+        (path, chunk_index, ROOT_ZONE_ID),
+    ).fetchone()
+    return int(row[0]) if row else 0
+
+
+async def _public_search_paths(
+    search_svc, query: str, path: str = "/workspace/demo", limit: int = 5
+) -> list[str]:
+    """Retrieval via the public ``SearchService.semantic_search`` path.
+
+    On SANDBOX this routes through ``_semantic_search_sandbox`` →
+    local sqlite-vec → federation → BM25S. That's the exact surface
+    users hit (MCP ``nexus_semantic_search``, HTTP
+    ``/api/v2/search/query``), so a regression in wiring, zone
+    filtering, or fallback behaviour is caught here.
+    """
+    svc = search_svc._service_instance
+    hits = await svc.semantic_search(query, path=path, limit=limit, search_mode="semantic")
+    return [h.get("path", "") for h in hits]
 
 
 async def main() -> int:
@@ -274,15 +310,29 @@ async def main() -> int:
             # =============================================================
             print("\n=== 6. HERB RETRIEVAL-QUALITY GATE (vector) ===")
             # =============================================================
-            # Retrieval quality on SANDBOX goes through the SqliteVecBackend
-            # path. Queries are the HERB natural-language **questions**
-            # (not the answer anchors) so ranking / query-understanding
-            # regressions would be caught.
-            vec_backend = _resolve_vec_backend(search_svc) if has_openai else None
+            # Retrieval quality on SANDBOX is asserted via the **public**
+            # SearchService.semantic_search entrypoint — the same path MCP
+            # and HTTP clients hit. The local SqliteVecBackend is used
+            # only as the ingest surface (SANDBOX ships no auto-indexer).
+            # Queries are the HERB natural-language questions so ranking
+            # / query-understanding regressions would be caught.
+            vec_backend = _resolve_vec_backend(search_svc)
+
+            # Fail-closed invariant: if the user opted into retrieval mode
+            # by setting OPENAI_API_KEY, the backend MUST be wired. A
+            # silent skip here would hide factory-wiring regressions.
+            if has_openai:
+                check(
+                    "vector backend wired when OPENAI_API_KEY set",
+                    vec_backend is not None,
+                    "enable_vector_search=True did not produce a backend — "
+                    "check factory/_wired.py + extras install (sqlite-vec, litellm)",
+                )
+
             if vec_backend is None:
                 print(
-                    "    (skipped — requires OPENAI_API_KEY + enable_vector_search; "
-                    "SANDBOX ships no keyword-index daemon out-of-box)"
+                    "    (skipped — OPENAI_API_KEY not set; SANDBOX ships no "
+                    "keyword-index daemon out-of-box)"
                 )
             else:
                 # Populate the vector backend from HERB files. One chunk per
@@ -290,12 +340,17 @@ async def main() -> int:
                 # structure SANDBOX produces when a user calls upsert once
                 # per document.
                 docs = []
-                for path, body, _desc in HERB_CORPUS:
-                    docs.append({"path": path, "chunk_index": 0, "text": body})
+                for p, body, _desc in HERB_CORPUS:
+                    docs.append({"path": p, "chunk_index": 0, "text": body})
                 t_ing = time.perf_counter()
                 n_written = await vec_backend.upsert(docs, zone_id=ROOT_ZONE_ID)
+                check(
+                    f"HERB ingest wrote {n_written}/{len(docs)} rows",
+                    n_written == len(docs),
+                    f"expected {len(docs)}, got {n_written}",
+                )
                 print(
-                    f"    Ingested {n_written} HERB files into vec backend "
+                    f"    Ingested {n_written} HERB files "
                     f"({(time.perf_counter() - t_ing) * 1000:.0f} ms)"
                 )
 
@@ -305,7 +360,9 @@ async def main() -> int:
                     q = qa["question"]
                     expected = qa["expected_file"]
                     try:
-                        paths = await _vec_search_paths(vec_backend, q, limit=5)
+                        # Public path — goes through semantic_search →
+                        # _semantic_search_sandbox → local sqlite-vec.
+                        paths = await _public_search_paths(search_svc, q, limit=5)
                     except Exception as e:
                         per_q.append((q, False, [f"error: {e}"]))
                         continue
@@ -358,24 +415,52 @@ async def main() -> int:
             # =============================================================
             print("\n=== 9. EDIT → REINDEX → INDEXED SEARCH ===")
             # =============================================================
-            # Exercise the real index-freshness invariant: after a write,
-            # the updated text must be findable via indexed search after
-            # the user re-upserts the file. SANDBOX ships no background
-            # refresh daemon; this captures the explicit-reindex contract.
+            # Exercise the real index-freshness invariant via the public
+            # semantic_search path:
+            #   1. Edit plan.md (verify the edit returned success).
+            #   2. Re-upsert into the vec backend (verify rows written).
+            #   3. Assert: NEW query returns plan.md (freshness).
+            #   4. Assert: OLD query does NOT return plan.md first
+            #      (stale-vector invalidation — duplicate / stale row
+            #      regressions would make this fail).
             if vec_backend is None:
-                print("    (skipped — requires OPENAI_API_KEY + enable_vector_search)")
+                print("    (skipped — OPENAI_API_KEY not set)")
             else:
-                nx.edit(
+                edit_res = nx.edit(
                     "/workspace/demo/plan.md",
                     [("Deploy to production", "Deploy using Kubernetes orchestration")],
                 )
-                await _vec_upsert_file(vec_backend, nx, "/workspace/demo/plan.md")
-                paths = await _vec_search_paths(vec_backend, "Kubernetes orchestration", limit=5)
                 check(
-                    "post-edit reindex — new content is top-K indexed",
-                    "/workspace/demo/plan.md" in paths,
-                    f"top-5: {paths}",
+                    "edit mutation succeeded",
+                    bool(edit_res.get("success")) and edit_res.get("applied_count") == 1,
+                    str(edit_res.get("errors") or edit_res),
                 )
+                rows = await _vec_upsert_file(vec_backend, nx, "/workspace/demo/plan.md")
+                check("re-upsert wrote >= 1 row", rows >= 1, f"rows={rows}")
+
+                new_paths = await _public_search_paths(
+                    search_svc, "Kubernetes orchestration", limit=5
+                )
+                check(
+                    "freshness — new content is top-K via semantic_search",
+                    "/workspace/demo/plan.md" in new_paths,
+                    f"top-5: {new_paths}",
+                )
+                # Mutation-consistency invariant: upsert must leave
+                # exactly one row for (path, chunk_index, zone_id). Two
+                # rows would mean the delete-before-insert pattern or
+                # the stable_rowid contract broke — and semantic-
+                # similarity queries can't distinguish that from
+                # ranking variance (OpenAI embeddings semantically match
+                # plan.md for "Deploy to production" even after the
+                # edit).
+                row_count = _count_vec_rows(vec_backend, "/workspace/demo/plan.md")
+                check(
+                    "exactly one vec row per (path, chunk_index) after upsert",
+                    row_count == 1,
+                    f"got {row_count} rows",
+                )
+
                 # Restore + reindex for idempotence
                 nx.edit(
                     "/workspace/demo/plan.md",
@@ -392,29 +477,54 @@ async def main() -> int:
             # =============================================================
             print("\n=== 10. DELETE → DEINDEX → INDEXED SEARCH ===")
             # =============================================================
-            # After unlink + explicit vec_backend.delete, the deleted path
-            # must NOT appear in indexed-search results. Tests the
-            # deletion half of the index-invalidation contract.
+            # Deletion half of the index-invalidation contract:
+            #   1. Write + upsert + verify file is searchable (public path).
+            #   2. Unlink + vec_backend.delete — assert rows_deleted >= 1
+            #      so a silent no-op delete regression would fail.
+            #   3. Assert absent from a WIDER window (limit=20) — catches
+            #      the case where ranking variance pushes stale content
+            #      out of top-5 but it's still indexed.
             if vec_backend is None:
-                print("    (skipped — requires OPENAI_API_KEY + enable_vector_search)")
+                print("    (skipped — OPENAI_API_KEY not set)")
             else:
                 del_path = "/workspace/demo/delete-test.md"
                 nx.write(del_path, b"Quantum entanglement teleportation\n")
-                await _vec_upsert_file(vec_backend, nx, del_path)
-                paths = await _vec_search_paths(vec_backend, "Quantum entanglement", limit=5)
+                upserted = await _vec_upsert_file(vec_backend, nx, del_path)
+                check("pre-delete upsert wrote row", upserted >= 1, f"rows={upserted}")
+
+                paths = await _public_search_paths(search_svc, "Quantum entanglement", limit=5)
                 check(
-                    "pre-delete file is index-searchable",
+                    "pre-delete file surfaces via semantic_search",
                     del_path in paths,
                     f"top-5: {paths}",
                 )
 
                 nx.sys_unlink(del_path)
                 deleted_rows = await vec_backend.delete([del_path], zone_id=ROOT_ZONE_ID)
-                paths = await _vec_search_paths(vec_backend, "Quantum entanglement", limit=5)
                 check(
-                    f"post-delete vec row purged (rows={deleted_rows})",
-                    del_path not in paths,
-                    f"top-5 still includes it: {paths}",
+                    f"vec_backend.delete rows >= 1 (actual={deleted_rows})",
+                    deleted_rows >= 1,
+                    "silent no-op delete",
+                )
+                # Direct row-count check — authoritative for "is the
+                # deletion persisted"; semantic_search alone would
+                # conflate this with ranking noise.
+                post_count = _count_vec_rows(vec_backend, del_path)
+                check(
+                    "post-delete vec row count == 0",
+                    post_count == 0,
+                    f"got {post_count} rows still present",
+                )
+
+                # Wider window via the public path — catches stale rows
+                # that a top-5 ranking quirk could otherwise hide.
+                wide_paths = await _public_search_paths(
+                    search_svc, "Quantum entanglement", limit=20
+                )
+                check(
+                    "post-delete deleted path absent from top-20",
+                    del_path not in wide_paths,
+                    f"stale entry still indexed: {wide_paths}",
                 )
 
         finally:

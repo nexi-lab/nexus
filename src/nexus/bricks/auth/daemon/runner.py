@@ -167,26 +167,25 @@ class DaemonRunner:
         )
 
     def drain_startup(self) -> None:
-        """Replay known sources so pending queue rows don't orphan on restart.
+        """Replay the watched source IFF the queue has pending rows.
 
-        The queue stores ``(profile_id, payload_hash)`` only — without the
-        envelope payload we cannot re-submit the exact failed push. Instead we
-        re-read the current state of every source we know about:
+        Gating on pending is important: a blind re-read on every startup
+        would re-push unchanged local state and could clobber newer central
+        state in multi-writer scenarios (or just generate audit churn). When
+        the queue is empty we trust the steady-state watcher to pick up any
+        future change and skip the replay.
 
-        * watched file (``source_watch_target``): read and run through the
-          normal ``_on_change`` path. If content matches a pending hash the
-          push succeeds and the queue row clears; if content has changed the
-          new push supersedes the stale pending entry at the server level
-          (last-write-wins on ``updated_at``).
-        * subprocess sources: ``_fetch_all_subprocess_sources`` is also
-          invoked by the poll loop immediately after startup, so we rely on
-          that for gh/gcloud/gws replay.
-
-        This closes the "pending-on-restart-with-no-file-change" gap without
-        requiring payload-durable queue storage.
+        When pending rows exist we re-read the watched file and route it
+        through ``_on_change`` — if content still matches the pending hash
+        the push succeeds and the queue row clears; if it has changed, the
+        new push supersedes the stale entry via server-side last-write-wins.
+        Payload-durable queue replay (replay the EXACT bytes of the failed
+        push) is tracked as follow-up; MVP trusts the source-of-truth file.
         """
         pending = self._queue.list_pending()
         log.info("startup drain: %d pending rows", len(pending))
+        if not pending:
+            return
         watch_path = self._source_watch_target
         if not watch_path.exists():
             log.debug("startup replay: watch target %s does not exist", watch_path)

@@ -73,11 +73,14 @@ def _machine_keypair() -> tuple[Ed25519PrivateKey, bytes]:
     return priv, pub_pem
 
 
-def _canonical_body(*, machine_id: str, tenant_id: str, timestamp_utc: str) -> str:
+def _canonical_body(
+    *, machine_id: str, tenant_id: str, timestamp_utc: str, nonce: str | None = None
+) -> str:
     """Client-side canonicalization shared by all refresh tests."""
     return json.dumps(
         {
             "machine_id": machine_id,
+            "nonce": nonce or str(uuid.uuid4()),
             "tenant_id": tenant_id,
             "timestamp_utc": timestamp_utc,
         },
@@ -382,3 +385,88 @@ def test_refresh_tenant_mismatch(
     )
     assert r2.status_code == 401
     assert "machine_unknown" in r2.text
+
+
+def test_refresh_replay_rejected(
+    client: TestClient,
+    pg_engine: Engine,
+    tenant_principal: tuple[uuid.UUID, uuid.UUID],
+) -> None:
+    """Re-submitting the exact same (body_raw, sig) must 401 nonce_replay.
+
+    Without the nonce guard, a captured request could be replayed inside
+    the ±60s skew window to mint fresh JWTs. This test captures a signed
+    body, uses it once, then submits it a second time verbatim.
+    """
+    t, p = tenant_principal
+    tok = issue_enroll_token(
+        engine=pg_engine,
+        secret=SECRET,
+        tenant_id=t,
+        principal_id=p,
+        ttl=timedelta(minutes=15),
+    )
+    priv, pub_pem = _machine_keypair()
+    r = client.post(
+        "/v1/daemon/enroll",
+        json={
+            "enroll_token": tok,
+            "pubkey_pem": pub_pem.decode(),
+            "daemon_version": "0.9.20",
+            "hostname": "x",
+        },
+    )
+    machine_id = r.json()["machine_id"]
+    body_raw = _canonical_body(
+        machine_id=machine_id,
+        tenant_id=str(t),
+        timestamp_utc=datetime.now(UTC).isoformat(),
+    )
+    sig = priv.sign(body_raw.encode("utf-8"))
+    payload = {"body_raw": body_raw, "sig_b64": base64.b64encode(sig).decode()}
+    r1 = client.post("/v1/daemon/refresh", json=payload)
+    assert r1.status_code == 200
+    # Replay with identical body_raw + sig_b64 → rejected.
+    r2 = client.post("/v1/daemon/refresh", json=payload)
+    assert r2.status_code == 401
+    assert r2.json()["detail"] == "nonce_replay"
+
+
+def test_refresh_missing_nonce_rejected(
+    client: TestClient,
+    pg_engine: Engine,
+    tenant_principal: tuple[uuid.UUID, uuid.UUID],
+) -> None:
+    """Legacy client that omits ``nonce`` from body must 401 body_malformed."""
+    t, p = tenant_principal
+    tok = issue_enroll_token(
+        engine=pg_engine, secret=SECRET, tenant_id=t, principal_id=p, ttl=timedelta(minutes=15)
+    )
+    priv, pub_pem = _machine_keypair()
+    r = client.post(
+        "/v1/daemon/enroll",
+        json={
+            "enroll_token": tok,
+            "pubkey_pem": pub_pem.decode(),
+            "daemon_version": "0.9.20",
+            "hostname": "x",
+        },
+    )
+    machine_id = r.json()["machine_id"]
+    # Hand-craft a body without ``nonce`` (legacy shape).
+    body_raw = json.dumps(
+        {
+            "machine_id": machine_id,
+            "tenant_id": str(t),
+            "timestamp_utc": datetime.now(UTC).isoformat(),
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    sig = priv.sign(body_raw.encode("utf-8"))
+    r2 = client.post(
+        "/v1/daemon/refresh",
+        json={"body_raw": body_raw, "sig_b64": base64.b64encode(sig).decode()},
+    )
+    assert r2.status_code == 401
+    assert r2.json()["detail"] == "body_malformed"

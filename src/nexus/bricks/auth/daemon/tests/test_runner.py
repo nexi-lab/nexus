@@ -169,9 +169,11 @@ def test_startup_drain_no_watch_target_is_noop(tmp_path: Path) -> None:
     pusher.push_source.assert_not_called()
 
 
-def test_startup_drain_replays_watch_target(tmp_path: Path) -> None:
-    """With a present file, drain_startup re-pushes it so pending rows clear."""
+def test_startup_drain_replays_watch_target_when_pending(tmp_path: Path) -> None:
+    """With pending rows, drain_startup re-pushes so pending can clear."""
     queue = PushQueue(tmp_path / "queue.db")
+    # Seed a pending row to trigger replay.
+    queue.enqueue("codex/alice@example.com", payload_hash="pending-hash")
     auth_file = tmp_path / "auth.json"
     token = _jwt_with_claims({"email": "alice@example.com"})
     auth_file.write_bytes(json.dumps({"tokens": {"id_token": token}}).encode())
@@ -191,6 +193,25 @@ def test_startup_drain_replays_watch_target(tmp_path: Path) -> None:
         provider="codex",
         account_identifier="alice@example.com",
     )
+
+
+def test_startup_drain_noop_when_queue_empty(tmp_path: Path) -> None:
+    """Empty queue → do NOT blindly re-push; avoids overwriting newer central state."""
+    queue = PushQueue(tmp_path / "queue.db")
+    auth_file = tmp_path / "auth.json"
+    token = _jwt_with_claims({"email": "alice@example.com"})
+    auth_file.write_bytes(json.dumps({"tokens": {"id_token": token}}).encode())
+
+    pusher = MagicMock()
+    runner = DaemonRunner(
+        source_watch_target=auth_file,
+        queue=queue,
+        pusher=pusher,
+        jwt_refresh_every=9999,
+        status_path=tmp_path / "status.json",
+    )
+    runner.drain_startup()
+    pusher.push_source.assert_not_called()
 
 
 def test_subprocess_sources_pushed_on_startup(tmp_path: Path) -> None:

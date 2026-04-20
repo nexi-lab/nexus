@@ -214,6 +214,22 @@ _TABLE_STATEMENTS: tuple[str, ...] = (
     """,
     "CREATE INDEX IF NOT EXISTS idx_daemon_enroll_tokens_expires "
     "ON daemon_enroll_tokens(expires_at)",
+    # Refresh-request nonces (#3804 round 5): /v1/daemon/refresh bodies
+    # include a single-use nonce so a captured (body_raw, sig_b64) pair
+    # cannot be replayed inside the ±60s skew window. We store the
+    # (tenant_id, machine_id, nonce) tuple and reject any INSERT that
+    # collides. A cleanup job prunes rows older than 2× skew.
+    """
+    CREATE TABLE IF NOT EXISTS daemon_refresh_nonces (
+        nonce        UUID NOT NULL,
+        tenant_id    UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+        machine_id   UUID NOT NULL,
+        seen_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (tenant_id, machine_id, nonce)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_daemon_refresh_nonces_seen_at "
+    "ON daemon_refresh_nonces(seen_at)",
     # Append-only audit log, **range-partitioned by written_at**. At 100k
     # users × ~10 pushes/day × 365 days = ~365M rows/year; a single flat table
     # is impractical. Monthly partitions (managed externally via pg_partman or
@@ -259,6 +275,8 @@ _RLS_STATEMENTS: tuple[str, ...] = (
     "ALTER TABLE daemon_machines FORCE ROW LEVEL SECURITY",
     "ALTER TABLE daemon_enroll_tokens ENABLE ROW LEVEL SECURITY",
     "ALTER TABLE daemon_enroll_tokens FORCE ROW LEVEL SECURITY",
+    "ALTER TABLE daemon_refresh_nonces ENABLE ROW LEVEL SECURITY",
+    "ALTER TABLE daemon_refresh_nonces FORCE ROW LEVEL SECURITY",
     "ALTER TABLE auth_profile_writes ENABLE ROW LEVEL SECURITY",
     "ALTER TABLE auth_profile_writes FORCE ROW LEVEL SECURITY",
 )
@@ -294,6 +312,11 @@ _POLICY_STATEMENTS: tuple[str, ...] = (
     "DROP POLICY IF EXISTS tenant_isolation_daemon_enroll_tokens ON daemon_enroll_tokens",
     """
     CREATE POLICY tenant_isolation_daemon_enroll_tokens ON daemon_enroll_tokens
+        USING (tenant_id = current_setting('app.current_tenant', true)::UUID)
+    """,
+    "DROP POLICY IF EXISTS tenant_isolation_daemon_refresh_nonces ON daemon_refresh_nonces",
+    """
+    CREATE POLICY tenant_isolation_daemon_refresh_nonces ON daemon_refresh_nonces
         USING (tenant_id = current_setting('app.current_tenant', true)::UUID)
     """,
     "DROP POLICY IF EXISTS tenant_isolation_auth_profile_writes ON auth_profile_writes",
@@ -551,6 +574,7 @@ def drop_schema(engine: Engine) -> None:
         # also drops the default partition and any child partitions.
         for tbl in (
             "auth_profile_writes",
+            "daemon_refresh_nonces",
             "daemon_enroll_tokens",
             "daemon_machines",
             "auth_profiles",

@@ -177,16 +177,19 @@ def make_daemon_router(
         raw_machine_id = parsed.get("machine_id")
         raw_tenant_id = parsed.get("tenant_id")
         raw_timestamp = parsed.get("timestamp_utc")
+        raw_nonce = parsed.get("nonce")
         if (
             not isinstance(raw_machine_id, str)
             or not isinstance(raw_tenant_id, str)
             or not isinstance(raw_timestamp, str)
+            or not isinstance(raw_nonce, str)
         ):
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="body_malformed")
 
         try:
             machine_id = uuid.UUID(raw_machine_id)
             tenant_id = uuid.UUID(raw_tenant_id)
+            nonce = uuid.UUID(raw_nonce)
         except ValueError as exc:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="body_malformed") from exc
 
@@ -246,6 +249,23 @@ def make_daemon_router(
                 raise HTTPException(
                     status.HTTP_401_UNAUTHORIZED, detail="signature_invalid"
                 ) from exc
+
+            # Replay protection: enforce single-use on the nonce BEFORE
+            # issuing the JWT. ``ON CONFLICT DO NOTHING RETURNING`` returns
+            # an empty set iff a prior request already claimed this
+            # (tenant, machine, nonce) tuple — reject as replay.
+            claim = conn.execute(
+                text(
+                    "INSERT INTO daemon_refresh_nonces "
+                    "(nonce, tenant_id, machine_id) "
+                    "VALUES (:n, :t, :m) "
+                    "ON CONFLICT (tenant_id, machine_id, nonce) DO NOTHING "
+                    "RETURNING nonce"
+                ),
+                {"n": str(nonce), "t": str(tenant_id), "m": str(machine_id)},
+            ).fetchone()
+            if claim is None:
+                raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="nonce_replay")
 
             # Final issuance gate: UPDATE guarded on ``revoked_at IS NULL``.
             # If a concurrent revoke snuck in between FOR UPDATE and here

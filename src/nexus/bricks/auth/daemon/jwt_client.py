@@ -135,12 +135,20 @@ class JwtClient:
         self._cached = token
 
     def refresh_now(self) -> str:
-        """Sign a fresh request, POST to ``/v1/daemon/refresh``, cache + return."""
+        """Sign a fresh request, POST to ``/v1/daemon/refresh``, cache + return.
+
+        Every call generates a fresh single-use ``nonce`` UUID that's signed
+        alongside the request. The server enforces uniqueness per
+        (tenant, machine, nonce) so a captured (body_raw, sig_b64) pair
+        cannot be replayed inside the clock-skew window.
+        """
         priv = load_private_key(self.key_path)
         now_iso = datetime.now(UTC).isoformat()
+        nonce = str(uuid.uuid4())
         body_raw = json.dumps(
             {
                 "machine_id": str(self.machine_id),
+                "nonce": nonce,
                 "tenant_id": str(self.tenant_id),
                 "timestamp_utc": now_iso,
             },

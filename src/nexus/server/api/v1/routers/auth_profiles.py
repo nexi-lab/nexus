@@ -160,13 +160,18 @@ def make_auth_profiles_router(*, engine: Engine, signer: JwtSigner) -> APIRouter
                 {"t": str(claims.tenant_id)},
             )
 
-            # Revocation / existence check (immediate control, independent of
-            # JWT expiry). Missing row → deprovisioned; revoked_at set →
-            # operator-revoked. Either way: reject.
+            # Revocation / existence check (immediate control, independent
+            # of JWT expiry). ``FOR UPDATE`` row-locks the machine for the
+            # duration of this transaction so a concurrent revoke has to
+            # either land BEFORE this SELECT (we see it) or wait until
+            # after we commit the write. Without the lock the revoke could
+            # slide in between this check and the upsert/audit, allowing
+            # one post-revocation write.
             machine_row = conn.execute(
                 text(
                     "SELECT revoked_at FROM daemon_machines "
-                    "WHERE tenant_id = :t AND principal_id = :p AND id = :m"
+                    "WHERE tenant_id = :t AND principal_id = :p AND id = :m "
+                    "FOR UPDATE"
                 ),
                 {
                     "t": str(claims.tenant_id),

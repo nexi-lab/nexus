@@ -1719,42 +1719,6 @@ impl PyZoneManager {
         self.node_id
     }
 
-    /// Set search capabilities for a zone (Issue #3147, Phase 2).
-    ///
-    /// Called by Python search daemon at startup to register real capabilities.
-    /// The Rust gRPC handler reads these when remote nodes query capabilities.
-    ///
-    /// # Arguments
-    /// * `zone_id` — Zone to set capabilities for.
-    /// * `device_tier` — "phone", "laptop", or "server".
-    /// * `search_modes` — List of supported modes: "keyword", "semantic", "hybrid".
-    /// * `has_graph` — Whether graph search is available.
-    /// * `embedding_model` — Embedding model name (empty string if none).
-    /// * `embedding_dimensions` — Embedding vector dimensions (0 if none).
-    pub fn set_search_capabilities(
-        &self,
-        zone_id: &str,
-        device_tier: &str,
-        search_modes: Vec<String>,
-        has_graph: bool,
-        embedding_model: &str,
-        embedding_dimensions: i32,
-    ) -> PyResult<()> {
-        use crate::raft::SearchCapabilitiesInfo;
-
-        self.registry.set_search_capabilities(
-            zone_id,
-            SearchCapabilitiesInfo {
-                device_tier: device_tier.to_string(),
-                search_modes,
-                embedding_model: embedding_model.to_string(),
-                embedding_dimensions,
-                has_graph,
-            },
-        );
-        Ok(())
-    }
-
     /// Gracefully shut down all zones and the gRPC server.
     pub fn shutdown(&mut self) -> PyResult<()> {
         self.registry.shutdown_all();

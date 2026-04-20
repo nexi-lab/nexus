@@ -43,6 +43,8 @@ mod error;
 #[cfg(feature = "grpc")]
 pub mod mount_event;
 pub mod replication_log;
+#[cfg(all(feature = "grpc", has_protos))]
+pub mod search_caps;
 mod state_machine;
 
 #[cfg(feature = "consensus")]
@@ -61,10 +63,12 @@ pub use state_machine::{
 
 #[cfg(feature = "consensus")]
 pub use node::{NodeRole, RaftConfig, RaftMsg, ZoneConsensus, ZoneConsensusDriver};
+#[cfg(all(feature = "grpc", has_protos))]
+pub use search_caps::{read_search_caps, write_search_caps, SearchCapabilitiesInfo};
 #[cfg(feature = "consensus")]
 pub use storage::RaftStorage;
 #[cfg(all(feature = "grpc", has_protos))]
-pub use zone_registry::{SearchCapabilitiesInfo, ZoneRaftRegistry};
+pub use zone_registry::ZoneRaftRegistry;
 
 #[cfg(feature = "grpc")]
 pub use mount_event::{MountEvent, MountEventTx};

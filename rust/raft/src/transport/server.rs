@@ -1071,8 +1071,9 @@ impl ZoneApiService for ZoneApiServiceImpl {
 
     /// Return search capabilities for a zone (Issue #3147, Phase 2).
     ///
-    /// Reads real capabilities set by Python via `ZoneManager.set_search_capabilities()`.
-    /// Falls back to keyword-only defaults if Python hasn't registered capabilities yet.
+    /// R20.12: reads `{base_path}/{zone_id}/search_caps.json` on each RPC.
+    /// Python search daemon writes the file at startup. Falls back to
+    /// keyword-only defaults if the file is missing or malformed.
     async fn get_search_capabilities(
         &self,
         request: Request<GetSearchCapabilitiesRequest>,
@@ -1084,10 +1085,8 @@ impl ZoneApiService for ZoneApiServiceImpl {
             return Err(Status::not_found(format!("Zone '{}' not found", zone_id)));
         }
 
-        let caps = self
-            .registry
-            .get_search_capabilities(&zone_id)
-            .unwrap_or_default();
+        let caps =
+            crate::raft::read_search_caps(self.registry.base_path(), &zone_id).unwrap_or_default();
 
         Ok(Response::new(SearchCapabilities {
             zone_id,

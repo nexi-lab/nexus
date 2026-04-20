@@ -50,40 +50,12 @@ struct ZoneEntry {
     _transport_handle: JoinHandle<()>,
 }
 
-/// Per-zone search capabilities set by the Python search daemon (Issue #3147).
-///
-/// Stored in the registry so the Rust gRPC handler can return real capabilities
-/// instead of static defaults. Python sets these at daemon startup via
-/// `ZoneManager.set_search_capabilities()`.
-#[derive(Debug, Clone)]
-pub struct SearchCapabilitiesInfo {
-    pub device_tier: String,
-    pub search_modes: Vec<String>,
-    pub embedding_model: String,
-    pub embedding_dimensions: i32,
-    pub has_graph: bool,
-}
-
-impl Default for SearchCapabilitiesInfo {
-    fn default() -> Self {
-        Self {
-            device_tier: "server".to_string(),
-            search_modes: vec!["keyword".to_string()],
-            embedding_model: String::new(),
-            embedding_dimensions: 0,
-            has_graph: false,
-        }
-    }
-}
-
 /// Registry of multiple Raft zones running in a single process.
 ///
 /// Thread-safe: all operations are safe to call from multiple threads concurrently.
 pub struct ZoneRaftRegistry {
     /// zone_id → ZoneEntry
     zones: DashMap<String, ZoneEntry>,
-    /// zone_id → SearchCapabilitiesInfo (set by Python search daemon)
-    search_capabilities: DashMap<String, SearchCapabilitiesInfo>,
     /// Base path for sled databases. Each zone gets `{base_path}/{zone_id}/`.
     base_path: PathBuf,
     /// This node's global ID (same across all zones on this node).
@@ -109,7 +81,6 @@ impl ZoneRaftRegistry {
     pub fn new(base_path: PathBuf, node_id: u64) -> Self {
         Self {
             zones: DashMap::new(),
-            search_capabilities: DashMap::new(),
             base_path,
             node_id,
             tls: Arc::new(RwLock::new(None)),
@@ -122,7 +93,6 @@ impl ZoneRaftRegistry {
     pub fn with_tls(base_path: PathBuf, node_id: u64, tls: Option<TlsConfig>) -> Self {
         Self {
             zones: DashMap::new(),
-            search_capabilities: DashMap::new(),
             base_path,
             node_id,
             tls: Arc::new(RwLock::new(tls)),
@@ -668,20 +638,6 @@ impl ZoneRaftRegistry {
     /// List all zone IDs.
     pub fn list_zones(&self) -> Vec<String> {
         self.zones.iter().map(|e| e.key().clone()).collect()
-    }
-
-    /// Set search capabilities for a zone (Issue #3147).
-    ///
-    /// Called by Python search daemon at startup to register what search
-    /// backends are available for each zone. The Rust gRPC handler reads
-    /// these to respond to GetSearchCapabilities RPCs from remote nodes.
-    pub fn set_search_capabilities(&self, zone_id: &str, caps: SearchCapabilitiesInfo) {
-        self.search_capabilities.insert(zone_id.to_string(), caps);
-    }
-
-    /// Get search capabilities for a zone, or None if not set.
-    pub fn get_search_capabilities(&self, zone_id: &str) -> Option<SearchCapabilitiesInfo> {
-        self.search_capabilities.get(zone_id).map(|v| v.clone())
     }
 
     /// Shutdown all zones.

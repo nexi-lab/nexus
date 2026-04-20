@@ -136,3 +136,22 @@ def test_missing_profile_returns_false(tmp_path: Path, bash_available: None, fn_
 def test_empty_file_returns_false(tmp_path: Path, bash_available: None, fn_file: Path) -> None:
     f = _write(tmp_path, "")
     assert _has_profile(f, "prod", fn_file) is False
+
+
+def test_header_on_final_line_without_trailing_newline_matches(
+    tmp_path: Path, bash_available: None, fn_file: Path
+) -> None:
+    """Hand-edited AWS config files often lack a trailing newline on the
+    last line. A bare ``while read`` loop drops that line silently, which
+    would look like a missing profile and trip the fail-closed guard.
+    """
+    # Note: no "\n" at end — deliberate.
+    f = _write(tmp_path, "[prod]")
+    assert _has_profile(f, "prod", fn_file) is True
+
+
+def test_profile_keyword_form_on_final_line_without_newline_matches(
+    tmp_path: Path, bash_available: None, fn_file: Path
+) -> None:
+    f = _write(tmp_path, "[profile prod]")
+    assert _has_profile(f, "prod", fn_file) is True

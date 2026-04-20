@@ -198,7 +198,12 @@ _aws_profile_file_has_name() {
     local _file="$1" _wanted="$2" _prof_line="" _rest=""
     [ -s "$_file" ] || return 1
     local _bracketed_wanted="[${_wanted}]"
-    while IFS= read -r _prof_line; do
+    # ``|| [ -n "$_prof_line" ]`` keeps the loop running for a final line
+    # that isn't newline-terminated (common in hand-edited AWS config
+    # files). Without it, ``[prod]`` at EOF without ``\n`` would be
+    # silently dropped, making a valid profile look missing and tripping
+    # the fail-closed startup guard.
+    while IFS= read -r _prof_line || [ -n "$_prof_line" ]; do
         # Strip leading + trailing whitespace from the raw line.
         _prof_line="${_prof_line#"${_prof_line%%[![:space:]]*}"}"
         _prof_line="${_prof_line%"${_prof_line##*[![:space:]]}"}"

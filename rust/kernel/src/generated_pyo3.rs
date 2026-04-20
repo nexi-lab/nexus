@@ -1036,7 +1036,7 @@ impl From<RustRouteResult> for PyRustRouteResult {
 ///   - Type conversion (Vec<u8> -> PyBytes, StatResult -> PyDict, etc.)
 #[pyclass(name = "Kernel")]
 pub struct PyKernel {
-    inner: Kernel,
+    inner: Arc<Kernel>,
     hooks: Mutex<HookRegistry>,
 }
 
@@ -1056,14 +1056,14 @@ impl PyKernel {
     #[new]
     fn new() -> Self {
         Self {
-            inner: Kernel::new(),
+            inner: Arc::new(Kernel::new()),
             hooks: Mutex::new(HookRegistry::new()),
         }
     }
 
     // ── Lock Manager wiring ──────────────────────────────────────────
 
-    fn set_vfs_lock_timeout(&mut self, timeout_ms: u64) {
+    fn set_vfs_lock_timeout(&self, timeout_ms: u64) {
         self.inner.set_vfs_lock_timeout(timeout_ms);
     }
 
@@ -1076,14 +1076,14 @@ impl PyKernel {
 
     /// Wire LocalMetastore by path — Rust kernel opens redb directly.
     /// Eliminates GIL crossing on every metastore.get/put.
-    fn set_metastore_path(&mut self, path: &str) -> PyResult<()> {
+    fn set_metastore_path(&self, path: &str) -> PyResult<()> {
         self.inner.set_metastore_path(path).map_err(Into::into)
     }
 
     /// Drop global + per-mount redb metastores so a subsequent kernel
     /// can reopen the same redb path without ``Database already open``.
     /// Called by Python ``NexusFS.close`` / nested ``ephemeral_mount``.
-    fn release_metastores(&mut self) {
+    fn release_metastores(&self) {
         self.inner.release_metastores()
     }
 

@@ -666,158 +666,15 @@ impl PyMetastore {
     }
 }
 
-// =========================================================================
-// Federation mount helpers (R16.1b)
-// =========================================================================
-
-// DirEntryType integer codes — must stay in sync with
-// proto/nexus/core/metadata.proto and the Python FileMetadata
-// constants in src/nexus/contracts/metadata.py.
-#[cfg(all(feature = "grpc", has_protos))]
-const DT_DIR: i32 = 1;
-#[cfg(all(feature = "grpc", has_protos))]
-const DT_MOUNT: i32 = 2;
-
-// Raft counter key for a zone's POSIX i_links_count — must match
-// RaftMetadataStore._KEY_LINKS_COUNT in
-// src/nexus/storage/raft_metadata_store.py.
-#[cfg(all(feature = "grpc", has_protos))]
-const I_LINKS_COUNT_KEY: &str = "__i_links_count__";
-
-/// Encode a minimal ``FileMetadata`` proto for federation mount writes.
-///
-/// Mirrors ``MetadataMapper.to_proto`` for the fields the mount path
-/// needs: ``path``, ``backend_name``, ``physical_path``, ``entry_type``,
-/// ``zone_id``, ``target_zone_id``. Size/version default to
-/// ``0``/``0`` — downstream ``raft_metastore::proto_to_kernel`` maps
-/// proto-default ``i32`` to the kernel's ``u32`` version field.
-#[cfg(all(feature = "grpc", has_protos))]
-fn encode_file_metadata(
-    path: &str,
-    backend_name: &str,
-    physical_path: &str,
-    entry_type: i32,
-    zone_id: &str,
-    target_zone_id: &str,
-) -> Vec<u8> {
-    use crate::transport::proto::nexus::core::FileMetadata as ProtoFileMetadata;
-    use prost::Message;
-
-    let proto = ProtoFileMetadata {
-        path: path.to_string(),
-        backend_name: backend_name.to_string(),
-        physical_path: physical_path.to_string(),
-        entry_type,
-        zone_id: zone_id.to_string(),
-        target_zone_id: target_zone_id.to_string(),
-        ..Default::default()
-    };
-    proto.encode_to_vec()
-}
-
-/// Decode ``FileMetadata`` proto bytes to the raft-crate proto type.
-///
-/// Kept local so the mount path doesn't need to depend on
-/// ``nexus_kernel::raft_metastore`` (avoids kernel→raft→kernel cycles).
-#[cfg(all(feature = "grpc", has_protos))]
-fn decode_file_metadata(
-    bytes: &[u8],
-) -> Result<crate::transport::proto::nexus::core::FileMetadata, prost::DecodeError> {
-    use crate::transport::proto::nexus::core::FileMetadata as ProtoFileMetadata;
-    use prost::Message;
-    ProtoFileMetadata::decode(bytes)
-}
-
-/// Propose a ``Command::SetMetadata`` through raft on the given node and
-/// wait for the apply-side acknowledgement. Mirrors the sync pattern
-/// ``PyZoneHandle::propose_command`` uses.
-#[cfg(all(feature = "grpc", has_protos))]
-fn propose_set_metadata(
-    handle: &tokio::runtime::Handle,
-    node: &crate::raft::ZoneConsensus<FullStateMachine>,
-    key: &str,
-    value: Vec<u8>,
-) -> Result<(), String> {
-    let cmd = Command::SetMetadata {
-        key: key.to_string(),
-        value,
-    };
-    match handle.block_on(node.propose(cmd)) {
-        Ok(CommandResult::Success) | Ok(CommandResult::Value(_)) => Ok(()),
-        Ok(CommandResult::Error(e)) => Err(e),
-        Ok(other) => Err(format!("unexpected result: {:?}", other)),
-        Err(e) => Err(e.to_string()),
-    }
-}
-
-/// Is ``path`` either exactly ``normalized_prefix`` or a descendant
-/// separated by a ``/`` boundary? (R16.3 ``share_subtree_core``)
-///
-/// Guards against the sibling-bleed bug where a raw ``starts_with``
-/// would match ``/usr/alicebob`` when filtering under ``/usr/alice``.
-/// Empty ``normalized_prefix`` matches everything (used when the
-/// caller passed ``/`` — i.e. share the whole zone).
-#[cfg(all(feature = "grpc", has_protos))]
-fn path_matches_prefix(path: &str, normalized_prefix: &str) -> bool {
-    if normalized_prefix.is_empty() {
-        true
-    } else {
-        path == normalized_prefix || {
-            // Cheap boundary check without allocating a new `String`.
-            path.len() > normalized_prefix.len()
-                && path.starts_with(normalized_prefix)
-                && path.as_bytes()[normalized_prefix.len()] == b'/'
-        }
-    }
-}
-
-/// Propose a ``Command::AdjustCounter`` through raft on the given node.
-/// Returns the new counter value, or ``i64::MIN`` when the proposal
-/// was forwarded to the leader over gRPC (``RaftResponse`` drops the
-/// 8-byte value payload for ``CommandResult::Value`` — see
-/// ``command_result_to_proto`` in ``transport/server.rs``). Callers
-/// on the federation mount path ignore the returned value, so
-/// treating "forwarded success" as "counter adjusted, value unknown"
-/// matches the intent without requiring a proto round-trip fix.
-///
-/// R20.11: no retry loop here. ``ZoneConsensus::propose`` now waits
-/// up to 5s internally for a leader to appear (see
-/// ``forward_to_leader``), so the transient initial-election window
-/// after ``create_zone`` is handled transparently by raft itself.
-/// Matches etcd's contract: client propose is "eventually consistent
-/// on retry" and the client never has to hand-roll its own
-/// election-wait backoff.
-#[cfg(all(feature = "grpc", has_protos))]
-fn propose_adjust_counter(
-    handle: &tokio::runtime::Handle,
-    node: &crate::raft::ZoneConsensus<FullStateMachine>,
-    key: &str,
-    delta: i64,
-) -> Result<i64, String> {
-    let cmd = Command::AdjustCounter {
-        key: key.to_string(),
-        delta,
-    };
-    match handle.block_on(node.propose(cmd)) {
-        Ok(CommandResult::Value(bytes)) => {
-            let arr: [u8; 8] = bytes
-                .try_into()
-                .map_err(|_| "invalid counter value encoding".to_string())?;
-            Ok(i64::from_be_bytes(arr))
-        }
-        // Forwarded to leader over gRPC: the RaftResponse proto drops
-        // the counter bytes, so the apply's ``Value(new_count)`` comes
-        // back flattened to ``Success``. The counter mutation did land
-        // in the state machine; we just don't know the new value.
-        Ok(CommandResult::Success) => Ok(i64::MIN),
-        Ok(CommandResult::Error(e)) => Err(e),
-        Ok(other) => Err(format!("unexpected counter result: {:?}", other)),
-        Err(e) => Err(e.to_string()),
-    }
-}
-
 // =============================================================================
-// ZoneManager: Multi-zone Raft registry exposed to Python
+// ZoneManager: Transitional PyO3 wrapper around pure-Rust ZoneManager
+// =============================================================================
+//
+// R20.18.1 moved state + logic to ``crate::zone_manager::ZoneManager``
+// (pure Rust, kernel-internal). ``PyZoneManager`` below holds an
+// ``Arc<ZoneManager>`` and only exists so Python can keep working
+// until R20.18.5 cuts Python callers over to syscalls; R20.18.6
+// deletes ``PyZoneManager`` entirely.
 // =============================================================================
 
 /// Multi-zone Raft manager — owns the registry, runtime, and gRPC server.
@@ -839,33 +696,28 @@ fn propose_adjust_counter(
 #[cfg(all(feature = "grpc", has_protos))]
 #[pyclass(name = "ZoneManager")]
 pub struct PyZoneManager {
-    registry: std::sync::Arc<crate::raft::ZoneRaftRegistry>,
-    runtime: tokio::runtime::Runtime,
-    shutdown_tx: Option<tokio::sync::watch::Sender<bool>>,
-    node_id: u64,
-    use_tls: bool,
+    inner: std::sync::Arc<crate::zone_manager::ZoneManager>,
+}
+
+// Internal: read the underlying Arc for kernel-side crate consumers
+// (e.g. ``nexus_kernel::raft_metastore``). Removed in R20.18.6 along
+// with the pyclass itself.
+#[cfg(all(feature = "grpc", has_protos))]
+impl PyZoneManager {
+    /// Not yet wired into kernel — R20.18.2 will take this ref during
+    /// federation bootstrap.
+    #[allow(dead_code)]
+    pub(crate) fn inner_arc(&self) -> std::sync::Arc<crate::zone_manager::ZoneManager> {
+        self.inner.clone()
+    }
 }
 
 #[cfg(all(feature = "grpc", has_protos))]
 #[pymethods]
 impl PyZoneManager {
-    /// Create a new ZoneManager.
-    ///
-    /// Starts a Tokio runtime and gRPC server. Zones are added dynamically
-    /// with `create_zone()`.
-    ///
-    /// Args:
-    ///     hostname: This node's hostname (node_id derived via SHA-256).
-    ///     base_path: Base directory for zone sled databases.
-    ///     bind_addr: gRPC bind address (e.g., "0.0.0.0:2126").
-    ///     tls_cert_path: Path to PEM certificate file (mTLS). All three TLS paths must be set, or none.
-    ///     tls_key_path: Path to PEM private key file (mTLS).
-    ///     tls_ca_path: Path to PEM CA certificate file (mTLS).
-    ///     ca_key_path: Path to CA private key file (read once at startup for server-side cert signing).
-    ///     join_token_hash: SHA-256 hash of join token password (for JoinCluster verification).
     #[new]
     #[pyo3(signature = (hostname, base_path, peers, bind_addr="0.0.0.0:2126", tls_cert_path=None, tls_key_path=None, tls_ca_path=None, ca_key_path=None, join_token_hash=None))]
-    #[allow(clippy::too_many_arguments)] // PyO3 constructor — Python API needs flat keyword args
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         hostname: &str,
         base_path: &str,
@@ -877,279 +729,57 @@ impl PyZoneManager {
         ca_key_path: Option<&str>,
         join_token_hash: Option<&str>,
     ) -> PyResult<Self> {
-        use crate::raft::ZoneRaftRegistry;
-        use crate::transport::{NodeAddress, RaftGrpcServer, ServerConfig, TlsConfig};
-        use std::sync::Arc;
-
-        let node_id = crate::transport::hostname_to_node_id(hostname);
-
-        // Initialize Rust tracing (once) so gRPC server logs are visible.
-        // Uses RUST_LOG env var (e.g., "info,nexus_raft=debug").
-        static TRACING_INIT: std::sync::Once = std::sync::Once::new();
-        TRACING_INIT.call_once(|| {
-            let _ = tracing_subscriber::fmt()
-                .with_env_filter(
-                    tracing_subscriber::EnvFilter::from_default_env()
-                        .add_directive("info".parse().unwrap()),
-                )
-                .try_init();
-        });
-
-        // Parse TLS config from file paths (all-or-nothing)
-        let tls_config = match (tls_cert_path, tls_key_path, tls_ca_path) {
-            (Some(cert), Some(key), Some(ca)) => {
-                let cert_pem = std::fs::read(cert).map_err(|e| {
-                    PyRuntimeError::new_err(format!("Failed to read TLS cert '{}': {}", cert, e))
-                })?;
-                let key_pem = std::fs::read(key).map_err(|e| {
-                    PyRuntimeError::new_err(format!("Failed to read TLS key '{}': {}", key, e))
-                })?;
-                let ca_pem = std::fs::read(ca).map_err(|e| {
-                    PyRuntimeError::new_err(format!("Failed to read TLS CA '{}': {}", ca, e))
-                })?;
-                Some(TlsConfig {
-                    cert_pem,
-                    key_pem,
-                    ca_pem,
-                })
-            }
+        let tls = match (tls_cert_path, tls_key_path, tls_ca_path) {
+            (Some(cert), Some(key), Some(ca)) => Some(crate::zone_manager::TlsFiles {
+                cert_path: cert.into(),
+                key_path: key.into(),
+                ca_path: ca.into(),
+                ca_key_path: ca_key_path.map(Into::into),
+                join_token_hash: join_token_hash.map(ToString::to_string),
+            }),
             (None, None, None) => None,
             _ => {
                 return Err(PyRuntimeError::new_err(
                     "TLS requires all three: tls_cert_path, tls_key_path, tls_ca_path",
-                ))
+                ));
             }
         };
-
-        let bind_socket: std::net::SocketAddr = bind_addr.parse().map_err(|e| {
-            PyRuntimeError::new_err(format!("Invalid bind address '{}': {}", bind_addr, e))
-        })?;
-
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
-            .enable_all()
-            .thread_name("nexus-zone-mgr")
-            .build()
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create runtime: {}", e)))?;
-
-        let registry = Arc::new(ZoneRaftRegistry::with_tls(
-            std::path::PathBuf::from(base_path),
-            node_id,
-            tls_config.clone(),
-        ));
-
-        // R20.16.2: DT_MOUNT apply-event channel + Python hook
-        // removed. Federation mount wiring is driven directly by the
-        // kernel's apply-side callback (``mount_apply_cb``) installed
-        // per-zone by ``install_federation_mount_coherence``; no
-        // separate channel or Python consumer is needed.
-
-        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-
-        let config = ServerConfig {
-            bind_address: bind_socket,
-            tls: tls_config.clone(),
-            ..Default::default()
-        };
-        let use_tls = tls_config.is_some();
-
-        // R15.e: enumerate local zone storage and reopen every
-        // previously-persisted zone BEFORE the gRPC server starts
-        // accepting RPCs. This is the etcd / CockroachDB / TiKV pattern
-        // — local storage is the source of truth for "which groups does
-        // this node host?", not the first inbound step_message. Without
-        // this, a vote/heartbeat arriving during the restart window would
-        // have been the only trigger to re-open the zone, and the
-        // now-deleted auto-reopen branch in step_message would have
-        // silently dropped messages (or worse, re-bootstrapped with
-        // peers=0) if it fired before the transport loop caught up.
-        let peer_addrs: Vec<NodeAddress> = peers
-            .iter()
-            .map(|s| {
-                NodeAddress::parse(s.trim(), use_tls)
-                    .map_err(|e| PyRuntimeError::new_err(format!("Invalid peer '{}': {}", s, e)))
-            })
-            .collect::<PyResult<Vec<_>>>()?;
-        let enum_handle = runtime.handle().clone();
-        let enum_registry = registry.clone();
-        let enum_peers = peer_addrs.clone();
-        runtime
-            .handle()
-            .block_on(async move {
-                enum_registry
-                    .open_existing_zones_from_disk(enum_peers, &enum_handle)
-                    .await
-            })
-            .map_err(|e| {
-                PyRuntimeError::new_err(format!("Failed to enumerate zones on startup: {}", e))
-            })?;
-
-        let mut server = RaftGrpcServer::new(registry.clone(), config);
-        // Configure JoinCluster RPC support if join token is available.
-        // Read CA key from disk once — held in memory for server-side cert signing.
-        if let (Some(ca_key_path), Some(token_hash)) = (ca_key_path, join_token_hash) {
-            let ca_key_pem = std::fs::read(ca_key_path).map_err(|e| {
-                PyRuntimeError::new_err(format!("Failed to read CA key for JoinCluster: {}", e))
-            })?;
-            server = server.with_join_config(ca_key_pem, token_hash.to_string());
-        }
-        let shutdown_rx_server = shutdown_rx.clone();
-        runtime.spawn(async move {
-            let shutdown = async move {
-                let mut rx = shutdown_rx_server;
-                let _ = rx.changed().await;
-            };
-            if let Err(e) = server.serve_with_shutdown(shutdown).await {
-                tracing::error!("ZoneManager gRPC server error: {}", e);
-            }
-        });
-
-        tracing::info!(
-            "ZoneManager node {} started (bind={}, tls={})",
-            node_id,
-            bind_addr,
-            use_tls,
-        );
-
-        Ok(Self {
-            registry,
-            runtime,
-            shutdown_tx: Some(shutdown_tx),
-            node_id,
-            use_tls,
-        })
+        let inner =
+            crate::zone_manager::ZoneManager::new(hostname, base_path, peers, bind_addr, tls)
+                .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(Self { inner })
     }
 
-    /// Create a new zone with its own Raft group.
-    ///
-    /// Args:
-    ///     zone_id: Unique zone identifier.
-    ///     peers: Peer addresses in "id@host:port" format.
-    ///
-    /// Returns:
-    ///     ZoneHandle for the new zone.
     #[pyo3(signature = (zone_id, peers=vec![]))]
     pub fn create_zone(&self, zone_id: &str, peers: Vec<String>) -> PyResult<PyZoneHandle> {
-        use crate::transport::NodeAddress;
-
-        let peer_addrs: Vec<NodeAddress> = peers
-            .iter()
-            .map(|s| {
-                NodeAddress::parse(s.trim(), self.use_tls)
-                    .map_err(|e| PyRuntimeError::new_err(format!("Invalid peer '{}': {}", s, e)))
-            })
-            .collect::<PyResult<Vec<_>>>()?;
-
-        // PyO3 is the sync↔async boundary here: Python is sync, but setup
-        // needs to .await a campaign / snapshot restore. block_on is safe
-        // because this thread is outside any tokio runtime — the rule it
-        // violates ("Cannot start a runtime from within a runtime") only
-        // applies to callers already inside an async context.
-        let node = self
-            .runtime
-            .handle()
-            .block_on(
-                self.registry
-                    .create_zone(zone_id, peer_addrs, self.runtime.handle()),
-            )
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create zone: {}", e)))?;
-
-        Ok(PyZoneHandle {
-            node,
-            runtime_handle: self.runtime.handle().clone(),
-            zone_id: zone_id.to_string(),
-        })
+        let handle = self
+            .inner
+            .create_zone(zone_id, peers)
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(PyZoneHandle { inner: handle })
     }
 
-    /// Join an existing zone as a new Voter.
-    ///
-    /// Creates a local ZoneConsensus for this zone without bootstrapping ConfState.
-    /// After calling this, send a JoinZone RPC to the leader — the leader will
-    /// propose ConfChange(AddNode) and auto-send a snapshot.
-    ///
-    /// Args:
-    ///     zone_id: Zone to join.
-    ///     peers: Existing peer addresses in "id@host:port" format.
-    ///
-    /// Returns:
-    ///     ZoneHandle for the joined zone.
     #[pyo3(signature = (zone_id, peers=vec![]))]
     pub fn join_zone(&self, zone_id: &str, peers: Vec<String>) -> PyResult<PyZoneHandle> {
-        use crate::transport::NodeAddress;
-
-        let peer_addrs: Vec<NodeAddress> = peers
-            .iter()
-            .map(|s| {
-                NodeAddress::parse(s.trim(), self.use_tls)
-                    .map_err(|e| PyRuntimeError::new_err(format!("Invalid peer '{}': {}", s, e)))
-            })
-            .collect::<PyResult<Vec<_>>>()?;
-
-        // See create_zone for why we use runtime.block_on here (PyO3
-        // sync↔async boundary).
-        let node = self
-            .runtime
-            .handle()
-            .block_on(
-                self.registry
-                    .join_zone(zone_id, peer_addrs, self.runtime.handle()),
-            )
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to join zone: {}", e)))?;
-
-        Ok(PyZoneHandle {
-            node,
-            runtime_handle: self.runtime.handle().clone(),
-            zone_id: zone_id.to_string(),
-        })
+        let handle = self
+            .inner
+            .join_zone(zone_id, peers)
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(PyZoneHandle { inner: handle })
     }
 
-    /// Get a handle for an existing zone.
-    ///
-    /// Returns:
-    ///     ZoneHandle if zone exists, None otherwise.
     pub fn get_zone(&self, zone_id: &str) -> Option<PyZoneHandle> {
-        self.registry.get_node(zone_id).map(|node| PyZoneHandle {
-            node,
-            runtime_handle: self.runtime.handle().clone(),
-            zone_id: zone_id.to_string(),
-        })
+        self.inner
+            .get_zone(zone_id)
+            .map(|h| PyZoneHandle { inner: h })
     }
 
-    /// Remove a zone — shut down its transport loop and delete its dir.
-    ///
-    /// R20.13: `registry.remove_zone` is now async (awaits transport task
-    /// exit + yields so redb handles drop before `remove_dir_all`). We
-    /// bridge via the manager's runtime, matching the `create_zone` pattern.
     pub fn remove_zone(&self, zone_id: &str) -> PyResult<()> {
-        self.runtime
-            .handle()
-            .block_on(self.registry.remove_zone(zone_id))
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to remove zone: {}", e)))
+        self.inner
+            .remove_zone(zone_id)
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
 
-    /// Mount a target zone at a path in a parent zone (NFS-style, strict).
-    ///
-    /// Writes a DT_MOUNT ``FileMetadata`` entry at ``mount_path`` in the
-    /// parent zone's raft-replicated metastore, then bumps the target zone's
-    /// ``__i_links_count__`` counter (POSIX: link() → nlink++). Auto-creates
-    /// a DT_DIR at ``mount_path`` if it doesn't exist yet (matches
-    /// ``ensure_topology()`` behavior for static mounts).
-    ///
-    /// Idempotent: if ``mount_path`` is already DT_MOUNT to the same target,
-    /// this returns ``Ok(())`` without proposing a new raft command.
-    ///
-    /// Python-side DLC bookkeeping (coordinator ``_store_mount_info``,
-    /// ``_dcache_proxy._dcache.clear()``) stays in the Python shim —
-    /// R16.1b only owns the raft-replicated state (DT_MOUNT entry +
-    /// links_count).
-    ///
-    /// Args:
-    ///     parent_zone_id: Zone containing the mount point.
-    ///     mount_path: Path in the parent zone (must exist as DT_DIR or be absent).
-    ///     target_zone_id: Zone to mount.
-    ///     increment_links: If ``True`` (default), bumps target's i_links_count.
-    ///         Callers like the JoinZone RPC handler pass ``False`` when the
-    ///         leader-side already incremented.
     #[pyo3(signature = (parent_zone_id, mount_path, target_zone_id, *, increment_links=true))]
     pub fn mount(
         &self,
@@ -1159,86 +789,17 @@ impl PyZoneManager {
         target_zone_id: &str,
         increment_links: bool,
     ) -> PyResult<()> {
-        use pyo3::exceptions::PyValueError;
-
-        let parent_node = self.registry.get_node(parent_zone_id).ok_or_else(|| {
-            PyRuntimeError::new_err(format!("Parent zone '{}' not found", parent_zone_id))
-        })?;
-        let target_node = self.registry.get_node(target_zone_id).ok_or_else(|| {
-            PyRuntimeError::new_err(format!("Target zone '{}' not found", target_zone_id))
-        })?;
-
-        let parent_zone_id = parent_zone_id.to_string();
-        let mount_path = mount_path.to_string();
-        let target_zone_id = target_zone_id.to_string();
-        let handle = self.runtime.handle().clone();
-
-        py.detach(|| -> PyResult<()> {
-            let existing = handle
-                .block_on(
-                    parent_node
-                        .with_state_machine(|sm: &FullStateMachine| sm.get_metadata(&mount_path)),
-                )
-                .map_err(|e| PyRuntimeError::new_err(format!("get_metadata: {}", e)))?
-                .map(|bytes| decode_file_metadata(&bytes))
-                .transpose()
-                .map_err(|e| PyRuntimeError::new_err(format!("decode existing: {}", e)))?;
-
-            if let Some(ref meta) = existing {
-                if meta.entry_type == DT_MOUNT {
-                    if meta.target_zone_id == target_zone_id {
-                        // Idempotent raft replication — Rust side done.
-                        return Ok(());
-                    }
-                    return Err(PyValueError::new_err(format!(
-                        "Mount point '{}' is already a DT_MOUNT in zone '{}'. Unmount first.",
-                        mount_path, parent_zone_id
-                    )));
-                }
-                if meta.entry_type != DT_DIR {
-                    return Err(PyValueError::new_err(format!(
-                        "Mount point '{}' is not a directory (type={}) in zone '{}'. \
-                         Mount points must be directories.",
-                        mount_path, meta.entry_type, parent_zone_id
-                    )));
-                }
-            } else {
-                // Auto-create DT_DIR (mkdir -p semantics).
-                let dir_bytes =
-                    encode_file_metadata(&mount_path, "virtual", "", DT_DIR, &parent_zone_id, "");
-                propose_set_metadata(&handle, &parent_node, &mount_path, dir_bytes)
-                    .map_err(|e| PyRuntimeError::new_err(format!("auto-create DT_DIR: {}", e)))?;
-            }
-
-            // Replace DT_DIR with DT_MOUNT (shadows original directory contents).
-            let mount_bytes = encode_file_metadata(
-                &mount_path,
-                "mount",
-                "",
-                DT_MOUNT,
-                &parent_zone_id,
-                &target_zone_id,
-            );
-            propose_set_metadata(&handle, &parent_node, &mount_path, mount_bytes)
-                .map_err(|e| PyRuntimeError::new_err(format!("DT_MOUNT put: {}", e)))?;
-
-            if increment_links {
-                propose_adjust_counter(&handle, &target_node, I_LINKS_COUNT_KEY, 1)
-                    .map_err(|e| PyRuntimeError::new_err(format!("adjust_counter(+1): {}", e)))?;
-            }
-
-            Ok(())
+        let inner = self.inner.clone();
+        let parent = parent_zone_id.to_string();
+        let mount = mount_path.to_string();
+        let target = target_zone_id.to_string();
+        py.detach(move || {
+            inner
+                .mount(&parent, &mount, &target, increment_links)
+                .map_err(|e| PyRuntimeError::new_err(e.to_string()))
         })
     }
 
-    /// Remove a mount point, restoring the original DT_DIR.
-    ///
-    /// Replaces the DT_MOUNT with a DT_DIR and decrements the target zone's
-    /// ``__i_links_count__``. Returns the former target zone id so the
-    /// Python shim can call ``DriverLifecycleCoordinator.unmount()`` with it.
-    ///
-    /// Raises ``ValueError`` if ``mount_path`` is not a mount point in the
-    /// parent zone.
     #[pyo3(signature = (parent_zone_id, mount_path))]
     pub fn unmount(
         &self,
@@ -1246,100 +807,16 @@ impl PyZoneManager {
         parent_zone_id: &str,
         mount_path: &str,
     ) -> PyResult<Option<String>> {
-        use pyo3::exceptions::PyValueError;
-
-        let parent_node = self.registry.get_node(parent_zone_id).ok_or_else(|| {
-            PyRuntimeError::new_err(format!("Parent zone '{}' not found", parent_zone_id))
-        })?;
-
-        let parent_zone_id = parent_zone_id.to_string();
-        let mount_path = mount_path.to_string();
-        let handle = self.runtime.handle().clone();
-        let registry = std::sync::Arc::clone(&self.registry);
-
-        py.detach(|| -> PyResult<Option<String>> {
-            let existing = handle
-                .block_on(
-                    parent_node
-                        .with_state_machine(|sm: &FullStateMachine| sm.get_metadata(&mount_path)),
-                )
-                .map_err(|e| PyRuntimeError::new_err(format!("get_metadata: {}", e)))?
-                .map(|bytes| decode_file_metadata(&bytes))
-                .transpose()
-                .map_err(|e| PyRuntimeError::new_err(format!("decode existing: {}", e)))?;
-
-            let existing = match existing {
-                Some(m) if m.entry_type == DT_MOUNT => m,
-                _ => {
-                    return Err(PyValueError::new_err(format!(
-                        "'{}' is not a mount point in zone '{}'",
-                        mount_path, parent_zone_id
-                    )));
-                }
-            };
-
-            let target_zone_id_opt: Option<String> = if existing.target_zone_id.is_empty() {
-                None
-            } else {
-                Some(existing.target_zone_id.clone())
-            };
-
-            // Restore DT_DIR at the mount point.
-            let dir_bytes =
-                encode_file_metadata(&mount_path, "virtual", "", DT_DIR, &parent_zone_id, "");
-            propose_set_metadata(&handle, &parent_node, &mount_path, dir_bytes)
-                .map_err(|e| PyRuntimeError::new_err(format!("restore DT_DIR: {}", e)))?;
-
-            // Decrement i_links_count on the target zone if locally hosted.
-            if let Some(ref target_id) = target_zone_id_opt {
-                if let Some(target_node) = registry.get_node(target_id) {
-                    propose_adjust_counter(&handle, &target_node, I_LINKS_COUNT_KEY, -1).map_err(
-                        |e| PyRuntimeError::new_err(format!("adjust_counter(-1): {}", e)),
-                    )?;
-                }
-                // Target not locally hosted → decrement is the remote leader's
-                // job; the Python caller owns cross-zone RPC in that path.
-            }
-
-            Ok(target_zone_id_opt)
+        let inner = self.inner.clone();
+        let parent = parent_zone_id.to_string();
+        let mount = mount_path.to_string();
+        py.detach(move || {
+            inner
+                .unmount(&parent, &mount)
+                .map_err(|e| PyRuntimeError::new_err(e.to_string()))
         })
     }
 
-    /// Copy every FileMetadata entry under ``prefix`` in ``parent_zone_id``
-    /// into ``new_zone_id`` with path rebased to the new zone's root, then
-    /// bump ``__i_links_count__`` on each nested DT_MOUNT target that the
-    /// local node owns (R16.3 ``share_subtree`` core).
-    ///
-    /// Leaves the outer Python orchestration to:
-    ///   - validate parent / target-not-mount preconditions,
-    ///   - generate the new zone id,
-    ///   - call ``create_zone`` (registers the Python
-    ///     ``RaftMetadataStore`` wrapper in ``self._stores``),
-    ///   - ensure the parent mount point exists as DT_DIR,
-    ///   - call ``mount()`` to flip it to DT_MOUNT.
-    ///
-    /// Returns the count of entries copied for logging.
-    ///
-    /// Behavior:
-    ///   - The entry at ``prefix`` (if present) becomes ``/`` in the new
-    ///     zone with entry_type forced to DT_DIR (matches Python's
-    ///     ``entry_type=DT_DIR`` override for the root).
-    ///   - Every deeper entry has the ``prefix`` stripped from its path;
-    ///     ``zone_id`` is rewritten to ``new_zone_id``; other fields
-    ///     (including ``target_zone_id``) are preserved bit-for-bit via
-    ///     the proto round-trip.
-    ///   - If no entry existed at ``prefix``, a synthetic DT_DIR root is
-    ///     written at ``/`` in the new zone so downstream mount() has a
-    ///     valid target.
-    ///   - Nested DT_MOUNT entries found during the copy have their
-    ///     ``target_zone_id``'s ``__i_links_count__`` incremented (+1)
-    ///     when the target is locally hosted — matches Finding #4 in
-    ///     the Python federation docs.
-    ///
-    /// Does NOT auto-create a DT_DIR at ``prefix`` in the parent zone
-    /// or call mount() — those stay in the Python orchestration because
-    /// they interact with the ``_dcache_proxy`` / ``_coordinator``
-    /// bookkeeping that R16.1b left in Python.
     #[pyo3(signature = (parent_zone_id, prefix, new_zone_id))]
     pub fn share_subtree_core(
         &self,
@@ -1348,367 +825,108 @@ impl PyZoneManager {
         prefix: &str,
         new_zone_id: &str,
     ) -> PyResult<usize> {
-        use pyo3::exceptions::PyValueError;
-
-        let parent_node = self.registry.get_node(parent_zone_id).ok_or_else(|| {
-            PyRuntimeError::new_err(format!("Parent zone '{}' not found", parent_zone_id))
-        })?;
-        let new_node = self.registry.get_node(new_zone_id).ok_or_else(|| {
-            PyRuntimeError::new_err(format!(
-                "Target zone '{}' not found (was create_zone called?)",
-                new_zone_id
-            ))
-        })?;
-
-        // Normalize prefix to match Python's rstrip("/"): "/" → "" means
-        // copy everything; "/a/b/" → "/a/b". An empty prefix after
-        // normalization is a structural error (can't rebase root).
-        let normalized_prefix = prefix.trim_end_matches('/').to_string();
-        if normalized_prefix.is_empty() && prefix != "/" {
-            return Err(PyValueError::new_err(format!(
-                "share_subtree: empty prefix (got '{}')",
-                prefix
-            )));
-        }
-
-        let parent_zone_id = parent_zone_id.to_string();
-        let new_zone_id = new_zone_id.to_string();
-        let handle = self.runtime.handle().clone();
-        let registry = std::sync::Arc::clone(&self.registry);
-
-        py.detach(|| -> PyResult<usize> {
-            // Scan the parent's metastore for everything under the prefix.
-            // list_metadata is a prefix scan; we post-filter to match
-            // Python's "path == prefix or path.startswith(prefix + '/')"
-            // so siblings like /usr/alicebob don't leak into /usr/alice.
-            let scan_prefix = if normalized_prefix.is_empty() {
-                "/".to_string()
-            } else {
-                normalized_prefix.clone()
-            };
-            let entries = handle
-                .block_on(
-                    parent_node.with_state_machine(move |sm: &FullStateMachine| {
-                        sm.list_metadata(&scan_prefix)
-                    }),
-                )
-                .map_err(|e| PyRuntimeError::new_err(format!("list_metadata: {}", e)))?;
-
-            let mut copied: usize = 0;
-            let mut nested_mount_targets: Vec<String> = Vec::new();
-            let mut root_written = false;
-
-            for (path, value) in entries {
-                if !path_matches_prefix(&path, &normalized_prefix) {
-                    continue;
-                }
-                let proto = match decode_file_metadata(&value) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        tracing::warn!(
-                            zone = %parent_zone_id,
-                            path = %path,
-                            error = %e,
-                            "share_subtree: skipping entry with undecodable FileMetadata",
-                        );
-                        continue;
-                    }
-                };
-
-                let (rebased_path, rebased_entry_type) = if path == normalized_prefix {
-                    // Root of the shared subtree becomes "/" as DT_DIR,
-                    // matching Python's `replace(..., path="/", entry_type=DT_DIR)`.
-                    root_written = true;
-                    ("/".to_string(), DT_DIR)
-                } else {
-                    // Strip the prefix from the path; ensure leading "/".
-                    let mut relative = path[normalized_prefix.len()..].to_string();
-                    if !relative.starts_with('/') {
-                        relative.insert(0, '/');
-                    }
-                    // Track nested DT_MOUNTs so we can bump their link
-                    // counts after copying (Finding #4).
-                    if proto.entry_type == DT_MOUNT && !proto.target_zone_id.is_empty() {
-                        nested_mount_targets.push(proto.target_zone_id.clone());
-                    }
-                    (relative, proto.entry_type)
-                };
-
-                let rebased_bytes = encode_file_metadata(
-                    &rebased_path,
-                    &proto.backend_name,
-                    &proto.physical_path,
-                    rebased_entry_type,
-                    &new_zone_id,
-                    &proto.target_zone_id,
-                );
-                propose_set_metadata(&handle, &new_node, &rebased_path, rebased_bytes).map_err(
-                    |e| {
-                        PyRuntimeError::new_err(format!(
-                            "share_subtree: copy {}: {}",
-                            rebased_path, e
-                        ))
-                    },
-                )?;
-                copied += 1;
-            }
-
-            // Ensure the new zone has a root "/" even if no entries
-            // existed at the prefix (matches Python's fallback).
-            if !root_written {
-                let root_bytes = encode_file_metadata("/", "virtual", "", DT_DIR, &new_zone_id, "");
-                propose_set_metadata(&handle, &new_node, "/", root_bytes).map_err(|e| {
-                    PyRuntimeError::new_err(format!("share_subtree: synth root put: {}", e))
-                })?;
-            }
-
-            // Bump i_links_count on every nested DT_MOUNT target that is
-            // locally hosted. Remote-only targets are the leader node's
-            // job once the DT_MOUNT replicates there.
-            for target_id in &nested_mount_targets {
-                if let Some(target_node) = registry.get_node(target_id) {
-                    propose_adjust_counter(&handle, &target_node, I_LINKS_COUNT_KEY, 1).map_err(
-                        |e| {
-                            PyRuntimeError::new_err(format!(
-                                "share_subtree: nested adjust_counter({}): {}",
-                                target_id, e
-                            ))
-                        },
-                    )?;
-                }
-            }
-
-            Ok(copied)
+        let inner = self.inner.clone();
+        let parent = parent_zone_id.to_string();
+        let pfx = prefix.to_string();
+        let new_id = new_zone_id.to_string();
+        py.detach(move || {
+            inner
+                .share_subtree_core(&parent, &pfx, &new_id)
+                .map_err(|e| PyRuntimeError::new_err(e.to_string()))
         })
     }
 
-    /// List all zone IDs.
     pub fn list_zones(&self) -> Vec<String> {
-        self.registry.list_zones()
+        self.inner.list_zones()
     }
 
-    /// Find which zone (if any) stores metadata for ``path``. Iterates
-    /// the live zone registry and asks each state machine in turn; returns
-    /// ``(zone_id, metadata_bytes)`` for the first hit, or ``None``.
-    ///
-    /// Used by federation.join() — ``local_path`` may live in any zone
-    /// reachable through DT_MOUNT chains, so a root-only lookup would
-    /// spuriously reject nested-mount scenarios. The iteration runs
-    /// entirely in Rust (no Python-side loop over each zone).
     pub fn lookup_path(&self, py: Python<'_>, path: &str) -> PyResult<Option<(String, Vec<u8>)>> {
-        let registry = self.registry.clone();
-        let runtime = self.runtime.handle().clone();
+        let inner = self.inner.clone();
         let path = path.to_string();
-        py.detach(|| {
-            runtime.block_on(async move {
-                for zone_id in registry.list_zones() {
-                    let Some(node) = registry.get_node(&zone_id) else {
-                        continue;
-                    };
-                    let found = node.with_state_machine(|sm| sm.get_metadata(&path)).await;
-                    match found {
-                        Ok(Some(bytes)) => return Ok(Some((zone_id, bytes))),
-                        Ok(None) => continue,
-                        Err(e) => {
-                            return Err(PyRuntimeError::new_err(format!(
-                                "lookup_path failed on zone '{}': {}",
-                                zone_id, e
-                            )));
-                        }
-                    }
-                }
-                Ok(None)
-            })
+        py.detach(move || {
+            inner
+                .lookup_path(&path)
+                .map_err(|e| PyRuntimeError::new_err(e.to_string()))
         })
     }
 
-    /// Return the peer roster for a zone as a list of ``(id, hostname,
-    /// endpoint, is_witness)`` tuples. Empty list if the zone is unknown.
-    ///
-    /// Witness classification is derived from hostname convention —
-    /// peers whose hostname starts with ``witness`` are counted as
-    /// witnesses. The witness binary (``rust/raft/src/bin/witness.rs``)
-    /// runs on hosts with that naming pattern in our docker compose and
-    /// the witness kubernetes manifests; this matches what
-    /// ``federation_cluster_info`` needs without requiring a separate
-    /// RPC handshake to tag peer roles (follow-up when we add a richer
-    /// ClusterConfig proto).
     pub fn zone_peers(&self, zone_id: &str) -> Vec<(u64, String, String, bool)> {
-        match self.registry.get_peers(zone_id) {
-            None => Vec::new(),
-            Some(peers) => peers
-                .into_values()
-                .map(|p| {
-                    let is_witness = p.hostname.to_ascii_lowercase().starts_with("witness");
-                    (p.id, p.hostname.clone(), p.endpoint.clone(), is_witness)
-                })
-                .collect(),
-        }
+        self.inner.zone_peers(zone_id)
     }
 
-    /// One-shot authoritative status snapshot for ``zone_id`` as seen by
-    /// this node. Returns a dict with every field the Python layer
-    /// (``federation_cluster_info`` RPC, tests, CLI) needs — the caller
-    /// never orchestrates multiple getters against a moving target.
-    ///
-    /// Fields:
-    ///   - ``zone_id``: echo of the requested zone id.
-    ///   - ``node_id``: this node's id.
-    ///   - ``has_store``: whether this node hosts the zone.
-    ///   - ``is_leader``: whether this node's ZoneConsensus thinks it's leader.
-    ///   - ``leader_id``: the leader id as this node knows it (0 during
-    ///      election windows or before the first heartbeat lands).
-    ///   - ``term``: the current raft term on this node.
-    ///   - ``commit_index``: cached raft log committed index. Updated by
-    ///      ``ZoneConsensusDriver::advance`` AFTER ``apply_entries`` so
-    ///      once this value matches the leader's, the state machine has
-    ///      applied every committed entry (no wall-clock wait needed).
-    ///   - ``voter_count`` / ``witness_count``: peer topology split by
-    ///      hostname convention (same as ``zone_peers``).
-    ///
-    /// Replaces the 4-call orchestration in Python's
-    /// ``federation_cluster_info`` — which reads a moving target piecemeal
-    /// and can observe a self-inconsistent snapshot during a term flip.
     pub fn cluster_status<'py>(
         &self,
         py: Python<'py>,
         zone_id: &str,
     ) -> PyResult<Bound<'py, pyo3::types::PyDict>> {
         use pyo3::types::PyDict;
-
+        let status = self.inner.cluster_status(zone_id);
         let dict = PyDict::new(py);
-        dict.set_item("zone_id", zone_id)?;
-        dict.set_item("node_id", self.node_id)?;
-
-        let Some(node) = self.registry.get_node(zone_id) else {
-            dict.set_item("has_store", false)?;
-            dict.set_item("is_leader", false)?;
-            dict.set_item("leader_id", 0u64)?;
-            dict.set_item("term", 0u64)?;
-            dict.set_item("commit_index", 0u64)?;
-            dict.set_item("applied_index", 0u64)?;
-            dict.set_item("voter_count", 0usize)?;
-            dict.set_item("witness_count", 0usize)?;
-            return Ok(dict);
-        };
-
-        dict.set_item("has_store", true)?;
-        dict.set_item("is_leader", node.is_leader())?;
-        dict.set_item("leader_id", node.leader_id().unwrap_or(0))?;
-        dict.set_item("term", node.term())?;
-        dict.set_item("commit_index", node.commit_index())?;
-        dict.set_item("applied_index", node.applied_index())?;
-
-        // Peer topology, inline (same hostname-convention split as zone_peers).
-        let (mut voter_count, mut witness_count) = (0usize, 0usize);
-        if let Some(peers) = self.registry.get_peers(zone_id) {
-            for (_, p) in peers {
-                if p.hostname.to_ascii_lowercase().starts_with("witness") {
-                    witness_count += 1;
-                } else {
-                    voter_count += 1;
-                }
-            }
-        }
-        dict.set_item("voter_count", voter_count)?;
-        dict.set_item("witness_count", witness_count)?;
+        dict.set_item("zone_id", status.zone_id)?;
+        dict.set_item("node_id", status.node_id)?;
+        dict.set_item("has_store", status.has_store)?;
+        dict.set_item("is_leader", status.is_leader)?;
+        dict.set_item("leader_id", status.leader_id)?;
+        dict.set_item("term", status.term)?;
+        dict.set_item("commit_index", status.commit_index)?;
+        dict.set_item("applied_index", status.applied_index)?;
+        dict.set_item("voter_count", status.voter_count)?;
+        dict.set_item("witness_count", status.witness_count)?;
         Ok(dict)
     }
 
-    /// Get this node's ID.
     #[getter]
     pub fn node_id(&self) -> u64 {
-        self.node_id
+        self.inner.node_id()
     }
 
-    /// Gracefully shut down all zones and the gRPC server.
-    pub fn shutdown(&mut self) -> PyResult<()> {
-        self.registry.shutdown_all();
-        if let Some(tx) = self.shutdown_tx.take() {
-            let _ = tx.send(true);
-        }
-        tracing::info!("ZoneManager node {} shut down", self.node_id);
+    pub fn shutdown(&self) -> PyResult<()> {
+        self.inner.shutdown();
         Ok(())
-    }
-}
-
-#[cfg(all(feature = "grpc", has_protos))]
-impl Drop for PyZoneManager {
-    fn drop(&mut self) {
-        // Shut the raft zones down — the transport loops, their gRPC
-        // clients, and all ``FullStateMachine`` senders go with them.
-        // R20.16.2: the DT_MOUNT mount-event consumer / mpsc channel
-        // are gone — the kernel's ``mount_apply_cb`` install is
-        // torn down when its owning ``Arc<Kernel>`` drops, so no
-        // separate abort is needed here.
-        self.registry.shutdown_all();
-
-        if let Some(tx) = self.shutdown_tx.take() {
-            let _ = tx.send(true);
-        }
     }
 }
 
 // =============================================================================
 // ZoneHandle: Per-zone Raft node handle (lightweight, returned by ZoneManager)
 // =============================================================================
-
-/// Handle to a single zone's Raft node.
+// ZoneHandle: Transitional PyO3 wrapper around pure-Rust ZoneHandle
+// =============================================================================
+/// Handle to a single zone's Raft node (transitional PyO3 wrapper).
 ///
-/// Provides metadata/lock operations scoped to one zone.
-/// Obtained from `ZoneManager.create_zone()` or `.get_zone()`.
+/// R20.18.1 moved state + logic to `crate::zone_handle::ZoneHandle`
+/// (pure Rust, kernel-internal). Deleted entirely in R20.18.6 once
+/// Python callers are cut over to syscalls.
 #[cfg(all(feature = "grpc", has_protos))]
 #[pyclass(name = "ZoneHandle")]
 pub struct PyZoneHandle {
-    node: crate::raft::ZoneConsensus<FullStateMachine>,
-    runtime_handle: tokio::runtime::Handle,
-    zone_id: String,
+    inner: std::sync::Arc<crate::zone_handle::ZoneHandle>,
 }
 
 #[cfg(all(feature = "grpc", has_protos))]
 impl PyZoneHandle {
-    /// Cheap clone of the underlying `ZoneConsensus` (Arc-based internally).
-    ///
-    /// Exposed so sibling crates (specifically ``nexus_kernel``'s
-    /// ``raft_metastore`` module) can construct a ``Metastore`` impl over
-    /// the same Raft state machine without touching private fields. The
-    /// ``#[pymethods]`` block below can't hold this because it would
-    /// require the return type to be a Python class.
+    /// Clone the underlying `ZoneConsensus` (Arc-based internally).
     pub fn consensus_node(&self) -> crate::raft::ZoneConsensus<FullStateMachine> {
-        self.node.clone()
+        self.inner.consensus_node()
     }
 
-    /// Clone the tokio runtime handle for the zone manager.
-    ///
-    /// Used by ``nexus_kernel::raft_metastore::ZoneMetastore`` to bridge
-    /// the sync ``Metastore`` trait onto Raft's async ``propose`` API.
+    /// Clone the tokio runtime handle.
     pub fn runtime_handle(&self) -> tokio::runtime::Handle {
-        self.runtime_handle.clone()
+        self.inner.runtime_handle()
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn inner_arc(&self) -> std::sync::Arc<crate::zone_handle::ZoneHandle> {
+        self.inner.clone()
     }
 }
 
 #[cfg(all(feature = "grpc", has_protos))]
 #[pymethods]
 impl PyZoneHandle {
-    /// Get this zone's ID.
     pub fn zone_id(&self) -> &str {
-        &self.zone_id
+        self.inner.zone_id()
     }
 
-    // =========================================================================
-    // Metadata Operations (all writes go through Raft consensus)
-    // =========================================================================
-
-    /// Set metadata for a path.
-    ///
-    /// Args:
-    ///     path: The file path (key).
-    ///     value: Serialized metadata bytes.
-    ///     consistency: "sc" (default, wait for commit) or "ec" (local write + WAL token).
-    ///
-    /// Returns:
-    ///     EC mode: write token (int) for polling via is_committed().
-    ///     SC mode: None (write is already committed when this returns).
     #[pyo3(signature = (path, value, consistency="sc"))]
     pub fn set_metadata(
         &self,
@@ -1717,30 +935,16 @@ impl PyZoneHandle {
         value: Vec<u8>,
         consistency: &str,
     ) -> PyResult<Option<u64>> {
-        validate_consistency(consistency)?;
-        let cmd = Command::SetMetadata {
-            key: path.to_string(),
-            value,
-        };
-        match consistency {
-            CONSISTENCY_EC => Ok(Some(self.propose_command_ec_local(py, cmd)?)),
-            _ => {
-                self.propose_command(py, cmd)?;
-                Ok(None)
-            }
-        }
+        let cons = parse_consistency(consistency)?;
+        let inner = self.inner.clone();
+        let path = path.to_string();
+        py.detach(move || {
+            inner
+                .set_metadata(&path, value, cons)
+                .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+        })
     }
 
-    /// Compare-and-swap metadata for a path (replicated through consensus).
-    ///
-    /// Args:
-    ///     path: The file path (key).
-    ///     value: Serialized metadata bytes.
-    ///     expected_version: Expected current version (0 = create-only).
-    ///     consistency: "sc" (default, wait for commit) or "ec" (local write).
-    ///
-    /// Returns:
-    ///     Tuple of (success: bool, current_version: int).
     #[pyo3(signature = (path, value, expected_version, consistency="sc"))]
     pub fn cas_set_metadata(
         &self,
@@ -1750,72 +954,36 @@ impl PyZoneHandle {
         expected_version: u32,
         consistency: &str,
     ) -> PyResult<(bool, u32)> {
-        validate_consistency(consistency)?;
-        let cmd = Command::CasSetMetadata {
-            key: path.to_string(),
-            value,
-            expected_version,
-        };
-        let result = self.propose_command_raw(py, cmd)?;
-        match result {
-            CommandResult::CasResult {
-                success,
-                current_version,
-            } => Ok((success, current_version)),
-            _ => Err(PyRuntimeError::new_err("Unexpected CAS result type")),
-        }
-    }
-
-    /// Atomically adjust a metadata counter by a signed delta (Raft-replicated).
-    ///
-    /// The read-modify-write happens during apply() on each node,
-    /// serialized by Raft — no lost updates under concurrency.
-    ///
-    /// Args:
-    ///     key: The metadata key (e.g., "__i_links_count__").
-    ///     delta: Signed adjustment (+1 to increment, -1 to decrement).
-    ///
-    /// Returns:
-    ///     New counter value after adjustment.
-    pub fn adjust_counter(&self, py: Python<'_>, key: &str, delta: i64) -> PyResult<i64> {
-        let cmd = Command::AdjustCounter {
-            key: key.to_string(),
-            delta,
-        };
-        let result = self.propose_command_raw(py, cmd)?;
-        match result {
-            CommandResult::Value(bytes) => {
-                let arr: [u8; 8] = bytes
-                    .try_into()
-                    .map_err(|_| PyRuntimeError::new_err("Invalid counter value"))?;
-                Ok(i64::from_be_bytes(arr))
-            }
-            _ => Err(PyRuntimeError::new_err("Unexpected result type")),
-        }
-    }
-
-    /// Get metadata for a path (local read, no consensus).
-    pub fn get_metadata(&self, py: Python<'_>, path: &str) -> PyResult<Option<Vec<u8>>> {
-        let node = self.node.clone();
+        let cons = parse_consistency(consistency)?;
+        let inner = self.inner.clone();
         let path = path.to_string();
-        py.detach(|| {
-            self.runtime_handle.block_on(async {
-                node.with_state_machine(|sm| sm.get_metadata(&path))
-                    .await
-                    .map_err(|e| PyRuntimeError::new_err(format!("Failed to get metadata: {}", e)))
-            })
+        py.detach(move || {
+            inner
+                .cas_set_metadata(&path, value, expected_version, cons)
+                .map_err(|e| PyRuntimeError::new_err(e.to_string()))
         })
     }
 
-    /// Delete metadata for a path.
-    ///
-    /// Args:
-    ///     path: The file path.
-    ///     consistency: "sc" (default, wait for commit) or "ec" (local write + WAL token).
-    ///
-    /// Returns:
-    ///     EC mode: write token (int) for polling via is_committed().
-    ///     SC mode: None (write is already committed when this returns).
+    pub fn adjust_counter(&self, py: Python<'_>, key: &str, delta: i64) -> PyResult<i64> {
+        let inner = self.inner.clone();
+        let key = key.to_string();
+        py.detach(move || {
+            inner
+                .adjust_counter(&key, delta)
+                .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+        })
+    }
+
+    pub fn get_metadata(&self, py: Python<'_>, path: &str) -> PyResult<Option<Vec<u8>>> {
+        let inner = self.inner.clone();
+        let path = path.to_string();
+        py.detach(move || {
+            inner
+                .get_metadata(&path)
+                .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+        })
+    }
+
     #[pyo3(signature = (path, consistency="sc"))]
     pub fn delete_metadata(
         &self,
@@ -1823,50 +991,30 @@ impl PyZoneHandle {
         path: &str,
         consistency: &str,
     ) -> PyResult<Option<u64>> {
-        validate_consistency(consistency)?;
-        let cmd = Command::DeleteMetadata {
-            key: path.to_string(),
-        };
-        match consistency {
-            CONSISTENCY_EC => Ok(Some(self.propose_command_ec_local(py, cmd)?)),
-            _ => {
-                self.propose_command(py, cmd)?;
-                Ok(None)
-            }
-        }
-    }
-
-    /// List all metadata with a prefix (local read, no consensus).
-    pub fn list_metadata(&self, py: Python<'_>, prefix: &str) -> PyResult<Vec<(String, Vec<u8>)>> {
-        let node = self.node.clone();
-        let prefix = prefix.to_string();
-        py.detach(|| {
-            self.runtime_handle.block_on(async {
-                node.with_state_machine(|sm| sm.list_metadata(&prefix))
-                    .await
-                    .map_err(|e| PyRuntimeError::new_err(format!("Failed to list metadata: {}", e)))
-            })
+        let cons = parse_consistency(consistency)?;
+        let inner = self.inner.clone();
+        let path = path.to_string();
+        py.detach(move || {
+            inner
+                .delete_metadata(&path, cons)
+                .map_err(|e| PyRuntimeError::new_err(e.to_string()))
         })
     }
 
-    /// Check if an EC write token has been replicated to a majority.
-    ///
-    /// Args:
-    ///     token: Write token returned by set_metadata/delete_metadata with consistency="ec".
-    ///
-    /// Returns:
-    ///     "committed" — replicated to majority.
-    ///     "pending" — local only, awaiting replication.
-    ///     None — invalid token or no replication log.
-    pub fn is_committed(&self, token: u64) -> Option<String> {
-        self.node.is_committed(token).map(|s| s.to_string())
+    pub fn list_metadata(&self, py: Python<'_>, prefix: &str) -> PyResult<Vec<(String, Vec<u8>)>> {
+        let inner = self.inner.clone();
+        let prefix = prefix.to_string();
+        py.detach(move || {
+            inner
+                .list_metadata(&prefix)
+                .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+        })
     }
 
-    // =========================================================================
-    // Lock Operations (always SC)
-    // =========================================================================
+    pub fn is_committed(&self, token: u64) -> Option<String> {
+        self.inner.is_committed(token)
+    }
 
-    /// Acquire a distributed lock (always replicated through consensus).
     #[pyo3(signature = (path, lock_id, max_holders=1, ttl_secs=30, holder_info="", mode="exclusive"))]
     #[allow(clippy::too_many_arguments)]
     pub fn acquire_lock(
@@ -1879,33 +1027,30 @@ impl PyZoneHandle {
         holder_info: &str,
         mode: &str,
     ) -> PyResult<PyLockState> {
-        let cmd = Command::AcquireLock {
-            path: path.to_string(),
-            lock_id: lock_id.to_string(),
-            max_holders,
-            ttl_secs,
-            holder_info: holder_info.to_string(),
-            mode: parse_lock_mode(mode)?,
-            now_secs: crate::prelude::FullStateMachine::now(),
-        };
-        let result = self.propose_command_raw(py, cmd)?;
-        match result {
-            CommandResult::LockResult(state) => Ok(state.into()),
-            _ => Err(PyRuntimeError::new_err("Unexpected result type")),
-        }
+        let lm = parse_lock_mode(mode)?;
+        let inner = self.inner.clone();
+        let path = path.to_string();
+        let lock_id = lock_id.to_string();
+        let holder_info = holder_info.to_string();
+        py.detach(move || {
+            inner
+                .acquire_lock(&path, &lock_id, max_holders, ttl_secs, &holder_info, lm)
+                .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+                .map(Into::into)
+        })
     }
 
-    /// Release a distributed lock (replicated through consensus).
     pub fn release_lock(&self, py: Python<'_>, path: &str, lock_id: &str) -> PyResult<bool> {
-        let cmd = Command::ReleaseLock {
-            path: path.to_string(),
-            lock_id: lock_id.to_string(),
-        };
-        let result = self.propose_command_raw(py, cmd)?;
-        Ok(matches!(result, CommandResult::Success))
+        let inner = self.inner.clone();
+        let path = path.to_string();
+        let lock_id = lock_id.to_string();
+        py.detach(move || {
+            inner
+                .release_lock(&path, &lock_id)
+                .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+        })
     }
 
-    /// Extend a lock's TTL (replicated through consensus).
     pub fn extend_lock(
         &self,
         py: Python<'_>,
@@ -1913,31 +1058,27 @@ impl PyZoneHandle {
         lock_id: &str,
         new_ttl_secs: u32,
     ) -> PyResult<bool> {
-        let cmd = Command::ExtendLock {
-            path: path.to_string(),
-            lock_id: lock_id.to_string(),
-            new_ttl_secs,
-            now_secs: crate::prelude::FullStateMachine::now(),
-        };
-        let result = self.propose_command_raw(py, cmd)?;
-        Ok(matches!(result, CommandResult::Success))
-    }
-
-    /// Get lock info (local read, no consensus).
-    pub fn get_lock(&self, py: Python<'_>, path: &str) -> PyResult<Option<PyLockInfo>> {
-        let node = self.node.clone();
+        let inner = self.inner.clone();
         let path = path.to_string();
-        py.detach(|| {
-            self.runtime_handle.block_on(async {
-                node.with_state_machine(|sm| sm.get_lock(&path))
-                    .await
-                    .map(|opt| opt.map(|l| l.into()))
-                    .map_err(|e| PyRuntimeError::new_err(format!("Failed to get lock: {}", e)))
-            })
+        let lock_id = lock_id.to_string();
+        py.detach(move || {
+            inner
+                .extend_lock(&path, &lock_id, new_ttl_secs)
+                .map_err(|e| PyRuntimeError::new_err(e.to_string()))
         })
     }
 
-    /// List all locks matching a prefix (local read, no consensus).
+    pub fn get_lock(&self, py: Python<'_>, path: &str) -> PyResult<Option<PyLockInfo>> {
+        let inner = self.inner.clone();
+        let path = path.to_string();
+        py.detach(move || {
+            inner
+                .get_lock(&path)
+                .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+                .map(|opt| opt.map(Into::into))
+        })
+    }
+
     #[pyo3(signature = (prefix="", limit=1000))]
     pub fn list_locks(
         &self,
@@ -1945,160 +1086,81 @@ impl PyZoneHandle {
         prefix: &str,
         limit: usize,
     ) -> PyResult<Vec<PyLockInfo>> {
-        let node = self.node.clone();
+        let inner = self.inner.clone();
         let prefix = prefix.to_string();
-        py.detach(|| {
-            self.runtime_handle.block_on(async {
-                node.with_state_machine(|sm| sm.list_locks(&prefix, limit))
-                    .await
-                    .map(|locks| locks.into_iter().map(|l| l.into()).collect())
-                    .map_err(|e| PyRuntimeError::new_err(format!("Failed to list locks: {}", e)))
-            })
+        py.detach(move || {
+            inner
+                .list_locks(&prefix, limit)
+                .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+                .map(|v| v.into_iter().map(Into::into).collect())
         })
     }
 
-    // =========================================================================
-    // Batch Operations
-    // =========================================================================
-
-    /// Get metadata for multiple paths in a single FFI call (local read, no consensus).
-    ///
-    /// Args:
-    ///     paths: List of file paths to look up.
-    ///
-    /// Returns:
-    ///     List of (path, metadata_bytes_or_none) tuples.
     pub fn get_metadata_multi(
         &self,
         py: Python<'_>,
         paths: Vec<String>,
     ) -> PyResult<Vec<(String, Option<Vec<u8>>)>> {
-        let node = self.node.clone();
-        py.detach(|| {
-            self.runtime_handle.block_on(async {
-                node.with_state_machine(|sm| sm.get_metadata_multi(&paths))
-                    .await
-                    .map_err(|e| {
-                        PyRuntimeError::new_err(format!("Failed to get metadata multi: {}", e))
-                    })
-            })
+        let inner = self.inner.clone();
+        py.detach(move || {
+            inner
+                .get_metadata_multi(paths)
+                .map_err(|e| PyRuntimeError::new_err(e.to_string()))
         })
     }
 
-    /// Set multiple metadata entries via Raft consensus.
-    ///
-    /// Each entry is proposed as an individual Raft command (matching
-    /// Metastore's per-item semantics). Not batch-atomic — partial
-    /// success is possible if a proposal fails mid-batch.
-    ///
-    /// Args:
-    ///     items: List of (path, value_bytes) tuples to set.
-    ///
-    /// Returns:
-    ///     Number of entries set.
     pub fn batch_set_metadata(
         &self,
         py: Python<'_>,
         items: Vec<(String, Vec<u8>)>,
     ) -> PyResult<usize> {
-        let count = items.len();
-        for (path, value) in items {
-            let cmd = Command::SetMetadata { key: path, value };
-            self.propose_command(py, cmd)?;
-        }
-        Ok(count)
+        let inner = self.inner.clone();
+        py.detach(move || {
+            inner
+                .batch_set_metadata(items)
+                .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+        })
     }
 
-    /// Delete multiple metadata entries via Raft consensus.
-    ///
-    /// Each entry is proposed as an individual Raft command.
-    ///
-    /// Args:
-    ///     keys: List of paths to delete.
-    ///
-    /// Returns:
-    ///     Number of entries deleted.
     pub fn batch_delete_metadata(&self, py: Python<'_>, keys: Vec<String>) -> PyResult<usize> {
-        let count = keys.len();
-        for key in keys {
-            let cmd = Command::DeleteMetadata { key };
-            self.propose_command(py, cmd)?;
-        }
-        Ok(count)
+        let inner = self.inner.clone();
+        py.detach(move || {
+            inner
+                .batch_delete_metadata(keys)
+                .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+        })
     }
 
-    // =========================================================================
-    // Cluster Status
-    // =========================================================================
-
-    /// Check if this node is the current leader (atomic read, no I/O).
     pub fn is_leader(&self) -> bool {
-        self.node.is_leader()
+        self.inner.is_leader()
     }
 
-    /// Get the current leader ID (None if unknown).
     pub fn leader_id(&self) -> Option<u64> {
-        self.node.leader_id()
+        self.inner.leader_id()
     }
 
-    /// Get the current raft log commit index (atomic read, no I/O).
-    /// Monotonically non-decreasing; grows with each committed entry.
     pub fn commit_index(&self) -> u64 {
-        self.node.commit_index()
+        self.inner.commit_index()
     }
 
-    /// Get the current raft term (atomic read, no I/O).
     pub fn term(&self) -> u64 {
-        self.node.term()
+        self.inner.term()
     }
 
-    /// Get the highest raft log index actually applied to the state
-    /// machine (atomic read, no I/O). Strictly ``<= commit_index()`` —
-    /// this is the correct signal for "state is visible to sys_stat /
-    /// list / queries". See ``ZoneConsensus::applied_index`` docs for
-    /// why ``commit_index`` alone is not sufficient.
     pub fn applied_index(&self) -> u64 {
-        self.node.applied_index()
+        self.inner.applied_index()
     }
-
-    // F2 C8 (Option A): federation metastore bridging now lives on the
-    // ``nexus_kernel`` side (rust/kernel/src/raft_metastore.rs). It
-    // takes a ``&PyZoneHandle`` via ``consensus_node()`` /
-    // ``runtime_handle()``, builds a ``ZoneMetastore``, and installs
-    // it on the kernel's mount_metastores map. No cross-crate PyO3
-    // handoff — raft and kernel are both inside the same cdylib now.
 }
 
 #[cfg(all(feature = "grpc", has_protos))]
-impl PyZoneHandle {
-    /// True Local-First EC write — bypasses Raft, returns WAL token.
-    fn propose_command_ec_local(&self, py: Python<'_>, cmd: Command) -> PyResult<u64> {
-        let node = self.node.clone();
-        py.detach(|| {
-            self.runtime_handle
-                .block_on(node.propose_ec_local(cmd))
-                .map_err(|e| PyRuntimeError::new_err(format!("EC local write failed: {}", e)))
-        })
-    }
-
-    fn propose_command(&self, py: Python<'_>, cmd: Command) -> PyResult<bool> {
-        let result = self.propose_command_raw(py, cmd)?;
-        match result {
-            CommandResult::Success => Ok(true),
-            CommandResult::Error(e) => Err(PyRuntimeError::new_err(e)),
-            CommandResult::LockResult(state) => Ok(state.acquired),
-            CommandResult::CasResult { success, .. } => Ok(success),
-            CommandResult::Value(_) => Ok(true),
-        }
-    }
-
-    fn propose_command_raw(&self, py: Python<'_>, cmd: Command) -> PyResult<CommandResult> {
-        let node = self.node.clone();
-        py.detach(|| {
-            self.runtime_handle
-                .block_on(node.propose(cmd))
-                .map_err(|e| PyRuntimeError::new_err(format!("Propose failed: {}", e)))
-        })
+fn parse_consistency(s: &str) -> PyResult<crate::zone_handle::Consistency> {
+    match s {
+        CONSISTENCY_SC => Ok(crate::zone_handle::Consistency::Sc),
+        CONSISTENCY_EC => Ok(crate::zone_handle::Consistency::Ec),
+        _ => Err(PyRuntimeError::new_err(format!(
+            "Invalid consistency mode '{}': expected '{}' or '{}'",
+            s, CONSISTENCY_SC, CONSISTENCY_EC
+        ))),
     }
 }
 
@@ -2246,7 +1308,10 @@ pub fn register_python_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
 #[cfg(all(test, feature = "grpc", has_protos))]
 mod mount_helpers_tests {
-    use super::*;
+    use crate::zone_manager::{
+        decode_file_metadata, encode_file_metadata, path_matches_prefix, DT_DIR, DT_MOUNT,
+        I_LINKS_COUNT_KEY,
+    };
 
     /// Mount + dir entries round-trip through encode/decode with the
     /// expected field fidelity: DT_MOUNT keeps ``target_zone_id``,

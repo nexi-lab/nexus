@@ -63,6 +63,20 @@ pub mod raft;
 #[cfg(feature = "grpc")]
 pub mod federation;
 
+/// Pure-Rust zone handle — kernel-internal, not exposed to Python.
+#[cfg(all(feature = "grpc", has_protos))]
+pub mod zone_handle;
+
+/// Pure-Rust zone manager — kernel-internal, not exposed to Python.
+#[cfg(all(feature = "grpc", has_protos))]
+pub mod zone_manager;
+
+#[cfg(all(feature = "grpc", has_protos))]
+pub use zone_handle::{Consistency, ZoneHandle};
+
+#[cfg(all(feature = "grpc", has_protos))]
+pub use zone_manager::{ClusterStatus, TlsFiles, ZoneManager};
+
 /// gRPC transport layer (requires `grpc` feature).
 ///
 /// This module provides network transport for Raft messages using gRPC.

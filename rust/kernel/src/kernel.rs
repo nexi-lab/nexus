@@ -469,10 +469,14 @@ pub struct Kernel {
     trie: Trie,
     // Unified lock manager: I/O lock + advisory lock + optional Raft.
     lock_manager: Arc<LockManager>,
-    // Metastore (Box<dyn Metastore>)
-    metastore: Option<Box<dyn crate::metastore::Metastore>>,
-    // VFS lock timeout for blocking acquire (ms)
-    vfs_lock_timeout_ms: u64,
+    // Metastore (Box<dyn Metastore>), behind parking_lot::RwLock so
+    // the setter paths (``set_metastore_path`` / ``release_metastores``)
+    // don't need ``&mut self`` — lets ``PyKernel`` hold an ``Arc<Kernel>``
+    // for the apply-side federation-mount callback (R20.16.3).
+    metastore: parking_lot::RwLock<Option<Box<dyn crate::metastore::Metastore>>>,
+    // VFS lock timeout for blocking acquire (ms) — ``AtomicU64`` so
+    // ``set_vfs_lock_timeout`` stays ``&self``; reads are lock-free.
+    vfs_lock_timeout_ms: AtomicU64,
     // Hook counts (atomics for lock-free hot-path check)
     read_hook_count: AtomicU64,
     write_hook_count: AtomicU64,
@@ -546,6 +550,33 @@ pub struct Kernel {
     // on every `CASEngine` via `MountTable` on mount registration.
     #[allow(dead_code)]
     pub(crate) chunk_fetcher: Arc<crate::cas_remote::GrpcChunkFetcher>,
+
+    // ── Federation mount wiring (R20.16.3) ─────────────────────────
+    //
+    // Installed once at federation bootstrap via ``attach_zone_registry``.
+    // Replaces the old Python ``_on_mount_event`` / ``_mount_via_kernel``
+    // / ``_mounts_by_target`` chain with a pure-Rust apply-cb path:
+    //
+    //   FullStateMachine::apply(DT_MOUNT) — mount_apply_cb
+    //     → Kernel::wire_federation_mount(parent, path, target, backend)
+    //       → MountTable.add_mount + install_metastore(ZoneMetastore)
+    //       → DCache.put (seed DT_MOUNT entry so sys_stat sees it)
+    //       → install_federation_dcache_coherence on target consensus
+    //       → cross_zone_mounts.entry(target).push((parent, path, global))
+    //
+    // All three are set once; ``OnceLock`` is idempotent + lock-free read.
+    #[allow(dead_code)]
+    zone_registry: std::sync::OnceLock<Arc<nexus_raft::raft::ZoneRaftRegistry>>,
+    #[allow(dead_code)]
+    zone_runtime: std::sync::OnceLock<tokio::runtime::Handle>,
+    /// Reverse index target_zone_id → [(parent_zone, mount_path,
+    /// global_path)] for ``global_mount_of`` + cascade-unmount.
+    /// Maintained by the apply-side callback: Set inserts, Delete drains.
+    /// SSOT: derived from DT_MOUNT entries in every parent zone's state
+    /// machine. Re-populated at startup by ``reconcile_mounts_from_zones``.
+    #[allow(dead_code)]
+    #[allow(clippy::type_complexity)]
+    cross_zone_mounts: Arc<DashMap<String, Vec<(String, String, String)>>>,
 }
 
 impl Kernel {
@@ -572,8 +603,10 @@ impl Kernel {
             // without explicit wiring. `set_metastore_path` swaps it
             // for a redb-backed one on demand; federation installs a
             // per-mount `ZoneMetastore` via `install_mount_metastore`.
-            metastore: Some(Box::new(crate::metastore::MemoryMetastore::new())),
-            vfs_lock_timeout_ms: 5000,
+            metastore: parking_lot::RwLock::new(Some(Box::new(
+                crate::metastore::MemoryMetastore::new(),
+            ))),
+            vfs_lock_timeout_ms: AtomicU64::new(5000),
             read_hook_count: AtomicU64::new(0),
             write_hook_count: AtomicU64::new(0),
             stat_hook_count: AtomicU64::new(0),
@@ -594,6 +627,9 @@ impl Kernel {
             self_address: parking_lot::RwLock::new(None),
             peer_client,
             chunk_fetcher,
+            zone_registry: std::sync::OnceLock::new(),
+            zone_runtime: std::sync::OnceLock::new(),
+            cross_zone_mounts: Arc::new(DashMap::new()),
         }
         // Observers registered on-demand (not at Kernel::new()).
         // FileWatcher + StreamEventObservers are registered by orchestrator
@@ -603,8 +639,15 @@ impl Kernel {
     // ── Lock Manager wiring ──────────────────────────────────────────
 
     /// Set VFS lock timeout in milliseconds (default 5000).
-    pub fn set_vfs_lock_timeout(&mut self, timeout_ms: u64) {
-        self.vfs_lock_timeout_ms = timeout_ms;
+    pub fn set_vfs_lock_timeout(&self, timeout_ms: u64) {
+        self.vfs_lock_timeout_ms
+            .store(timeout_ms, Ordering::Relaxed);
+    }
+
+    /// Read current VFS lock timeout (ms).
+    #[inline]
+    fn vfs_lock_timeout_ms(&self) -> u64 {
+        self.vfs_lock_timeout_ms.load(Ordering::Relaxed)
     }
 
     // ── Node identity (federation content origin) ─────────────────────
@@ -630,10 +673,10 @@ impl Kernel {
 
     /// Wire LocalMetastore by path — Rust kernel opens redb directly.
     /// Only metastore wiring method (PyMetastoreAdapter removed in Phase 9).
-    pub fn set_metastore_path(&mut self, path: &str) -> Result<(), KernelError> {
+    pub fn set_metastore_path(&self, path: &str) -> Result<(), KernelError> {
         let ms = LocalMetastore::open(std::path::Path::new(path))
             .map_err(|e| KernelError::IOError(format!("LocalMetastore: {e:?}")))?;
-        self.metastore = Some(Box::new(ms));
+        *self.metastore.write() = Some(Box::new(ms));
         Ok(())
     }
 
@@ -642,8 +685,8 @@ impl Kernel {
     /// calls this so a subsequent kernel can reopen the same redb path
     /// without the ``"Database already open"`` error (Issue #3765 Cat-5/6
     /// SQLite-lifecycle regression).
-    pub fn release_metastores(&mut self) {
-        self.metastore = None;
+    pub fn release_metastores(&self) {
+        *self.metastore.write() = None;
         // Drop per-mount metastores by clearing their slot on each
         // MountEntry. We iterate via `iter_mut` to avoid a full rebuild.
         for mut entry in self.mount_table.entries_iter_mut() {
@@ -670,7 +713,7 @@ impl Kernel {
                 return Some(f(ms_arc.as_ref()));
             }
         }
-        self.metastore.as_ref().map(|ms| f(ms.as_ref()))
+        self.metastore.read().as_ref().map(|ms| f(ms.as_ref()))
     }
 
     // ── Metastore routing ────────────────────────────────────────────
@@ -847,7 +890,7 @@ impl Kernel {
         &self,
         paths: &[String],
     ) -> Result<Vec<Option<crate::metastore::FileMetadata>>, KernelError> {
-        match &self.metastore {
+        match self.metastore.read().as_ref() {
             Some(ms) => ms
                 .get_batch(paths)
                 .map_err(|e| KernelError::IOError(format!("metastore_get_batch: {e:?}"))),
@@ -858,7 +901,7 @@ impl Kernel {
     // Called by PyKernel.metastore_delete_batch() via PyO3 — no direct Rust caller.
     #[allow(dead_code)]
     pub fn metastore_delete_batch(&self, paths: &[String]) -> Result<usize, KernelError> {
-        match &self.metastore {
+        match self.metastore.read().as_ref() {
             Some(ms) => ms
                 .delete_batch(paths)
                 .map_err(|e| KernelError::IOError(format!("metastore_delete_batch: {e:?}"))),
@@ -870,7 +913,7 @@ impl Kernel {
         &self,
         items: &[(String, crate::metastore::FileMetadata)],
     ) -> Result<(), KernelError> {
-        match &self.metastore {
+        match self.metastore.read().as_ref() {
             Some(ms) => ms
                 .put_batch(items)
                 .map_err(|e| KernelError::IOError(format!("metastore_put_batch: {e:?}"))),
@@ -951,7 +994,7 @@ impl Kernel {
     ) -> Result<Vec<crate::metastore::PathValueStr>, KernelError> {
         // Bulk: fan out to the global metastore. Mixed-mount bulk reads
         // go through the Python wrapper.
-        match &self.metastore {
+        match self.metastore.read().as_ref() {
             Some(ms) => ms.get_file_metadata_bulk(paths, key).map_err(|e| {
                 KernelError::IOError(format!("metastore_get_file_metadata_bulk: {e:?}"))
             }),
@@ -1002,7 +1045,7 @@ impl Kernel {
         &self,
         paths: &[String],
     ) -> Result<Vec<crate::metastore::PathEtag>, KernelError> {
-        match &self.metastore {
+        match self.metastore.read().as_ref() {
             Some(ms) => ms.batch_get_content_ids(paths).map_err(|e| {
                 KernelError::IOError(format!("metastore_batch_get_content_ids: {e:?}"))
             }),
@@ -1160,6 +1203,7 @@ impl Kernel {
     /// callbacks. Consumer holds its own reference so the callback
     /// stays valid even if the kernel's invoking call frame has
     /// returned — the cache itself lives as long as *any* holder.
+    #[allow(dead_code)]
     pub(crate) fn dcache_handle(&self) -> Arc<DCache> {
         Arc::clone(&self.dcache)
     }
@@ -1168,6 +1212,7 @@ impl Kernel {
     /// callbacks that need to look up mount-points-for-zone at
     /// invalidation time. See ``dcache_handle`` for the lifetime
     /// rationale — same contract.
+    #[allow(dead_code)]
     pub(crate) fn mount_table_handle(&self) -> Arc<MountTable> {
         Arc::clone(&self.mount_table)
     }
@@ -1361,26 +1406,7 @@ impl Kernel {
         &self,
         consensus: nexus_raft::prelude::ZoneConsensus<nexus_raft::prelude::FullStateMachine>,
     ) {
-        let Some(slot) = consensus.invalidate_cb_slot() else {
-            return;
-        };
-        let coherence_key = consensus.coherence_id();
-        let dcache = self.dcache_handle();
-        let mount_table = self.mount_table_handle();
-        let cb: Arc<dyn Fn(&str) + Send + Sync> = Arc::new(move |zone_relative_key: &str| {
-            let trimmed = zone_relative_key.trim_start_matches('/');
-            for mp in mount_table.mount_points_for_coherence_key(coherence_key) {
-                let global = if trimmed.is_empty() {
-                    mp.clone()
-                } else if mp.ends_with('/') {
-                    format!("{}{}", mp, trimmed)
-                } else {
-                    format!("{}/{}", mp, trimmed)
-                };
-                dcache.evict(&global);
-            }
-        });
-        *slot.write() = Some(cb);
+        install_federation_dcache_coherence_impl(&self.mount_table, &self.dcache, &consensus);
     }
 
     /// Syscall: set attributes on a path. Handles ALL filesystem entry types.
@@ -2536,7 +2562,7 @@ impl Kernel {
         // 4. VFS lock (blocking acquire — wrapper releases GIL before calling this)
         let lock_handle =
             self.lock_manager
-                .blocking_acquire(path, LockMode::Read, self.vfs_lock_timeout_ms);
+                .blocking_acquire(path, LockMode::Read, self.vfs_lock_timeout_ms());
         if lock_handle == 0 {
             return Err(KernelError::IOError(format!(
                 "vfs read lock timeout: {path}"
@@ -2750,7 +2776,7 @@ impl Kernel {
         // 4. VFS lock (blocking write lock)
         let lock_handle =
             self.lock_manager
-                .blocking_acquire(path, LockMode::Write, self.vfs_lock_timeout_ms);
+                .blocking_acquire(path, LockMode::Write, self.vfs_lock_timeout_ms());
         if lock_handle == 0 {
             return miss();
         }
@@ -3100,7 +3126,7 @@ impl Kernel {
         // 5. VFS write lock (DT_REG path)
         let lock_handle =
             self.lock_manager
-                .blocking_acquire(path, LockMode::Write, self.vfs_lock_timeout_ms);
+                .blocking_acquire(path, LockMode::Write, self.vfs_lock_timeout_ms());
         if lock_handle == 0 {
             return miss(entry.entry_type);
         }
@@ -3199,10 +3225,10 @@ impl Kernel {
 
         let lock1 =
             self.lock_manager
-                .blocking_acquire(first, LockMode::Write, self.vfs_lock_timeout_ms);
+                .blocking_acquire(first, LockMode::Write, self.vfs_lock_timeout_ms());
         let lock2 = if first != second {
             self.lock_manager
-                .blocking_acquire(second, LockMode::Write, self.vfs_lock_timeout_ms)
+                .blocking_acquire(second, LockMode::Write, self.vfs_lock_timeout_ms())
         } else {
             0
         };
@@ -3422,10 +3448,10 @@ impl Kernel {
         };
         let lock1 =
             self.lock_manager
-                .blocking_acquire(first, LockMode::Write, self.vfs_lock_timeout_ms);
+                .blocking_acquire(first, LockMode::Write, self.vfs_lock_timeout_ms());
         let lock2 = if first != second {
             self.lock_manager
-                .blocking_acquire(second, LockMode::Write, self.vfs_lock_timeout_ms)
+                .blocking_acquire(second, LockMode::Write, self.vfs_lock_timeout_ms())
         } else {
             0
         };
@@ -3929,7 +3955,7 @@ impl Kernel {
                     lock_handles[idx] = self.lock_manager.blocking_acquire(
                         &items[idx].0,
                         LockMode::Write,
-                        self.vfs_lock_timeout_ms,
+                        self.vfs_lock_timeout_ms(),
                     );
                 }
             }
@@ -4064,7 +4090,7 @@ impl Kernel {
                 }
             }
             if !global_items.is_empty() {
-                if let Some(ref ms) = self.metastore {
+                if let Some(ms) = self.metastore.read().as_ref() {
                     let _ = ms.put_batch(&global_items);
                 }
             }
@@ -4377,6 +4403,409 @@ impl Kernel {
         self.cas_engine_do(mount_point, zone_id, "cas_write_partial", |cas| {
             cas.write_partial(old_hash, buf, offset, origins)
         })
+    }
+
+    // ═════════════════════════════════════════════════════════════════
+    // R20.18.2+.3: Federation mount wiring — kernel-internal Rust calls
+    //   (not exposed to Python per v20.10 boundary rule). Invoked by
+    //   Kernel::init_federation_from_env (R20.18.2) + apply-cb installed
+    //   on every loaded zone. All methods below carry #[allow(dead_code)]
+    //   until R20.18.2 wires the env-driven bootstrap that invokes them.
+    // ═════════════════════════════════════════════════════════════════
+
+    /// Install the ``ZoneRaftRegistry`` + tokio runtime the apply-side
+    /// federation mount wiring needs. Idempotent: subsequent calls are
+    /// no-ops (``OnceLock::set`` returns ``Err`` on second call).
+    #[allow(dead_code)]
+    pub fn attach_zone_registry(
+        &self,
+        registry: Arc<nexus_raft::raft::ZoneRaftRegistry>,
+        runtime: tokio::runtime::Handle,
+    ) {
+        let _ = self.zone_registry.set(registry);
+        let _ = self.zone_runtime.set(runtime);
+    }
+
+    /// Look up a target zone's global VFS mount path on this node —
+    /// R20.16.3 Rust port of Python ``_global_mount_of``.
+    ///
+    /// Returns the lexicographically smallest global path under which
+    /// ``target_zone_id`` is currently mounted locally, or ``None`` if
+    /// the zone has no local mount. Reads the apply-cb-maintained
+    /// ``cross_zone_mounts`` reverse index (SSOT: DT_MOUNT entries in
+    /// each parent zone's state machine).
+    #[allow(dead_code)]
+    pub fn global_mount_of(&self, target_zone_id: &str) -> Option<String> {
+        let bucket = self.cross_zone_mounts.get(target_zone_id)?;
+        bucket.iter().map(|(_, _, g)| g.clone()).min()
+    }
+
+    /// Snapshot the reverse-index entries for a target zone — used by
+    /// Python ``remove_zone(force=True)`` to iterate cascade-unmount
+    /// candidates (PyO3 surface returns this as a list of 3-tuples).
+    #[allow(dead_code)]
+    pub fn list_cross_zone_mounts(&self, target_zone_id: &str) -> Vec<(String, String, String)> {
+        self.cross_zone_mounts
+            .get(target_zone_id)
+            .map(|v| v.clone())
+            .unwrap_or_default()
+    }
+
+    /// Wire a federation child-zone mount into the local MountTable
+    /// (R20.16.3). Invoked by the apply-side ``mount_apply_cb`` on
+    /// every replica — leader and followers alike — after a DT_MOUNT
+    /// Set commits in the parent zone's state machine. Safe to call
+    /// before ``attach_zone_registry`` (returns Ok no-op).
+    #[allow(dead_code)]
+    pub fn wire_federation_mount(
+        &self,
+        parent_zone_id: &str,
+        mount_path: &str,
+        target_zone_id: &str,
+        backend_name: &str,
+    ) -> Result<(), KernelError> {
+        let (Some(registry), Some(runtime)) = (self.zone_registry.get(), self.zone_runtime.get())
+        else {
+            // Not yet attached — startup replay will re-drive this.
+            return Ok(());
+        };
+        wire_federation_mount_impl(
+            &self.mount_table,
+            &self.dcache,
+            &self.lock_manager,
+            registry,
+            runtime,
+            &self.cross_zone_mounts,
+            parent_zone_id,
+            mount_path,
+            target_zone_id,
+            backend_name,
+        )
+    }
+
+    /// Install the apply-side DT_MOUNT callback that drives
+    /// ``wire_federation_mount`` for every DT_MOUNT commit in
+    /// ``consensus`` (R20.16.4). Mirrors the ``invalidate_cb``
+    /// pattern — the closure captures cloned ``Arc``s of everything it
+    /// needs so the state-machine callback stays a pure Fn with no
+    /// ``&Kernel`` back-reference.
+    #[allow(dead_code)]
+    pub fn install_federation_mount_coherence(
+        &self,
+        parent_zone_id: &str,
+        consensus: nexus_raft::prelude::ZoneConsensus<nexus_raft::prelude::FullStateMachine>,
+    ) {
+        let Some(slot) = consensus.mount_apply_cb_slot() else {
+            return;
+        };
+        let (Some(registry), Some(runtime)) = (self.zone_registry.get(), self.zone_runtime.get())
+        else {
+            return;
+        };
+        let mount_table = self.mount_table_handle();
+        let dcache = self.dcache_handle();
+        let lock_manager = Arc::clone(&self.lock_manager);
+        let registry = Arc::clone(registry);
+        let runtime = runtime.clone();
+        let cross_zone_mounts = Arc::clone(&self.cross_zone_mounts);
+        let parent_zone_id = parent_zone_id.to_string();
+
+        use nexus_raft::raft::MountApplyEvent;
+        let cb: Arc<dyn Fn(&MountApplyEvent) + Send + Sync> =
+            Arc::new(move |event: &MountApplyEvent| match event {
+                MountApplyEvent::Set {
+                    key,
+                    target_zone_id,
+                    backend_name,
+                } => {
+                    let _ = wire_federation_mount_impl(
+                        &mount_table,
+                        &dcache,
+                        &lock_manager,
+                        &registry,
+                        &runtime,
+                        &cross_zone_mounts,
+                        &parent_zone_id,
+                        key,
+                        target_zone_id,
+                        backend_name,
+                    );
+                }
+                MountApplyEvent::Delete { key } => {
+                    unwire_federation_mount_impl(
+                        &mount_table,
+                        &dcache,
+                        &cross_zone_mounts,
+                        &parent_zone_id,
+                        key,
+                    );
+                }
+            });
+        *slot.write() = Some(cb);
+    }
+
+    /// Startup replay (R20.16.4): iterate every currently-loaded zone's
+    /// DT_MOUNT entries, wire each one, and install the apply-cb so
+    /// future DT_MOUNT commits fire ``wire_federation_mount``.
+    /// Topological: repeats the pass until no progress (parent not
+    /// wired yet → child mount deferred one round).
+    #[allow(dead_code)]
+    pub fn reconcile_mounts_from_zones(&self) -> Result<(), KernelError> {
+        let Some(registry) = self.zone_registry.get() else {
+            return Ok(());
+        };
+
+        let zone_ids = registry.list_zones();
+        // Install callbacks first so any fresh commits arriving during
+        // the scan are captured directly instead of being missed.
+        for zone_id in &zone_ids {
+            if let Some(node) = registry.get_node(zone_id) {
+                self.install_federation_mount_coherence(zone_id, node);
+            }
+        }
+
+        // Collect every DT_MOUNT entry across all zones.
+        let mut pending: Vec<(String, String, String, String)> = Vec::new();
+        for zone_id in &zone_ids {
+            let Some(node) = registry.get_node(zone_id) else {
+                continue;
+            };
+            let entries = node.iter_dt_mount_entries().unwrap_or_default();
+            for (key, target_zone_id, backend_name) in entries {
+                pending.push((zone_id.clone(), key, target_zone_id, backend_name));
+            }
+        }
+
+        // Topological wire: loop until no progress. Cap iterations to
+        // zone_count + 1 so a misconfigured cycle errors instead of
+        // looping forever.
+        let max_rounds = pending.len() + 1;
+        for _ in 0..max_rounds {
+            if pending.is_empty() {
+                break;
+            }
+            let mut progressed = false;
+            pending.retain(|(parent, key, target, backend)| {
+                match self.wire_federation_mount(parent, key, target, backend) {
+                    Ok(()) => {
+                        // Check whether actually wired (cross_zone_mounts
+                        // updated). If parent still unknown, the impl
+                        // returns Ok but doesn't insert — retry.
+                        if self.cross_zone_mounts.contains_key(target) {
+                            progressed = true;
+                            false
+                        } else {
+                            true
+                        }
+                    }
+                    Err(_) => false, // give up on permanent failures
+                }
+            });
+            if !progressed {
+                break;
+            }
+        }
+        Ok(())
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// R20.16.3 free-function helpers — take only ``Arc``-shared kernel state
+// so the apply-side ``mount_apply_cb`` closure can call them without a
+// back-reference to ``Kernel`` itself.
+// ─────────────────────────────────────────────────────────────────────
+
+fn install_federation_dcache_coherence_impl(
+    mount_table: &Arc<MountTable>,
+    dcache: &Arc<DCache>,
+    consensus: &nexus_raft::prelude::ZoneConsensus<nexus_raft::prelude::FullStateMachine>,
+) {
+    let Some(slot) = consensus.invalidate_cb_slot() else {
+        return;
+    };
+    let coherence_key = consensus.coherence_id();
+    let dcache = Arc::clone(dcache);
+    let mount_table = Arc::clone(mount_table);
+    let cb: Arc<dyn Fn(&str) + Send + Sync> = Arc::new(move |zone_relative_key: &str| {
+        let trimmed = zone_relative_key.trim_start_matches('/');
+        for mp in mount_table.mount_points_for_coherence_key(coherence_key) {
+            let global = if trimmed.is_empty() {
+                mp.clone()
+            } else if mp.ends_with('/') {
+                format!("{}{}", mp, trimmed)
+            } else {
+                format!("{}/{}", mp, trimmed)
+            };
+            dcache.evict(&global);
+        }
+    });
+    *slot.write() = Some(cb);
+}
+
+#[allow(clippy::too_many_arguments)]
+#[allow(dead_code)]
+fn wire_federation_mount_impl(
+    mount_table: &Arc<MountTable>,
+    dcache: &Arc<DCache>,
+    lock_manager: &Arc<LockManager>,
+    registry: &Arc<nexus_raft::raft::ZoneRaftRegistry>,
+    runtime: &tokio::runtime::Handle,
+    cross_zone_mounts: &DashMap<String, Vec<(String, String, String)>>,
+    parent_zone_id: &str,
+    mount_path: &str,
+    target_zone_id: &str,
+    backend_name: &str,
+) -> Result<(), KernelError> {
+    // 1. Look up target zone. Not-yet-local is a no-op — reconcile
+    //    loop and future apply events will re-drive.
+    let Some(target_consensus) = registry.get_node(target_zone_id) else {
+        return Ok(());
+    };
+
+    // 2. Reconstruct the global VFS path for this mount (Python
+    //    ``_on_mount_event`` did the same prefix logic on
+    //    ``_mounts_by_target``).
+    let global_path = match reconstruct_global_path(cross_zone_mounts, parent_zone_id, mount_path) {
+        Some(g) => g,
+        None => return Ok(()), // parent not wired locally yet
+    };
+
+    // 3. Build a ZoneMetastore rooted at global_path targeting the
+    //    target's state machine. Reuses the root mount's backend (Arc
+    //    clone), so every federation mount shares the CAS backend on
+    //    this node.
+    let metastore: Arc<dyn crate::metastore::Metastore> =
+        crate::raft_metastore::ZoneMetastore::new_arc(
+            target_consensus.clone(),
+            runtime.clone(),
+            global_path.clone(),
+        );
+    let root_canonical = canonicalize("/", contracts::ROOT_ZONE_ID);
+    let root_backend = mount_table
+        .get_canonical(&root_canonical)
+        .and_then(|e| e.backend.clone());
+
+    // 4. Install into MountTable (routing + backend + metastore) under
+    //    the root zone — federation mounts live in the root zone's path
+    //    space on every node.
+    mount_table.add_mount(
+        &global_path,
+        contracts::ROOT_ZONE_ID,
+        backend_name,
+        root_backend,
+        false,
+    );
+    let canonical = canonicalize(&global_path, contracts::ROOT_ZONE_ID);
+    mount_table.install_metastore(&canonical, metastore);
+
+    // 5. LockManager upgrade on first federated mount — idempotent.
+    if !lock_manager.locks_installed() {
+        let kernel_state = lock_manager.advisory_state_arc();
+        let (backend, shared_state) = nexus_raft::federation::DistributedLocks::new(
+            target_consensus.clone(),
+            runtime.clone(),
+            kernel_state,
+        );
+        lock_manager.install_locks(Arc::new(backend), shared_state);
+    }
+
+    // 6. DCache seed so sys_stat on the mount point resolves locally
+    //    without a metastore round-trip.
+    dcache.put(
+        &global_path,
+        CachedEntry {
+            backend_name: backend_name.to_string(),
+            physical_path: String::new(),
+            size: 0,
+            etag: None,
+            version: 1,
+            entry_type: 2, // DT_MOUNT
+            zone_id: Some(contracts::ROOT_ZONE_ID.to_string()),
+            mime_type: None,
+            created_at_ms: None,
+            modified_at_ms: None,
+        },
+    );
+
+    // 7. Install apply-side dcache coherence on the target consensus
+    //    (idempotent — replays overwrite with an equivalent closure).
+    install_federation_dcache_coherence_impl(mount_table, dcache, &target_consensus);
+
+    // 8. Update reverse index (target → [(parent, mount_path, global)]).
+    //    Dedup so replayed apply events don't double-register.
+    let mut bucket = cross_zone_mounts
+        .entry(target_zone_id.to_string())
+        .or_default();
+    let tuple = (
+        parent_zone_id.to_string(),
+        mount_path.to_string(),
+        global_path,
+    );
+    if !bucket.contains(&tuple) {
+        bucket.push(tuple);
+    }
+    Ok(())
+}
+
+#[allow(dead_code)]
+fn unwire_federation_mount_impl(
+    mount_table: &Arc<MountTable>,
+    dcache: &Arc<DCache>,
+    cross_zone_mounts: &DashMap<String, Vec<(String, String, String)>>,
+    parent_zone_id: &str,
+    mount_path: &str,
+) {
+    // Find the matching entry via the reverse index, then drop the
+    // MountTable slot + evict the DCache seed. Scans all targets
+    // because the apply-cb only knows (parent, mount_path), not target.
+    let mut remove_empty: Option<String> = None;
+    let mut unwired_global: Option<String> = None;
+    for mut entry in cross_zone_mounts.iter_mut() {
+        let bucket = entry.value_mut();
+        if let Some(pos) = bucket
+            .iter()
+            .position(|(p, m, _)| p == parent_zone_id && m == mount_path)
+        {
+            let (_, _, global) = bucket.remove(pos);
+            unwired_global = Some(global);
+            if bucket.is_empty() {
+                remove_empty = Some(entry.key().clone());
+            }
+            break;
+        }
+    }
+    if let Some(target) = remove_empty {
+        cross_zone_mounts.remove(&target);
+    }
+    if let Some(global) = unwired_global {
+        mount_table.remove(&global, contracts::ROOT_ZONE_ID);
+        dcache.evict(&global);
+        dcache.evict_prefix(&format!("{}/", global.trim_end_matches('/')));
+    }
+}
+
+/// Reconstruct the global VFS path for a DT_MOUNT apply event. Port of
+/// Python ``_on_mount_event`` prefix logic — root-zone parents already
+/// publish global paths; non-root parents need the parent's own global
+/// prepended (looked up via ``cross_zone_mounts``).
+#[allow(dead_code)]
+fn reconstruct_global_path(
+    cross_zone_mounts: &DashMap<String, Vec<(String, String, String)>>,
+    parent_zone_id: &str,
+    mount_path: &str,
+) -> Option<String> {
+    if parent_zone_id == contracts::ROOT_ZONE_ID || parent_zone_id.is_empty() {
+        return Some(mount_path.to_string());
+    }
+    let parent_global = cross_zone_mounts
+        .get(parent_zone_id)
+        .and_then(|v| v.iter().map(|(_, _, g)| g.clone()).min())?;
+    if mount_path == parent_global || mount_path.starts_with(&format!("{}/", parent_global)) {
+        Some(mount_path.to_string())
+    } else if mount_path == "/" {
+        Some(parent_global)
+    } else {
+        Some(format!("{}{}", parent_global, mount_path))
     }
 }
 

@@ -1111,6 +1111,34 @@ impl FullStateMachine {
         Ok(result)
     }
 
+    /// Iterate every DT_MOUNT entry in this state machine, returning
+    /// ``(key, target_zone_id, backend_name)`` triples (R20.16.4).
+    ///
+    /// Used by the kernel's startup replay to re-drive every historic
+    /// federation mount through ``wire_federation_mount`` — apply-cb
+    /// only fires on new applies, so restart-from-snapshot wouldn't
+    /// otherwise wire the mounts already in state.
+    ///
+    /// Lenient: skips entries that fail to decode or aren't DT_MOUNT
+    /// or have an empty target_zone_id.
+    #[cfg(feature = "grpc")]
+    pub fn iter_dt_mount_entries(&self) -> Result<Vec<(String, String, String)>> {
+        use crate::transport::proto::nexus::core::FileMetadata as ProtoFileMetadata;
+        use prost::Message as ProstMessage;
+
+        let mut result = Vec::new();
+        for (key, bytes) in self.list_metadata("/")? {
+            let Ok(proto) = ProtoFileMetadata::decode(bytes.as_slice()) else {
+                continue;
+            };
+            const DT_MOUNT: i32 = 2;
+            if proto.entry_type == DT_MOUNT && !proto.target_zone_id.is_empty() {
+                result.push((key, proto.target_zone_id, proto.backend_name));
+            }
+        }
+        Ok(result)
+    }
+
     /// Get a stream entry by key (R19.1b').
     ///
     /// Looks up the opaque bytes previously stored by

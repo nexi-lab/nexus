@@ -1,0 +1,14 @@
+[Unit]
+Description=Nexus daemon (source watcher + JWT renewer)
+After=default.target network-online.target
+
+[Service]
+Type=simple
+ExecStart={executable} daemon run --config {config_path}
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:{stdout_path}
+StandardError=append:{stderr_path}
+
+[Install]
+WantedBy=default.target

@@ -360,7 +360,7 @@ where = ["src"]
 "nexus.cli" = ["data/*.yml", "data/*.Dockerfile", "data/*.sql"]
 "nexus.backends.connectors.gws" = ["configs/*.yaml"]
 "nexus.backends.connectors.github" = ["*.yaml"]
-"nexus.bricks.auth.daemon.templates" = ["*.plist.j2"]
+"nexus.bricks.auth.daemon.templates" = ["*.plist.j2", "*.service.j2"]
 
 [tool.pytest.ini_options]
 minversion = "7.0"

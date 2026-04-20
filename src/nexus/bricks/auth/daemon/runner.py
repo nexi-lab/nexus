@@ -86,6 +86,7 @@ class _Pusher(Protocol):
         content: bytes,
         provider: str | None = None,
         account_identifier: str,
+        source_mtime: datetime | None = None,
     ) -> None: ...
 
 
@@ -273,7 +274,7 @@ class DaemonRunner:
     def _on_signal(self, _signum: int, _frame: object) -> None:
         self.shutdown()
 
-    def _on_change(self, _path: Path, content: bytes) -> None:
+    def _on_change(self, path: Path, content: bytes) -> None:
         account = _codex_account_from_auth_json(content)
         if account is None:
             # Refuse to push under a wildcard — it would silently overwrite
@@ -284,12 +285,24 @@ class DaemonRunner:
             )
             self._maybe_degrade()
             return
+        # Capture the SOURCE's timestamp (file mtime), not now(). This is the
+        # value the server compares to the stored ``updated_at`` for
+        # stale-write rejection. Using now() on every retry would make old
+        # content look freshly-written and defeat the ordering check.
+        # Re-reading mtime via stat() is stable across retries because the
+        # file itself doesn't change between them.
+        source_mtime: datetime | None
+        try:
+            source_mtime = datetime.fromtimestamp(path.stat().st_mtime, tz=UTC)
+        except OSError:
+            source_mtime = None
         try:
             self._pusher.push_source(
                 "codex",
                 content=content,
                 provider="codex",
                 account_identifier=account,
+                source_mtime=source_mtime,
             )
         except Exception:
             log.exception("push_source failed")

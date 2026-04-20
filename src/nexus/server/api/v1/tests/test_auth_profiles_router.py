@@ -283,36 +283,74 @@ def test_push_rejects_revoked_machine(
     assert r.json()["detail"] == "machine_revoked"
 
 
-def test_push_stale_write_logged_but_accepted(
+def test_push_stale_write_rejected_with_409(
     client: TestClient,
     setup_tenant: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
     signer: JwtSigner,
     caplog: pytest.LogCaptureFixture,
+    pg_engine: Engine,
 ) -> None:
+    """Stale writes are rejected with 409 and leave the row untouched.
+
+    Regression: previously this handler only warned and then still wrote,
+    so a late retry from daemon A could silently overwrite a fresher write
+    from daemon B — real token regressions under concurrent laptops. Now
+    the write is refused and the central row stays at the fresher state.
+    """
     t, p, m = setup_tenant
     jwt_str = signer.sign(
         DaemonClaims(tenant_id=t, principal_id=p, machine_id=m),
         ttl=timedelta(hours=1),
     )
     # First write establishes the row (and its updated_at = NOW()).
+    first = _push_payload()
     r1 = client.post(
         "/v1/auth-profiles",
-        json=_push_payload(),
+        json=first,
         headers={"Authorization": f"Bearer {jwt_str}"},
     )
     assert r1.status_code == 200, r1.text
-    # Second write with DIFFERENT hash but EARLIER client_updated_at → conflict log.
-    payload = _push_payload()
-    payload["source_file_hash"] = "cafef00d" * 8
-    payload["client_updated_at"] = "1970-01-01T00:00:00+00:00"
+
+    # Second write with DIFFERENT hash but EARLIER client_updated_at → 409.
+    stale = _push_payload()
+    stale["source_file_hash"] = "cafef00d" * 8
+    stale["client_updated_at"] = "1970-01-01T00:00:00+00:00"
     with caplog.at_level(logging.WARNING):
         r2 = client.post(
             "/v1/auth-profiles",
-            json=payload,
+            json=stale,
             headers={"Authorization": f"Bearer {jwt_str}"},
         )
-    assert r2.status_code == 200, r2.text
-    assert any("push_conflict_stale_write" in rec.getMessage() for rec in caplog.records)
+    assert r2.status_code == 409, r2.text
+    assert r2.json()["detail"] == "stale_write_rejected"
+    assert any("push_conflict_stale_write_rejected" in rec.getMessage() for rec in caplog.records)
+
+    # Central row hash must still equal the ORIGINAL (fresher) write.
+    with pg_engine.begin() as conn:
+        conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(t)})
+        row = conn.execute(
+            text(
+                "SELECT source_file_hash FROM auth_profiles "
+                "WHERE tenant_id = :t AND principal_id = :p AND id = :id"
+            ),
+            {"t": str(t), "p": str(p), "id": stale["id"]},
+        ).fetchone()
+    assert row is not None
+    assert row.source_file_hash == first["source_file_hash"]
+
+    # Rejected stale attempt was audited (marked with '@rejected-stale' suffix).
+    with pg_engine.begin() as conn:
+        conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(t)})
+        n = conn.execute(
+            text(
+                "SELECT COUNT(*) FROM auth_profile_writes "
+                "WHERE tenant_id = :t AND principal_id = :p "
+                "AND auth_profile_id = :apid "
+                "AND source_file_hash LIKE '%@rejected-stale'"
+            ),
+            {"t": str(t), "p": str(p), "apid": stale["id"]},
+        ).scalar()
+    assert n == 1
 
 
 def test_push_rejects_naive_client_updated_at(

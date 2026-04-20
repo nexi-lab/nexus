@@ -19,9 +19,66 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
+import jwt as pyjwt
 
 from nexus.bricks.auth.daemon.jwt_cache import JwtCache, make_jwt_cache
 from nexus.bricks.auth.daemon.keystore import load_private_key, sign_body
+
+
+def _verify_refreshed_jwt(
+    token: str,
+    *,
+    server_pubkey_pem: bytes,
+    expected_tenant_id: uuid.UUID,
+    expected_machine_id: uuid.UUID,
+) -> None:
+    """Verify a freshly-minted refresh JWT before caching it.
+
+    Without this check ``refresh_now`` would accept any 200 response whose
+    body has a string ``jwt`` field — a misrouted response (wrong server,
+    wrong machine, wrong tenant) or an active MITM downgrading an attacker's
+    token into the daemon cache would go undetected.
+
+    Enforces:
+        - ES256 signature valid under the pinned ``server_pubkey_pem``
+          (established at enroll-time and written to
+          ``server_pubkey_path`` by the operator).
+        - ``exp`` in the future (pyjwt does this automatically).
+        - ``tenant_id`` and ``machine_id`` claims match what this daemon
+          was enrolled as. A token for a different machine/tenant is
+          rejected even if its signature is valid — prevents server bugs
+          or misrouting from swapping identities.
+
+    Raises:
+        JwtClientError: on any verification failure. The caller keeps the
+        previously-cached token.
+    """
+    try:
+        decoded = pyjwt.decode(
+            token,
+            server_pubkey_pem,
+            algorithms=["ES256"],
+            # The server's JwtSigner stamps ``aud: "nexus-daemon"`` on every
+            # token it mints for this subsystem. Pinning the audience here
+            # prevents a token issued for a different subsystem (e.g. a
+            # token-exchange route) from being accepted as a daemon JWT.
+            audience="nexus-daemon",
+            options={"require": ["exp"]},
+        )
+    except pyjwt.ExpiredSignatureError as exc:
+        raise JwtClientError("refresh jwt expired before caching") from exc
+    except pyjwt.InvalidTokenError as exc:
+        raise JwtClientError(f"refresh jwt signature/claim invalid: {exc}") from exc
+    tenant_claim = decoded.get("tenant_id")
+    machine_claim = decoded.get("machine_id")
+    if tenant_claim != str(expected_tenant_id):
+        raise JwtClientError(
+            f"refresh jwt tenant_id mismatch: expected={expected_tenant_id} got={tenant_claim!r}"
+        )
+    if machine_claim != str(expected_machine_id):
+        raise JwtClientError(
+            f"refresh jwt machine_id mismatch: expected={expected_machine_id} got={machine_claim!r}"
+        )
 
 
 class JwtClientError(Exception):
@@ -179,6 +236,22 @@ class JwtClient:
             raise JwtClientError(f"refresh response malformed: {exc}") from exc
         if not isinstance(jwt_str, str):
             raise JwtClientError("refresh response 'jwt' is not a string")
+
+        # Load the pinned server pubkey once (cached across calls via disk).
+        # If it's missing we cannot verify — fail closed rather than caching
+        # an unverified token.
+        try:
+            server_pubkey_pem = self.server_pubkey_path.read_bytes()
+        except OSError as exc:
+            raise JwtClientError(
+                f"cannot read pinned server pubkey at {self.server_pubkey_path}: {exc}"
+            ) from exc
+        _verify_refreshed_jwt(
+            jwt_str,
+            server_pubkey_pem=server_pubkey_pem,
+            expected_tenant_id=self.tenant_id,
+            expected_machine_id=self.machine_id,
+        )
 
         self.store_token(jwt_str)
         return jwt_str

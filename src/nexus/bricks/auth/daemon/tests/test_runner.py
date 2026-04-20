@@ -187,12 +187,15 @@ def test_startup_drain_replays_watch_target_when_pending(tmp_path: Path) -> None
         status_path=tmp_path / "status.json",
     )
     runner.drain_startup()
-    pusher.push_source.assert_called_once_with(
-        "codex",
-        content=auth_file.read_bytes(),
-        provider="codex",
-        account_identifier="alice@example.com",
-    )
+    pusher.push_source.assert_called_once()
+    kwargs = pusher.push_source.call_args.kwargs
+    assert pusher.push_source.call_args.args == ("codex",)
+    assert kwargs["content"] == auth_file.read_bytes()
+    assert kwargs["provider"] == "codex"
+    assert kwargs["account_identifier"] == "alice@example.com"
+    # source_mtime is threaded through so retries don't regenerate the
+    # timestamp on every send attempt.
+    assert kwargs.get("source_mtime") is not None
 
 
 def test_startup_drain_noop_when_queue_empty(tmp_path: Path) -> None:
@@ -290,6 +293,40 @@ def test_subprocess_source_unavailable_skips_push(tmp_path: Path) -> None:
     runner.shutdown()
     t.join(timeout=5.0)
     pusher.push_source.assert_not_called()
+
+
+def test_on_change_passes_source_mtime(tmp_path: Path) -> None:
+    """Watcher callback stamps the push with the source file's mtime.
+
+    Regression: retries previously generated a fresh now() on every send,
+    defeating the server's stale-write ordering. Using the file mtime keeps
+    the claimed timestamp stable across retries of the same source revision.
+    """
+    import json as _json
+    import os as _os
+    from datetime import UTC, datetime
+
+    auth = tmp_path / "auth.json"
+    token = _jwt_with_claims({"email": "alice@example.com"})
+    auth.write_text(_json.dumps({"tokens": {"id_token": token}}))
+    # Backdate mtime to a known sentinel so we can compare exactly.
+    sentinel_epoch = 1_700_000_000.0  # 2023-11-14 UTC
+    _os.utime(auth, (sentinel_epoch, sentinel_epoch))
+
+    queue = PushQueue(tmp_path / "queue.db")
+    pusher = MagicMock()
+    runner = DaemonRunner(
+        source_watch_target=auth,
+        queue=queue,
+        pusher=pusher,
+        jwt_refresh_every=9999,
+        status_path=tmp_path / "status.json",
+    )
+
+    runner._on_change(auth, auth.read_bytes())
+    pusher.push_source.assert_called_once()
+    kwargs = pusher.push_source.call_args.kwargs
+    assert kwargs.get("source_mtime") == datetime.fromtimestamp(sentinel_epoch, tz=UTC)
 
 
 def test_sigterm_stops_cleanly(tmp_path: Path) -> None:

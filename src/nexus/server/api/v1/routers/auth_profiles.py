@@ -220,7 +220,13 @@ def make_auth_profiles_router(*, engine: Engine, signer: JwtSigner) -> APIRouter
                     detail="machine_revoked",
                 )
 
-            # Advisory conflict detection — log only, still write.
+            # Stale-write rejection with optimistic concurrency. If the
+            # client's timestamp is OLDER than the stored row AND the payload
+            # represents different content, the write is a late retry of an
+            # already-superseded version — accepting it would regress state
+            # for every other consumer. Reject with 409 and log to the same
+            # "push_conflict_stale_write" channel the advisory warning used
+            # so existing dashboards still fire.
             cur = conn.execute(
                 text(
                     "SELECT source_file_hash, updated_at FROM auth_profiles "
@@ -240,13 +246,52 @@ def make_auth_profiles_router(*, engine: Engine, signer: JwtSigner) -> APIRouter
                 and req.client_updated_at < cur.updated_at
             ):
                 log.warning(
-                    "push_conflict_stale_write tenant=%s principal=%s id=%s "
-                    "server_hash=%s incoming_hash=%s",
+                    "push_conflict_stale_write_rejected tenant=%s principal=%s id=%s "
+                    "server_hash=%s incoming_hash=%s "
+                    "server_updated_at=%s incoming_client_updated_at=%s",
                     claims.tenant_id,
                     claims.principal_id,
                     req.id,
                     cur.source_file_hash,
                     req.source_file_hash,
+                    cur.updated_at.isoformat(),
+                    req.client_updated_at.isoformat(),
+                )
+                # Audit the rejected stale attempt BEFORE raising so there's a
+                # permanent record of the conflict. The outer ``engine.begin()``
+                # rolls back the whole tx on raise, so we need the insert to
+                # land on a separate connection. A short autonomous tx keeps
+                # this from blocking the main path on lock contention.
+                try:
+                    with engine.begin() as audit_conn:
+                        audit_conn.execute(
+                            text("SET LOCAL app.current_tenant = :t"),
+                            {"t": str(claims.tenant_id)},
+                        )
+                        audit_conn.execute(
+                            text(
+                                "INSERT INTO auth_profile_writes "
+                                "(id, tenant_id, principal_id, auth_profile_id, "
+                                " machine_id, daemon_version, source_file_hash) "
+                                "VALUES (:id, :tid, :pid, :apid, :mid, :ver, "
+                                "        :hash || '@rejected-stale')"
+                            ),
+                            {
+                                "id": str(uuid.uuid4()),
+                                "tid": str(claims.tenant_id),
+                                "pid": str(claims.principal_id),
+                                "apid": req.id,
+                                "mid": str(claims.machine_id),
+                                "ver": req.daemon_version,
+                                "hash": req.source_file_hash,
+                            },
+                        )
+                except Exception:
+                    # Audit failure must not mask the 409 — log and proceed.
+                    log.exception("stale-write audit insert failed")
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="stale_write_rejected",
                 )
 
             # Profile upsert (atomic with audit insert below). daemon_version

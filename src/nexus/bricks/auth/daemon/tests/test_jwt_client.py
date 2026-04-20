@@ -148,3 +148,78 @@ def test_seconds_until_expiry_tracks_ttl(client_setup: ClientSetup) -> None:
     assert remaining is not None
     # Should be close to 1 hour, well above 1 minute.
     assert 60.0 < remaining < 3700.0
+
+
+@respx.mock
+def test_refresh_rejects_token_signed_by_wrong_key(client_setup: ClientSetup) -> None:
+    """A JWT signed by a DIFFERENT key must be rejected, cache must stay.
+
+    Regression: previously ``refresh_now`` cached any 200-body ``jwt``
+    string verbatim, so a misrouted / MITMed response could replace the
+    daemon's trusted token. We pin the server pubkey at enroll-time and
+    verify signature before caching.
+    """
+    client, _signer, t, p, m = client_setup
+    # Take a note of the current cached token; it must NOT change on failure.
+    prior = client.current()
+
+    # Mint a JWT with a DIFFERENT signing key (simulates a malicious
+    # response claiming to be the server).
+    attacker_k = ec.generate_private_key(ec.SECP256R1())
+    attacker_pem = attacker_k.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    attacker_signer = JwtSigner.from_pem(attacker_pem, issuer="https://test.nexus")
+    forged = attacker_signer.sign(
+        DaemonClaims(tenant_id=t, principal_id=p, machine_id=m),
+        ttl=timedelta(hours=1),
+    )
+    respx.post("https://test.nexus/v1/daemon/refresh").mock(
+        return_value=httpx.Response(200, json={"jwt": forged})
+    )
+
+    with pytest.raises(JwtClientError, match="signature|invalid"):
+        client.refresh_now()
+    assert client.current() == prior
+
+
+@respx.mock
+def test_refresh_rejects_token_for_wrong_machine(
+    client_setup: ClientSetup,
+) -> None:
+    """Valid signature but mismatched machine_id claim must also reject."""
+    client, signer, t, p, _m = client_setup
+    prior = client.current()
+    wrong_machine = uuid.uuid4()  # different from the one the client was built with
+    forged_for_other_machine = signer.sign(
+        DaemonClaims(tenant_id=t, principal_id=p, machine_id=wrong_machine),
+        ttl=timedelta(hours=1),
+    )
+    respx.post("https://test.nexus/v1/daemon/refresh").mock(
+        return_value=httpx.Response(200, json={"jwt": forged_for_other_machine})
+    )
+    with pytest.raises(JwtClientError, match="machine_id mismatch"):
+        client.refresh_now()
+    assert client.current() == prior
+
+
+@respx.mock
+def test_refresh_rejects_token_for_wrong_tenant(
+    client_setup: ClientSetup,
+) -> None:
+    """A valid token for a DIFFERENT tenant must also reject."""
+    client, signer, _t, p, m = client_setup
+    prior = client.current()
+    wrong_tenant = uuid.uuid4()
+    forged_for_other_tenant = signer.sign(
+        DaemonClaims(tenant_id=wrong_tenant, principal_id=p, machine_id=m),
+        ttl=timedelta(hours=1),
+    )
+    respx.post("https://test.nexus/v1/daemon/refresh").mock(
+        return_value=httpx.Response(200, json={"jwt": forged_for_other_tenant})
+    )
+    with pytest.raises(JwtClientError, match="tenant_id mismatch"):
+        client.refresh_now()
+    assert client.current() == prior

@@ -797,13 +797,42 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
 
     /// Forward a proposal to the current leader via gRPC.
     ///
-    /// Returns `NotLeader` if no forwarding context or no known leader.
+    /// Returns `NotLeader` if no forwarding context, or if no leader is
+    /// known after a bounded wait (R20.11 — transparent initial-election
+    /// handling, mirrors etcd's pattern).
+    ///
+    /// When ``leader_id()`` returns ``None`` we are almost always in the
+    /// 100-300ms initial-election window right after ``create_zone`` —
+    /// waiting here is cheaper than returning an error and making the
+    /// caller (``propose_adjust_counter``, federation RPC handlers) run
+    /// its own backoff loop. The wait also handles leader-lease gaps
+    /// during failover.
+    ///
+    /// Bound: 5 s. One raft election completes in <300 ms (our
+    /// ``election_tick=10 * tick_interval=10ms = 100ms`` + jitter); 5s
+    /// covers >10 election rounds which is enough to conclude the
+    /// cluster is actually down rather than still electing.
     async fn forward_to_leader(&self, command: Command) -> Result<CommandResult> {
         #[cfg(all(feature = "grpc", has_protos))]
         if let Some(ctx) = &self.forward_ctx {
-            let leader_id = self
-                .leader_id()
-                .ok_or(RaftError::NotLeader { leader_hint: None })?;
+            let leader_id = match self.leader_id() {
+                Some(id) => id,
+                None => {
+                    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+                    let mut found: Option<u64> = None;
+                    while tokio::time::Instant::now() < deadline {
+                        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                        if let Some(id) = self.leader_id() {
+                            found = Some(id);
+                            break;
+                        }
+                    }
+                    match found {
+                        Some(id) => id,
+                        None => return Err(RaftError::NotLeader { leader_hint: None }),
+                    }
+                }
+            };
 
             let leader_addr = {
                 let peers = ctx.peers.read().unwrap();

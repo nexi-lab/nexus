@@ -89,8 +89,17 @@ from nexus.contracts.exceptions import (
     NexusPermissionError,
 )
 
+
 # All mutable state (data, metastore, record store, etc.) lives under this directory.
-NEXUS_STATE_DIR = _os.path.expanduser("~/.nexus")
+# Resolved lazily so HOME changes after import (e.g., per-agent isolation) take effect.
+# Override via NEXUS_STATE_DIR env var. Access via ``nexus.NEXUS_STATE_DIR`` (routed
+# through ``__getattr__``) or call ``_resolve_state_dir()`` directly inside this module.
+def _resolve_state_dir() -> str:
+    override = _os.environ.get("NEXUS_STATE_DIR")
+    if override:
+        return override
+    return _os.path.expanduser("~/.nexus")
+
 
 logger = logging.getLogger(__name__)
 
@@ -153,6 +162,11 @@ def __getattr__(name: str) -> Any:
     # Special case: connect function (defined below but needs lazy deps)
     if name == "connect":
         return connect
+
+    # Dynamic state dir — resolved on every access so HOME / NEXUS_STATE_DIR
+    # changes after import are honored (per-agent HOME isolation, Koi hosts).
+    if name == "NEXUS_STATE_DIR":
+        return _resolve_state_dir()
 
     raise AttributeError(f"module 'nexus' has no attribute {name!r}")
 
@@ -436,11 +450,13 @@ async def connect(
                 project_id=cfg.gcs_project_id,
                 credentials_path=cfg.gcs_credentials_path,
             )
-            nexus_root = NEXUS_STATE_DIR
+            nexus_root = _resolve_state_dir()
             data_dir = str(Path(nexus_root) / "data")
         else:
             data_dir = (
-                cfg.data_dir if cfg.data_dir is not None else str(Path(NEXUS_STATE_DIR) / "data")
+                cfg.data_dir
+                if cfg.data_dir is not None
+                else str(Path(_resolve_state_dir()) / "data")
             )
             # nexus_root hosts sibling state directories (metastore, record_store).
             # When data_dir is explicitly provided (e.g. --data-dir /some/path), USE

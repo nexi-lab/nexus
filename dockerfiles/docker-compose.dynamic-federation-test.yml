@@ -185,6 +185,25 @@ services:
       start_period: 10s
 
   # ==========================================================================
+  # SSE mock sidecar — OpenAI + Anthropic streaming responses for the
+  # Rust OpenAIBackend / AnthropicBackend E2E tests.
+  # ==========================================================================
+  sse-mock:
+    build:
+      context: sse-mock
+      dockerfile: Dockerfile
+    image: nexus-sse-mock:latest
+    container_name: nexus-dyn-sse-mock
+    hostname: sse-mock
+    networks:
+      - dyn-nexus-network
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import urllib.request, sys; sys.exit(0 if urllib.request.urlopen(\"http://localhost:8080/healthz\").status == 200 else 1)' || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ==========================================================================
   # E2E Test Runner — dynamic federation tests
   # ==========================================================================
   test:
@@ -198,6 +217,8 @@ services:
       nexus-1:
         condition: service_healthy
       nexus-2:
+        condition: service_healthy
+      sse-mock:
         condition: service_healthy
     entrypoint: []
     volumes:

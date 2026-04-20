@@ -1718,6 +1718,65 @@ impl PyZoneManager {
         self.registry.list_zones()
     }
 
+    /// Find which zone (if any) stores metadata for ``path``. Iterates
+    /// the live zone registry and asks each state machine in turn; returns
+    /// ``(zone_id, metadata_bytes)`` for the first hit, or ``None``.
+    ///
+    /// Used by federation.join() — ``local_path`` may live in any zone
+    /// reachable through DT_MOUNT chains, so a root-only lookup would
+    /// spuriously reject nested-mount scenarios. The iteration runs
+    /// entirely in Rust (no Python-side loop over each zone).
+    pub fn lookup_path(&self, py: Python<'_>, path: &str) -> PyResult<Option<(String, Vec<u8>)>> {
+        let registry = self.registry.clone();
+        let runtime = self.runtime.handle().clone();
+        let path = path.to_string();
+        py.detach(|| {
+            runtime.block_on(async move {
+                for zone_id in registry.list_zones() {
+                    let Some(node) = registry.get_node(&zone_id) else {
+                        continue;
+                    };
+                    let found = node.with_state_machine(|sm| sm.get_metadata(&path)).await;
+                    match found {
+                        Ok(Some(bytes)) => return Ok(Some((zone_id, bytes))),
+                        Ok(None) => continue,
+                        Err(e) => {
+                            return Err(PyRuntimeError::new_err(format!(
+                                "lookup_path failed on zone '{}': {}",
+                                zone_id, e
+                            )));
+                        }
+                    }
+                }
+                Ok(None)
+            })
+        })
+    }
+
+    /// Return the peer roster for a zone as a list of ``(id, hostname,
+    /// endpoint, is_witness)`` tuples. Empty list if the zone is unknown.
+    ///
+    /// Witness classification is derived from hostname convention —
+    /// peers whose hostname starts with ``witness`` are counted as
+    /// witnesses. The witness binary (``rust/raft/src/bin/witness.rs``)
+    /// runs on hosts with that naming pattern in our docker compose and
+    /// the witness kubernetes manifests; this matches what
+    /// ``federation_cluster_info`` needs without requiring a separate
+    /// RPC handshake to tag peer roles (follow-up when we add a richer
+    /// ClusterConfig proto).
+    pub fn zone_peers(&self, zone_id: &str) -> Vec<(u64, String, String, bool)> {
+        match self.registry.get_peers(zone_id) {
+            None => Vec::new(),
+            Some(peers) => peers
+                .into_values()
+                .map(|p| {
+                    let is_witness = p.hostname.to_ascii_lowercase().starts_with("witness");
+                    (p.id, p.hostname.clone(), p.endpoint.clone(), is_witness)
+                })
+                .collect(),
+        }
+    }
+
     /// Get this node's ID.
     #[getter]
     pub fn node_id(&self) -> u64 {
@@ -2154,6 +2213,17 @@ impl PyZoneHandle {
     /// Get the current leader ID (None if unknown).
     pub fn leader_id(&self) -> Option<u64> {
         self.node.leader_id()
+    }
+
+    /// Get the current raft log commit index (atomic read, no I/O).
+    /// Monotonically non-decreasing; grows with each committed entry.
+    pub fn commit_index(&self) -> u64 {
+        self.node.commit_index()
+    }
+
+    /// Get the current raft term (atomic read, no I/O).
+    pub fn term(&self) -> u64 {
+        self.node.term()
     }
 
     // F2 C8 (Option A): federation metastore bridging now lives on the

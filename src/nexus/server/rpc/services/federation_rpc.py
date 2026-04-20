@@ -34,12 +34,34 @@ class FederationRPCService:
     def federation_cluster_info(self, zone_id: str) -> dict[str, Any]:
         store = self._zone_manager.get_store(zone_id)
         is_leader = store.is_leader() if store is not None else False
+        commit_index = store.commit_index() if store is not None else 0
+
+        # Peer topology: voters vs witnesses. PyZoneManager's Rust registry
+        # is authoritative — it tracks membership + witness role per peer.
+        voter_count = 0
+        witness_count = 0
+        _py_mgr = getattr(self._zone_manager, "_py_mgr", None)
+        if _py_mgr is not None and hasattr(_py_mgr, "zone_peers"):
+            try:
+                # PyZoneManager.zone_peers returns tuples:
+                # (node_id, hostname, endpoint, is_witness).
+                for _id, _host, _endpoint, is_witness in _py_mgr.zone_peers(zone_id):
+                    if is_witness:
+                        witness_count += 1
+                    else:
+                        voter_count += 1
+            except Exception:  # zone not known to registry — leave zeros
+                pass
+
         return {
             "zone_id": zone_id,
             "node_id": self._zone_manager.node_id,
             "links_count": self._zone_manager.get_links_count(zone_id),
             "has_store": store is not None,
             "is_leader": is_leader,
+            "commit_index": commit_index,
+            "voter_count": voter_count,
+            "witness_count": witness_count,
         }
 
     @rpc_expose(admin_only=True, description="Create a new Raft zone")

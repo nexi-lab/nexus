@@ -146,6 +146,16 @@ class RaftMetadataStore(MetastoreABC):
             return False
         return self._engine.is_leader()
 
+    def commit_index(self) -> int:
+        """Return the zone's current raft log commit index.
+
+        ``0`` until raft has applied at least one Ready pass — covers both
+        fresh zones and engines that don't expose the atomic counter.
+        """
+        if self._engine is None or not hasattr(self._engine, "commit_index"):
+            return 0
+        return int(self._engine.commit_index())
+
     # =========================================================================
     # Batch Engine Helpers — DRY fallback for engines without batch methods.
     # ZoneHandle may not expose batch_set_metadata / batch_delete_metadata;

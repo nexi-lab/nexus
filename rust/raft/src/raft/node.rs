@@ -308,6 +308,9 @@ pub struct ZoneConsensus<S: StateMachine + 'static> {
     cached_leader_id: Arc<AtomicU64>,
     /// Cached term, updated by driver after each advance().
     cached_term: Arc<AtomicU64>,
+    /// Cached raft log commit index, updated by driver after each advance().
+    /// Monotonically non-decreasing — grows with every committed entry.
+    cached_commit_index: Arc<AtomicU64>,
     /// EC replication WAL (None for witness nodes that don't store data).
     replication_log: Option<Arc<ReplicationLog>>,
     /// Transport context for forwarding proposals to the leader.
@@ -332,6 +335,7 @@ impl<S: StateMachine + 'static> Clone for ZoneConsensus<S> {
             cached_role: self.cached_role.clone(),
             cached_leader_id: self.cached_leader_id.clone(),
             cached_term: self.cached_term.clone(),
+            cached_commit_index: self.cached_commit_index.clone(),
             replication_log: self.replication_log.clone(),
             #[cfg(all(feature = "grpc", has_protos))]
             forward_ctx: self.forward_ctx.clone(),
@@ -392,6 +396,8 @@ pub struct ZoneConsensusDriver<S: StateMachine + 'static> {
     cached_leader_id: Arc<AtomicU64>,
     /// Cached term (shared with handle for reads).
     cached_term: Arc<AtomicU64>,
+    /// Cached commit index (shared with handle for reads).
+    cached_commit_index: Arc<AtomicU64>,
     /// Shared peer map — updated when ConfChange adds/removes nodes.
     /// Set by `set_peer_map()` before the transport loop starts.
     #[cfg(all(feature = "grpc", has_protos))]
@@ -523,6 +529,7 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
         let cached_role = Arc::new(AtomicU8::new(ROLE_FOLLOWER));
         let cached_leader_id = Arc::new(AtomicU64::new(0));
         let cached_term = Arc::new(AtomicU64::new(0));
+        let cached_commit_index = Arc::new(AtomicU64::new(0));
 
         // Bounded channel with backpressure
         let (msg_tx, msg_rx) = mpsc::channel(DRIVER_CHANNEL_CAPACITY);
@@ -534,6 +541,7 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
             cached_role: cached_role.clone(),
             cached_leader_id: cached_leader_id.clone(),
             cached_term: cached_term.clone(),
+            cached_commit_index: cached_commit_index.clone(),
             replication_log,
             #[cfg(all(feature = "grpc", has_protos))]
             forward_ctx: None,
@@ -555,6 +563,7 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
             cached_role,
             cached_leader_id,
             cached_term,
+            cached_commit_index,
             #[cfg(all(feature = "grpc", has_protos))]
             peer_map: None,
             replication_log: handle.replication_log.clone(),
@@ -622,6 +631,13 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
     /// Get the current term (atomic read, no channel).
     pub fn term(&self) -> u64 {
         self.cached_term.load(Ordering::Relaxed)
+    }
+
+    /// Get the current raft log commit index (atomic read, no channel).
+    /// Monotonically non-decreasing; grows each time a log entry commits.
+    /// Zero until the driver has executed at least one advance().
+    pub fn commit_index(&self) -> u64 {
+        self.cached_commit_index.load(Ordering::Relaxed)
     }
 
     /// Clone the state-machine's apply-side invalidation slot so the
@@ -1558,6 +1574,8 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
             .store(self.raw_node.raft.leader_id, Ordering::Relaxed);
         self.cached_term
             .store(self.raw_node.raft.term, Ordering::Relaxed);
+        self.cached_commit_index
+            .store(self.raw_node.raft.raft_log.committed, Ordering::Relaxed);
     }
 }
 

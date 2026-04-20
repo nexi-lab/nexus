@@ -1319,7 +1319,12 @@ def _cli_exec(container_name: str, argv: list[str], timeout: int = 30) -> tuple[
         pytest.skip(f"Container {container_name} not found: {exc}")
 
     cmd = ["nexus", *argv]
-    env_overrides = {"NEXUS_API_KEY": E2E_ADMIN_API_KEY}
+    # CLI connects to the local RPC server over the container's loopback —
+    # matches what a sysadmin SSH'd into a node would do.
+    env_overrides = {
+        "NEXUS_API_KEY": E2E_ADMIN_API_KEY,
+        "NEXUS_URL": "http://localhost:2026",
+    }
     result = container.exec_run(
         cmd,
         environment=env_overrides,
@@ -2315,11 +2320,13 @@ class TestFullFailoverRecovery:
             rn = _grpc_call(
                 grpc2,
                 "sys_rename",
-                {"src": f"{base}/doc1.txt", "dst": f"{base}/doc1-renamed.txt"},
+                {
+                    "old_path": f"{base}/doc1.txt",
+                    "new_path": f"{base}/doc1-renamed.txt",
+                },
                 api_key=api_key,
             )
-            if "error" in rn:
-                pytest.skip(f"sys_rename not available: {rn}")
+            assert "error" not in rn, f"sys_rename failed: {rn}"
             _grpc_call(
                 grpc2,
                 "write",

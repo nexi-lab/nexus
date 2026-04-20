@@ -356,18 +356,28 @@ class NexusFederation:
             RuntimeError: If zone discovery or join fails.
         """
         root_zone = self._mgr.root_zone_id or ROOT_ZONE_ID
-
-        # Fail fast on the local mount point before touching the peer —
-        # we don't want to join a Raft group we can't subsequently mount.
         root_store = self._mgr.get_store(root_zone)
         if root_store is None:
             raise RuntimeError(f"Root zone '{root_zone}' not found locally")
-        mount_point = root_store.get(local_path)
-        if mount_point is None:
+
+        # Fail fast on the local mount point before touching the peer —
+        # we don't want to join a Raft group we can't subsequently mount.
+        # local_path may live in any zone (root, or a nested child zone
+        # reached via a DT_MOUNT), so we ask the Rust ZoneManager to
+        # walk its live registry. Pure Rust iteration — no Python loop
+        # over per-zone stores.
+        _py_mgr = getattr(self._mgr, "_py_mgr", None)
+        hit = _py_mgr.lookup_path(local_path) if _py_mgr is not None else None
+        if hit is None:
             raise ValueError(
-                f"Mount point '{local_path}' does not exist in root zone. "
-                f"Create the directory first (mkdir -p)."
+                f"Mount point '{local_path}' does not exist. Create the directory first (mkdir -p)."
             )
+        _found_zone, _meta_bytes = hit
+        # Decode to inspect is_mount — reuse the shared protobuf/JSON
+        # codec used by every other Python metastore reader.
+        from nexus.storage.raft_metadata_store import _deserialize_metadata
+
+        mount_point = _deserialize_metadata(_meta_bytes)
         if mount_point.is_mount:
             raise ValueError(f"Mount point '{local_path}' is already a DT_MOUNT. Unmount first.")
 

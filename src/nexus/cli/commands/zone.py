@@ -28,10 +28,13 @@ from nexus.cli.dry_run import add_dry_run_option, dry_run_preview, render_dry_ru
 from nexus.cli.output import OutputOptions, add_output_options, render_error, render_output
 from nexus.cli.timing import CommandTiming
 from nexus.cli.utils import (
+    REMOTE_API_KEY_OPTION,
+    REMOTE_URL_OPTION,
     add_backend_options,
     console,
     get_filesystem,
     handle_error,
+    rpc_call,
 )
 from nexus.contracts.constants import DEFAULT_GRPC_BIND_ADDR
 
@@ -267,11 +270,15 @@ def join_zone_cmd(
     show_default=True,
     help="gRPC bind address",
 )
+@REMOTE_URL_OPTION
+@REMOTE_API_KEY_OPTION
 @add_output_options
 def list_zones_cmd(
     hostname: str | None,
     data_dir: str,
     bind: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
     output_opts: OutputOptions,
 ) -> None:
     """List all local zones on this node.
@@ -289,10 +296,20 @@ def list_zones_cmd(
     timing = CommandTiming()
 
     try:
-        with timing.phase("server"):
-            mgr = _get_zone_manager(hostname, data_dir, bind)
-            zones = mgr.list_zones()
-            mgr.shutdown()
+        # When NEXUS_URL / --remote-url is set we dispatch through the running
+        # server — this avoids fighting for the redb lock when a node is live.
+        # Kernel-state is owned by the server process; CLI is a thin user-space
+        # tool that reads via RPC. Only fall back to direct ZoneManager open
+        # for maintenance scenarios (no server running).
+        if remote_url:
+            with timing.phase("server"):
+                rpc_data = rpc_call(remote_url, remote_api_key, "federation_list_zones")
+            zones = [z.get("zone_id", "") for z in rpc_data.get("zones", [])]
+        else:
+            with timing.phase("server"):
+                mgr = _get_zone_manager(hostname, data_dir, bind)
+                zones = mgr.list_zones()
+                mgr.shutdown()
 
         data = [{"zone_id": z} for z in sorted(zones)] if zones else []
 
@@ -572,8 +589,10 @@ def export_zone(
                 console.print("Use ISO format: 2025-01-01T00:00:00")
                 sys.exit(1)
 
-        # Get filesystem
-        nx: Any = get_filesystem(remote_url, remote_api_key)
+        # Get filesystem (get_filesystem is async — CLI needs a sync bridge)
+        import asyncio as _asyncio
+
+        nx: Any = _asyncio.run(get_filesystem(remote_url, remote_api_key))
 
         # Configure export options
         output_path = Path(output)
@@ -712,8 +731,10 @@ def import_zone(
             old, new = remap.split("=", 1)
             path_prefix_remap[old] = new
 
-        # Get filesystem
-        nx: Any = get_filesystem(remote_url, remote_api_key)
+        # Get filesystem (get_filesystem is async — CLI needs a sync bridge)
+        import asyncio as _asyncio
+
+        nx: Any = _asyncio.run(get_filesystem(remote_url, remote_api_key))
 
         # Configure import options
         conflict_mode = ConflictMode(conflict)

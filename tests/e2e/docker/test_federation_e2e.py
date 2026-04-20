@@ -2500,6 +2500,31 @@ class TestFullFailoverRecovery:
                     f"{(logs or b'').decode(errors='replace')}"
                 )
 
+        # Protocol-level catchup gate: after _wait_healthy (HTTP ready) node-1's
+        # raft driver may not yet have re-received append-entries from node-2
+        # (transport reconnect backoff can delay the first MsgAppend post-restart
+        # by several seconds on slow Docker hosts). Use the commit_index exposed
+        # on cluster_info (R20.x) to wait for actual log replication, not wall-
+        # clock time — this is the protocol signal the failover test needs.
+        leader_info = _grpc_call(
+            grpc2, "federation_cluster_info", {"zone_id": "corp-eng"}, api_key=api_key
+        )
+        leader_ci = leader_info.get("result", {}).get("commit_index", 0)
+        catchup_deadline = time.time() + 60
+        while time.time() < catchup_deadline:
+            follower_info = _grpc_call(
+                grpc1, "federation_cluster_info", {"zone_id": "corp-eng"}, api_key=api_key
+            )
+            follower_ci = follower_info.get("result", {}).get("commit_index", 0)
+            if follower_ci >= leader_ci:
+                break
+            time.sleep(0.5)
+        else:
+            pytest.fail(
+                f"Node-1 did not catch up to corp-eng commit_index {leader_ci} within 60s "
+                f"(last follower_ci={follower_ci}). Raft transport may have stalled on reconnect."
+            )
+
         deadline = time.time() + 30
         s = r2 = r3 = {}
         while time.time() < deadline:

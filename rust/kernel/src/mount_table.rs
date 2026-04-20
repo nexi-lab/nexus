@@ -161,6 +161,12 @@ impl MountTable {
     /// isn't wiped when the backend mount registers afterwards.
     pub fn add(&self, mount_point: &str, zone_id: &str, mut entry: MountEntry) {
         let canonical = canonicalize_mount_path(mount_point, zone_id);
+        tracing::info!(
+            mount_point = %mount_point,
+            zone_id = %zone_id,
+            canonical = %canonical,
+            "R20.18.5 MountTable::add"
+        );
         if entry.metastore.is_none() {
             if let Some(existing) = self.entries.get(&canonical) {
                 if let Some(ms) = existing.metastore.as_ref() {

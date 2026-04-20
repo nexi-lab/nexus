@@ -109,6 +109,9 @@ def pg_engine() -> Generator[Engine, None, None]:
                     "NOCREATEDB NOCREATEROLE NOINHERIT"
                 )
             )
+        # PG 15+ removed default USAGE on public for PUBLIC; grant explicitly
+        # so nexus_test_nonsuper can resolve relations in the public schema.
+        conn.execute(text("GRANT USAGE ON SCHEMA public TO nexus_test_nonsuper"))
         conn.execute(
             text(
                 "GRANT SELECT, INSERT, UPDATE, DELETE "

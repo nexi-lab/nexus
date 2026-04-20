@@ -2206,11 +2206,11 @@ async def _async_main() -> None:
                 app.add_middleware(MCPAuditLogMiddleware)
                 # Outermost: rate-limit short-circuits before any work.
                 install_rate_limit(app)
-        except (ImportError, Exception) as e:
+        except Exception as e:
             import logging
 
             logger_ = logging.getLogger(__name__)
-            logger_.warning(f"Failed to add MCP HTTP middleware: {e}")
+            logger_.warning("Failed to add MCP HTTP middleware: %s", e)
 
     # Run with selected transport
     if transport == "stdio":

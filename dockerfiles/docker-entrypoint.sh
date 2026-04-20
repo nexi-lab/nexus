@@ -256,6 +256,28 @@ _aws_profile_cannot_resolve() {
     exit 1
 }
 
+# Normalize AWS_SHARED_CREDENTIALS_FILE / AWS_CONFIG_FILE before validation.
+# nexus-stack.yml passes these through from the operator's shell. That means:
+#   * Empty strings arrive when the operator didn't export anything. An empty
+#     value must NOT be treated as "use cwd" (Path('').exists() is True but
+#     points at ``.``, which is misleading); unset it so botocore and our
+#     check both fall back to defaults.
+#   * Host absolute paths (``/Users/alice/.aws/config``) are passed through
+#     verbatim but those paths usually don't exist inside the container.
+#     Rather than fail-closing a legitimate bind-mount-based setup, unset
+#     the env so both botocore and this guard use the container-visible
+#     ``${HOME}/.aws/`` defaults.
+for _aws_env in AWS_SHARED_CREDENTIALS_FILE AWS_CONFIG_FILE; do
+    _val="${!_aws_env:-}"
+    if [ -z "$_val" ]; then
+        unset "$_aws_env"
+    elif [ ! -f "$_val" ]; then
+        echo "${YELLOW:-}${_aws_env}=${_val} points to a file that is not visible inside the container; unsetting so the default ${HOME}/.aws/ location can take over.${NC:-}"
+        unset "$_aws_env"
+    fi
+done
+unset _aws_env _val
+
 if [ -n "${AWS_PROFILE+x}" ]; then
     if [ -z "${AWS_PROFILE:-}" ]; then
         # Compose's inherent behavior with ``AWS_PROFILE: ${AWS_PROFILE:-}``
@@ -264,10 +286,9 @@ if [ -n "${AWS_PROFILE+x}" ]; then
         # silently.
         unset AWS_PROFILE
     else
-        # Honor botocore's own env overrides before falling back to ~/.aws.
-        # Operators who point AWS_SHARED_CREDENTIALS_FILE or AWS_CONFIG_FILE
-        # at a non-default location must see their explicit profile
-        # checked there first.
+        # Prefer botocore's own env overrides (now guaranteed to be unset
+        # unless the path is reachable inside the container, see the
+        # normalization loop above) before falling back to ~/.aws.
         _aws_cred_file="${AWS_SHARED_CREDENTIALS_FILE:-${HOME}/.aws/credentials}"
         _aws_conf_file="${AWS_CONFIG_FILE:-${HOME}/.aws/config}"
         if [ ! -s "$_aws_cred_file" ] && [ ! -s "$_aws_conf_file" ]; then

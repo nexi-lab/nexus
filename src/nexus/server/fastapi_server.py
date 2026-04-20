@@ -980,59 +980,89 @@ def _register_routes(app: FastAPI) -> None:
                 )
                 from nexus.server.api.v1.routers.daemon import make_daemon_router
                 from nexus.server.api.v1.routers.jwks import make_jwks_router
-
-                _v1_engine = create_engine(_database_url, future=True)
-                _v1_signer = JwtSigner.from_path(
-                    _jwt_signing_key,
-                    issuer=os.environ.get("NEXUS_JWT_ISSUER", "https://nexus.local"),
-                )
-                app.include_router(
-                    make_daemon_router(
-                        engine=_v1_engine,
-                        signer=_v1_signer,
-                        enroll_secret=_enroll_token_secret.encode(),
-                    )
-                )
-                app.include_router(make_auth_profiles_router(engine=_v1_engine, signer=_v1_signer))
-                app.include_router(make_jwks_router(signer=_v1_signer))
-                logger.info("v1 daemon + auth-profiles + jwks routes registered")
-
-                # Dev-loop convenience: mint tenant/principal/enroll-token in
-                # one call. Requires admin-bypass explicitly on AND a
-                # non-empty NEXUS_ADMIN_BOOTSTRAP_TOKEN so a spoofable header
-                # alone cannot mint credentials. Production deployments
-                # (bypass=false or token unset) never expose this endpoint.
-                _admin_bootstrap_token = os.environ.get("NEXUS_ADMIN_BOOTSTRAP_TOKEN", "")
-                if (
-                    os.environ.get("NEXUS_ALLOW_ADMIN_BYPASS", "").lower() in ("1", "true", "yes")
-                    and _admin_bootstrap_token
-                ):
-                    from nexus.server.api.v1.routers.admin_bootstrap import (
-                        make_admin_bootstrap_router,
-                    )
-
-                    app.include_router(
-                        make_admin_bootstrap_router(
-                            engine=_v1_engine,
-                            enroll_secret=_enroll_token_secret.encode(),
-                            admin_user=os.environ.get("NEXUS_ADMIN_USER", "admin"),
-                            bootstrap_token=_admin_bootstrap_token.encode(),
-                        )
-                    )
-                    logger.info("v1 admin daemon-bootstrap route registered (dev-only)")
-                elif os.environ.get("NEXUS_ALLOW_ADMIN_BYPASS", "").lower() in (
-                    "1",
-                    "true",
-                    "yes",
-                ):
-                    logger.warning(
-                        "v1 admin daemon-bootstrap route NOT registered: "
-                        "NEXUS_ALLOW_ADMIN_BYPASS=true but "
-                        "NEXUS_ADMIN_BOOTSTRAP_TOKEN is unset — set it to a "
-                        "random 32+ byte secret to enable dev bootstrap."
-                    )
             except ImportError as e:
                 logger.warning(f"Failed to import v1 daemon routers: {e}")
+            else:
+                # Signer init can fail with OSError (key path unreadable), ValueError
+                # (PEM malformed), or cryptography-specific errors. A miswired daemon
+                # key file is an operator mistake in a strictly optional subsystem; it
+                # must degrade gracefully to "daemon routes disabled" rather than take
+                # the whole API server down during startup.
+                try:
+                    _v1_engine = create_engine(_database_url, future=True)
+                    _v1_signer = JwtSigner.from_path(
+                        _jwt_signing_key,
+                        issuer=os.environ.get("NEXUS_JWT_ISSUER", "https://nexus.local"),
+                    )
+                except (OSError, ValueError) as e:
+                    logger.warning(
+                        "v1 daemon routes disabled: failed to load JWT signing key "
+                        "from %s (%s: %s). Fix NEXUS_JWT_SIGNING_KEY or leave it "
+                        "unset to run without the daemon subsystem.",
+                        _jwt_signing_key,
+                        type(e).__name__,
+                        e,
+                    )
+                    _v1_signer = None
+                except Exception as e:  # noqa: BLE001
+                    # Cryptography raises subclasses of Exception that are not
+                    # strictly OSError/ValueError (e.g. UnsupportedAlgorithm).
+                    # Fail closed on daemon routes rather than abort startup.
+                    logger.warning(
+                        "v1 daemon routes disabled: unexpected %s while loading signing key: %s",
+                        type(e).__name__,
+                        e,
+                    )
+                    _v1_signer = None
+                if _v1_signer is not None:
+                    app.include_router(
+                        make_daemon_router(
+                            engine=_v1_engine,
+                            signer=_v1_signer,
+                            enroll_secret=_enroll_token_secret.encode(),
+                        )
+                    )
+                    app.include_router(
+                        make_auth_profiles_router(engine=_v1_engine, signer=_v1_signer)
+                    )
+                    app.include_router(make_jwks_router(signer=_v1_signer))
+                    logger.info("v1 daemon + auth-profiles + jwks routes registered")
+
+                    # Dev-loop convenience: mint tenant/principal/enroll-token in
+                    # one call. Requires admin-bypass explicitly on AND a
+                    # non-empty NEXUS_ADMIN_BOOTSTRAP_TOKEN so a spoofable header
+                    # alone cannot mint credentials. Production deployments
+                    # (bypass=false or token unset) never expose this endpoint.
+                    _admin_bootstrap_token = os.environ.get("NEXUS_ADMIN_BOOTSTRAP_TOKEN", "")
+                    if (
+                        os.environ.get("NEXUS_ALLOW_ADMIN_BYPASS", "").lower()
+                        in ("1", "true", "yes")
+                        and _admin_bootstrap_token
+                    ):
+                        from nexus.server.api.v1.routers.admin_bootstrap import (
+                            make_admin_bootstrap_router,
+                        )
+
+                        app.include_router(
+                            make_admin_bootstrap_router(
+                                engine=_v1_engine,
+                                enroll_secret=_enroll_token_secret.encode(),
+                                admin_user=os.environ.get("NEXUS_ADMIN_USER", "admin"),
+                                bootstrap_token=_admin_bootstrap_token.encode(),
+                            )
+                        )
+                        logger.info("v1 admin daemon-bootstrap route registered (dev-only)")
+                    elif os.environ.get("NEXUS_ALLOW_ADMIN_BYPASS", "").lower() in (
+                        "1",
+                        "true",
+                        "yes",
+                    ):
+                        logger.warning(
+                            "v1 admin daemon-bootstrap route NOT registered: "
+                            "NEXUS_ALLOW_ADMIN_BYPASS=true but "
+                            "NEXUS_ADMIN_BOOTSTRAP_TOKEN is unset — set it to a "
+                            "random 32+ byte secret to enable dev bootstrap."
+                        )
     else:
         logger.warning(
             "v1 daemon routes disabled: NEXUS_JWT_SIGNING_KEY and/or "

@@ -7,6 +7,7 @@ delegated to the watcher, the pusher, and an optional JWT refresh callable.
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import os
@@ -26,8 +27,66 @@ from nexus.bricks.auth.daemon.watcher import SourceWatcher
 log = logging.getLogger(__name__)
 
 
+def _codex_account_from_auth_json(content: bytes) -> str | None:
+    """Extract an account identifier from a codex auth.json blob.
+
+    Codex stores its credentials as::
+
+        {
+          "tokens": {
+            "id_token": "<JWT with `email` claim>",
+            ...
+          },
+          ...
+        }
+
+    We parse the id_token's payload (signature NOT verified — we trust the
+    local file, we only want to label the account) and return the first
+    available identity claim: ``email`` → ``preferred_username`` → ``sub``.
+    Returns ``None`` on any parse failure so the caller can skip rather
+    than push under a shared wildcard. Never raises.
+    """
+    try:
+        doc = json.loads(content.decode("utf-8"))
+    except Exception:
+        return None
+    tokens = doc.get("tokens") if isinstance(doc, dict) else None
+    id_token = tokens.get("id_token") if isinstance(tokens, dict) else None
+    if not isinstance(id_token, str):
+        # Some codex setups only have an API key with no OIDC id_token.
+        # Fall back to an explicit account_id / email at the top level.
+        for key in ("account_id", "email", "preferred_username", "sub"):
+            v = doc.get(key) if isinstance(doc, dict) else None
+            if isinstance(v, str) and v:
+                return v
+        return None
+    parts = id_token.split(".")
+    if len(parts) < 2:
+        return None
+    payload_b64 = parts[1]
+    pad = "=" * (-len(payload_b64) % 4)
+    try:
+        payload = json.loads(base64.urlsafe_b64decode(payload_b64 + pad).decode("utf-8"))
+    except Exception:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    for key in ("email", "preferred_username", "sub"):
+        v = payload.get(key)
+        if isinstance(v, str) and v:
+            return v
+    return None
+
+
 class _Pusher(Protocol):
-    def push_source(self, source: str, *, content: bytes, provider: str | None = None) -> None: ...
+    def push_source(
+        self,
+        source: str,
+        *,
+        content: bytes,
+        provider: str | None = None,
+        account_identifier: str,
+    ) -> None: ...
 
 
 @dataclass
@@ -101,14 +160,40 @@ class DaemonRunner:
         )
 
     def drain_startup(self) -> None:
-        """MVP: just log the count of pending rows.
+        """Replay known sources so pending queue rows don't orphan on restart.
 
-        The next watcher fire will trigger ``push_source`` which already knows
-        how to flush dedupe state; we intentionally don't re-push from here to
-        avoid doubling up on the watcher's debounce flow.
+        The queue stores ``(profile_id, payload_hash)`` only — without the
+        envelope payload we cannot re-submit the exact failed push. Instead we
+        re-read the current state of every source we know about:
+
+        * watched file (``source_watch_target``): read and run through the
+          normal ``_on_change`` path. If content matches a pending hash the
+          push succeeds and the queue row clears; if content has changed the
+          new push supersedes the stale pending entry at the server level
+          (last-write-wins on ``updated_at``).
+        * subprocess sources: ``_fetch_all_subprocess_sources`` is also
+          invoked by the poll loop immediately after startup, so we rely on
+          that for gh/gcloud/gws replay.
+
+        This closes the "pending-on-restart-with-no-file-change" gap without
+        requiring payload-durable queue storage.
         """
         pending = self._queue.list_pending()
         log.info("startup drain: %d pending rows", len(pending))
+        watch_path = self._source_watch_target
+        if not watch_path.exists():
+            log.debug("startup replay: watch target %s does not exist", watch_path)
+            return
+        try:
+            content = watch_path.read_bytes()
+        except OSError:
+            log.warning("startup replay: failed to read %s", watch_path)
+            return
+        if not content:
+            return
+        # Route through the normal _on_change path so account-extraction +
+        # degrade-on-failure semantics stay consistent with live operation.
+        self._on_change(watch_path, content)
 
     def run(self) -> None:
         """Block until ``shutdown()`` fires (or a signal triggers it)."""
@@ -174,8 +259,23 @@ class DaemonRunner:
         self.shutdown()
 
     def _on_change(self, _path: Path, content: bytes) -> None:
+        account = _codex_account_from_auth_json(content)
+        if account is None:
+            # Refuse to push under a wildcard — it would silently overwrite
+            # other accounts that share "codex/unknown" as their profile_id.
+            log.warning(
+                "codex push skipped: could not extract account_identifier "
+                "from auth.json (tokens.id_token missing or undecodable)"
+            )
+            self._maybe_degrade()
+            return
         try:
-            self._pusher.push_source("codex", content=content, provider="codex")
+            self._pusher.push_source(
+                "codex",
+                content=content,
+                provider="codex",
+                account_identifier=account,
+            )
         except Exception:
             log.exception("push_source failed")
             self._maybe_degrade()
@@ -247,8 +347,23 @@ class DaemonRunner:
             content = src.fetch()
             if content is None:
                 continue
+            account = src.fetch_account_label()
+            if not account:
+                # Without a stable account label, multiple enrolled accounts
+                # would collide on the same profile_id. Skip and warn instead
+                # of merging them under a shared wildcard.
+                log.warning(
+                    "subprocess push skipped: adapter %s has no account label "
+                    "(account_cmd missing or failed)",
+                    src.name,
+                )
+                continue
             try:
-                self._pusher.push_source(src.name, content=content)
+                self._pusher.push_source(
+                    src.name,
+                    content=content,
+                    account_identifier=account,
+                )
             except Exception:
                 log.exception("subprocess push failed name=%s", src.name)
                 self._maybe_degrade()

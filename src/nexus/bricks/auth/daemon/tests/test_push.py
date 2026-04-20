@@ -66,7 +66,9 @@ def test_push_happy_path_clears_queue(tmp_path: Path) -> None:
     respx.post("https://test.nexus/v1/auth-profiles").mock(
         return_value=httpx.Response(200, json={"status": "ok"})
     )
-    pusher.push_source("codex", content=b'{"token":"abc"}', provider="codex")
+    pusher.push_source(
+        "codex", content=b'{"token":"abc"}', provider="codex", account_identifier="u@example.com"
+    )
     assert queue.list_pending() == []
 
 
@@ -76,8 +78,12 @@ def test_hash_dedupe_skips_second_push(tmp_path: Path) -> None:
     route = respx.post("https://test.nexus/v1/auth-profiles").mock(
         return_value=httpx.Response(200, json={"status": "ok"})
     )
-    pusher.push_source("codex", content=b'{"token":"abc"}', provider="codex")
-    pusher.push_source("codex", content=b'{"token":"abc"}', provider="codex")
+    pusher.push_source(
+        "codex", content=b'{"token":"abc"}', provider="codex", account_identifier="u@example.com"
+    )
+    pusher.push_source(
+        "codex", content=b'{"token":"abc"}', provider="codex", account_identifier="u@example.com"
+    )
     assert route.call_count == 1
 
 
@@ -88,7 +94,12 @@ def test_push_network_fail_leaves_queue_dirty(tmp_path: Path) -> None:
         return_value=httpx.Response(503, text="temporary")
     )
     with pytest.raises(PushError):
-        pusher.push_source("codex", content=b'{"token":"abc"}', provider="codex")
+        pusher.push_source(
+            "codex",
+            content=b'{"token":"abc"}',
+            provider="codex",
+            account_identifier="u@example.com",
+        )
     pending = queue.list_pending()
     assert len(pending) == 1
     assert pending[0].attempts >= 1
@@ -101,7 +112,12 @@ def test_push_401_raises_auth_stale(tmp_path: Path) -> None:
         return_value=httpx.Response(401, text="unauthorized")
     )
     with pytest.raises(PushError, match="auth_stale"):
-        pusher.push_source("codex", content=b'{"token":"abc"}', provider="codex")
+        pusher.push_source(
+            "codex",
+            content=b'{"token":"abc"}',
+            provider="codex",
+            account_identifier="u@example.com",
+        )
 
 
 @respx.mock
@@ -115,7 +131,9 @@ def test_push_401_refresh_and_retry_succeeds(tmp_path: Path) -> None:
             httpx.Response(200, json={"status": "ok"}),
         ]
     )
-    pusher.push_source("codex", content=b'{"token":"abc"}', provider="codex")
+    pusher.push_source(
+        "codex", content=b'{"token":"abc"}', provider="codex", account_identifier="u@example.com"
+    )
     # Both the initial stale JWT AND the fresh JWT must have been sent.
     assert route.call_count == 2
     assert refresh_jwt.call_count == 1
@@ -131,7 +149,12 @@ def test_push_401_refresh_then_still_401_records_stale(tmp_path: Path) -> None:
         return_value=httpx.Response(401, text="auth_stale"),
     )
     with pytest.raises(PushError, match="auth_stale"):
-        pusher.push_source("codex", content=b'{"token":"abc"}', provider="codex")
+        pusher.push_source(
+            "codex",
+            content=b'{"token":"abc"}',
+            provider="codex",
+            account_identifier="u@example.com",
+        )
     assert refresh_jwt.call_count == 1
 
 
@@ -144,5 +167,28 @@ def test_push_401_refresh_raises_falls_through(tmp_path: Path) -> None:
         return_value=httpx.Response(401, text="auth_stale"),
     )
     with pytest.raises(PushError, match="auth_stale"):
-        pusher.push_source("codex", content=b'{"token":"abc"}', provider="codex")
+        pusher.push_source(
+            "codex",
+            content=b'{"token":"abc"}',
+            provider="codex",
+            account_identifier="u@example.com",
+        )
     assert refresh_jwt.call_count == 1
+
+
+def test_push_rejects_empty_account_identifier(tmp_path: Path) -> None:
+    """Refuse to push when caller can't name the account — no more 'unknown'."""
+    pusher, _q, _jp = _make_pusher(tmp_path)
+    with pytest.raises(PushError, match="account_identifier required"):
+        pusher.push_source(
+            "codex", content=b'{"token":"abc"}', provider="codex", account_identifier=""
+        )
+
+
+def test_push_rejects_unknown_sentinel(tmp_path: Path) -> None:
+    """Explicit 'unknown' is also rejected so old callers fail loudly."""
+    pusher, _q, _jp = _make_pusher(tmp_path)
+    with pytest.raises(PushError, match="account_identifier required"):
+        pusher.push_source(
+            "codex", content=b'{"token":"abc"}', provider="codex", account_identifier="unknown"
+        )

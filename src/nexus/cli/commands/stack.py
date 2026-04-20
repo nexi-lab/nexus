@@ -995,16 +995,32 @@ def up(
 
     if with_daemon:
         assert bootstrap_token is not None, "with_daemon implies bootstrap_token"
-        _run_daemon_bootstrap(conn_env, bootstrap_token=bootstrap_token)
+        ok = _run_daemon_bootstrap(conn_env, bootstrap_token=bootstrap_token)
+        if not ok:
+            # Stack is up but the --with-daemon promise wasn't delivered.
+            # Exit non-zero so CI / automation don't treat this as success.
+            console.print(
+                "[nexus.error]--with-daemon:[/nexus.error] daemon enrollment failed. "
+                "The stack is still running — rerun `nexus daemon bootstrap "
+                "--server <url>` after fixing the issue, or `nexus down` to stop."
+            )
+            raise SystemExit(1)
 
 
-def _run_daemon_bootstrap(conn_env: dict[str, str], *, bootstrap_token: str) -> None:
+def _run_daemon_bootstrap(conn_env: dict[str, str], *, bootstrap_token: str) -> bool:
     """After `nexus up --with-daemon`, enroll this laptop into the stack it started.
 
     Hits ``/v1/admin/daemon-bootstrap`` which mints a tenant + machine principal
     + enroll token, then invokes ``nexus daemon bootstrap`` in-process to run
-    the normal join flow. No-op on any failure — the server is already up,
-    daemon enrollment is best-effort.
+    the normal join flow.
+
+    Returns
+    -------
+    bool
+        ``True`` if bootstrap + join both succeeded, ``False`` on any failure.
+        The caller is responsible for signalling non-zero exit to the shell —
+        this function never raises so an unexpected daemon error cannot abort
+        a healthy-stack startup that has already done its work.
     """
     import platform
 
@@ -1017,7 +1033,7 @@ def _run_daemon_bootstrap(conn_env: dict[str, str], *, bootstrap_token: str) -> 
             "[nexus.warning]--with-daemon: no server URL in connection env; "
             "skipping bootstrap.[/nexus.warning]"
         )
-        return
+        return False
 
     console.print()
     console.print(f"[bold]--with-daemon:[/bold] enrolling this laptop into {server_url}...")
@@ -1038,22 +1054,23 @@ def _run_daemon_bootstrap(conn_env: dict[str, str], *, bootstrap_token: str) -> 
             f"run `nexus daemon bootstrap --server {server_url}` manually."
             "[/nexus.warning]"
         )
-        return
+        return False
 
     if resp.status_code == 404:
         console.print(
             "[nexus.warning]--with-daemon: admin-bootstrap endpoint unavailable "
             "(server needs NEXUS_ALLOW_ADMIN_BYPASS=true AND "
-            "NEXUS_ADMIN_BOOTSTRAP_TOKEN set)."
+            "NEXUS_ADMIN_BOOTSTRAP_TOKEN set — also check that "
+            "NEXUS_JWT_SIGNING_KEY and NEXUS_ENROLL_TOKEN_SECRET are set)."
             "[/nexus.warning]"
         )
-        return
+        return False
     if resp.status_code != 200:
         console.print(
             f"[nexus.warning]--with-daemon: bootstrap returned "
             f"{resp.status_code} {resp.text}[/nexus.warning]"
         )
-        return
+        return False
 
     body = resp.json()
     from click.testing import CliRunner
@@ -1063,6 +1080,8 @@ def _run_daemon_bootstrap(conn_env: dict[str, str], *, bootstrap_token: str) -> 
     # Never let a daemon-join exception abort `nexus up`; services are already
     # healthy at this point and the operator can retry `nexus daemon bootstrap`
     # manually. catch_exceptions=True captures tracebacks into result.output.
+    # Failure is signalled via the return value so the caller can decide
+    # whether to emit a non-zero process exit.
     try:
         result = CliRunner().invoke(
             daemon_group,
@@ -1081,18 +1100,19 @@ def _run_daemon_bootstrap(conn_env: dict[str, str], *, bootstrap_token: str) -> 
             "stack is up — rerun `nexus daemon bootstrap --server <url>` to retry."
             "[/nexus.warning]"
         )
-        return
+        return False
     if result.exit_code != 0:
         console.print(
             f"[nexus.warning]--with-daemon: daemon join failed (exit={result.exit_code}): "
             f"{result.output}[/nexus.warning]"
         )
-        return
+        return False
     console.print(
         f"[nexus.success]✓[/nexus.success] daemon enrolled: "
         f"tenant_id={body['tenant_id']} principal_id={body['principal_id']}"
     )
     console.print("  Run `nexus daemon run` to start the push loop.")
+    return True
 
 
 @click.command()

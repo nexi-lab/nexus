@@ -59,6 +59,13 @@ class PushRequest(BaseModel):
     envelope: EnvelopePayload
     source_file_hash: str
     sync_ttl_seconds: int = 300
+    daemon_version: str | None = Field(
+        default=None,
+        description=(
+            "Daemon build version. Persisted on every write for rollback / "
+            "forensics attribution when a bad daemon emits corrupt state."
+        ),
+    )
     updated_at_override: datetime | None = Field(
         default=None,
         description="Test-only: override updated_at for conflict-detection tests.",
@@ -202,14 +209,14 @@ def make_auth_profiles_router(*, engine: Engine, signer: JwtSigner) -> APIRouter
                     req.source_file_hash,
                 )
 
-            # Profile upsert (atomic with audit insert below).
+            # Profile upsert (atomic with audit insert below). daemon_version
+            # comes from the push payload so central state carries the exact
+            # daemon build that produced each envelope.
             store.upsert_with_envelope(
                 profile,
                 envelope=envelope,
                 source_file_hash=req.source_file_hash,
-                # daemon_version is tracked on daemon_machines.daemon_version_last_seen
-                # via the refresh handshake — MVP stores NULL in auth_profiles.
-                daemon_version=None,
+                daemon_version=req.daemon_version,
                 machine_id=claims.machine_id,
                 conn=conn,
             )
@@ -228,7 +235,7 @@ def make_auth_profiles_router(*, engine: Engine, signer: JwtSigner) -> APIRouter
                     "pid": str(claims.principal_id),
                     "apid": req.id,
                     "mid": str(claims.machine_id),
-                    "ver": None,
+                    "ver": req.daemon_version,
                     "hash": req.source_file_hash,
                 },
             )

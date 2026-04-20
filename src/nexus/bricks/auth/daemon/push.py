@@ -89,9 +89,22 @@ class Pusher:
         *,
         content: bytes,
         provider: str | None = None,
-        account_identifier: str = "unknown",
+        account_identifier: str,
     ) -> None:
-        """Push one source's raw content; skip if hash unchanged."""
+        """Push one source's raw content; skip if hash unchanged.
+
+        ``account_identifier`` is now REQUIRED (no more ``"unknown"`` default).
+        Multi-account setups send multiple credentials for the same provider,
+        and defaulting all of them to the same identifier caused silent
+        overwrite of earlier accounts by later ones. Callers that cannot
+        determine the identifier must skip the push rather than emit a
+        wildcard — see ``DaemonRunner._on_change`` for the parse-and-skip
+        pattern used for the codex source.
+        """
+        if not account_identifier or account_identifier == "unknown":
+            raise PushError(
+                "account_identifier required (refuse to collapse accounts to 'unknown')"
+            )
         new_hash = hashlib.sha256(content).hexdigest()
         provider_name = provider or self._source_to_provider(source)
         profile_id = f"{provider_name}/{account_identifier}"
@@ -121,6 +134,7 @@ class Pusher:
                 "kek_version": envelope.kek_version,
             },
             "source_file_hash": new_hash,
+            "daemon_version": self._daemon_version,
         }
 
         jwt_str = self._jwt_provider()

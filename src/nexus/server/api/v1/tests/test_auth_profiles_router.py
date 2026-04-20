@@ -101,6 +101,7 @@ def _push_payload(provider: str = "codex") -> dict:
             "kek_version": 1,
         },
         "source_file_hash": "deadbeef" * 8,
+        "daemon_version": "0.9.31-test",
     }
 
 
@@ -134,6 +135,7 @@ def test_push_happy_path(
         ).fetchone()
     assert row is not None
     assert row.source_file_hash == "deadbeef" * 8
+    assert row.daemon_version == "0.9.31-test"
     assert row.machine_id == m
     assert bytes(row.ciphertext) == b"\x01" * 32
 
@@ -170,7 +172,7 @@ def test_push_writes_audit_row(
         conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(t)})
         rows = conn.execute(
             text(
-                "SELECT source_file_hash, machine_id, auth_profile_id "
+                "SELECT source_file_hash, daemon_version, machine_id, auth_profile_id "
                 "FROM auth_profile_writes "
                 "WHERE tenant_id = :t AND principal_id = :p "
                 "ORDER BY written_at ASC"
@@ -180,6 +182,8 @@ def test_push_writes_audit_row(
     assert len(rows) == 2
     assert rows[0].source_file_hash == "deadbeef" * 8
     assert rows[1].source_file_hash == "feedface" * 8
+    # daemon_version is stamped on every audit row for rollback forensics.
+    assert all(r.daemon_version == "0.9.31-test" for r in rows)
     assert all(r.machine_id == m and r.auth_profile_id == "codex/user@example.com" for r in rows)
 
 

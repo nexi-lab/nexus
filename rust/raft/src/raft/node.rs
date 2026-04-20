@@ -311,6 +311,14 @@ pub struct ZoneConsensus<S: StateMachine + 'static> {
     /// Cached raft log commit index, updated by driver after each advance().
     /// Monotonically non-decreasing — grows with every committed entry.
     cached_commit_index: Arc<AtomicU64>,
+    /// Shared clone of the state machine's ``last_applied`` atomic — not
+    /// a second cache, the state machine IS the SSOT for applied index.
+    /// ``commit_index`` reflects ``raft_log.committed`` which raft-rs
+    /// can advance via ``step()`` BEFORE the next ``advance()`` has
+    /// applied the entries, so callers that need "state is visible"
+    /// (sys_stat/list/follower-catchup gates) must consult
+    /// ``applied_index``, not ``commit_index``.
+    applied_index_atom: Arc<AtomicU64>,
     /// EC replication WAL (None for witness nodes that don't store data).
     replication_log: Option<Arc<ReplicationLog>>,
     /// Transport context for forwarding proposals to the leader.
@@ -336,6 +344,7 @@ impl<S: StateMachine + 'static> Clone for ZoneConsensus<S> {
             cached_leader_id: self.cached_leader_id.clone(),
             cached_term: self.cached_term.clone(),
             cached_commit_index: self.cached_commit_index.clone(),
+            applied_index_atom: self.applied_index_atom.clone(),
             replication_log: self.replication_log.clone(),
             #[cfg(all(feature = "grpc", has_protos))]
             forward_ctx: self.forward_ctx.clone(),
@@ -522,6 +531,15 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
         // async callers can touch it, but ``ZoneConsensus::invalidate_cb_slot``
         // is called from sync contexts (kernel DLC::mount).
         let invalidate_cb_slot = state_machine.invalidate_cb_slot();
+        // The state machine is the SSOT for applied index — borrow its
+        // atomic so sync readers can observe it without acquiring the
+        // async RwLock the SM lives behind. Grabbed before the SM moves
+        // into the Arc<RwLock<..>> wrapper. State machines without an
+        // atomic (witness, test harnesses) fall back to an empty Arc
+        // that stays at 0 — those callers don't gate on applied_index.
+        let applied_index_atom = state_machine
+            .last_applied_shared()
+            .unwrap_or_else(|| Arc::new(AtomicU64::new(0)));
 
         // Shared state
         let state_machine = Arc::new(RwLock::new(state_machine));
@@ -542,6 +560,7 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
             cached_leader_id: cached_leader_id.clone(),
             cached_term: cached_term.clone(),
             cached_commit_index: cached_commit_index.clone(),
+            applied_index_atom,
             replication_log,
             #[cfg(all(feature = "grpc", has_protos))]
             forward_ctx: None,
@@ -636,8 +655,31 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
     /// Get the current raft log commit index (atomic read, no channel).
     /// Monotonically non-decreasing; grows each time a log entry commits.
     /// Zero until the driver has executed at least one advance().
+    ///
+    /// **Do not gate reads on this value.** It reflects
+    /// ``raft_log.committed`` which raft-rs can advance via ``step()``
+    /// ahead of the next ``advance()``/``apply_entries`` call — meaning
+    /// there is a short window where ``commit_index > applied_index``
+    /// and the state machine does not yet reflect the latest entry.
+    /// Consult ``applied_index()`` when the caller needs "the state
+    /// machine has actually applied X" (sys_stat, list, linearizable
+    /// replication checks).
     pub fn commit_index(&self) -> u64 {
         self.cached_commit_index.load(Ordering::Relaxed)
+    }
+
+    /// Get the highest raft log index that has actually been applied to
+    /// the state machine (atomic read, no channel).
+    ///
+    /// Reads directly from the state machine's own ``last_applied``
+    /// atomic — state machine is SSOT, no shadow cache. Strictly
+    /// ``<= commit_index()`` and the correct "state is visible" signal:
+    /// a reader that sees ``applied_index >= N`` is guaranteed to also
+    /// see every state-machine effect of log entries with ``index <= N``
+    /// (the write path uses ``Release`` ordering on the store, paired
+    /// with ``Acquire`` here).
+    pub fn applied_index(&self) -> u64 {
+        self.applied_index_atom.load(Ordering::Acquire)
     }
 
     /// Clone the state-machine's apply-side invalidation slot so the
@@ -1567,6 +1609,12 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
     }
 
     /// Update the atomic cached status values from the current raw_node state.
+    ///
+    /// ``applied_index`` intentionally does NOT live here — the state
+    /// machine publishes its own ``last_applied`` atomic via
+    /// ``FullStateMachine::last_applied`` (Release-stored inside
+    /// ``apply``), and ``ZoneConsensus::applied_index_atom`` borrows
+    /// that Arc. Keeping the SSOT on the state machine avoids shadowing.
     fn update_cached_status(&self) {
         let role: NodeRole = self.raw_node.raft.state.into();
         self.cached_role.store(role.to_u8(), Ordering::Relaxed);

@@ -1817,6 +1817,7 @@ impl PyZoneManager {
             dict.set_item("leader_id", 0u64)?;
             dict.set_item("term", 0u64)?;
             dict.set_item("commit_index", 0u64)?;
+            dict.set_item("applied_index", 0u64)?;
             dict.set_item("voter_count", 0usize)?;
             dict.set_item("witness_count", 0usize)?;
             return Ok(dict);
@@ -1827,6 +1828,7 @@ impl PyZoneManager {
         dict.set_item("leader_id", node.leader_id().unwrap_or(0))?;
         dict.set_item("term", node.term())?;
         dict.set_item("commit_index", node.commit_index())?;
+        dict.set_item("applied_index", node.applied_index())?;
 
         // Peer topology, inline (same hostname-convention split as zone_peers).
         let (mut voter_count, mut witness_count) = (0usize, 0usize);
@@ -2291,6 +2293,15 @@ impl PyZoneHandle {
     /// Get the current raft term (atomic read, no I/O).
     pub fn term(&self) -> u64 {
         self.node.term()
+    }
+
+    /// Get the highest raft log index actually applied to the state
+    /// machine (atomic read, no I/O). Strictly ``<= commit_index()`` —
+    /// this is the correct signal for "state is visible to sys_stat /
+    /// list / queries". See ``ZoneConsensus::applied_index`` docs for
+    /// why ``commit_index`` alone is not sufficient.
+    pub fn applied_index(&self) -> u64 {
+        self.node.applied_index()
     }
 
     // F2 C8 (Option A): federation metastore bridging now lives on the

@@ -5,6 +5,7 @@
 //! (NOT file data - that stays in CAS/S3).
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -260,6 +261,21 @@ pub trait StateMachine: Send + Sync {
     ///
     /// Used to determine which log entries need to be applied after restart.
     fn last_applied_index(&self) -> u64;
+
+    /// Return a shared atomic counter reflecting ``last_applied_index``.
+    ///
+    /// Implementors that need to expose applied progress to sync readers
+    /// outside the state-machine's async RwLock return an ``Arc`` clone
+    /// of the atomic they own internally. Default is ``None`` — callers
+    /// that need the signal must then fall back to ``last_applied_index``
+    /// under the async lock.
+    ///
+    /// Only ``FullStateMachine`` implements this; witness / in-memory
+    /// test state machines return ``None`` because nothing outside
+    /// raft reads their applied progress.
+    fn last_applied_shared(&self) -> Option<Arc<AtomicU64>> {
+        None
+    }
 
     /// Optional apply-side cache-invalidation slot.
     ///
@@ -522,7 +538,13 @@ pub struct FullStateMachine {
     /// `AdjustCounter` would double-count otherwise. Lock commands
     /// are idempotent under full replay (acquire/release cycles
     /// cancel out) so they ignore this guard and always apply.
-    last_applied: u64,
+    ///
+    /// Held as ``Arc<AtomicU64>`` so the ZoneConsensus handle can
+    /// publish its current value to sync Python readers (gate tests,
+    /// monitoring) without acquiring the state-machine's async
+    /// RwLock. The state machine is the SSOT; the Arc is how we
+    /// surface it, not a shadow copy.
+    last_applied: Arc<AtomicU64>,
     /// DT_MOUNT apply-side event channel (R16.2).
     ///
     /// Populated by ``ZoneRaftRegistry::setup_zone`` via
@@ -599,13 +621,21 @@ impl FullStateMachine {
             metadata,
             stream_entries,
             advisory,
-            last_applied,
+            last_applied: Arc::new(AtomicU64::new(last_applied)),
             #[cfg(feature = "grpc")]
             mount_event_tx: None,
             #[cfg(feature = "grpc")]
             zone_id_for_events: String::new(),
             invalidate_cb: Arc::new(parking_lot::RwLock::new(None)),
         })
+    }
+
+    /// Return a clone of the shared ``last_applied`` atomic so a caller
+    /// outside the state-machine's RwLock can publish "state machine has
+    /// this index" as an atomic read. The state machine remains the
+    /// SSOT; this is how the value is surfaced, not a shadow.
+    pub fn last_applied_shared_arc(&self) -> Arc<AtomicU64> {
+        Arc::clone(&self.last_applied)
     }
 
     /// Attach a DT_MOUNT apply-event sender + owning zone id (R16.2).
@@ -1394,8 +1424,9 @@ impl StateMachine for FullStateMachine {
             // persist it for lock-only entries because the idempotency
             // check doesn't apply to them and because their persistent
             // record lives in the raft log + snapshot, not redb.
-            if index > self.last_applied {
-                self.last_applied = index;
+            let cur = self.last_applied.load(Ordering::Relaxed);
+            if index > cur {
+                self.last_applied.store(index, Ordering::Release);
             }
             return Ok(result);
         }
@@ -1403,7 +1434,7 @@ impl StateMachine for FullStateMachine {
         // Metadata path: skip if we've already applied this index.
         // Protects `AdjustCounter` and similar non-idempotent
         // commands from double-replay on restart.
-        if index <= self.last_applied {
+        if index <= self.last_applied.load(Ordering::Relaxed) {
             return Ok(CommandResult::Success);
         }
 
@@ -1473,8 +1504,11 @@ impl StateMachine for FullStateMachine {
             );
         }
 
-        // Update in-memory state only after successful commit
-        self.last_applied = index;
+        // Update in-memory state only after successful commit. Release
+        // ordering pairs with Acquire loads in sync readers (e.g. the
+        // PyO3 gate helper) so a reader observing a new last_applied
+        // value also sees the metadata write that preceded it.
+        self.last_applied.store(index, Ordering::Release);
 
         // R16.2: fire a DT_MOUNT apply event *after* commit. Any send
         // failure is logged but never propagated — returning Err from
@@ -1524,7 +1558,7 @@ impl StateMachine for FullStateMachine {
             metadata,
             stream_entries,
             advisory,
-            last_applied: self.last_applied,
+            last_applied: self.last_applied.load(Ordering::Relaxed),
         };
 
         Ok(bincode::serialize(&snapshot)?)
@@ -1598,13 +1632,18 @@ impl StateMachine for FullStateMachine {
         }
 
         // Update in-memory state only after both writes succeed.
-        self.last_applied = snapshot.last_applied;
+        self.last_applied
+            .store(snapshot.last_applied, Ordering::Release);
 
         Ok(())
     }
 
     fn last_applied_index(&self) -> u64 {
-        self.last_applied
+        self.last_applied.load(Ordering::Acquire)
+    }
+
+    fn last_applied_shared(&self) -> Option<Arc<AtomicU64>> {
+        Some(self.last_applied_shared_arc())
     }
 
     /// Return the shared apply-side invalidation slot so downstream

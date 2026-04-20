@@ -343,9 +343,15 @@ def _wait_one_zone_caught_up(
                 break
 
         if candidate is not None:
-            leader_ci = candidate.get("commit_index", 0)
-            if leader_ci > 0 and all(
-                snapshots[n].get("has_store") and snapshots[n].get("commit_index", 0) >= leader_ci
+            # Use applied_index (not commit_index) as the "state machine
+            # has this entry" signal — commit_index can race ahead of
+            # applied_index when raft-rs's step() advances committed
+            # before the next advance()/apply_entries pass. Readers
+            # gating on commit_index can observe metadata:None even
+            # after the gate passes (exactly the flake we were seeing).
+            leader_ai = candidate.get("applied_index", 0)
+            if leader_ai > 0 and all(
+                snapshots[n].get("has_store") and snapshots[n].get("applied_index", 0) >= leader_ai
                 for n in nodes
             ):
                 return

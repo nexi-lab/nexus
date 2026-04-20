@@ -32,36 +32,31 @@ class FederationRPCService:
 
     @rpc_expose(admin_only=True, description="Get cluster info for a zone")
     def federation_cluster_info(self, zone_id: str) -> dict[str, Any]:
-        store = self._zone_manager.get_store(zone_id)
-        is_leader = store.is_leader() if store is not None else False
-        commit_index = store.commit_index() if store is not None else 0
-
-        # Peer topology: voters vs witnesses. PyZoneManager's Rust registry
-        # is authoritative — it tracks membership + witness role per peer.
-        voter_count = 0
-        witness_count = 0
+        # All fields come from a single atomic snapshot on the Rust side —
+        # see PyZoneManager::cluster_status for the contract. Doing one
+        # call (instead of orchestrating is_leader / commit_index / term /
+        # zone_peers separately in Python) eliminates the self-inconsistent
+        # snapshot window where e.g. is_leader=true but the cached
+        # leader_id/term belong to a previous term.
         _py_mgr = getattr(self._zone_manager, "_py_mgr", None)
-        if _py_mgr is not None and hasattr(_py_mgr, "zone_peers"):
-            try:
-                # PyZoneManager.zone_peers returns tuples:
-                # (node_id, hostname, endpoint, is_witness).
-                for _id, _host, _endpoint, is_witness in _py_mgr.zone_peers(zone_id):
-                    if is_witness:
-                        witness_count += 1
-                    else:
-                        voter_count += 1
-            except Exception:  # zone not known to registry — leave zeros
-                pass
-
+        if _py_mgr is not None and hasattr(_py_mgr, "cluster_status"):
+            status = dict(_py_mgr.cluster_status(zone_id))
+            status["links_count"] = self._zone_manager.get_links_count(zone_id)
+            return status
+        # Fallback only used in the embedded-single-node profile with no
+        # PyZoneManager (unit tests).
+        store = self._zone_manager.get_store(zone_id)
         return {
             "zone_id": zone_id,
             "node_id": self._zone_manager.node_id,
             "links_count": self._zone_manager.get_links_count(zone_id),
             "has_store": store is not None,
-            "is_leader": is_leader,
-            "commit_index": commit_index,
-            "voter_count": voter_count,
-            "witness_count": witness_count,
+            "is_leader": store.is_leader() if store is not None else False,
+            "leader_id": 0,
+            "term": 0,
+            "commit_index": store.commit_index() if store is not None else 0,
+            "voter_count": 0,
+            "witness_count": 0,
         }
 
     @rpc_expose(admin_only=True, description="Create a new Raft zone")

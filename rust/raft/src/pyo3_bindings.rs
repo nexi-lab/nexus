@@ -1777,6 +1777,73 @@ impl PyZoneManager {
         }
     }
 
+    /// One-shot authoritative status snapshot for ``zone_id`` as seen by
+    /// this node. Returns a dict with every field the Python layer
+    /// (``federation_cluster_info`` RPC, tests, CLI) needs — the caller
+    /// never orchestrates multiple getters against a moving target.
+    ///
+    /// Fields:
+    ///   - ``zone_id``: echo of the requested zone id.
+    ///   - ``node_id``: this node's id.
+    ///   - ``has_store``: whether this node hosts the zone.
+    ///   - ``is_leader``: whether this node's ZoneConsensus thinks it's leader.
+    ///   - ``leader_id``: the leader id as this node knows it (0 during
+    ///      election windows or before the first heartbeat lands).
+    ///   - ``term``: the current raft term on this node.
+    ///   - ``commit_index``: cached raft log committed index. Updated by
+    ///      ``ZoneConsensusDriver::advance`` AFTER ``apply_entries`` so
+    ///      once this value matches the leader's, the state machine has
+    ///      applied every committed entry (no wall-clock wait needed).
+    ///   - ``voter_count`` / ``witness_count``: peer topology split by
+    ///      hostname convention (same as ``zone_peers``).
+    ///
+    /// Replaces the 4-call orchestration in Python's
+    /// ``federation_cluster_info`` — which reads a moving target piecemeal
+    /// and can observe a self-inconsistent snapshot during a term flip.
+    pub fn cluster_status<'py>(
+        &self,
+        py: Python<'py>,
+        zone_id: &str,
+    ) -> PyResult<Bound<'py, pyo3::types::PyDict>> {
+        use pyo3::types::PyDict;
+
+        let dict = PyDict::new(py);
+        dict.set_item("zone_id", zone_id)?;
+        dict.set_item("node_id", self.node_id)?;
+
+        let Some(node) = self.registry.get_node(zone_id) else {
+            dict.set_item("has_store", false)?;
+            dict.set_item("is_leader", false)?;
+            dict.set_item("leader_id", 0u64)?;
+            dict.set_item("term", 0u64)?;
+            dict.set_item("commit_index", 0u64)?;
+            dict.set_item("voter_count", 0usize)?;
+            dict.set_item("witness_count", 0usize)?;
+            return Ok(dict);
+        };
+
+        dict.set_item("has_store", true)?;
+        dict.set_item("is_leader", node.is_leader())?;
+        dict.set_item("leader_id", node.leader_id().unwrap_or(0))?;
+        dict.set_item("term", node.term())?;
+        dict.set_item("commit_index", node.commit_index())?;
+
+        // Peer topology, inline (same hostname-convention split as zone_peers).
+        let (mut voter_count, mut witness_count) = (0usize, 0usize);
+        if let Some(peers) = self.registry.get_peers(zone_id) {
+            for (_, p) in peers {
+                if p.hostname.to_ascii_lowercase().starts_with("witness") {
+                    witness_count += 1;
+                } else {
+                    voter_count += 1;
+                }
+            }
+        }
+        dict.set_item("voter_count", voter_count)?;
+        dict.set_item("witness_count", witness_count)?;
+        Ok(dict)
+    }
+
     /// Get this node's ID.
     #[getter]
     pub fn node_id(&self) -> u64 {

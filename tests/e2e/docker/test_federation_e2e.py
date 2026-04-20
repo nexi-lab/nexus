@@ -32,6 +32,8 @@ import grpc
 import httpx
 import pytest
 
+from nexus.contracts.constants import ROOT_ZONE_ID
+
 # All tests share one Docker cluster -- run sequentially in a single xdist worker.
 pytestmark = [pytest.mark.xdist_group("federation-e2e")]
 
@@ -251,62 +253,105 @@ def _wait_leader_elected(
         time.sleep(0.2)
 
 
-def _wait_raft_caught_up(
-    leader: str,
-    follower: str,
-    zone_id: str,
+def _wait_nodes_caught_up(
+    nodes: list[str],
+    zone_ids: str | list[str],
     api_key: str,
     *,
     timeout: float = 60,
 ) -> None:
-    """Wait until ``follower`` has caught up to ``leader`` on ``zone_id``.
+    """Wait until every node in ``nodes`` has caught up to the actual raft
+    leader on each zone in ``zone_ids``.
 
-    Uses ``federation_cluster_info.commit_index`` as the protocol signal —
-    ``cached_commit_index`` is updated by ``ZoneConsensusDriver::advance``
-    AFTER ``apply_entries`` runs, so once the follower's commit_index
-    reaches the leader's, the state machine has applied every committed
-    entry and subsequent sys_stat / list reads will see a consistent view.
-    Preferable to wall-clock waits for post-failover or cross-node catchup,
-    which otherwise depend on transport reconnect latency.
+    Protocol signal (per zone):
+      1. Find the node with ``is_leader=true``, cross-checked against all
+         other nodes' ``leader_id`` + ``term`` — this rejects the post-
+         restart window where a fresh node's cached ``is_leader`` still
+         reflects a stale pre-failover term.
+      2. Read the leader's commit_index.
+      3. Wait for every node's commit_index to reach that value.
+
+    ``cached_commit_index`` is updated inside ``ZoneConsensusDriver::advance``
+    AFTER ``apply_entries`` runs synchronously, so once a node's
+    commit_index reaches the leader's, its state machine has applied every
+    committed entry and subsequent sys_stat/list reads see a consistent
+    view. No wall-clock sleep; the only ``timeout`` is a hard upper bound
+    that fails the test with a diagnostic if something's structurally
+    wrong (transport stall, unloaded zone, lost leader).
+
+    ``zone_ids`` accepts a single id or a list. The canonical root zone id
+    lives in ``ROOT_ZONE_ID``; hard-coding ``"root"`` at call sites
+    silently breaks whenever the constant is updated, so always import
+    and pass it.
     """
+    if isinstance(zone_ids, str):
+        zone_ids = [zone_ids]
+    for zone_id in zone_ids:
+        _wait_one_zone_caught_up(nodes, zone_id, api_key, timeout=timeout)
+
+
+def _wait_one_zone_caught_up(
+    nodes: list[str],
+    zone_id: str,
+    api_key: str,
+    *,
+    timeout: float,
+) -> None:
     deadline = time.time() + timeout
-    leader_ci = 0
-    follower_ci = 0
-    follower_has_store = False
+    last_snapshots: dict[str, dict] = {}
     while time.time() < deadline:
-        # Re-read leader each iteration — its commit_index advances as writes
-        # keep landing, and we want to catch up to whatever the current state is.
-        leader_info = (
-            _grpc_call(
-                leader, "federation_cluster_info", {"zone_id": zone_id}, api_key=api_key
-            ).get("result")
-            or {}
-        )
-        leader_ci = leader_info.get("commit_index", 0)
+        snapshots: dict[str, dict] = {}
+        for n in nodes:
+            snapshots[n] = (
+                _grpc_call(n, "federation_cluster_info", {"zone_id": zone_id}, api_key=api_key).get(
+                    "result"
+                )
+                or {}
+            )
+        last_snapshots = snapshots
 
-        follower_info = (
-            _grpc_call(
-                follower, "federation_cluster_info", {"zone_id": zone_id}, api_key=api_key
-            ).get("result")
-            or {}
-        )
-        follower_has_store = bool(follower_info.get("has_store"))
-        follower_ci = follower_info.get("commit_index", 0)
+        # Legitimate-leader cross-check: a node is only trusted as the
+        # leader of `zone_id` when (a) it reports is_leader=true, (b) its
+        # own leader_id matches its node_id (not a stale cache from a
+        # previous term), and (c) every other node that has the zone
+        # loaded agrees this node is their leader AND is at the same term.
+        # This rejects the narrow window right after a node restart where
+        # its cached_* fields still reflect pre-failover state and it
+        # briefly looks like a leader to a naive observer.
+        candidate = None
+        for n, info in snapshots.items():
+            if not info.get("is_leader"):
+                continue
+            node_id = info.get("node_id", 0)
+            leader_id = info.get("leader_id", 0)
+            term = info.get("term", 0)
+            if node_id == 0 or leader_id != node_id or term == 0:
+                continue
+            # Every loaded node must agree on this leader and this term.
+            consensus = True
+            for other, other_info in snapshots.items():
+                if other == n or not other_info.get("has_store"):
+                    continue
+                if other_info.get("leader_id", 0) != node_id:
+                    consensus = False
+                    break
+                if other_info.get("term", 0) != term:
+                    consensus = False
+                    break
+            if consensus:
+                candidate = info
+                break
 
-        # Both sides must have the zone loaded — an unloaded follower always
-        # reports commit_index=0, which would false-positive if leader_ci is
-        # also 0 (fresh zone, no commits yet).
-        if (
-            follower_has_store
-            and leader_info.get("has_store")
-            and follower_ci >= leader_ci
-            and leader_ci > 0
-        ):
-            return
+        if candidate is not None:
+            leader_ci = candidate.get("commit_index", 0)
+            if leader_ci > 0 and all(
+                snapshots[n].get("has_store") and snapshots[n].get("commit_index", 0) >= leader_ci
+                for n in nodes
+            ):
+                return
         time.sleep(0.5)
     pytest.fail(
-        f"Raft catch-up stalled: zone={zone_id} leader_ci={leader_ci} "
-        f"follower_ci={follower_ci} follower_has_store={follower_has_store} "
+        f"Raft catch-up stalled: zone={zone_id} snapshots={last_snapshots} "
         f"within {timeout}s. Check transport reconnect / peer health."
     )
 
@@ -1231,7 +1276,7 @@ class TestLeaderFailover:
         # replication has actually caught up. Then the _wait_replicated loop
         # just confirms list() sees the same state (apply already happened
         # before commit_index advanced).
-        _wait_raft_caught_up(grpc2, grpc1, "corp-eng", api_key, timeout=60)
+        _wait_nodes_caught_up([grpc1, grpc2], [ROOT_ZONE_ID, "corp-eng"], api_key, timeout=60)
         for path, _content in new_files:
             _wait_replicated(
                 grpc1,
@@ -1321,7 +1366,7 @@ class TestFederationCacheCoherence:
 
         # Read back from node-2 — should eventually succeed via Raft replication.
         # commit_index gate first (protocol signal), then verify via list().
-        _wait_raft_caught_up(grpc1, grpc2, "corp-eng", api_key, timeout=60)
+        _wait_nodes_caught_up([grpc1, grpc2], [ROOT_ZONE_ID, "corp-eng"], api_key, timeout=60)
         _wait_replicated(
             grpc2,
             "/corp/eng/",
@@ -1445,7 +1490,7 @@ class TestScatterGatherChunkedRead:
             grpc1, "write", {"path": path, "content": content}, api_key=api_key, timeout=60
         )
         assert "error" not in w1, f"Initial chunked write failed: {w1}"
-        _wait_raft_caught_up(grpc1, grpc2, "corp-eng", api_key, timeout=60)
+        _wait_nodes_caught_up([grpc1, grpc2], [ROOT_ZONE_ID, "corp-eng"], api_key, timeout=60)
         _wait_replicated(
             grpc2,
             "/corp/eng/",
@@ -2565,9 +2610,14 @@ class TestFullFailoverRecovery:
                     f"{(logs or b'').decode(errors='replace')}"
                 )
 
-        # Wait for node-1 to catch up on corp-eng via the raft commit_index
-        # protocol signal — see _wait_raft_caught_up docstring.
-        _wait_raft_caught_up(grpc2, grpc1, "corp-eng", api_key, timeout=60)
+        # Wait for node-1 to catch up on every zone that could host these
+        # paths. Empirically the file metadata for ``/corp/eng/recover-*``
+        # lands in the ROOT zone's state machine (``zone_id=ROOT_ZONE_ID``
+        # in the returned metadata blob), not in corp-eng — DT_MOUNT
+        # children are addressed through the parent zone's namespace. Gate
+        # on both so a slow metadata replication in root doesn't leave the
+        # sys_stat assertions reading a half-applied state machine.
+        _wait_nodes_caught_up([grpc1, grpc2], [ROOT_ZONE_ID, "corp-eng"], api_key, timeout=60)
 
         deadline = time.time() + 30
         s = r2 = r3 = {}

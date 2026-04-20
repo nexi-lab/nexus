@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import random
 import signal
 import threading
 from collections.abc import Callable
@@ -183,10 +184,19 @@ class DaemonRunner:
         self._state = "degraded"
 
     def _jwt_refresh_loop(self) -> None:
+        """Refresh JWT periodically. Jitter spreads herd-after-restart (#3788).
+
+        At 100k enrolled daemons, all refreshing at exact 45-minute boundaries
+        after a server restart would be ~1,666 req/sec. With ±10% jitter the
+        same population spreads its refreshes over ~9 minutes, keeping the
+        burst rate inside a single uvicorn worker's capacity.
+        """
         assert self._jwt_refresh_callable is not None
         while not self._stop.is_set():
+            jitter = random.uniform(-0.1, 0.1) * float(self._jwt_refresh_every)
+            wait_s = max(1.0, float(self._jwt_refresh_every) + jitter)
             # Wait first so we don't race the caller's own startup refresh.
-            if self._stop.wait(timeout=float(self._jwt_refresh_every)):
+            if self._stop.wait(timeout=wait_s):
                 return
             try:
                 self._jwt_refresh_callable()

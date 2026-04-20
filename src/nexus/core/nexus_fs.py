@@ -5353,8 +5353,19 @@ class NexusFS(  # type: ignore[misc]
         # The metastore is a single store shared across zones (each row carries
         # a zone_id column). Without this filter, V2 API callers see every
         # zone's files. Admins and root-zone callers keep the global view.
-        caller_zone = getattr(context, "zone_id", None) or ROOT_ZONE_ID if context else ROOT_ZONE_ID
-        caller_is_admin = bool(getattr(context, "is_admin", False)) if context else False
+        # Handle OperationContext, dict, and None uniformly — missing zone
+        # falls open to ROOT (admin-equivalent view) by design: a caller
+        # without a zone claim is either the kernel or an unauthenticated
+        # path, neither of which should be zone-restricted here.
+        if isinstance(context, dict):
+            caller_zone = context.get("zone_id") or ROOT_ZONE_ID
+            caller_is_admin = bool(context.get("is_admin", False))
+        elif context is not None:
+            caller_zone = getattr(context, "zone_id", None) or ROOT_ZONE_ID
+            caller_is_admin = bool(getattr(context, "is_admin", False))
+        else:
+            caller_zone = ROOT_ZONE_ID
+            caller_is_admin = False
 
         def _zone_allowed(entry: Any) -> bool:
             if caller_is_admin or caller_zone == ROOT_ZONE_ID:

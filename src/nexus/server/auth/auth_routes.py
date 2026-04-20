@@ -1002,12 +1002,16 @@ async def oauth_check(
     # without sticky sessions. A forged callback or a (code, state) pair
     # leaked to a different browser can't present the matching cookie →
     # CSRF + login-fixation both blocked.
+    #
+    # The binding cookie is cleared only on the SUCCESS path below — if the
+    # token exchange / user provisioning fails transiently, the caller can
+    # retry without re-authorizing because the state (signed, TTL-bounded)
+    # and cookie are both still present.
     if not get_oauth_state_service().verify(request.state, nexus_oauth_binding):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="OAuth state is invalid, expired, or unbound — possible CSRF attack",
         )
-    response.delete_cookie(OAUTH_BINDING_COOKIE, path="/")
 
     try:
         # Exchange code for tokens to get user info
@@ -1162,6 +1166,7 @@ async def oauth_check(
                     )
                     api_key_value = None
 
+                response.delete_cookie(OAUTH_BINDING_COOKIE, path="/")
                 return OAuthCheckResponseExisting(
                     needs_confirmation=False,
                     token=token,
@@ -1193,6 +1198,7 @@ async def oauth_check(
                 if not user.email:
                     raise ValueError("OAuth user must have an email")
 
+                response.delete_cookie(OAUTH_BINDING_COOKIE, path="/")
                 return OAuthCheckResponseExisting(
                     needs_confirmation=False,
                     token=token,
@@ -1252,6 +1258,7 @@ async def oauth_check(
             proposed_zone_id = ""
             proposed_zone_name = ""
 
+        response.delete_cookie(OAUTH_BINDING_COOKIE, path="/")
         return OAuthCheckResponseNew(
             needs_confirmation=True,
             pending_token=pending_token,
@@ -1633,12 +1640,15 @@ async def oauth_callback(
     # without sticky sessions. A forged callback or a (code, state) pair
     # leaked to a different browser can't present the matching cookie →
     # CSRF + login-fixation both blocked.
+    #
+    # The binding cookie is cleared only on the SUCCESS path below — if
+    # handle_google_callback fails transiently the caller can retry with
+    # the same state and cookie (both still present).
     if not get_oauth_state_service().verify(request.state, nexus_oauth_binding):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="OAuth state is invalid, expired, or unbound — possible CSRF attack",
         )
-    response.delete_cookie(OAUTH_BINDING_COOKIE, path="/")
 
     try:
         user, token = await oauth_provider.handle_google_callback(
@@ -1654,6 +1664,7 @@ async def oauth_callback(
         # This is a simplification - in practice, you'd track this in the handler
         is_new_user = False  # Stub: needs proper tracking in OAuthUserAuth
 
+        response.delete_cookie(OAUTH_BINDING_COOKIE, path="/")
         return OAuthCallbackResponse(
             token=token,
             user=UserResponse(

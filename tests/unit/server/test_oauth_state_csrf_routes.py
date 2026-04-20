@@ -149,6 +149,27 @@ async def test_oauth_callback_accepts_matching_binding(
     assert auth_routes.OAUTH_BINDING_COOKIE in response.headers.get("set-cookie", "")
 
 
+async def test_oauth_callback_preserves_cookie_on_transient_failure(
+    mock_oauth_provider: MagicMock,
+) -> None:
+    """If the token exchange / DB step fails AFTER state verification, the
+    binding cookie must remain so the caller can retry without having to
+    restart the whole /authorize flow.
+    """
+    mock_oauth_provider.handle_google_callback = AsyncMock(
+        side_effect=RuntimeError("transient network blip")
+    )
+    state = _issue_state_for("survives-nonce")
+    req = auth_routes.OAuthCallbackRequest(provider="google", code="c", state=state)
+    response = Response()
+    with pytest.raises(HTTPException):
+        await auth_routes.oauth_callback(
+            req, response=response, nexus_oauth_binding="survives-nonce"
+        )
+    # delete_cookie sets a Set-Cookie header; ensure one was NOT emitted.
+    assert auth_routes.OAUTH_BINDING_COOKIE not in response.headers.get("set-cookie", "")
+
+
 async def test_oauth_callback_verifies_across_workers(mock_oauth_provider: MagicMock) -> None:
     """State issued by 'worker A' must verify at 'worker B' with the same
     signing secret — simulates a load-balanced deployment where authorize

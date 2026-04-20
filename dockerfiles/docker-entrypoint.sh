@@ -228,14 +228,20 @@ if [ -n "${AWS_PROFILE+x}" ]; then
     if [ -z "${AWS_PROFILE:-}" ]; then
         unset AWS_PROFILE
     else
-        _aws_cred_file="${HOME}/.aws/credentials"
-        _aws_conf_file="${HOME}/.aws/config"
+        # Honor botocore's own env overrides before falling back to ~/.aws.
+        # Operators who point AWS_SHARED_CREDENTIALS_FILE or AWS_CONFIG_FILE
+        # at a non-default location (supported elsewhere in this repo) must
+        # see their explicit profile checked there first — otherwise this
+        # guard would silently unset a valid profile and route operations
+        # to env/IAM credentials for a *different* AWS account.
+        _aws_cred_file="${AWS_SHARED_CREDENTIALS_FILE:-${HOME}/.aws/credentials}"
+        _aws_conf_file="${AWS_CONFIG_FILE:-${HOME}/.aws/config}"
         if [ ! -s "$_aws_cred_file" ] && [ ! -s "$_aws_conf_file" ]; then
-            echo "${YELLOW:-}AWS_PROFILE=${AWS_PROFILE} set but no ~/.aws/credentials or ~/.aws/config present; unsetting so env/IAM-role creds can take over.${NC:-}"
+            echo "${YELLOW:-}AWS_PROFILE=${AWS_PROFILE} set but neither ${_aws_cred_file} nor ${_aws_conf_file} is present; unsetting so env/IAM-role creds can take over.${NC:-}"
             unset AWS_PROFILE
         elif ! _aws_profile_file_has_name "$_aws_cred_file" "$AWS_PROFILE" \
               && ! _aws_profile_file_has_name "$_aws_conf_file" "$AWS_PROFILE"; then
-            echo "${YELLOW:-}AWS_PROFILE=${AWS_PROFILE} not present in mounted ~/.aws/credentials or ~/.aws/config; unsetting so env/IAM-role creds can take over.${NC:-}"
+            echo "${YELLOW:-}AWS_PROFILE=${AWS_PROFILE} not present in ${_aws_cred_file} or ${_aws_conf_file}; unsetting so env/IAM-role creds can take over.${NC:-}"
             unset AWS_PROFILE
         fi
         unset _aws_cred_file _aws_conf_file

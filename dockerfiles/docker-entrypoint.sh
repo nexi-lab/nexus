@@ -226,7 +226,7 @@ _aws_profile_file_has_name() {
 
 _aws_profile_fail_open="${NEXUS_AWS_PROFILE_FAIL_OPEN:-false}"
 case "$_aws_profile_fail_open" in
-    true|TRUE|True|1|yes|YES) _aws_profile_fail_open="true" ;;
+    true|TRUE|True|1|yes|YES|Yes|on|ON|On) _aws_profile_fail_open="true" ;;
     *) _aws_profile_fail_open="false" ;;
 esac
 
@@ -256,34 +256,47 @@ _aws_profile_cannot_resolve() {
     exit 1
 }
 
-# Normalize AWS_SHARED_CREDENTIALS_FILE / AWS_CONFIG_FILE before validation.
-# nexus-stack.yml passes these through from the operator's shell. Two cases:
-#   * Empty string: Compose injects "" when the operator didn't export
-#     anything. That's "no preference" — not a misconfiguration. Unset it
-#     so both botocore and our guard fall back to defaults. (An empty
-#     value also confuses downstream ``Path('').exists()`` checks.)
-#   * Non-empty value pointing at a file that's not visible inside the
-#     container: this is an explicit operator intent that we cannot honor.
-#     Fail closed under the default policy — silently unsetting would
-#     cause botocore to resolve AWS_PROFILE against the mounted
-#     ``~/.aws/`` instead, which could be a *different* account.
-#     ``NEXUS_AWS_PROFILE_FAIL_OPEN=true`` restores the lenient behavior.
+# Compose's ``AWS_PROFILE: ${AWS_PROFILE:-}`` injects an empty string when
+# nothing was exported upstream. Treat that as "no preference" — unset
+# silently so it doesn't masquerade as an explicit selection.
+if [ -n "${AWS_PROFILE+x}" ] && [ -z "${AWS_PROFILE:-}" ]; then
+    unset AWS_PROFILE
+fi
+
+# Normalize AWS_SHARED_CREDENTIALS_FILE / AWS_CONFIG_FILE. Same story:
+#   * Empty string -> no preference -> unset. (Prevents downstream bugs
+#     where ``Path('').exists()`` evaluates to True on the cwd.)
+#   * Non-empty value pointing at a file not visible inside the container
+#     -> we can't honor it. The action depends on whether AWS_PROFILE is
+#     also set:
+#       - AWS_PROFILE set: fail closed by default because botocore would
+#         silently resolve the profile against the mounted ``~/.aws/``,
+#         potentially a different account. Opt-out via
+#         NEXUS_AWS_PROFILE_FAIL_OPEN=true.
+#       - AWS_PROFILE unset: creds come from env / IAM role / instance
+#         metadata, and the file var is irrelevant to auth. Warn and
+#         unset so it doesn't confuse botocore later; starting the
+#         server is the right move.
 for _aws_env in AWS_SHARED_CREDENTIALS_FILE AWS_CONFIG_FILE; do
     _val="${!_aws_env:-}"
     if [ -z "$_val" ]; then
         unset "$_aws_env"
     elif [ ! -f "$_val" ]; then
-        if [ "${NEXUS_AWS_PROFILE_FAIL_OPEN:-false}" = "true" ] \
-           || [ "${NEXUS_AWS_PROFILE_FAIL_OPEN:-false}" = "1" ]; then
-            echo "${YELLOW:-}${_aws_env}=${_val} not visible inside container; NEXUS_AWS_PROFILE_FAIL_OPEN=true, unsetting and falling back to ${HOME}/.aws/.${NC:-}"
+        if [ -z "${AWS_PROFILE:-}" ] || [ "$_aws_profile_fail_open" = "true" ]; then
+            _reason="not visible inside container"
+            [ "$_aws_profile_fail_open" = "true" ] \
+                && _reason="$_reason; NEXUS_AWS_PROFILE_FAIL_OPEN=true"
+            echo "${YELLOW:-}${_aws_env}=${_val} ${_reason}; unsetting so botocore's default chain can take over.${NC:-}"
             unset "$_aws_env"
+            unset _reason
         else
-            echo "${RED:-}ERROR: ${_aws_env}=${_val} is set but that file is not visible inside the container.${NC:-}" >&2
+            echo "${RED:-}ERROR: ${_aws_env}=${_val} is set but that file is not visible inside the container, and AWS_PROFILE=${AWS_PROFILE} points at it.${NC:-}" >&2
             echo "  nexus-stack.yml forwards this env var from your shell, but" >&2
             echo "  host absolute paths (e.g. /Users/you/.aws/config) aren't" >&2
             echo "  reachable inside the container's filesystem. Silently" >&2
-            echo "  falling back to the default ~/.aws/ mount risks running" >&2
-            echo "  against a different AWS account than you intended." >&2
+            echo "  falling back to the default ~/.aws/ mount risks resolving" >&2
+            echo "  AWS_PROFILE against a different AWS account than you" >&2
+            echo "  intended." >&2
             echo "" >&2
             echo "  Fix: unset ${_aws_env} in your shell (the bind-mounted" >&2
             echo "       ~/.aws/ location will be used), OR point it at a" >&2
@@ -296,29 +309,20 @@ for _aws_env in AWS_SHARED_CREDENTIALS_FILE AWS_CONFIG_FILE; do
 done
 unset _aws_env _val
 
-if [ -n "${AWS_PROFILE+x}" ]; then
-    if [ -z "${AWS_PROFILE:-}" ]; then
-        # Compose's inherent behavior with ``AWS_PROFILE: ${AWS_PROFILE:-}``
-        # injects an empty string when the operator didn't export anything.
-        # That's not a misconfiguration — it's "no preference" — so unset
-        # silently.
-        unset AWS_PROFILE
-    else
-        # Prefer botocore's own env overrides (now guaranteed to be unset
-        # unless the path is reachable inside the container, see the
-        # normalization loop above) before falling back to ~/.aws.
-        _aws_cred_file="${AWS_SHARED_CREDENTIALS_FILE:-${HOME}/.aws/credentials}"
-        _aws_conf_file="${AWS_CONFIG_FILE:-${HOME}/.aws/config}"
-        if [ ! -s "$_aws_cred_file" ] && [ ! -s "$_aws_conf_file" ]; then
-            _aws_profile_cannot_resolve \
-                "set but neither ${_aws_cred_file} nor ${_aws_conf_file} is present"
-        elif ! _aws_profile_file_has_name "$_aws_cred_file" "$AWS_PROFILE" \
-              && ! _aws_profile_file_has_name "$_aws_conf_file" "$AWS_PROFILE"; then
-            _aws_profile_cannot_resolve \
-                "not present in ${_aws_cred_file} or ${_aws_conf_file}"
-        fi
-        unset _aws_cred_file _aws_conf_file
+# With the env vars above normalized, validate AWS_PROFILE against the
+# resolved credential files (env-override first, then ~/.aws defaults).
+if [ -n "${AWS_PROFILE:-}" ]; then
+    _aws_cred_file="${AWS_SHARED_CREDENTIALS_FILE:-${HOME}/.aws/credentials}"
+    _aws_conf_file="${AWS_CONFIG_FILE:-${HOME}/.aws/config}"
+    if [ ! -s "$_aws_cred_file" ] && [ ! -s "$_aws_conf_file" ]; then
+        _aws_profile_cannot_resolve \
+            "set but neither ${_aws_cred_file} nor ${_aws_conf_file} is present"
+    elif ! _aws_profile_file_has_name "$_aws_cred_file" "$AWS_PROFILE" \
+          && ! _aws_profile_file_has_name "$_aws_conf_file" "$AWS_PROFILE"; then
+        _aws_profile_cannot_resolve \
+            "not present in ${_aws_cred_file} or ${_aws_conf_file}"
     fi
+    unset _aws_cred_file _aws_conf_file
 fi
 unset _aws_profile_fail_open
 

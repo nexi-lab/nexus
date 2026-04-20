@@ -26,3 +26,10 @@ def pg_engine() -> Engine:
             pytest.skip("PostgreSQL not reachable at TEST_POSTGRES_URL")
     ensure_schema(engine)
     return engine
+
+
+@pytest.fixture(autouse=True)
+def _force_file_jwt_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Route the daemon JWT cache to disk so integration tests don't touch the
+    real OS keychain (flaky on headless CI, noisy on dev macs)."""
+    monkeypatch.setenv("NEXUS_DAEMON_JWT_CACHE_BACKEND", "file")

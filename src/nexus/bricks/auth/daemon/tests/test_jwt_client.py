@@ -11,6 +11,7 @@ import respx
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519
 
+from nexus.bricks.auth.daemon.jwt_cache import FileJwtCache
 from nexus.bricks.auth.daemon.jwt_client import JwtClient, JwtClientError
 from nexus.server.api.v1.jwt_signer import DaemonClaims, JwtSigner
 
@@ -55,6 +56,8 @@ def client_setup(tmp_path: Path, server_signer: JwtSigner) -> ClientSetup:
         key_path=key_path,
         jwt_cache_path=jwt_cache,
         server_pubkey_path=pub_path,
+        # Force file backend so tests don't touch the real OS keychain.
+        cache=FileJwtCache(jwt_cache),
     )
     initial = server_signer.sign(
         DaemonClaims(tenant_id=tenant_id, principal_id=principal_id, machine_id=machine_id),

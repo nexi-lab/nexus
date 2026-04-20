@@ -13,13 +13,13 @@ from __future__ import annotations
 
 import base64
 import json
-import os
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
 
+from nexus.bricks.auth.daemon.jwt_cache import JwtCache, make_jwt_cache
 from nexus.bricks.auth.daemon.keystore import load_private_key, sign_body
 
 
@@ -45,6 +45,7 @@ class JwtClient:
         jwt_cache_path: Path,
         server_pubkey_path: Path,
         http: httpx.Client | None = None,
+        cache: JwtCache | None = None,
     ) -> None:
         self.server_url = server_url.rstrip("/")
         self.tenant_id = tenant_id
@@ -53,32 +54,17 @@ class JwtClient:
         self.jwt_cache_path = jwt_cache_path
         self.server_pubkey_path = server_pubkey_path
         self._http = http if http is not None else httpx.Client()
-        self._cached: str | None = self._load_cached()
-
-    def _load_cached(self) -> str | None:
-        if not self.jwt_cache_path.exists():
-            return None
-        text = self.jwt_cache_path.read_text().strip()
-        return text or None
+        # Pluggable cache: keychain first, fall back to a 0600 file.
+        self._cache: JwtCache = cache if cache is not None else make_jwt_cache(jwt_cache_path)
+        self._cached: str | None = self._cache.load()
 
     def current(self) -> str | None:
         """In-memory cached JWT (or ``None`` if never stored)."""
         return self._cached
 
     def store_token(self, token: str) -> None:
-        """Atomically write the JWT to disk with mode 0600."""
-        self.jwt_cache_path.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(
-            str(self.jwt_cache_path),
-            os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
-            0o600,
-        )
-        try:
-            os.write(fd, token.encode("utf-8"))
-        finally:
-            os.close(fd)
-        # belt-and-suspenders: umask may override the open() mode
-        os.chmod(self.jwt_cache_path, 0o600)
+        """Persist the JWT via the configured cache backend (keychain or file)."""
+        self._cache.store(token)
         self._cached = token
 
     def refresh_now(self) -> str:

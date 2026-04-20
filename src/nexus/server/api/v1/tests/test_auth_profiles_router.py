@@ -52,6 +52,8 @@ def client(app: FastAPI) -> TestClient:
 
 @pytest.fixture
 def setup_tenant(pg_engine: Engine) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
+    import os
+
     t = ensure_tenant(pg_engine, f"push-{uuid.uuid4()}")
     p = ensure_principal(
         pg_engine,
@@ -60,6 +62,10 @@ def setup_tenant(pg_engine: Engine) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
         auth_method="oidc",
     )
     m = uuid.uuid4()
+    # daemon_machines.pubkey has a GLOBAL unique index (perf + correctness for
+    # refresh lookups). Tests share a module-scoped engine, so a fixed value
+    # like b"\x00" * 32 trips the constraint on the second function-scoped
+    # fixture call. Generate a random 32-byte key per test instead.
     with pg_engine.begin() as conn:
         conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(t)})
         conn.execute(
@@ -73,7 +79,7 @@ def setup_tenant(pg_engine: Engine) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
                 "id": str(m),
                 "tid": str(t),
                 "pid": str(p),
-                "pk": b"\x00" * 32,
+                "pk": os.urandom(32),
                 "ver": "0.9.20",
             },
         )
@@ -180,6 +186,56 @@ def test_push_writes_audit_row(
 def test_push_missing_auth(client: TestClient) -> None:
     r = client.post("/v1/auth-profiles", json=_push_payload())
     assert r.status_code == 401
+
+
+def test_push_rejects_unknown_machine(
+    client: TestClient,
+    setup_tenant: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
+    signer: JwtSigner,
+) -> None:
+    """JWT minted for a (tenant, principal) but carrying a machine_id that
+    has NO daemon_machines row must 401 with machine_unknown."""
+    t, p, _m = setup_tenant
+    ghost_machine = uuid.uuid4()
+    jwt_str = signer.sign(
+        DaemonClaims(tenant_id=t, principal_id=p, machine_id=ghost_machine),
+        ttl=timedelta(hours=1),
+    )
+    r = client.post(
+        "/v1/auth-profiles",
+        json=_push_payload(),
+        headers={"Authorization": f"Bearer {jwt_str}"},
+    )
+    assert r.status_code == 401
+    assert r.json()["detail"] == "machine_unknown"
+
+
+def test_push_rejects_revoked_machine(
+    client: TestClient,
+    setup_tenant: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
+    signer: JwtSigner,
+    pg_engine: Engine,
+) -> None:
+    """Revoking a machine_id must take effect immediately — the JWT is still
+    signature-valid but the push must 401 with machine_revoked."""
+    t, p, m = setup_tenant
+    with pg_engine.begin() as conn:
+        conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(t)})
+        conn.execute(
+            text("UPDATE daemon_machines SET revoked_at = NOW() WHERE id = :m AND tenant_id = :t"),
+            {"m": str(m), "t": str(t)},
+        )
+    jwt_str = signer.sign(
+        DaemonClaims(tenant_id=t, principal_id=p, machine_id=m),
+        ttl=timedelta(hours=1),
+    )
+    r = client.post(
+        "/v1/auth-profiles",
+        json=_push_payload(),
+        headers={"Authorization": f"Bearer {jwt_str}"},
+    )
+    assert r.status_code == 401
+    assert r.json()["detail"] == "machine_revoked"
 
 
 def test_push_stale_write_logged_but_accepted(

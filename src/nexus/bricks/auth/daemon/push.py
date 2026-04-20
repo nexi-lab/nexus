@@ -55,6 +55,7 @@ class Pusher:
         encryption_provider: _EncryptionProvider,
         queue: PushQueue,
         jwt_provider: Callable[[], str],
+        refresh_jwt: Callable[[], str] | None = None,
         http: httpx.Client | None = None,
     ) -> None:
         self._server_url = server_url.rstrip("/")
@@ -65,6 +66,11 @@ class Pusher:
         self._ep = encryption_provider
         self._queue = queue
         self._jwt_provider = jwt_provider
+        # Reactive 401 handling: when the server says auth_stale we ask the
+        # caller for a forcibly-refreshed token and retry ONCE. Without this,
+        # a single expired cached JWT causes every push to fail until the
+        # periodic refresh loop runs (up to ~45min), stalling sync.
+        self._refresh_jwt = refresh_jwt
         self._http = http or httpx.Client(timeout=10.0)
         self._last_pushed = _LastPushed()
 
@@ -127,6 +133,27 @@ class Pusher:
         except httpx.HTTPError as exc:
             self._queue.record_attempt(profile_id, error=f"network:{exc}")
             raise PushError(f"network: {exc}") from exc
+
+        # Reactive refresh-and-retry on 401: the cached JWT was accepted
+        # locally but rejected by the server (expired, revoked, rotated
+        # signing key). Force a refresh and retry once; if it still fails,
+        # fall through to the normal auth_stale record path.
+        if resp.status_code == 401 and self._refresh_jwt is not None:
+            try:
+                fresh_jwt = self._refresh_jwt()
+            except Exception as exc:  # noqa: BLE001
+                log.warning("jwt force-refresh after 401 failed: %s", exc)
+                fresh_jwt = None
+            if fresh_jwt:
+                try:
+                    resp = self._http.post(
+                        f"{self._server_url}/v1/auth-profiles",
+                        json=payload,
+                        headers={"Authorization": f"Bearer {fresh_jwt}"},
+                    )
+                except httpx.HTTPError as exc:
+                    self._queue.record_attempt(profile_id, error=f"network:{exc}")
+                    raise PushError(f"network: {exc}") from exc
 
         if resp.status_code == 401:
             self._queue.record_attempt(profile_id, error="auth_stale")

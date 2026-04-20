@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import base64
 import json
+import time
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -25,6 +26,30 @@ from nexus.bricks.auth.daemon.keystore import load_private_key, sign_body
 
 class JwtClientError(Exception):
     """Refresh failed (HTTP non-200, network error, malformed response)."""
+
+
+def _jwt_exp_seconds(token: str) -> float | None:
+    """Return the ``exp`` claim (unix seconds) from ``token`` or ``None``.
+
+    Used for expiry-aware refresh scheduling. Signature is NOT verified —
+    the daemon trusts its own cached token because it was verified when
+    the server issued it; we only need the ``exp`` value to decide when
+    to refresh locally. A malformed token returns ``None`` so callers fall
+    back to the fixed refresh cadence.
+    """
+    try:
+        parts = token.split(".")
+        if len(parts) < 2:
+            return None
+        payload_b64 = parts[1]
+        pad = "=" * (-len(payload_b64) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(payload_b64 + pad).decode())
+        exp = payload.get("exp")
+        if isinstance(exp, (int, float)):
+            return float(exp)
+    except Exception:
+        return None
+    return None
 
 
 class JwtClient:
@@ -69,6 +94,40 @@ class JwtClient:
     def current(self) -> str | None:
         """In-memory cached JWT (or ``None`` if never stored)."""
         return self._cached
+
+    def current_valid(self, margin_s: int = 60) -> str | None:
+        """Return the cached JWT iff it has > ``margin_s`` seconds until exp.
+
+        Callers should prefer this over :meth:`current` when about to send
+        the token on the wire: a token whose ``exp`` is inside the margin
+        will almost certainly be rejected by the server, so we force a
+        refresh at the call site instead of waiting for the periodic loop.
+
+        Returns ``None`` when no token is cached, when it's already within
+        the margin, or when ``exp`` is undecodable (fail closed).
+        """
+        token = self._cached
+        if token is None:
+            return None
+        exp = _jwt_exp_seconds(token)
+        if exp is None:
+            return None
+        if exp - time.time() <= margin_s:
+            return None
+        return token
+
+    def seconds_until_expiry(self, now_s: float | None = None) -> float | None:
+        """Seconds until cached token's ``exp`` (or ``None`` if undecodable).
+
+        Negative values indicate the token is already expired.
+        """
+        token = self._cached
+        if token is None:
+            return None
+        exp = _jwt_exp_seconds(token)
+        if exp is None:
+            return None
+        return exp - (now_s if now_s is not None else time.time())
 
     def store_token(self, token: str) -> None:
         """Persist the JWT via the configured cache backend (keychain or file)."""

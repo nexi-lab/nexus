@@ -6,16 +6,20 @@ a single `nexus up` can bring up the server AND enroll the calling machine
 without the operator manually minting credentials.
 
 Security posture:
-  * Gated on ``NEXUS_ALLOW_ADMIN_BYPASS=true`` AND a matching
-    ``X-Admin-User`` header (same guard used by other admin-bypass routes).
-  * Production deployments that keep admin-bypass disabled never see this
-    endpoint register — the caller in ``fastapi_server`` short-circuits.
+  * Gated on ``NEXUS_ALLOW_ADMIN_BYPASS=true`` AND a non-empty
+    ``NEXUS_ADMIN_BOOTSTRAP_TOKEN`` env var. The caller MUST present the
+    token via ``X-Admin-Token`` header, compared in constant time.
+    ``X-Admin-User`` is advisory metadata only — not an auth factor.
+  * Production deployments that keep admin-bypass disabled OR leave the
+    bootstrap token unset never see this endpoint register — the caller in
+    ``fastapi_server`` short-circuits.
   * Tokens are still single-use HMACs with 15-minute TTL; the endpoint
     does not hand out any long-lived secret.
 """
 
 from __future__ import annotations
 
+import hmac
 import os
 import uuid
 from datetime import timedelta
@@ -41,73 +45,104 @@ class BootstrapResponse(BaseModel):
 
 
 def _ensure_tenant(conn: Connection, *, name: str) -> uuid.UUID:
-    row = conn.execute(text("SELECT id FROM tenants WHERE name = :n"), {"n": name}).fetchone()
-    if row is not None:
-        return uuid.UUID(str(row.id))
+    """Idempotent find-or-create for tenants.name.
+
+    Uses ``INSERT ... ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
+    RETURNING id`` so concurrent calls converge on the same tenant id without
+    tripping the UNIQUE constraint. The no-op UPDATE forces RETURNING to
+    emit a row on both insert and conflict paths.
+    """
     tid = uuid.uuid4()
-    conn.execute(
-        text("INSERT INTO tenants (id, name) VALUES (:id, :n)"),
+    row = conn.execute(
+        text(
+            "INSERT INTO tenants (id, name) VALUES (:id, :n) "
+            "ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name "
+            "RETURNING id"
+        ),
         {"id": str(tid), "n": name},
-    )
-    return tid
+    ).fetchone()
+    assert row is not None  # RETURNING always yields a row with DO UPDATE
+    return uuid.UUID(str(row.id))
 
 
 _AUTH_METHOD = "dev-bootstrap"
 
 
 def _ensure_machine_principal(conn: Connection, *, tenant_id: uuid.UUID, label: str) -> uuid.UUID:
-    """Find-or-create a machine principal for (tenant, label).
+    """Idempotent find-or-create for a machine principal keyed by label.
 
-    Uses ``principal_aliases(tenant_id, auth_method, external_sub)`` as the
-    stable lookup key so repeated calls with the same label return the same
-    principal.
+    ``principal_aliases`` PK is ``(tenant_id, auth_method, external_sub)``,
+    so a conflict on that tuple identifies an existing enrollment. We:
+      1. ``INSERT`` a fresh ``principals`` row (id collision impossible for
+         a freshly-generated UUID, but ``ON CONFLICT (id) DO NOTHING``
+         guards against caller reuse).
+      2. ``INSERT`` the alias; if the (tenant, auth_method, label) tuple
+         already exists, ``DO UPDATE`` returns the existing ``principal_id``
+         — which is the principal the caller should reuse.
+      3. Delete the orphaned freshly-minted ``principals`` row when the
+         alias pointed to an existing principal, so we don't leak rows
+         under concurrent bootstrap.
     """
-    # RLS-forced tables need SET LOCAL app.current_tenant before any access.
     conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(tenant_id)})
 
-    row = conn.execute(
-        text(
-            "SELECT principal_id FROM principal_aliases "
-            "WHERE tenant_id = :t AND auth_method = :m AND external_sub = :s"
-        ),
-        {"t": str(tenant_id), "m": _AUTH_METHOD, "s": label},
-    ).fetchone()
-    if row is not None:
-        return uuid.UUID(str(row.principal_id))
-
-    pid = uuid.uuid4()
+    new_pid = uuid.uuid4()
     conn.execute(
         text(
             "INSERT INTO principals (id, tenant_id, kind, created_at) "
-            "VALUES (:id, :t, 'machine', NOW())"
+            "VALUES (:id, :t, 'machine', NOW()) "
+            "ON CONFLICT (id) DO NOTHING"
         ),
-        {"id": str(pid), "t": str(tenant_id)},
+        {"id": str(new_pid), "t": str(tenant_id)},
     )
-    conn.execute(
+    row = conn.execute(
         text(
             "INSERT INTO principal_aliases "
             "(tenant_id, auth_method, external_sub, principal_id) "
-            "VALUES (:t, :m, :s, :p)"
+            "VALUES (:t, :m, :s, :p) "
+            "ON CONFLICT (tenant_id, auth_method, external_sub) "
+            "DO UPDATE SET external_sub = EXCLUDED.external_sub "
+            "RETURNING principal_id"
         ),
-        {"t": str(tenant_id), "m": _AUTH_METHOD, "s": label, "p": str(pid)},
-    )
-    return pid
+        {"t": str(tenant_id), "m": _AUTH_METHOD, "s": label, "p": str(new_pid)},
+    ).fetchone()
+    assert row is not None  # DO UPDATE guarantees a RETURNING row
+    resolved_pid = uuid.UUID(str(row.principal_id))
+    if resolved_pid != new_pid:
+        # Alias pointed to a pre-existing principal; drop our speculative insert.
+        conn.execute(
+            text("DELETE FROM principals WHERE id = :id AND tenant_id = :t"),
+            {"id": str(new_pid), "t": str(tenant_id)},
+        )
+    return resolved_pid
 
 
 def make_admin_bootstrap_router(
-    *, engine: Engine, enroll_secret: bytes, admin_user: str
+    *,
+    engine: Engine,
+    enroll_secret: bytes,
+    admin_user: str,
+    bootstrap_token: bytes,
 ) -> APIRouter:
     """Build the ``/v1/admin/daemon-bootstrap`` router.
 
-    Only call this when ``NEXUS_ALLOW_ADMIN_BYPASS`` is true — the wiring
-    in ``fastapi_server.create_app`` enforces that outer guard.
+    Only call this when ``NEXUS_ALLOW_ADMIN_BYPASS`` is true AND
+    ``NEXUS_ADMIN_BOOTSTRAP_TOKEN`` is a non-empty value — the wiring in
+    ``fastapi_server.create_app`` enforces both outer guards.
+
+    ``bootstrap_token`` is the raw bytes the caller must present in
+    ``X-Admin-Token``. An empty token is a programmer error and raises
+    ``ValueError`` to fail closed.
     """
+    if not bootstrap_token:
+        raise ValueError("bootstrap_token must be non-empty")
+
     router = APIRouter(prefix="/v1/admin", tags=["admin"])
 
     @router.post("/daemon-bootstrap", response_model=BootstrapResponse)
     def bootstrap(
         req: BootstrapRequest,
         x_admin_user: str | None = Header(default=None, alias="X-Admin-User"),
+        x_admin_token: str | None = Header(default=None, alias="X-Admin-Token"),
     ) -> BootstrapResponse:
         if os.environ.get("NEXUS_ALLOW_ADMIN_BYPASS", "").lower() not in (
             "1",
@@ -115,6 +150,13 @@ def make_admin_bootstrap_router(
             "yes",
         ):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not_available")
+        # Auth: constant-time compare on the shared token. The user header is
+        # advisory — matching only X-Admin-User does NOT authenticate.
+        presented = (x_admin_token or "").encode()
+        if not hmac.compare_digest(presented, bootstrap_token):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="admin_token_mismatch"
+            )
         if x_admin_user != admin_user:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED, detail="admin_user_mismatch"

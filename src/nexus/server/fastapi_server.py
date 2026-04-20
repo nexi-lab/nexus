@@ -998,12 +998,14 @@ def _register_routes(app: FastAPI) -> None:
                 logger.info("v1 daemon + auth-profiles + jwks routes registered")
 
                 # Dev-loop convenience: mint tenant/principal/enroll-token in
-                # one call. Only mounted when admin-bypass is explicitly on,
-                # so production deployments (bypass=false) never expose it.
-                if os.environ.get("NEXUS_ALLOW_ADMIN_BYPASS", "").lower() in (
-                    "1",
-                    "true",
-                    "yes",
+                # one call. Requires admin-bypass explicitly on AND a
+                # non-empty NEXUS_ADMIN_BOOTSTRAP_TOKEN so a spoofable header
+                # alone cannot mint credentials. Production deployments
+                # (bypass=false or token unset) never expose this endpoint.
+                _admin_bootstrap_token = os.environ.get("NEXUS_ADMIN_BOOTSTRAP_TOKEN", "")
+                if (
+                    os.environ.get("NEXUS_ALLOW_ADMIN_BYPASS", "").lower() in ("1", "true", "yes")
+                    and _admin_bootstrap_token
                 ):
                     from nexus.server.api.v1.routers.admin_bootstrap import (
                         make_admin_bootstrap_router,
@@ -1014,9 +1016,21 @@ def _register_routes(app: FastAPI) -> None:
                             engine=_v1_engine,
                             enroll_secret=_enroll_token_secret.encode(),
                             admin_user=os.environ.get("NEXUS_ADMIN_USER", "admin"),
+                            bootstrap_token=_admin_bootstrap_token.encode(),
                         )
                     )
                     logger.info("v1 admin daemon-bootstrap route registered (dev-only)")
+                elif os.environ.get("NEXUS_ALLOW_ADMIN_BYPASS", "").lower() in (
+                    "1",
+                    "true",
+                    "yes",
+                ):
+                    logger.warning(
+                        "v1 admin daemon-bootstrap route NOT registered: "
+                        "NEXUS_ALLOW_ADMIN_BYPASS=true but "
+                        "NEXUS_ADMIN_BOOTSTRAP_TOKEN is unset — set it to a "
+                        "random 32+ byte secret to enable dev bootstrap."
+                    )
             except ImportError as e:
                 logger.warning(f"Failed to import v1 daemon routers: {e}")
     else:

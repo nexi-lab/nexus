@@ -63,6 +63,8 @@ class DaemonRunner:
         jwt_refresh_every: int,
         status_path: Path,
         jwt_refresh_callable: Callable[[], None] | None = None,
+        jwt_expiry_provider: Callable[[], float | None] | None = None,
+        jwt_refresh_margin_s: int = 60,
         subprocess_sources: tuple[SubprocessSource, ...] = (),
         subprocess_poll_every: int = 300,
     ) -> None:
@@ -72,6 +74,11 @@ class DaemonRunner:
         self._jwt_refresh_every = jwt_refresh_every
         self._status_path = status_path
         self._jwt_refresh_callable = jwt_refresh_callable
+        # Optional: returns seconds-until-expiry for the cached token, used to
+        # derive refresh timing from the actual token ``exp`` rather than a
+        # fixed interval (#3804 review feedback). ``None`` → fixed interval.
+        self._jwt_expiry_provider = jwt_expiry_provider
+        self._jwt_refresh_margin_s = jwt_refresh_margin_s
         self._subprocess_sources = subprocess_sources
         self._subprocess_poll_every = subprocess_poll_every
 
@@ -184,17 +191,19 @@ class DaemonRunner:
         self._state = "degraded"
 
     def _jwt_refresh_loop(self) -> None:
-        """Refresh JWT periodically. Jitter spreads herd-after-restart (#3788).
+        """Refresh JWT proactively, guided by the token's own ``exp`` claim.
 
-        At 100k enrolled daemons, all refreshing at exact 45-minute boundaries
-        after a server restart would be ~1,666 req/sec. With ±10% jitter the
-        same population spreads its refreshes over ~9 minutes, keeping the
-        burst rate inside a single uvicorn worker's capacity.
+        When ``jwt_expiry_provider`` is set, the loop sleeps until
+        ``exp - margin`` (with ±10% jitter), so a token with a 1-hour TTL
+        refreshes well before a 45-minute fixed cadence would. Fallback
+        behavior (no provider, or ``None`` return) is the legacy fixed
+        ``jwt_refresh_every`` cadence with ±10% jitter. Jitter spreads
+        herd-after-restart (#3788) — at 100k enrolled daemons that keeps
+        refresh bursts inside a single uvicorn worker's capacity.
         """
         assert self._jwt_refresh_callable is not None
         while not self._stop.is_set():
-            jitter = random.uniform(-0.1, 0.1) * float(self._jwt_refresh_every)
-            wait_s = max(1.0, float(self._jwt_refresh_every) + jitter)
+            wait_s = self._next_refresh_wait_s()
             # Wait first so we don't race the caller's own startup refresh.
             if self._stop.wait(timeout=wait_s):
                 return
@@ -203,6 +212,22 @@ class DaemonRunner:
             except Exception:
                 log.exception("jwt refresh failed")
                 self._maybe_degrade()
+
+    def _next_refresh_wait_s(self) -> float:
+        """Compute the next refresh interval; exposed for easier testing."""
+        base = float(self._jwt_refresh_every)
+        if self._jwt_expiry_provider is not None:
+            try:
+                remaining = self._jwt_expiry_provider()
+            except Exception:
+                remaining = None
+            if remaining is not None:
+                proactive = float(remaining) - float(self._jwt_refresh_margin_s)
+                if proactive < base:
+                    # Floor at 60s so even a near-expired token doesn't thrash.
+                    base = max(60.0, proactive)
+        jitter = random.uniform(-0.1, 0.1) * base
+        return max(1.0, base + jitter)
 
     def _subprocess_poll_loop(self) -> None:
         """Fetch each SubprocessSource on an interval; hand bytes to pusher.

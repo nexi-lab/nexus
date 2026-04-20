@@ -179,7 +179,15 @@ def join_cmd(server: str, enroll_token: str, profile: str | None) -> None:
     "--admin-user",
     default="admin",
     show_default=True,
-    help="Admin username for X-Admin-User header.",
+    help="Admin username for X-Admin-User header (advisory only; not an auth factor).",
+)
+@click.option(
+    "--admin-token",
+    default=None,
+    help=(
+        "Value for X-Admin-Token. Defaults to the NEXUS_ADMIN_BOOTSTRAP_TOKEN env var. "
+        "Required — the server rejects requests without a matching token."
+    ),
 )
 @click.option("--tenant-name", default="dev-local", show_default=True)
 @click.option("--principal-label", default=None, help="Defaults to machine hostname.")
@@ -191,6 +199,7 @@ def join_cmd(server: str, enroll_token: str, profile: str | None) -> None:
 def bootstrap_cmd(
     server: str,
     admin_user: str,
+    admin_token: str | None,
     tenant_name: str,
     principal_label: str | None,
     profile: str | None,
@@ -199,25 +208,34 @@ def bootstrap_cmd(
     to mint tenant+principal+enroll-token, then enroll this laptop.
 
     Requires the server to have been started with ``NEXUS_ALLOW_ADMIN_BYPASS=true``
-    (the default for ``nexus up``). Fails fast with a 401/404 otherwise —
-    production stacks must use ``nexus auth enroll-token`` instead.
+    AND ``NEXUS_ADMIN_BOOTSTRAP_TOKEN`` set to a shared secret (the caller
+    must present the same value via ``--admin-token`` or the
+    ``NEXUS_ADMIN_BOOTSTRAP_TOKEN`` env var). Fails fast with 401/404
+    otherwise — production stacks must use ``nexus auth enroll-token`` instead.
     """
+    import os
     import platform
 
     import httpx
 
     label = principal_label or platform.node() or "dev-laptop"
+    token = admin_token or os.environ.get("NEXUS_ADMIN_BOOTSTRAP_TOKEN", "")
+    if not token:
+        raise click.ClickException(
+            "admin bootstrap token required: pass --admin-token or set "
+            "NEXUS_ADMIN_BOOTSTRAP_TOKEN (the same value the server was started with)"
+        )
 
     resp = httpx.post(
         f"{server.rstrip('/')}/v1/admin/daemon-bootstrap",
-        headers={"X-Admin-User": admin_user},
+        headers={"X-Admin-User": admin_user, "X-Admin-Token": token},
         json={"tenant_name": tenant_name, "principal_label": label, "ttl_minutes": 15},
         timeout=30.0,
     )
     if resp.status_code == 404:
         raise click.ClickException(
-            "bootstrap endpoint not available — "
-            "ensure the server has NEXUS_ALLOW_ADMIN_BYPASS=true (dev-only)"
+            "bootstrap endpoint not available — ensure the server has "
+            "NEXUS_ALLOW_ADMIN_BYPASS=true AND NEXUS_ADMIN_BOOTSTRAP_TOKEN set (dev-only)"
         )
     if resp.status_code != 200:
         raise click.ClickException(f"bootstrap failed: {resp.status_code} {resp.text}")
@@ -261,6 +279,10 @@ def run_cmd(profile: str | None) -> None:
         keyring_service=_keyring_service_for(cfg.profile),
     )
     ep = _build_encryption_provider()
+    # Expiry-aware token selection: prefer the cached JWT ONLY when it has
+    # more than a 60s safety margin until exp. Otherwise force a refresh
+    # before the request leaves the laptop. Combined with the Pusher's
+    # 401-reactive retry this keeps sync from stalling on a stale token.
     pusher = Pusher(
         server_url=cfg.server_url,
         tenant_id=cfg.tenant_id,
@@ -269,7 +291,8 @@ def run_cmd(profile: str | None) -> None:
         daemon_version=_daemon_version(),
         encryption_provider=ep,
         queue=queue,
-        jwt_provider=lambda: jwt_client.current() or jwt_client.refresh_now(),
+        jwt_provider=lambda: jwt_client.current_valid(margin_s=60) or jwt_client.refresh_now(),
+        refresh_jwt=jwt_client.refresh_now,
     )
     watch_target = Path.home() / ".codex" / "auth.json"
 
@@ -283,6 +306,11 @@ def run_cmd(profile: str | None) -> None:
         jwt_refresh_every=45 * 60,
         status_path=paths["status"],
         jwt_refresh_callable=_refresh_jwt,
+        # Pass the token's own expiry so refresh scheduling is driven by
+        # the actual JWT lifetime (with a 60s safety margin) rather than a
+        # fixed cadence. Fixes the startup-with-near-expired-token gap.
+        jwt_expiry_provider=jwt_client.seconds_until_expiry,
+        jwt_refresh_margin_s=60,
         subprocess_sources=DEFAULT_SUBPROCESS_SOURCES,
         subprocess_poll_every=5 * 60,
     )

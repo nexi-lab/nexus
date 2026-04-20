@@ -1224,6 +1224,7 @@ class PostgresAuthProfileStore:
         source_file_hash: str | None = None,
         daemon_version: str | None = None,
         machine_id: uuid.UUID | None = None,
+        conn: Connection | None = None,
     ) -> None:
         """Upsert ``profile`` with a pre-built envelope — no server-side encrypt.
 
@@ -1244,6 +1245,12 @@ class PostgresAuthProfileStore:
             constraint forbids partial envelopes.
         source_file_hash / daemon_version / machine_id:
             Audit stamps landed on every central write.
+        conn:
+            Optional caller-managed transaction. When provided, the upsert
+            runs inside the caller's transaction (which must already have
+            ``SET LOCAL app.current_tenant`` set) — used by the push router
+            to keep profile write + audit row atomic. When ``None`` (default),
+            the method opens its own scoped transaction.
         """
         required = {"ciphertext", "wrapped_dek", "nonce", "aad", "kek_version"}
         missing = required - envelope.keys()
@@ -1263,12 +1270,19 @@ class PostgresAuthProfileStore:
             machine_id=machine_id,
         )
         lock_key = f"{self._tenant_id}/{profile.id}"
-        with self._scoped() as conn:
+        if conn is not None:
             conn.execute(
                 text("SELECT pg_advisory_xact_lock(hashtextextended(:k, 0))"),
                 {"k": lock_key},
             )
             conn.execute(text(_UPSERT_WITH_CREDENTIAL_SQL), params)
+            return
+        with self._scoped() as scoped:
+            scoped.execute(
+                text("SELECT pg_advisory_xact_lock(hashtextextended(:k, 0))"),
+                {"k": lock_key},
+            )
+            scoped.execute(text(_UPSERT_WITH_CREDENTIAL_SQL), params)
 
     def get_with_credential(
         self, profile_id: str

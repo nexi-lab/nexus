@@ -108,3 +108,43 @@ def test_cache_persisted(client_setup: ClientSetup) -> None:
 def test_current_returns_cached(client_setup: ClientSetup) -> None:
     client, *_ = client_setup
     assert client.current() is not None
+
+
+def test_current_valid_returns_token_when_far_from_expiry(client_setup: ClientSetup) -> None:
+    """A freshly-issued 1-hour token must pass the 60s margin check."""
+    client, *_ = client_setup
+    assert client.current_valid(margin_s=60) is not None
+
+
+def test_current_valid_returns_none_when_near_expiry(client_setup: ClientSetup) -> None:
+    """A token with 10s remaining must be rejected by a 60s margin."""
+    client, signer, t, p, m = client_setup
+    near_exp = signer.sign(
+        DaemonClaims(tenant_id=t, principal_id=p, machine_id=m),
+        ttl=timedelta(seconds=10),
+    )
+    client.store_token(near_exp)
+    assert client.current_valid(margin_s=60) is None
+    # Plenty-of-margin call accepts the same token.
+    assert client.current_valid(margin_s=1) is not None
+
+
+def test_current_valid_returns_none_when_undecodable(client_setup: ClientSetup) -> None:
+    """A malformed token must fail closed (force refresh at call site)."""
+    client, *_ = client_setup
+    client.store_token("not.a.jwt")
+    assert client.current_valid(margin_s=60) is None
+
+
+def test_seconds_until_expiry_tracks_ttl(client_setup: ClientSetup) -> None:
+    """seconds_until_expiry must report a positive value for a fresh token."""
+    client, signer, t, p, m = client_setup
+    fresh = signer.sign(
+        DaemonClaims(tenant_id=t, principal_id=p, machine_id=m),
+        ttl=timedelta(hours=1),
+    )
+    client.store_token(fresh)
+    remaining = client.seconds_until_expiry()
+    assert remaining is not None
+    # Should be close to 1 hour, well above 1 minute.
+    assert 60.0 < remaining < 3700.0

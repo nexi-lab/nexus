@@ -8,7 +8,14 @@ decrypts on this path — it persists the bytes verbatim via
 trip or access to plaintext is required.
 
 Authentication: ``Authorization: Bearer <jwt>`` (ES256) issued by the
-server's ``JwtSigner``. Verification happens before any DB work.
+server's ``JwtSigner``. Verification happens before any DB work; every
+push also re-checks ``daemon_machines.revoked_at`` so revocation is an
+immediate control (not bounded by the JWT lifetime).
+
+Atomicity: the profile upsert and the ``auth_profile_writes`` audit row
+execute inside the SAME database transaction. Either both commit or
+neither — retries never observe a profile mutation without its matching
+audit entry.
 
 Conflict handling: advisory only. If the client provides
 ``updated_at_override`` that is older than the stored ``updated_at`` AND
@@ -84,8 +91,8 @@ def make_auth_profiles_router(*, engine: Engine, signer: JwtSigner) -> APIRouter
     Parameters
     ----------
     engine:
-        SQLAlchemy engine for per-request ``PostgresAuthProfileStore`` and the
-        advisory conflict-detection SELECT.
+        SQLAlchemy engine for the shared per-request transaction that wraps
+        the revocation check, profile upsert, and audit insert.
     signer:
         ES256 ``JwtSigner`` that minted the daemon's current JWT. The router
         only *verifies* tokens — it does not issue them.
@@ -124,13 +131,49 @@ def make_auth_profiles_router(*, engine: Engine, signer: JwtSigner) -> APIRouter
             last_synced_at=datetime.now(UTC),
         )
 
-        # Advisory conflict detection — log only, still write.
-        # Must SET LOCAL app.current_tenant so RLS authorizes the read.
+        store = PostgresAuthProfileStore(
+            db_url=str(engine.url),
+            tenant_id=claims.tenant_id,
+            principal_id=claims.principal_id,
+            engine=engine,
+            # No encryption_provider — the envelope was pre-built by the daemon.
+        )
+
+        # Single transaction: revocation check → advisory conflict read →
+        # profile upsert → audit insert. If ANY step fails the whole push
+        # rolls back, so retries never observe a half-written state.
         with engine.begin() as conn:
             conn.execute(
                 text("SET LOCAL app.current_tenant = :t"),
                 {"t": str(claims.tenant_id)},
             )
+
+            # Revocation / existence check (immediate control, independent of
+            # JWT expiry). Missing row → deprovisioned; revoked_at set →
+            # operator-revoked. Either way: reject.
+            machine_row = conn.execute(
+                text(
+                    "SELECT revoked_at FROM daemon_machines "
+                    "WHERE tenant_id = :t AND principal_id = :p AND id = :m"
+                ),
+                {
+                    "t": str(claims.tenant_id),
+                    "p": str(claims.principal_id),
+                    "m": str(claims.machine_id),
+                },
+            ).fetchone()
+            if machine_row is None:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="machine_unknown",
+                )
+            if machine_row.revoked_at is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="machine_revoked",
+                )
+
+            # Advisory conflict detection — log only, still write.
             cur = conn.execute(
                 text(
                     "SELECT source_file_hash, updated_at FROM auth_profiles "
@@ -142,46 +185,36 @@ def make_auth_profiles_router(*, engine: Engine, signer: JwtSigner) -> APIRouter
                     "id": req.id,
                 },
             ).fetchone()
-        if (
-            cur is not None
-            and cur.source_file_hash is not None
-            and cur.source_file_hash != req.source_file_hash
-            and req.updated_at_override is not None
-            and req.updated_at_override < cur.updated_at
-        ):
-            log.warning(
-                "push_conflict_stale_write tenant=%s principal=%s id=%s "
-                "server_hash=%s incoming_hash=%s",
-                claims.tenant_id,
-                claims.principal_id,
-                req.id,
-                cur.source_file_hash,
-                req.source_file_hash,
+            if (
+                cur is not None
+                and cur.source_file_hash is not None
+                and cur.source_file_hash != req.source_file_hash
+                and req.updated_at_override is not None
+                and req.updated_at_override < cur.updated_at
+            ):
+                log.warning(
+                    "push_conflict_stale_write tenant=%s principal=%s id=%s "
+                    "server_hash=%s incoming_hash=%s",
+                    claims.tenant_id,
+                    claims.principal_id,
+                    req.id,
+                    cur.source_file_hash,
+                    req.source_file_hash,
+                )
+
+            # Profile upsert (atomic with audit insert below).
+            store.upsert_with_envelope(
+                profile,
+                envelope=envelope,
+                source_file_hash=req.source_file_hash,
+                # daemon_version is tracked on daemon_machines.daemon_version_last_seen
+                # via the refresh handshake — MVP stores NULL in auth_profiles.
+                daemon_version=None,
+                machine_id=claims.machine_id,
+                conn=conn,
             )
 
-        store = PostgresAuthProfileStore(
-            db_url=str(engine.url),
-            tenant_id=claims.tenant_id,
-            principal_id=claims.principal_id,
-            engine=engine,
-            # No encryption_provider — the envelope was pre-built by the daemon.
-        )
-        store.upsert_with_envelope(
-            profile,
-            envelope=envelope,
-            source_file_hash=req.source_file_hash,
-            # daemon_version is tracked on daemon_machines.daemon_version_last_seen
-            # via the refresh handshake — MVP stores NULL in auth_profiles.
-            daemon_version=None,
-            machine_id=claims.machine_id,
-        )
-
-        # Append-only audit record — one row per push, never updated or deleted.
-        with engine.begin() as conn:
-            conn.execute(
-                text("SET LOCAL app.current_tenant = :t"),
-                {"t": str(claims.tenant_id)},
-            )
+            # Append-only audit record — one row per push, never updated or deleted.
             conn.execute(
                 text(
                     "INSERT INTO auth_profile_writes "

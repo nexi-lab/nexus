@@ -515,7 +515,8 @@ def register_commands(cli: click.Group) -> None:
     default=False,
     help=(
         "After the server is healthy, enroll this laptop into it via the "
-        "admin-bootstrap endpoint (dev only; requires NEXUS_ALLOW_ADMIN_BYPASS=true)."
+        "admin-bootstrap endpoint (dev only; generates an unguessable bootstrap "
+        "token and injects it as NEXUS_ADMIN_BOOTSTRAP_TOKEN into the server env)."
     ),
 )
 def up(
@@ -794,6 +795,18 @@ def up(
             effective_image_used = local_image
             effective_build_mode = "local"
 
+    # --with-daemon: mint (or reuse) an unguessable admin-bootstrap token so
+    # the /v1/admin/daemon-bootstrap endpoint is protected by more than a
+    # spoofable header. The server reads NEXUS_ADMIN_BOOTSTRAP_TOKEN from its
+    # env; we pass the same value back to _run_daemon_bootstrap via the
+    # in-process return value so it can present X-Admin-Token.
+    bootstrap_token: str | None = None
+    if with_daemon:
+        import secrets
+
+        bootstrap_token = os.environ.get("NEXUS_ADMIN_BOOTSTRAP_TOKEN") or secrets.token_urlsafe(32)
+        compose_env["NEXUS_ADMIN_BOOTSTRAP_TOKEN"] = bootstrap_token
+
     # When --build is requested, build with a local-only tag
     if build:
         project_hash = compose_env["COMPOSE_PROJECT_NAME"].split("-")[-1]
@@ -981,10 +994,11 @@ def up(
     console.print("  nexus status")
 
     if with_daemon:
-        _run_daemon_bootstrap(conn_env)
+        assert bootstrap_token is not None, "with_daemon implies bootstrap_token"
+        _run_daemon_bootstrap(conn_env, bootstrap_token=bootstrap_token)
 
 
-def _run_daemon_bootstrap(conn_env: dict[str, str]) -> None:
+def _run_daemon_bootstrap(conn_env: dict[str, str], *, bootstrap_token: str) -> None:
     """After `nexus up --with-daemon`, enroll this laptop into the stack it started.
 
     Hits ``/v1/admin/daemon-bootstrap`` which mints a tenant + machine principal
@@ -1010,7 +1024,7 @@ def _run_daemon_bootstrap(conn_env: dict[str, str]) -> None:
     try:
         resp = httpx.post(
             f"{server_url.rstrip('/')}/v1/admin/daemon-bootstrap",
-            headers={"X-Admin-User": "admin"},
+            headers={"X-Admin-User": "admin", "X-Admin-Token": bootstrap_token},
             json={
                 "tenant_name": "dev-local",
                 "principal_label": platform.node() or "dev-laptop",
@@ -1021,15 +1035,16 @@ def _run_daemon_bootstrap(conn_env: dict[str, str]) -> None:
     except Exception as e:  # noqa: BLE001
         console.print(
             f"[nexus.warning]--with-daemon: bootstrap request failed ({e}); "
-            "run `nexus daemon bootstrap --server {server_url}` manually."
-            f"[/nexus.warning]"
+            f"run `nexus daemon bootstrap --server {server_url}` manually."
+            "[/nexus.warning]"
         )
         return
 
     if resp.status_code == 404:
         console.print(
             "[nexus.warning]--with-daemon: admin-bootstrap endpoint unavailable "
-            "(NEXUS_ALLOW_ADMIN_BYPASS must be 'true' on the server)."
+            "(server needs NEXUS_ALLOW_ADMIN_BYPASS=true AND "
+            "NEXUS_ADMIN_BOOTSTRAP_TOKEN set)."
             "[/nexus.warning]"
         )
         return
@@ -1045,20 +1060,32 @@ def _run_daemon_bootstrap(conn_env: dict[str, str]) -> None:
 
     from nexus.bricks.auth.daemon.cli import daemon as daemon_group
 
-    result = CliRunner().invoke(
-        daemon_group,
-        [
-            "join",
-            "--server",
-            server_url,
-            "--enroll-token",
-            body["enroll_token"],
-        ],
-        catch_exceptions=False,
-    )
+    # Never let a daemon-join exception abort `nexus up`; services are already
+    # healthy at this point and the operator can retry `nexus daemon bootstrap`
+    # manually. catch_exceptions=True captures tracebacks into result.output.
+    try:
+        result = CliRunner().invoke(
+            daemon_group,
+            [
+                "join",
+                "--server",
+                server_url,
+                "--enroll-token",
+                body["enroll_token"],
+            ],
+            catch_exceptions=True,
+        )
+    except Exception as e:  # noqa: BLE001
+        console.print(
+            f"[nexus.warning]--with-daemon: daemon join raised {type(e).__name__}: {e}; "
+            "stack is up — rerun `nexus daemon bootstrap --server <url>` to retry."
+            "[/nexus.warning]"
+        )
+        return
     if result.exit_code != 0:
         console.print(
-            f"[nexus.warning]--with-daemon: daemon join failed: {result.output}[/nexus.warning]"
+            f"[nexus.warning]--with-daemon: daemon join failed (exit={result.exit_code}): "
+            f"{result.output}[/nexus.warning]"
         )
         return
     console.print(

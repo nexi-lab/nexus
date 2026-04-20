@@ -10,6 +10,62 @@ from nexus.bricks.auth.daemon.queue import PushQueue
 from nexus.bricks.auth.daemon.runner import DaemonRunner
 
 
+def test_next_refresh_wait_prefers_token_expiry(tmp_path: Path) -> None:
+    """When expiry_provider returns < jwt_refresh_every, scheduler shortens wait."""
+    queue = PushQueue(tmp_path / "queue.db")
+    pusher = MagicMock()
+    # Token expires in 120s; with 60s margin, expected proactive = 60s.
+    runner = DaemonRunner(
+        source_watch_target=tmp_path / "auth.json",
+        queue=queue,
+        pusher=pusher,
+        jwt_refresh_every=45 * 60,
+        status_path=tmp_path / "status.json",
+        jwt_refresh_callable=lambda: None,
+        jwt_expiry_provider=lambda: 120.0,
+        jwt_refresh_margin_s=60,
+    )
+    wait = runner._next_refresh_wait_s()
+    # Base is 60s (120 - margin), jitter ±10% → [54, 66], floored at 1.
+    assert 50.0 <= wait <= 70.0
+
+
+def test_next_refresh_wait_falls_back_to_fixed(tmp_path: Path) -> None:
+    """When expiry_provider is None, scheduler uses jwt_refresh_every."""
+    queue = PushQueue(tmp_path / "queue.db")
+    pusher = MagicMock()
+    runner = DaemonRunner(
+        source_watch_target=tmp_path / "auth.json",
+        queue=queue,
+        pusher=pusher,
+        jwt_refresh_every=600,
+        status_path=tmp_path / "status.json",
+        jwt_refresh_callable=lambda: None,
+    )
+    wait = runner._next_refresh_wait_s()
+    # Jitter ±10% of 600 → [540, 660].
+    assert 540.0 <= wait <= 660.0
+
+
+def test_next_refresh_wait_floors_at_60s(tmp_path: Path) -> None:
+    """A near-expired token floors at 60s so we don't thrash the refresh endpoint."""
+    queue = PushQueue(tmp_path / "queue.db")
+    pusher = MagicMock()
+    runner = DaemonRunner(
+        source_watch_target=tmp_path / "auth.json",
+        queue=queue,
+        pusher=pusher,
+        jwt_refresh_every=45 * 60,
+        status_path=tmp_path / "status.json",
+        jwt_refresh_callable=lambda: None,
+        jwt_expiry_provider=lambda: 1.0,  # already essentially expired
+        jwt_refresh_margin_s=60,
+    )
+    wait = runner._next_refresh_wait_s()
+    # Floor is 60s; jitter ±10% → [54, 66].
+    assert 50.0 <= wait <= 70.0
+
+
 def test_startup_drain_replays_pending(tmp_path: Path) -> None:
     queue = PushQueue(tmp_path / "queue.db")
     queue.enqueue("codex/u@x", payload_hash="hashA")

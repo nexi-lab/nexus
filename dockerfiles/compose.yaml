@@ -182,6 +182,13 @@ services:
       # Set to 'false' for stricter security in production
       NEXUS_ALLOW_ADMIN_BYPASS: ${NEXUS_ALLOW_ADMIN_BYPASS:-true}
 
+      # Admin-bootstrap token (dev-only). When unset, the
+      # /v1/admin/daemon-bootstrap endpoint is NOT registered even if
+      # NEXUS_ALLOW_ADMIN_BYPASS=true. `nexus up --with-daemon` injects a
+      # fresh random token so the endpoint is reachable for the calling
+      # laptop only.
+      NEXUS_ADMIN_BOOTSTRAP_TOKEN: ${NEXUS_ADMIN_BOOTSTRAP_TOKEN:-}
+
       # Configuration file path — explicitly set for demo stack.
       # The release image defaults to no config file (env vars + profile).
       NEXUS_CONFIG_FILE: ${NEXUS_CONFIG_FILE:-/app/configs/config.demo.yaml}

@@ -33,6 +33,7 @@ def _decode_enroll_body(token: str) -> dict[str, Any]:
 
 
 PG_URL = "postgresql+psycopg2://postgres:nexus@localhost:5432/nexus"
+BOOTSTRAP_TOKEN = "test-bootstrap-token-abcdef0123456789"
 
 # Serialize with other schema-mutating tests on the same Postgres so that
 # concurrent `ensure_schema()` calls don't deadlock on AccessExclusiveLock.
@@ -52,9 +53,29 @@ def client(engine: Engine, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setenv("NEXUS_ALLOW_ADMIN_BYPASS", "true")
     app = FastAPI()
     app.include_router(
-        make_admin_bootstrap_router(engine=engine, enroll_secret=b"x" * 32, admin_user="admin")
+        make_admin_bootstrap_router(
+            engine=engine,
+            enroll_secret=b"x" * 32,
+            admin_user="admin",
+            bootstrap_token=BOOTSTRAP_TOKEN.encode(),
+        )
     )
     return TestClient(app)
+
+
+def _auth_headers() -> dict[str, str]:
+    return {"X-Admin-User": "admin", "X-Admin-Token": BOOTSTRAP_TOKEN}
+
+
+def test_router_rejects_empty_bootstrap_token() -> None:
+    """Empty token must be a hard programmer error — fail-closed at construction."""
+    with pytest.raises(ValueError, match="bootstrap_token"):
+        make_admin_bootstrap_router(
+            engine=create_engine(PG_URL, future=True),
+            enroll_secret=b"x" * 32,
+            admin_user="admin",
+            bootstrap_token=b"",
+        )
 
 
 def test_bootstrap_rejects_without_admin_bypass(
@@ -64,16 +85,46 @@ def test_bootstrap_rejects_without_admin_bypass(
     monkeypatch.delenv("NEXUS_ALLOW_ADMIN_BYPASS", raising=False)
     app = FastAPI()
     app.include_router(
-        make_admin_bootstrap_router(engine=engine, enroll_secret=b"x" * 32, admin_user="admin")
+        make_admin_bootstrap_router(
+            engine=engine,
+            enroll_secret=b"x" * 32,
+            admin_user="admin",
+            bootstrap_token=BOOTSTRAP_TOKEN.encode(),
+        )
     )
     c = TestClient(app)
-    r = c.post("/v1/admin/daemon-bootstrap", headers={"X-Admin-User": "admin"}, json={})
+    r = c.post("/v1/admin/daemon-bootstrap", headers=_auth_headers(), json={})
     assert r.status_code == 404
 
 
-def test_bootstrap_rejects_wrong_admin_user(client: TestClient) -> None:
-    r = client.post("/v1/admin/daemon-bootstrap", headers={"X-Admin-User": "someone-else"}, json={})
+def test_bootstrap_rejects_missing_token(client: TestClient) -> None:
+    r = client.post(
+        "/v1/admin/daemon-bootstrap",
+        headers={"X-Admin-User": "admin"},  # no X-Admin-Token
+        json={},
+    )
     assert r.status_code == 401
+    assert r.json()["detail"] == "admin_token_mismatch"
+
+
+def test_bootstrap_rejects_wrong_token(client: TestClient) -> None:
+    r = client.post(
+        "/v1/admin/daemon-bootstrap",
+        headers={"X-Admin-User": "admin", "X-Admin-Token": "obviously-wrong-token"},
+        json={},
+    )
+    assert r.status_code == 401
+    assert r.json()["detail"] == "admin_token_mismatch"
+
+
+def test_bootstrap_rejects_wrong_admin_user(client: TestClient) -> None:
+    r = client.post(
+        "/v1/admin/daemon-bootstrap",
+        headers={"X-Admin-User": "someone-else", "X-Admin-Token": BOOTSTRAP_TOKEN},
+        json={},
+    )
+    assert r.status_code == 401
+    assert r.json()["detail"] == "admin_user_mismatch"
 
 
 def test_bootstrap_mints_tenant_principal_and_token(client: TestClient, engine: Engine) -> None:
@@ -81,7 +132,7 @@ def test_bootstrap_mints_tenant_principal_and_token(client: TestClient, engine: 
     tn = f"bootstrap-test-{uuid.uuid4()}"
     r = client.post(
         "/v1/admin/daemon-bootstrap",
-        headers={"X-Admin-User": "admin"},
+        headers=_auth_headers(),
         json={"tenant_name": tn, "principal_label": "laptop-a", "ttl_minutes": 5},
     )
     assert r.status_code == 200, r.text
@@ -113,12 +164,12 @@ def test_bootstrap_is_idempotent_on_label(client: TestClient) -> None:
     tn = f"idem-{uuid.uuid4()}"
     r1 = client.post(
         "/v1/admin/daemon-bootstrap",
-        headers={"X-Admin-User": "admin"},
+        headers=_auth_headers(),
         json={"tenant_name": tn, "principal_label": "same-laptop"},
     )
     r2 = client.post(
         "/v1/admin/daemon-bootstrap",
-        headers={"X-Admin-User": "admin"},
+        headers=_auth_headers(),
         json={"tenant_name": tn, "principal_label": "same-laptop"},
     )
     assert r1.status_code == 200
@@ -128,3 +179,23 @@ def test_bootstrap_is_idempotent_on_label(client: TestClient) -> None:
     assert r1.json()["principal_id"] == r2.json()["principal_id"]
     # But different single-use enroll tokens (jti is fresh each call).
     assert r1.json()["enroll_token"] != r2.json()["enroll_token"]
+
+
+def test_bootstrap_is_idempotent_under_same_tenant_different_labels(client: TestClient) -> None:
+    """Second call with same tenant but different label mints a new principal."""
+    tn = f"multi-label-{uuid.uuid4()}"
+    r1 = client.post(
+        "/v1/admin/daemon-bootstrap",
+        headers=_auth_headers(),
+        json={"tenant_name": tn, "principal_label": "laptop-one"},
+    )
+    r2 = client.post(
+        "/v1/admin/daemon-bootstrap",
+        headers=_auth_headers(),
+        json={"tenant_name": tn, "principal_label": "laptop-two"},
+    )
+    assert r1.status_code == 200
+    assert r2.status_code == 200
+    # Same tenant, different labels → different principals.
+    assert r1.json()["tenant_id"] == r2.json()["tenant_id"]
+    assert r1.json()["principal_id"] != r2.json()["principal_id"]

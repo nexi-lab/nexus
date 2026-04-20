@@ -2159,6 +2159,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "                    pyo3::exceptions::PyIOError::new_err(msg)",
             "                }",
             "            }),",
+            '            KernelError::Federation(msg) => pyo3::exceptions::PyRuntimeError::new_err(format!("Federation:{msg}")),',
             "        }",
             "    }",
             "}",

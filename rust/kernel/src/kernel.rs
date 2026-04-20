@@ -23,7 +23,7 @@ use crate::mount_table::{
 };
 use dashmap::DashMap;
 use parking_lot::{Condvar, Mutex};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 /// VFS gRPC client stubs — used by `try_remote_fetch` to pull blobs from
@@ -64,6 +64,9 @@ pub enum KernelError {
     /// ``nexus.contracts.exceptions.BackendError`` on the Python side so
     /// callers can distinguish storage failures from pure kernel issues.
     BackendError(String),
+    /// R20.18.2: federation bootstrap (env parsing, ZoneManager
+    /// construction, create_zone/join_zone, reconcile) failed.
+    Federation(String),
 }
 
 impl From<RouteError> for KernelError {
@@ -569,6 +572,11 @@ pub struct Kernel {
     zone_registry: std::sync::OnceLock<Arc<nexus_raft::raft::ZoneRaftRegistry>>,
     #[allow(dead_code)]
     zone_runtime: std::sync::OnceLock<tokio::runtime::Handle>,
+    /// R20.18.2: the owning `raft::ZoneManager` — populated by
+    /// `init_federation_from_env()` when federation env vars are set.
+    /// Kernel-internal; never exposed to Python per v20.10 boundary rule.
+    #[allow(dead_code)]
+    zone_manager: std::sync::OnceLock<Arc<nexus_raft::ZoneManager>>,
     /// Reverse index target_zone_id → [(parent_zone, mount_path,
     /// global_path)] for ``global_mount_of`` + cascade-unmount.
     /// Maintained by the apply-side callback: Set inserts, Delete drains.
@@ -577,6 +585,13 @@ pub struct Kernel {
     #[allow(dead_code)]
     #[allow(clippy::type_complexity)]
     cross_zone_mounts: Arc<DashMap<String, Vec<(String, String, String)>>>,
+    /// R20.18.2: set true by `init_federation_from_env` after
+    /// `reconcile_mounts_from_zones` finishes. R20.16.6 /healthz/ready
+    /// and R20.18.4 `/__sys__/zones/root` PathResolver will read this
+    /// as the "federation bootstrap complete, safe to serve traffic"
+    /// signal.
+    #[allow(dead_code)]
+    mount_reconciliation_done: AtomicBool,
 }
 
 impl Kernel {
@@ -629,7 +644,9 @@ impl Kernel {
             chunk_fetcher,
             zone_registry: std::sync::OnceLock::new(),
             zone_runtime: std::sync::OnceLock::new(),
+            zone_manager: std::sync::OnceLock::new(),
             cross_zone_mounts: Arc::new(DashMap::new()),
+            mount_reconciliation_done: AtomicBool::new(false),
         }
         // Observers registered on-demand (not at Kernel::new()).
         // FileWatcher + StreamEventObservers are registered by orchestrator
@@ -4426,6 +4443,190 @@ impl Kernel {
         let _ = self.zone_runtime.set(runtime);
     }
 
+    /// R20.18.2: driven by `Kernel::new()` at startup (post-R20.18.5)
+    /// or from tests. Reads federation env vars, constructs
+    /// `raft::ZoneManager` internally, bootstraps the root raft group,
+    /// creates listed zones, installs per-zone apply-cb, and replays
+    /// persisted DT_MOUNT entries into the MountTable.
+    ///
+    /// Env vars read (all optional — absence of `NEXUS_HOSTNAME` is
+    /// the "no federation" signal and the method returns `Ok(())`
+    /// as a no-op):
+    /// - `NEXUS_HOSTNAME`: this node's hostname (required to enable
+    ///   federation; absence disables).
+    /// - `NEXUS_PEERS`: comma-separated `host:port` list.
+    /// - `NEXUS_BIND_ADDR`: defaults to `0.0.0.0:2126`.
+    /// - `NEXUS_DATA_DIR`: base dir for zone redb files; defaults to
+    ///   `<NEXUS_STATE_DIR>/zones` where `NEXUS_STATE_DIR` itself
+    ///   falls back to `~/.nexus`.
+    /// - `NEXUS_FEDERATION_ZONES`: comma-separated zone ids to create
+    ///   at Phase-1 bootstrap (raft group ConfState init only; no
+    ///   data writes).
+    /// - TLS state at `<zones_dir>/tls/`: probed to decide leader vs
+    ///   joiner path. A `join-token` file triggers TLS pre-provision
+    ///   from the cluster leader before ZoneManager construction.
+    ///
+    /// Aligned with Python `federation.py:from_env()` behavior —
+    /// R20.18.5 deletes that Python path and activates this one.
+    #[allow(dead_code)]
+    pub(crate) fn init_federation_from_env(&self) -> Result<(), KernelError> {
+        use std::path::Path;
+
+        // No federation unless NEXUS_HOSTNAME is set.
+        let Ok(hostname) = std::env::var("NEXUS_HOSTNAME") else {
+            return Ok(());
+        };
+
+        let bind_addr =
+            std::env::var("NEXUS_BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:2126".to_string());
+
+        // zones_dir: honor NEXUS_DATA_DIR, else <NEXUS_STATE_DIR>/zones,
+        // else ./nexus-zones (last-resort for smoke tests — prod must
+        // set one of the env vars explicitly).
+        let zones_dir = std::env::var("NEXUS_DATA_DIR").unwrap_or_else(|_| {
+            std::env::var("NEXUS_STATE_DIR")
+                .map(|s| format!("{}/zones", s))
+                .unwrap_or_else(|_| "./nexus-zones".to_string())
+        });
+
+        // Parse peers "host:port,host:port" → "id@host:port".
+        let peers_csv = std::env::var("NEXUS_PEERS").unwrap_or_default();
+        let peers = parse_peer_list_to_raft_format(&peers_csv)
+            .map_err(|e| KernelError::Federation(format!("NEXUS_PEERS parse: {}", e)))?;
+
+        // TLS dir probe: detect joiner vs leader.
+        let tls_dir = Path::new(&zones_dir).join("tls");
+        let join_token_path = tls_dir.join("join-token");
+        let ca_path = tls_dir.join("ca.pem");
+        let node_cert_path = tls_dir.join("node.pem");
+        let node_key_path = tls_dir.join("node-key.pem");
+
+        // Join-token present + no node.pem → pre-provision TLS by
+        // calling the leader's JoinCluster RPC.
+        if join_token_path.exists() && !node_cert_path.exists() {
+            let join_token = std::fs::read_to_string(&join_token_path)
+                .map_err(|e| KernelError::Federation(format!("read join-token: {}", e)))?;
+            let join_token = join_token.trim();
+            // Pick any peer != self as the join target.
+            let my_id = nexus_raft::transport::hostname_to_node_id(&hostname);
+            let join_peer = peers.iter().find_map(|p| {
+                // "id@host:port" → extract id + "host:port"
+                let (id_str, hostport) = p.split_once('@')?;
+                let id: u64 = id_str.parse().ok()?;
+                (id != my_id).then(|| hostport.to_string())
+            });
+            if let Some(peer_addr) = join_peer {
+                nexus_raft::zone_manager::join_cluster_and_provision_tls(
+                    &peer_addr,
+                    join_token,
+                    &hostname,
+                    &tls_dir.to_string_lossy(),
+                )
+                .map_err(|e| KernelError::Federation(format!("TLS pre-provision: {}", e)))?;
+            } else {
+                return Err(KernelError::Federation(
+                    "Join token found but no peer in NEXUS_PEERS to join".to_string(),
+                ));
+            }
+        }
+
+        // TLS config for ZoneManager: present if ca.pem + node.pem +
+        // node-key.pem all exist.
+        let tls = if ca_path.exists() && node_cert_path.exists() && node_key_path.exists() {
+            Some(nexus_raft::TlsFiles {
+                cert_path: node_cert_path.clone(),
+                key_path: node_key_path,
+                ca_path: ca_path.clone(),
+                ca_key_path: tls_dir
+                    .join("ca-key.pem")
+                    .exists()
+                    .then(|| tls_dir.join("ca-key.pem")),
+                join_token_hash: std::env::var("NEXUS_JOIN_TOKEN_HASH").ok(),
+            })
+        } else {
+            None
+        };
+
+        // Construct ZoneManager. This spawns the gRPC server and opens
+        // every previously-persisted zone from disk (R15.e).
+        let zm =
+            nexus_raft::ZoneManager::new(&hostname, &zones_dir, peers.clone(), &bind_addr, tls)
+                .map_err(|e| KernelError::Federation(format!("ZoneManager::new: {}", e)))?;
+
+        // Store Arc + derived handles. OnceLock::set is idempotent but
+        // second call is Err — ignore per attach_zone_registry semantics.
+        let runtime_handle = zm.runtime_handle();
+        let registry = zm.registry();
+        let _ = self.zone_manager.set(zm.clone());
+        let _ = self.zone_registry.set(registry);
+        let _ = self.zone_runtime.set(runtime_handle);
+
+        // Joiner detection: ca.pem + node.pem + node-key.pem exist AND
+        // no join-token left over (we consumed it above).
+        let is_joiner = ca_path.exists()
+            && node_cert_path.exists()
+            && !join_token_path.exists()
+            && std::env::var("NEXUS_JOINER_HINT")
+                .map(|v| v == "1")
+                .unwrap_or(false);
+
+        // Phase-1 bootstrap: create/join root zone. Idempotent — skip
+        // if registry already knows the zone (loaded from disk).
+        const ROOT_ZONE_ID: &str = "root";
+        if zm.get_zone(ROOT_ZONE_ID).is_none() {
+            if is_joiner {
+                zm.join_zone(ROOT_ZONE_ID, peers.clone())
+                    .map_err(|e| KernelError::Federation(format!("join_zone(root): {}", e)))?;
+            } else {
+                zm.create_zone(ROOT_ZONE_ID, peers.clone())
+                    .map_err(|e| KernelError::Federation(format!("create_zone(root): {}", e)))?;
+            }
+        }
+
+        // Phase-1 for non-root zones declared in NEXUS_FEDERATION_ZONES.
+        // Mounts are handled separately via reconcile_mounts_from_zones
+        // (for persisted DT_MOUNT) + apply-cb (for new proposals).
+        if let Ok(zones_csv) = std::env::var("NEXUS_FEDERATION_ZONES") {
+            for zone_id in zones_csv
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                if zm.get_zone(zone_id).is_none() {
+                    zm.create_zone(zone_id, peers.clone()).map_err(|e| {
+                        KernelError::Federation(format!("create_zone({}): {}", zone_id, e))
+                    })?;
+                }
+            }
+        }
+
+        // Install apply-cb on every loaded zone so future DT_MOUNT
+        // commits fire wire_federation_mount.
+        for zone_id in zm.list_zones() {
+            if let Some(consensus) = zm.registry().get_node(&zone_id) {
+                self.install_federation_mount_coherence(&zone_id, consensus);
+            }
+        }
+
+        // Replay persisted DT_MOUNT entries so MountTable is current
+        // before first syscall arrives.
+        self.reconcile_mounts_from_zones()?;
+
+        // Signal: federation bootstrap complete.
+        self.mount_reconciliation_done
+            .store(true, Ordering::Release);
+        tracing::info!("Federation bootstrap complete (hostname={})", hostname);
+        Ok(())
+    }
+
+    /// R20.16.6: snapshot the federation-bootstrap-complete flag.
+    /// `/healthz/ready` and the `/__sys__/zones/<id>` PathResolver
+    /// (R20.18.4) read this as the "safe to serve" signal.
+    #[allow(dead_code)]
+    pub fn mount_reconciliation_done(&self) -> bool {
+        self.mount_reconciliation_done.load(Ordering::Acquire)
+    }
+
     /// Look up a target zone's global VFS mount path on this node —
     /// R20.16.3 Rust port of Python ``_global_mount_of``.
     ///
@@ -4640,6 +4841,34 @@ fn install_federation_dcache_coherence_impl(
         }
     });
     *slot.write() = Some(cb);
+}
+
+/// R20.18.2: parse a comma-separated `host:port` peer list (the
+/// `NEXUS_PEERS` env-var format) into the `id@host:port` form
+/// `raft::ZoneManager::new` expects. Node IDs are derived via the
+/// raft crate's `hostname_to_node_id` SHA-256 helper — identical
+/// to Python `PeerAddress.parse` so both sides agree on IDs during
+/// the transition window.
+#[allow(dead_code)]
+fn parse_peer_list_to_raft_format(peers_csv: &str) -> Result<Vec<String>, String> {
+    if peers_csv.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    peers_csv
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| {
+            let (host, port_str) = s
+                .rsplit_once(':')
+                .ok_or_else(|| format!("expected 'host:port', got '{}'", s))?;
+            let _port: u16 = port_str
+                .parse()
+                .map_err(|_| format!("invalid port in '{}'", s))?;
+            let node_id = nexus_raft::transport::hostname_to_node_id(host);
+            Ok(format!("{}@{}", node_id, s))
+        })
+        .collect()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4900,6 +5129,76 @@ pub(crate) fn validate_path_fast(path: &str) -> Result<(), KernelError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_parse_peer_list_to_raft_format_empty() {
+        assert_eq!(
+            parse_peer_list_to_raft_format("").unwrap(),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            parse_peer_list_to_raft_format("   ").unwrap(),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn test_parse_peer_list_to_raft_format_single() {
+        let out = parse_peer_list_to_raft_format("nexus-1:2126").unwrap();
+        assert_eq!(out.len(), 1);
+        // "id@host:port" — id derived from SHA-256(hostname), can't hard-code
+        // (it's raft crate's SSOT); just check shape.
+        assert!(out[0].ends_with("@nexus-1:2126"));
+        assert!(out[0].contains('@'));
+    }
+
+    #[test]
+    fn test_parse_peer_list_to_raft_format_multiple() {
+        let out =
+            parse_peer_list_to_raft_format("nexus-1:2126, nexus-2:2126 , nexus-3:2126").unwrap();
+        assert_eq!(out.len(), 3);
+        assert!(out[0].ends_with("@nexus-1:2126"));
+        assert!(out[1].ends_with("@nexus-2:2126"));
+        assert!(out[2].ends_with("@nexus-3:2126"));
+    }
+
+    #[test]
+    fn test_parse_peer_list_to_raft_format_invalid() {
+        assert!(parse_peer_list_to_raft_format("no-colon").is_err());
+        assert!(parse_peer_list_to_raft_format("nexus-1:notanumber").is_err());
+    }
+
+    #[test]
+    fn test_parse_peer_list_to_raft_format_deterministic_ids() {
+        // Same hostname → same ID across calls (SSOT: raft crate's
+        // hostname_to_node_id SHA-256 derivation).
+        let a = parse_peer_list_to_raft_format("nexus-1:2126").unwrap();
+        let b = parse_peer_list_to_raft_format("nexus-1:2126").unwrap();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn test_init_federation_from_env_no_hostname_is_noop() {
+        // Without NEXUS_HOSTNAME the method returns Ok(()) without
+        // touching any fields — the "federation disabled" path.
+        // Save + clear + restore so parallel tests don't collide.
+        let saved = std::env::var("NEXUS_HOSTNAME").ok();
+        // SAFETY: tests run serial on the same process; we restore
+        // before returning and only flip one key.
+        unsafe {
+            std::env::remove_var("NEXUS_HOSTNAME");
+        }
+        let k = Kernel::new();
+        assert!(k.init_federation_from_env().is_ok());
+        assert!(k.zone_manager.get().is_none());
+        assert!(!k.mount_reconciliation_done());
+        unsafe {
+            match saved {
+                Some(v) => std::env::set_var("NEXUS_HOSTNAME", v),
+                None => std::env::remove_var("NEXUS_HOSTNAME"),
+            }
+        }
+    }
 
     #[test]
     fn test_validate_path_fast() {

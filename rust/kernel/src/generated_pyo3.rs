@@ -158,6 +158,9 @@ impl From<KernelError> for PyErr {
                     pyo3::exceptions::PyIOError::new_err(msg)
                 }
             }),
+            KernelError::Federation(msg) => {
+                pyo3::exceptions::PyRuntimeError::new_err(format!("Federation:{msg}"))
+            }
         }
     }
 }

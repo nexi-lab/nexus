@@ -945,6 +945,65 @@ def _register_routes(app: FastAPI) -> None:
     except ImportError as e:
         logger.warning(f"Failed to import secrets router: {e}")
 
+    # ---- /v1 (nexus-bot daemon, #3804) ----
+    # Token-exchange stub — always registered; flag controls behavior
+    # (route currently always returns 501, so there's no gating risk).
+    try:
+        from nexus.server.api.v1.routers.token_exchange import make_token_exchange_router
+
+        _token_exchange_enabled = os.environ.get("NEXUS_TOKEN_EXCHANGE_ENABLED", "").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        app.include_router(make_token_exchange_router(enabled=_token_exchange_enabled))
+        logger.info("v1 token-exchange route registered (enabled=%s)", _token_exchange_enabled)
+    except ImportError as e:
+        logger.warning(f"Failed to import v1 token-exchange router: {e}")
+
+    # Daemon enroll/refresh + auth-profiles routers — gated on JWT signing key
+    # + enroll-token secret. If either env var is missing, skip with a warning;
+    # deployments that don't use the nexus-bot daemon are unaffected.
+    _jwt_signing_key = os.environ.get("NEXUS_JWT_SIGNING_KEY")
+    _enroll_token_secret = os.environ.get("NEXUS_ENROLL_TOKEN_SECRET", "")
+    if _jwt_signing_key and _enroll_token_secret:
+        _database_url = getattr(app.state, "database_url", None)
+        if not _database_url:
+            logger.warning("v1 daemon routes disabled: database_url unavailable on app.state")
+        else:
+            try:
+                from sqlalchemy import create_engine
+
+                from nexus.server.api.v1.jwt_signer import JwtSigner
+                from nexus.server.api.v1.routers.auth_profiles import (
+                    make_auth_profiles_router,
+                )
+                from nexus.server.api.v1.routers.daemon import make_daemon_router
+
+                _v1_engine = create_engine(_database_url, future=True)
+                _v1_signer = JwtSigner.from_path(
+                    _jwt_signing_key,
+                    issuer=os.environ.get("NEXUS_JWT_ISSUER", "https://nexus.local"),
+                )
+                app.include_router(
+                    make_daemon_router(
+                        engine=_v1_engine,
+                        signer=_v1_signer,
+                        enroll_secret=_enroll_token_secret.encode(),
+                    )
+                )
+                app.include_router(make_auth_profiles_router(engine=_v1_engine, signer=_v1_signer))
+                logger.info(
+                    "v1 daemon + auth-profiles routes registered (/v1/daemon/*, /v1/auth-profiles)"
+                )
+            except ImportError as e:
+                logger.warning(f"Failed to import v1 daemon routers: {e}")
+    else:
+        logger.warning(
+            "v1 daemon routes disabled: NEXUS_JWT_SIGNING_KEY and/or "
+            "NEXUS_ENROLL_TOKEN_SECRET unset"
+        )
+
     # Asyncio debug endpoint (Python 3.14+) — gated behind env flag + admin auth (Issue #1596)
     if os.environ.get("NEXUS_DEBUG_ENABLED", "").lower() in ("1", "true", "yes"):
         from nexus.server.dependencies import require_admin as _require_admin_dep

@@ -296,6 +296,36 @@ pub struct StatResult {
     pub lock: Option<crate::lock_manager::KernelLockInfo>,
 }
 
+// ── ZonesProcfsEntry — R20.18.4 procfs virtual namespace ──────────────
+
+/// Synthesized entry for `/__sys__/zones/*` virtual paths.
+///
+/// All fields are read live from `raft::ZoneManager` each call — this
+/// struct carries no persisted state of its own (SSOT: raft state
+/// machine). Returned by `Kernel::resolve_zones_procfs`; R20.18.5
+/// wires it into `sys_stat` so Python callers see zone runtime state
+/// as if it were a filesystem entry.
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct ZonesProcfsEntry {
+    /// True when the path is the `/__sys__/zones/` directory itself.
+    pub is_directory: bool,
+    /// Zone id when `is_directory == false`; `None` for the dir.
+    pub zone_id: Option<String>,
+    pub node_id: u64,
+    pub has_store: bool,
+    pub is_leader: bool,
+    pub leader_id: u64,
+    pub term: u64,
+    pub commit_index: u64,
+    pub applied_index: u64,
+    pub voter_count: usize,
+    pub witness_count: usize,
+    /// R20.16.6 ready-signal passthrough — saves consumers a
+    /// second Kernel call.
+    pub mount_reconciliation_done: bool,
+}
+
 // ── KernelObserverRegistry — pure Rust observer dispatch ────────────────
 
 /// Observer entry — pure Rust, no PyO3 dependency.
@@ -4641,6 +4671,83 @@ impl Kernel {
         self.mount_reconciliation_done.load(Ordering::Acquire)
     }
 
+    /// R20.18.4: procfs-style virtual namespace for zone state. Read
+    /// path only — any write/delete on `/__sys__/zones/*` must be
+    /// rejected upstream (the underlying state is raft state-machine
+    /// SSOT, not filesystem mutable state). Path format:
+    ///
+    /// - `/__sys__/zones/` → directory; `list_zones_procfs()`
+    ///   enumerates zone ids.
+    /// - `/__sys__/zones/<zone_id>` → synthesized entry with
+    ///   `{is_leader, leader_id, term, commit_index, applied_index,
+    ///   node_id, voter_count, witness_count}` fields read live from
+    ///   `raft::ZoneManager`. Never persisted.
+    ///
+    /// Returns `None` when: federation isn't active; the path
+    /// doesn't fall under `/__sys__/zones/`; or the zone id is
+    /// unknown on this node. R20.18.5 wires this into `sys_stat` so
+    /// Python `nx.sys_stat("/__sys__/zones/root")` reads through.
+    #[allow(dead_code)]
+    pub fn resolve_zones_procfs(&self, path: &str) -> Option<ZonesProcfsEntry> {
+        const PREFIX: &str = "/__sys__/zones";
+        let zm = self.zone_manager.get()?;
+
+        if path == PREFIX || path == "/__sys__/zones/" {
+            return Some(ZonesProcfsEntry {
+                is_directory: true,
+                zone_id: None,
+                node_id: zm.node_id(),
+                has_store: false,
+                is_leader: false,
+                leader_id: 0,
+                term: 0,
+                commit_index: 0,
+                applied_index: 0,
+                voter_count: 0,
+                witness_count: 0,
+                mount_reconciliation_done: self.mount_reconciliation_done(),
+            });
+        }
+
+        // Extract zone id: must match exactly `/__sys__/zones/<id>`
+        // with no trailing subpath.
+        let suffix = path.strip_prefix(&format!("{}/", PREFIX))?;
+        if suffix.is_empty() || suffix.contains('/') {
+            return None;
+        }
+        let zone_id = suffix;
+        let status = zm.cluster_status(zone_id);
+        if !status.has_store {
+            return None;
+        }
+        Some(ZonesProcfsEntry {
+            is_directory: false,
+            zone_id: Some(zone_id.to_string()),
+            node_id: status.node_id,
+            has_store: status.has_store,
+            is_leader: status.is_leader,
+            leader_id: status.leader_id,
+            term: status.term,
+            commit_index: status.commit_index,
+            applied_index: status.applied_index,
+            voter_count: status.voter_count,
+            witness_count: status.witness_count,
+            mount_reconciliation_done: self.mount_reconciliation_done(),
+        })
+    }
+
+    /// R20.18.4: readdir companion for `/__sys__/zones/`. Returns the
+    /// list of zone ids loaded on this node (derived from live
+    /// `raft::ZoneManager::list_zones`), or an empty Vec when
+    /// federation isn't active. Never errors.
+    #[allow(dead_code)]
+    pub fn list_zones_procfs(&self) -> Vec<String> {
+        self.zone_manager
+            .get()
+            .map(|zm| zm.list_zones())
+            .unwrap_or_default()
+    }
+
     /// R20.18.3: when `sys_setattr(DT_MOUNT)` leader path runs without
     /// explicit metastore / raft_backend (Python didn't hand in
     /// `py_zone_handle` or `metastore_path`) AND federation is active,
@@ -5313,6 +5420,32 @@ mod tests {
             .expect("resolve");
         assert!(out_ms.is_none());
         assert!(out_rb.is_none());
+    }
+
+    #[test]
+    fn test_resolve_zones_procfs_returns_none_without_federation() {
+        // No zone_manager attached → every `/__sys__/zones/*` query
+        // is None so the caller falls through to regular path routing.
+        let k = Kernel::new();
+        assert!(k.resolve_zones_procfs("/__sys__/zones").is_none());
+        assert!(k.resolve_zones_procfs("/__sys__/zones/").is_none());
+        assert!(k.resolve_zones_procfs("/__sys__/zones/root").is_none());
+        assert_eq!(k.list_zones_procfs(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn test_resolve_zones_procfs_rejects_non_zones_paths() {
+        // Even when federation is active the resolver must only
+        // claim paths under `/__sys__/zones/` — otherwise sys_stat
+        // on unrelated paths would silently short-circuit.
+        let k = Kernel::new();
+        // These should be None regardless of federation state.
+        assert!(k.resolve_zones_procfs("/workspace/file.txt").is_none());
+        assert!(k.resolve_zones_procfs("/__sys__/other/path").is_none());
+        assert!(k
+            .resolve_zones_procfs("/__sys__/zones/root/nested")
+            .is_none());
+        assert!(k.resolve_zones_procfs("/__sys__/zones/").is_none()); // no federation
     }
 
     #[test]

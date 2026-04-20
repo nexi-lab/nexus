@@ -1964,32 +1964,154 @@ class TestPartialReplicationFailure:
 
 
 # ===================================================================
-# R13.1 Class 10/11: OpenAI backend Rust CAS (skipped — needs sidecar)
+# R13.1 Class 10/11: OpenAI backend Rust CAS (via sse-mock sidecar)
 # ===================================================================
-@pytest.mark.skip(reason="Requires an SSE mock sidecar in the compose file — follow-up.")
-class TestOpenAIBackendRustCAS:
-    """End-to-end LLM streaming via Rust OpenAIBackend inside a container.
+# SSE mock sidecar URL (see dockerfiles/docker-compose.dynamic-federation-test.yml).
+# OpenAI backend builds `{base_url}/chat/completions` — SSE mock serves it at
+# `/v1/chat/completions`, so base URL includes the `/v1` prefix. Anthropic backend
+# builds `{base_url}/v1/messages` itself, so its base URL stops at the hostname.
+_SSE_MOCK_OPENAI_BASE = "http://sse-mock:8080/v1"
+_SSE_MOCK_ANTHROPIC_BASE = "http://sse-mock:8080"
 
-    To enable: add a pytest-httpserver or custom Python SSE-mock service
-    to ``dockerfiles/docker-compose.dynamic-federation-test.yml``, reachable
-    from nexus-dyn-node-1 as ``http://sse-mock:8080/``. Then mount
-    ``backend_type='openai'`` on ``/llm`` with ``openai_base_url`` pointing
-    at that sidecar and drive ``nx.llm_start_streaming`` via an RPC.
+
+def _bootstrap_standalone_fs(tmp_path):
+    """Create an in-process NexusFS with a local CAS backend.
+
+    The e2e-runner container carries the full nexus_kernel install, so we
+    can instantiate a fresh standalone filesystem just like the unit test
+    at tests/unit/backends/test_openai_compat_rust.py::_bootstrap does.
+    No RPC surface is added — the test drives kernel syscalls in-process
+    via the PyO3 bindings (the pattern validated for R20.14).
+    """
+    import asyncio
+
+    from nexus.backends.storage.cas_local import CASLocalBackend
+    from nexus.core.config import ParseConfig, PermissionConfig
+    from nexus.factory import create_nexus_fs
+    from nexus.storage.record_store import SQLAlchemyRecordStore
+    from tests.helpers.dict_metastore import DictMetastore
+
+    return asyncio.run(
+        create_nexus_fs(
+            backend=CASLocalBackend(tmp_path / "data"),
+            metadata_store=DictMetastore(),
+            record_store=SQLAlchemyRecordStore(db_path=tmp_path / "meta.db"),
+            parsing=ParseConfig(auto_parse=False),
+            permissions=PermissionConfig(enforce=False),
+        )
+    )
+
+
+def _llm_round_trip(nx, mount, request, session_suffix="0"):
+    """Drive one llm_start_streaming call and return (payload, session_hash, envelope)."""
+    import json as _json
+
+    stream_path = f"{mount}/stream/session-{session_suffix}"
+    nx._kernel.create_stream(stream_path, 65_536)
+    req_bytes = _json.dumps(request).encode("utf-8")
+    nx._kernel.llm_start_streaming(mount, "root", req_bytes, stream_path)
+    raw = nx.stream_collect_all(stream_path).decode("utf-8")
+    done_idx = raw.index("{")
+    done = _json.loads(raw[done_idx:])
+    assert done["type"] == "done", f"expected done frame, got: {done}"
+    session_hash = done["session_hash"]
+    envelope_bytes = nx._kernel.cas_read(mount, "root", session_hash)
+    envelope = _json.loads(envelope_bytes)
+    return raw[:done_idx], session_hash, envelope
+
+
+class TestOpenAIBackendRustCAS:
+    """End-to-end LLM streaming via Rust OpenAIBackend against sse-mock sidecar.
+
+    Drives kernel syscalls in-process via PyO3 (no RPC surface added).
     """
 
-    def test_streaming_round_trip(self, cluster, api_key):
-        raise RuntimeError("see skip reason")
+    def test_streaming_round_trip(self, tmp_path):
+        import json as _json
+
+        from nexus.contracts.metadata import DT_MOUNT
+
+        nx = _bootstrap_standalone_fs(tmp_path)
+        try:
+            nx.sys_setattr(
+                "/llm",
+                entry_type=DT_MOUNT,
+                backend_type="openai",
+                backend_name="openai_compatible",
+                openai_base_url=_SSE_MOCK_OPENAI_BASE,
+                openai_api_key="sk-mock",
+                openai_model="mock-gpt-4o-mini",
+                openai_blob_root=str(tmp_path / "llm_spool"),
+            )
+
+            payload, session_hash, envelope = _llm_round_trip(
+                nx,
+                "/llm",
+                {
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "model": "mock-gpt-4o-mini",
+                },
+            )
+
+            assert "Hello from SSE mock." in payload
+            assert len(session_hash) == 64
+            assert envelope["type"] == "llm_session_v1"
+            assert envelope["model"] == "mock-gpt-4o-mini"
+            assert envelope["request_hash"]
+            assert envelope["response_hash"]
+
+            # CAS dedup: identical request -> identical session_hash.
+            _, session_hash_2, envelope_2 = _llm_round_trip(
+                nx,
+                "/llm",
+                {
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "model": "mock-gpt-4o-mini",
+                },
+                session_suffix="dedup",
+            )
+            assert session_hash_2 == session_hash, _json.dumps(envelope_2)
+        finally:
+            nx.close()
 
 
-# ===================================================================
-# R13.1 Class 11/11: Anthropic backend Rust CAS (skipped — same reason)
-# ===================================================================
-@pytest.mark.skip(reason="Requires an SSE mock sidecar in the compose file — follow-up.")
 class TestAnthropicBackendRustCAS:
     """Mirror of TestOpenAIBackendRustCAS with Anthropic-shaped SSE."""
 
-    def test_streaming_round_trip(self, cluster, api_key):
-        raise RuntimeError("see skip reason")
+    def test_streaming_round_trip(self, tmp_path):
+        from nexus.contracts.metadata import DT_MOUNT
+
+        nx = _bootstrap_standalone_fs(tmp_path)
+        try:
+            nx.sys_setattr(
+                "/llm",
+                entry_type=DT_MOUNT,
+                backend_type="anthropic",
+                backend_name="anthropic_native",
+                anthropic_base_url=_SSE_MOCK_ANTHROPIC_BASE,
+                anthropic_api_key="sk-ant-mock",
+                anthropic_model="mock-claude-3-5-sonnet",
+                anthropic_blob_root=str(tmp_path / "llm_spool"),
+            )
+
+            payload, session_hash, envelope = _llm_round_trip(
+                nx,
+                "/llm",
+                {
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "model": "mock-claude-3-5-sonnet",
+                    "max_tokens": 1024,
+                },
+            )
+
+            assert "Hello from SSE mock." in payload
+            assert len(session_hash) == 64
+            assert envelope["type"] == "llm_session_v1"
+            assert envelope["model"] == "mock-claude-3-5-sonnet"
+            assert envelope["request_hash"]
+            assert envelope["response_hash"]
+        finally:
+            nx.close()
 
 
 # ===================================================================
@@ -2473,15 +2595,62 @@ class TestMultiZoneAtomicWrite:
 
 
 # ===================================================================
-# R13.2 Class 7/7: LLM session end-to-end (skipped — needs SSE sidecar)
+# R13.2 Class 7/7: LLM session end-to-end (via sse-mock sidecar)
 # ===================================================================
-@pytest.mark.skip(reason="Requires an SSE mock sidecar in the compose file — follow-up.")
 class TestLLMSessionEndToEnd:
-    """ManagedAgentLoop driving a multi-turn session through the Rust
-    OpenAIBackend, validating CAS dedup + envelope retrieval."""
+    """Three-turn conversation through the Rust OpenAIBackend, verifying
+    CAS dedup (repeat request = same envelope hash) and that each distinct
+    turn produces its own envelope stored under a unique session hash.
+    """
 
-    def test_three_turn_conversation(self, cluster, api_key):
-        raise RuntimeError("see skip reason")
+    def test_three_turn_conversation(self, tmp_path):
+        from nexus.contracts.metadata import DT_MOUNT
+
+        nx = _bootstrap_standalone_fs(tmp_path)
+        try:
+            nx.sys_setattr(
+                "/llm",
+                entry_type=DT_MOUNT,
+                backend_type="openai",
+                backend_name="openai_compatible",
+                openai_base_url=_SSE_MOCK_OPENAI_BASE,
+                openai_api_key="sk-mock",
+                openai_model="mock-gpt-4o-mini",
+                openai_blob_root=str(tmp_path / "llm_spool"),
+            )
+
+            # Accumulate conversation history across three user turns.
+            messages = []
+            envelopes = []
+            for turn, user_msg in enumerate(["hi", "how are you?", "goodbye"]):
+                messages.append({"role": "user", "content": user_msg})
+                _, _sh, env = _llm_round_trip(
+                    nx,
+                    "/llm",
+                    {"messages": list(messages), "model": "mock-gpt-4o-mini"},
+                    session_suffix=f"t{turn}",
+                )
+                envelopes.append(env)
+                # Feed assistant reply back into the context (canned text).
+                messages.append({"role": "assistant", "content": "Hello from SSE mock."})
+
+            # Three distinct prompts => three distinct session hashes.
+            hashes = {env["request_hash"] for env in envelopes}
+            assert len(hashes) == 3, f"expected 3 distinct request hashes, got {hashes}"
+
+            # CAS dedup on repeat: re-running turn 0 returns the same envelope.
+            _, _sh, env_repeat = _llm_round_trip(
+                nx,
+                "/llm",
+                {
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "model": "mock-gpt-4o-mini",
+                },
+                session_suffix="repeat",
+            )
+            assert env_repeat["request_hash"] == envelopes[0]["request_hash"]
+        finally:
+            nx.close()
 
 
 # ===================================================================

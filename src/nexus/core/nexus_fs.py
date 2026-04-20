@@ -3840,6 +3840,25 @@ class NexusFS(  # type: ignore[misc]
         _rust_ctx = self._build_rust_ctx(context, is_admin)
         _rename_result = self._kernel.sys_rename(old_path, new_path, _rust_ctx)
 
+        # Rust fast path completed the full rename (metastore + backend + dcache).
+        # Do not run Python fallback rename again; that can turn a successful
+        # rename into a false 404 because the source path is already gone.
+        if _rename_result.hit:
+            if _rename_result.post_hook_needed:
+                from nexus.contracts.vfs_hooks import RenameHookContext
+
+                _rename_ctx = RenameHookContext(
+                    old_path=old_path,
+                    new_path=new_path,
+                    context=context,
+                    zone_id=zone_id,
+                    agent_id=agent_id,
+                    is_directory=bool(_rename_result.is_directory),
+                    metadata=meta,
+                )
+                self._kernel.dispatch_post_hooks("rename", _rename_ctx)
+            return {}
+
         # Python always does full metastore rename under VFS lock
         # (Rust kernel has the capability for FUSE/gRPC bypass, but Python
         # wrapper continues to use route.metastore for authoritative metadata)

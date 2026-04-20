@@ -7,10 +7,12 @@ on every /v1 request authenticated as a daemon.
 
 from __future__ import annotations
 
+import base64
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import jwt as pyjwt
 from cryptography.hazmat.primitives import serialization
@@ -53,6 +55,7 @@ class JwtSigner:
             encoding=serialization.Encoding.PEM,
             format=serialization.PublicFormat.SubjectPublicKeyInfo,
         )
+        self._public_key = public_key
         self._issuer = issuer
 
     @classmethod
@@ -74,6 +77,21 @@ class JwtSigner:
     def public_key_pem(self) -> bytes:
         """PEM-encoded public key. Daemon pins this at join time."""
         return self._public_pem
+
+    def public_key_jwk(self) -> dict[str, Any]:
+        """Return the public key as a JWK dict (RFC 7517). Used by the JWKS endpoint."""
+        numbers = self._public_key.public_numbers()
+        # P-256 coords are 32 bytes big-endian, base64url without padding
+        x = numbers.x.to_bytes(32, "big")
+        y = numbers.y.to_bytes(32, "big")
+        return {
+            "kty": "EC",
+            "crv": "P-256",
+            "alg": _ALGORITHM,
+            "use": "sig",
+            "x": base64.urlsafe_b64encode(x).rstrip(b"=").decode("ascii"),
+            "y": base64.urlsafe_b64encode(y).rstrip(b"=").decode("ascii"),
+        }
 
     def sign(self, claims: DaemonClaims, *, ttl: timedelta) -> str:
         now = datetime.now(UTC)

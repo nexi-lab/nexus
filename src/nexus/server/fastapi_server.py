@@ -979,6 +979,7 @@ def _register_routes(app: FastAPI) -> None:
                     make_auth_profiles_router,
                 )
                 from nexus.server.api.v1.routers.daemon import make_daemon_router
+                from nexus.server.api.v1.routers.jwks import make_jwks_router
 
                 _v1_engine = create_engine(_database_url, future=True)
                 _v1_signer = JwtSigner.from_path(
@@ -993,9 +994,8 @@ def _register_routes(app: FastAPI) -> None:
                     )
                 )
                 app.include_router(make_auth_profiles_router(engine=_v1_engine, signer=_v1_signer))
-                logger.info(
-                    "v1 daemon + auth-profiles routes registered (/v1/daemon/*, /v1/auth-profiles)"
-                )
+                app.include_router(make_jwks_router(signer=_v1_signer))
+                logger.info("v1 daemon + auth-profiles + jwks routes registered")
             except ImportError as e:
                 logger.warning(f"Failed to import v1 daemon routers: {e}")
     else:

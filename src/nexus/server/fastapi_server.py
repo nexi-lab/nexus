@@ -996,6 +996,27 @@ def _register_routes(app: FastAPI) -> None:
                 app.include_router(make_auth_profiles_router(engine=_v1_engine, signer=_v1_signer))
                 app.include_router(make_jwks_router(signer=_v1_signer))
                 logger.info("v1 daemon + auth-profiles + jwks routes registered")
+
+                # Dev-loop convenience: mint tenant/principal/enroll-token in
+                # one call. Only mounted when admin-bypass is explicitly on,
+                # so production deployments (bypass=false) never expose it.
+                if os.environ.get("NEXUS_ALLOW_ADMIN_BYPASS", "").lower() in (
+                    "1",
+                    "true",
+                    "yes",
+                ):
+                    from nexus.server.api.v1.routers.admin_bootstrap import (
+                        make_admin_bootstrap_router,
+                    )
+
+                    app.include_router(
+                        make_admin_bootstrap_router(
+                            engine=_v1_engine,
+                            enroll_secret=_enroll_token_secret.encode(),
+                            admin_user=os.environ.get("NEXUS_ADMIN_USER", "admin"),
+                        )
+                    )
+                    logger.info("v1 admin daemon-bootstrap route registered (dev-only)")
             except ImportError as e:
                 logger.warning(f"Failed to import v1 daemon routers: {e}")
     else:

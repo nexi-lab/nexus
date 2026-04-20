@@ -171,6 +171,70 @@ def join_cmd(server: str, enroll_token: str, profile: str | None) -> None:
     )
 
 
+@daemon.command("bootstrap")
+@click.option(
+    "--server", required=True, help="Local Nexus server URL (e.g. http://localhost:2026)."
+)
+@click.option(
+    "--admin-user",
+    default="admin",
+    show_default=True,
+    help="Admin username for X-Admin-User header.",
+)
+@click.option("--tenant-name", default="dev-local", show_default=True)
+@click.option("--principal-label", default=None, help="Defaults to machine hostname.")
+@click.option(
+    "--profile",
+    default=None,
+    help="Profile name (default: sanitized server host, e.g. 'localhost-2026').",
+)
+def bootstrap_cmd(
+    server: str,
+    admin_user: str,
+    tenant_name: str,
+    principal_label: str | None,
+    profile: str | None,
+) -> None:
+    """Dev-loop one-shot: hit the running server's admin-bootstrap endpoint
+    to mint tenant+principal+enroll-token, then enroll this laptop.
+
+    Requires the server to have been started with ``NEXUS_ALLOW_ADMIN_BYPASS=true``
+    (the default for ``nexus up``). Fails fast with a 401/404 otherwise —
+    production stacks must use ``nexus auth enroll-token`` instead.
+    """
+    import platform
+
+    import httpx
+
+    label = principal_label or platform.node() or "dev-laptop"
+
+    resp = httpx.post(
+        f"{server.rstrip('/')}/v1/admin/daemon-bootstrap",
+        headers={"X-Admin-User": admin_user},
+        json={"tenant_name": tenant_name, "principal_label": label, "ttl_minutes": 15},
+        timeout=30.0,
+    )
+    if resp.status_code == 404:
+        raise click.ClickException(
+            "bootstrap endpoint not available — "
+            "ensure the server has NEXUS_ALLOW_ADMIN_BYPASS=true (dev-only)"
+        )
+    if resp.status_code != 200:
+        raise click.ClickException(f"bootstrap failed: {resp.status_code} {resp.text}")
+    body = resp.json()
+    click.echo(f"bootstrap ok: tenant_id={body['tenant_id']} principal_id={body['principal_id']}")
+
+    # Re-use the existing join command in-process (preserves all the side
+    # effects: keystore, JWT cache, server pubkey, Keychain seed).
+    ctx = click.get_current_context()
+    ctx.invoke(
+        join_cmd,
+        server=server,
+        enroll_token=body["enroll_token"],
+        profile=profile,
+    )
+
+
 @daemon.command("run")
 @click.option("--profile", default=None, help="Profile name (auto-selected if only one exists).")
 def run_cmd(profile: str | None) -> None:

@@ -39,8 +39,8 @@ def test_build_encryption_provider_rejects_unknown(monkeypatch: pytest.MonkeyPat
 
 
 def test_daemon_group_exposes_expected_subcommands() -> None:
-    """All 6 MVP subcommands are registered on the group (incl. `list`)."""
-    expected = {"join", "run", "status", "install", "uninstall", "list"}
+    """All 7 MVP subcommands are registered on the group (incl. `list`, `bootstrap`)."""
+    expected = {"join", "run", "status", "install", "uninstall", "list", "bootstrap"}
     registered = set(daemon_cli.daemon.commands.keys())
     assert expected <= registered, f"missing: {expected - registered}"
 

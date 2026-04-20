@@ -510,6 +510,14 @@ def register_commands(cli: click.Group) -> None:
 @click.option(
     "--timeout", type=int, default=180, show_default=True, help="Health check timeout in seconds."
 )
+@click.option(
+    "--with-daemon/--no-with-daemon",
+    default=False,
+    help=(
+        "After the server is healthy, enroll this laptop into it via the "
+        "admin-bootstrap endpoint (dev only; requires NEXUS_ALLOW_ADMIN_BYPASS=true)."
+    ),
+)
 def up(
     detach: bool,
     addons: tuple[str, ...],
@@ -518,6 +526,7 @@ def up(
     build: bool | None,
     force_pull: bool | None,
     timeout: int,
+    with_daemon: bool,
 ) -> None:
     """Start the Nexus stack.
 
@@ -970,6 +979,93 @@ def up(
     if preset == "demo":
         console.print("  nexus demo init")
     console.print("  nexus status")
+
+    if with_daemon:
+        _run_daemon_bootstrap(conn_env)
+
+
+def _run_daemon_bootstrap(conn_env: dict[str, str]) -> None:
+    """After `nexus up --with-daemon`, enroll this laptop into the stack it started.
+
+    Hits ``/v1/admin/daemon-bootstrap`` which mints a tenant + machine principal
+    + enroll token, then invokes ``nexus daemon bootstrap`` in-process to run
+    the normal join flow. No-op on any failure — the server is already up,
+    daemon enrollment is best-effort.
+    """
+    import platform
+
+    import httpx
+
+    server_url = conn_env.get("NEXUS_SERVER_URL") or conn_env.get("NEXUS_URL")
+    if not server_url:
+        console.print()
+        console.print(
+            "[nexus.warning]--with-daemon: no server URL in connection env; "
+            "skipping bootstrap.[/nexus.warning]"
+        )
+        return
+
+    console.print()
+    console.print(f"[bold]--with-daemon:[/bold] enrolling this laptop into {server_url}...")
+    try:
+        resp = httpx.post(
+            f"{server_url.rstrip('/')}/v1/admin/daemon-bootstrap",
+            headers={"X-Admin-User": "admin"},
+            json={
+                "tenant_name": "dev-local",
+                "principal_label": platform.node() or "dev-laptop",
+                "ttl_minutes": 15,
+            },
+            timeout=30.0,
+        )
+    except Exception as e:  # noqa: BLE001
+        console.print(
+            f"[nexus.warning]--with-daemon: bootstrap request failed ({e}); "
+            "run `nexus daemon bootstrap --server {server_url}` manually."
+            f"[/nexus.warning]"
+        )
+        return
+
+    if resp.status_code == 404:
+        console.print(
+            "[nexus.warning]--with-daemon: admin-bootstrap endpoint unavailable "
+            "(NEXUS_ALLOW_ADMIN_BYPASS must be 'true' on the server)."
+            "[/nexus.warning]"
+        )
+        return
+    if resp.status_code != 200:
+        console.print(
+            f"[nexus.warning]--with-daemon: bootstrap returned "
+            f"{resp.status_code} {resp.text}[/nexus.warning]"
+        )
+        return
+
+    body = resp.json()
+    from click.testing import CliRunner
+
+    from nexus.bricks.auth.daemon.cli import daemon as daemon_group
+
+    result = CliRunner().invoke(
+        daemon_group,
+        [
+            "join",
+            "--server",
+            server_url,
+            "--enroll-token",
+            body["enroll_token"],
+        ],
+        catch_exceptions=False,
+    )
+    if result.exit_code != 0:
+        console.print(
+            f"[nexus.warning]--with-daemon: daemon join failed: {result.output}[/nexus.warning]"
+        )
+        return
+    console.print(
+        f"[nexus.success]✓[/nexus.success] daemon enrolled: "
+        f"tenant_id={body['tenant_id']} principal_id={body['principal_id']}"
+    )
+    console.print("  Run `nexus daemon run` to start the push loop.")
 
 
 @click.command()

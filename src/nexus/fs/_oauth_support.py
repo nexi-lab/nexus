@@ -110,7 +110,7 @@ def _get_token_manager_cls() -> Any:
 
 
 def _get_x_oauth_provider_cls() -> Any:
-    return _il.import_module("nexus.bricks.auth.oauth.providers.x").XOAuthProvider
+    return _il.import_module("nexus.lib.oauth.providers.x").XOAuthProvider
 
 
 def get_fs_database_url() -> str | None:
@@ -230,9 +230,7 @@ def get_google_auth_url(
     Raises:
         ValueError: If client_id or client_secret is missing.
     """
-    GoogleOAuthProvider = _il.import_module(
-        "nexus.bricks.auth.oauth.providers.google"
-    ).GoogleOAuthProvider
+    GoogleOAuthProvider = _il.import_module("nexus.lib.oauth.providers.google").GoogleOAuthProvider
 
     client_id = client_id or os.getenv("NEXUS_OAUTH_GOOGLE_CLIENT_ID")
     client_secret = client_secret or os.getenv("NEXUS_OAUTH_GOOGLE_CLIENT_SECRET")
@@ -328,7 +326,7 @@ def run_google_oauth_setup(
 
     async def _exchange_and_store() -> str:
         GoogleOAuthProvider = _il.import_module(
-            "nexus.bricks.auth.oauth.providers.google"
+            "nexus.lib.oauth.providers.google"
         ).GoogleOAuthProvider
         client_secret_resolved = client_secret or os.getenv("NEXUS_OAUTH_GOOGLE_CLIENT_SECRET", "")
         provider = GoogleOAuthProvider(
@@ -501,7 +499,7 @@ async def exchange_auth_code(
     """
     if provider in _GOOGLE_SERVICE_SCOPES:
         GoogleOAuthProvider = _il.import_module(
-            "nexus.bricks.auth.oauth.providers.google"
+            "nexus.lib.oauth.providers.google"
         ).GoogleOAuthProvider
         client_id = os.getenv("NEXUS_OAUTH_GOOGLE_CLIENT_ID", "")
         client_secret = os.getenv("NEXUS_OAUTH_GOOGLE_CLIENT_SECRET", "")

@@ -9,6 +9,7 @@ import sys
 from typing import TYPE_CHECKING, Any, cast
 
 import click
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from nexus.cli.utils import (
     add_backend_options,
@@ -46,110 +47,60 @@ def _add_health_check_route(mcp_server: Any) -> None:
         )
 
 
-def _add_api_key_middleware(mcp_server: Any) -> None:
-    """Add HTTP middleware to extract API keys from headers.
+class _APIKeyMiddleware(BaseHTTPMiddleware):
+    """Extract API key from HTTP headers into request contextvar.
 
-    This middleware extracts the API key from the X-Nexus-API-Key header
-    and sets it in the request context for use by MCP tools.
-
-    Args:
-        mcp_server: FastMCP server instance
+    Defined at module level so it can be passed to
+    ``mcp.run(middleware=[Middleware(_APIKeyMiddleware)])``.
+    FastMCP's ``http_app()`` returns a fresh Starlette app on each
+    call, so middleware added after the fact is lost.
     """
-    try:
-        from starlette.middleware.base import BaseHTTPMiddleware
 
+    async def dispatch(self, request: "Request", call_next: Any) -> "Response":
         from nexus.bricks.mcp import reset_request_api_key, set_request_api_key
 
-        class APIKeyMiddleware(BaseHTTPMiddleware):
-            """Middleware to extract API key from HTTP headers."""
-
-            async def dispatch(self, request: "Request", call_next: Any) -> "Response":
-                # Extract API key from header (try both formats)
-                api_key = request.headers.get("X-Nexus-API-Key") or request.headers.get(
-                    "x-nexus-api-key"
-                )
-
-                # Also support Authorization header format: "Bearer <api-key>"
-                if not api_key:
-                    auth_header = request.headers.get("Authorization") or request.headers.get(
-                        "authorization"
-                    )
-                    if auth_header and auth_header.startswith("Bearer "):
-                        api_key = auth_header[7:]  # Remove "Bearer " prefix
-
-                # Set API key in context if present
-                token = None
-                if api_key:
-                    token = set_request_api_key(api_key)
-
-                try:
-                    # Process request
-                    response = await call_next(request)
-                    return cast("Response", response)
-                finally:
-                    # Clean up context
-                    if token is not None:
-                        reset_request_api_key(token)
-
-        # Add middleware to the underlying Starlette app
-        # FastMCP's http_app is a method that returns the Starlette application
-        if hasattr(mcp_server, "http_app"):
-            app = mcp_server.http_app()
-            app.add_middleware(APIKeyMiddleware)
-            console.print(
-                "[nexus.success]✓ API key middleware enabled (X-Nexus-API-Key header)[/nexus.success]"
+        api_key = request.headers.get("X-Nexus-API-Key") or request.headers.get("x-nexus-api-key")
+        if not api_key:
+            auth_header = request.headers.get("Authorization") or request.headers.get(
+                "authorization"
             )
-        else:
-            console.print(
-                "[nexus.warning]Warning: http_app not available, middleware not added[/nexus.warning]"
-            )
+            if auth_header and auth_header.lower().startswith("bearer "):
+                api_key = auth_header[7:]
+        token = set_request_api_key(api_key) if api_key else None
+        try:
+            response = await call_next(request)
+            return cast("Response", response)
+        finally:
+            if token is not None:
+                reset_request_api_key(token)
 
-    except Exception as e:
-        console.print(
-            f"[nexus.warning]Warning: Failed to add API key middleware: {e}[/nexus.warning]"
-        )
 
+def _build_http_middleware() -> list[Any]:
+    """Build the Starlette middleware list for MCP HTTP transport (#3779).
 
-def _add_audit_log_middleware(mcp_server: Any) -> None:
-    """Add MCP audit-log middleware (Issue #3779).
-
-    Emits structured JSON per HTTP request to stdout and publishes
-    the same payload to the Redis ``nexus:audit:mcp`` channel.
+    Order (outermost → innermost):
+      1. RateLimit — short-circuit with 429 before any work
+      2. AuditLog  — emit structured record per request
+      3. APIKey    — set ``_request_api_key`` contextvar for tool handlers
     """
-    try:
-        from nexus.bricks.mcp.middleware_audit import MCPAuditLogMiddleware
+    from starlette.middleware import Middleware
 
-        if hasattr(mcp_server, "http_app"):
-            app = mcp_server.http_app()
-            app.add_middleware(MCPAuditLogMiddleware)
-            console.print(
-                "[nexus.success]✓ Audit log middleware enabled (nexus:audit:mcp)[/nexus.success]"
-            )
+    from nexus.bricks.mcp.middleware_audit import MCPAuditLogMiddleware
+    from nexus.bricks.mcp.middleware_ratelimit import build_rate_limit_middleware
+
+    items: list[Any] = []
+    try:
+        items.append(build_rate_limit_middleware())
     except Exception as e:
         console.print(
-            f"[nexus.warning]Warning: Failed to add audit log middleware: {e}[/nexus.warning]"
+            f"[nexus.warning]Warning: Failed to build rate-limit middleware: {e}[/nexus.warning]"
         )
-
-
-def _add_rate_limit_middleware(mcp_server: Any) -> None:
-    """Install SlowAPI-based rate-limit middleware (Issue #3779).
-
-    Per-token tiers keyed by the same header conventions as the
-    HTTP API. Enabled via ``MCP_RATE_LIMIT_ENABLED=true``.
-    """
-    try:
-        from nexus.bricks.mcp.middleware_ratelimit import install_rate_limit
-
-        if hasattr(mcp_server, "http_app"):
-            app = mcp_server.http_app()
-            install_rate_limit(app)
-            console.print(
-                "[nexus.success]✓ Rate-limit middleware installed (MCP_RATE_LIMIT_ENABLED to enforce)[/nexus.success]"
-            )
-    except Exception as e:
-        console.print(
-            f"[nexus.warning]Warning: Failed to add rate-limit middleware: {e}[/nexus.warning]"
-        )
+    items.append(Middleware(MCPAuditLogMiddleware))
+    items.append(Middleware(_APIKeyMiddleware))
+    console.print(
+        "[nexus.success]✓ MCP HTTP middleware chain: APIKey → AuditLog → RateLimit[/nexus.success]"
+    )
+    return items
 
 
 @click.group(name="mcp")
@@ -275,7 +226,24 @@ def serve(
     """
     import asyncio
 
-    asyncio.run(_async_serve(transport, host, port, api_key, remote_url, remote_api_key))
+    # FastMCP's .run(transport="http") starts its own event loop via anyio.run
+    # and cannot be called from inside an already-running asyncio loop. Split
+    # async setup (connects, creates server, installs middleware) from the
+    # synchronous transport run.
+    mcp_server = asyncio.run(
+        _async_serve(transport, host, port, api_key, remote_url, remote_api_key)
+    )
+    if mcp_server is None:
+        return
+    if transport == "stdio":
+        mcp_server.run(transport="stdio")
+    elif transport in ("http", "sse"):
+        # Middleware MUST be passed at run() time — FastMCP's http_app() returns
+        # a new Starlette instance on every call, so post-hoc add_middleware
+        # is lost (#3779 integration fix).
+        mcp_server.run(
+            transport=transport, host=host, port=port, middleware=_build_http_middleware()
+        )
 
 
 async def _async_serve(
@@ -285,7 +253,7 @@ async def _async_serve(
     api_key: str | None,
     remote_url: str | None,
     remote_api_key: str | None,
-) -> None:
+) -> Any:
     try:
         # Check if fastmcp is installed
         try:
@@ -393,27 +361,21 @@ async def _async_serve(
             manifest_resolver=manifest_resolve_fn,
         )
 
-        # Add HTTP middleware and routes (for http/sse transports)
+        # Add custom HTTP routes (health check). Middleware is installed at
+        # mcp.run() time in the outer ``serve()`` caller via
+        # ``_build_http_middleware()`` — FastMCP's http_app() returns a fresh
+        # Starlette instance per call, so post-hoc add_middleware is lost.
         if transport in ["http", "sse"]:
-            # Middleware order (outermost to innermost, added in reverse):
-            #   APIKey (innermost) → AuditLog → RateLimit (outermost).
             _add_health_check_route(mcp_server)
-            _add_api_key_middleware(mcp_server)
-            _add_audit_log_middleware(mcp_server)
-            _add_rate_limit_middleware(mcp_server)
 
-        # Run with appropriate transport
-        if transport == "stdio":
-            mcp_server.run(transport="stdio")
-        elif transport == "http":
-            mcp_server.run(transport="http", host=host, port=port)
-        elif transport == "sse":
-            mcp_server.run(transport="sse", host=host, port=port)
+        return mcp_server
 
     except KeyboardInterrupt:
         console.print("\n[nexus.warning]MCP server stopped by user[/nexus.warning]")
+        return None
     except Exception as e:
         handle_error(e)
+        return None
 
 
 @mcp.command(name="export-tools")

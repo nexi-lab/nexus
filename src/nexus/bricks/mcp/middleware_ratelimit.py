@@ -182,6 +182,32 @@ class _MCPRateLimitMiddleware(BaseHTTPMiddleware):
 # ---------------------------------------------------------------------------
 
 
+def build_rate_limit_middleware() -> Any:
+    """Return a Starlette ``Middleware`` wrapper for use with
+    ``mcp.run(middleware=[...])``.
+
+    FastMCP's ``http_app()`` returns a new Starlette instance on each call,
+    so middleware must be passed at ``run()`` time — not added after the
+    fact. This helper mirrors the configuration read by ``install_rate_limit``.
+    """
+    from starlette.middleware import Middleware
+
+    enabled = os.environ.get("MCP_RATE_LIMIT_ENABLED", "false").lower() == "true"
+    storage_uri = (
+        os.environ.get("NEXUS_REDIS_URL") or os.environ.get("DRAGONFLY_URL") or "memory://"
+    )
+    try:
+        storage = storage_from_string(storage_uri)
+    except Exception:
+        logger.warning(
+            "Rate-limit storage init failed for uri=%s — falling back to memory://",
+            storage_uri,
+            exc_info=True,
+        )
+        storage = storage_from_string("memory://")
+    return Middleware(_MCPRateLimitMiddleware, storage=storage, enabled=enabled)
+
+
 def install_rate_limit(app: Any) -> None:
     """Install rate-limit middleware + 429 handler on a Starlette app.
 
@@ -216,4 +242,4 @@ def install_rate_limit(app: Any) -> None:
     app.add_middleware(_MCPRateLimitMiddleware, storage=storage, enabled=enabled)
 
 
-__all__ = ["install_rate_limit"]
+__all__ = ["build_rate_limit_middleware", "install_rate_limit"]

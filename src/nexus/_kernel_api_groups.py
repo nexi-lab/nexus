@@ -165,5 +165,13 @@ KERNEL_REQUIRED_METHODS: frozenset[str] = frozenset(
         "unregister_hook",
         "unregister_watch",
         "wait_zone_revision",
+        "zone_cluster_info",
+        "zone_create",
+        "zone_join",
+        "zone_list",
+        "zone_mount",
+        "zone_remove",
+        "zone_share",
+        "zone_unmount",
     }
 )

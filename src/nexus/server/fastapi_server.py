@@ -400,13 +400,30 @@ def create_app(
         _version_svc = nexus_fs.service("version_service") if hasattr(nexus_fs, "service") else None
         if _version_svc is not None:
             _rpc_sources.append(_version_svc)
-        # R20.18.5: FederationRPCService registered ZoneManager CRUD RPCs
-        # on top of a Python `NexusFederation` service object. Kernel
-        # owns federation internally now — no service to register,
-        # nothing to mount on the RPC surface. If zone CRUD RPCs are
-        # needed again, they should be reimplemented via `sys_setattr`
-        # / `sys_unlink` on `/__sys__/zones/` virtual paths (procfs
-        # pattern) rather than bolted onto a Python shim.
+        # R20.18.5 Phase B: FederationRPCService backs the federation_*
+        # gRPC surface. It now delegates every call to kernel zone_*
+        # accessors (tolerated tech debt — the boundary-rule-compliant
+        # replacement is /__sys__/zones/ procfs through sys_stat, tracked
+        # as a post-merge follow-up).
+        _kernel = getattr(nexus_fs, "_kernel", None)
+        _fed_active = False
+        if _kernel is not None:
+            _mrd = getattr(_kernel, "mount_reconciliation_done", None)
+            try:
+                _fed_active = bool(_mrd()) if callable(_mrd) else bool(_mrd)
+                # "always ready" semantics: True even when federation is
+                # disabled. Gate the RPC on an actual zone list signal
+                # so we don't mount federation_* on slim profiles.
+                if _fed_active:
+                    _zl = getattr(_kernel, "zone_list", None)
+                    if callable(_zl):
+                        _fed_active = bool(_zl())
+            except Exception:
+                _fed_active = False
+        if _fed_active:
+            from nexus.server.rpc.services.federation_rpc import FederationRPCService
+
+            _rpc_sources.append(FederationRPCService(_kernel))
         # Lock syscalls (sys_lock, sys_unlock, lock_info, lock_list, etc.)
         # are @rpc_expose on NexusFS — auto-discovered by _discover_exposed_methods.
         # LocksRPCService deleted — no separate RPC service needed.

@@ -4529,10 +4529,33 @@ impl Kernel {
         use std::path::Path;
         use std::sync::atomic::AtomicBool;
 
-        // No federation unless NEXUS_HOSTNAME is set.
-        let Ok(hostname) = std::env::var("NEXUS_HOSTNAME") else {
+        // Activation signal: NEXUS_PEERS non-empty means federation is
+        // explicitly configured. NEXUS_HOSTNAME defaults to the OS
+        // hostname (docker compose sets `hostname: nexus-1` but not
+        // the env var — Python `federation.py:from_env()` used
+        // `socket.gethostname()` as the same fallback).
+        let peers_csv = std::env::var("NEXUS_PEERS").unwrap_or_default();
+        if peers_csv.trim().is_empty() {
             return Ok(());
-        };
+        }
+        let hostname = std::env::var("NEXUS_HOSTNAME").ok().unwrap_or_else(|| {
+            // Best-effort OS hostname — docker sets this to the
+            // container `hostname:` field.
+            #[cfg(unix)]
+            {
+                std::process::Command::new("hostname")
+                    .output()
+                    .ok()
+                    .and_then(|o| String::from_utf8(o.stdout).ok())
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or_else(|| "localhost".to_string())
+            }
+            #[cfg(not(unix))]
+            {
+                std::env::var("COMPUTERNAME").unwrap_or_else(|_| "localhost".to_string())
+            }
+        });
 
         // Process-wide one-shot guard. Multiple `Kernel::new()` calls in
         // one process (e.g. `nexus.connect()` + a side embedded store
@@ -4559,8 +4582,8 @@ impl Kernel {
                 .unwrap_or_else(|_| "./nexus-zones".to_string())
         });
 
-        // Parse peers "host:port,host:port" → "id@host:port".
-        let peers_csv = std::env::var("NEXUS_PEERS").unwrap_or_default();
+        // Parse peers "host:port,host:port" → "id@host:port". `peers_csv`
+        // already read above as part of the activation gate.
         let peers = parse_peer_list_to_raft_format(&peers_csv)
             .map_err(|e| KernelError::Federation(format!("NEXUS_PEERS parse: {}", e)))?;
 
@@ -4687,6 +4710,14 @@ impl Kernel {
             .store(true, Ordering::Release);
         tracing::info!("Federation bootstrap complete (hostname={})", hostname);
         Ok(())
+    }
+
+    /// R20.18.5 Phase B: clone the owning Arc<ZoneManager> so the
+    /// codegen'd PyKernel `zone_*` methods (FederationRPCService
+    /// backend) can reach it without a crate-internal back-reference.
+    /// Returns None when federation isn't active.
+    pub fn zone_manager_arc(&self) -> Option<Arc<nexus_raft::ZoneManager>> {
+        self.zone_manager.get().cloned()
     }
 
     /// R20.16.6: snapshot the federation-bootstrap-complete flag.
@@ -5402,15 +5433,16 @@ mod tests {
     }
 
     #[test]
-    fn test_init_federation_from_env_no_hostname_is_noop() {
-        // Without NEXUS_HOSTNAME the method returns Ok(()) without
-        // touching any fields — the "federation disabled" path.
-        // Save + clear + restore so parallel tests don't collide.
-        let saved = std::env::var("NEXUS_HOSTNAME").ok();
+    fn test_init_federation_from_env_no_peers_is_noop() {
+        // Activation gate: NEXUS_PEERS must be non-empty. Without it
+        // the method returns Ok(()) without touching any fields —
+        // the "federation disabled" path. Save + clear + restore so
+        // parallel tests don't collide.
+        let saved_peers = std::env::var("NEXUS_PEERS").ok();
         // SAFETY: tests run serial on the same process; we restore
         // before returning and only flip one key.
         unsafe {
-            std::env::remove_var("NEXUS_HOSTNAME");
+            std::env::remove_var("NEXUS_PEERS");
         }
         let k = Kernel::new();
         assert!(k.init_federation_from_env().is_ok());
@@ -5421,9 +5453,9 @@ mod tests {
         // profile. Verify the "inactive" fast path.
         assert!(k.mount_reconciliation_done());
         unsafe {
-            match saved {
-                Some(v) => std::env::set_var("NEXUS_HOSTNAME", v),
-                None => std::env::remove_var("NEXUS_HOSTNAME"),
+            match saved_peers {
+                Some(v) => std::env::set_var("NEXUS_PEERS", v),
+                None => std::env::remove_var("NEXUS_PEERS"),
             }
         }
     }

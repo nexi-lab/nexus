@@ -1,4 +1,4 @@
-"""Unit tests for PersistentService protocol (Issue #1577).
+"""Unit tests for BackgroundService protocol (Issue #1577).
 
 Verifies structural subtyping (Protocol) works correctly for service
 lifecycle classification without requiring explicit inheritance.
@@ -8,15 +8,15 @@ from __future__ import annotations
 
 import pytest
 
-from nexus.contracts.protocols.service_lifecycle import PersistentService
+from nexus.contracts.protocols.service_lifecycle import BackgroundService
 
 # ---------------------------------------------------------------------------
 # Test stubs — satisfy protocols structurally (no inheritance)
 # ---------------------------------------------------------------------------
 
 
-class _FullPersistent:
-    """Structurally satisfies PersistentService — start + stop."""
+class _FullBackground:
+    """Structurally satisfies BackgroundService — start + stop."""
 
     async def start(self) -> None:
         pass
@@ -26,37 +26,37 @@ class _FullPersistent:
 
 
 class _PlainService:
-    """No lifecycle methods — not PersistentService."""
+    """No lifecycle methods — not BackgroundService."""
 
     def do_work(self) -> str:
         return "done"
 
 
-class _PartialPersistent:
-    """Has start but missing stop — NOT PersistentService."""
+class _PartialBackground:
+    """Has start but missing stop — NOT BackgroundService."""
 
     async def start(self) -> None:
         pass
 
 
 # ---------------------------------------------------------------------------
-# PersistentService Protocol
+# BackgroundService Protocol
 # ---------------------------------------------------------------------------
 
 
-class TestPersistentServiceProtocol:
+class TestBackgroundServiceProtocol:
     def test_full_implementation_detected(self) -> None:
-        assert isinstance(_FullPersistent(), PersistentService)
+        assert isinstance(_FullBackground(), BackgroundService)
 
     def test_plain_service_not_detected(self) -> None:
-        assert not isinstance(_PlainService(), PersistentService)
+        assert not isinstance(_PlainService(), BackgroundService)
 
     def test_partial_not_detected(self) -> None:
-        """Missing stop() → not PersistentService."""
-        assert not isinstance(_PartialPersistent(), PersistentService)
+        """Missing stop() → not BackgroundService."""
+        assert not isinstance(_PartialBackground(), BackgroundService)
 
     @pytest.mark.asyncio()
     async def test_start_and_stop_are_async(self) -> None:
-        svc = _FullPersistent()
+        svc = _FullBackground()
         await svc.start()
         await svc.stop()

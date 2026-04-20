@@ -156,7 +156,8 @@ class ExporterRegistry:
         self._exporters.clear()
         self._breakers.clear()
 
-    # PersistentService protocol alias
+    # NOT a BackgroundService today (no start()). Alias kept as a
+    # convenience — close_all() is the real shutdown hook.
     stop = close_all
 
     async def health_check(self) -> dict[str, bool]:

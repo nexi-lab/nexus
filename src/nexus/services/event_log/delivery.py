@@ -103,7 +103,7 @@ class EventDeliveryWorker:
     # ---- Lifecycle -----------------------------------------------------------
 
     async def start(self) -> None:
-        """Start background consumer task (PersistentService protocol)."""
+        """Start background consumer task (BackgroundService protocol)."""
         if self._consumer_task is not None and not self._consumer_task.done():
             logger.warning("EventDeliveryWorker already running")
             return
@@ -118,7 +118,7 @@ class EventDeliveryWorker:
         )
 
     async def stop(self, timeout: float = 5.0) -> None:  # noqa: ARG002
-        """Graceful shutdown: cancel task and await completion (PersistentService protocol)."""
+        """Graceful shutdown: cancel task and await completion (BackgroundService protocol)."""
         self._stopped = True
         if self._consumer_task is not None:
             self._consumer_task.cancel()

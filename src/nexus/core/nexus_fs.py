@@ -275,11 +275,11 @@ class NexusFS(  # type: ignore[misc]
         self._initialized = True
 
     def bootstrap(self) -> None:
-        """Phase 3: Start persistent services.  Server/Worker only.
+        """Phase 3: Start background services.  Server/Worker only.
 
-        Auto-starts all PersistentService instances (ZoneLifecycleService,
+        Auto-starts all BackgroundService instances (ZoneLifecycleService,
         EventDeliveryWorker, DeferredPermissionBuffer, etc.) via
-        ServiceRegistry.start_persistent_services().
+        ServiceRegistry.start_background_services().
 
         Idempotent — guarded by ``_bootstrapped`` flag.
         """
@@ -287,10 +287,10 @@ class NexusFS(  # type: ignore[misc]
             return
         if not self._initialized:
             self.initialize()
-        # Auto-lifecycle: start PersistentService instances (Issue #1580)
+        # Auto-lifecycle: start BackgroundService instances (Issue #1580)
         coord = self.service_coordinator
         if coord is not None:
-            coord.start_persistent_services()
+            coord.start_background_services()
             coord.mark_bootstrapped()  # future enlist() calls auto-start
         self._bootstrapped = True
 
@@ -4796,7 +4796,7 @@ class NexusFS(  # type: ignore[misc]
     # Pipe/stream methods in nexus_fs_ipc.py (IPCMixin)
 
     def aclose(self) -> None:
-        """Shutdown: stop PersistentService + unregister hooks, then close.
+        """Shutdown: stop BackgroundService + unregister hooks, then close.
 
         Calls coordinator lifecycle methods first, then
         delegates to close() for sync resource cleanup.
@@ -4806,7 +4806,7 @@ class NexusFS(  # type: ignore[misc]
 
         coord = self.service_coordinator
         if coord is not None:
-            coord.stop_persistent_services()
+            coord.stop_background_services()
             coord._unregister_all_hooks()
         self.close()
 

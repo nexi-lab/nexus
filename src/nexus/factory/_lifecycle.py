@@ -184,7 +184,7 @@ async def _wire_services(
         nx._close_callbacks.append(_close_write_observer_cancel)
 
     # Issue #3193: Cancel the delivery worker asyncio.Task on sync close.
-    # The coordinator's stop_persistent_services() is async and only runs
+    # The coordinator's stop_background_services() is async and only runs
     # during lifespan shutdown. For sync close (tests, CLI), we cancel
     # the task directly so it doesn't block event loop cleanup.
     _dw = _svc.get("delivery_worker")
@@ -268,8 +268,8 @@ async def _initialize_services(
     )
 
     # Background services (DeferredPermissionBuffer, EventDeliveryWorker,
-    # ZoneLifecycleService) implement PersistentService and are auto-started
-    # by the coordinator's start_persistent_services() at bootstrap.
+    # ZoneLifecycleService) implement BackgroundService and are auto-started
+    # by the coordinator's start_background_services() at bootstrap.
     # No manual _bootstrap_callbacks needed.
 
 

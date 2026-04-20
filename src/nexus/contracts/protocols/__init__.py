@@ -38,7 +38,7 @@ from nexus.contracts.protocols.rebac import ReBACBrickProtocol
 from nexus.contracts.protocols.sandbox import SandboxProtocol
 from nexus.contracts.protocols.scheduler import AgentRequest, SchedulerProtocol
 from nexus.contracts.protocols.search import SearchBrickProtocol, SearchProtocol
-from nexus.contracts.protocols.service_lifecycle import PersistentService
+from nexus.contracts.protocols.service_lifecycle import BackgroundService
 from nexus.contracts.protocols.share_link import ShareLinkProtocol
 from nexus.contracts.protocols.time_travel import TimeTravelProtocol
 from nexus.contracts.protocols.token_encryptor import TokenEncryptor
@@ -49,6 +49,7 @@ from nexus.contracts.protocols.workspace_manager import WorkspaceManagerProtocol
 __all__ = [
     "APIKeyCreatorProtocol",
     "AgentRequest",
+    "BackgroundService",
     "ChunkedUploadProtocol",
     "EntityRegistryProtocol",
     "FileReaderProtocol",
@@ -62,7 +63,6 @@ __all__ = [
     "OperationLogProtocol",
     "ParseProtocol",
     "PaymentProtocol",
-    "PersistentService",
     "PermissionEnforcerProtocol",
     "PermissionProtocol",
     "ReBACBrickProtocol",

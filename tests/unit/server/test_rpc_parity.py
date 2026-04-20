@@ -106,7 +106,7 @@ def test_all_public_methods_are_exposed_or_excluded():
     # ADD NEW METHODS HERE if they should remain local-only
     INTERNAL_ONLY_METHODS = {
         # Lifecycle/infrastructure methods
-        "aclose",  # Async shutdown — stop PersistentService + unregister hooks (Issue #1580)
+        "aclose",  # Async shutdown — stop BackgroundService + unregister hooks (Issue #1580)
         "close",  # Connection management - handled differently for remote
         "link",  # Boot phase 1 - pure memory wiring, not an RPC operation
         "initialize",  # Boot phase 2 - one-time side effects, not an RPC operation

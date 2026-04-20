@@ -395,7 +395,7 @@ async def _startup_tiger_cache(app: "FastAPI", svc: "LifespanServices") -> list[
                     )
                     app.state.directory_grant_expander = expander
 
-                    # Q3 PersistentService — coordinator auto-calls start()
+                    # Q3 BackgroundService — coordinator auto-calls start()
                     coord = svc.service_coordinator
                     if coord is not None:
                         coord.enlist("directory_grant_expander", expander)

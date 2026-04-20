@@ -30,7 +30,7 @@ def _start_background_services(system: dict[str, Any]) -> None:
 
     # Event Delivery Worker (system tier)
     # Issue #3193: start() is now async — auto-started by
-    # ServiceRegistry.start_persistent_services() (Q3).
+    # ServiceRegistry.start_background_services() (Q3).
 
     # Zone Lifecycle — load Terminating zones from DB (Issue #2061)
     zl = system.get("zone_lifecycle")

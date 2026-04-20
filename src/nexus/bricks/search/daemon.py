@@ -834,7 +834,7 @@ class SearchDaemon:
         self._initialized = False
         logger.info("SearchDaemon shutdown complete")
 
-    # PersistentService protocol aliases
+    # BackgroundService protocol aliases
     start = startup
     stop = shutdown
 

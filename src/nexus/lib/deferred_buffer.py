@@ -60,7 +60,7 @@ class DeferredBuffer(ABC, Generic[T]):
         self._flush_count = 0
         self._total_flushed = 0
 
-    # ── Lifecycle (PersistentService protocol) ──
+    # ── Lifecycle (BackgroundService protocol) ──
 
     async def start(self) -> None:
         """Start the background flush worker thread."""

@@ -42,27 +42,27 @@ from __future__ import annotations
 from typing import Protocol, runtime_checkable
 
 # ---------------------------------------------------------------------------
-# PersistentService — requires long-running process
+# BackgroundService — requires long-running process
 # ---------------------------------------------------------------------------
 
 
 @runtime_checkable
-class PersistentService(Protocol):
+class BackgroundService(Protocol):
     """Service that requires a long-running process (background workers).
 
-    PersistentServices have background tasks that run continuously
+    BackgroundServices have background tasks that run continuously
     (e.g., event delivery polling, deferred permission flushing).
     They need an ``asyncio`` event loop and cannot operate in
     on-demand mode (Lambda, Cloud Run single-request).
 
     The kernel and CLI use this protocol to determine distro type::
 
-        persistent = [
+        background = [
             name for name, svc in registry.all()
-            if isinstance(svc, PersistentService)
+            if isinstance(svc, BackgroundService)
         ]
-        if persistent:
-            log.info("Persistent distro: %s", persistent)
+        if background:
+            log.info("Background distro: %s", background)
         else:
             log.info("On-demand compatible distro")
 
@@ -82,7 +82,7 @@ class PersistentService(Protocol):
 
     Design note:
         Separate from ``BrickLifecycleProtocol`` which adds ``health_check()``
-        and integrates with the BLM FSM.  ``PersistentService`` is lighter —
+        and integrates with the BLM FSM.  ``BackgroundService`` is lighter —
         just the start/stop contract for distro classification.
     """
 

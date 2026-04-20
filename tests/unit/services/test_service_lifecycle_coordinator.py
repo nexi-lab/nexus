@@ -3,7 +3,7 @@
 These tests exercise the lifecycle methods (enlist, swap_service, start/stop)
 that were merged from ServiceLifecycleCoordinator into ServiceRegistry in Issue #1814.
 
-One-dimension model: PersistentService protocol + duck-typed hook_spec().
+One-dimension model: BackgroundService protocol + duck-typed hook_spec().
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from nexus.contracts.protocols.service_hooks import HookSpec
-from nexus.contracts.protocols.service_lifecycle import PersistentService
+from nexus.contracts.protocols.service_lifecycle import BackgroundService
 from nexus.core.nexus_fs_dispatch import DispatchMixin
 from nexus.core.service_registry import ServiceRegistry
 
@@ -93,8 +93,8 @@ class _FakeHookServiceV2(_FakeHookService):
         return [f"v2:{pattern}"]
 
 
-class _PersistentFakeService:
-    """PersistentService stub — satisfies the Protocol structurally."""
+class _BackgroundFakeService:
+    """BackgroundService stub — satisfies the Protocol structurally."""
 
     def __init__(self) -> None:
         self.started = False
@@ -110,7 +110,7 @@ class _PersistentFakeService:
         return "working"
 
 
-class _FakePersistentHookService:
+class _FakeBackgroundHookService:
     """Fake service with both start/stop and hook_spec()."""
 
     def __init__(self, hook_spec_value: HookSpec | None = None) -> None:
@@ -523,14 +523,14 @@ class TestSwapWithFullHookSpec:
 
 
 class TestProtocolConformance:
-    """Verify structural subtyping works for PersistentService."""
+    """Verify structural subtyping works for BackgroundService."""
 
     @pytest.mark.parametrize(
         "service_class,protocol,expected",
         [
-            (_PersistentFakeService, PersistentService, True),
-            (_FakeService, PersistentService, False),
-            (_FakeHookService, PersistentService, False),
+            (_BackgroundFakeService, BackgroundService, True),
+            (_FakeService, BackgroundService, False),
+            (_FakeHookService, BackgroundService, False),
         ],
     )
     def test_protocol_conformance(
@@ -542,29 +542,29 @@ class TestProtocolConformance:
 
 
 # ---------------------------------------------------------------------------
-# Auto-lifecycle — PersistentService management (Issue #1580)
+# Auto-lifecycle — BackgroundService management (Issue #1580)
 # ---------------------------------------------------------------------------
 
 
-class TestAutoLifecyclePersistentService:
-    """Auto start/stop for PersistentService (Q3 + Q4)."""
+class TestAutoLifecycleBackgroundService:
+    """Auto start/stop for BackgroundService (Q3 + Q4)."""
 
-    def test_start_calls_start_on_persistent(self, coordinator: ServiceRegistry) -> None:
-        svc = _PersistentFakeService()
+    def test_start_calls_start_on_background(self, coordinator: ServiceRegistry) -> None:
+        svc = _BackgroundFakeService()
         coordinator._register_service("worker", svc)
-        started = coordinator.start_persistent_services()
+        started = coordinator.start_background_services()
         assert started == ["worker"]
         assert svc.started is True
 
-    def test_start_skips_non_persistent(self, coordinator: ServiceRegistry) -> None:
+    def test_start_skips_non_background(self, coordinator: ServiceRegistry) -> None:
         coordinator._register_service("search", _FakeService())
-        started = coordinator.start_persistent_services()
+        started = coordinator.start_background_services()
         assert started == []
 
-    def test_stop_calls_stop_on_persistent(self, coordinator: ServiceRegistry) -> None:
-        svc = _PersistentFakeService()
+    def test_stop_calls_stop_on_background(self, coordinator: ServiceRegistry) -> None:
+        svc = _BackgroundFakeService()
         coordinator._register_service("worker", svc)
-        stopped = coordinator.stop_persistent_services()
+        stopped = coordinator.stop_background_services()
         assert stopped == ["worker"]
         assert svc.stopped is True
 
@@ -578,10 +578,10 @@ class TestAutoLifecyclePersistentService:
             async def stop(self) -> None:
                 pass
 
-        ok_svc = _PersistentFakeService()
+        ok_svc = _BackgroundFakeService()
         coordinator._register_service("fail", _FailStart())
         coordinator._register_service("ok", ok_svc)
-        started = coordinator.start_persistent_services()
+        started = coordinator.start_background_services()
         assert "ok" in started
         assert "fail" not in started
         assert ok_svc.started is True
@@ -596,10 +596,10 @@ class TestAutoLifecyclePersistentService:
             async def stop(self) -> None:
                 raise RuntimeError("boom")
 
-        ok_svc = _PersistentFakeService()
+        ok_svc = _BackgroundFakeService()
         coordinator._register_service("fail", _FailStop())
         coordinator._register_service("ok", ok_svc)
-        stopped = coordinator.stop_persistent_services()
+        stopped = coordinator.stop_background_services()
         assert "ok" in stopped
         assert "fail" not in stopped
         assert ok_svc.stopped is True
@@ -614,21 +614,21 @@ class TestAutoLifecyclePersistentService:
             async def stop(self) -> None:
                 pass
 
-        ok_svc = _PersistentFakeService()
+        ok_svc = _BackgroundFakeService()
         coordinator._register_service("slow", _SlowStart())
         coordinator._register_service("ok", ok_svc)
-        started = coordinator.start_persistent_services(timeout=0.01)
+        started = coordinator.start_background_services(timeout=0.01)
         assert "ok" in started
         assert "slow" not in started
 
     def test_start_stop_idempotent(self, coordinator: ServiceRegistry) -> None:
-        svc = _PersistentFakeService()
+        svc = _BackgroundFakeService()
         coordinator._register_service("worker", svc)
-        coordinator.start_persistent_services()
-        coordinator.start_persistent_services()
+        coordinator.start_background_services()
+        coordinator.start_background_services()
         assert svc.started is True
-        coordinator.stop_persistent_services()
-        coordinator.stop_persistent_services()
+        coordinator.stop_background_services()
+        coordinator.stop_background_services()
         assert svc.stopped is True
 
 
@@ -675,12 +675,12 @@ class TestEnlist:
         assert info is not None
         assert info.instance is svc
 
-    def test_enlist_persistent_pre_bootstrap(
+    def test_enlist_background_pre_bootstrap(
         self,
         coordinator: ServiceRegistry,
     ) -> None:
-        """PersistentService pre-bootstrap: enlist registers but defers start()."""
-        svc = _PersistentFakeService()
+        """BackgroundService pre-bootstrap: enlist registers but defers start()."""
+        svc = _BackgroundFakeService()
         assert svc.started is False
 
         coordinator.enlist("svc", svc)
@@ -689,13 +689,13 @@ class TestEnlist:
         info = coordinator.service_info("svc")
         assert info is not None
 
-    def test_enlist_persistent_post_bootstrap(
+    def test_enlist_background_post_bootstrap(
         self,
         coordinator: ServiceRegistry,
     ) -> None:
-        """PersistentService post-bootstrap: enlist registers + calls start() immediately."""
+        """BackgroundService post-bootstrap: enlist registers + calls start() immediately."""
         coordinator.mark_bootstrapped()
-        svc = _PersistentFakeService()
+        svc = _BackgroundFakeService()
         assert svc.started is False
 
         coordinator.enlist("svc", svc)
@@ -720,14 +720,14 @@ class TestEnlist:
         assert coordinator._get_hook_spec("svc") is not None
         assert dispatch.read_hook_count == 1
 
-    def test_enlist_persistent_with_hooks_pre_bootstrap(
+    def test_enlist_background_with_hooks_pre_bootstrap(
         self,
         coordinator: ServiceRegistry,
         dispatch: _TestDispatch,
     ) -> None:
-        """PersistentService + hook_spec pre-bootstrap: hooks registered, start deferred."""
+        """BackgroundService + hook_spec pre-bootstrap: hooks registered, start deferred."""
         hook = MagicMock()
-        svc = _FakePersistentHookService(hook_spec_value=HookSpec(read_hooks=(hook,)))
+        svc = _FakeBackgroundHookService(hook_spec_value=HookSpec(read_hooks=(hook,)))
         assert svc.started is False
 
         coordinator.enlist("svc", svc)
@@ -736,15 +736,15 @@ class TestEnlist:
         assert coordinator._get_hook_spec("svc") is not None
         assert dispatch.read_hook_count == 1
 
-    def test_enlist_persistent_with_hooks_post_bootstrap(
+    def test_enlist_background_with_hooks_post_bootstrap(
         self,
         coordinator: ServiceRegistry,
         dispatch: _TestDispatch,
     ) -> None:
-        """PersistentService + hook_spec post-bootstrap: hooks registered + started."""
+        """BackgroundService + hook_spec post-bootstrap: hooks registered + started."""
         coordinator.mark_bootstrapped()
         hook = MagicMock()
-        svc = _FakePersistentHookService(hook_spec_value=HookSpec(read_hooks=(hook,)))
+        svc = _FakeBackgroundHookService(hook_spec_value=HookSpec(read_hooks=(hook,)))
 
         coordinator.enlist("svc", svc)
 
@@ -760,7 +760,7 @@ class TestEnlist:
         dep = _FakeService()
         coordinator.enlist("dep", dep)
 
-        svc = _PersistentFakeService()
+        svc = _BackgroundFakeService()
         coordinator.enlist("child", svc, depends_on=("dep",))
 
         info = coordinator.service_info("child")
@@ -774,9 +774,9 @@ class TestSwapUnifiedPath:
         "service_class,replacement_class",
         [
             (_FakeService, _FakeServiceV2),
-            (_PersistentFakeService, _PersistentFakeService),
+            (_BackgroundFakeService, _BackgroundFakeService),
             (_FakeHookService, _FakeHookServiceV2),
-            (_FakePersistentHookService, _FakePersistentHookService),
+            (_FakeBackgroundHookService, _FakeBackgroundHookService),
         ],
     )
     def test_swap_all_service_types(

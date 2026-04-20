@@ -75,13 +75,13 @@ class ZoneLifecycleService:
         )
 
     # ------------------------------------------------------------------
-    # PersistentService lifecycle (auto-managed by ServiceRegistry)
+    # BackgroundService lifecycle (auto-managed by ServiceRegistry)
     # ------------------------------------------------------------------
 
     async def start(self) -> None:
         """Load terminating zones from DB at bootstrap.
 
-        Called by ServiceRegistry.start_persistent_services(). Replaces
+        Called by ServiceRegistry.start_background_services(). Replaces
         the old _bootstrap_callbacks pattern.
         """
         try:
@@ -89,7 +89,7 @@ class ZoneLifecycleService:
                 with self._session_factory() as session:
                     self.load_terminating_zones(session)
                 logger.debug(
-                    "[ZoneLifecycle] Loaded terminating zones at PersistentService.start()"
+                    "[ZoneLifecycle] Loaded terminating zones at BackgroundService.start()"
                 )
         except Exception as exc:
             logger.warning("[ZoneLifecycle] Failed to load terminating zones: %s", exc)

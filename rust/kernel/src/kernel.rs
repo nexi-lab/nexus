@@ -4951,11 +4951,14 @@ impl Kernel {
         parent_zone_id: &str,
         consensus: nexus_raft::prelude::ZoneConsensus<nexus_raft::prelude::FullStateMachine>,
     ) {
+        tracing::info!(parent_zone_id = %parent_zone_id, "R20.18.5 install_federation_mount_coherence");
         let Some(slot) = consensus.mount_apply_cb_slot() else {
+            tracing::warn!(parent_zone_id = %parent_zone_id, "install_federation_mount_coherence: mount_apply_cb_slot returned None");
             return;
         };
         let (Some(registry), Some(runtime)) = (self.zone_registry.get(), self.zone_runtime.get())
         else {
+            tracing::warn!(parent_zone_id = %parent_zone_id, "install_federation_mount_coherence: zone_registry or zone_runtime not set");
             return;
         };
         let mount_table = self.mount_table_handle();
@@ -4964,7 +4967,8 @@ impl Kernel {
         let registry = Arc::clone(registry);
         let runtime = runtime.clone();
         let cross_zone_mounts = Arc::clone(&self.cross_zone_mounts);
-        let parent_zone_id = parent_zone_id.to_string();
+        let parent_zone_id_owned = parent_zone_id.to_string();
+        let log_parent_zone_id = parent_zone_id_owned.clone();
 
         use nexus_raft::raft::MountApplyEvent;
         let cb: Arc<dyn Fn(&MountApplyEvent) + Send + Sync> =
@@ -4981,7 +4985,7 @@ impl Kernel {
                         &registry,
                         &runtime,
                         &cross_zone_mounts,
-                        &parent_zone_id,
+                        &parent_zone_id_owned,
                         key,
                         target_zone_id,
                         backend_name,
@@ -4992,12 +4996,13 @@ impl Kernel {
                         &mount_table,
                         &dcache,
                         &cross_zone_mounts,
-                        &parent_zone_id,
+                        &parent_zone_id_owned,
                         key,
                     );
                 }
             });
         *slot.write() = Some(cb);
+        tracing::info!(parent_zone_id = %log_parent_zone_id, "R20.18.5 install_federation_mount_coherence: slot set");
     }
 
     /// Startup replay (R20.16.4): iterate every currently-loaded zone's
@@ -5140,9 +5145,17 @@ fn wire_federation_mount_impl(
     target_zone_id: &str,
     backend_name: &str,
 ) -> Result<(), KernelError> {
+    tracing::info!(
+        parent_zone_id = %parent_zone_id,
+        mount_path = %mount_path,
+        target_zone_id = %target_zone_id,
+        backend_name = %backend_name,
+        "R20.18.5 wire_federation_mount_impl entered"
+    );
     // 1. Look up target zone. Not-yet-local is a no-op — reconcile
     //    loop and future apply events will re-drive.
     let Some(target_consensus) = registry.get_node(target_zone_id) else {
+        tracing::warn!(target_zone_id = %target_zone_id, "wire_federation_mount: target zone not loaded locally");
         return Ok(());
     };
 
@@ -5151,8 +5164,12 @@ fn wire_federation_mount_impl(
     //    ``_mounts_by_target``).
     let global_path = match reconstruct_global_path(cross_zone_mounts, parent_zone_id, mount_path) {
         Some(g) => g,
-        None => return Ok(()), // parent not wired locally yet
+        None => {
+            tracing::warn!(parent_zone_id = %parent_zone_id, mount_path = %mount_path, "wire_federation_mount: reconstruct_global_path returned None");
+            return Ok(());
+        }
     };
+    tracing::info!(global_path = %global_path, "wire_federation_mount: will add to MountTable");
 
     // 3. Build a ZoneMetastore rooted at global_path targeting the
     //    target's state machine. Reuses the root mount's backend (Arc

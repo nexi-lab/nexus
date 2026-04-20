@@ -220,17 +220,43 @@ def make_auth_profiles_router(*, engine: Engine, signer: JwtSigner) -> APIRouter
                     detail="machine_revoked",
                 )
 
+            # Serialize every push for this exact profile across the whole
+            # cluster. Without this, two concurrent pushes would both snapshot
+            # the same pre-update ``cur`` row, both pass the stale check, and
+            # commit in reverse order — the older write wins. A Postgres
+            # advisory lock keyed on (tenant, principal, id) makes the check +
+            # upsert a single critical section: the second writer blocks here
+            # until the first commits, then re-reads ``cur`` and correctly
+            # detects that its own write is now stale.
+            conn.execute(
+                text(
+                    "SELECT pg_advisory_xact_lock("
+                    "  hashtextextended(:t || '|' || :p || '|' || :id, 0)"
+                    ")"
+                ),
+                {
+                    "t": str(claims.tenant_id),
+                    "p": str(claims.principal_id),
+                    "id": req.id,
+                },
+            )
+
             # Stale-write rejection with optimistic concurrency. If the
             # client's timestamp is OLDER than the stored row AND the payload
             # represents different content, the write is a late retry of an
             # already-superseded version — accepting it would regress state
             # for every other consumer. Reject with 409 and log to the same
             # "push_conflict_stale_write" channel the advisory warning used
-            # so existing dashboards still fire.
+            # so existing dashboards still fire. ``FOR UPDATE`` is belt-and-
+            # suspenders: the advisory lock above already serialized writers
+            # on this profile_id, but locking the row too ensures any cursor
+            # that somehow sneaks past the advisory (e.g. a non-router writer
+            # bypassing this path) at least contends on the row itself.
             cur = conn.execute(
                 text(
                     "SELECT source_file_hash, updated_at FROM auth_profiles "
-                    "WHERE tenant_id = :t AND principal_id = :p AND id = :id"
+                    "WHERE tenant_id = :t AND principal_id = :p AND id = :id "
+                    "FOR UPDATE"
                 ),
                 {
                     "t": str(claims.tenant_id),

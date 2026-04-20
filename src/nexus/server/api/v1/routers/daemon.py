@@ -27,6 +27,7 @@ from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import IntegrityError
 
 from nexus.server.api.v1.enroll_tokens import (
     EnrollTokenError,
@@ -136,23 +137,38 @@ def make_daemon_router(
             # SET LOCAL is already applied inside consume_enroll_token; the
             # daemon_machines INSERT runs in the same transaction so RLS
             # evaluates against the same tenant.
-            conn.execute(
-                text(
-                    "INSERT INTO daemon_machines "
-                    "(id, tenant_id, principal_id, pubkey, "
-                    " daemon_version_last_seen, hostname, "
-                    " enrolled_at, last_seen_at) "
-                    "VALUES (:id, :tid, :pid, :pk, :ver, :host, NOW(), NOW())"
-                ),
-                {
-                    "id": str(machine_id),
-                    "tid": str(claims.tenant_id),
-                    "pid": str(claims.principal_id),
-                    "pk": pub_der,
-                    "ver": req.daemon_version,
-                    "host": req.hostname,
-                },
-            )
+            try:
+                conn.execute(
+                    text(
+                        "INSERT INTO daemon_machines "
+                        "(id, tenant_id, principal_id, pubkey, "
+                        " daemon_version_last_seen, hostname, "
+                        " enrolled_at, last_seen_at) "
+                        "VALUES (:id, :tid, :pid, :pk, :ver, :host, NOW(), NOW())"
+                    ),
+                    {
+                        "id": str(machine_id),
+                        "tid": str(claims.tenant_id),
+                        "pid": str(claims.principal_id),
+                        "pk": pub_der,
+                        "ver": req.daemon_version,
+                        "host": req.hostname,
+                    },
+                )
+            except IntegrityError as exc:
+                # The ``idx_daemon_machines_pubkey`` unique index across the whole
+                # cluster fires when the same Ed25519 pubkey has already been
+                # enrolled. Previously this surfaced as an uncaught 500 —
+                # confusing for the operator mid-bootstrap. Return a
+                # deterministic 409 with the detail code the daemon CLI can
+                # act on (delete the local profile dir or reuse the existing
+                # enrollment). The surrounding ``engine.begin()`` context
+                # still rolls back, so ``daemon_enroll_tokens.used_at`` stays
+                # NULL and the caller can retry with a fresh keypair + token.
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="machine_pubkey_already_enrolled",
+                ) from exc
 
         daemon_claims = DaemonClaims(
             tenant_id=claims.tenant_id,

@@ -195,6 +195,43 @@ def test_push_rejects_unknown_sentinel(tmp_path: Path) -> None:
 
 
 @respx.mock
+def test_push_retry_preserves_client_updated_at(tmp_path: Path) -> None:
+    """Retries of the same payload must reuse the original client_updated_at.
+
+    Regression: subprocess sources have no natural source_mtime. Before the
+    fix, each retry regenerated now() so a stale retry after network recovery
+    claimed to be freshly written and bypassed server-side stale-ordering.
+    With the queue-backed fallback, the first enqueue stamps a timestamp and
+    every retry of the same (profile_id, payload_hash) reuses it.
+    """
+    import json as _json
+
+    pusher, _q, _jp = _make_pusher(tmp_path)
+    # First response fails (503 transient), second succeeds.
+    route = respx.post("https://test.nexus/v1/auth-profiles").mock(
+        side_effect=[
+            httpx.Response(503, text="down"),
+            httpx.Response(200, json={"status": "ok"}),
+        ]
+    )
+    content = b'{"token":"same"}'
+    # First attempt fails → stays pending, queue captures enqueued_at.
+    with pytest.raises(PushError):
+        pusher.push_source(
+            "codex", content=content, provider="codex", account_identifier="u@example.com"
+        )
+    first_body = _json.loads(route.calls[0].request.content)
+    first_ts = first_body["client_updated_at"]
+
+    # Second attempt (same content) must send the SAME client_updated_at.
+    pusher.push_source(
+        "codex", content=content, provider="codex", account_identifier="u@example.com"
+    )
+    second_body = _json.loads(route.calls[1].request.content)
+    assert second_body["client_updated_at"] == first_ts
+
+
+@respx.mock
 def test_push_payload_includes_client_updated_at(tmp_path: Path) -> None:
     """Daemon always sends ``client_updated_at`` so server conflict detection fires.
 

@@ -122,11 +122,20 @@ class Pusher:
         )
         self._queue.enqueue(profile_id, payload_hash=new_hash)
 
-        # Always populate client_updated_at. The server uses it for advisory
-        # cross-daemon conflict detection — if we omit it, a stale daemon can
-        # silently clobber a fresher write from another daemon. Prefer the
-        # source file mtime when the caller knows it, else wall-clock now().
-        client_updated_at = (source_mtime or datetime.now(UTC)).isoformat()
+        # client_updated_at precedence (highest → lowest):
+        #   1. explicit source_mtime (file-backed sources) — stable across retries
+        #   2. queue's enqueued_at for a still-pending row with this exact hash
+        #      — preserves first-send timestamp across retries of the SAME content
+        #      so stale-write ordering survives network outages.
+        #   3. now() — first send of a brand-new payload.
+        # Without (2), subprocess retries would regenerate now() per attempt
+        # and make stale retries claim to be freshly written.
+        if source_mtime is None:
+            queued_at = self._queue.enqueued_at_for(profile_id, payload_hash=new_hash)
+            effective_ts = queued_at if queued_at is not None else datetime.now(UTC)
+        else:
+            effective_ts = source_mtime
+        client_updated_at = effective_ts.isoformat()
         payload = {
             "id": profile_id,
             "provider": provider_name,

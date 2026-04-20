@@ -119,6 +119,25 @@ class PushQueue:
             ).fetchone()
         return row["payload_hash"] if row else None
 
+    def enqueued_at_for(self, profile_id: str, *, payload_hash: str) -> datetime | None:
+        """Return the original enqueued_at for a (profile, hash) still pending.
+
+        Used by the Pusher to stamp ``client_updated_at`` consistently across
+        retry attempts of the same payload — without this, each retry would
+        regenerate ``now()`` and defeat the server-side stale-ordering check
+        for non-file sources (subprocess adapters) that have no natural
+        ``source_mtime``. Returns ``None`` if no pending row matches the
+        requested hash (fresh payload → caller falls back to ``now()``).
+        """
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT enqueued_at FROM push_queue WHERE profile_id = ? AND payload_hash = ?",
+                (profile_id, payload_hash),
+            ).fetchone()
+        if row is None:
+            return None
+        return datetime.fromisoformat(row["enqueued_at"])
+
     def close(self) -> None:
         with self._lock:
             self._conn.close()

@@ -156,6 +156,61 @@ def test_enroll_replay_rejected(
     assert "reused" in r2.text
 
 
+def test_enroll_duplicate_pubkey_returns_409(
+    client: TestClient,
+    pg_engine: Engine,
+    tenant_principal: tuple[uuid.UUID, uuid.UUID],
+) -> None:
+    """Re-enrolling a pubkey that's already bound must 409, not 500.
+
+    Regression: the ``idx_daemon_machines_pubkey`` unique index fires when
+    the same Ed25519 pubkey is presented again (e.g. after a partial local
+    failure). Previously this surfaced as an uncaught IntegrityError and a
+    500 — brittle recovery for operators mid-bootstrap. The router should
+    now turn this into a deterministic 409 with ``machine_pubkey_already_enrolled``.
+    """
+    t, p = tenant_principal
+    # First enrollment binds the pubkey successfully.
+    tok1 = issue_enroll_token(
+        engine=pg_engine,
+        secret=SECRET,
+        tenant_id=t,
+        principal_id=p,
+        ttl=timedelta(minutes=15),
+    )
+    _, pub_pem = _machine_keypair()
+    r1 = client.post(
+        "/v1/daemon/enroll",
+        json={
+            "enroll_token": tok1,
+            "pubkey_pem": pub_pem.decode(),
+            "daemon_version": "0.9.20",
+            "hostname": "x",
+        },
+    )
+    assert r1.status_code == 200, r1.text
+
+    # Second enrollment uses a FRESH token but the SAME pubkey → 409.
+    tok2 = issue_enroll_token(
+        engine=pg_engine,
+        secret=SECRET,
+        tenant_id=t,
+        principal_id=p,
+        ttl=timedelta(minutes=15),
+    )
+    r2 = client.post(
+        "/v1/daemon/enroll",
+        json={
+            "enroll_token": tok2,
+            "pubkey_pem": pub_pem.decode(),
+            "daemon_version": "0.9.20",
+            "hostname": "x",
+        },
+    )
+    assert r2.status_code == 409, r2.text
+    assert r2.json()["detail"] == "machine_pubkey_already_enrolled"
+
+
 def test_enroll_bad_token(client: TestClient) -> None:
     _, pub_pem = _machine_keypair()
     r = client.post(

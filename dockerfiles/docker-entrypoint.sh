@@ -152,6 +152,22 @@ fix_data_dir_and_drop_privileges() {
 fix_data_dir_and_drop_privileges "$@"
 
 # -----------------------------------------------------------------------------
+# GOOGLE_APPLICATION_CREDENTIALS sanity
+#
+# nexus-stack.yml defaults GOOGLE_APPLICATION_CREDENTIALS to
+# /app/gcs-credentials.json so that GCS-style service-account flows can work
+# without extra wiring. When that file doesn't exist, Google's auto-auth
+# chain still probes the env var first and fails hard — which breaks the
+# gws CLI even though bind-mounted user-flow creds at ~/.config/gws/ would
+# otherwise authenticate it. Clear the dangling env var so auto-auth falls
+# back to the user-flow creds.
+# -----------------------------------------------------------------------------
+if [ -n "${GOOGLE_APPLICATION_CREDENTIALS:-}" ] && [ ! -s "${GOOGLE_APPLICATION_CREDENTIALS}" ]; then
+    echo "${YELLOW:-}GOOGLE_APPLICATION_CREDENTIALS points to missing file '${GOOGLE_APPLICATION_CREDENTIALS}'; unsetting so user-flow auth can take over.${NC:-}"
+    unset GOOGLE_APPLICATION_CREDENTIALS
+fi
+
+# -----------------------------------------------------------------------------
 # Functions
 # -----------------------------------------------------------------------------
 print_banner() {

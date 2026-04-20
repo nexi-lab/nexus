@@ -96,10 +96,15 @@ services:
       NEXUS_GCS_BUCKET: ${NEXUS_GCS_BUCKET:-}
       NEXUS_GCS_PROJECT: ${NEXUS_GCS_PROJECT:-}
       GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-/app/gcs-credentials.json}
-      # AWS (for S3 connector)
+      # AWS (for S3 connector) — either env vars below OR the ~/.aws
+      # bind mount will supply credentials to boto3's default chain.
+      # AWS_PROFILE defaults to 'default' so boto3 picks up the [default]
+      # section of a bind-mounted ~/.aws/credentials; an empty string here
+      # makes botocore raise ProfileNotFound.
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
       AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-}
+      AWS_PROFILE: ${AWS_PROFILE:-default}
       # Permissions
       NEXUS_SKIP_PERMISSIONS: ${NEXUS_SKIP_PERMISSIONS:-false}
       NEXUS_ENFORCE_PERMISSIONS: ${NEXUS_ENFORCE_PERMISSIONS:-true}
@@ -152,6 +157,10 @@ services:
       # Use ${HOME} not ~ (tilde is not expanded by Docker Compose).
       - ${GWS_CONFIG_DIR:-${HOME}/.config/gws}:/home/nexus/.config/gws
       - ${GH_CONFIG_DIR:-${HOME}/.config/gh}:/home/nexus/.config/gh
+      # S3 connector: mount host ~/.aws so boto3's default credential chain
+      # finds ``[default]`` / any ``AWS_PROFILE`` without having to export
+      # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY on every ``nexus up``.
+      - ${AWS_CONFIG_DIR:-${HOME}/.aws}:/home/nexus/.aws:ro
     user: root
     ports:
       - "${NEXUS_PORT:-2026}:2026"

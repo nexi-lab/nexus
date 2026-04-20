@@ -99,14 +99,17 @@ class MCPAuditLogMiddleware:
                 return
         body = b"".join(body_chunks)
 
-        # Build a receive that replays the buffered body then signals disconnect
+        # Build a receive that replays the buffered body once, then forwards
+        # subsequent receives to the real transport (so real http.disconnect
+        # events still reach the app, e.g. for SSE streaming where the app
+        # may poll receive() to detect client aborts mid-response).
         sent = {"done": False}
 
         async def wrapped_receive() -> Message:
             if not sent["done"]:
                 sent["done"] = True
                 return {"type": "http.request", "body": body, "more_body": False}
-            return {"type": "http.disconnect"}
+            return await receive()
 
         # Capture the response status
         status_holder = {"code": 500}
@@ -145,12 +148,32 @@ class MCPAuditLogMiddleware:
         user_agent = headers.get("user-agent", "")
         identity = scope.get("nexus.identity") or {}
 
+        # If scope["nexus.identity"] wasn't populated by an upstream middleware,
+        # fall back to AuthIdentityCache by token hash. The first tool call
+        # for a token populates the cache; subsequent calls find zone/subject
+        # here even without explicit scope threading.
+        zone_id = identity.get("zone_id")
+        subject_id = identity.get("subject_id")
+        if zone_id is None and auth.lower().startswith("bearer "):
+            try:
+                from nexus.bricks.mcp.auth_cache import (
+                    get_auth_identity_cache,
+                    hash_api_key,
+                )
+
+                cached = get_auth_identity_cache().get(hash_api_key(auth[7:]))
+                if cached is not None:
+                    zone_id = cached.zone_id
+                    subject_id = cached.subject_id
+            except Exception:
+                pass
+
         record = {
             "ts": datetime.now(tz=UTC).isoformat(),
             "event": "mcp.request",
             "token_hash": token_hash,
-            "zone_id": identity.get("zone_id"),
-            "subject_id": identity.get("subject_id"),
+            "zone_id": zone_id,
+            "subject_id": subject_id,
             "rpc_method": rpc_method,
             "tool_name": tool_name,
             "status_code": status,

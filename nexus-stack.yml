@@ -96,15 +96,16 @@ services:
       NEXUS_GCS_BUCKET: ${NEXUS_GCS_BUCKET:-}
       NEXUS_GCS_PROJECT: ${NEXUS_GCS_PROJECT:-}
       GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-/app/gcs-credentials.json}
-      # AWS (for S3 connector) — either env vars below OR the ~/.aws
-      # bind mount will supply credentials to boto3's default chain.
-      # AWS_PROFILE defaults to 'default' so boto3 picks up the [default]
-      # section of a bind-mounted ~/.aws/credentials; an empty string here
-      # makes botocore raise ProfileNotFound.
+      # AWS (for S3 connector) — any of the env vars below, the ~/.aws
+      # bind mount, or an EC2/ECS IAM role supplies credentials via boto3's
+      # default chain. AWS_PROFILE is passed through only when the operator
+      # set it explicitly; otherwise it's empty and the entrypoint unsets
+      # it, so botocore doesn't raise ProfileNotFound when no ~/.aws file
+      # is mounted (env-only + IAM-role setups).
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
       AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-}
-      AWS_PROFILE: ${AWS_PROFILE:-default}
+      AWS_PROFILE: ${AWS_PROFILE:-}
       # Permissions
       NEXUS_SKIP_PERMISSIONS: ${NEXUS_SKIP_PERMISSIONS:-false}
       NEXUS_ENFORCE_PERMISSIONS: ${NEXUS_ENFORCE_PERMISSIONS:-true}

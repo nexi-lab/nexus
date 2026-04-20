@@ -4,15 +4,23 @@ Provides endpoints for user registration, login, OAuth authentication, and profi
 """
 
 import logging
+import secrets
 from typing import Any
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Response, status
 from pydantic import BaseModel, EmailStr, Field
 
 from nexus.bricks.auth.oauth.user_auth import OAuthUserAuth
 from nexus.bricks.auth.providers.database_local import DatabaseLocalAuth
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.server.auth.oauth_state_store import get_oauth_state_store
+
+# Browser-bound OAuth state cookie.
+# Set on /authorize, required on /check and /callback. HttpOnly so JS can't
+# read it; SameSite=Lax lets it ride along on the top-level navigation back
+# from Google; Max-Age mirrors the server-side TTL.
+OAUTH_BINDING_COOKIE = "nexus_oauth_binding"
+OAUTH_BINDING_TTL_SECONDS = 600
 
 logger = logging.getLogger(__name__)
 
@@ -55,17 +63,47 @@ def _synthesize_from_oauth() -> DatabaseLocalAuth | None:
 
 
 def get_auth_provider() -> DatabaseLocalAuth:
-    """Return the injected auth provider (used as ``Depends(get_auth_provider)``).
+    """Return the *explicitly-injected* DatabaseLocalAuth, or raise 503.
 
-    Falls back to a DatabaseLocalAuth synthesized from the OAuth provider when
-    no auth provider was explicitly injected (static-auth mode): the OAuth
-    provider already has a session_factory + jwt_secret, so reusing them lets
-    ``/auth/me`` and similar JWT-gated endpoints work for OAuth-logged-in
-    users even without a standalone DatabaseLocalAuth on the server.
+    Used by endpoints that mutate email/password auth state — register,
+    login, change-password, request-verification, verify-email, setup-zone.
+    In OAuth-only deployments (no DatabaseLocalAuth injected) these endpoints
+    MUST 503: we don't silently synthesize a password backend from the OAuth
+    provider, because that would enable flows (e.g. email+password login)
+    the operator didn't configure.
+
+    For JWT verification and profile read/update — where the operation only
+    needs to verify a token and read/update a user row — use
+    ``get_token_verifier`` instead; that variant does fall back to the OAuth
+    provider's session_factory + jwt_secret so OAuth-logged-in users can
+    still hit ``/auth/me``.
 
     Raises:
-        HTTPException: When neither a direct auth provider nor an OAuth
-            provider is available.
+        HTTPException: 503 when no DatabaseLocalAuth is injected.
+    """
+    if _auth_provider is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication provider not configured",
+        )
+    return _auth_provider
+
+
+def get_token_verifier() -> DatabaseLocalAuth:
+    """Return a JWT-verifying provider — may be synthesized from OAuth.
+
+    Used by JWT verification and the profile read/update endpoints, where
+    the only operations are ``verify_token`` + a SQLAlchemy session off
+    ``session_factory``. In OAuth-only mode the injected
+    ``_auth_provider`` is None, so we synthesize a DatabaseLocalAuth from
+    the OAuth provider's already-configured session_factory + jwt_secret.
+    JWTs issued by OAuthUserAuth verify against the same secret, so this
+    keeps ``/auth/me`` and friends working for OAuth users without
+    implicitly enabling email/password auth.
+
+    Raises:
+        HTTPException: 503 when neither an injected DatabaseLocalAuth nor
+            an OAuth provider is available.
     """
     if _auth_provider is not None:
         return _auth_provider
@@ -102,7 +140,7 @@ def get_nexus_instance() -> Any | None:
 
 async def get_authenticated_user(
     authorization: str = Header(..., description="Bearer JWT token"),
-    auth: DatabaseLocalAuth = Depends(get_auth_provider),
+    auth: DatabaseLocalAuth = Depends(get_token_verifier),
 ) -> tuple[str, str]:
     """Extract authenticated user from JWT token.
 
@@ -633,7 +671,7 @@ async def setup_zone(
 @router.get("/me", response_model=UserResponse)
 async def get_profile(
     user_info: tuple[str, str] = Depends(get_authenticated_user),
-    auth: DatabaseLocalAuth = Depends(get_auth_provider),
+    auth: DatabaseLocalAuth = Depends(get_token_verifier),
 ) -> UserResponse:
     """Get current user profile.
 
@@ -676,7 +714,7 @@ async def get_profile(
 async def update_profile(
     request: UpdateProfileRequest,
     user_info: tuple[str, str] = Depends(get_authenticated_user),
-    auth: DatabaseLocalAuth = Depends(get_auth_provider),
+    auth: DatabaseLocalAuth = Depends(get_token_verifier),
 ) -> UserResponse:
     """Update current user profile.
 
@@ -866,15 +904,23 @@ async def verify_email(
 
 
 @router.get("/oauth/google/authorize", response_model=OAuthAuthorizeResponse)
-async def get_google_oauth_url(redirect_uri: str | None = None) -> OAuthAuthorizeResponse:
+async def get_google_oauth_url(
+    response: Response, redirect_uri: str | None = None
+) -> OAuthAuthorizeResponse:
     """Get Google OAuth authorization URL.
 
     Args:
+        response: FastAPI response — used to set the binding cookie.
         redirect_uri: Optional redirect URI to use after OAuth callback.
                      If not provided, uses default from OAuth provider config.
 
     Returns:
-        Authorization URL and state for OAuth flow
+        Authorization URL and state for OAuth flow.
+
+    Also sets an HttpOnly ``nexus_oauth_binding`` cookie tying this state
+    to the initiating browser — required on callback to block login-fixation
+    attacks where an attacker forwards a valid (code, state) pair to a
+    victim.
 
     Raises:
         500: OAuth provider not configured
@@ -888,7 +934,16 @@ async def get_google_oauth_url(redirect_uri: str | None = None) -> OAuthAuthoriz
 
     try:
         auth_url, state = oauth_provider.get_google_auth_url(redirect_uri=redirect_uri)
-        get_oauth_state_store().register(state)
+        binding_nonce = secrets.token_urlsafe(32)
+        get_oauth_state_store().register(state, binding_nonce)
+        response.set_cookie(
+            key=OAUTH_BINDING_COOKIE,
+            value=binding_nonce,
+            max_age=OAUTH_BINDING_TTL_SECONDS,
+            httponly=True,
+            samesite="lax",
+            path="/",
+        )
         return OAuthAuthorizeResponse(auth_url=auth_url, state=state)
     except Exception as e:
         logger.error(f"Failed to generate Google OAuth URL: {e}")
@@ -901,6 +956,8 @@ async def get_google_oauth_url(redirect_uri: str | None = None) -> OAuthAuthoriz
 @router.post("/oauth/check")
 async def oauth_check(
     request: OAuthCheckRequest,
+    response: Response,
+    nexus_oauth_binding: str | None = Cookie(default=None),
 ) -> OAuthCheckResponseExisting | OAuthCheckResponseNew:
     """Check OAuth callback and determine if confirmation is needed.
 
@@ -909,6 +966,10 @@ async def oauth_check(
 
     Args:
         request: OAuth check request with code and state
+        response: FastAPI response — used to clear the binding cookie on success.
+        nexus_oauth_binding: HttpOnly cookie issued at /authorize; pairs with
+            ``request.state`` to prove this is the same browser that began the
+            flow.
 
     Returns:
         Either existing user response (with token) or new user response (with pending_token)
@@ -930,14 +991,17 @@ async def oauth_check(
             detail="Google OAuth is not configured. Please set up OAuth provider.",
         )
 
-    # RFC 6749 §10.12: validate the state against the server-side store before
-    # touching the authorization code. A forged callback cannot present a state
-    # that was issued by this server, so this blocks CSRF login-fixation.
-    if not get_oauth_state_store().consume(request.state):
+    # RFC 6749 §10.12 + OAuth 2.0 BCP: validate the state AND its browser
+    # binding before touching the authorization code. A forged callback or a
+    # (code, state) pair leaked out of a different browser cannot present
+    # the bound nonce from our HttpOnly cookie, so this blocks both CSRF
+    # and login-fixation.
+    if not get_oauth_state_store().consume(request.state, nexus_oauth_binding):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="OAuth state is invalid or expired — possible CSRF attack",
+            detail="OAuth state is invalid, expired, or unbound — possible CSRF attack",
         )
+    response.delete_cookie(OAUTH_BINDING_COOKIE, path="/")
 
     try:
         # Exchange code for tokens to get user info
@@ -1521,13 +1585,21 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
 
 
 @router.post("/oauth/callback", response_model=OAuthCallbackResponse)
-async def oauth_callback(request: OAuthCallbackRequest) -> OAuthCallbackResponse:
+async def oauth_callback(
+    request: OAuthCallbackRequest,
+    response: Response,
+    nexus_oauth_binding: str | None = Cookie(default=None),
+) -> OAuthCallbackResponse:
     """Handle OAuth callback.
 
     Exchanges authorization code for tokens and creates/links user account.
 
     Args:
         request: OAuth callback request with code and state
+        response: FastAPI response — used to clear the binding cookie on success.
+        nexus_oauth_binding: HttpOnly cookie issued at /authorize; pairs with
+            ``request.state`` to prove this is the same browser that began the
+            flow.
 
     Returns:
         JWT token and user information
@@ -1549,14 +1621,17 @@ async def oauth_callback(request: OAuthCallbackRequest) -> OAuthCallbackResponse
             detail="Google OAuth is not configured. Please set up OAuth provider.",
         )
 
-    # RFC 6749 §10.12: validate the state against the server-side store before
-    # touching the authorization code. A forged callback cannot present a state
-    # that was issued by this server, so this blocks CSRF login-fixation.
-    if not get_oauth_state_store().consume(request.state):
+    # RFC 6749 §10.12 + OAuth 2.0 BCP: validate the state AND its browser
+    # binding before touching the authorization code. A forged callback or a
+    # (code, state) pair leaked out of a different browser cannot present
+    # the bound nonce from our HttpOnly cookie, so this blocks both CSRF
+    # and login-fixation.
+    if not get_oauth_state_store().consume(request.state, nexus_oauth_binding):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="OAuth state is invalid or expired — possible CSRF attack",
+            detail="OAuth state is invalid, expired, or unbound — possible CSRF attack",
         )
+    response.delete_cookie(OAUTH_BINDING_COOKIE, path="/")
 
     try:
         user, token = await oauth_provider.handle_google_callback(

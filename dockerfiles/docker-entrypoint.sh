@@ -168,6 +168,28 @@ if [ -n "${GOOGLE_APPLICATION_CREDENTIALS:-}" ] && [ ! -s "${GOOGLE_APPLICATION_
 fi
 
 # -----------------------------------------------------------------------------
+# AWS_PROFILE sanity
+#
+# nexus-stack.yml passes AWS_PROFILE through from the operator's shell. When
+# unset upstream, Compose still injects it as an empty string ("") because
+# the service has an AWS_PROFILE: key. botocore treats "" like "use profile
+# ''" and then raises ProfileNotFound — which breaks env-only creds
+# (AWS_ACCESS_KEY_ID/..) and EC2/ECS IAM-role auth even though boto3's
+# default chain would otherwise resolve them cleanly.
+#
+# Also unset if the named profile exists but there is no ~/.aws file to
+# resolve it against — same ProfileNotFound path.
+# -----------------------------------------------------------------------------
+if [ -n "${AWS_PROFILE+x}" ]; then
+    if [ -z "${AWS_PROFILE:-}" ]; then
+        unset AWS_PROFILE
+    elif [ ! -s "${HOME}/.aws/credentials" ] && [ ! -s "${HOME}/.aws/config" ]; then
+        echo "${YELLOW:-}AWS_PROFILE=${AWS_PROFILE} set but no ~/.aws/credentials or ~/.aws/config present; unsetting so env/IAM-role creds can take over.${NC:-}"
+        unset AWS_PROFILE
+    fi
+fi
+
+# -----------------------------------------------------------------------------
 # Functions
 # -----------------------------------------------------------------------------
 print_banner() {

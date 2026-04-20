@@ -637,7 +637,7 @@ impl Kernel {
             Arc::clone(&peer_client),
             None,
         ));
-        Self {
+        let k = Self {
             dlc: crate::dlc::DriverLifecycleCoordinator::new(),
             dcache: Arc::new(DCache::new()),
             mount_table: Arc::new(MountTable::new()),
@@ -677,10 +677,22 @@ impl Kernel {
             zone_manager: std::sync::OnceLock::new(),
             cross_zone_mounts: Arc::new(DashMap::new()),
             mount_reconciliation_done: AtomicBool::new(false),
+        };
+        // R20.18.5 activation: every Kernel instance attempts federation
+        // bootstrap from env. `init_federation_from_env` is a no-op
+        // when NEXUS_HOSTNAME is unset (tests / slim profile) so
+        // unit tests aren't affected. Bootstrap failures are logged
+        // and the kernel stays up in "federation disabled" mode so a
+        // misconfigured NEXUS_PEERS doesn't take the whole process
+        // down — gives operators a path to diagnose via sys_stat on
+        // `/__sys__/zones/`.
+        if let Err(e) = k.init_federation_from_env() {
+            tracing::warn!("federation bootstrap from env failed: {:?}", e);
         }
         // Observers registered on-demand (not at Kernel::new()).
         // FileWatcher + StreamEventObservers are registered by orchestrator
         // at boot time to avoid issues in lightweight test contexts.
+        k
     }
 
     // ── Lock Manager wiring ──────────────────────────────────────────
@@ -4515,11 +4527,25 @@ impl Kernel {
     #[allow(dead_code)]
     pub(crate) fn init_federation_from_env(&self) -> Result<(), KernelError> {
         use std::path::Path;
+        use std::sync::atomic::AtomicBool;
 
         // No federation unless NEXUS_HOSTNAME is set.
         let Ok(hostname) = std::env::var("NEXUS_HOSTNAME") else {
             return Ok(());
         };
+
+        // Process-wide one-shot guard. Multiple `Kernel::new()` calls in
+        // one process (e.g. `nexus.connect()` + a side embedded store
+        // for OAuth crypto settings) would otherwise each try to bind
+        // the same gRPC port. First kernel wins; later kernels in the
+        // same process run in "federation disabled" mode.
+        static FEDERATION_CLAIMED: AtomicBool = AtomicBool::new(false);
+        if FEDERATION_CLAIMED.swap(true, Ordering::AcqRel) {
+            tracing::debug!(
+                "init_federation_from_env: already claimed by another Kernel in this process, skipping"
+            );
+            return Ok(());
+        }
 
         let bind_addr =
             std::env::var("NEXUS_BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:2126".to_string());
@@ -4666,8 +4692,17 @@ impl Kernel {
     /// R20.16.6: snapshot the federation-bootstrap-complete flag.
     /// `/healthz/ready` and the `/__sys__/zones/<id>` PathResolver
     /// (R20.18.4) read this as the "safe to serve" signal.
-    #[allow(dead_code)]
+    ///
+    /// Returns `true` when federation was never bootstrapped (no
+    /// `NEXUS_HOSTNAME`) — the "federation disabled = always ready"
+    /// semantics the health probe relies on. When federation IS
+    /// active, returns the atomic flag flipped by
+    /// `init_federation_from_env` after `reconcile_mounts_from_zones`
+    /// finishes.
     pub fn mount_reconciliation_done(&self) -> bool {
+        if self.zone_manager.get().is_none() {
+            return true;
+        }
         self.mount_reconciliation_done.load(Ordering::Acquire)
     }
 
@@ -5380,7 +5415,11 @@ mod tests {
         let k = Kernel::new();
         assert!(k.init_federation_from_env().is_ok());
         assert!(k.zone_manager.get().is_none());
-        assert!(!k.mount_reconciliation_done());
+        // R20.18.5: "federation disabled = always ready" semantics —
+        // mount_reconciliation_done() returns true when zone_manager
+        // is None so /healthz/ready isn't pinned-unhealthy on slim
+        // profile. Verify the "inactive" fast path.
+        assert!(k.mount_reconciliation_done());
         unsafe {
             match saved {
                 Some(v) => std::env::set_var("NEXUS_HOSTNAME", v),

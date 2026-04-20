@@ -2853,6 +2853,13 @@ impl PyKernel {
     fn agent_count(&self) -> usize {
         self.inner.agent_registry.count()
     }
+
+    /// R20.16.6 readiness probe: true when federation bootstrap
+    /// is complete (or when federation is disabled). /healthz/ready
+    /// reads this via `nx._kernel.mount_reconciliation_done()`.
+    fn mount_reconciliation_done(&self) -> bool {
+        self.inner.mount_reconciliation_done()
+    }
 }
 
 // ── Private: hook dispatch (wrapper-only) ───────────────────────────────

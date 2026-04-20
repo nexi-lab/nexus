@@ -147,22 +147,12 @@ async def _wire_services(
     # Canonical name mapping consolidated in service_routing.py.
     await enlist_services(nx, _svc)
 
-    # Federation — wire from parameter (profile-gated, created before kernel).
-    if federation is not None:
-        nx.sys_setattr("/__sys__/services/federation", service=federation)
-        logger.debug("[LINK] Federation service enlisted")
-
-        # Lock manager upgrade handled by Rust kernel: sys_setattr(DT_MOUNT) with
-        # py_zone_handle upgrades LockManager to distributed for root zone.
-
-        # Wire DLC into ZoneManager for runtime mount registration.
-        # R20.16.2: the old ``install_mount_hook`` bridge is gone — Rust
-        # drives federation mount wiring directly via the per-zone
-        # ``mount_apply_cb`` installed by kernel
-        # (R20.16.3+ wires this through ``install_federation_mount_coherence``
-        # once that lands).
-        _zone_mgr = federation.zone_manager
-        _zone_mgr._coordinator = nx._driver_coordinator
+    # R20.18.5: federation is kernel-internal now. The federation
+    # parameter is vestigial (always None post-cutover). Kernel::new()
+    # reads env vars and bootstraps raft::ZoneManager in Rust. DLC
+    # wiring is driven by the per-zone mount_apply_cb installed by
+    # Kernel::install_federation_mount_coherence — no Python bridge.
+    _ = federation  # kept in signature for caller compat; unused
 
     # descendant_checker is now accessed via PermissionCheckHook (KernelDispatch INTERCEPT).
     # No kernel DI needed — PermissionCheckHook holds the reference internally.

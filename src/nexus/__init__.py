@@ -497,35 +497,19 @@ async def connect(
     except Exception:
         pass
 
-    # Create metadata store — profile-gated federation (PR #3371 Phase 2)
-    metadata_store: MetastoreABC
+    # Create metadata store — kernel owns federation bootstrap since
+    # R20.18.5. When federation env vars are set (NEXUS_HOSTNAME /
+    # NEXUS_PEERS / NEXUS_FEDERATION_ZONES), Kernel::new reads them
+    # in Rust and stands up the raft::ZoneManager internally; the
+    # metadata store wrapper below uses the same kernel so writes
+    # route through MountTable to the per-zone ZoneMetastore. When
+    # those env vars are unset, Kernel::new is a no-op and the
+    # store is backed by LocalMetastore/MemoryMetastore as before.
+    metadata_store: MetastoreABC = _open_local_metastore(metadata_path, kernel=_early_kernel)
+    # Python no longer owns a FederationService object. `federation=None`
+    # below just drops a dead kwarg into the orchestrator; _lifecycle.py
+    # handles the None path.
     federation = None
-
-    # Federation: attempt when IPC brick is enabled (cluster profile and above).
-    # Federation is a system service (not a brick) but requires IPC infrastructure.
-    if "ipc" in enabled_bricks:
-        try:
-            from nexus.raft.federation import NexusFederation
-
-            federation, metadata_store = NexusFederation.bootstrap(
-                metadata_path=metadata_path,
-                kernel=_early_kernel,
-            )
-        except ImportError:
-            logger.warning("Federation brick enabled but Rust extensions unavailable")
-            federation = None
-            metadata_store = _open_local_metastore(metadata_path, kernel=_early_kernel)
-        except RuntimeError as exc:
-            if "ZoneManager requires PyO3 build with --features full" not in str(exc):
-                raise
-            logger.info(
-                "Federation extensions unavailable for local connect(); "
-                "falling back to single-node metadata store"
-            )
-            federation = None
-            metadata_store = _open_local_metastore(metadata_path, kernel=_early_kernel)
-    else:
-        metadata_store = _open_local_metastore(metadata_path, kernel=_early_kernel)
 
     # Permission defaults: standalone without explicit config → permissive
     enforce_permissions = cfg.enforce_permissions

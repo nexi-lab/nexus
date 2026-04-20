@@ -8,7 +8,8 @@ Two access modes:
 2. ZoneManager + ZoneHandle (PyO3 FFI) - Multi-zone Raft consensus (~2-10ms)
 
 REMOTE profile uses RPCTransport → NexusVFSService (see nexus.remote).
-Federation uses NexusFederation (see nexus.raft.federation).
+Federation is owned entirely by the Rust kernel since R20.18.5
+(see `Kernel::init_federation_from_env` + `/__sys__/zones/` procfs).
 
 Architecture:
     Embedded:   NexusFS -> Metastore (PyO3) -> redb (~5μs)
@@ -72,8 +73,12 @@ try:
 except ImportError:
     pass
 
-# Python wrappers for multi-zone federation
-from nexus.raft.zone_manager import ZoneManager
+# R20.18.5: Python ZoneManager/RaftMetadataStore/federation shims were
+# deleted — federation is now owned entirely by the Rust kernel (see
+# `Kernel::init_federation_from_env` + `/__sys__/zones/` procfs). This
+# symbol is kept as ``None`` so legacy imports keep resolving until
+# their callers are retired.
+ZoneManager: Any = None
 
 
 def require_metastore() -> None:

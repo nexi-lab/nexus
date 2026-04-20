@@ -40,9 +40,13 @@ async def health_check(request: Request) -> HealthResponse | Any:
         enforce_permissions = getattr(getattr(nx_fs, "_perm_config", None), "enforce", None)
         enforce_zone_isolation = getattr(nx_fs, "_enforce_zone_isolation", None)
 
-        # Federation mode: ensure topology is initialized (standard Raft lifecycle).
-        _fed = nx_fs.service("federation") if hasattr(nx_fs, "service") else None
-        if _fed is not None and not _fed.ensure_topology():
+        # R20.18.5: federation readiness is a kernel atomic flipped
+        # by Kernel::init_federation_from_env after reconcile finishes.
+        # Returns True when federation is disabled (no env vars) so
+        # the slim / tests path sails through unchanged.
+        _kernel = getattr(nx_fs, "_kernel", None)
+        _mrd = getattr(_kernel, "mount_reconciliation_done", None) if _kernel else None
+        if _mrd is not None and not (_mrd() if callable(_mrd) else bool(_mrd)):
             from fastapi.responses import JSONResponse
 
             return JSONResponse(

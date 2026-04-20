@@ -66,15 +66,18 @@ def _get_zone_manager(
 ) -> Any:
     """Create a ZoneManager from CLI options.
 
-    Imports lazily to avoid requiring PyO3 for non-federation commands.
+    R20.18.5: Python ZoneManager was deleted — federation is kernel-
+    internal now. CLI commands that relied on a direct-open ZoneManager
+    (create / join / mount / unmount) now raise a clear error; callers
+    should drive zone CRUD via the RPC path through a running server
+    process. Export/import flows (R20.17) will reach raft-backed zones
+    through the same RPC surface.
     """
-    from nexus.raft.zone_manager import ZoneManager
-
-    return ZoneManager(
-        hostname=hostname,
-        base_path=data_dir,
-        peers=peers or [],
-        bind_addr=bind_addr,
+    del hostname, data_dir, bind_addr, peers
+    raise RuntimeError(
+        "Direct-open ZoneManager is no longer available — the Python "
+        "shim was deleted in R20.18.5. Drive zone CRUD through the "
+        "nexus RPC surface (a running nexus-server) instead."
     )
 
 

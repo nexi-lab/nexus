@@ -21,7 +21,6 @@ from typing import Any
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.server.rate_limiting import limiter
 
 logger = logging.getLogger(__name__)
@@ -42,18 +41,20 @@ def _check_raft_topology(request: Request) -> tuple[bool, str]:
         nx_fs = getattr(request.app.state, "nexus_fs", None)
         if nx_fs is None:
             return True, ""
-        _fed = nx_fs.service("federation") if hasattr(nx_fs, "service") else None
-        if _fed is None:
+        # R20.18.5: federation readiness is now a kernel atomic flipped
+        # by Kernel::init_federation_from_env after reconcile finishes.
+        # When federation env vars are unset, the flag stays false and
+        # this probe is a no-op (fails open via the getattr fallback).
+        kernel = getattr(nx_fs, "_kernel", None)
+        if kernel is None:
             return True, ""
-        if not _fed.ensure_topology():
+        mrd = getattr(kernel, "mount_reconciliation_done", None)
+        if mrd is None:
+            # Old kernel build without the probe — fail open.
+            return True, ""
+        ready = mrd() if callable(mrd) else bool(mrd)
+        if not ready:
             return False, "Raft topology not ready"
-        _zmgr = _fed.zone_manager
-        root_zone_id = getattr(_zmgr, "root_zone_id", None) or ROOT_ZONE_ID
-        root_store = _zmgr.get_store(root_zone_id)
-        if root_store is None:
-            return False, "Raft root store not ready"
-        # Followers are ready too — they serve reads and forward writes.
-        # Only check that root store exists (leader election is Raft-internal).
         return True, ""
     except Exception:
         return True, ""

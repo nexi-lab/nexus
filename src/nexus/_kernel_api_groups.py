@@ -129,6 +129,7 @@ KERNEL_REQUIRED_METHODS: frozenset[str] = frozenset(
         "metastore_put_if_version",
         "metastore_rename_path",
         "metastore_set_file_metadata",
+        "mount_reconciliation_done",
         "notify_zone_revision",
         "pipe_read_nowait",
         "pipe_write_nowait",

@@ -87,38 +87,46 @@ def authenticate_api_key(auth_provider: Any, api_key: str) -> Any:
             )
             return None
 
-    # Fast path: cache hit.
-    cached = cache.get(key_hash)
-    if cached is not None:
-        # Rebuild an auth-result-like object for callers expecting .subject_id / .zone_id.
-        from types import SimpleNamespace
+    # Fast path: cache hit (via get_or_resolve to hold lock across resolve).
+    from types import SimpleNamespace
 
-        return SimpleNamespace(
-            subject_id=cached.subject_id,
-            zone_id=cached.zone_id,
-            is_admin=cached.is_admin,
+    def _resolve_and_cache() -> ResolvedIdentity | None:
+        auth_result = _resolve()
+        if auth_result is None:
+            return None
+        subject_id = getattr(auth_result, "subject_id", None) or getattr(
+            auth_result, "user_id", None
+        )
+        zone_id = getattr(auth_result, "zone_id", None)
+        is_admin = bool(getattr(auth_result, "is_admin", False))
+        # Default authenticated=True when absent: a non-None return from the provider
+        # implies success (matches original fail-closed behavior where the check was implicit).
+        authenticated = bool(getattr(auth_result, "authenticated", True))
+        if not authenticated or not subject_id or not zone_id:
+            return None
+        return ResolvedIdentity(
+            subject_id=subject_id,
+            zone_id=zone_id,
+            is_admin=is_admin,
+            tier="premium" if is_admin else "authenticated",
+            subject_type=getattr(auth_result, "subject_type", None) or "user",
+            agent_generation=getattr(auth_result, "agent_generation", None),
+            inherit_permissions=getattr(auth_result, "inherit_permissions", None),
         )
 
-    # Slow path: resolve and cache positive result.
-    auth_result = _resolve()
-    if auth_result is None:
+    resolved = cache.get_or_resolve(key_hash, _resolve_and_cache)
+    if resolved is None:
         return None
 
-    subject_id = getattr(auth_result, "subject_id", None) or getattr(auth_result, "user_id", None)
-    zone_id = getattr(auth_result, "zone_id", None)
-    is_admin = bool(getattr(auth_result, "is_admin", False))
-    if subject_id and zone_id:
-        tier = "premium" if is_admin else "authenticated"
-        cache.put(
-            key_hash,
-            ResolvedIdentity(
-                subject_id=subject_id,
-                zone_id=zone_id,
-                is_admin=is_admin,
-                tier=tier,
-            ),
-        )
-    return auth_result
+    return SimpleNamespace(
+        authenticated=True,
+        subject_type=resolved.subject_type,
+        subject_id=resolved.subject_id,
+        zone_id=resolved.zone_id,
+        is_admin=resolved.is_admin,
+        agent_generation=resolved.agent_generation,
+        inherit_permissions=resolved.inherit_permissions,
+    )
 
 
 def resolve_mcp_operation_context(

@@ -25,6 +25,9 @@ class ResolvedIdentity:
     zone_id: str
     is_admin: bool
     tier: str  # "anonymous" | "authenticated" | "premium"
+    subject_type: str = "user"
+    agent_generation: int | None = None
+    inherit_permissions: bool | None = None
 
 
 class AuthIdentityCache:

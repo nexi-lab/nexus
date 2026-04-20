@@ -448,20 +448,6 @@ class NexusFS(  # type: ignore[misc]
             )
         return context.zone_id, context.agent_id, getattr(context, "is_admin", False)
 
-    def _caller_zone_and_admin(self, context: OperationContext | dict | None) -> tuple[str, bool]:
-        """Return (caller_zone_id, is_admin), defaulting zone to ROOT_ZONE_ID.
-
-        Used by list-type operations to post-filter by the caller's zone
-        when the metastore is a single store shared across zones.
-        """
-        if context is None:
-            return ROOT_ZONE_ID, False
-        if isinstance(context, dict):
-            zone = context.get("zone_id") or ROOT_ZONE_ID
-            return zone, bool(context.get("is_admin", False))
-        zone = getattr(context, "zone_id", None) or ROOT_ZONE_ID
-        return zone, bool(getattr(context, "is_admin", False))
-
     # =========================================================================
     # Virtual .readme/ overlay helper (Issue #3728)
     # =========================================================================
@@ -5367,7 +5353,8 @@ class NexusFS(  # type: ignore[misc]
         # The metastore is a single store shared across zones (each row carries
         # a zone_id column). Without this filter, V2 API callers see every
         # zone's files. Admins and root-zone callers keep the global view.
-        caller_zone, caller_is_admin = self._caller_zone_and_admin(context)
+        caller_zone = getattr(context, "zone_id", None) or ROOT_ZONE_ID if context else ROOT_ZONE_ID
+        caller_is_admin = bool(getattr(context, "is_admin", False)) if context else False
 
         def _zone_allowed(entry: Any) -> bool:
             if caller_is_admin or caller_zone == ROOT_ZONE_ID:

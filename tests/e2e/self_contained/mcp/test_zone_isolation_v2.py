@@ -18,6 +18,7 @@ same way.
 
 from __future__ import annotations
 
+import json
 import os
 
 import httpx
@@ -28,26 +29,18 @@ from .conftest import mcp_http_call
 pytestmark = pytest.mark.e2e
 
 
-def _admin_client() -> httpx.Client:
-    admin_url = os.environ.get("NEXUS_ADMIN_URL", "http://localhost:38630")
-    admin_key = os.environ.get("NEXUS_ADMIN_KEY")
-    if not admin_key:
-        pytest.skip("requires NEXUS_ADMIN_URL + NEXUS_ADMIN_KEY")
-    return httpx.Client(
-        base_url=admin_url,
-        headers={"Authorization": f"Bearer {admin_key}"},
-        timeout=15.0,
-    )
+def _v2_api_base_url() -> str:
+    return os.environ.get("NEXUS_ADMIN_URL", "http://localhost:38630")
 
 
 def test_rest_list_does_not_leak_cross_zone(seeded_zones) -> None:
     """A zone key's /api/v2/files/list must not return sibling zone files."""
     own = seeded_zones[0]
     sibling_markers = [f"marker-{z['zone_id']}.txt" for z in seeded_zones[1:]]
-    with _admin_client() as client:
+    with httpx.Client(base_url=_v2_api_base_url(), timeout=15.0) as client:
         resp = client.get(
             "/api/v2/files/list",
-            params={"path": "/", "page_size": 200},
+            params={"path": "/", "limit": 200},
             headers={"Authorization": f"Bearer {own['api_key']}"},
         )
         resp.raise_for_status()
@@ -69,7 +62,6 @@ async def test_mcp_glob_finds_own_zone_marker(mcp_http_base_url: str, seeded_zon
         {"name": "nexus_glob", "arguments": {"pattern": "/marker-*.txt"}},
         timeout=30.0,
     )
-    import json
 
     text = json.dumps(payload)
     assert own_marker in text, (
@@ -90,7 +82,6 @@ async def test_mcp_glob_does_not_leak_sibling_zone_marker(
         {"name": "nexus_glob", "arguments": {"pattern": "/marker-*.txt"}},
         timeout=30.0,
     )
-    import json
 
     text = json.dumps(payload)
     leaks = [

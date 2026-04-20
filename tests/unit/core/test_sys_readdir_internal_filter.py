@@ -145,3 +145,112 @@ class TestSysReaddirInternalFilter:
         result = fs.sys_readdir("/workspace/demo", recursive=False, details=False)
 
         assert len(result) == 2
+
+
+# ---------------------------------------------------------------------------
+# sys_readdir zone-column filter (Issue #3779 follow-up)
+# ---------------------------------------------------------------------------
+
+
+class _FakeCtx:
+    """Minimal stand-in for OperationContext with only the fields the filter reads."""
+
+    def __init__(self, zone_id: str | None, is_admin: bool = False) -> None:
+        self.zone_id = zone_id
+        self.is_admin = is_admin
+
+
+class TestSysReaddirZoneFilter:
+    """sys_readdir drops rows whose zone_id column doesn't match the caller."""
+
+    @pytest.mark.asyncio
+    async def test_own_zone_rows_kept(self) -> None:
+        fs = _build_fs(
+            [
+                _FakeMeta(path="/a.txt", zone_id="zone-a"),
+                _FakeMeta(path="/b.txt", zone_id="zone-b"),
+            ]
+        )
+        result = fs.sys_readdir(
+            "/", recursive=False, details=False, context=_FakeCtx(zone_id="zone-a")
+        )
+        assert result == ["/a.txt"]
+
+    @pytest.mark.asyncio
+    async def test_sibling_zone_rows_dropped(self) -> None:
+        fs = _build_fs(
+            [
+                _FakeMeta(path="/a.txt", zone_id="zone-a"),
+                _FakeMeta(path="/b.txt", zone_id="zone-b"),
+                _FakeMeta(path="/c.txt", zone_id="zone-c"),
+            ]
+        )
+        result = fs.sys_readdir(
+            "/", recursive=False, details=False, context=_FakeCtx(zone_id="zone-b")
+        )
+        assert result == ["/b.txt"]
+
+    @pytest.mark.asyncio
+    async def test_admin_sees_all_zones(self) -> None:
+        fs = _build_fs(
+            [
+                _FakeMeta(path="/a.txt", zone_id="zone-a"),
+                _FakeMeta(path="/b.txt", zone_id="zone-b"),
+            ]
+        )
+        result = fs.sys_readdir(
+            "/",
+            recursive=False,
+            details=False,
+            context=_FakeCtx(zone_id="zone-a", is_admin=True),
+        )
+        assert sorted(result) == ["/a.txt", "/b.txt"]
+
+    @pytest.mark.asyncio
+    async def test_root_zone_caller_sees_all(self) -> None:
+        from nexus.contracts.constants import ROOT_ZONE_ID
+
+        fs = _build_fs(
+            [
+                _FakeMeta(path="/a.txt", zone_id="zone-a"),
+                _FakeMeta(path="/b.txt", zone_id=ROOT_ZONE_ID),
+            ]
+        )
+        result = fs.sys_readdir(
+            "/", recursive=False, details=False, context=_FakeCtx(zone_id=ROOT_ZONE_ID)
+        )
+        assert sorted(result) == ["/a.txt", "/b.txt"]
+
+    @pytest.mark.asyncio
+    async def test_paginated_applies_zone_filter(self) -> None:
+        fs = _build_fs(
+            [
+                _FakeMeta(path="/a.txt", zone_id="zone-a"),
+                _FakeMeta(path="/b.txt", zone_id="zone-b"),
+                _FakeMeta(path="/c.txt", zone_id="zone-a"),
+            ]
+        )
+        result = fs.sys_readdir(
+            "/",
+            recursive=False,
+            details=False,
+            limit=10,
+            context=_FakeCtx(zone_id="zone-a"),
+        )
+        assert sorted(result.items) == ["/a.txt", "/c.txt"]
+
+    @pytest.mark.asyncio
+    async def test_missing_zone_column_treated_as_root(self) -> None:
+        from nexus.contracts.constants import ROOT_ZONE_ID
+
+        fs = _build_fs(
+            [
+                _FakeMeta(path="/a.txt", zone_id=None),  # legacy/root row
+                _FakeMeta(path="/b.txt", zone_id="zone-b"),
+            ]
+        )
+        result = fs.sys_readdir(
+            "/", recursive=False, details=False, context=_FakeCtx(zone_id=ROOT_ZONE_ID)
+        )
+        # ROOT caller keeps everything (admin-equivalent).
+        assert sorted(result) == ["/a.txt", "/b.txt"]

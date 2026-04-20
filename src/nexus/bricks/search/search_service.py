@@ -511,6 +511,8 @@ class SearchService:
         # here when the backing store is not zone-partitioned so the
         # metastore query finds the flat-stored entries; the zone-column
         # post-filter below enforces isolation.
+        # list_prefix is either "" or ends with "/" (set above), so only the
+        # trailing-slash case can match.
         _engine_zone_id: str | None = getattr(self.metadata, "_zone_id", None)
         _standalone_flat_paths = _engine_zone_id is None
         if (
@@ -520,13 +522,6 @@ class SearchService:
             and list_prefix.startswith(f"/zone/{list_zone_id}/")
         ):
             list_prefix = list_prefix[len(f"/zone/{list_zone_id}") :]
-        elif (
-            _standalone_flat_paths
-            and list_zone_id
-            and list_zone_id != ROOT_ZONE_ID
-            and list_prefix == f"/zone/{list_zone_id}"
-        ):
-            list_prefix = ""
 
         # OPTIMIZATION: For non-recursive, try sparse directory index + Tiger bitmap
         _use_fast_path = False

@@ -360,47 +360,55 @@ impl ObjectStore for PathLocalBackend {
         }
 
         if offset == 0 {
-            // Fast path: truncate + write full content.
+            // Fast path: truncate + write full content. Hash + size
+            // come from `content` directly — no read-back needed.
             fs::write(&file_path, content).map_err(StorageError::IOError)?;
-        } else {
-            // R20.10 partial write: open for rw, extend via set_len so the
-            // file system zero-fills the hole when offset > current size
-            // (POSIX sparse-file semantics — ext4/xfs/ntfs all honor this),
-            // then seek + write_all. `create(true)` so we don't fail when
-            // the backend_path was never written before (matches
-            // pwrite(O_CREAT) semantics; kernel gates on "file exists" at
-            // the metastore layer, not here).
-            use std::io::{Seek, SeekFrom, Write};
-            let mut f = fs::OpenOptions::new()
-                .create(true)
-                .truncate(false)
-                .write(true)
-                .read(false)
-                .open(&file_path)
-                .map_err(StorageError::IOError)?;
-            let cur_len = f.metadata().map_err(StorageError::IOError)?.len();
-            let new_len = cur_len.max(offset + content.len() as u64);
-            if new_len > cur_len {
-                f.set_len(new_len).map_err(StorageError::IOError)?;
+            if self.fsync {
+                if let Ok(f) = fs::File::open(&file_path) {
+                    let _ = f.sync_all();
+                }
             }
-            f.seek(SeekFrom::Start(offset))
-                .map_err(StorageError::IOError)?;
-            f.write_all(content).map_err(StorageError::IOError)?;
+            let hash = library::hash::hash_content(content);
+            return Ok(WriteResult {
+                content_id: hash.clone(),
+                version: hash,
+                size: content.len() as u64,
+            });
         }
+
+        // R20.10 partial-write slow path: open for rw, extend via
+        // set_len so the file system zero-fills the hole when offset >
+        // current size (POSIX sparse-file semantics — ext4/xfs/ntfs
+        // all honor this), then seek + write_all. `create(true)` so we
+        // don't fail when backend_path was never written before —
+        // matches pwrite(O_CREAT); kernel gates on "file exists" at
+        // the metastore layer, not here.
+        use std::io::{Seek, SeekFrom, Write};
+        let mut f = fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .read(false)
+            .open(&file_path)
+            .map_err(StorageError::IOError)?;
+        let cur_len = f.metadata().map_err(StorageError::IOError)?.len();
+        let new_len = cur_len.max(offset + content.len() as u64);
+        if new_len > cur_len {
+            f.set_len(new_len).map_err(StorageError::IOError)?;
+        }
+        f.seek(SeekFrom::Start(offset))
+            .map_err(StorageError::IOError)?;
+        f.write_all(content).map_err(StorageError::IOError)?;
 
         if self.fsync {
-            if let Ok(f) = fs::File::open(&file_path) {
-                let _ = f.sync_all();
-            }
+            let _ = f.sync_all();
         }
+        drop(f);
 
-        // R20.10: size + hash must reflect FINAL file state, not just the
-        // bytes we wrote. For offset=0 they're identical; for offset>0 we
-        // read back and hash so downstream dcache/metastore carry the
-        // correct post-splice hash. Read-back is the simple correct
-        // implementation; a future optimization can splice locally and
-        // hash without re-reading, but PAS local files are typically small
-        // enough that the cost is acceptable.
+        // Partial writes only: final bytes differ from `content`, so
+        // we must read back to compute the post-splice hash + size.
+        // Gated behind offset > 0 so the common full-overwrite path
+        // stays at its pre-R20.10 cost.
         let final_bytes = fs::read(&file_path).map_err(StorageError::IOError)?;
         let hash = library::hash::hash_content(&final_bytes);
         Ok(WriteResult {
@@ -598,31 +606,42 @@ impl ObjectStore for LocalConnectorBackend {
         }
 
         if offset == 0 {
+            // Fast path: full overwrite, hash `content` directly.
             fs::write(&file_path, content).map_err(StorageError::IOError)?;
-        } else {
-            // R20.10 pwrite — see PathLocalBackend for rationale.
-            use std::io::{Seek, SeekFrom, Write};
-            let mut f = fs::OpenOptions::new()
-                .create(true)
-                .truncate(false)
-                .write(true)
-                .open(&file_path)
-                .map_err(StorageError::IOError)?;
-            let cur_len = f.metadata().map_err(StorageError::IOError)?.len();
-            let new_len = cur_len.max(offset + content.len() as u64);
-            if new_len > cur_len {
-                f.set_len(new_len).map_err(StorageError::IOError)?;
+            if self.fsync {
+                if let Ok(f) = fs::File::open(&file_path) {
+                    let _ = f.sync_all();
+                }
             }
-            f.seek(SeekFrom::Start(offset))
-                .map_err(StorageError::IOError)?;
-            f.write_all(content).map_err(StorageError::IOError)?;
+            let hash = library::hash::hash_content(content);
+            return Ok(WriteResult {
+                content_id: hash.clone(),
+                version: hash,
+                size: content.len() as u64,
+            });
         }
 
-        if self.fsync {
-            if let Ok(f) = fs::File::open(&file_path) {
-                let _ = f.sync_all();
-            }
+        // R20.10 pwrite slow path — see PathLocalBackend for rationale.
+        use std::io::{Seek, SeekFrom, Write};
+        let mut f = fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&file_path)
+            .map_err(StorageError::IOError)?;
+        let cur_len = f.metadata().map_err(StorageError::IOError)?.len();
+        let new_len = cur_len.max(offset + content.len() as u64);
+        if new_len > cur_len {
+            f.set_len(new_len).map_err(StorageError::IOError)?;
         }
+        f.seek(SeekFrom::Start(offset))
+            .map_err(StorageError::IOError)?;
+        f.write_all(content).map_err(StorageError::IOError)?;
+
+        if self.fsync {
+            let _ = f.sync_all();
+        }
+        drop(f);
 
         let final_bytes = fs::read(&file_path).map_err(StorageError::IOError)?;
         let hash = library::hash::hash_content(&final_bytes);

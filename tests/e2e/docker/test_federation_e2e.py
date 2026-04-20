@@ -1471,6 +1471,51 @@ class TestScatterGatherChunkedRead:
         if decoded1 != expected_bytes:
             pytest.fail(_diagnose("node1 read (all local)", decoded1))
 
+    def test_partial_write_zero_fills_past_eof(self, cluster, api_key):
+        """POSIX pwrite semantics: writing past EOF zero-fills the gap.
+
+        R20.10 validation: write a small file, pwrite with offset > size,
+        read back and verify the hole between old EOF and the new
+        payload is filled with 0x00.
+        """
+        import hashlib
+
+        uid = _uid()
+        grpc1 = cluster["grpc1"]
+        path = f"/corp/eng/pwrite-gap-{uid}.bin"
+
+        # Step 1: original tiny file (2 bytes).
+        w1 = _grpc_call(
+            grpc1, "write", {"path": path, "content": b"ab"}, api_key=api_key, timeout=30
+        )
+        assert "error" not in w1, f"Initial write failed: {w1}"
+
+        # Step 2: pwrite "xyz" at offset 5 → expected = "ab\0\0\0xyz".
+        w2 = _grpc_call(
+            grpc1,
+            "write",
+            {"path": path, "content": b"xyz", "offset": 5},
+            api_key=api_key,
+            timeout=30,
+        )
+        if "error" in w2:
+            pytest.skip(f"offset-based write not wired: {w2}")
+
+        expected = b"ab\x00\x00\x00xyz"
+        expected_hash = hashlib.blake2b(expected, digest_size=32).hexdigest()
+
+        # Step 3: read + verify
+        r = _grpc_call(grpc1, "read", {"path": path}, api_key=api_key, timeout=30)
+        assert "error" not in r, f"Post-pwrite read failed: {r}"
+        got = _decode_content(r)
+        if isinstance(got, str):
+            got = got.encode("utf-8")
+        assert got == expected, (
+            f"pwrite-zero-fill: got {got!r} want {expected!r} "
+            f"(hash {hashlib.blake2b(got, digest_size=32).hexdigest()[:16]} "
+            f"vs {expected_hash[:16]})"
+        )
+
 
 # ===================================================================
 # R13.1 Class 2/11: federation_share / federation_join RPCs

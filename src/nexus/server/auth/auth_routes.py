@@ -12,6 +12,7 @@ from pydantic import BaseModel, EmailStr, Field
 from nexus.bricks.auth.oauth.user_auth import OAuthUserAuth
 from nexus.bricks.auth.providers.database_local import DatabaseLocalAuth
 from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.server.auth.oauth_state_store import get_oauth_state_store
 
 logger = logging.getLogger(__name__)
 
@@ -854,6 +855,7 @@ async def get_google_oauth_url(redirect_uri: str | None = None) -> OAuthAuthoriz
 
     try:
         auth_url, state = oauth_provider.get_google_auth_url(redirect_uri=redirect_uri)
+        get_oauth_state_store().register(state)
         return OAuthAuthorizeResponse(auth_url=auth_url, state=state)
     except Exception as e:
         logger.error(f"Failed to generate Google OAuth URL: {e}")
@@ -893,6 +895,15 @@ async def oauth_check(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Google OAuth is not configured. Please set up OAuth provider.",
+        )
+
+    # RFC 6749 §10.12: validate the state against the server-side store before
+    # touching the authorization code. A forged callback cannot present a state
+    # that was issued by this server, so this blocks CSRF login-fixation.
+    if not get_oauth_state_store().consume(request.state):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="OAuth state is invalid or expired — possible CSRF attack",
         )
 
     try:
@@ -1503,6 +1514,15 @@ async def oauth_callback(request: OAuthCallbackRequest) -> OAuthCallbackResponse
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Google OAuth is not configured. Please set up OAuth provider.",
+        )
+
+    # RFC 6749 §10.12: validate the state against the server-side store before
+    # touching the authorization code. A forged callback cannot present a state
+    # that was issued by this server, so this blocks CSRF login-fixation.
+    if not get_oauth_state_store().consume(request.state):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="OAuth state is invalid or expired — possible CSRF attack",
         )
 
     try:

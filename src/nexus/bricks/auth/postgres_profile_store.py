@@ -195,6 +195,11 @@ _TABLE_STATEMENTS: tuple[str, ...] = (
     """,
     "CREATE INDEX IF NOT EXISTS idx_daemon_machines_tenant_principal "
     "ON daemon_machines(tenant_id, principal_id)",
+    # /v1/daemon/refresh looks up by pubkey on every request. At 100k enrolled
+    # daemons × 1 refresh / 45min = ~37 req/s, seq-scan is unacceptable. The
+    # BYTEA pubkey is deterministic and unique per enrollment, so a unique
+    # btree index is both correctness and performance (#3788, #3804).
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_daemon_machines_pubkey ON daemon_machines(pubkey)",
     """
     CREATE TABLE IF NOT EXISTS daemon_enroll_tokens (
         jti              UUID PRIMARY KEY,
@@ -209,17 +214,31 @@ _TABLE_STATEMENTS: tuple[str, ...] = (
     """,
     "CREATE INDEX IF NOT EXISTS idx_daemon_enroll_tokens_expires "
     "ON daemon_enroll_tokens(expires_at)",
+    # Append-only audit log, **range-partitioned by written_at**. At 100k
+    # users × ~10 pushes/day × 365 days = ~365M rows/year; a single flat table
+    # is impractical. Monthly partitions (managed externally via pg_partman or
+    # cron) keep vacuum + index-rebuild cost bounded. A default partition
+    # catches writes outside any declared range so inserts never fail.
+    #
+    # Partition constraint: PK must include the partition key, so (id, written_at).
     """
     CREATE TABLE IF NOT EXISTS auth_profile_writes (
-        id                UUID PRIMARY KEY,
+        id                UUID NOT NULL,
         tenant_id         UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
         principal_id      UUID NOT NULL,
         auth_profile_id   TEXT NOT NULL,
         machine_id        UUID NOT NULL,
         daemon_version    TEXT,
         source_file_hash  TEXT,
-        written_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
+        written_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (id, written_at)
+    ) PARTITION BY RANGE (written_at)
+    """,
+    # Default partition — catches every row until monthly partitions are
+    # provisioned. Operators should replace with per-month partitions in prod.
+    """
+    CREATE TABLE IF NOT EXISTS auth_profile_writes_default
+        PARTITION OF auth_profile_writes DEFAULT
     """,
     "CREATE INDEX IF NOT EXISTS idx_auth_profile_writes_tenant_profile "
     "ON auth_profile_writes(tenant_id, principal_id, auth_profile_id, written_at DESC)",
@@ -528,7 +547,10 @@ def _upgrade_shape_in_place(conn: Connection) -> None:
 def drop_schema(engine: Engine) -> None:
     """Drop every table created by ``ensure_schema`` (test teardown helper)."""
     with engine.begin() as conn:
+        # auth_profile_writes is partitioned — dropping the parent with CASCADE
+        # also drops the default partition and any child partitions.
         for tbl in (
+            "auth_profile_writes",
             "daemon_enroll_tokens",
             "daemon_machines",
             "auth_profiles",

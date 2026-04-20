@@ -269,22 +269,44 @@ def _wait_raft_caught_up(
     Preferable to wall-clock waits for post-failover or cross-node catchup,
     which otherwise depend on transport reconnect latency.
     """
-    leader_info = _grpc_call(
-        leader, "federation_cluster_info", {"zone_id": zone_id}, api_key=api_key
-    )
-    leader_ci = leader_info.get("result", {}).get("commit_index", 0)
     deadline = time.time() + timeout
+    leader_ci = 0
     follower_ci = 0
+    follower_has_store = False
     while time.time() < deadline:
-        follower_info = _grpc_call(
-            follower, "federation_cluster_info", {"zone_id": zone_id}, api_key=api_key
+        # Re-read leader each iteration — its commit_index advances as writes
+        # keep landing, and we want to catch up to whatever the current state is.
+        leader_info = (
+            _grpc_call(
+                leader, "federation_cluster_info", {"zone_id": zone_id}, api_key=api_key
+            ).get("result")
+            or {}
         )
-        follower_ci = follower_info.get("result", {}).get("commit_index", 0)
-        if follower_ci >= leader_ci:
+        leader_ci = leader_info.get("commit_index", 0)
+
+        follower_info = (
+            _grpc_call(
+                follower, "federation_cluster_info", {"zone_id": zone_id}, api_key=api_key
+            ).get("result")
+            or {}
+        )
+        follower_has_store = bool(follower_info.get("has_store"))
+        follower_ci = follower_info.get("commit_index", 0)
+
+        # Both sides must have the zone loaded — an unloaded follower always
+        # reports commit_index=0, which would false-positive if leader_ci is
+        # also 0 (fresh zone, no commits yet).
+        if (
+            follower_has_store
+            and leader_info.get("has_store")
+            and follower_ci >= leader_ci
+            and leader_ci > 0
+        ):
             return
         time.sleep(0.5)
     pytest.fail(
-        f"Raft catch-up stalled: zone={zone_id} leader_ci={leader_ci} follower_ci={follower_ci} "
+        f"Raft catch-up stalled: zone={zone_id} leader_ci={leader_ci} "
+        f"follower_ci={follower_ci} follower_has_store={follower_has_store} "
         f"within {timeout}s. Check transport reconnect / peer health."
     )
 

@@ -40,8 +40,7 @@ class AuthIdentityCache:
 
     def get(self, key_hash: str) -> ResolvedIdentity | None:
         with self._lock:
-            result: ResolvedIdentity | None = self._cache.get(key_hash)
-            return result
+            return self._cache.get(key_hash)
 
     def put(self, key_hash: str, identity: ResolvedIdentity) -> None:
         with self._lock:
@@ -56,17 +55,24 @@ class AuthIdentityCache:
         key_hash: str,
         resolver: Callable[[], ResolvedIdentity | None],
     ) -> ResolvedIdentity | None:
-        hit = self.get(key_hash)
-        if hit is not None:
-            return hit
-        resolved = resolver()
-        if resolved is not None:
-            self.put(key_hash, resolved)
-        return resolved
+        # Lock held across resolver call so concurrent misses for the
+        # same key don't each fire a 10s auth round-trip.
+        with self._lock:
+            hit = self._cache.get(key_hash)
+            if hit is not None:
+                return hit
+            resolved = resolver()
+            if resolved is not None:
+                self._cache[key_hash] = resolved
+            return resolved
 
 
 def hash_api_key(api_key: str) -> str:
-    """Return first 16 hex chars of sha256(api_key). Never stores raw keys."""
+    """Returns a 16-char hex prefix of sha256(api_key).
+
+    Used only as a cache/lookup key — not a cryptographic commitment.
+    Raw keys are never stored.
+    """
     return hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:16]
 
 

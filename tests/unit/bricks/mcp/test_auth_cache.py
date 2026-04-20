@@ -5,7 +5,7 @@ from __future__ import annotations
 import threading
 import time
 
-from nexus.bricks.mcp.auth_cache import AuthIdentityCache, ResolvedIdentity
+from nexus.bricks.mcp.auth_cache import AuthIdentityCache, ResolvedIdentity, hash_api_key
 
 
 def test_put_and_get_returns_stored_identity():
@@ -26,10 +26,10 @@ def test_get_missing_key_returns_none():
 
 
 def test_ttl_expiry_evicts_entry():
-    cache = AuthIdentityCache(maxsize=16, ttl=1)
+    cache = AuthIdentityCache(maxsize=16, ttl=0.1)
     cache.put("k", ResolvedIdentity("s", "z", False, "authenticated"))
     assert cache.get("k") is not None
-    time.sleep(1.1)
+    time.sleep(0.2)
     assert cache.get("k") is None
 
 
@@ -45,9 +45,9 @@ def test_maxsize_evicts_oldest():
     cache.put("a", ResolvedIdentity("s", "z", False, "authenticated"))
     cache.put("b", ResolvedIdentity("s", "z", False, "authenticated"))
     cache.put("c", ResolvedIdentity("s", "z", False, "authenticated"))
-    # At least one of the earlier entries must have been evicted.
-    present = sum(1 for k in ("a", "b", "c") if cache.get(k) is not None)
-    assert present == 2
+    # "a" is the LRU entry and must have been evicted; "b" and "c" must remain.
+    assert cache.get("a") is None
+    assert cache.get("b") is not None and cache.get("c") is not None
 
 
 def test_thread_safe_concurrent_put_get():
@@ -98,3 +98,8 @@ def test_get_or_resolve_does_not_cache_none():
     cache.get_or_resolve("k", resolver)
     cache.get_or_resolve("k", resolver)
     assert calls["n"] == 2
+
+
+def test_hash_api_key_returns_16_hex():
+    assert len(hash_api_key("secret")) == 16
+    assert all(c in "0123456789abcdef" for c in hash_api_key("secret"))

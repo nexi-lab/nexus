@@ -166,10 +166,19 @@ class UniversalOAuthProvider(BaseOAuthProvider):
             return True
         async with self._get_client() as client:
             try:
+                # httpx.BasicAuth returns an ``Auth`` instance; passing a bare
+                # tuple here type-errors under strict mypy because
+                # ``tuple[str, str]`` is invariant and not a subtype of the
+                # declared ``tuple[str | bytes, str | bytes]``.
+                auth = (
+                    httpx.BasicAuth(self.client_id, self.client_secret)
+                    if self.client_secret
+                    else None
+                )
                 response = await client.post(
                     self.INTROSPECTION_ENDPOINT,
                     data={"token": access_token},
-                    auth=(self.client_id, self.client_secret) if self.client_secret else None,
+                    auth=auth if auth is not None else httpx.USE_CLIENT_DEFAULT,
                 )
                 response.raise_for_status()
                 body = response.json()

@@ -2060,8 +2060,10 @@ class TestOpenAIBackendRustCAS:
             assert envelope["request_hash"]
             assert envelope["response_hash"]
 
-            # CAS dedup: identical request -> identical session_hash.
-            _, session_hash_2, envelope_2 = _llm_round_trip(
+            # CAS dedup: identical request -> identical request_hash.
+            # (session_hash hashes the full envelope which includes latency_ms;
+            # that varies per call by design, so compare request_hash instead.)
+            _, _session_hash_2, envelope_2 = _llm_round_trip(
                 nx,
                 "/llm",
                 {
@@ -2070,7 +2072,7 @@ class TestOpenAIBackendRustCAS:
                 },
                 session_suffix="dedup",
             )
-            assert session_hash_2 == session_hash, _json.dumps(envelope_2)
+            assert envelope_2["request_hash"] == envelope["request_hash"], _json.dumps(envelope_2)
         finally:
             nx.close()
 
@@ -2506,9 +2508,25 @@ class TestFullFailoverRecovery:
                 grpc1, "sys_stat", {"path": f"{base}/doc1-renamed.txt"}, api_key=api_key
             )
             r3 = _grpc_call(grpc1, "sys_stat", {"path": f"{base}/doc3.txt"}, api_key=api_key)
-            s_gone = "error" in s or s.get("result") is None
-            r2_present = "error" not in r2 and r2.get("result") is not None
-            r3_present = "error" not in r3 and r3.get("result") is not None
+
+            # sys_stat on a deleted/absent path returns {"result": {"metadata": None}},
+            # not {"result": None} — the kernel always emits a result envelope and
+            # signals "gone" via metadata:None (mirrors POSIX stat returning -ENOENT).
+            def _is_gone(resp):
+                if "error" in resp:
+                    return True
+                r = resp.get("result")
+                return r is None or r.get("metadata") is None
+
+            def _is_present(resp):
+                if "error" in resp:
+                    return False
+                r = resp.get("result") or {}
+                return r.get("metadata") is not None
+
+            s_gone = _is_gone(s)
+            r2_present = _is_present(r2)
+            r3_present = _is_present(r3)
             if s_gone and r2_present and r3_present:
                 return
             time.sleep(1)

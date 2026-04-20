@@ -230,7 +230,7 @@ services:
     command: >
       bash -c '
         echo "Installing test dependencies..."
-        pip install -q pytest pytest-asyncio pytest-timeout httpx grpcio grpcio-tools protobuf docker
+        pip install -q -i "${PIP_INDEX_URL:-https://mirrors.cloud.tencent.com/pypi/simple}" pytest pytest-asyncio pytest-timeout httpx grpcio grpcio-tools protobuf docker
         echo "Running dynamic federation E2E tests..."
         python -m pytest tests/e2e/docker/test_federation_e2e.py -v --no-header -o "addopts=" --timeout=300
       '

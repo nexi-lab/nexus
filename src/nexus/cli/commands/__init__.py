@@ -76,6 +76,7 @@ _ADD_COMMAND: dict[str, tuple[str, str]] = {
     "sandbox": ("sandbox", "sandbox"),
     "oauth": ("oauth", "oauth"),
     "auth_cli": ("auth", "auth"),
+    "daemon_cli": ("daemon", "daemon"),
     "zone": ("zone", "zone"),
     # Issue #2811: New CLI command groups
     "pay": ("pay", "pay"),

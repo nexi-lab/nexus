@@ -145,7 +145,7 @@ class TestRouteOverhead:
         nx = populated_nexus
 
         def route_only():
-            return nx.router.route("/test_small.bin", is_admin=True, check_write=False)
+            return nx.router.route("/test_small.bin")
 
         result = benchmark(route_only)
         assert result is not None

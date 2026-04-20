@@ -86,7 +86,6 @@ class MountPersistService:
         mount_point: str,
         backend_type: str,
         backend_config: dict[str, Any],
-        readonly: bool = False,
         owner_user_id: str | None = None,
         zone_id: str | None = None,
         description: str | None = None,
@@ -98,7 +97,6 @@ class MountPersistService:
             mount_point: Virtual path where backend is mounted
             backend_type: Backend type identifier
             backend_config: Backend-specific configuration
-            readonly: Read-only flag (default: False)
             owner_user_id: Owner user ID (auto-populated from context)
             zone_id: Zone ID (auto-populated from context)
             description: Human-readable description
@@ -126,7 +124,6 @@ class MountPersistService:
             mount_point=mount_point,
             backend_type=backend_type,
             backend_config=backend_config,
-            readonly=readonly,
             owner_user_id=owner_user_id,
             zone_id=zone_id,
             description=description,
@@ -139,7 +136,6 @@ class MountPersistService:
                 mount_point=mount_point,
                 backend_type=backend_type,
                 backend_config=backend_config,
-                readonly=readonly,
                 context=context,
             )
         except Exception as e:
@@ -188,7 +184,6 @@ class MountPersistService:
             mount_point=config["mount_point"],
             backend_type=config["backend_type"],
             backend_config=backend_config,
-            readonly=bool(config["readonly"]),
             context=context,
         )
 
@@ -232,7 +227,6 @@ class MountPersistService:
                     mount_point=mount_point,
                     backend_type=mount["backend_type"],
                     backend_config=backend_config,
-                    readonly=bool(mount["readonly"]),
                 )
 
                 loaded += 1

@@ -76,7 +76,6 @@ class MountRequest(BaseModel):
     connector_type: str = Field(..., description="Connector backend type")
     mount_point: str = Field(..., description="VFS mount path (e.g., /mnt/gmail)")
     config: dict[str, Any] = Field(default_factory=dict, description="Backend config")
-    readonly: bool = False
 
 
 class MountResponse(BaseModel):
@@ -151,7 +150,6 @@ class MountInfo(BaseModel):
     """Info about a mounted connector."""
 
     mount_point: str
-    readonly: bool
     connector_type: str | None = None
     skill_name: str | None = None
     operations: list[str] = Field(default_factory=list)
@@ -657,7 +655,6 @@ async def mount_connector(
             mount_point=req.mount_point,
             backend_type=req.connector_type,
             backend_config=req.config,
-            readonly=req.readonly,
             context=mount_context,
         )
         _mount_types[req.mount_point] = req.connector_type
@@ -733,7 +730,6 @@ async def list_mounted_connectors(
         result.append(
             MountInfo(
                 mount_point=mp,
-                readonly=m.get("readonly", False),
                 skill_name=skill_name,
                 operations=operations,
                 sync_status=sync_status,
@@ -910,14 +906,12 @@ async def write_to_connector(
     nx = _get_nx(request)
 
     # Preflight route resolution to discover backend type and backend_path.
-    # Uses is_admin=True because this is a routing decision, not a permission
-    # check — actual auth is enforced by backend.write_content() (CLI connectors)
-    # or nx.write() (kernel path). Without admin, a non-admin caller's route
-    # lookup could fail and silently fall back to the wrong write path.
+    # Routing decision only — actual auth is enforced by backend.write_content()
+    # (CLI connectors) or nx.write() (kernel path).
     _backend_path = None
     _route = None
     try:
-        _route = nx.router.route(mount_path, is_admin=True)
+        _route = nx.router.route(mount_path)
         _backend_path = _route.backend_path if _route else None
     except Exception:
         pass
@@ -949,17 +943,9 @@ async def write_to_connector(
         is_cli_connector = BackendFeature.CLI_BACKED in _caps
 
         if is_cli_connector and _backend_path:
-            # Enforce the same write-access checks that nx.write() performs:
-            # 1. Route with check_write=True (zone/agent isolation)
-            # 2. Read-only mount check
-            # 3. Pre-write intercept hooks (permission hooks)
-            _write_route = nx.router.route(
-                mount_path,
-                is_admin=write_context.is_admin,
-                check_write=True,
-            )
-            if _write_route.readonly:
-                raise PermissionError(f"Path is read-only: {mount_path}")
+            # Route to the mount (pure routing); write permissions are enforced
+            # by the pre-write intercept hooks below.
+            _write_route = nx.router.route(mount_path)
 
             from nexus.contracts.vfs_hooks import WriteHookContext as _WHC
 

@@ -109,14 +109,12 @@ class TestMount:
         _, _, coord = _make_coordinator()
         backend = _FakeBackend()
 
-        coord._store_mount_info("/data", backend, readonly=True)
+        coord._store_mount_info("/data", backend)
 
         canonical = canonicalize_path("/data", "root")
         assert canonical in coord._mounts
         info = coord._mounts[canonical]
         assert info.backend is backend
-        assert info.readonly is True
-        assert info.admin_only is False
 
     def test_mount_registers_hook_spec_observers(self) -> None:
         _, dispatch, coord = _make_coordinator()

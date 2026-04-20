@@ -35,7 +35,6 @@ class MountConfig:
 
     mount_point: str
     backend: Any
-    readonly: bool = False
 
 
 class MountManager:
@@ -74,7 +73,6 @@ class MountManager:
         mount_point: str,
         backend_type: str,
         backend_config: dict[str, Any],
-        readonly: bool = False,
         owner_user_id: str | None = None,
         zone_id: str | None = None,
         description: str | None = None,
@@ -85,7 +83,6 @@ class MountManager:
             mount_point: Virtual path where backend is mounted (e.g., "/personal/alice")
             backend_type: Type of backend (e.g., "google_drive", "gcs", "cas_local")
             backend_config: Backend-specific configuration (dict)
-            readonly: Whether mount is read-only
             owner_user_id: User ID who owns this mount
             zone_id: Zone ID this mount belongs to
             description: Optional description of the mount
@@ -102,7 +99,6 @@ class MountManager:
             mount_point=mount_point,
             backend_type=backend_type,
             backend_config=backend_config,
-            readonly=readonly,
             owner_user_id=owner_user_id,
             zone_id=zone_id,
             description=description,
@@ -112,7 +108,6 @@ class MountManager:
         self,
         mount_point: str,
         backend_config: dict[str, Any] | None = None,
-        readonly: bool | None = None,
         description: str | None = None,
     ) -> bool:
         """Update an existing mount configuration.
@@ -120,7 +115,6 @@ class MountManager:
         Args:
             mount_point: Mount point to update
             backend_config: New backend config (if provided)
-            readonly: New readonly status (if provided)
             description: New description (if provided)
 
         Returns:
@@ -129,7 +123,6 @@ class MountManager:
         return self._store.update(
             mount_point=mount_point,
             backend_config=backend_config,
-            readonly=readonly,
             description=description,
         )
 
@@ -190,7 +183,6 @@ class MountManager:
                 mount_config = MountConfig(
                     mount_point=mount_data["mount_point"],
                     backend=backend,
-                    readonly=mount_data.get("readonly", False),
                 )
 
                 mount_configs.append(mount_config)

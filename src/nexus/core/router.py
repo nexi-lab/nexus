@@ -1,13 +1,13 @@
 """Path routing for mapping virtual paths to storage backends.
 
 PathRouter = read-only query engine over the kernel mount table. Routes
-virtual paths to storage backends using longest-prefix matching with
-mount-level access control (readonly, admin_only). Zone-aware.
+virtual paths to storage backends using longest-prefix matching.
+Zone-aware. Access control is rebac, not mount-level.
 
 Routing happens inside the Rust kernel (``PyKernel.route``). PathRouter
 is a thin Python façade that:
   1. Enforces Python-side path validation and security checks.
-  2. Calls ``kernel.route(path, zone_id, is_admin, check_write)``.
+  2. Calls ``kernel.route(path, zone_id)``.
   3. Enriches the result with the Python-only ``_PyMountInfo`` (connector
      backend ref, stream backend factory) owned by the
      ``DriverLifecycleCoordinator``.
@@ -16,7 +16,7 @@ is a thin Python façade that:
 
 The kernel is the single source of truth for mount state. PathRouter does
 not own a ``MountTable``; it reads from the DLC and delegates to the
-kernel for LPM and access checks.
+kernel for LPM.
 
 Issue #3584.
 """
@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.contracts.exceptions import AccessDeniedError, InvalidPathError, PathNotMountedError
+from nexus.contracts.exceptions import InvalidPathError, PathNotMountedError
 from nexus.core.path_utils import canonicalize_path, extract_zone_id, strip_zone_prefix
 
 if TYPE_CHECKING:
@@ -68,7 +68,6 @@ class RouteResult:
     metastore: "MetastoreABC"  # Default Python metastore (kernel owns per-mount)
     backend_path: str  # Path relative to backend root
     mount_point: str  # Matched mount point
-    readonly: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,7 +94,6 @@ class ExternalRouteResult:
     metastore: "MetastoreABC"
     backend_path: str
     mount_point: str
-    readonly: bool
 
 
 class PathRouter:
@@ -108,8 +106,7 @@ class PathRouter:
 
     Design principles:
     1. **Longest prefix match**: most specific mount wins (kernel LPM).
-    2. **Mount-level access control**: ``readonly`` and ``admin_only``.
-    3. **Kernel-native**: LPM + canonicalization inside Rust kernel.
+    2. **Kernel-native**: LPM + canonicalization inside Rust kernel.
 
     Issue #3584.
     """
@@ -139,11 +136,9 @@ class PathRouter:
         self,
         virtual_path: str,
         *,
-        is_admin: bool = False,
-        check_write: bool = False,
         zone_id: str = ROOT_ZONE_ID,
     ) -> RouteResult | PipeRouteResult | StreamRouteResult | ExternalRouteResult:
-        """Route virtual path to backend with mount-level access control."""
+        """Route virtual path to backend (pure LPM; no mount-level access checks)."""
         virtual_path = self.validate_path(virtual_path)
 
         # DT_PIPE / DT_STREAM: kernel-native IPC dispatch at exact target
@@ -158,10 +153,7 @@ class PathRouter:
 
         if self._kernel is not None:
             try:
-                rust_result = self._kernel.route(virtual_path, zone_id, is_admin, check_write)
-            except PermissionError as e:
-                msg = str(e).replace(f"/{zone_id}/", "/").replace(f"/{zone_id}'", "/'")
-                raise AccessDeniedError(msg) from None
+                rust_result = self._kernel.route(virtual_path, zone_id)
             except ValueError:
                 raise PathNotMountedError(virtual_path) from None
 
@@ -176,14 +168,12 @@ class PathRouter:
                     metastore=self._metastore,
                     backend_path=rust_result.backend_path,
                     mount_point=user_mp,
-                    readonly=rust_result.readonly,
                 )
             return RouteResult(
                 backend=info.backend,
                 metastore=self._metastore,
                 backend_path=rust_result.backend_path,
                 mount_point=user_mp,
-                readonly=rust_result.readonly,
             )
 
         # Python fallback: walk DLC mounts for LPM.
@@ -193,10 +183,6 @@ class PathRouter:
         canonical_key, info = result
         canonical = canonicalize_path(virtual_path, zone_id)
         user_mp = extract_zone_id(canonical_key)[1]
-        if info.admin_only and not is_admin:
-            raise AccessDeniedError(f"Mount '{user_mp}' requires admin privileges")
-        if info.readonly and check_write:
-            raise AccessDeniedError(f"Mount '{user_mp}' is read-only")
 
         backend_path = self._strip_mount_prefix(canonical, canonical_key)
 
@@ -207,14 +193,12 @@ class PathRouter:
                 metastore=self._metastore,
                 backend_path=backend_path,
                 mount_point=user_mp,
-                readonly=info.readonly,
             )
         return RouteResult(
             backend=info.backend,
             metastore=self._metastore,
             backend_path=backend_path,
             mount_point=user_mp,
-            readonly=info.readonly,
         )
 
     # ------------------------------------------------------------------
@@ -243,8 +227,6 @@ class PathRouter:
             return None
         return MountInfo(
             mount_point=normalized,
-            readonly=info.readonly,
-            admin_only=info.admin_only,
             backend=info.backend,
         )
 
@@ -267,8 +249,6 @@ class PathRouter:
             [
                 MountInfo(
                     mount_point=extract_zone_id(canonical_key)[1],
-                    readonly=info.readonly,
-                    admin_only=info.admin_only,
                     backend=info.backend,
                 )
                 for canonical_key, info in self._dlc.list_mounts()

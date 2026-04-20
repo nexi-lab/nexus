@@ -24,8 +24,6 @@ use std::sync::Arc;
 #[allow(dead_code)]
 pub(crate) struct MountInfo {
     pub zone_id: String,
-    pub readonly: bool,
-    pub admin_only: bool,
     pub backend_name: String,
 }
 
@@ -50,7 +48,6 @@ impl DriverLifecycleCoordinator {
     /// - `kernel` — back-reference to the owning Kernel (interior mutability)
     /// - `mount_point` — virtual path (e.g. `/`, `/data`)
     /// - `zone_id` — zone identifier
-    /// - `readonly`, `admin_only` — access flags
     /// - `backend_name` — backend identifier string
     /// - `backend` — optional Rust backend (None = Python-side backend)
     /// - `metastore` — optional per-mount metastore (ZoneMetastore or LocalMetastore)
@@ -61,8 +58,6 @@ impl DriverLifecycleCoordinator {
         kernel: &Kernel,
         mount_point: &str,
         zone_id: &str,
-        readonly: bool,
-        admin_only: bool,
         backend_name: &str,
         backend: Option<Arc<dyn crate::backend::ObjectStore>>,
         metastore: Option<Arc<dyn crate::metastore::Metastore>>,
@@ -85,8 +80,6 @@ impl DriverLifecycleCoordinator {
         kernel.add_mount(
             mount_point,
             zone_id,
-            readonly,
-            admin_only,
             backend_name,
             backend,
             metastore,
@@ -140,8 +133,6 @@ impl DriverLifecycleCoordinator {
             canonical,
             MountInfo {
                 zone_id: zone_id.to_string(),
-                readonly,
-                admin_only,
                 backend_name: backend_name.to_string(),
             },
         );

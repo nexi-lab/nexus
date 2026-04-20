@@ -187,7 +187,7 @@ class NexusConfig(BaseModel):
     # Custom namespace configurations
     namespaces: list[dict[str, Any]] | None = Field(
         default=None,
-        description="Custom namespace configurations (list of dicts with name, readonly, admin_only, requires_zone)",
+        description="Custom namespace configurations (list of dicts with name, requires_zone)",
     )
 
     auto_parse: bool = Field(
@@ -252,7 +252,7 @@ class NexusConfig(BaseModel):
     # Multi-backend storage configuration (v0.9.0)
     backends: list[dict[str, Any]] | None = Field(
         default=None,
-        description="Multiple backend mount configurations (type, mount_point, config, priority, readonly)",
+        description="Multiple backend mount configurations (type, mount_point, config, priority)",
     )
 
     # Cold tiering configuration (v0.9.15, Issue #3406)

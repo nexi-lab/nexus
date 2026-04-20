@@ -307,21 +307,10 @@ class VersionService:
         # Check WRITE permission
         await self._check_write_permission(path, context)
 
-        # Route to backend using context
+        # Router presence is a precondition for rollback (derives from mount context).
         if self.router is None:
             raise RuntimeError("Router not configured for VersionService")
-
-        is_admin = context.is_admin if context else False
-
-        route = self.router.route(
-            path,
-            is_admin=is_admin,
-            check_write=True,
-        )
-
-        # Check readonly
-        if route.readonly:
-            raise PermissionError(f"Cannot rollback read-only path: {path}")
+        self.router.route(path)
 
         # Perform rollback via VersionManager + session_factory
         # (RaftMetadataStore lacks rollback(); use SQL version history instead)

@@ -19,10 +19,9 @@ class TestResolvedPath:
             virtual_path="/workspace/file.txt",
             backend_path="file.txt",
             mount_point="/workspace",
-            readonly=False,
         )
         with pytest.raises(dataclasses.FrozenInstanceError):
-            rp.readonly = True  # type: ignore[misc]
+            rp.mount_point = "/other"
 
     def test_slots(self) -> None:
         assert hasattr(ResolvedPath, "__slots__")
@@ -33,7 +32,6 @@ class TestResolvedPath:
             "virtual_path",
             "backend_path",
             "mount_point",
-            "readonly",
         }
 
     def test_equality(self) -> None:
@@ -41,7 +39,6 @@ class TestResolvedPath:
             "virtual_path": "/ws/f",
             "backend_path": "f",
             "mount_point": "/ws",
-            "readonly": False,
         }
         assert ResolvedPath(**kwargs) == ResolvedPath(**kwargs)
 
@@ -55,7 +52,7 @@ class TestMountInfo:
     """Verify MountInfo is a proper frozen, slots dataclass."""
 
     def test_frozen(self) -> None:
-        mi = MountInfo(mount_point="/workspace", readonly=False)
+        mi = MountInfo(mount_point="/workspace")
         with pytest.raises(dataclasses.FrozenInstanceError):
             mi.mount_point = "/other"  # type: ignore[misc]
 
@@ -66,8 +63,6 @@ class TestMountInfo:
         fields = {f.name for f in dataclasses.fields(MountInfo)}
         assert fields == {
             "mount_point",
-            "readonly",
-            "admin_only",
             "status",
             "backend",
             "priority",
@@ -75,15 +70,7 @@ class TestMountInfo:
         }
 
     def test_equality(self) -> None:
-        assert MountInfo("/ws", False) == MountInfo("/ws", False)
-
-    def test_readonly_mount(self) -> None:
-        mi = MountInfo(mount_point="/archives", readonly=True)
-        assert mi.readonly is True
-
-    def test_admin_only_mount(self) -> None:
-        mi = MountInfo(mount_point="/system", readonly=True, admin_only=True)
-        assert mi.admin_only is True
+        assert MountInfo("/ws") == MountInfo("/ws")
 
 
 # ---------------------------------------------------------------------------
@@ -139,7 +126,7 @@ class TestPathRouterConformance:
 
         from nexus.core.router import PathRouter
 
-        # For route: protocol has (virtual_path, is_admin, check_write)
+        # For route: protocol has (virtual_path, zone_id)
         proto_sig = inspect.signature(VFSRouterProtocol.route)
         impl_sig = inspect.signature(PathRouter.route)
         proto_params = {n for n in proto_sig.parameters if n != "self"}

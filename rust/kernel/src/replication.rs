@@ -132,16 +132,8 @@ impl ReplicationScanner {
                 _ => continue, // No content to replicate
             };
 
-            // Only replicate entries under the configured source mount, and
-            // map them into the target mount subtree.
-            let target_path =
-                match Self::map_source_to_target_path(&entry.path, &source_mount, &target_mount) {
-                    Some(p) => p,
-                    None => continue,
-                };
-
-            // Check target path is routable/writable.
-            let target_read = kernel.route(&target_path, &self.zone_id, true, true);
+            // Check if content exists in target mount
+            let target_read = kernel.route(&entry.path, &self.zone_id);
             if target_read.is_err() {
                 continue; // Not routable to target
             }

@@ -54,7 +54,7 @@ class MockRouter:
     def __init__(self, mount_point: str = "/mnt/gcs"):
         self.mount_point = mount_point
 
-    def route(self, path: str, *, is_admin=False, check_write=False):
+    def route(self, path: str):
         # Simulate mount point stripping
         if path.startswith(self.mount_point):
             backend_path = path[len(self.mount_point) + 1 :]  # Strip /mnt/gcs/

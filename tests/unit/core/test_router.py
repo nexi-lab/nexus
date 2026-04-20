@@ -32,7 +32,6 @@ pytest.skip(
 
 from nexus.backends.storage.cas_local import CASLocalBackend  # noqa: E402, F401
 from nexus.contracts.exceptions import (  # noqa: E402, F401
-    AccessDeniedError,
     InvalidPathError,
     PathNotMountedError,
 )
@@ -150,13 +149,11 @@ def test_list_mounts(
 ) -> None:
     """Test list_mounts returns MountInfo objects."""
     mount_table.add("/workspace", temp_backend)
-    mount_table.add("/shared", temp_backend, readonly=True)
+    mount_table.add("/shared", temp_backend)
     mounts = router.list_mounts()
     assert len(mounts) == 2
     mount_points = {m.mount_point for m in mounts}
     assert mount_points == {"/shared", "/workspace"}
-    shared_mount = next(m for m in mounts if m.mount_point == "/shared")
-    assert shared_mount.readonly is True
 
 
 def test_get_backend_by_name(
@@ -187,7 +184,6 @@ def test_route_exact_match(
     assert result.backend == temp_backend
     assert result.backend_path == ""
     assert result.mount_point == "/data"
-    assert result.readonly is False
 
 
 def test_route_prefix_match(
@@ -257,79 +253,6 @@ def test_route_no_match_raises_error(
         router.route("/other/path")
 
     assert "/other/path" in str(exc_info.value)
-
-
-def test_route_readonly_mount(
-    mount_table: MountTable, router: PathRouter, temp_backend: CASLocalBackend
-) -> None:
-    """Test routing to readonly mount."""
-    mount_table.add("/readonly", temp_backend, readonly=True)
-
-    result = router.route("/readonly/file.txt")
-    assert result.readonly is True
-
-
-def test_route_readonly_rejects_writes(
-    mount_table: MountTable, router: PathRouter, temp_backend: CASLocalBackend
-) -> None:
-    """Test that readonly mounts reject write operations."""
-    mount_table.add("/archives", temp_backend, readonly=True)
-
-    with pytest.raises(AccessDeniedError) as exc_info:
-        router.route("/archives/backup.tar", check_write=True)
-
-    assert "read-only" in str(exc_info.value)
-
-
-def test_route_readonly_allows_reads(
-    mount_table: MountTable, router: PathRouter, temp_backend: CASLocalBackend
-) -> None:
-    """Test that readonly mounts allow read operations."""
-    mount_table.add("/archives", temp_backend, readonly=True)
-
-    result = router.route("/archives/backup.tar", check_write=False)
-    assert result.backend == temp_backend
-    assert result.readonly is True
-
-
-# === Admin-only mount tests ===
-
-
-def test_mount_admin_only_rejects_non_admin(
-    mount_table: MountTable, router: PathRouter, temp_backend: CASLocalBackend
-) -> None:
-    """Test that admin_only mount requires admin privileges."""
-    mount_table.add("/system", temp_backend, admin_only=True)
-
-    with pytest.raises(AccessDeniedError) as exc_info:
-        router.route("/system/config/settings.json", is_admin=False)
-
-    assert "requires admin" in str(exc_info.value)
-
-
-def test_mount_admin_only_allows_admin(
-    mount_table: MountTable, router: PathRouter, temp_backend: CASLocalBackend
-) -> None:
-    """Test that admin can access admin_only mount."""
-    mount_table.add("/system", temp_backend, admin_only=True)
-
-    result = router.route("/system/config/settings.json", is_admin=True)
-    assert result.backend == temp_backend
-
-
-def test_mount_admin_only_and_readonly(
-    mount_table: MountTable, router: PathRouter, temp_backend: CASLocalBackend
-) -> None:
-    """Test that admin_only + readonly mount rejects admin writes."""
-    mount_table.add("/system", temp_backend, admin_only=True, readonly=True)
-
-    # Admin can read
-    result = router.route("/system/config.json", is_admin=True, check_write=False)
-    assert result.readonly is True
-
-    # Admin cannot write (readonly takes precedence)
-    with pytest.raises(AccessDeniedError):
-        router.route("/system/config.json", is_admin=True, check_write=True)
 
 
 # === Path normalization tests ===

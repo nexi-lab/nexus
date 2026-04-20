@@ -497,10 +497,7 @@ def _augment_paths_with_virtual_readme(
         return paths_to_index
 
     try:
-        _, _, is_admin = nexus_fs._get_context_identity(context)
-        route = nexus_fs.router.route(
-            target_path, is_admin=is_admin, check_write=False, zone_id=nexus_fs._zone_id
-        )
+        route = nexus_fs.router.route(target_path, zone_id=nexus_fs._zone_id)
     except Exception:
         return paths_to_index
 

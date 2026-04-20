@@ -21,7 +21,6 @@ from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.core.driver_lifecycle_coordinator import DriverLifecycleCoordinator, _PyMountInfo
 from nexus.core.path_utils import canonicalize_path
 from nexus.core.router import (
-    AccessDeniedError,
     InvalidPathError,
     PathNotMountedError,
     PathRouter,
@@ -55,16 +54,12 @@ def _add_mount(
     mount_point: str,
     backend,
     *,
-    readonly: bool = False,
-    admin_only: bool = False,
     zone_id: str = ROOT_ZONE_ID,
 ) -> None:
     """Insert a mount into the router's DLC map directly."""
     canonical = canonicalize_path(mount_point, zone_id)
     router._dlc._mounts[canonical] = _PyMountInfo(
         backend=backend,
-        readonly=readonly,
-        admin_only=admin_only,
         zone_id=zone_id,
     )
 
@@ -78,8 +73,8 @@ def _make_router_with_mounts() -> tuple[PathRouter, CASLocalBackend]:
     _add_mount(router, "/workspace", backend)
     _add_mount(router, "/shared", backend)
     _add_mount(router, "/external", backend)
-    _add_mount(router, "/system", backend, admin_only=True, readonly=True)
-    _add_mount(router, "/archives", backend, readonly=True)
+    _add_mount(router, "/system", backend)
+    _add_mount(router, "/archives", backend)
     return router, backend
 
 
@@ -193,8 +188,7 @@ class TestLongestPrefixMatchInvariants:
             r2 = router.route(path)
             assert r1.mount_point == r2.mount_point
             assert r1.backend_path == r2.backend_path
-            assert r1.readonly == r2.readonly
-        except (PathNotMountedError, InvalidPathError, AccessDeniedError):
+        except (PathNotMountedError, InvalidPathError):
             pass
 
     @given(
@@ -223,42 +217,5 @@ class TestLongestPrefixMatchInvariants:
             result = router.route(query_path)
             # The deeper mount should match
             assert result.backend is backend_deep
-        except (InvalidPathError, AccessDeniedError):
+        except InvalidPathError:
             pass  # Path validation may reject generated paths
-
-
-# ---------------------------------------------------------------------------
-# Invariant 4: Read-only mount enforcement
-# ---------------------------------------------------------------------------
-
-
-class TestReadOnlyMountInvariants:
-    """Read-only mount properties."""
-
-    @given(path=valid_path(max_depth=3))
-    @settings(deadline=None)
-    def test_system_mount_rejects_writes(self, path: str) -> None:
-        """System mount (admin_only + readonly) always rejects write access."""
-        router, _ = _make_router_with_mounts()
-        full_path = f"/system{path}"
-        try:
-            router.route(full_path, is_admin=True, check_write=True)
-            raise AssertionError(f"System mount accepted write: {full_path}")
-        except AccessDeniedError:
-            pass  # Correctly rejected
-        except (InvalidPathError, PathNotMountedError):
-            pass  # Path issues, also acceptable
-
-    @given(path=valid_path(max_depth=3))
-    @settings(deadline=None)
-    def test_archives_mount_rejects_writes(self, path: str) -> None:
-        """Archives mount (readonly) always rejects write access."""
-        router, _ = _make_router_with_mounts()
-        full_path = f"/archives{path}"
-        try:
-            router.route(full_path, is_admin=False, check_write=True)
-            raise AssertionError(f"Archives mount accepted write: {full_path}")
-        except AccessDeniedError:
-            pass  # Correctly rejected
-        except (InvalidPathError, PathNotMountedError):
-            pass  # Path issues, also acceptable

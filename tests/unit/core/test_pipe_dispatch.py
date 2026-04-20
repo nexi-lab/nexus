@@ -38,8 +38,6 @@ def _add_mount(router: PathRouter, mount_point: str, backend, zone_id: str = ROO
     canonical = canonicalize_path(mount_point, zone_id)
     router._dlc._mounts[canonical] = _PyMountInfo(
         backend=backend,
-        readonly=False,
-        admin_only=False,
         zone_id=zone_id,
     )
 

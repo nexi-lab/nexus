@@ -43,15 +43,13 @@ class _PyMountInfo:
     """Python-only fields for a mount.
 
     The kernel (``PyKernel``) is the single source of truth for routing —
-    it owns mount points, readonly flags, backend adapters, and per-zone
-    metastores. This dataclass keeps the Python-only references the kernel
-    does not carry: connector backend objects (some backends are still
-    Python) and the zone id of the mount.
+    it owns mount points and backend adapters plus per-zone metastores.
+    This dataclass keeps the Python-only references the kernel does not
+    carry: connector backend objects (some backends are still Python)
+    and the zone id of the mount.
     """
 
     backend: "ObjectStoreABC"
-    readonly: bool
-    admin_only: bool
     zone_id: str
     is_external: bool = False
 
@@ -138,8 +136,6 @@ class DriverLifecycleCoordinator:
         mount_point: str,
         backend: "ObjectStoreABC",
         *,
-        readonly: bool = False,
-        admin_only: bool = False,
         zone_id: str = ROOT_ZONE_ID,
         is_external: bool = False,
     ) -> None:
@@ -154,8 +150,6 @@ class DriverLifecycleCoordinator:
 
         info = _PyMountInfo(
             backend=backend,
-            readonly=readonly,
-            admin_only=admin_only,
             zone_id=zone_id,
             is_external=is_external,
         )

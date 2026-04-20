@@ -508,7 +508,6 @@ class NexusFSGateway:
                 {
                     "mount_point": mount_info.mount_point,
                     "priority": mount_info.priority,
-                    "readonly": mount_info.readonly,
                     "backend_type": type(mount_info.backend).__name__,
                     "backend": mount_info.backend,
                     "conflict_strategy": mount_info.conflict_strategy,
@@ -527,7 +526,7 @@ class NexusFSGateway:
             path: Virtual file path
 
         Returns:
-            Dict with mount_point, backend, backend_path, readonly keys,
+            Dict with mount_point, backend, backend_path keys,
             or None if no mount matches.
         """
         # Sort by mount_point length descending so longest prefix matches first
@@ -541,7 +540,6 @@ class NexusFSGateway:
                     "mount_point": mp,
                     "backend": mount.backend,
                     "backend_path": backend_path,
-                    "readonly": mount.readonly,
                     "backend_name": getattr(mount.backend, "name", type(mount.backend).__name__),
                     "conflict_strategy": mount.conflict_strategy,
                 }

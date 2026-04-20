@@ -688,7 +688,7 @@ impl Kernel {
     /// whether to fall back to the global metastore).
     fn resolve_mount_point(&self, path: &str, zone_id: &str) -> String {
         self.mount_table
-            .route(path, zone_id, true, false)
+            .route(path, zone_id)
             .map(|r| r.mount_point)
             .unwrap_or_default()
     }
@@ -1234,8 +1234,6 @@ impl Kernel {
         &self,
         mount_point: &str,
         zone_id: &str,
-        readonly: bool,
-        admin_only: bool,
         backend_name: &str,
         backend: Option<Arc<dyn crate::backend::ObjectStore>>,
         metastore: Option<Arc<dyn crate::metastore::Metastore>>,
@@ -1245,15 +1243,8 @@ impl Kernel {
         )>,
         is_external: bool,
     ) -> Result<(), KernelError> {
-        self.mount_table.add_mount(
-            mount_point,
-            zone_id,
-            readonly,
-            admin_only,
-            backend_name,
-            backend,
-            is_external,
-        );
+        self.mount_table
+            .add_mount(mount_point, zone_id, backend_name, backend, is_external);
         // Install per-mount metastore if provided. Must come AFTER the
         // entry is inserted so `install_metastore` finds it.
         if let Some(ms) = metastore {
@@ -1324,15 +1315,9 @@ impl Kernel {
     }
 
     /// Zone-canonical LPM routing.
-    pub fn route(
-        &self,
-        path: &str,
-        zone_id: &str,
-        is_admin: bool,
-        check_write: bool,
-    ) -> Result<RustRouteResult, KernelError> {
+    pub fn route(&self, path: &str, zone_id: &str) -> Result<RustRouteResult, KernelError> {
         self.mount_table
-            .route(path, zone_id, is_admin, check_write)
+            .route(path, zone_id)
             .map_err(KernelError::from)
     }
 
@@ -1420,8 +1405,6 @@ impl Kernel {
             nexus_raft::prelude::ZoneConsensus<nexus_raft::prelude::FullStateMachine>,
             tokio::runtime::Handle,
         )>,
-        readonly: bool,
-        admin_only: bool,
         io_profile: &str,
         zone_id: &str,
         // -- DT_MOUNT is_external flag (entry_type == 2) --
@@ -1452,8 +1435,6 @@ impl Kernel {
                     self,
                     path,
                     zone_id,
-                    readonly,
-                    admin_only,
                     backend_name,
                     backend,
                     metastore,
@@ -2442,10 +2423,7 @@ impl Kernel {
         }))?;
 
         // 2. Route (pure Rust LPM)
-        let route = match self
-            .mount_table
-            .route(path, &ctx.zone_id, ctx.is_admin, false)
-        {
+        let route = match self.mount_table.route(path, &ctx.zone_id) {
             Ok(r) => r,
             Err(_) => return Err(not_found()),
         };
@@ -2715,10 +2693,7 @@ impl Kernel {
         }))?;
 
         // 2. Route (check write access)
-        let route = match self
-            .mount_table
-            .route(path, &ctx.zone_id, ctx.is_admin, true)
-        {
+        let route = match self.mount_table.route(path, &ctx.zone_id) {
             Ok(r) => r,
             Err(_) => return miss(),
         };
@@ -2939,7 +2914,7 @@ impl Kernel {
     ///
     /// validate -> route -> dcache lookup -> return StatResult.
     /// Returns None on dcache miss or trie-resolved paths (wrapper handles).
-    pub fn sys_stat(&self, path: &str, zone_id: &str, is_admin: bool) -> Option<StatResult> {
+    pub fn sys_stat(&self, path: &str, zone_id: &str) -> Option<StatResult> {
         // 1. Validate
         if validate_path_fast(path).is_err() {
             return None;
@@ -2951,10 +2926,7 @@ impl Kernel {
         }
 
         // 3. Route
-        let route = self
-            .mount_table
-            .route(path, zone_id, is_admin, false)
-            .ok()?;
+        let route = self.mount_table.route(path, zone_id).ok()?;
 
         // 4. DCache lookup. On miss, fall back to the per-mount metastore
         //    so federation zones see inodes that haven't been cached yet
@@ -3062,10 +3034,7 @@ impl Kernel {
         }))?;
 
         // 2. Route (check write access)
-        let route = match self
-            .mount_table
-            .route(path, &ctx.zone_id, ctx.is_admin, true)
-        {
+        let route = match self.mount_table.route(path, &ctx.zone_id) {
             Ok(r) => r,
             Err(_) => return miss(0),
         };
@@ -3211,18 +3180,12 @@ impl Kernel {
             is_directory: false,
         }))?;
 
-        // 2. Route both (check write access)
-        let old_route = match self
-            .mount_table
-            .route(old_path, &ctx.zone_id, ctx.is_admin, true)
-        {
+        // 2. Route both
+        let old_route = match self.mount_table.route(old_path, &ctx.zone_id) {
             Ok(r) => r,
             Err(_) => return miss(),
         };
-        let new_route = match self
-            .mount_table
-            .route(new_path, &ctx.zone_id, ctx.is_admin, true)
-        {
+        let new_route = match self.mount_table.route(new_path, &ctx.zone_id) {
             Ok(r) => r,
             Err(_) => return miss(),
         };
@@ -3395,17 +3358,11 @@ impl Kernel {
         validate_path_fast(dst_path)?;
 
         // 2. Route both (read access for src, write access for dst)
-        let src_route = match self
-            .mount_table
-            .route(src_path, &ctx.zone_id, ctx.is_admin, false)
-        {
+        let src_route = match self.mount_table.route(src_path, &ctx.zone_id) {
             Ok(r) => r,
             Err(_) => return miss(),
         };
-        let dst_route = match self
-            .mount_table
-            .route(dst_path, &ctx.zone_id, ctx.is_admin, true)
-        {
+        let dst_route = match self.mount_table.route(dst_path, &ctx.zone_id) {
             Ok(r) => r,
             Err(_) => return miss(),
         };
@@ -3666,9 +3623,7 @@ impl Kernel {
         validate_path_fast(path)?;
 
         // 2. Route (check write access)
-        let route = self
-            .mount_table
-            .route(path, &ctx.zone_id, ctx.is_admin, true)?;
+        let route = self.mount_table.route(path, &ctx.zone_id)?;
 
         // 3. Existence check via metastore (per-mount or global) — full path
         let exists = self
@@ -3850,9 +3805,7 @@ impl Kernel {
         validate_path_fast(path)?;
 
         // 2. Route (check write access)
-        let route = self
-            .mount_table
-            .route(path, &ctx.zone_id, ctx.is_admin, true)?;
+        let route = self.mount_table.route(path, &ctx.zone_id)?;
 
         // 3. Get metadata (per-mount or global) — full path
         let entry_type = self
@@ -3927,15 +3880,11 @@ impl Kernel {
     ///
     /// Returns true if file exists in dcache and path is routable.
     /// Does NOT check metastore (dcache authoritative for hot-path).
-    pub fn access(&self, path: &str, zone_id: &str, is_admin: bool) -> bool {
+    pub fn access(&self, path: &str, zone_id: &str) -> bool {
         if validate_path_fast(path).is_err() {
             return false;
         }
-        if self
-            .mount_table
-            .route(path, zone_id, is_admin, false)
-            .is_err()
-        {
+        if self.mount_table.route(path, zone_id).is_err() {
             return false;
         }
         self.dcache.contains(path)
@@ -3964,10 +3913,7 @@ impl Kernel {
         // 2. Route all paths (single lock acquisition on mount table via read lock)
         let mut routes = Vec::with_capacity(items.len());
         for (path, _) in items {
-            let route = self
-                .mount_table
-                .route(path, &ctx.zone_id, ctx.is_admin, true)
-                .ok();
+            let route = self.mount_table.route(path, &ctx.zone_id).ok();
             routes.push(route);
         }
 
@@ -4194,7 +4140,7 @@ impl Kernel {
     /// List immediate children of a directory path from dcache.
     ///
     /// Returns Vec of (child_name, entry_type) tuples.
-    pub fn readdir(&self, parent_path: &str, zone_id: &str, is_admin: bool) -> Vec<(String, u8)> {
+    pub fn readdir(&self, parent_path: &str, zone_id: &str) -> Vec<(String, u8)> {
         if validate_path_fast(parent_path).is_err() {
             return Vec::new();
         }
@@ -4206,7 +4152,7 @@ impl Kernel {
         } else {
             parent_path
         };
-        let route = match self.mount_table.route(normalized, zone_id, is_admin, false) {
+        let route = match self.mount_table.route(normalized, zone_id) {
             Ok(r) => r,
             Err(_) => return Vec::new(),
         };
@@ -4775,12 +4721,10 @@ mod tests {
         entry_type: i32,
     ) -> Result<SysSetAttrResult, KernelError> {
         kernel.sys_setattr(
-            path, entry_type, "",    // backend_name
-            None,  // backend
-            None,  // metastore
-            None,  // raft_backend
-            false, // readonly
-            false, // admin_only
+            path, entry_type, "",   // backend_name
+            None, // backend
+            None, // metastore
+            None, // raft_backend
             "memory", "root", false, // is_external
             65536, // capacity
             None,  // read_fd
@@ -4876,8 +4820,6 @@ mod tests {
                 None,
                 None,
                 None,
-                false,
-                false,
                 "memory",
                 "root",
                 false,
@@ -4928,18 +4870,8 @@ mod tests {
         // into ZoneMetastore, so generic full-path stores see full keys.
         let k = Kernel::new();
         let ms = temp_metastore();
-        k.add_mount(
-            "/data",
-            "root",
-            false,
-            false,
-            "test",
-            None,
-            Some(ms.clone()),
-            None,
-            false,
-        )
-        .unwrap();
+        k.add_mount("/data", "root", "test", None, Some(ms.clone()), None, false)
+            .unwrap();
 
         // Create DT_DIR via sys_setattr — writes to per-mount metastore
         let r = k
@@ -4950,8 +4882,6 @@ mod tests {
                 None,
                 None,
                 None,
-                false,
-                false,
                 "balanced",
                 "root",
                 false,
@@ -4980,18 +4910,8 @@ mod tests {
         // metastore_get/list should return global paths even though storage is zone-relative.
         let k = Kernel::new();
         let ms = temp_metastore();
-        k.add_mount(
-            "/data",
-            "root",
-            false,
-            false,
-            "test",
-            None,
-            Some(ms.clone()),
-            None,
-            false,
-        )
-        .unwrap();
+        k.add_mount("/data", "root", "test", None, Some(ms.clone()), None, false)
+            .unwrap();
 
         // Create a DT_DIR at /data/reports
         k.sys_setattr(
@@ -5001,8 +4921,6 @@ mod tests {
             None,
             None,
             None,
-            false,
-            false,
             "balanced",
             "root",
             false,

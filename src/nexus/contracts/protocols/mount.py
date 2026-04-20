@@ -32,7 +32,6 @@ class MountProtocol(Protocol):
         mount_point: str,
         backend_type: str,
         backend_config: dict[str, Any],
-        readonly: bool = False,
         context: "OperationContext | None" = None,
     ) -> str: ...
 
@@ -76,7 +75,6 @@ class MountProtocol(Protocol):
         mount_point: str,
         backend_type: str,
         backend_config: dict[str, Any],
-        readonly: bool = False,
         owner_user_id: str | None = None,
         zone_id: str | None = None,
         description: str | None = None,

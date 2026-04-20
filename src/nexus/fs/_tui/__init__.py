@@ -135,7 +135,7 @@ class ContextualNexusFS:
         from datetime import UTC, datetime
 
         try:
-            route = self._kernel.router.route(path, is_admin=True, check_write=False)
+            route = self._kernel.router.route(path)
         except Exception:
             return None
 

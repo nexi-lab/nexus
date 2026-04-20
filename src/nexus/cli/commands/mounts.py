@@ -59,7 +59,6 @@ def mounts_group() -> None:
 @click.argument("mount_point", type=str)
 @click.argument("backend_type", type=str)
 @click.argument("config_json", type=str)
-@click.option("--readonly", is_flag=True, help="Mount as read-only")
 @click.option("--owner", type=str, default=None, help="Owner user ID")
 @click.option("--zone", type=str, default=None, help="Zone ID")
 @add_backend_options
@@ -67,7 +66,6 @@ def add_mount(
     mount_point: str,
     backend_type: str,
     config_json: str,
-    readonly: bool,
     owner: str | None,
     zone: str | None,
     remote_url: str | None,
@@ -101,7 +99,6 @@ def add_mount(
             mount_point,
             backend_type,
             config_json,
-            readonly,
             owner,
             zone,
             remote_url,
@@ -114,7 +111,6 @@ async def _async_add_mount(
     mount_point: str,
     backend_type: str,
     config_json: str,
-    readonly: bool,
     owner: str | None,
     zone: str | None,
     remote_url: str | None,
@@ -149,7 +145,6 @@ async def _async_add_mount(
                     "connector_type": backend_type,
                     "mount_point": mount_point,
                     "config": config_dict,
-                    "readonly": readonly,
                 },
             )
             resp.raise_for_status()
@@ -170,7 +165,6 @@ async def _async_add_mount(
         console.print("[bold nexus.value]Mount Details:[/bold nexus.value]")
         console.print(f"  Mount Point: [nexus.path]{mount_point}[/nexus.path]")
         console.print(f"  Backend Type: [nexus.value]{backend_type}[/nexus.value]")
-        console.print(f"  Read-Only: [nexus.value]{readonly}[/nexus.value]")
         if owner:
             console.print(f"  Owner: [nexus.value]{owner}[/nexus.value]")
         if zone:
@@ -316,12 +310,6 @@ async def _async_list_mounts(
                     )
                 else:
                     console.print(f"[bold]{mount['mount_point']}[/bold]")
-                console.print(
-                    f"  Read-Only: [nexus.value]{'Yes' if mount['readonly'] else 'No'}[/nexus.value]"
-                )
-                console.print(
-                    f"  Admin-Only: [nexus.value]{'Yes' if mount.get('admin_only') else 'No'}[/nexus.value]"
-                )
                 console.print()
 
         render_output(
@@ -382,9 +370,6 @@ async def _async_mount_info(
 
         # Display mount info
         console.print(f"\n[bold nexus.value]Mount Information: {mount_point}[/bold nexus.value]\n")
-
-        console.print(f"[bold]Read-Only:[/bold] {'Yes' if mount['readonly'] else 'No'}")
-        console.print(f"[bold]Admin-Only:[/bold] {'Yes' if mount.get('admin_only') else 'No'}")
 
         # Note: show_config not supported yet for active mounts (config not returned by router)
         if show_config:

@@ -1904,7 +1904,7 @@ class NexusFS(  # type: ignore[misc]
             else (context.get("is_admin", False) if isinstance(context, dict) else False)
         )
         _rust_ctx = self._build_rust_ctx(context, _is_admin)
-        result = self._kernel.sys_write(path, _rust_ctx, buf)
+        result = self._kernel.sys_write(path, _rust_ctx, buf, offset)
 
         if result.hit:
             # Rust wrote to backend (CAS or PAS) + built metadata + updated dcache
@@ -2101,8 +2101,9 @@ class NexusFS(  # type: ignore[misc]
             buf: File content as bytes or str.
             count: Max bytes to write (None = len(buf)).
             offset: Byte offset for partial write (POSIX pwrite semantics).
-                Currently ignored by the kernel hot path; a follow-up will
-                thread offset into ``Kernel::sys_write``.
+                0 (default) is a full-file write. >0 splices ``buf`` at
+                ``offset`` within the existing file; gap past EOF is
+                zero-filled. Threaded into ``Kernel::sys_write`` (R20.10).
             context: Operation context.
             consistency: Metadata consistency mode. Currently ignored — the
                 kernel routes through per-mount metastores which encode
@@ -2140,7 +2141,7 @@ class NexusFS(  # type: ignore[misc]
         _meta = self.metadata.get(path)
 
         _rust_ctx = self._build_rust_ctx(context, is_admin)
-        result = self._kernel.sys_write(path, _rust_ctx, buf)
+        result = self._kernel.sys_write(path, _rust_ctx, buf, offset)
 
         now = datetime.now(UTC)
         content_hash = result.content_id or ""

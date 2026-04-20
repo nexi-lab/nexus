@@ -155,8 +155,8 @@ impl ReplicationScanner {
                 Err(_) => continue,
             };
 
-            // Write to the mapped target path.
-            match kernel.sys_write(&target_path, &ctx, &content) {
+            // Write to target (the router will pick the target mount based on routing)
+            match kernel.sys_write(&entry.path, &ctx, &content, 0) {
                 Ok(r) if r.hit => {
                     replicated += 1;
                 }

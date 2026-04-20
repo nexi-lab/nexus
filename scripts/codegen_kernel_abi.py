@@ -1143,8 +1143,8 @@ def _generate_adapter_method(
         return lines
 
     if override == "WRITE_RESULT":
-        # write_content(content, content_id, ctx): Python returns WriteResult
-        # Pass content_id as positional arg, ctx as keyword context=
+        # write_content(content, content_id, *, offset, context): Python returns WriteResult
+        # Pass content_id as positional arg, offset + ctx as keyword args.
         err = _rust_err_map(config, method.name, first_param)
         lines.append("        Python::attach(|py| {")
         lines.append("            let obj = self.inner.bind(py);")
@@ -1155,6 +1155,9 @@ def _generate_adapter_method(
         lines.append("                .map_err(|e| StorageError::IOError(io::Error::other(e)))?;")
         lines.append("            let kwargs = pyo3::types::PyDict::new(py);")
         lines.append('            let _ = kwargs.set_item("context", &py_ctx);')
+        lines.append("            // R20.10: thread offset as a kwarg so Python backends")
+        lines.append("            // (PAS-addressing-engine RMW) honor POSIX pwrite semantics.")
+        lines.append('            let _ = kwargs.set_item("offset", offset);')
         lines.append("            let result = obj")
         lines.append(
             '                .call_method("write_content", (content, content_id), Some(&kwargs))'
@@ -3843,13 +3846,14 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "",
             "    // ── sys_write ──────────────────────────────────────────────────────",
             "",
-            "    #[pyo3(signature = (path, ctx, content))]",
+            "    #[pyo3(signature = (path, ctx, content, offset=0))]",
             "    fn sys_write<'py>(",
             "        &self,",
             "        py: Python<'py>,",
             "        path: &str,",
             "        ctx: &PyOperationContext,",
             "        content: &[u8],",
+            "        offset: u64,",
             "    ) -> PyResult<PySysWriteResult> {",
             "        // 1. PRE-INTERCEPT hooks (GIL, abort on exception)",
             '        if self.inner.has_hooks("write") {',
@@ -3864,7 +3868,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "        // 2. Call pure Rust kernel (releasing GIL for VFS lock blocking)",
             "        let rust_ctx = ctx.to_rust();",
             "        let content_owned = content.to_vec();",
-            "        let result = py.detach(|| self.inner.sys_write(path, &rust_ctx, &content_owned));",
+            "        let result = py.detach(|| self.inner.sys_write(path, &rust_ctx, &content_owned, offset));",
             "        let result = result.map_err(|e| -> PyErr { e.into() })?;",
             "",
             "        Ok(PySysWriteResult {",

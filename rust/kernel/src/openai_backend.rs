@@ -99,7 +99,13 @@ impl ObjectStore for OpenAIBackend {
         content: &[u8],
         _content_id: &str,
         _ctx: &OperationContext,
+        offset: u64,
     ) -> Result<WriteResult, StorageError> {
+        if offset != 0 {
+            return Err(StorageError::NotSupported(
+                "openai backend does not support offset writes",
+            ));
+        }
         let hash = self
             .engine
             .write_content(content)
@@ -174,7 +180,7 @@ mod tests {
         let b = build(&tmp);
         let ctx = test_ctx();
         let payload = br#"hello llm backend"#;
-        let wr = b.write_content(payload, "", &ctx).unwrap();
+        let wr = b.write_content(payload, "", &ctx, 0).unwrap();
         assert_eq!(wr.size, payload.len() as u64);
         let back = b.read_content(&wr.content_id, "", &ctx).unwrap();
         assert_eq!(back, payload);
@@ -191,8 +197,8 @@ mod tests {
         let conv_a = br#"[{"role":"user","content":"hi"},{"role":"assistant","content":"hello"},{"role":"user","content":"A"}]"#;
         let conv_b = br#"[{"role":"user","content":"hi"},{"role":"assistant","content":"hello"},{"role":"user","content":"B"}]"#;
 
-        let wr_a = b.write_content(conv_a, "", &ctx).unwrap();
-        let wr_b = b.write_content(conv_b, "", &ctx).unwrap();
+        let wr_a = b.write_content(conv_a, "", &ctx, 0).unwrap();
+        let wr_b = b.write_content(conv_b, "", &ctx, 0).unwrap();
         assert_ne!(wr_a.content_id, wr_b.content_id);
 
         // Both must be chunked manifests (MessageBoundary accepts any valid
@@ -223,7 +229,7 @@ mod tests {
         let b = build(&tmp);
         let ctx = test_ctx();
         let conv = br#"[{"role":"user","content":"hi"},{"role":"assistant","content":"hello"}]"#;
-        let wr = b.write_content(conv, "", &ctx).unwrap();
+        let wr = b.write_content(conv, "", &ctx, 0).unwrap();
         assert!(b.engine.is_chunked(&wr.content_id));
         b.delete_content(&wr.content_id).unwrap();
         assert!(!b.engine.content_exists(&wr.content_id));

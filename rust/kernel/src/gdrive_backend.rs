@@ -95,7 +95,13 @@ impl ObjectStore for GDriveBackend {
         content: &[u8],
         content_id: &str,
         _ctx: &OperationContext,
+        offset: u64,
     ) -> Result<WriteResult, StorageError> {
+        if offset != 0 {
+            return Err(StorageError::NotSupported(
+                "gdrive backend does not support offset writes (API limitation)",
+            ));
+        }
         let token = self.token();
         let size = content.len() as u64;
         let file_name = if content_id.is_empty() {

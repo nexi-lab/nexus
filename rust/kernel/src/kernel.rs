@@ -2658,7 +2658,7 @@ impl Kernel {
         // be readable. write_content is idempotent for CAS backends.
         let _ = self
             .mount_table
-            .write_content(mount_point, &data, &content_hash, ctx);
+            .write_content(mount_point, &data, &content_hash, ctx, 0);
 
         Ok(SysReadResult {
             data: Some(data),
@@ -2682,6 +2682,7 @@ impl Kernel {
         path: &str,
         ctx: &OperationContext,
         content: &[u8],
+        offset: u64,
     ) -> Result<SysWriteResult, KernelError> {
         let miss = || {
             Ok(SysWriteResult {
@@ -2782,13 +2783,52 @@ impl Kernel {
             return miss();
         }
 
-        // 5. Backend write (CasLocal or PyObjectStoreAdapter)
-        //    Pass backend_path as content_id (CAS ignores it, PAS uses it as blob path).
+        // 5. Backend write (CasLocal or PyObjectStoreAdapter).
+        //    Pass backend_path as content_id for PAS; for CAS at offset=0
+        //    content_id is ignored, but for offset>0 we need the OLD
+        //    content hash so CASEngine::write_partial can splice against
+        //    it. Look up old entry (dcache → metastore fallback).
+        let effective_content_id = if offset == 0 {
+            route.backend_path.clone()
+        } else {
+            // Partial write path: use the CAS hash from the existing inode.
+            // PathLocalBackend ignores content_id when offset>0 (uses the
+            // on-disk file instead), so this value is only consulted by
+            // CasLocalBackend.
+            let old_entry = self.dcache.get_entry(path).or_else(|| {
+                self.with_metastore(&route.mount_point, |ms| {
+                    ms.get(path).ok().flatten().map(|m| CachedEntry {
+                        backend_name: m.backend_name.clone(),
+                        physical_path: m.physical_path.clone(),
+                        size: m.size,
+                        etag: m.etag.clone(),
+                        version: m.version,
+                        entry_type: m.entry_type,
+                        zone_id: m.zone_id.clone(),
+                        mime_type: m.mime_type.clone(),
+                        created_at_ms: m.created_at_ms,
+                        modified_at_ms: m.modified_at_ms,
+                    })
+                })
+                .flatten()
+            });
+            match old_entry {
+                Some(e) => e.physical_path,
+                None => {
+                    // Partial write requires an existing file — but
+                    // `sys_write` contract says "file must exist" anyway,
+                    // so just surface that.
+                    self.lock_manager.do_release(lock_handle);
+                    return Err(KernelError::FileNotFound(path.to_string()));
+                }
+            }
+        };
         let write_result = match self.mount_table.write_content(
             &route.mount_point,
             content,
-            &route.backend_path,
+            &effective_content_id,
             ctx,
+            offset,
         ) {
             Ok(opt) => opt,
             Err(storage_err) => {
@@ -3598,6 +3638,7 @@ impl Kernel {
                 &content,
                 &dst_route.backend_path,
                 ctx,
+                0,
             )
             .map_err(|e| KernelError::BackendError(format!("sys_copy: {e:?}")))?
             .ok_or_else(|| {
@@ -3988,7 +4029,7 @@ impl Kernel {
             // path skipped). Caller inspects ``SysWriteResult.hit`` + retries.
             let write_result = self
                 .mount_table
-                .write_content(&route.mount_point, content, &route.backend_path, ctx)
+                .write_content(&route.mount_point, content, &route.backend_path, ctx, 0)
                 .unwrap_or_default();
 
             match write_result {

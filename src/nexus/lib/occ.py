@@ -39,6 +39,7 @@ async def occ_write(
     context: OperationContext | None = None,
     if_match: str | None = None,
     if_none_match: bool = False,
+    offset: int = 0,
 ) -> dict[str, Any]:
     """Write with OCC pre-check (compare-and-swap).
 
@@ -52,6 +53,7 @@ async def occ_write(
         context: Operation context for permission checks.
         if_match: Expected etag — raises ConflictError on mismatch.
         if_none_match: If True, fail if file already exists (create-only).
+        offset: POSIX pwrite offset (R20.10). 0 = full-file write.
 
     Returns:
         Dict with metadata (etag, version, modified_at, size) from write().
@@ -85,5 +87,5 @@ async def occ_write(
                     current_etag=current_etag or "(no etag)",
                 )
 
-    result: dict[str, Any] = fs.write(path, buf, context=context)
+    result: dict[str, Any] = fs.write(path, buf, context=context, offset=offset)
     return result

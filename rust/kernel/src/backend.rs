@@ -96,14 +96,36 @@ pub trait ObjectStore: Send + Sync {
     /// Write content to storage and return a `WriteResult`.
     ///
     /// - `content_id`: Target address for the content.
-    ///   CAS backends: ignored (address = hash of content).
+    ///   CAS backends: when `offset == 0`, ignored (new hash = hash of content);
+    ///   when `offset > 0`, the OLD content hash the partial write is applied
+    ///   against (required so CAS CDC can read+splice).
     ///   PAS backends: blob path where content will be stored.
     /// - `ctx`: Operation context (carries backend_path, auth, TTL).
+    /// - `offset`: POSIX `pwrite(2)` semantics.
+    ///
+    ///   `offset == 0` is a full-file write (truncate + write) — current
+    ///   behavior for every caller that predates the partial-write wiring
+    ///   (R20.10).
+    ///
+    ///   `offset > 0` splices `content` starting at `offset`, preserving
+    ///   bytes before `offset` and after `offset + content.len()`. When
+    ///   `offset > current_size`, the gap is zero-filled (POSIX sparse-
+    ///   file semantics).
+    ///
+    ///   Every backend that accepts `offset > 0` MUST honor this contract;
+    ///   backends whose transport does not support seekable / range writes
+    ///   (cloud object stores like S3, GCS — their PUT replaces the entire
+    ///   object) MUST return `Err(StorageError::NotSupported)` on
+    ///   `offset > 0` rather than silently falling back to read-splice-
+    ///   write (that fallback would violate the caller's cost expectation
+    ///   of pwrite — O(content.len()) would become O(full_blob) network
+    ///   I/O).
     fn write_content(
         &self,
         content: &[u8],
         content_id: &str,
         ctx: &crate::kernel::OperationContext,
+        offset: u64,
     ) -> Result<WriteResult, StorageError>;
 
     /// Read content by opaque identifier.
@@ -224,14 +246,46 @@ impl ObjectStore for CasLocalBackend {
     fn write_content(
         &self,
         content: &[u8],
-        _content_id: &str,
+        content_id: &str,
         _ctx: &crate::kernel::OperationContext,
+        offset: u64,
     ) -> Result<WriteResult, StorageError> {
-        let hash = self.0.write_content(content).map_err(StorageError::from)?;
+        if offset == 0 {
+            // Fast path: full-content write (new hash = hash(content)).
+            let hash = self.0.write_content(content).map_err(StorageError::from)?;
+            return Ok(WriteResult {
+                version: hash.clone(),
+                size: content.len() as u64,
+                content_id: hash,
+            });
+        }
+        // R20.10 partial write: splice `content` at `offset` against the
+        // OLD CAS object identified by `content_id`. CASEngine handles
+        // both chunked (CDC re-chunk affected region) and non-chunked
+        // (RMW single blob) cases, and honors POSIX zero-fill when
+        // offset > old size.
+        if content_id.is_empty() {
+            return Err(StorageError::IOError(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "CasLocalBackend partial write requires content_id (old hash)",
+            )));
+        }
+        let new_hash = self
+            .0
+            .write_partial(content_id, content, offset, &[])
+            .map_err(StorageError::from)?;
+        // New size = max(old_size, offset + content.len()). For the common
+        // case of splice-within-bounds we'd need a get_content_size call;
+        // read_content_size is available so use it.
+        let new_size = self
+            .0
+            .content_size(&new_hash)
+            .map_err(StorageError::from)
+            .unwrap_or(offset + content.len() as u64);
         Ok(WriteResult {
-            version: hash.clone(),
-            size: content.len() as u64,
-            content_id: hash,
+            version: new_hash.clone(),
+            size: new_size,
+            content_id: new_hash,
         })
     }
 
@@ -289,6 +343,7 @@ impl ObjectStore for PathLocalBackend {
         content: &[u8],
         content_id: &str,
         _ctx: &crate::kernel::OperationContext,
+        offset: u64,
     ) -> Result<WriteResult, StorageError> {
         if content_id.is_empty() {
             return Err(StorageError::IOError(io::Error::new(
@@ -298,12 +353,40 @@ impl ObjectStore for PathLocalBackend {
         }
         let file_path = self.resolve_path(content_id)?;
 
-        // Ensure parent directory exists
+        // Ensure parent directory exists (only needed on create; open-for-write
+        // below errors cleanly if the parent vanishes mid-op).
         if let Some(parent) = file_path.parent() {
             fs::create_dir_all(parent).map_err(StorageError::IOError)?;
         }
 
-        fs::write(&file_path, content).map_err(StorageError::IOError)?;
+        if offset == 0 {
+            // Fast path: truncate + write full content.
+            fs::write(&file_path, content).map_err(StorageError::IOError)?;
+        } else {
+            // R20.10 partial write: open for rw, extend via set_len so the
+            // file system zero-fills the hole when offset > current size
+            // (POSIX sparse-file semantics — ext4/xfs/ntfs all honor this),
+            // then seek + write_all. `create(true)` so we don't fail when
+            // the backend_path was never written before (matches
+            // pwrite(O_CREAT) semantics; kernel gates on "file exists" at
+            // the metastore layer, not here).
+            use std::io::{Seek, SeekFrom, Write};
+            let mut f = fs::OpenOptions::new()
+                .create(true)
+                .truncate(false)
+                .write(true)
+                .read(false)
+                .open(&file_path)
+                .map_err(StorageError::IOError)?;
+            let cur_len = f.metadata().map_err(StorageError::IOError)?.len();
+            let new_len = cur_len.max(offset + content.len() as u64);
+            if new_len > cur_len {
+                f.set_len(new_len).map_err(StorageError::IOError)?;
+            }
+            f.seek(SeekFrom::Start(offset))
+                .map_err(StorageError::IOError)?;
+            f.write_all(content).map_err(StorageError::IOError)?;
+        }
 
         if self.fsync {
             if let Ok(f) = fs::File::open(&file_path) {
@@ -311,12 +394,19 @@ impl ObjectStore for PathLocalBackend {
             }
         }
 
-        // PAS: content_id for future reads = hash of content (no version_id for local)
-        let hash = library::hash::hash_content(content);
+        // R20.10: size + hash must reflect FINAL file state, not just the
+        // bytes we wrote. For offset=0 they're identical; for offset>0 we
+        // read back and hash so downstream dcache/metastore carry the
+        // correct post-splice hash. Read-back is the simple correct
+        // implementation; a future optimization can splice locally and
+        // hash without re-reading, but PAS local files are typically small
+        // enough that the cost is acceptable.
+        let final_bytes = fs::read(&file_path).map_err(StorageError::IOError)?;
+        let hash = library::hash::hash_content(&final_bytes);
         Ok(WriteResult {
             content_id: hash.clone(),
             version: hash,
-            size: content.len() as u64,
+            size: final_bytes.len() as u64,
         })
     }
 
@@ -493,6 +583,7 @@ impl ObjectStore for LocalConnectorBackend {
         content: &[u8],
         content_id: &str,
         _ctx: &crate::kernel::OperationContext,
+        offset: u64,
     ) -> Result<WriteResult, StorageError> {
         if content_id.is_empty() {
             return Err(StorageError::IOError(io::Error::new(
@@ -506,7 +597,26 @@ impl ObjectStore for LocalConnectorBackend {
             fs::create_dir_all(parent).map_err(StorageError::IOError)?;
         }
 
-        fs::write(&file_path, content).map_err(StorageError::IOError)?;
+        if offset == 0 {
+            fs::write(&file_path, content).map_err(StorageError::IOError)?;
+        } else {
+            // R20.10 pwrite — see PathLocalBackend for rationale.
+            use std::io::{Seek, SeekFrom, Write};
+            let mut f = fs::OpenOptions::new()
+                .create(true)
+                .truncate(false)
+                .write(true)
+                .open(&file_path)
+                .map_err(StorageError::IOError)?;
+            let cur_len = f.metadata().map_err(StorageError::IOError)?.len();
+            let new_len = cur_len.max(offset + content.len() as u64);
+            if new_len > cur_len {
+                f.set_len(new_len).map_err(StorageError::IOError)?;
+            }
+            f.seek(SeekFrom::Start(offset))
+                .map_err(StorageError::IOError)?;
+            f.write_all(content).map_err(StorageError::IOError)?;
+        }
 
         if self.fsync {
             if let Ok(f) = fs::File::open(&file_path) {
@@ -514,11 +624,12 @@ impl ObjectStore for LocalConnectorBackend {
             }
         }
 
-        let hash = library::hash::hash_content(content);
+        let final_bytes = fs::read(&file_path).map_err(StorageError::IOError)?;
+        let hash = library::hash::hash_content(&final_bytes);
         Ok(WriteResult {
             content_id: hash.clone(),
             version: hash,
-            size: content.len() as u64,
+            size: final_bytes.len() as u64,
         })
     }
 
@@ -626,7 +737,7 @@ mod tests {
         let ctx = test_ctx();
         let content = b"hello via ObjectStore";
 
-        let result = backend.write_content(content, "", &ctx).unwrap();
+        let result = backend.write_content(content, "", &ctx, 0).unwrap();
         assert_eq!(result.content_id.len(), 64);
         assert_eq!(result.size, content.len() as u64);
         assert_eq!(result.version, result.content_id); // CAS: version == hash
@@ -653,8 +764,8 @@ mod tests {
         let ctx = test_ctx();
         let content = b"dedup via ObjectStore";
 
-        let r1 = backend.write_content(content, "", &ctx).unwrap();
-        let r2 = backend.write_content(content, "", &ctx).unwrap();
+        let r1 = backend.write_content(content, "", &ctx, 0).unwrap();
+        let r2 = backend.write_content(content, "", &ctx, 0).unwrap();
         assert_eq!(r1.content_id, r2.content_id);
     }
 
@@ -668,7 +779,7 @@ mod tests {
     fn test_cas_local_backend_delete() {
         let (_tmp, backend) = setup();
         let ctx = test_ctx();
-        let r = backend.write_content(b"to delete", "", &ctx).unwrap();
+        let r = backend.write_content(b"to delete", "", &ctx, 0).unwrap();
         assert!(backend.delete_content(&r.content_id).is_ok());
         assert!(matches!(
             backend.read_content(&r.content_id, "", &ctx).unwrap_err(),
@@ -681,7 +792,7 @@ mod tests {
         let (_tmp, backend) = setup();
         let ctx = test_ctx();
         let content = b"size check";
-        let r = backend.write_content(content, "", &ctx).unwrap();
+        let r = backend.write_content(content, "", &ctx, 0).unwrap();
         assert_eq!(
             backend.get_content_size(&r.content_id).unwrap(),
             content.len() as u64
@@ -714,7 +825,7 @@ mod tests {
         let content = b"hello via path backend";
 
         let wr = backend
-            .write_content(content, "docs/file.txt", &ctx)
+            .write_content(content, "docs/file.txt", &ctx, 0)
             .unwrap();
         assert_eq!(wr.size, content.len() as u64);
         assert_eq!(wr.content_id.len(), 64); // hash
@@ -730,8 +841,8 @@ mod tests {
         let (_tmp, backend) = setup_path();
         let ctx = test_ctx();
 
-        backend.write_content(b"v1", "file.txt", &ctx).unwrap();
-        backend.write_content(b"v2", "file.txt", &ctx).unwrap();
+        backend.write_content(b"v1", "file.txt", &ctx, 0).unwrap();
+        backend.write_content(b"v2", "file.txt", &ctx, 0).unwrap();
 
         let data = backend.read_content("", "file.txt", &ctx).unwrap();
         assert_eq!(data, b"v2");
@@ -758,7 +869,7 @@ mod tests {
     fn test_path_local_rejects_traversal() {
         let (_tmp, backend) = setup_path();
         let ctx = test_ctx();
-        let result = backend.write_content(b"evil", "../../etc/passwd", &ctx);
+        let result = backend.write_content(b"evil", "../../etc/passwd", &ctx, 0);
         assert!(result.is_err());
     }
 
@@ -772,7 +883,7 @@ mod tests {
     fn test_path_local_empty_content_id_errors() {
         let (_tmp, backend) = setup_path();
         let ctx = test_ctx();
-        let result = backend.write_content(b"data", "", &ctx);
+        let result = backend.write_content(b"data", "", &ctx, 0);
         assert!(result.is_err());
     }
 
@@ -791,7 +902,7 @@ mod tests {
         let content = b"hello via connector";
 
         let wr = backend
-            .write_content(content, "docs/file.txt", &ctx)
+            .write_content(content, "docs/file.txt", &ctx, 0)
             .unwrap();
         assert_eq!(wr.size, content.len() as u64);
 
@@ -811,7 +922,7 @@ mod tests {
     fn test_connector_rejects_traversal() {
         let (_tmp, backend) = setup_connector();
         let ctx = test_ctx();
-        let result = backend.write_content(b"evil", "../../etc/passwd", &ctx);
+        let result = backend.write_content(b"evil", "../../etc/passwd", &ctx, 0);
         assert!(result.is_err());
     }
 
@@ -828,5 +939,73 @@ mod tests {
     fn test_connector_nonexistent_root_errors() {
         let result = LocalConnectorBackend::new(Path::new("/nonexistent/root"), true, false);
         assert!(result.is_err());
+    }
+
+    // ── R20.10: partial-write (pwrite semantics) tests ────────────────
+
+    #[test]
+    fn test_path_local_partial_write_splices_middle() {
+        let (_tmp, backend) = setup_path();
+        let ctx = test_ctx();
+        backend
+            .write_content(b"hello world!", "file.txt", &ctx, 0)
+            .unwrap();
+        // Splice "RUST!" at offset 6 → "hello RUST!!"
+        backend
+            .write_content(b"RUST!", "file.txt", &ctx, 6)
+            .unwrap();
+        let data = backend.read_content("", "file.txt", &ctx).unwrap();
+        assert_eq!(data, b"hello RUST!!");
+    }
+
+    #[test]
+    fn test_path_local_partial_write_zero_fills_gap() {
+        // POSIX pwrite semantic: offset past EOF zero-fills the hole.
+        let (_tmp, backend) = setup_path();
+        let ctx = test_ctx();
+        backend.write_content(b"ab", "sparse.txt", &ctx, 0).unwrap();
+        backend
+            .write_content(b"xyz", "sparse.txt", &ctx, 5)
+            .unwrap();
+        let data = backend.read_content("", "sparse.txt", &ctx).unwrap();
+        assert_eq!(data, b"ab\x00\x00\x00xyz");
+    }
+
+    #[test]
+    fn test_path_local_partial_write_extends_past_end() {
+        // offset+len exceeds current size but offset <= size: splice + extend.
+        let (_tmp, backend) = setup_path();
+        let ctx = test_ctx();
+        backend.write_content(b"head", "ext.txt", &ctx, 0).unwrap();
+        backend.write_content(b"TAIL", "ext.txt", &ctx, 2).unwrap();
+        let data = backend.read_content("", "ext.txt", &ctx).unwrap();
+        assert_eq!(data, b"heTAIL");
+    }
+
+    #[test]
+    fn test_cas_local_partial_write_non_chunked() {
+        let (_tmp, backend) = setup();
+        let ctx = test_ctx();
+        let original = b"hello world!";
+        let wr = backend.write_content(original, "", &ctx, 0).unwrap();
+        // Splice "RUST!" at offset 6 using the old hash as content_id.
+        let new_wr = backend
+            .write_content(b"RUST!", &wr.content_id, &ctx, 6)
+            .unwrap();
+        assert_ne!(new_wr.content_id, wr.content_id); // new blob → new hash
+        let data = backend.read_content(&new_wr.content_id, "", &ctx).unwrap();
+        assert_eq!(data, b"hello RUST!!");
+    }
+
+    #[test]
+    fn test_cas_local_partial_write_zero_fills_gap() {
+        let (_tmp, backend) = setup();
+        let ctx = test_ctx();
+        let wr = backend.write_content(b"ab", "", &ctx, 0).unwrap();
+        let new_wr = backend
+            .write_content(b"xyz", &wr.content_id, &ctx, 5)
+            .unwrap();
+        let data = backend.read_content(&new_wr.content_id, "", &ctx).unwrap();
+        assert_eq!(data, b"ab\x00\x00\x00xyz");
     }
 }

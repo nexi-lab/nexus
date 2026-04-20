@@ -202,6 +202,10 @@ async def handle_write(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[s
     if isinstance(content, str):
         content = content.encode("utf-8")
 
+    # R20.10: POSIX pwrite offset threaded from RPC params through to
+    # Kernel::sys_write. Default 0 = full-file write (backward compat).
+    offset = int(getattr(params, "offset", 0) or 0)
+
     # OCC: use lib/occ helper if CAS params present
     if_match = getattr(params, "if_match", None) or None
     if_none_match = getattr(params, "if_none_match", False)
@@ -217,9 +221,10 @@ async def handle_write(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[s
             context=context,
             if_match=if_match,
             if_none_match=if_none_match,
+            offset=offset,
         )
     else:
-        write_result = nexus_fs.write(params.path, content, context=context)
+        write_result = nexus_fs.write(params.path, content, context=context, offset=offset)
 
     # write() returns dict with metadata (etag, version, modified_at, size).
     # Merge bytes_written into the response for backward compatibility.

@@ -425,12 +425,17 @@ impl MountTable {
     }
 
     /// Write content to the mount's backend.
+    ///
+    /// `offset == 0` is full-file write (current behavior). `offset > 0`
+    /// is POSIX pwrite(2) — see `ObjectStore::write_content` for the
+    /// zero-fill / NotSupported contract.
     pub fn write_content(
         &self,
         canonical_key: &str,
         content: &[u8],
         content_id: &str,
         ctx: &OperationContext,
+        offset: u64,
     ) -> Result<Option<WriteResult>, StorageError> {
         let Some(entry) = self.entries.get(canonical_key) else {
             // Mount not found — caller treats as a hit=false miss.
@@ -439,7 +444,9 @@ impl MountTable {
         let Some(backend) = entry.backend.as_ref() else {
             return Ok(None);
         };
-        backend.write_content(content, content_id, ctx).map(Some)
+        backend
+            .write_content(content, content_id, ctx, offset)
+            .map(Some)
     }
 
     /// Delete a file via the mount's backend.

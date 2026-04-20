@@ -52,7 +52,13 @@ impl ObjectStore for GmailBackend {
         content: &[u8],
         _content_id: &str,
         _ctx: &OperationContext,
+        offset: u64,
     ) -> Result<WriteResult, StorageError> {
+        if offset != 0 {
+            return Err(StorageError::NotSupported(
+                "gmail backend does not support offset writes (messages are immutable)",
+            ));
+        }
         // Send a new message (content is RFC 2822 raw email or JSON)
         let token = self.token();
         let url = format!("{}/messages/send", GMAIL_API);

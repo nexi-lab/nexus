@@ -97,7 +97,16 @@ impl ObjectStore for AnthropicBackend {
         content: &[u8],
         _content_id: &str,
         _ctx: &OperationContext,
+        offset: u64,
     ) -> Result<WriteResult, StorageError> {
+        if offset != 0 {
+            // R20.10: LLM streaming backends model one-shot completions,
+            // not seekable files. Partial writes are semantically
+            // meaningless here.
+            return Err(StorageError::NotSupported(
+                "anthropic backend does not support offset writes",
+            ));
+        }
         let hash = self
             .engine
             .write_content(content)
@@ -172,7 +181,7 @@ mod tests {
         let b = build(&tmp);
         let ctx = test_ctx();
         let payload = br#"hello anthropic backend"#;
-        let wr = b.write_content(payload, "", &ctx).unwrap();
+        let wr = b.write_content(payload, "", &ctx, 0).unwrap();
         assert_eq!(wr.size, payload.len() as u64);
         let back = b.read_content(&wr.content_id, "", &ctx).unwrap();
         assert_eq!(back, payload);
@@ -190,8 +199,8 @@ mod tests {
         let conv_a = br#"[{"role":"user","content":"hi"},{"role":"assistant","content":"hello"},{"role":"user","content":"A"}]"#;
         let conv_b = br#"[{"role":"user","content":"hi"},{"role":"assistant","content":"hello"},{"role":"user","content":"B"}]"#;
 
-        let wr_a = b.write_content(conv_a, "", &ctx).unwrap();
-        let wr_b = b.write_content(conv_b, "", &ctx).unwrap();
+        let wr_a = b.write_content(conv_a, "", &ctx, 0).unwrap();
+        let wr_b = b.write_content(conv_b, "", &ctx, 0).unwrap();
         assert_ne!(wr_a.content_id, wr_b.content_id);
 
         assert!(b.engine.is_chunked(&wr_a.content_id));

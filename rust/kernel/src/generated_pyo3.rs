@@ -430,6 +430,7 @@ impl ObjectStore for PyObjectStoreAdapter {
         content: &[u8],
         content_id: &str,
         ctx: &crate::kernel::OperationContext,
+        offset: u64,
     ) -> Result<WriteResult, StorageError> {
         Python::attach(|py| {
             let obj = self.inner.bind(py);
@@ -438,6 +439,9 @@ impl ObjectStore for PyObjectStoreAdapter {
                 .map_err(|e| StorageError::IOError(io::Error::other(e)))?;
             let kwargs = pyo3::types::PyDict::new(py);
             let _ = kwargs.set_item("context", &py_ctx);
+            // R20.10: thread offset as a kwarg so Python backends
+            // (PAS-addressing-engine RMW) honor POSIX pwrite semantics.
+            let _ = kwargs.set_item("offset", offset);
             let result = obj
                 .call_method("write_content", (content, content_id), Some(&kwargs))
                 .map_err(|e| StorageError::IOError(io::Error::other(e.to_string())))?;
@@ -2342,13 +2346,14 @@ impl PyKernel {
 
     // ── sys_write ──────────────────────────────────────────────────────
 
-    #[pyo3(signature = (path, ctx, content))]
+    #[pyo3(signature = (path, ctx, content, offset=0))]
     fn sys_write<'py>(
         &self,
         py: Python<'py>,
         path: &str,
         ctx: &PyOperationContext,
         content: &[u8],
+        offset: u64,
     ) -> PyResult<PySysWriteResult> {
         // 1. PRE-INTERCEPT hooks (GIL, abort on exception)
         if self.inner.has_hooks("write") {
@@ -2365,7 +2370,10 @@ impl PyKernel {
         // 2. Call pure Rust kernel (releasing GIL for VFS lock blocking)
         let rust_ctx = ctx.to_rust();
         let content_owned = content.to_vec();
-        let result = py.detach(|| self.inner.sys_write(path, &rust_ctx, &content_owned));
+        let result = py.detach(|| {
+            self.inner
+                .sys_write(path, &rust_ctx, &content_owned, offset)
+        });
         let result = result.map_err(|e| -> PyErr { e.into() })?;
 
         Ok(PySysWriteResult {

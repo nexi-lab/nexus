@@ -13,7 +13,7 @@ from pydantic import BaseModel, EmailStr, Field
 from nexus.bricks.auth.oauth.user_auth import OAuthUserAuth
 from nexus.bricks.auth.providers.database_local import DatabaseLocalAuth
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.server.auth.oauth_state_store import get_oauth_state_store
+from nexus.server.auth.oauth_state_store import get_oauth_state_service
 
 # Browser-bound OAuth state cookie.
 # Set on /authorize, required on /check and /callback. HttpOnly so JS can't
@@ -933,9 +933,14 @@ async def get_google_oauth_url(
         )
 
     try:
-        auth_url, state = oauth_provider.get_google_auth_url(redirect_uri=redirect_uri)
         binding_nonce = secrets.token_urlsafe(32)
-        get_oauth_state_store().register(state, binding_nonce)
+        # Signed, TTL-bounded state that carries the binding nonce. Verified
+        # stateless-ly on callback so multi-worker/multi-replica deployments
+        # don't need sticky sessions.
+        signed_state = get_oauth_state_service().issue(binding_nonce)
+        auth_url, state = oauth_provider.get_google_auth_url(
+            redirect_uri=redirect_uri, state=signed_state
+        )
         response.set_cookie(
             key=OAUTH_BINDING_COOKIE,
             value=binding_nonce,
@@ -991,12 +996,13 @@ async def oauth_check(
             detail="Google OAuth is not configured. Please set up OAuth provider.",
         )
 
-    # RFC 6749 §10.12 + OAuth 2.0 BCP: validate the state AND its browser
-    # binding before touching the authorization code. A forged callback or a
-    # (code, state) pair leaked out of a different browser cannot present
-    # the bound nonce from our HttpOnly cookie, so this blocks both CSRF
-    # and login-fixation.
-    if not get_oauth_state_store().consume(request.state, nexus_oauth_binding):
+    # RFC 6749 §10.12 + OAuth 2.0 BCP: verify the state signature, its TTL,
+    # and that the bound nonce matches the HttpOnly cookie set at
+    # /authorize. Stateless, so multi-worker/multi-replica deployments work
+    # without sticky sessions. A forged callback or a (code, state) pair
+    # leaked to a different browser can't present the matching cookie →
+    # CSRF + login-fixation both blocked.
+    if not get_oauth_state_service().verify(request.state, nexus_oauth_binding):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="OAuth state is invalid, expired, or unbound — possible CSRF attack",
@@ -1621,12 +1627,13 @@ async def oauth_callback(
             detail="Google OAuth is not configured. Please set up OAuth provider.",
         )
 
-    # RFC 6749 §10.12 + OAuth 2.0 BCP: validate the state AND its browser
-    # binding before touching the authorization code. A forged callback or a
-    # (code, state) pair leaked out of a different browser cannot present
-    # the bound nonce from our HttpOnly cookie, so this blocks both CSRF
-    # and login-fixation.
-    if not get_oauth_state_store().consume(request.state, nexus_oauth_binding):
+    # RFC 6749 §10.12 + OAuth 2.0 BCP: verify the state signature, its TTL,
+    # and that the bound nonce matches the HttpOnly cookie set at
+    # /authorize. Stateless, so multi-worker/multi-replica deployments work
+    # without sticky sessions. A forged callback or a (code, state) pair
+    # leaked to a different browser can't present the matching cookie →
+    # CSRF + login-fixation both blocked.
+    if not get_oauth_state_service().verify(request.state, nexus_oauth_binding):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="OAuth state is invalid, expired, or unbound — possible CSRF attack",

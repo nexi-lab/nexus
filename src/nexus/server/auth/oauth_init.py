@@ -58,6 +58,7 @@ def initialize_oauth_provider(nexus_fs: "NexusFS", auth_provider: Any) -> None:
         from nexus.bricks.auth.oauth.providers.google import GoogleOAuthProvider
         from nexus.bricks.auth.oauth.user_auth import OAuthUserAuth
         from nexus.server.auth.auth_routes import set_oauth_provider
+        from nexus.server.auth.oauth_state_store import initialize_oauth_state_service
 
         _oauth_enc_key = os.environ.get("NEXUS_OAUTH_ENCRYPTION_KEY", "").strip() or None
         _settings_store = None
@@ -99,6 +100,19 @@ def initialize_oauth_provider(nexus_fs: "NexusFS", auth_provider: Any) -> None:
         )
 
         set_oauth_provider(oauth_provider)
+
+        # Initialize the stateless, signed OAuth state service. Shares the
+        # JWT secret because (a) it's already a server-held secret and
+        # (b) callers that hold the secret already hold the power to issue
+        # tokens. Stateless verification means this works across any
+        # number of uvicorn workers / replicas without sticky sessions.
+        state_signing_secret = jwt_secret or oauth_provider.local_auth.jwt_secret
+        if not state_signing_secret:
+            raise RuntimeError(
+                "Cannot initialize OAuth state service: no JWT secret available. "
+                "Set NEXUS_JWT_SECRET or configure an auth provider with a jwt_secret."
+            )
+        initialize_oauth_state_service(state_signing_secret)
         logger.info("Google OAuth provider initialized successfully")
     except Exception as e:
         logger.warning(

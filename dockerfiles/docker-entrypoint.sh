@@ -177,15 +177,44 @@ fi
 # (AWS_ACCESS_KEY_ID/..) and EC2/ECS IAM-role auth even though boto3's
 # default chain would otherwise resolve them cleanly.
 #
-# Also unset if the named profile exists but there is no ~/.aws file to
-# resolve it against — same ProfileNotFound path.
+# Also unset when:
+#   * no ~/.aws file is mounted (nothing to resolve the profile against), or
+#   * the named profile is absent from the mounted ~/.aws/credentials and
+#     ~/.aws/config files (stale shell-inherited name).
+#
+# Profile lookup uses a plain grep for ``[profile-name]`` or
+# ``[profile <name>]``; botocore accepts both spellings and a false positive
+# here just means we keep a potentially-valid profile rather than unsetting
+# a valid one, which is the safer direction.
 # -----------------------------------------------------------------------------
 if [ -n "${AWS_PROFILE+x}" ]; then
     if [ -z "${AWS_PROFILE:-}" ]; then
         unset AWS_PROFILE
-    elif [ ! -s "${HOME}/.aws/credentials" ] && [ ! -s "${HOME}/.aws/config" ]; then
-        echo "${YELLOW:-}AWS_PROFILE=${AWS_PROFILE} set but no ~/.aws/credentials or ~/.aws/config present; unsetting so env/IAM-role creds can take over.${NC:-}"
-        unset AWS_PROFILE
+    else
+        _aws_cred_file="${HOME}/.aws/credentials"
+        _aws_conf_file="${HOME}/.aws/config"
+        if [ ! -s "$_aws_cred_file" ] && [ ! -s "$_aws_conf_file" ]; then
+            echo "${YELLOW:-}AWS_PROFILE=${AWS_PROFILE} set but no ~/.aws/credentials or ~/.aws/config present; unsetting so env/IAM-role creds can take over.${NC:-}"
+            unset AWS_PROFILE
+        else
+            # Look for the profile in either file. ``credentials`` uses
+            # ``[name]``; ``config`` uses ``[profile name]`` (except for
+            # ``default`` which is just ``[default]`` in both).
+            _profile_pat="^\[(${AWS_PROFILE}|profile[[:space:]]+${AWS_PROFILE})\][[:space:]]*$"
+            _profile_found="no"
+            if [ -s "$_aws_cred_file" ] && grep -Eq "$_profile_pat" "$_aws_cred_file" 2>/dev/null; then
+                _profile_found="yes"
+            fi
+            if [ "$_profile_found" = "no" ] && [ -s "$_aws_conf_file" ] && grep -Eq "$_profile_pat" "$_aws_conf_file" 2>/dev/null; then
+                _profile_found="yes"
+            fi
+            if [ "$_profile_found" = "no" ]; then
+                echo "${YELLOW:-}AWS_PROFILE=${AWS_PROFILE} not present in mounted ~/.aws/credentials or ~/.aws/config; unsetting so env/IAM-role creds can take over.${NC:-}"
+                unset AWS_PROFILE
+            fi
+            unset _profile_pat _profile_found
+        fi
+        unset _aws_cred_file _aws_conf_file
     fi
 fi
 

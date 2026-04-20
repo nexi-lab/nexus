@@ -63,14 +63,31 @@ class OAuthUserAuth:
                 list(providers.keys()),
             )
 
-    def get_auth_url(self, provider_name: str, redirect_uri: str | None = None) -> tuple[str, str]:
+    def get_auth_url(
+        self,
+        provider_name: str,
+        redirect_uri: str | None = None,
+        state: str | None = None,
+    ) -> tuple[str, str]:
         """Get OAuth authorization URL for any registered provider.
 
+        Args:
+            provider_name: Registered provider key (e.g. ``"google"``).
+            redirect_uri: Optional redirect URI override.
+            state: Optional caller-supplied state value. When provided, it
+                is forwarded verbatim to the OAuth provider as the
+                ``state`` query parameter and returned to the caller. This
+                lets the server layer issue signed / binding-aware state
+                (see ``OAuthStateService``) without duplicating generation
+                logic here. When ``None``, a fresh 32-byte random token is
+                generated — preserves backward compatibility.
+
         Returns:
-            Tuple of (authorization_url, state)
+            Tuple of (authorization_url, state).
         """
         provider = self._get_provider(provider_name)
-        state = secrets.token_urlsafe(32)
+        if state is None:
+            state = secrets.token_urlsafe(32)
         kwargs: dict[str, Any] = {"state": state}
         if redirect_uri is not None:
             kwargs["redirect_uri"] = redirect_uri
@@ -78,8 +95,10 @@ class OAuthUserAuth:
         return auth_url, state
 
     # Keep backward-compat convenience method
-    def get_google_auth_url(self, redirect_uri: str | None = None) -> tuple[str, str]:
-        return self.get_auth_url("google", redirect_uri=redirect_uri)
+    def get_google_auth_url(
+        self, redirect_uri: str | None = None, state: str | None = None
+    ) -> tuple[str, str]:
+        return self.get_auth_url("google", redirect_uri=redirect_uri, state=state)
 
     async def handle_callback(
         self,

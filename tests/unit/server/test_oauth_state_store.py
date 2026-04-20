@@ -1,4 +1,4 @@
-"""Unit tests for the OAuth CSRF state store."""
+"""Unit tests for the stateless OAuth state service."""
 
 from __future__ import annotations
 
@@ -6,80 +6,100 @@ import time
 
 import pytest
 
-from nexus.server.auth.oauth_state_store import OAuthStateStore, get_oauth_state_store
+from nexus.server.auth import oauth_state_store
+from nexus.server.auth.oauth_state_store import (
+    OAuthStateService,
+    get_oauth_state_service,
+    initialize_oauth_state_service,
+)
 
 
-def test_register_then_consume_returns_true() -> None:
-    store = OAuthStateStore()
-    store.register("abc123", "nonce-1")
-    assert store.consume("abc123", "nonce-1") is True
+@pytest.fixture(autouse=True)
+def _reset_module_singleton(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(oauth_state_store, "_state_service", None, raising=False)
 
 
-def test_consume_is_single_use() -> None:
-    store = OAuthStateStore()
-    store.register("once", "nonce-1")
-    assert store.consume("once", "nonce-1") is True
-    assert store.consume("once", "nonce-1") is False
+def test_issue_then_verify_returns_true() -> None:
+    svc = OAuthStateService(signing_secret="secret")
+    state = svc.issue("nonce-1")
+    assert svc.verify(state, "nonce-1") is True
 
 
-def test_consume_unknown_state_returns_false() -> None:
-    store = OAuthStateStore()
-    assert store.consume("never-registered", "nonce-1") is False
+def test_issue_produces_unique_state_each_call() -> None:
+    """Two /authorize calls with the same binding nonce must still yield
+    different state tokens, otherwise an attacker who observes one flow's
+    state could predict others."""
+    svc = OAuthStateService(signing_secret="secret")
+    assert svc.issue("nonce-1") != svc.issue("nonce-1")
 
 
-def test_consume_none_or_empty_returns_false() -> None:
-    store = OAuthStateStore()
-    store.register("s", "nonce-1")
-    assert store.consume(None, "nonce-1") is False
-    assert store.consume("", "nonce-1") is False
-    assert store.consume("s", None) is False
-    assert store.consume("s", "") is False
+def test_verify_rejects_unbound_callback() -> None:
+    """Callback without the binding cookie must fail even if state is valid."""
+    svc = OAuthStateService(signing_secret="secret")
+    state = svc.issue("nonce-1")
+    assert svc.verify(state, None) is False
+    assert svc.verify(state, "") is False
 
 
-def test_consume_wrong_binding_nonce_returns_false_and_invalidates() -> None:
-    """A replay with a mismatched cookie nonce must fail AND consume the state.
+def test_verify_rejects_mismatched_binding() -> None:
+    """Attacker forwards (code, state) to victim; victim's cookie differs."""
+    svc = OAuthStateService(signing_secret="secret")
+    state = svc.issue("attacker-nonce")
+    assert svc.verify(state, "victim-nonce") is False
 
-    Popping-on-read prevents an attacker from guessing repeatedly — one shot
-    at the nonce and the state is gone.
+
+def test_verify_rejects_unsigned_or_forged_state() -> None:
+    svc = OAuthStateService(signing_secret="secret")
+    assert svc.verify("not-a-signed-token", "nonce-1") is False
+    assert svc.verify(None, "nonce-1") is False
+    assert svc.verify("", "nonce-1") is False
+
+
+def test_verify_rejects_state_signed_with_different_secret() -> None:
+    """Tokens from another server / tenant must not verify here."""
+    svc_a = OAuthStateService(signing_secret="secret-a")
+    svc_b = OAuthStateService(signing_secret="secret-b")
+    state_from_a = svc_a.issue("nonce-1")
+    assert svc_b.verify(state_from_a, "nonce-1") is False
+
+
+def test_verify_rejects_expired_state() -> None:
+    # itsdangerous stamps integer-second timestamps and enforces ``age > max_age``,
+    # so we need the wall-clock sleep to exceed TTL by at least one whole second.
+    svc = OAuthStateService(signing_secret="secret", ttl_seconds=1)
+    state = svc.issue("nonce-1")
+    time.sleep(2.5)
+    assert svc.verify(state, "nonce-1") is False
+
+
+def test_issue_rejects_empty_binding() -> None:
+    svc = OAuthStateService(signing_secret="secret")
+    with pytest.raises(ValueError):
+        svc.issue("")
+
+
+def test_constructor_rejects_empty_secret() -> None:
+    with pytest.raises(ValueError):
+        OAuthStateService(signing_secret="")
+
+
+def test_multi_worker_safe_verification() -> None:
+    """State issued by 'worker A' must verify against a freshly-built
+    'worker B' service sharing the same signing secret — no shared memory
+    needed.
     """
-    store = OAuthStateStore()
-    store.register("state-1", "cookie-nonce")
-    # Attacker presents the right state but wrong cookie binding
-    assert store.consume("state-1", "wrong-nonce") is False
-    # Legitimate browser follow-up with the correct nonce now also fails
-    assert store.consume("state-1", "cookie-nonce") is False
+    worker_a = OAuthStateService(signing_secret="shared-jwt-secret")
+    state = worker_a.issue("nonce-multi")
+
+    worker_b = OAuthStateService(signing_secret="shared-jwt-secret")
+    assert worker_b.verify(state, "nonce-multi") is True
 
 
-def test_register_rejects_empty_state() -> None:
-    store = OAuthStateStore()
-    with pytest.raises(ValueError):
-        store.register("", "nonce-1")
+def test_get_service_raises_when_not_initialized() -> None:
+    with pytest.raises(RuntimeError):
+        get_oauth_state_service()
 
 
-def test_register_rejects_empty_binding_nonce() -> None:
-    store = OAuthStateStore()
-    with pytest.raises(ValueError):
-        store.register("state-1", "")
-
-
-def test_ttl_expiry_rejects_stale_state() -> None:
-    store = OAuthStateStore(ttl_seconds=1)
-    store.register("short-lived", "nonce-1")
-    time.sleep(1.1)
-    assert store.consume("short-lived", "nonce-1") is False
-
-
-def test_maxsize_evicts_oldest_entries() -> None:
-    store = OAuthStateStore(ttl_seconds=60, maxsize=2)
-    store.register("a", "n-a")
-    store.register("b", "n-b")
-    store.register("c", "n-c")  # evicts "a"
-    assert store.consume("a", "n-a") is False
-    assert store.consume("b", "n-b") is True
-    assert store.consume("c", "n-c") is True
-
-
-def test_get_oauth_state_store_returns_singleton() -> None:
-    first = get_oauth_state_store()
-    second = get_oauth_state_store()
-    assert first is second
+def test_initialize_and_get_returns_service() -> None:
+    svc = initialize_oauth_state_service("secret")
+    assert get_oauth_state_service() is svc

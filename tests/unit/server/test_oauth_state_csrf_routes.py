@@ -1,12 +1,11 @@
 """Route-level tests for OAuth CSRF state + browser binding (Issue P2.5).
 
 Covers:
-  - /oauth/google/authorize registers state AND sets the binding cookie
+  - /oauth/google/authorize issues a signed state AND sets the binding cookie
   - /oauth/check and /oauth/callback reject callbacks when:
       * state is missing/unknown
       * binding cookie is missing
       * binding cookie is mismatched (login-fixation attack)
-      * state is replayed
   - /oauth/check and /oauth/callback accept callbacks with matching
     state + cookie, and clear the cookie on success.
 """
@@ -19,20 +18,19 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi import HTTPException, Response
 
-from nexus.server.auth import auth_routes
-from nexus.server.auth.oauth_state_store import OAuthStateStore
+from nexus.server.auth import auth_routes, oauth_state_store
+from nexus.server.auth.oauth_state_store import (
+    OAuthStateService,
+    initialize_oauth_state_service,
+)
 
 
 @pytest.fixture(autouse=True)
-def reset_state_store(monkeypatch: pytest.MonkeyPatch) -> OAuthStateStore:
-    """Give each test a fresh state store so state from earlier tests can't leak in."""
-    store = OAuthStateStore()
-    monkeypatch.setattr(
-        "nexus.server.auth.oauth_state_store._state_store",
-        store,
-        raising=False,
-    )
-    return store
+def reset_state_service(monkeypatch: pytest.MonkeyPatch) -> OAuthStateService:
+    """Initialize a fresh state service per test so no state can leak across."""
+    svc = initialize_oauth_state_service("test-secret")
+    yield svc
+    monkeypatch.setattr(oauth_state_store, "_state_service", None, raising=False)
 
 
 def _make_user(**overrides: Any) -> MagicMock:
@@ -53,30 +51,44 @@ def _make_user(**overrides: Any) -> MagicMock:
 
 @pytest.fixture
 def mock_oauth_provider(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
-    """Install a mock OAuthUserAuth and return the mock."""
+    """Install a mock OAuthUserAuth and return the mock.
+
+    Importantly, ``get_google_auth_url`` echoes back whatever ``state`` it is
+    given — the real provider does the same, so tests verify that the route
+    passes its *signed* state into the provider rather than letting the
+    provider mint a random one.
+    """
     provider = MagicMock()
-    provider.get_google_auth_url = MagicMock(return_value=("https://example/auth", "STATE-123"))
+
+    def _build_auth_url(redirect_uri: str | None = None, state: str | None = None):
+        assert state is not None, "route must supply signed state"
+        return ("https://example/auth", state)
+
+    provider.get_google_auth_url = MagicMock(side_effect=_build_auth_url)
     provider.handle_google_callback = AsyncMock(return_value=(_make_user(), "JWT"))
     monkeypatch.setattr(auth_routes, "_oauth_provider", provider)
     return provider
 
 
-async def test_authorize_registers_state_and_sets_binding_cookie(
-    mock_oauth_provider: MagicMock, reset_state_store: OAuthStateStore
+def _issue_state_for(binding: str) -> str:
+    return oauth_state_store.get_oauth_state_service().issue(binding)
+
+
+async def test_authorize_issues_signed_state_and_sets_binding_cookie(
+    mock_oauth_provider: MagicMock, reset_state_service: OAuthStateService
 ) -> None:
     response = Response()
     resp = await auth_routes.get_google_oauth_url(response=response, redirect_uri=None)
-    assert resp.state == "STATE-123"
 
     set_cookie = response.headers.get("set-cookie", "")
     assert auth_routes.OAUTH_BINDING_COOKIE in set_cookie
     assert "HttpOnly" in set_cookie
     assert "samesite=lax" in set_cookie.lower()
 
-    # Extract the nonce from the Set-Cookie header and confirm it's the one
-    # registered against the state in the store.
+    # The returned state must verify against the cookie nonce — i.e. the
+    # route wired the signed state + cookie correctly.
     nonce = _extract_cookie_value(set_cookie, auth_routes.OAUTH_BINDING_COOKIE)
-    assert reset_state_store.consume("STATE-123", nonce) is True
+    assert reset_state_service.verify(resp.state, nonce) is True
 
 
 async def test_oauth_callback_rejects_missing_state(mock_oauth_provider: MagicMock) -> None:
@@ -99,11 +111,11 @@ async def test_oauth_callback_rejects_unknown_state(mock_oauth_provider: MagicMo
 
 
 async def test_oauth_callback_rejects_missing_binding_cookie(
-    mock_oauth_provider: MagicMock, reset_state_store: OAuthStateStore
+    mock_oauth_provider: MagicMock,
 ) -> None:
-    """State was registered but the caller has no binding cookie — login-fixation attempt."""
-    reset_state_store.register("valid-state", "the-nonce")
-    req = auth_routes.OAuthCallbackRequest(provider="google", code="c", state="valid-state")
+    """State is valid but the caller has no binding cookie — login-fixation attempt."""
+    state = _issue_state_for("the-nonce")
+    req = auth_routes.OAuthCallbackRequest(provider="google", code="c", state=state)
     response = Response()
     with pytest.raises(HTTPException) as exc:
         await auth_routes.oauth_callback(req, response=response, nexus_oauth_binding=None)
@@ -112,11 +124,11 @@ async def test_oauth_callback_rejects_missing_binding_cookie(
 
 
 async def test_oauth_callback_rejects_mismatched_binding_cookie(
-    mock_oauth_provider: MagicMock, reset_state_store: OAuthStateStore
+    mock_oauth_provider: MagicMock,
 ) -> None:
     """Attacker forwarded (code, state) to victim; victim's cookie doesn't match."""
-    reset_state_store.register("valid-state", "attacker-nonce")
-    req = auth_routes.OAuthCallbackRequest(provider="google", code="c", state="valid-state")
+    state = _issue_state_for("attacker-nonce")
+    req = auth_routes.OAuthCallbackRequest(provider="google", code="c", state=state)
     response = Response()
     with pytest.raises(HTTPException) as exc:
         await auth_routes.oauth_callback(req, response=response, nexus_oauth_binding="victim-nonce")
@@ -125,10 +137,10 @@ async def test_oauth_callback_rejects_mismatched_binding_cookie(
 
 
 async def test_oauth_callback_accepts_matching_binding(
-    mock_oauth_provider: MagicMock, reset_state_store: OAuthStateStore
+    mock_oauth_provider: MagicMock,
 ) -> None:
-    reset_state_store.register("valid-state", "the-nonce")
-    req = auth_routes.OAuthCallbackRequest(provider="google", code="code-x", state="valid-state")
+    state = _issue_state_for("the-nonce")
+    req = auth_routes.OAuthCallbackRequest(provider="google", code="code-x", state=state)
     response = Response()
     resp = await auth_routes.oauth_callback(req, response=response, nexus_oauth_binding="the-nonce")
     assert resp.token == "JWT"
@@ -137,18 +149,23 @@ async def test_oauth_callback_accepts_matching_binding(
     assert auth_routes.OAUTH_BINDING_COOKIE in response.headers.get("set-cookie", "")
 
 
-async def test_oauth_callback_rejects_replayed_state(
-    mock_oauth_provider: MagicMock, reset_state_store: OAuthStateStore
-) -> None:
-    reset_state_store.register("one-shot", "nonce")
-    req = auth_routes.OAuthCallbackRequest(provider="google", code="c", state="one-shot")
-    response = Response()
-    await auth_routes.oauth_callback(req, response=response, nexus_oauth_binding="nonce")
+async def test_oauth_callback_verifies_across_workers(mock_oauth_provider: MagicMock) -> None:
+    """State issued by 'worker A' must verify at 'worker B' with the same
+    signing secret — simulates a load-balanced deployment where authorize
+    and callback land on different Python processes.
+    """
+    # Worker A issues the state
+    worker_a = OAuthStateService(signing_secret="test-secret")
+    state = worker_a.issue("multi-worker-nonce")
 
-    req2 = auth_routes.OAuthCallbackRequest(provider="google", code="c", state="one-shot")
-    with pytest.raises(HTTPException) as exc:
-        await auth_routes.oauth_callback(req2, response=Response(), nexus_oauth_binding="nonce")
-    assert exc.value.status_code == 400
+    # Worker B serves the callback (fresh service with same secret)
+    initialize_oauth_state_service("test-secret")
+
+    req = auth_routes.OAuthCallbackRequest(provider="google", code="c", state=state)
+    resp = await auth_routes.oauth_callback(
+        req, response=Response(), nexus_oauth_binding="multi-worker-nonce"
+    )
+    assert resp.token == "JWT"
 
 
 async def test_oauth_check_rejects_missing_state(mock_oauth_provider: MagicMock) -> None:
@@ -167,13 +184,13 @@ async def test_oauth_check_rejects_missing_state(mock_oauth_provider: MagicMock)
 
 
 async def test_oauth_check_rejects_mismatched_binding_cookie(
-    mock_oauth_provider: MagicMock, reset_state_store: OAuthStateStore
+    mock_oauth_provider: MagicMock,
 ) -> None:
-    reset_state_store.register("s", "real-nonce")
+    state = _issue_state_for("real-nonce")
     mock_oauth_provider._get_provider = MagicMock(
         side_effect=AssertionError("should not be called")
     )
-    req = auth_routes.OAuthCheckRequest(provider="google", code="code-x", state="s")
+    req = auth_routes.OAuthCheckRequest(provider="google", code="code-x", state=state)
     with pytest.raises(HTTPException) as exc:
         await auth_routes.oauth_check(
             req, response=Response(), nexus_oauth_binding="attacker-nonce"

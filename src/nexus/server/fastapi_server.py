@@ -502,17 +502,39 @@ def create_app(
         logger.warning(f"Failed to initialize subscription manager: {e}")
 
     # Add CORS middleware (Issue #1596: env-based allowlist, never wildcard + credentials)
+    #
+    # OAuth cookie-binding note: ``/auth/oauth/google/authorize`` sets an
+    # HttpOnly ``nexus_oauth_binding`` cookie that must come back on
+    # ``/auth/oauth/check`` and ``/auth/oauth/callback``. For split-origin
+    # setups (frontend on :5173 or :3000, server elsewhere) the browser only
+    # persists and re-sends that cookie when BOTH of these are true:
+    #   (a) the fetch from the frontend uses ``credentials: 'include'``;
+    #   (b) this CORS middleware echoes the origin back AND sets
+    #       ``Access-Control-Allow-Credentials: true``.
+    #
+    # ``allow_origins`` here is always an explicit allowlist — never "*" —
+    # so enabling credentials on the *server* side is safe by CORS spec
+    # (the wildcard+credentials combination flagged by Issue #1596 is
+    # structurally impossible below). We therefore enable credentials
+    # unconditionally; otherwise the OAuth binding cookie silently drops
+    # in default dev wiring and callback fails with "invalid, expired, or
+    # unbound — possible CSRF attack".
     _cors_origins_raw = os.environ.get("CORS_ORIGINS", "")
     _cors_origins: list[str] = (
         [o.strip() for o in _cors_origins_raw.split(",") if o.strip()]
         if _cors_origins_raw
         else ["http://localhost:3000", "http://localhost:5173"]
     )
-    _cors_allow_credentials = bool(_cors_origins_raw)  # credentials only with explicit origins
+    if "*" in _cors_origins:
+        # Defensive: the allowlist must never be wildcard with credentials=True.
+        raise RuntimeError(
+            "CORS_ORIGINS=* is not allowed — credentials require explicit origins. "
+            "Set CORS_ORIGINS to a comma-separated list of allowed origins."
+        )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=_cors_origins,
-        allow_credentials=_cors_allow_credentials,
+        allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type", "X-Zone-ID", "X-Request-ID"],
     )

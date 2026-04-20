@@ -110,6 +110,48 @@ def _add_api_key_middleware(mcp_server: Any) -> None:
         )
 
 
+def _add_audit_log_middleware(mcp_server: Any) -> None:
+    """Add MCP audit-log middleware (Issue #3779).
+
+    Emits structured JSON per HTTP request to stdout and publishes
+    the same payload to the Redis ``nexus:audit:mcp`` channel.
+    """
+    try:
+        from nexus.bricks.mcp.middleware_audit import MCPAuditLogMiddleware
+
+        if hasattr(mcp_server, "http_app"):
+            app = mcp_server.http_app()
+            app.add_middleware(MCPAuditLogMiddleware)
+            console.print(
+                "[nexus.success]✓ Audit log middleware enabled (nexus:audit:mcp)[/nexus.success]"
+            )
+    except Exception as e:
+        console.print(
+            f"[nexus.warning]Warning: Failed to add audit log middleware: {e}[/nexus.warning]"
+        )
+
+
+def _add_rate_limit_middleware(mcp_server: Any) -> None:
+    """Install SlowAPI-based rate-limit middleware (Issue #3779).
+
+    Per-token tiers keyed by the same header conventions as the
+    HTTP API. Enabled via ``MCP_RATE_LIMIT_ENABLED=true``.
+    """
+    try:
+        from nexus.bricks.mcp.middleware_ratelimit import install_rate_limit
+
+        if hasattr(mcp_server, "http_app"):
+            app = mcp_server.http_app()
+            install_rate_limit(app)
+            console.print(
+                "[nexus.success]✓ Rate-limit middleware installed (MCP_RATE_LIMIT_ENABLED to enforce)[/nexus.success]"
+            )
+    except Exception as e:
+        console.print(
+            f"[nexus.warning]Warning: Failed to add rate-limit middleware: {e}[/nexus.warning]"
+        )
+
+
 @click.group(name="mcp")
 def mcp() -> None:
     """Model Context Protocol (MCP) server commands.
@@ -353,9 +395,12 @@ async def _async_serve(
 
         # Add HTTP middleware and routes (for http/sse transports)
         if transport in ["http", "sse"]:
-            # Add health check route (already added in create_mcp_server, but ensure it's there)
+            # Middleware order (outermost to innermost, added in reverse):
+            #   APIKey (innermost) → AuditLog → RateLimit (outermost).
             _add_health_check_route(mcp_server)
             _add_api_key_middleware(mcp_server)
+            _add_audit_log_middleware(mcp_server)
+            _add_rate_limit_middleware(mcp_server)
 
         # Run with appropriate transport
         if transport == "stdio":

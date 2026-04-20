@@ -251,6 +251,44 @@ def _wait_leader_elected(
         time.sleep(0.2)
 
 
+def _wait_raft_caught_up(
+    leader: str,
+    follower: str,
+    zone_id: str,
+    api_key: str,
+    *,
+    timeout: float = 60,
+) -> None:
+    """Wait until ``follower`` has caught up to ``leader`` on ``zone_id``.
+
+    Uses ``federation_cluster_info.commit_index`` as the protocol signal —
+    ``cached_commit_index`` is updated by ``ZoneConsensusDriver::advance``
+    AFTER ``apply_entries`` runs, so once the follower's commit_index
+    reaches the leader's, the state machine has applied every committed
+    entry and subsequent sys_stat / list reads will see a consistent view.
+    Preferable to wall-clock waits for post-failover or cross-node catchup,
+    which otherwise depend on transport reconnect latency.
+    """
+    leader_info = _grpc_call(
+        leader, "federation_cluster_info", {"zone_id": zone_id}, api_key=api_key
+    )
+    leader_ci = leader_info.get("result", {}).get("commit_index", 0)
+    deadline = time.time() + timeout
+    follower_ci = 0
+    while time.time() < deadline:
+        follower_info = _grpc_call(
+            follower, "federation_cluster_info", {"zone_id": zone_id}, api_key=api_key
+        )
+        follower_ci = follower_info.get("result", {}).get("commit_index", 0)
+        if follower_ci >= leader_ci:
+            return
+        time.sleep(0.5)
+    pytest.fail(
+        f"Raft catch-up stalled: zone={zone_id} leader_ci={leader_ci} follower_ci={follower_ci} "
+        f"within {timeout}s. Check transport reconnect / peer health."
+    )
+
+
 def _wait_zone_ready(
     target: str,
     zone_id: str,
@@ -1167,8 +1205,11 @@ class TestLeaderFailover:
                 )
 
         # Node-1 catches up via Raft log replay from node-2 leader.
-        # 20s is generous — Raft catch-up should complete in < 5s.
-        # If this times out, it's a real Raft bug, not a timing issue.
+        # Gate on raft commit_index first — that's the protocol signal that
+        # replication has actually caught up. Then the _wait_replicated loop
+        # just confirms list() sees the same state (apply already happened
+        # before commit_index advanced).
+        _wait_raft_caught_up(grpc2, grpc1, "corp-eng", api_key, timeout=60)
         for path, _content in new_files:
             _wait_replicated(
                 grpc1,
@@ -1257,7 +1298,8 @@ class TestFederationCacheCoherence:
             pytest.skip(f"Write failed (may not have perms): {write_result}")
 
         # Read back from node-2 — should eventually succeed via Raft replication.
-        # _wait_replicated checks full paths from list(), so pass the full path.
+        # commit_index gate first (protocol signal), then verify via list().
+        _wait_raft_caught_up(grpc1, grpc2, "corp-eng", api_key, timeout=60)
         _wait_replicated(
             grpc2,
             "/corp/eng/",
@@ -1381,6 +1423,7 @@ class TestScatterGatherChunkedRead:
             grpc1, "write", {"path": path, "content": content}, api_key=api_key, timeout=60
         )
         assert "error" not in w1, f"Initial chunked write failed: {w1}"
+        _wait_raft_caught_up(grpc1, grpc2, "corp-eng", api_key, timeout=60)
         _wait_replicated(
             grpc2,
             "/corp/eng/",
@@ -2500,30 +2543,9 @@ class TestFullFailoverRecovery:
                     f"{(logs or b'').decode(errors='replace')}"
                 )
 
-        # Protocol-level catchup gate: after _wait_healthy (HTTP ready) node-1's
-        # raft driver may not yet have re-received append-entries from node-2
-        # (transport reconnect backoff can delay the first MsgAppend post-restart
-        # by several seconds on slow Docker hosts). Use the commit_index exposed
-        # on cluster_info (R20.x) to wait for actual log replication, not wall-
-        # clock time — this is the protocol signal the failover test needs.
-        leader_info = _grpc_call(
-            grpc2, "federation_cluster_info", {"zone_id": "corp-eng"}, api_key=api_key
-        )
-        leader_ci = leader_info.get("result", {}).get("commit_index", 0)
-        catchup_deadline = time.time() + 60
-        while time.time() < catchup_deadline:
-            follower_info = _grpc_call(
-                grpc1, "federation_cluster_info", {"zone_id": "corp-eng"}, api_key=api_key
-            )
-            follower_ci = follower_info.get("result", {}).get("commit_index", 0)
-            if follower_ci >= leader_ci:
-                break
-            time.sleep(0.5)
-        else:
-            pytest.fail(
-                f"Node-1 did not catch up to corp-eng commit_index {leader_ci} within 60s "
-                f"(last follower_ci={follower_ci}). Raft transport may have stalled on reconnect."
-            )
+        # Wait for node-1 to catch up on corp-eng via the raft commit_index
+        # protocol signal — see _wait_raft_caught_up docstring.
+        _wait_raft_caught_up(grpc2, grpc1, "corp-eng", api_key, timeout=60)
 
         deadline = time.time() + 30
         s = r2 = r3 = {}

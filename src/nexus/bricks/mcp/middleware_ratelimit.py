@@ -26,17 +26,26 @@ import hashlib
 import logging
 import os
 import time
+from functools import lru_cache
 from typing import Any
 
-from limits import parse as parse_limit
+from limits import RateLimitItem
+from limits import parse as _parse_limit
 from limits.storage import storage_from_string
 from limits.strategies import FixedWindowRateLimiter
+from slowapi.util import get_remote_address
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from nexus.bricks.mcp.auth_cache import get_auth_identity_cache, hash_api_key
 from nexus.server.token_utils import parse_sk_token
+
+
+@lru_cache(maxsize=16)
+def _parse_limit_cached(limit_str: str) -> RateLimitItem:
+    return _parse_limit(limit_str)
+
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +87,7 @@ def _rate_limit_key(request: Request) -> str:
     agent = request.headers.get("X-Agent-ID")
     if agent:
         return f"agent:{agent}"
-    client_host = request.client.host if request.client else "unknown"
+    client_host = get_remote_address(request) or "unknown"
     return f"ip:{client_host}"
 
 
@@ -114,20 +123,6 @@ def _dynamic_limit(request: Request) -> str:
     return _limit_for_tier(_tier_for_request(request))
 
 
-def _rate_limit_exceeded_handler(_request: Request, exc: Exception) -> JSONResponse:
-    """Produce a structured 429 response with Retry-After."""
-    retry_after = getattr(exc, "retry_after", 60)
-    return JSONResponse(
-        status_code=429,
-        content={
-            "error": "Rate limit exceeded",
-            "detail": str(exc),
-            "retry_after": retry_after,
-        },
-        headers={"Retry-After": str(retry_after)},
-    )
-
-
 # ---------------------------------------------------------------------------
 # Custom middleware
 # ---------------------------------------------------------------------------
@@ -153,10 +148,19 @@ class _MCPRateLimitMiddleware(BaseHTTPMiddleware):
 
         tier = _tier_for_request(request)
         limit_str = _limit_for_tier(tier)
-        limit_item = parse_limit(limit_str)
+        limit_item = _parse_limit_cached(limit_str)
         key = _rate_limit_key(request)
 
-        allowed = self._strategy.hit(limit_item, key)
+        try:
+            allowed = self._strategy.hit(limit_item, key)
+        except Exception:
+            logger.warning(
+                "Rate-limit storage unavailable — failing open for key=%s",
+                key,
+                exc_info=True,
+            )
+            return await call_next(request)
+
         if not allowed:
             stats = self._strategy.get_window_stats(limit_item, key)
             retry_after = max(0, int(stats.reset_time - time.time()))
@@ -212,12 +216,4 @@ def install_rate_limit(app: Any) -> None:
     app.add_middleware(_MCPRateLimitMiddleware, storage=storage, enabled=enabled)
 
 
-__all__ = [
-    "install_rate_limit",
-    "_rate_limit_exceeded_handler",
-    "_rate_limit_key",
-    "_tier_for_request",
-    "_dynamic_limit",
-    "_limit_for_tier",
-    "_extract_token",
-]
+__all__ = ["install_rate_limit"]

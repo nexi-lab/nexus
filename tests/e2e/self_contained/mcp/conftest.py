@@ -1,5 +1,7 @@
 """Fixtures for MCP integration tests."""
 
+import os
+
 import pytest
 
 
@@ -26,3 +28,13 @@ def isolate_mcp_integration_tests(monkeypatch):
         monkeypatch.delenv(var, raising=False)
 
     yield
+
+
+@pytest.fixture
+def mcp_http_base_url() -> str:
+    """Base URL for the MCP HTTP transport under test.
+
+    Override via MCP_HTTP_URL env var. Default assumes a running nexus
+    stack with MCP_TRANSPORT=http on port 8081.
+    """
+    return os.environ.get("MCP_HTTP_URL", "http://localhost:8081")

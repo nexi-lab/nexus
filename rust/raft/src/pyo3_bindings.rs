@@ -1312,10 +1312,15 @@ impl PyZoneManager {
         })
     }
 
-    /// Remove a zone, shutting down its transport loop.
+    /// Remove a zone — shut down its transport loop and delete its dir.
+    ///
+    /// R20.13: `registry.remove_zone` is now async (awaits transport task
+    /// exit + yields so redb handles drop before `remove_dir_all`). We
+    /// bridge via the manager's runtime, matching the `create_zone` pattern.
     pub fn remove_zone(&self, zone_id: &str) -> PyResult<()> {
-        self.registry
-            .remove_zone(zone_id)
+        self.runtime
+            .handle()
+            .block_on(self.registry.remove_zone(zone_id))
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to remove zone: {}", e)))
     }
 

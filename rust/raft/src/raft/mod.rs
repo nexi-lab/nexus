@@ -46,6 +46,8 @@ pub mod replication_log;
 #[cfg(all(feature = "grpc", has_protos))]
 pub mod search_caps;
 mod state_machine;
+#[cfg(all(feature = "grpc", has_protos))]
+pub mod zone_persistence;
 
 #[cfg(feature = "consensus")]
 mod node;
@@ -67,6 +69,8 @@ pub use node::{NodeRole, RaftConfig, RaftMsg, ZoneConsensus, ZoneConsensusDriver
 pub use search_caps::{read_search_caps, write_search_caps, SearchCapabilitiesInfo};
 #[cfg(feature = "consensus")]
 pub use storage::RaftStorage;
+#[cfg(all(feature = "grpc", has_protos))]
+pub use zone_persistence::ZonePersistence;
 #[cfg(all(feature = "grpc", has_protos))]
 pub use zone_registry::ZoneRaftRegistry;
 

@@ -98,6 +98,58 @@ def test_codex_account_none_when_undecodable() -> None:
     assert _codex_account_from_auth_json(b"{}") is None
 
 
+def test_retry_pending_loop_replays_watched_file(tmp_path: Path) -> None:
+    """Pending queue row → retry thread re-reads source + calls push_source."""
+    queue = PushQueue(tmp_path / "queue.db")
+    # Seed queue with a pending row (simulates a prior push that failed).
+    queue.enqueue("codex/alice@example.com", payload_hash="pending-hash")
+    auth_file = tmp_path / "auth.json"
+    token = _jwt_with_claims({"email": "alice@example.com"})
+    auth_file.write_bytes(json.dumps({"tokens": {"id_token": token}}).encode())
+
+    pusher = MagicMock()
+    runner = DaemonRunner(
+        source_watch_target=auth_file,
+        queue=queue,
+        pusher=pusher,
+        jwt_refresh_every=9999,
+        status_path=tmp_path / "status.json",
+        retry_pending_every=1,  # tight interval for test
+    )
+    t = threading.Thread(target=runner.run, daemon=True)
+    t.start()
+    for _ in range(60):
+        if pusher.push_source.called:
+            break
+        time.sleep(0.05)
+    runner.shutdown()
+    t.join(timeout=5.0)
+    # Retry loop must have invoked push_source at least once for the codex src.
+    assert pusher.push_source.called
+    call = pusher.push_source.call_args
+    assert call.args[0] == "codex"
+    assert call.kwargs["account_identifier"] == "alice@example.com"
+
+
+def test_retry_pending_loop_disabled_when_interval_zero(tmp_path: Path) -> None:
+    """retry_pending_every=0 disables the loop entirely."""
+    queue = PushQueue(tmp_path / "queue.db")
+    queue.enqueue("codex/alice@example.com", payload_hash="pending-hash")
+    auth_file = tmp_path / "auth.json"
+    auth_file.write_bytes(b'{"OPENAI_API_KEY":"sk-x"}')  # no id_token → account None
+
+    pusher = MagicMock()
+    runner = DaemonRunner(
+        source_watch_target=auth_file,
+        queue=queue,
+        pusher=pusher,
+        jwt_refresh_every=9999,
+        status_path=tmp_path / "status.json",
+        retry_pending_every=0,  # disable
+    )
+    assert runner._retry_pending_every == 0
+
+
 def test_startup_drain_no_watch_target_is_noop(tmp_path: Path) -> None:
     """Missing watch file must NOT crash the daemon — just log and continue."""
     queue = PushQueue(tmp_path / "queue.db")

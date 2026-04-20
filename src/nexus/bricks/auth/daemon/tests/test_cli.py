@@ -16,11 +16,14 @@ import pytest
 from nexus.bricks.auth.daemon import cli as daemon_cli
 
 
-def test_build_encryption_provider_defaults_to_memory(monkeypatch: pytest.MonkeyPatch) -> None:
-    """No env → memory provider (the MVP default), wrapped in _DaemonEnvelope."""
+def test_build_encryption_provider_memory_with_unsafe_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Memory provider requires NEXUS_UNSAFE_DEV_MEMORY_KMS=true acknowledgement."""
     import uuid
 
     monkeypatch.delenv("NEXUS_KMS_PROVIDER", raising=False)
+    monkeypatch.setenv("NEXUS_UNSAFE_DEV_MEMORY_KMS", "true")
     ep = daemon_cli._build_encryption_provider()
     # _DaemonEnvelope exposes .encrypt(plaintext, tenant_id, aad)
     env = ep.encrypt(b"hello", tenant_id=uuid.uuid4(), aad=b"tenant|principal|id")
@@ -28,6 +31,18 @@ def test_build_encryption_provider_defaults_to_memory(monkeypatch: pytest.Monkey
     assert len(env.nonce) == 12
     assert env.kek_version >= 1
     assert len(env.wrapped_dek) > 0
+
+
+def test_build_encryption_provider_memory_rejects_without_unsafe_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without the unsafe flag the memory provider is refused — fail closed."""
+    monkeypatch.delenv("NEXUS_KMS_PROVIDER", raising=False)
+    monkeypatch.delenv("NEXUS_UNSAFE_DEV_MEMORY_KMS", raising=False)
+    with pytest.raises(click.ClickException) as excinfo:
+        daemon_cli._build_encryption_provider()
+    assert "NEXUS_UNSAFE_DEV_MEMORY_KMS" in str(excinfo.value.message)
+    assert "not durable" in str(excinfo.value.message)
 
 
 def test_build_encryption_provider_rejects_unknown(monkeypatch: pytest.MonkeyPatch) -> None:

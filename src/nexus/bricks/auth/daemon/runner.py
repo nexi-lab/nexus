@@ -126,6 +126,7 @@ class DaemonRunner:
         jwt_refresh_margin_s: int = 60,
         subprocess_sources: tuple[SubprocessSource, ...] = (),
         subprocess_poll_every: int = 300,
+        retry_pending_every: int = 60,
     ) -> None:
         self._source_watch_target = source_watch_target
         self._queue = queue
@@ -140,6 +141,11 @@ class DaemonRunner:
         self._jwt_refresh_margin_s = jwt_refresh_margin_s
         self._subprocess_sources = subprocess_sources
         self._subprocess_poll_every = subprocess_poll_every
+        # Periodic retry of pending queue rows — runs continuously so a
+        # transient outage doesn't strand queued writes until the next file
+        # change. The watched file is re-read + re-pushed, so hash-matching
+        # pending rows clear on the first successful retry.
+        self._retry_pending_every = retry_pending_every
 
         self._stop = threading.Event()
         self._state: str = "healthy"
@@ -148,6 +154,7 @@ class DaemonRunner:
         self._watcher: SourceWatcher | None = None
         self._jwt_thread: threading.Thread | None = None
         self._subprocess_thread: threading.Thread | None = None
+        self._retry_thread: threading.Thread | None = None
 
     # ------------------------------------------------------------------ API
 
@@ -226,6 +233,15 @@ class DaemonRunner:
             )
             sp.start()
             self._subprocess_thread = sp
+
+        if self._retry_pending_every > 0:
+            rt = threading.Thread(
+                target=self._retry_pending_loop,
+                name="daemon-retry-pending",
+                daemon=True,
+            )
+            rt.start()
+            self._retry_thread = rt
 
         try:
             while not self._stop.is_set():
@@ -328,6 +344,60 @@ class DaemonRunner:
                     base = max(60.0, proactive)
         jitter = random.uniform(-0.1, 0.1) * base
         return max(1.0, base + jitter)
+
+    def _retry_pending_loop(self) -> None:
+        """Periodically replay pending queue rows until the queue is empty.
+
+        The queue only stores ``(profile_id, payload_hash, attempts)`` — it
+        has no envelope payload to re-submit directly. Instead we re-read
+        every source we know about (watched file + subprocess adapters) on a
+        fixed cadence, so the existing push+dedupe pipeline clears matching
+        pending rows on success. This closes the “network blip strands the
+        queue until the next file change” gap flagged in review.
+
+        Light backoff: sleep ``retry_pending_every`` seconds between cycles
+        (already a multiple of the watcher debounce). No exponential growth
+        — we cap at the fixed interval to keep bookkeeping simple for a
+        small pending-row count.
+        """
+        while not self._stop.is_set():
+            if self._stop.wait(timeout=float(self._retry_pending_every)):
+                return
+            try:
+                pending = self._queue.list_pending()
+            except Exception:
+                log.exception("retry loop: list_pending failed")
+                continue
+            if not pending:
+                continue
+            log.info("retry loop: %d pending rows — replaying known sources", len(pending))
+            self._replay_known_sources()
+
+    def _replay_known_sources(self) -> None:
+        """Re-read + re-push the watched file and every subprocess source.
+
+        Used by the retry loop; shares the drain-startup semantics so both
+        paths keep identical push behavior (account extraction, skip-on-
+        missing, degrade-on-failure). Swallows exceptions — we don't want
+        retry bookkeeping to kill the daemon.
+        """
+        watch_path = self._source_watch_target
+        if watch_path.exists():
+            try:
+                content = watch_path.read_bytes()
+            except OSError:
+                log.warning("retry loop: failed to read %s", watch_path)
+                content = b""
+            if content:
+                try:
+                    self._on_change(watch_path, content)
+                except Exception:
+                    log.exception("retry loop: watched source replay raised")
+        if self._subprocess_sources:
+            try:
+                self._fetch_all_subprocess_sources()
+            except Exception:
+                log.exception("retry loop: subprocess replay raised")
 
     def _subprocess_poll_loop(self) -> None:
         """Fetch each SubprocessSource on an interval; hand bytes to pusher.

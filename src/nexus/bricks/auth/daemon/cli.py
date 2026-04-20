@@ -438,10 +438,36 @@ class _DaemonEnvelope:
 def _build_encryption_provider() -> Any:
     """Build the envelope helper for the Pusher from ``NEXUS_KMS_PROVIDER``.
 
-    MVP only supports ``memory`` (``InMemoryEncryptionProvider``).
+    Supports ``memory`` (``InMemoryEncryptionProvider``) for dev, guarded by
+    ``NEXUS_UNSAFE_DEV_MEMORY_KMS=true``. The in-memory provider stores its
+    KEK in process memory — any other process (or a later run of this one)
+    cannot unwrap the DEK, so envelopes shipped to ``/v1/auth-profiles``
+    become undecryptable for server-side consumers. That's acceptable for a
+    laptop-only dev loop but will corrupt production state; we fail closed
+    unless the operator explicitly opts in.
     """
     provider_name = os.environ.get("NEXUS_KMS_PROVIDER", "memory")
     if provider_name == "memory":
+        unsafe_ok = os.environ.get("NEXUS_UNSAFE_DEV_MEMORY_KMS", "").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        if not unsafe_ok:
+            raise click.ClickException(
+                "NEXUS_KMS_PROVIDER='memory' is dev-only and not durable across "
+                "processes — envelopes shipped to /v1/auth-profiles will be "
+                "undecryptable server-side. Set NEXUS_UNSAFE_DEV_MEMORY_KMS=true "
+                "to acknowledge and proceed (ONLY for local dev loops), or "
+                "configure a persistent KMS (AWS KMS / Vault / etc.) via "
+                "NEXUS_KMS_PROVIDER."
+            )
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "daemon using in-memory KMS provider (dev-only); envelopes are NOT "
+            "durable across processes. Do NOT use in production."
+        )
         from nexus.bricks.auth.envelope_providers.in_memory import (
             InMemoryEncryptionProvider,
         )

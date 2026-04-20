@@ -192,6 +192,47 @@ def test_push_missing_auth(client: TestClient) -> None:
     assert r.status_code == 401
 
 
+def test_push_rejects_missing_daemon_version(
+    client: TestClient,
+    setup_tenant: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
+    signer: JwtSigner,
+) -> None:
+    """API must 422 when daemon_version is absent so attribution is never NULL."""
+    t, p, m = setup_tenant
+    jwt_str = signer.sign(
+        DaemonClaims(tenant_id=t, principal_id=p, machine_id=m),
+        ttl=timedelta(hours=1),
+    )
+    payload = _push_payload()
+    payload.pop("daemon_version")
+    r = client.post(
+        "/v1/auth-profiles",
+        json=payload,
+        headers={"Authorization": f"Bearer {jwt_str}"},
+    )
+    assert r.status_code == 422
+
+
+def test_push_rejects_empty_daemon_version(
+    client: TestClient,
+    setup_tenant: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
+    signer: JwtSigner,
+) -> None:
+    t, p, m = setup_tenant
+    jwt_str = signer.sign(
+        DaemonClaims(tenant_id=t, principal_id=p, machine_id=m),
+        ttl=timedelta(hours=1),
+    )
+    payload = _push_payload()
+    payload["daemon_version"] = ""
+    r = client.post(
+        "/v1/auth-profiles",
+        json=payload,
+        headers={"Authorization": f"Bearer {jwt_str}"},
+    )
+    assert r.status_code == 422
+
+
 def test_push_rejects_unknown_machine(
     client: TestClient,
     setup_tenant: tuple[uuid.UUID, uuid.UUID, uuid.UUID],

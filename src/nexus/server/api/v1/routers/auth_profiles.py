@@ -59,11 +59,16 @@ class PushRequest(BaseModel):
     envelope: EnvelopePayload
     source_file_hash: str
     sync_ttl_seconds: int = 300
-    daemon_version: str | None = Field(
-        default=None,
+    # Required + non-empty at the API boundary: every central write carries
+    # the exact daemon build that produced it so rollback / incident
+    # forensics can attribute bad state. Missing or empty → 422 from pydantic.
+    daemon_version: str = Field(
+        ...,
+        min_length=1,
         description=(
-            "Daemon build version. Persisted on every write for rollback / "
-            "forensics attribution when a bad daemon emits corrupt state."
+            "Daemon build version. Required — persisted on every write for "
+            "rollback / forensics attribution when a bad daemon emits corrupt "
+            "state."
         ),
     )
     updated_at_override: datetime | None = Field(

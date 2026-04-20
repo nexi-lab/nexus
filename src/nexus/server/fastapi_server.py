@@ -705,14 +705,28 @@ def _register_routes(app: FastAPI) -> None:
     app.include_router(streaming_router)
     app.include_router(rpc_router)
 
-    # Authentication routes
+    # Authentication routes — fail fast. A server that boots without auth
+    # endpoints looks healthy but silently 404s every login/OAuth request,
+    # which is worse than not starting. If a deployment genuinely doesn't
+    # want auth routes (rare — isolated internal service), set
+    # ``NEXUS_ALLOW_MISSING_AUTH_ROUTES=true`` to preserve the old tolerant
+    # behavior.
     try:
         from nexus.server.auth.auth_routes import router as auth_router
 
         app.include_router(auth_router)
         logger.info("Authentication routes registered")
     except ImportError as e:
-        logger.warning(f"Failed to import auth routes: {e}. OAuth endpoints will not be available.")
+        if os.environ.get("NEXUS_ALLOW_MISSING_AUTH_ROUTES", "").lower() in ("true", "1", "yes"):
+            logger.warning(
+                f"Failed to import auth routes: {e}. Proceeding because "
+                "NEXUS_ALLOW_MISSING_AUTH_ROUTES is set. OAuth endpoints will not be available."
+            )
+        else:
+            raise RuntimeError(
+                f"Failed to import auth routes ({e}). Missing a required dependency? "
+                "Set NEXUS_ALLOW_MISSING_AUTH_ROUTES=true to start without auth routes."
+            ) from e
 
     # Zone management routes
     try:
@@ -724,8 +738,6 @@ def _register_routes(app: FastAPI) -> None:
         logger.warning(f"Failed to import zone routes: {e}. Zone management unavailable.")
 
     # Test hooks REST API (Issue #2) — only when NEXUS_TEST_HOOKS=true
-    import os
-
     if os.getenv("NEXUS_TEST_HOOKS") == "true":
         try:
             from nexus.core.test_hooks import build_test_hooks_router

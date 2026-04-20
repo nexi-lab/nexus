@@ -56,17 +56,15 @@ class GoogleOAuthProvider(UniversalOAuthProvider):
         redirect_uri: str | None = None,
         **kwargs: Any,
     ) -> str:
+        # Per-call redirect_uri is forwarded as a kwarg so the parent resolves
+        # it into a local variable. The GoogleOAuthProvider instance is
+        # shared across concurrent requests (one provider per app); mutating
+        # ``self.redirect_uri`` here would race against any other authorize
+        # request building its URL at the same time.
         extras = {"access_type": "offline", "prompt": "consent"}
-        if redirect_uri and redirect_uri != self.redirect_uri:
-            # Per-call override: save/restore to avoid mutating provider state
-            # across concurrent callers.
-            original = self.redirect_uri
-            self.redirect_uri = redirect_uri
-            try:
-                return super().get_authorization_url(state=state, extra_params=extras, **kwargs)
-            finally:
-                self.redirect_uri = original
-        return super().get_authorization_url(state=state, extra_params=extras, **kwargs)
+        return super().get_authorization_url(
+            state=state, redirect_uri=redirect_uri, extra_params=extras, **kwargs
+        )
 
     async def validate_token(self, access_token: str) -> bool:
         async with self._get_client() as client:

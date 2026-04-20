@@ -91,13 +91,18 @@ class UniversalOAuthProvider(BaseOAuthProvider):
         self,
         state: str | None = None,
         *,
+        redirect_uri: str | None = None,
         extra_params: dict[str, str] | None = None,
         **_kwargs: Any,
     ) -> str:
+        # Per-call redirect_uri override is resolved into a local variable —
+        # never mutate ``self.redirect_uri``, which is shared across concurrent
+        # requests (see GoogleOAuthProvider thread-safety fix).
+        effective_redirect_uri = redirect_uri or self.redirect_uri
         params: dict[str, str] = {
             "response_type": "code",
             "client_id": self.client_id,
-            "redirect_uri": self.redirect_uri,
+            "redirect_uri": effective_redirect_uri,
             "scope": self._scope_string(),
         }
         if state:

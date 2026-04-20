@@ -182,11 +182,48 @@ fi
 #   * the named profile is absent from the mounted ~/.aws/credentials and
 #     ~/.aws/config files (stale shell-inherited name).
 #
-# Profile lookup uses a plain grep for ``[profile-name]`` or
-# ``[profile <name>]``; botocore accepts both spellings and a false positive
-# here just means we keep a potentially-valid profile rather than unsetting
-# a valid one, which is the safer direction.
+# Profile-presence check uses exact INI-header matching (NOT regex), so
+# profile names with regex metacharacters (``.``, ``+``, ``*``) resolve
+# correctly — e.g. ``prod.us`` matches only ``[prod.us]``, not anything
+# containing "prod" + any char + "us". Botocore accepts both the bare
+# ``[name]`` form (credentials file) and the ``[profile <name>]`` form
+# (config file); either is treated as a match.
 # -----------------------------------------------------------------------------
+_aws_profile_file_has_name() {
+    # Exact INI-header comparison for an AWS profile name. Accepts both
+    # spellings botocore honors: ``[name]`` (credentials file) and
+    # ``[profile <name>]`` (config file). No regex — profile names
+    # containing ``.``, ``+`` or other metacharacters compare as plain
+    # strings.
+    local _file="$1" _wanted="$2" _prof_line="" _rest=""
+    [ -s "$_file" ] || return 1
+    local _bracketed_wanted="[${_wanted}]"
+    while IFS= read -r _prof_line; do
+        # Strip leading + trailing whitespace from the raw line.
+        _prof_line="${_prof_line#"${_prof_line%%[![:space:]]*}"}"
+        _prof_line="${_prof_line%"${_prof_line##*[![:space:]]}"}"
+        case "$_prof_line" in
+            \[*\])
+                if [ "$_prof_line" = "$_bracketed_wanted" ]; then
+                    return 0
+                fi
+                case "$_prof_line" in
+                    "[profile "*"]")
+                        _rest="${_prof_line#\[profile }"
+                        _rest="${_rest%\]}"
+                        # Collapse any whitespace around the name so
+                        # ``[profile   prod]`` still matches ``prod``.
+                        _rest="${_rest#"${_rest%%[![:space:]]*}"}"
+                        _rest="${_rest%"${_rest##*[![:space:]]}"}"
+                        [ "$_rest" = "$_wanted" ] && return 0
+                        ;;
+                esac
+                ;;
+        esac
+    done < "$_file"
+    return 1
+}
+
 if [ -n "${AWS_PROFILE+x}" ]; then
     if [ -z "${AWS_PROFILE:-}" ]; then
         unset AWS_PROFILE
@@ -196,23 +233,10 @@ if [ -n "${AWS_PROFILE+x}" ]; then
         if [ ! -s "$_aws_cred_file" ] && [ ! -s "$_aws_conf_file" ]; then
             echo "${YELLOW:-}AWS_PROFILE=${AWS_PROFILE} set but no ~/.aws/credentials or ~/.aws/config present; unsetting so env/IAM-role creds can take over.${NC:-}"
             unset AWS_PROFILE
-        else
-            # Look for the profile in either file. ``credentials`` uses
-            # ``[name]``; ``config`` uses ``[profile name]`` (except for
-            # ``default`` which is just ``[default]`` in both).
-            _profile_pat="^\[(${AWS_PROFILE}|profile[[:space:]]+${AWS_PROFILE})\][[:space:]]*$"
-            _profile_found="no"
-            if [ -s "$_aws_cred_file" ] && grep -Eq "$_profile_pat" "$_aws_cred_file" 2>/dev/null; then
-                _profile_found="yes"
-            fi
-            if [ "$_profile_found" = "no" ] && [ -s "$_aws_conf_file" ] && grep -Eq "$_profile_pat" "$_aws_conf_file" 2>/dev/null; then
-                _profile_found="yes"
-            fi
-            if [ "$_profile_found" = "no" ]; then
-                echo "${YELLOW:-}AWS_PROFILE=${AWS_PROFILE} not present in mounted ~/.aws/credentials or ~/.aws/config; unsetting so env/IAM-role creds can take over.${NC:-}"
-                unset AWS_PROFILE
-            fi
-            unset _profile_pat _profile_found
+        elif ! _aws_profile_file_has_name "$_aws_cred_file" "$AWS_PROFILE" \
+              && ! _aws_profile_file_has_name "$_aws_conf_file" "$AWS_PROFILE"; then
+            echo "${YELLOW:-}AWS_PROFILE=${AWS_PROFILE} not present in mounted ~/.aws/credentials or ~/.aws/config; unsetting so env/IAM-role creds can take over.${NC:-}"
+            unset AWS_PROFILE
         fi
         unset _aws_cred_file _aws_conf_file
     fi

@@ -364,14 +364,38 @@ def list_cmd() -> None:
 
 @daemon.command("install")
 @click.option("--profile", default=None, help="Profile name (auto-selected if only one exists).")
-def install_cmd(profile: str | None) -> None:
-    """Install launchd plist / systemd user unit for this profile."""
+@click.option(
+    "--executable",
+    default=None,
+    help=(
+        "Path to the `nexus` CLI binary launchd/systemd should invoke. "
+        "Defaults to the first `nexus` found on PATH."
+    ),
+)
+def install_cmd(profile: str | None, executable: str | None) -> None:
+    """Install launchd plist / systemd user unit for this profile.
+
+    The unit invokes ``<executable> daemon run --profile <profile>``. We need
+    a working Nexus CLI binary — passing ``sys.executable`` (the Python
+    interpreter) would produce ``python daemon run ...``, which fails since
+    Python tries to open a file called ``daemon``. Resolve via
+    ``shutil.which("nexus")`` unless the operator overrides with --executable.
+    """
+    import shutil
+
     from nexus.bricks.auth.daemon.installer import install
 
     resolved_profile = _resolve_profile(profile, required_action="daemon install")
     paths = _profile_paths(resolved_profile)
+    resolved_exec = executable or shutil.which("nexus")
+    if not resolved_exec:
+        raise click.ClickException(
+            "Could not resolve the `nexus` CLI binary on PATH. "
+            "Install the Nexus CLI (e.g. `pipx install nexus`) or pass "
+            "--executable /absolute/path/to/nexus."
+        )
     unit_path = install(
-        executable=sys.executable,
+        executable=resolved_exec,
         config_path=paths["config"],
         profile=resolved_profile,
     )

@@ -104,3 +104,107 @@ def test_resolve_profile_errors_when_ambiguous(
         daemon_cli._resolve_profile(None, required_action="run")
     # Explicit pick still works.
     assert daemon_cli._resolve_profile("home", required_action="run") == "home"
+
+
+def test_install_cmd_errors_when_nexus_missing_from_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """install_cmd must refuse to wire units pointing at a Python interpreter.
+
+    Regression: previously passed ``sys.executable`` which produced a broken
+    ``python daemon run ...`` ExecStart. With no nexus binary on PATH and no
+    --executable override, the command must error loudly rather than install
+    a bogus unit.
+    """
+    from click.testing import CliRunner
+
+    monkeypatch.setattr(daemon_cli, "_NEXUS_HOME", tmp_path)
+    d = tmp_path / "daemons" / "work"
+    d.mkdir(parents=True)
+    (d / "daemon.toml").write_text("x")
+
+    import shutil as _shutil
+
+    monkeypatch.setattr(_shutil, "which", lambda _name: None)
+
+    result = CliRunner().invoke(
+        daemon_cli.daemon, ["install", "--profile", "work"], catch_exceptions=False
+    )
+    assert result.exit_code != 0
+    assert "nexus" in result.output.lower()
+
+
+def test_install_cmd_resolves_nexus_from_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """When PATH contains nexus, installer receives that binary, not sys.executable."""
+    from click.testing import CliRunner
+
+    from nexus.bricks.auth.daemon import installer as installer_mod
+
+    monkeypatch.setattr(daemon_cli, "_NEXUS_HOME", tmp_path)
+    d = tmp_path / "daemons" / "work"
+    d.mkdir(parents=True)
+    (d / "daemon.toml").write_text("x")
+
+    import shutil as _shutil
+
+    monkeypatch.setattr(
+        _shutil, "which", lambda name: "/usr/local/bin/nexus" if name == "nexus" else None
+    )
+
+    captured: dict[str, object] = {}
+
+    def fake_install(
+        *,
+        executable: str,
+        config_path: Path,  # noqa: ARG001 - signature parity w/ real install()
+        profile: str,
+    ) -> Path:
+        captured["executable"] = executable
+        captured["profile"] = profile
+        return tmp_path / "fake.plist"
+
+    monkeypatch.setattr(installer_mod, "install", fake_install)
+
+    result = CliRunner().invoke(
+        daemon_cli.daemon, ["install", "--profile", "work"], catch_exceptions=False
+    )
+    assert result.exit_code == 0, result.output
+    assert captured["executable"] == "/usr/local/bin/nexus"
+    assert captured["profile"] == "work"
+
+
+def test_install_cmd_executable_override_wins(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """--executable overrides PATH lookup and is passed through verbatim."""
+    from click.testing import CliRunner
+
+    from nexus.bricks.auth.daemon import installer as installer_mod
+
+    monkeypatch.setattr(daemon_cli, "_NEXUS_HOME", tmp_path)
+    d = tmp_path / "daemons" / "work"
+    d.mkdir(parents=True)
+    (d / "daemon.toml").write_text("x")
+
+    captured: dict[str, object] = {}
+
+    def fake_install(
+        *,
+        executable: str,
+        config_path: Path,  # noqa: ARG001 - signature parity w/ real install()
+        profile: str,  # noqa: ARG001 - signature parity w/ real install()
+    ) -> Path:
+        captured["executable"] = executable
+        return tmp_path / "fake.plist"
+
+    monkeypatch.setattr(installer_mod, "install", fake_install)
+
+    result = CliRunner().invoke(
+        daemon_cli.daemon,
+        ["install", "--profile", "work", "--executable", "/opt/nexus/bin/nexus"],
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 0, result.output
+    assert captured["executable"] == "/opt/nexus/bin/nexus"

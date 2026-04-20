@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import base64
 import json
+import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -35,6 +36,16 @@ from nexus.server.api.v1.jwt_signer import DaemonClaims, JwtSigner
 
 _JWT_TTL = timedelta(hours=1)
 _REFRESH_SKEW = timedelta(seconds=60)
+# Nonce rows older than this are replay-irrelevant (the signed timestamp they
+# guard has already fallen outside ``_REFRESH_SKEW`` on both sides). We keep
+# a generous buffer — 10× skew — so clock drift on a lagging daemon still
+# sees its replay protection intact. Rows older than the retention window are
+# pruned opportunistically on refresh.
+_NONCE_RETENTION = _REFRESH_SKEW * 10
+# Prune opportunistically on a fraction of refreshes. At ~1/32 sampling the
+# cleanup cost amortizes across refreshes without any cron/background worker,
+# and a few hundred refreshes per minute is enough to keep the table bounded.
+_NONCE_PRUNE_SAMPLE_DENOMINATOR = 32
 
 
 class EnrollRequest(BaseModel):
@@ -266,6 +277,17 @@ def make_daemon_router(
             ).fetchone()
             if claim is None:
                 raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="nonce_replay")
+
+            # Opportunistic prune. Without this the nonce table grows forever
+            # (1 insert per refresh, ~hourly per daemon). We keep rows for
+            # ``_NONCE_RETENTION`` so replay protection survives worst-case
+            # clock drift, then delete — running on ~1/N refreshes so the
+            # cost amortizes. No background job or external scheduler needed.
+            if secrets.randbelow(_NONCE_PRUNE_SAMPLE_DENOMINATOR) == 0:
+                conn.execute(
+                    text("DELETE FROM daemon_refresh_nonces WHERE seen_at < NOW() - :retention"),
+                    {"retention": _NONCE_RETENTION},
+                )
 
             # Final issuance gate: UPDATE guarded on ``revoked_at IS NULL``.
             # If a concurrent revoke snuck in between FOR UPDATE and here

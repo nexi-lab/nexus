@@ -17,10 +17,13 @@ execute inside the SAME database transaction. Either both commit or
 neither — retries never observe a profile mutation without its matching
 audit entry.
 
-Conflict handling: advisory only. If the client provides
-``updated_at_override`` that is older than the stored ``updated_at`` AND
-the ``source_file_hash`` differs, a WARNING is logged but the write still
-proceeds ("last-write wins on updated_at").
+Conflict handling: advisory only. If the client-reported
+``client_updated_at`` (e.g. source file mtime on the daemon host) is older
+than the stored ``updated_at`` AND the ``source_file_hash`` differs, a
+WARNING is logged but the write still proceeds ("last-write wins on
+updated_at"). The daemon sends ``client_updated_at`` on every push, so
+the warning surfaces real cross-daemon write races (not just test-crafted
+scenarios).
 """
 
 from __future__ import annotations
@@ -71,9 +74,14 @@ class PushRequest(BaseModel):
             "state."
         ),
     )
-    updated_at_override: datetime | None = Field(
+    client_updated_at: datetime | None = Field(
         default=None,
-        description="Test-only: override updated_at for conflict-detection tests.",
+        description=(
+            "Client-side timestamp (e.g. source file mtime) used for advisory "
+            "cross-daemon conflict detection. Optional for legacy clients; "
+            "daemons should always populate it so stale-write warnings fire "
+            "in production, not only in tests."
+        ),
     )
 
 
@@ -206,8 +214,8 @@ def make_auth_profiles_router(*, engine: Engine, signer: JwtSigner) -> APIRouter
                 cur is not None
                 and cur.source_file_hash is not None
                 and cur.source_file_hash != req.source_file_hash
-                and req.updated_at_override is not None
-                and req.updated_at_override < cur.updated_at
+                and req.client_updated_at is not None
+                and req.client_updated_at < cur.updated_at
             ):
                 log.warning(
                     "push_conflict_stale_write tenant=%s principal=%s id=%s "

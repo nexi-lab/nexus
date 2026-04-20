@@ -8,6 +8,7 @@ import logging
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Protocol
 
 import httpx
@@ -90,6 +91,7 @@ class Pusher:
         content: bytes,
         provider: str | None = None,
         account_identifier: str,
+        source_mtime: datetime | None = None,
     ) -> None:
         """Push one source's raw content; skip if hash unchanged.
 
@@ -120,6 +122,11 @@ class Pusher:
         )
         self._queue.enqueue(profile_id, payload_hash=new_hash)
 
+        # Always populate client_updated_at. The server uses it for advisory
+        # cross-daemon conflict detection — if we omit it, a stale daemon can
+        # silently clobber a fresher write from another daemon. Prefer the
+        # source file mtime when the caller knows it, else wall-clock now().
+        client_updated_at = (source_mtime or datetime.now(UTC)).isoformat()
         payload = {
             "id": profile_id,
             "provider": provider_name,
@@ -135,6 +142,7 @@ class Pusher:
             },
             "source_file_hash": new_hash,
             "daemon_version": self._daemon_version,
+            "client_updated_at": client_updated_at,
         }
 
         jwt_str = self._jwt_provider()

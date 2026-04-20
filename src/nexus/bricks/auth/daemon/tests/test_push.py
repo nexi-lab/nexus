@@ -192,3 +192,44 @@ def test_push_rejects_unknown_sentinel(tmp_path: Path) -> None:
         pusher.push_source(
             "codex", content=b'{"token":"abc"}', provider="codex", account_identifier="unknown"
         )
+
+
+@respx.mock
+def test_push_payload_includes_client_updated_at(tmp_path: Path) -> None:
+    """Daemon always sends ``client_updated_at`` so server conflict detection fires.
+
+    Regression: previously the server's conflict-detection field was test-only
+    and was never populated in production pushes, disabling the warning for
+    real cross-daemon races. The daemon must populate it on every push.
+    """
+    from datetime import UTC, datetime
+
+    pusher, _q, _jp = _make_pusher(tmp_path)
+    route = respx.post("https://test.nexus/v1/auth-profiles").mock(
+        return_value=httpx.Response(200, json={"status": "ok"})
+    )
+
+    # With explicit source_mtime.
+    fixed = datetime(2026, 3, 5, 12, 0, 0, tzinfo=UTC)
+    pusher.push_source(
+        "codex",
+        content=b'{"token":"abc"}',
+        provider="codex",
+        account_identifier="u@example.com",
+        source_mtime=fixed,
+    )
+    import json as _json
+
+    first_body = _json.loads(route.calls.last.request.content)
+    assert first_body["client_updated_at"] == fixed.isoformat()
+
+    # Without source_mtime, daemon substitutes wall-clock NOW.
+    pusher.push_source(
+        "codex",
+        content=b'{"token":"def"}',
+        provider="codex",
+        account_identifier="u@example.com",
+    )
+    second_body = _json.loads(route.calls.last.request.content)
+    assert "client_updated_at" in second_body
+    assert second_body["client_updated_at"] != fixed.isoformat()

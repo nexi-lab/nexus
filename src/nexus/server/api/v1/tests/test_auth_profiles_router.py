@@ -301,10 +301,10 @@ def test_push_stale_write_logged_but_accepted(
         headers={"Authorization": f"Bearer {jwt_str}"},
     )
     assert r1.status_code == 200, r1.text
-    # Second write with DIFFERENT hash but EARLIER updated_at_override → conflict log.
+    # Second write with DIFFERENT hash but EARLIER client_updated_at → conflict log.
     payload = _push_payload()
     payload["source_file_hash"] = "cafef00d" * 8
-    payload["updated_at_override"] = "1970-01-01T00:00:00+00:00"
+    payload["client_updated_at"] = "1970-01-01T00:00:00+00:00"
     with caplog.at_level(logging.WARNING):
         r2 = client.post(
             "/v1/auth-profiles",

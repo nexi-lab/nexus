@@ -470,3 +470,90 @@ def test_refresh_missing_nonce_rejected(
     )
     assert r2.status_code == 401
     assert r2.json()["detail"] == "body_malformed"
+
+
+def test_refresh_prunes_old_nonce_rows(
+    client: TestClient,
+    pg_engine: Engine,
+    tenant_principal: tuple[uuid.UUID, uuid.UUID],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A successful refresh prunes nonce rows older than the retention window.
+
+    Regression: without pruning the ``daemon_refresh_nonces`` table grows
+    unbounded (one row per refresh, forever). We force the sampled prune
+    branch to run deterministically and insert a synthetic row outside the
+    retention window, then assert the refresh deletes it.
+    """
+    from nexus.server.api.v1.routers import daemon as daemon_router_mod
+
+    # Force the opportunistic prune to run on this refresh.
+    monkeypatch.setattr(daemon_router_mod.secrets, "randbelow", lambda _n: 0)
+
+    t, p = tenant_principal
+    tok = issue_enroll_token(
+        engine=pg_engine,
+        secret=SECRET,
+        tenant_id=t,
+        principal_id=p,
+        ttl=timedelta(minutes=15),
+    )
+    priv, pub_pem = _machine_keypair()
+    r = client.post(
+        "/v1/daemon/enroll",
+        json={
+            "enroll_token": tok,
+            "pubkey_pem": pub_pem.decode(),
+            "daemon_version": "0.9.20",
+            "hostname": "x",
+        },
+    )
+    machine_id = r.json()["machine_id"]
+
+    # Seed a synthetic "ancient" nonce row. seen_at is backdated well past
+    # the retention window so a correct prune must delete it.
+    ancient_nonce = uuid.uuid4()
+    with pg_engine.begin() as conn:
+        conn.execute(
+            text("SET LOCAL app.current_tenant = :t"),
+            {"t": str(t)},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO daemon_refresh_nonces "
+                "(nonce, tenant_id, machine_id, seen_at) "
+                "VALUES (:n, :t, :m, NOW() - INTERVAL '1 day')"
+            ),
+            {"n": str(ancient_nonce), "t": str(t), "m": machine_id},
+        )
+
+    body_raw = _canonical_body(
+        machine_id=machine_id,
+        tenant_id=str(t),
+        timestamp_utc=datetime.now(UTC).isoformat(),
+    )
+    sig = priv.sign(body_raw.encode("utf-8"))
+    r1 = client.post(
+        "/v1/daemon/refresh",
+        json={"body_raw": body_raw, "sig_b64": base64.b64encode(sig).decode()},
+    )
+    assert r1.status_code == 200, r1.text
+
+    # The ancient row should have been pruned by this refresh; the fresh row
+    # inserted by this refresh should still be present (inside retention).
+    with pg_engine.begin() as conn:
+        conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(t)})
+        ancient_remaining = conn.execute(
+            text("SELECT 1 FROM daemon_refresh_nonces WHERE tenant_id = :t AND nonce = :n"),
+            {"t": str(t), "n": str(ancient_nonce)},
+        ).fetchone()
+        fresh_count = conn.execute(
+            text(
+                "SELECT COUNT(*) FROM daemon_refresh_nonces "
+                "WHERE tenant_id = :t AND machine_id = :m "
+                "AND seen_at > NOW() - INTERVAL '1 minute'"
+            ),
+            {"t": str(t), "m": machine_id},
+        ).scalar()
+    assert ancient_remaining is None
+    assert fresh_count == 1

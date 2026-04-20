@@ -218,6 +218,7 @@ dev = [
     "freezegun>=1.4.0",  # Time mocking for tests
     "hypothesis>=6.0.0",  # Property-based testing for crypto/identity (Issue #1355)
     "syrupy>=4.6.0",  # Snapshot testing for doctor output (Issue #3741)
+    "respx>=0.22.0",  # httpx mocking for daemon JWT client tests (#3804)
 
     # Code Quality
     "ruff>=0.14.0",

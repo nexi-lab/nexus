@@ -28,7 +28,7 @@ classifiers = [
 # monorepo package; nexus-fs is the slim standalone subset. A future release
 # will formalize the dependency direction (nexus-ai-fs depends on nexus-fs).
 
-# ~16 base dependencies — slim by design
+# ~17 base dependencies — slim by design (httpx enables universal OAuth)
 dependencies = [
     "pydantic[email]>=2.0",
     "click>=8.0",
@@ -40,6 +40,7 @@ dependencies = [
     "pyyaml>=6.0",
     "platformdirs>=4.0",
     "cryptography>=41.0",
+    "httpx>=0.28",
 ]
 
 [project.optional-dependencies]

@@ -12,10 +12,19 @@ ARG USE_CHINA_MIRROR
 RUN if [ "$USE_CHINA_MIRROR" = "true" ]; then \
         go env -w GOPROXY=https://goproxy.cn,direct GOSUMDB=off; \
     fi
+# Retry ``go install`` up to 3 times with exponential backoff: the Google
+# module proxy occasionally returns TLS handshake timeouts mid-dependency-
+# download (see develop CI run 24639873826), and those failures fail the
+# multi-arch image build for the whole day unless the job is rerun.
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 go install github.com/sourcegraph/zoekt/cmd/zoekt-index@latest && \
-    CGO_ENABLED=0 go install github.com/sourcegraph/zoekt/cmd/zoekt-webserver@latest
+    for i in 1 2 3; do \
+        CGO_ENABLED=0 go install github.com/sourcegraph/zoekt/cmd/zoekt-index@latest && \
+        CGO_ENABLED=0 go install github.com/sourcegraph/zoekt/cmd/zoekt-webserver@latest && \
+        break || { echo "zoekt go install attempt $i failed; retrying..."; sleep $((i * 5)); }; \
+    done; \
+    command -v zoekt-index >/dev/null 2>&1 || (echo "zoekt-index missing after retries" >&2; exit 1); \
+    command -v zoekt-webserver >/dev/null 2>&1 || (echo "zoekt-webserver missing after retries" >&2; exit 1)
 
 # ---------- Stage 2: Build Python + Rust ----------
 FROM python:3.14-slim AS builder

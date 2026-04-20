@@ -132,6 +132,51 @@ def test_push_happy_path(
     assert bytes(row.ciphertext) == b"\x01" * 32
 
 
+def test_push_writes_audit_row(
+    client: TestClient,
+    setup_tenant: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
+    signer: JwtSigner,
+    pg_engine: Engine,
+) -> None:
+    """Every successful push inserts an append-only auth_profile_writes row."""
+    t, p, m = setup_tenant
+    jwt_str = signer.sign(
+        DaemonClaims(tenant_id=t, principal_id=p, machine_id=m),
+        ttl=timedelta(hours=1),
+    )
+    # Two pushes with different hashes → two audit rows.
+    r1 = client.post(
+        "/v1/auth-profiles",
+        json=_push_payload(),
+        headers={"Authorization": f"Bearer {jwt_str}"},
+    )
+    assert r1.status_code == 200, r1.text
+    payload2 = _push_payload()
+    payload2["source_file_hash"] = "feedface" * 8
+    r2 = client.post(
+        "/v1/auth-profiles",
+        json=payload2,
+        headers={"Authorization": f"Bearer {jwt_str}"},
+    )
+    assert r2.status_code == 200, r2.text
+
+    with pg_engine.begin() as conn:
+        conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(t)})
+        rows = conn.execute(
+            text(
+                "SELECT source_file_hash, machine_id, auth_profile_id "
+                "FROM auth_profile_writes "
+                "WHERE tenant_id = :t AND principal_id = :p "
+                "ORDER BY written_at ASC"
+            ),
+            {"t": t, "p": p},
+        ).fetchall()
+    assert len(rows) == 2
+    assert rows[0].source_file_hash == "deadbeef" * 8
+    assert rows[1].source_file_hash == "feedface" * 8
+    assert all(r.machine_id == m and r.auth_profile_id == "codex/user@example.com" for r in rows)
+
+
 def test_push_missing_auth(client: TestClient) -> None:
     r = client.post("/v1/auth-profiles", json=_push_payload())
     assert r.status_code == 401

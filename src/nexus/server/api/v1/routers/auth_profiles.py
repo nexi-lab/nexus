@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import uuid
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Header, HTTPException, status
@@ -174,6 +175,30 @@ def make_auth_profiles_router(*, engine: Engine, signer: JwtSigner) -> APIRouter
             daemon_version=None,
             machine_id=claims.machine_id,
         )
+
+        # Append-only audit record — one row per push, never updated or deleted.
+        with engine.begin() as conn:
+            conn.execute(
+                text("SET LOCAL app.current_tenant = :t"),
+                {"t": str(claims.tenant_id)},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO auth_profile_writes "
+                    "(id, tenant_id, principal_id, auth_profile_id, machine_id, "
+                    " daemon_version, source_file_hash) "
+                    "VALUES (:id, :tid, :pid, :apid, :mid, :ver, :hash)"
+                ),
+                {
+                    "id": str(uuid.uuid4()),
+                    "tid": str(claims.tenant_id),
+                    "pid": str(claims.principal_id),
+                    "apid": req.id,
+                    "mid": str(claims.machine_id),
+                    "ver": None,
+                    "hash": req.source_file_hash,
+                },
+            )
 
         return {"status": "ok"}
 

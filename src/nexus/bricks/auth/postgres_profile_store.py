@@ -209,6 +209,20 @@ _TABLE_STATEMENTS: tuple[str, ...] = (
     """,
     "CREATE INDEX IF NOT EXISTS idx_daemon_enroll_tokens_expires "
     "ON daemon_enroll_tokens(expires_at)",
+    """
+    CREATE TABLE IF NOT EXISTS auth_profile_writes (
+        id                UUID PRIMARY KEY,
+        tenant_id         UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+        principal_id      UUID NOT NULL,
+        auth_profile_id   TEXT NOT NULL,
+        machine_id        UUID NOT NULL,
+        daemon_version    TEXT,
+        source_file_hash  TEXT,
+        written_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_auth_profile_writes_tenant_profile "
+    "ON auth_profile_writes(tenant_id, principal_id, auth_profile_id, written_at DESC)",
 )
 
 # RLS statements. Run LAST so the backfill in _upgrade_shape_in_place is not
@@ -226,6 +240,8 @@ _RLS_STATEMENTS: tuple[str, ...] = (
     "ALTER TABLE daemon_machines FORCE ROW LEVEL SECURITY",
     "ALTER TABLE daemon_enroll_tokens ENABLE ROW LEVEL SECURITY",
     "ALTER TABLE daemon_enroll_tokens FORCE ROW LEVEL SECURITY",
+    "ALTER TABLE auth_profile_writes ENABLE ROW LEVEL SECURITY",
+    "ALTER TABLE auth_profile_writes FORCE ROW LEVEL SECURITY",
 )
 
 # Policies are separate because ``CREATE POLICY`` lacks IF NOT EXISTS in
@@ -259,6 +275,11 @@ _POLICY_STATEMENTS: tuple[str, ...] = (
     "DROP POLICY IF EXISTS tenant_isolation_daemon_enroll_tokens ON daemon_enroll_tokens",
     """
     CREATE POLICY tenant_isolation_daemon_enroll_tokens ON daemon_enroll_tokens
+        USING (tenant_id = current_setting('app.current_tenant', true)::UUID)
+    """,
+    "DROP POLICY IF EXISTS tenant_isolation_auth_profile_writes ON auth_profile_writes",
+    """
+    CREATE POLICY tenant_isolation_auth_profile_writes ON auth_profile_writes
         USING (tenant_id = current_setting('app.current_tenant', true)::UUID)
     """,
 )

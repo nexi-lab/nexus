@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 _auth_provider: DatabaseLocalAuth | None = None
 _oauth_provider: OAuthUserAuth | None = None
 _nexus_fs_instance: Any | None = None
+_synthesized_auth_provider: DatabaseLocalAuth | None = None
 
 
 def set_auth_provider(provider: DatabaseLocalAuth) -> None:
@@ -31,18 +32,50 @@ def set_auth_provider(provider: DatabaseLocalAuth) -> None:
     _auth_provider = provider
 
 
+def _synthesize_from_oauth() -> DatabaseLocalAuth | None:
+    """Build a DatabaseLocalAuth from the OAuth provider's state.
+
+    In static-auth mode the server doesn't inject a DatabaseLocalAuth, but
+    the OAuth provider (when configured) already holds a SQLAlchemy
+    session_factory plus the JWT secret that signed the token being verified.
+    Reusing both keeps the synthesized provider's tokens mutually verifiable
+    with the ones OAuthUserAuth issues. Returns None if OAuth isn't set up.
+    """
+    global _synthesized_auth_provider
+    if _synthesized_auth_provider is not None:
+        return _synthesized_auth_provider
+    if _oauth_provider is None:
+        return None
+    _synthesized_auth_provider = DatabaseLocalAuth(
+        session_factory=_oauth_provider.session_factory,
+        jwt_secret=_oauth_provider.local_auth.jwt_secret,
+        token_expiry=_oauth_provider.local_auth.token_expiry,
+    )
+    return _synthesized_auth_provider
+
+
 def get_auth_provider() -> DatabaseLocalAuth:
     """Return the injected auth provider (used as ``Depends(get_auth_provider)``).
 
+    Falls back to a DatabaseLocalAuth synthesized from the OAuth provider when
+    no auth provider was explicitly injected (static-auth mode): the OAuth
+    provider already has a session_factory + jwt_secret, so reusing them lets
+    ``/auth/me`` and similar JWT-gated endpoints work for OAuth-logged-in
+    users even without a standalone DatabaseLocalAuth on the server.
+
     Raises:
-        HTTPException: If auth provider has not been injected.
+        HTTPException: When neither a direct auth provider nor an OAuth
+            provider is available.
     """
-    if _auth_provider is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Authentication provider not configured",
-        )
-    return _auth_provider
+    if _auth_provider is not None:
+        return _auth_provider
+    fallback = _synthesize_from_oauth()
+    if fallback is not None:
+        return fallback
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="Authentication provider not configured",
+    )
 
 
 def set_oauth_provider(provider: OAuthUserAuth) -> None:

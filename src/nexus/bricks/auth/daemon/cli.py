@@ -53,6 +53,40 @@ def _profile_paths(profile: str) -> dict[str, Path]:
     }
 
 
+_INSECURE_LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def _validate_server_url(server: str, *, allow_insecure_localhost: bool) -> None:
+    """Refuse cleartext http:// unless explicitly opted into for localhost.
+
+    Enroll tokens, signed refresh requests, and bearer JWTs all traverse this
+    URL. Over plain http they would be captured and replayed by anyone on the
+    path, enabling machine impersonation. We therefore require ``https://``
+    by default, with a single narrow exception: the operator can opt into
+    ``http://localhost``/``127.0.0.1``/``::1`` for local dev loops by passing
+    ``--allow-insecure-localhost``.
+    """
+    from urllib.parse import urlparse
+
+    parsed = urlparse(server)
+    if parsed.scheme == "https":
+        return
+    if parsed.scheme != "http":
+        raise click.ClickException(
+            "server URL scheme must be https (or http with --allow-insecure-localhost "
+            f"for local dev); got {parsed.scheme!r}"
+        )
+    host = (parsed.hostname or "").lower()
+    if allow_insecure_localhost and host in _INSECURE_LOCAL_HOSTS:
+        return
+    raise click.ClickException(
+        "server URL uses cleartext http://, which exposes enroll tokens, "
+        "refresh signatures, and bearer JWTs to network capture. Use https:// "
+        "in production. For local dev, pass --allow-insecure-localhost and "
+        "target localhost/127.0.0.1/::1."
+    )
+
+
 def _resolve_profile(
     profile: str | None,
     *,
@@ -92,7 +126,22 @@ def daemon() -> None:
     default=None,
     help="Profile name (default: sanitized server host, e.g. 'localhost-2026').",
 )
-def join_cmd(server: str, enroll_token: str, profile: str | None) -> None:
+@click.option(
+    "--allow-insecure-localhost",
+    is_flag=True,
+    default=False,
+    help=(
+        "Allow http:// against localhost/127.0.0.1/::1 for local dev. "
+        "Production MUST use https:// — this flag does not relax policy for "
+        "any non-local host."
+    ),
+)
+def join_cmd(
+    server: str,
+    enroll_token: str,
+    profile: str | None,
+    allow_insecure_localhost: bool,
+) -> None:
     """Enroll this machine with the server, writing ~/.nexus/daemons/<profile>/."""
     import platform
 
@@ -101,6 +150,8 @@ def join_cmd(server: str, enroll_token: str, profile: str | None) -> None:
 
     from nexus.bricks.auth.daemon.config import DaemonConfig, default_profile_for
     from nexus.bricks.auth.daemon.keystore import load_or_create_keypair
+
+    _validate_server_url(server, allow_insecure_localhost=allow_insecure_localhost)
 
     resolved_profile = profile or default_profile_for(server)
     paths = _profile_paths(resolved_profile)
@@ -196,6 +247,16 @@ def join_cmd(server: str, enroll_token: str, profile: str | None) -> None:
     default=None,
     help="Profile name (default: sanitized server host, e.g. 'localhost-2026').",
 )
+@click.option(
+    "--allow-insecure-localhost",
+    is_flag=True,
+    default=False,
+    help=(
+        "Allow http:// against localhost/127.0.0.1/::1 for local dev. "
+        "Bootstrap is a dev-only workflow; production should use "
+        "`nexus auth enroll-token` over https."
+    ),
+)
 def bootstrap_cmd(
     server: str,
     admin_user: str,
@@ -203,6 +264,7 @@ def bootstrap_cmd(
     tenant_name: str,
     principal_label: str | None,
     profile: str | None,
+    allow_insecure_localhost: bool,
 ) -> None:
     """Dev-loop one-shot: hit the running server's admin-bootstrap endpoint
     to mint tenant+principal+enroll-token, then enroll this laptop.
@@ -217,6 +279,8 @@ def bootstrap_cmd(
     import platform
 
     import httpx
+
+    _validate_server_url(server, allow_insecure_localhost=allow_insecure_localhost)
 
     label = principal_label or platform.node() or "dev-laptop"
     token = admin_token or os.environ.get("NEXUS_ADMIN_BOOTSTRAP_TOKEN", "")
@@ -243,19 +307,32 @@ def bootstrap_cmd(
     click.echo(f"bootstrap ok: tenant_id={body['tenant_id']} principal_id={body['principal_id']}")
 
     # Re-use the existing join command in-process (preserves all the side
-    # effects: keystore, JWT cache, server pubkey, Keychain seed).
+    # effects: keystore, JWT cache, server pubkey, Keychain seed). Pass the
+    # same insecure-localhost policy through so `join` doesn't re-reject a
+    # URL that the operator already explicitly approved at bootstrap time.
     ctx = click.get_current_context()
     ctx.invoke(
         join_cmd,
         server=server,
         enroll_token=body["enroll_token"],
         profile=profile,
+        allow_insecure_localhost=allow_insecure_localhost,
     )
 
 
 @daemon.command("run")
 @click.option("--profile", default=None, help="Profile name (auto-selected if only one exists).")
-def run_cmd(profile: str | None) -> None:
+@click.option(
+    "--allow-insecure-localhost",
+    is_flag=True,
+    default=False,
+    help=(
+        "Permit a cleartext http:// URL in the profile config, but only when "
+        "it targets localhost/127.0.0.1/::1. Guards against a tampered config "
+        "silently downgrading the daemon to http in production."
+    ),
+)
+def run_cmd(profile: str | None, allow_insecure_localhost: bool) -> None:
     """Main daemon loop: watch source files + push changes + renew JWT."""
     from nexus.bricks.auth.daemon.adapters import DEFAULT_SUBPROCESS_SOURCES
     from nexus.bricks.auth.daemon.config import DaemonConfig
@@ -268,6 +345,11 @@ def run_cmd(profile: str | None) -> None:
     paths = _profile_paths(resolved_profile)
 
     cfg = DaemonConfig.load(paths["config"])
+    # Re-validate the URL every boot. ``join`` already enforces this, but the
+    # config file is a plain TOML on disk — a tampered or hand-edited file
+    # could downgrade the daemon to http:// against an arbitrary host on
+    # every restart. Cheap belt-and-suspenders.
+    _validate_server_url(cfg.server_url, allow_insecure_localhost=allow_insecure_localhost)
     queue = PushQueue(paths["queue"])
     jwt_client = JwtClient(
         server_url=cfg.server_url,

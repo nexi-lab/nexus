@@ -175,6 +175,40 @@ def test_install_cmd_resolves_nexus_from_path(
     assert captured["profile"] == "work"
 
 
+def test_validate_server_url_accepts_https() -> None:
+    """https is always permitted regardless of host."""
+    daemon_cli._validate_server_url("https://nexus.example.com", allow_insecure_localhost=False)
+    daemon_cli._validate_server_url("https://localhost:2026", allow_insecure_localhost=False)
+
+
+def test_validate_server_url_rejects_plain_http_by_default() -> None:
+    """Refuse http:// even on localhost when the opt-in flag is not set.
+
+    Regression: auth material over cleartext http permits MITM impersonation.
+    The default MUST be https; localhost http requires an explicit opt-in.
+    """
+    with pytest.raises(click.ClickException, match="cleartext http"):
+        daemon_cli._validate_server_url("http://nexus.example.com", allow_insecure_localhost=False)
+    with pytest.raises(click.ClickException, match="cleartext http"):
+        daemon_cli._validate_server_url("http://localhost:2026", allow_insecure_localhost=False)
+
+
+def test_validate_server_url_allows_http_on_localhost_with_opt_in() -> None:
+    """Opt-in flag narrowly permits http:// only for localhost/127.0.0.1/::1."""
+    daemon_cli._validate_server_url("http://localhost:2026", allow_insecure_localhost=True)
+    daemon_cli._validate_server_url("http://127.0.0.1:2026", allow_insecure_localhost=True)
+    daemon_cli._validate_server_url("http://[::1]:2026", allow_insecure_localhost=True)
+    # Opt-in does NOT relax policy for non-local hosts.
+    with pytest.raises(click.ClickException, match="cleartext http"):
+        daemon_cli._validate_server_url("http://nexus.example.com", allow_insecure_localhost=True)
+
+
+def test_validate_server_url_rejects_unknown_scheme() -> None:
+    """Schemes other than http/https (e.g. ftp, ws) fail hard."""
+    with pytest.raises(click.ClickException, match="must be https"):
+        daemon_cli._validate_server_url("ftp://nexus.example.com", allow_insecure_localhost=False)
+
+
 def test_install_cmd_executable_override_wins(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

@@ -34,7 +34,7 @@ import uuid
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Header, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
@@ -80,9 +80,31 @@ class PushRequest(BaseModel):
             "Client-side timestamp (e.g. source file mtime) used for advisory "
             "cross-daemon conflict detection. Optional for legacy clients; "
             "daemons should always populate it so stale-write warnings fire "
-            "in production, not only in tests."
+            "in production, not only in tests. Must be timezone-aware — "
+            "naive datetimes are rejected because comparing them to the "
+            "timezone-aware DB value raises TypeError and would surface as "
+            "a 500."
         ),
     )
+
+    @field_validator("client_updated_at")
+    @classmethod
+    def _require_tz_aware_client_updated_at(cls, v: datetime | None) -> datetime | None:
+        """Reject naive datetimes at the API boundary.
+
+        A naive ``client_updated_at`` compared against a tz-aware
+        ``cur.updated_at`` from Postgres raises ``TypeError`` inside the
+        conflict-detection branch, causing an otherwise-valid push to
+        return 500 instead of a clean 422. Fail fast at validation so the
+        handler path only ever sees tz-aware values.
+        """
+        if v is not None and v.tzinfo is None:
+            raise ValueError(
+                "client_updated_at must be timezone-aware (include tz offset, "
+                "e.g. '2026-03-05T12:00:00+00:00'); naive datetimes would break "
+                "server-side comparison"
+            )
+        return v
 
 
 def _verify_auth(

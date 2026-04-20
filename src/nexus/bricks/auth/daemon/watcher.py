@@ -10,6 +10,7 @@ from pathlib import Path
 from watchdog.events import (
     FileSystemEvent,
     FileSystemEventHandler,
+    FileSystemMovedEvent,
 )
 from watchdog.observers import Observer
 from watchdog.observers.api import BaseObserver
@@ -97,17 +98,49 @@ class _TargetHandler(FileSystemEventHandler):
     def on_created(self, event: FileSystemEvent) -> None:
         self._maybe_schedule(event)
 
+    def on_moved(self, event: FileSystemEvent) -> None:
+        """Trigger when an atomic temp-file rename lands at the target path.
+
+        The canonical safe way to update a credential file is to write a
+        tmp file then ``rename`` it over the target. Under ``watchdog`` that
+        surfaces as ``FileSystemMovedEvent`` with ``dest_path`` set to the
+        target — neither ``on_modified`` nor ``on_created`` fires. Without
+        handling this, the daemon silently misses credential rotations and
+        central state goes stale.
+        """
+        # Prefer dest_path (where the file landed); fall back to src_path
+        # for unusual backends that only populate src_path.
+        dest_raw = getattr(event, "dest_path", None) or event.src_path
+        dest_path = dest_raw.decode() if isinstance(dest_raw, bytes) else dest_raw
+        if self._path_matches_target(dest_path, event):
+            self._schedule()
+            return
+        # Also handle the rename-AWAY case: if the target was moved out of
+        # the way, a rescheduling callback lets ``_fire`` discover the new
+        # content (if any other writer replaces it) without waiting for a
+        # subsequent modify event that may never come.
+        src_raw = getattr(event, "src_path", None)
+        src_path = src_raw.decode() if isinstance(src_raw, bytes) else src_raw
+        if self._path_matches_target(src_path, event):
+            self._schedule()
+
     def _maybe_schedule(self, event: FileSystemEvent) -> None:
-        if getattr(event, "is_directory", False):
-            return
         src_path = getattr(event, "src_path", None)
-        if src_path is None:
-            return
+        if self._path_matches_target(src_path, event):
+            self._schedule()
+
+    def _path_matches_target(self, candidate: str | None, event: FileSystemEvent) -> bool:
+        if getattr(event, "is_directory", False):
+            return False
+        if not candidate:
+            return False
         try:
-            resolved = Path(src_path).resolve()
+            resolved = Path(candidate).resolve()
             target_resolved = self._target.resolve()
         except OSError:
-            return
-        if resolved != target_resolved:
-            return
-        self._schedule()
+            return False
+        return resolved == target_resolved
+
+
+# Re-export for backwards compat / narrow type imports in tests.
+__all__ = ["SourceWatcher", "FileSystemMovedEvent"]

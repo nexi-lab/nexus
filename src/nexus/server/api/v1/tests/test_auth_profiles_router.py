@@ -313,3 +313,31 @@ def test_push_stale_write_logged_but_accepted(
         )
     assert r2.status_code == 200, r2.text
     assert any("push_conflict_stale_write" in rec.getMessage() for rec in caplog.records)
+
+
+def test_push_rejects_naive_client_updated_at(
+    client: TestClient,
+    setup_tenant: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
+    signer: JwtSigner,
+) -> None:
+    """A naive (tz-less) ``client_updated_at`` must 422, not 500.
+
+    Regression: previously the field was accepted verbatim. When the server
+    tried to compare it to the tz-aware stored ``updated_at``, Python raised
+    ``TypeError`` and the push surfaced as 500. Reject at validation so the
+    error is attributable to the client and the handler never runs.
+    """
+    t, p, m = setup_tenant
+    jwt_str = signer.sign(
+        DaemonClaims(tenant_id=t, principal_id=p, machine_id=m),
+        ttl=timedelta(hours=1),
+    )
+    payload = _push_payload()
+    payload["client_updated_at"] = "2026-03-05T12:00:00"  # naive — no tz
+    resp = client.post(
+        "/v1/auth-profiles",
+        json=payload,
+        headers={"Authorization": f"Bearer {jwt_str}"},
+    )
+    assert resp.status_code == 422, resp.text
+    assert "timezone-aware" in resp.text.lower()

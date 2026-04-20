@@ -97,3 +97,14 @@ def test_publish_failure_does_not_break_request(app: Starlette, monkeypatch) -> 
     resp = client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "initialize"})
     assert resp.status_code == 200
     assert len(captured) == 1
+
+
+def test_bearer_case_insensitive(app: Starlette, captured_records: list[dict]) -> None:
+    client = TestClient(app)
+    client.post(
+        "/mcp",
+        json={"jsonrpc": "2.0", "id": 1, "method": "initialize"},
+        headers={"Authorization": "bearer sk-abc"},  # lowercase bearer
+    )
+    assert len(captured_records) == 1
+    assert captured_records[0]["token_hash"] is not None

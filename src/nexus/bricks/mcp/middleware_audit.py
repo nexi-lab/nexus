@@ -11,10 +11,7 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import ClientDisconnect, Request
-from starlette.responses import Response
-from starlette.types import Message
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 logger = logging.getLogger("nexus.mcp.audit")
 
@@ -48,9 +45,10 @@ async def _publish_record(record: dict[str, Any]) -> None:
 
 
 def _hash_token(auth_header: str) -> str | None:
-    if not auth_header.startswith("Bearer "):
+    lowered = auth_header.lower()
+    if not lowered.startswith("bearer "):
         return None
-    token = auth_header[7:]
+    token = auth_header[7:]  # preserves original case of the token
     return hashlib.sha256(token.encode("utf-8")).hexdigest()[:16]
 
 
@@ -72,97 +70,87 @@ def _extract_rpc_fields(body_bytes: bytes) -> tuple[str | None, str | None]:
     return rpc_method, tool_name
 
 
-async def _read_and_replay_body(request: Request) -> bytes:
-    """Read the request body once; rewire `scope["receive"]` to replay it."""
-    body = await request.body()
-    replayed = {"called": False}
+class MCPAuditLogMiddleware:
+    """Pure ASGI middleware — buffers body, forwards, emits audit record."""
 
-    async def receive() -> Message:
-        if not replayed["called"]:
-            replayed["called"] = True
-            return {"type": "http.request", "body": body, "more_body": False}
-        return {"type": "http.disconnect"}
+    _pending_tasks: set[Any] = set()  # class-level; retains task references mid-flight
 
-    # Rewire the receive callable so downstream handlers can still read the body.
-    request._receive = receive
-    return body
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
 
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
 
-class MCPAuditLogMiddleware(BaseHTTPMiddleware):
-    """Emit a structured record per request; fail-safe for downstream."""
-
-    async def dispatch(self, request: Request, call_next: Any) -> Response:
         start = time.monotonic()
-        token_hash = _hash_token(request.headers.get("Authorization", ""))
-        user_agent = request.headers.get("User-Agent", "")
-        rpc_method: str | None = None
-        tool_name: str | None = None
 
+        # Buffer request body
+        body_chunks: list[bytes] = []
+        while True:
+            message = await receive()
+            if message["type"] == "http.request":
+                body_chunks.append(message.get("body", b""))
+                if not message.get("more_body", False):
+                    break
+            elif message["type"] == "http.disconnect":
+                # Client gone before we ever got a response
+                self._record_from_scope(scope, start=start, status=499)
+                return
+        body = b"".join(body_chunks)
+
+        # Build a receive that replays the buffered body then signals disconnect
+        sent = {"done": False}
+
+        async def wrapped_receive() -> Message:
+            if not sent["done"]:
+                sent["done"] = True
+                return {"type": "http.request", "body": body, "more_body": False}
+            return {"type": "http.disconnect"}
+
+        # Capture the response status
+        status_holder = {"code": 500}
+
+        async def wrapped_send(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                status_holder["code"] = message["status"]
+            await send(message)
+
+        rpc_method, tool_name = _extract_rpc_fields(body)
         try:
-            body = await _read_and_replay_body(request)
-            rpc_method, tool_name = _extract_rpc_fields(body)
-        except ClientDisconnect:
-            self._record(
-                status=499,
+            await self.app(scope, wrapped_receive, wrapped_send)
+        finally:
+            self._record_from_scope(
+                scope,
                 start=start,
-                token_hash=token_hash,
-                rpc_method=None,
-                tool_name=None,
-                user_agent=user_agent,
-                zone_id=None,
-                subject_id=None,
+                status=status_holder["code"],
+                rpc_method=rpc_method,
+                tool_name=tool_name,
             )
-            raise
-        except Exception:  # defensive: body read failure must not drop the request
-            logger.warning("audit body peek failed", exc_info=True)
 
-        status: int
-        zone_id: str | None = None
-        subject_id: str | None = None
-        response: Response | None = None
-        try:
-            response = await call_next(request)
-            status = response.status_code
-        except ClientDisconnect:
-            status = 499
-        else:
-            # best-effort: identity fields populated by downstream handler via scope
-            scope_state = request.scope.get("nexus.identity") or {}
-            zone_id = scope_state.get("zone_id")
-            subject_id = scope_state.get("subject_id")
-
-        self._record(
-            status=status,
-            start=start,
-            token_hash=token_hash,
-            rpc_method=rpc_method,
-            tool_name=tool_name,
-            user_agent=user_agent,
-            zone_id=zone_id,
-            subject_id=subject_id,
-        )
-        if response is None:
-            raise ClientDisconnect()
-        return response
-
-    def _record(
+    def _record_from_scope(
         self,
+        scope: Scope,
         *,
-        status: int,
         start: float,
-        token_hash: str | None,
-        rpc_method: str | None,
-        tool_name: str | None,
-        user_agent: str,
-        zone_id: str | None,
-        subject_id: str | None,
+        status: int,
+        rpc_method: str | None = None,
+        tool_name: str | None = None,
     ) -> None:
+        headers = {
+            k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope.get("headers", [])
+        }
+        auth = headers.get("authorization", "")
+        token_hash = _hash_token(auth)
+        user_agent = headers.get("user-agent", "")
+        identity = scope.get("nexus.identity") or {}
+
         record = {
             "ts": datetime.now(tz=UTC).isoformat(),
             "event": "mcp.request",
             "token_hash": token_hash,
-            "zone_id": zone_id,
-            "subject_id": subject_id,
+            "zone_id": identity.get("zone_id"),
+            "subject_id": identity.get("subject_id"),
             "rpc_method": rpc_method,
             "tool_name": tool_name,
             "status_code": status,
@@ -171,15 +159,18 @@ class MCPAuditLogMiddleware(BaseHTTPMiddleware):
         }
         try:
             _emit_stdout_record(record)
-        except Exception:  # pragma: no cover - stdout is resilient
+        except Exception:
             logger.warning("audit stdout emit failed", exc_info=True)
 
+        # Schedule fire-and-forget publish and RETAIN the task reference
+        # so it isn't garbage-collected mid-flight (asyncio docs warn about this).
         try:
             loop = asyncio.get_running_loop()
-            loop.create_task(self._safe_publish(record))
         except RuntimeError:
-            # No running loop (shouldn't happen under ASGI); skip publish.
-            pass
+            return
+        task = loop.create_task(self._safe_publish(record))
+        self._pending_tasks.add(task)
+        task.add_done_callback(self._pending_tasks.discard)
 
     @staticmethod
     async def _safe_publish(record: dict[str, Any]) -> None:

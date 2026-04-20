@@ -153,6 +153,19 @@ def join_cmd(server: str, enroll_token: str, profile: str | None) -> None:
         os.close(fd)
     os.chmod(paths["jwt_cache"], 0o600)
 
+    # Also push the fresh JWT into the per-profile cache (Keychain on macOS /
+    # Secret Service on Linux, else file). Prevents a prior enrollment's
+    # cached JWT from poisoning the new one when the OS keyring survives a
+    # `rm -rf ~/.nexus/daemons/<profile>/` and the profile name collides
+    # (e.g., same server URL).
+    from nexus.bricks.auth.daemon.jwt_cache import make_jwt_cache
+
+    try:
+        cache = make_jwt_cache(paths["jwt_cache"], service=_keyring_service_for(resolved_profile))
+        cache.store(body["jwt"])
+    except Exception as exc:  # noqa: BLE001  # keyring-backend errors must not fail join
+        click.echo(f"warning: could not seed JWT cache ({exc}); daemon will refresh on first run")
+
     click.echo(
         f"daemon joined: profile={cfg.profile} machine_id={cfg.machine_id} dir={paths['dir']}"
     )

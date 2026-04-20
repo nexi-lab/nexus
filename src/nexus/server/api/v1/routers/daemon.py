@@ -89,18 +89,10 @@ def make_daemon_router(
 
     @router.post("/enroll", response_model=EnrollResponse)
     def enroll(req: EnrollRequest) -> EnrollResponse:
-        try:
-            claims = consume_enroll_token(
-                engine=engine, secret=enroll_secret, token=req.enroll_token
-            )
-        except EnrollTokenError as exc:
-            code = exc.args[0] if exc.args else "enroll_token_invalid"
-            if code == "enroll_token_reused":
-                raise HTTPException(status.HTTP_409_CONFLICT, detail=code) from exc
-            # enroll_token_invalid / enroll_token_expired → 401
-            raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail=code) from exc
-
-        # Parse PEM → require Ed25519 → store as DER in daemon_machines.pubkey.
+        # Parse the pubkey FIRST, before claiming the single-use token.
+        # If we consumed the token upfront and then bailed on a malformed
+        # pubkey, the operator would have to re-mint a fresh token for
+        # every retry — an easy denial-of-enrollment path.
         try:
             pub = serialization.load_pem_public_key(req.pubkey_pem.encode())
         except Exception as exc:
@@ -113,11 +105,26 @@ def make_daemon_router(
         )
 
         machine_id = uuid.uuid4()
+        # One transaction: consume token → insert machine. If the INSERT
+        # raises, the outer ``engine.begin()`` context rolls back, leaving
+        # ``used_at`` NULL so the caller can retry with the same token.
         with engine.begin() as conn:
-            conn.execute(
-                text("SET LOCAL app.current_tenant = :t"),
-                {"t": str(claims.tenant_id)},
-            )
+            try:
+                claims = consume_enroll_token(
+                    engine=engine,
+                    secret=enroll_secret,
+                    token=req.enroll_token,
+                    conn=conn,
+                )
+            except EnrollTokenError as exc:
+                code = exc.args[0] if exc.args else "enroll_token_invalid"
+                if code == "enroll_token_reused":
+                    raise HTTPException(status.HTTP_409_CONFLICT, detail=code) from exc
+                # enroll_token_invalid / enroll_token_expired → 401
+                raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail=code) from exc
+            # SET LOCAL is already applied inside consume_enroll_token; the
+            # daemon_machines INSERT runs in the same transaction so RLS
+            # evaluates against the same tenant.
             conn.execute(
                 text(
                     "INSERT INTO daemon_machines "
@@ -191,9 +198,19 @@ def make_daemon_router(
         if ts.tzinfo is None:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="body_malformed")
 
-        # ---- Tenant-scoped lookup (RLS-safe) ----------------------------
-        # Set the tenant GUC *before* the SELECT so RLS gates the read to the
-        # claimed tenant. Defense-in-depth: also filter by tenant_id in SQL.
+        # ---- Clock skew (cheap check before any DB work) ----------------
+        now = datetime.now(UTC)
+        if abs(now - ts) > _REFRESH_SKEW:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="clock_skew")
+
+        # ---- One transaction: lookup + signature check + issuance gate --
+        # Previously the lookup, signature verification, and last_seen_at
+        # UPDATE ran across two separate transactions with a no-guard UPDATE
+        # at the end. A revoke that landed between the two windows would
+        # still mint a fresh 1h JWT. The fix: acquire a row lock with
+        # ``SELECT ... FOR UPDATE`` so any concurrent revoke blocks until
+        # this tx commits; then issue the token only if the final
+        # revocation-guarded UPDATE actually matches.
         with engine.begin() as conn:
             conn.execute(
                 text("SET LOCAL app.current_tenant = :t"),
@@ -202,42 +219,48 @@ def make_daemon_router(
             row = conn.execute(
                 text(
                     "SELECT tenant_id, principal_id, pubkey, revoked_at "
-                    "FROM daemon_machines WHERE id = :m AND tenant_id = :t"
+                    "FROM daemon_machines "
+                    "WHERE id = :m AND tenant_id = :t "
+                    "FOR UPDATE"
                 ),
                 {"m": str(machine_id), "t": str(tenant_id)},
             ).fetchone()
-        if row is None:
-            raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="machine_unknown")
-        if row.revoked_at is not None:
-            raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="machine_revoked")
+            if row is None:
+                raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="machine_unknown")
+            if row.revoked_at is not None:
+                raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="machine_revoked")
 
-        # ---- Clock skew -------------------------------------------------
-        now = datetime.now(UTC)
-        if abs(now - ts) > _REFRESH_SKEW:
-            raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="clock_skew")
+            # Signature verification over raw bytes — safe to do inside the
+            # tx, holding only the row lock we already acquired.
+            try:
+                pub = serialization.load_der_public_key(row.pubkey)
+            except Exception as exc:
+                raise HTTPException(
+                    status.HTTP_401_UNAUTHORIZED, detail="signature_invalid"
+                ) from exc
+            if not isinstance(pub, Ed25519PublicKey):
+                raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="signature_invalid")
+            try:
+                pub.verify(sig, req.body_raw.encode("utf-8"))
+            except InvalidSignature as exc:
+                raise HTTPException(
+                    status.HTTP_401_UNAUTHORIZED, detail="signature_invalid"
+                ) from exc
 
-        # ---- Signature verification over raw bytes ----------------------
-        try:
-            pub = serialization.load_der_public_key(row.pubkey)
-        except Exception as exc:
-            raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="signature_invalid") from exc
-        if not isinstance(pub, Ed25519PublicKey):
-            raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="signature_invalid")
-        try:
-            pub.verify(sig, req.body_raw.encode("utf-8"))
-        except InvalidSignature as exc:
-            raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="signature_invalid") from exc
-
-        # ---- Refresh last_seen_at (same tenant) -------------------------
-        with engine.begin() as conn:
-            conn.execute(
-                text("SET LOCAL app.current_tenant = :t"),
-                {"t": str(tenant_id)},
-            )
-            conn.execute(
-                text("UPDATE daemon_machines SET last_seen_at = NOW() WHERE id = :m"),
-                {"m": str(machine_id)},
-            )
+            # Final issuance gate: UPDATE guarded on ``revoked_at IS NULL``.
+            # If a concurrent revoke snuck in between FOR UPDATE and here
+            # (impossible under the same row lock, but belt-and-suspenders)
+            # the RETURNING set is empty and we reject.
+            gate = conn.execute(
+                text(
+                    "UPDATE daemon_machines SET last_seen_at = NOW() "
+                    "WHERE id = :m AND tenant_id = :t AND revoked_at IS NULL "
+                    "RETURNING principal_id"
+                ),
+                {"m": str(machine_id), "t": str(tenant_id)},
+            ).fetchone()
+            if gate is None:
+                raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="machine_revoked")
 
         daemon_claims = DaemonClaims(
             tenant_id=row.tenant_id,

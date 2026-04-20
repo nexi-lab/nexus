@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import text
-from sqlalchemy.engine import Engine
+from sqlalchemy.engine import Connection, Engine
 
 _ALG = "HS256"
 
@@ -95,13 +95,13 @@ def issue_enroll_token(
     return f"{_b64(body)}.{_b64(sig)}"
 
 
-def consume_enroll_token(
-    *,
-    engine: Engine,
-    secret: bytes,
-    token: str,
-) -> EnrollClaims:
-    """Verify HMAC, expiry, and single-use; mark ``used_at``."""
+def _parse_and_verify_token(*, secret: bytes, token: str) -> EnrollClaims:
+    """Verify HMAC signature and expiry; return parsed claims WITHOUT consuming.
+
+    Used by the router so it can do all fallible work (pubkey parse, tenant
+    guard) before burning the single-use token. A separate ``_claim_token_jti``
+    runs inside the caller's transaction to do the atomic ``used_at`` update.
+    """
     try:
         body_b64, sig_b64 = token.split(".")
         body = _unb64(body_b64)
@@ -129,34 +129,62 @@ def consume_enroll_token(
     if datetime.now(UTC) >= exp:
         raise EnrollTokenError("enroll_token_expired")
 
-    with engine.begin() as conn:
+    return EnrollClaims(jti=jti, tenant_id=tid, principal_id=pid, exp=exp)
+
+
+def _claim_token_jti(conn: Connection, *, claims: EnrollClaims) -> None:
+    """Atomically mark a token as used inside the caller's transaction.
+
+    Raises ``EnrollTokenError`` if the row is missing or already consumed.
+    Caller must have ``SET LOCAL app.current_tenant = :t`` already.
+    """
+    claimed = conn.execute(
+        text(
+            "UPDATE daemon_enroll_tokens SET used_at = NOW() "
+            "WHERE jti = :jti AND tenant_id = :tid AND used_at IS NULL "
+            "RETURNING jti"
+        ),
+        {"jti": str(claims.jti), "tid": str(claims.tenant_id)},
+    ).fetchone()
+    if claimed is not None:
+        return
+    probe = conn.execute(
+        text("SELECT used_at FROM daemon_enroll_tokens WHERE jti = :jti AND tenant_id = :tid"),
+        {"jti": str(claims.jti), "tid": str(claims.tenant_id)},
+    ).fetchone()
+    if probe is None:
+        raise EnrollTokenError("enroll_token_invalid")
+    raise EnrollTokenError("enroll_token_reused")
+
+
+def consume_enroll_token(
+    *,
+    engine: Engine,
+    secret: bytes,
+    token: str,
+    conn: Connection | None = None,
+) -> EnrollClaims:
+    """Verify HMAC, expiry, and single-use; mark ``used_at``.
+
+    When ``conn`` is provided the atomic claim runs inside the caller's
+    transaction — callers can roll back any downstream insert failure and
+    re-use the token (the token is NOT consumed until their transaction
+    commits). When ``conn`` is None the function opens its own transaction
+    for backward compatibility with callers that don't need atomicity.
+    """
+    claims = _parse_and_verify_token(secret=secret, token=token)
+    if conn is not None:
         conn.execute(
             text("SET LOCAL app.current_tenant = :t"),
-            {"t": str(tid)},
+            {"t": str(claims.tenant_id)},
         )
-        # Atomic claim: succeeds only if used_at was NULL at UPDATE time.
-        # Guards against concurrent consumers under READ COMMITTED isolation.
-        claimed = conn.execute(
-            text(
-                "UPDATE daemon_enroll_tokens SET used_at = NOW() "
-                "WHERE jti = :jti AND tenant_id = :tid AND used_at IS NULL "
-                "RETURNING jti"
-            ),
-            {"jti": str(jti), "tid": str(tid)},
-        ).fetchone()
-        if claimed is None:
-            # Either row didn't exist, or already used. Distinguish for error
-            # taxonomy (probe is stale for reporting only, not for correctness
-            # — the claim above is already atomic).
-            probe = conn.execute(
-                text(
-                    "SELECT used_at FROM daemon_enroll_tokens WHERE jti = :jti AND tenant_id = :tid"
-                ),
-                {"jti": str(jti), "tid": str(tid)},
-            ).fetchone()
-            if probe is None:
-                raise EnrollTokenError("enroll_token_invalid")
-            # Row exists, used_at was non-null at claim time → reused.
-            raise EnrollTokenError("enroll_token_reused")
+        _claim_token_jti(conn, claims=claims)
+        return claims
 
-    return EnrollClaims(jti=jti, tenant_id=tid, principal_id=pid, exp=exp)
+    with engine.begin() as scoped:
+        scoped.execute(
+            text("SET LOCAL app.current_tenant = :t"),
+            {"t": str(claims.tenant_id)},
+        )
+        _claim_token_jti(scoped, claims=claims)
+    return claims

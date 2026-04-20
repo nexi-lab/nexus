@@ -985,9 +985,19 @@ fn propose_adjust_counter(
                         backoff_ms = delay_ms,
                         "propose_adjust_counter: no leader yet, retrying",
                     );
-                    handle.block_on(tokio::time::sleep(std::time::Duration::from_millis(
-                        delay_ms,
-                    )));
+                    // Pre-R20.10 bug exposed by timing flakes: using
+                    // ``handle.block_on(tokio::time::sleep(...))`` panics
+                    // with "no reactor running" when the outer caller is
+                    // ALREADY on a tokio worker (every PyO3 call into
+                    // ``propose_adjust_counter`` arrives via
+                    // ``py.detach(|| handle.block_on(...))`` in
+                    // ``PyZoneManager::mount``). We're doing sync sleep
+                    // between retries — ``std::thread::sleep`` is the
+                    // correct primitive here; it doesn't require a
+                    // reactor and doesn't starve the tokio scheduler
+                    // (the outer block_on is a sync-over-async bridge,
+                    // no peer work is queued on this thread).
+                    std::thread::sleep(std::time::Duration::from_millis(delay_ms));
                     delay_ms = (delay_ms * 2).min(12_800);
                     continue;
                 }

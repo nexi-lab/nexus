@@ -1473,6 +1473,20 @@ impl Kernel {
                 // so crosslinks of the same zone share one callback
                 // that fans out across every surface via MountTable's
                 // reverse lookup.
+                //
+                // R20.18.3: zone-create-on-mount. If the caller didn't
+                // supply metastore + raft_backend (neither `py_zone_handle`
+                // nor `metastore_path` in the Python shim) AND federation
+                // is active (zone_manager installed by
+                // `init_federation_from_env`), auto-resolve: ensure the
+                // zone's raft group exists on this node, then build a
+                // ZoneMetastore over it. This replaces the Python
+                // `_mount_via_kernel` chain — every DT_MOUNT becomes a
+                // federation-wired mount when federation is active,
+                // without any Python-side ZoneManager orchestration.
+                let (metastore, raft_backend) =
+                    self.resolve_federation_mount_backing(zone_id, path, metastore, raft_backend)?;
+
                 let consensus_for_cb = raft_backend.as_ref().map(|(c, _)| c.clone());
                 self.dlc.mount(
                     self,
@@ -4627,6 +4641,74 @@ impl Kernel {
         self.mount_reconciliation_done.load(Ordering::Acquire)
     }
 
+    /// R20.18.3: when `sys_setattr(DT_MOUNT)` leader path runs without
+    /// explicit metastore / raft_backend (Python didn't hand in
+    /// `py_zone_handle` or `metastore_path`) AND federation is active,
+    /// auto-resolve the zone raft group and build a `ZoneMetastore`
+    /// over it.
+    ///
+    /// Behavior matrix:
+    /// - `metastore` OR `raft_backend` already supplied → passthrough.
+    /// - No zone_manager attached (no federation) → passthrough (None, None).
+    /// - Federation active, zone_id unknown locally →
+    ///   `zone_manager.get_or_create_zone` creates the raft group
+    ///   (Phase-1 ConfState bootstrap, idempotent).
+    /// - Federation active, zone_id already loaded → reuse handle.
+    ///
+    /// In every federation-active branch, the returned tuple is
+    /// `(Some(ZoneMetastore), Some((consensus, runtime)))` so
+    /// `dlc.mount` wires a raft-backed mount identically to the
+    /// old Python `_mount_via_kernel` path.
+    #[allow(clippy::type_complexity)]
+    fn resolve_federation_mount_backing(
+        &self,
+        zone_id: &str,
+        mount_path: &str,
+        metastore: Option<Arc<dyn crate::metastore::Metastore>>,
+        raft_backend: Option<(
+            nexus_raft::prelude::ZoneConsensus<nexus_raft::prelude::FullStateMachine>,
+            tokio::runtime::Handle,
+        )>,
+    ) -> Result<
+        (
+            Option<Arc<dyn crate::metastore::Metastore>>,
+            Option<(
+                nexus_raft::prelude::ZoneConsensus<nexus_raft::prelude::FullStateMachine>,
+                tokio::runtime::Handle,
+            )>,
+        ),
+        KernelError,
+    > {
+        // Explicit caller-supplied backing wins; never clobber it.
+        if metastore.is_some() || raft_backend.is_some() {
+            return Ok((metastore, raft_backend));
+        }
+
+        let Some(zm) = self.zone_manager.get() else {
+            // No federation — local-only mount (metastore_path /
+            // MemoryMetastore fallback handled upstream).
+            return Ok((None, None));
+        };
+
+        let handle = zm.get_or_create_zone(zone_id).map_err(|e| {
+            KernelError::Federation(format!("get_or_create_zone({}): {}", zone_id, e))
+        })?;
+        let consensus = handle.consensus_node();
+        let runtime = handle.runtime_handle();
+        let ms: Arc<dyn crate::metastore::Metastore> =
+            crate::raft_metastore::ZoneMetastore::new_arc(
+                consensus.clone(),
+                runtime.clone(),
+                mount_path.to_string(),
+            );
+        // Ensure this zone has the mount-apply callback installed
+        // (idempotent — OnceLock-backed). Matters when
+        // init_federation_from_env ran before this zone was created,
+        // so the bootstrap-time install loop didn't see it.
+        self.install_federation_mount_coherence(zone_id, consensus.clone());
+        Ok((Some(ms), Some((consensus, runtime))))
+    }
+
     /// Look up a target zone's global VFS mount path on this node —
     /// R20.16.3 Rust port of Python ``_global_mount_of``.
     ///
@@ -5198,6 +5280,39 @@ mod tests {
                 None => std::env::remove_var("NEXUS_HOSTNAME"),
             }
         }
+    }
+
+    #[test]
+    fn test_resolve_federation_mount_backing_passthrough_when_explicit() {
+        // When the caller already supplied a metastore (e.g. Python
+        // passed `metastore_path` → LocalMetastore), the resolver
+        // must not auto-resolve — preserves the "local-only mount"
+        // path even when federation is active.
+        let k = Kernel::new();
+        let ms: Arc<dyn crate::metastore::Metastore> =
+            Arc::new(crate::metastore::MemoryMetastore::new());
+        let (out_ms, out_rb) = k
+            .resolve_federation_mount_backing("test-zone", "/test", Some(ms.clone()), None)
+            .expect("resolve");
+        assert!(
+            out_ms.is_some(),
+            "passthrough must preserve caller's metastore"
+        );
+        assert!(out_rb.is_none());
+    }
+
+    #[test]
+    fn test_resolve_federation_mount_backing_no_federation_returns_none_none() {
+        // No zone_manager attached (slim / non-federation profile) →
+        // resolver is a no-op, returns (None, None) so upstream
+        // continues with local-only MemoryMetastore fallback.
+        let k = Kernel::new();
+        assert!(k.zone_manager.get().is_none());
+        let (out_ms, out_rb) = k
+            .resolve_federation_mount_backing("test-zone", "/test", None, None)
+            .expect("resolve");
+        assert!(out_ms.is_none());
+        assert!(out_rb.is_none());
     }
 
     #[test]

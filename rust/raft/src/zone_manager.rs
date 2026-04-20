@@ -170,6 +170,12 @@ pub struct ZoneManager {
     shutdown_tx: tokio::sync::Mutex<Option<tokio::sync::watch::Sender<bool>>>,
     node_id: u64,
     use_tls: bool,
+    /// R20.18.3: remembered peer list (the `peers` arg from construction),
+    /// in `id@host:port` form. Used when `get_or_create_zone` auto-creates
+    /// a zone during `sys_setattr(DT_MOUNT)` — every zone in a federation
+    /// shares the same raft peer topology, so the peer list is cluster-
+    /// wide not per-zone.
+    default_peers: Vec<String>,
 }
 
 impl ZoneManager {
@@ -316,7 +322,29 @@ impl ZoneManager {
             shutdown_tx: tokio::sync::Mutex::new(Some(shutdown_tx)),
             node_id,
             use_tls,
+            default_peers: peers,
         }))
+    }
+
+    /// R20.18.3: cluster-wide peer list remembered from construction,
+    /// in `id@host:port` form. Used by `sys_setattr(DT_MOUNT)`'s
+    /// leader-side create-on-mount path so zone auto-creation picks
+    /// up the federation's peer topology without re-parsing env vars.
+    pub fn default_peers(&self) -> &[String] {
+        &self.default_peers
+    }
+
+    /// R20.18.3: get an existing zone handle, or create one with the
+    /// remembered `default_peers()` and return a handle to it.
+    /// Called from `Kernel::sys_setattr(DT_MOUNT)` leader path so the
+    /// caller doesn't have to specify peers (same federation = same
+    /// peers). Idempotent: subsequent calls for an existing zone
+    /// skip the raft ConfState bootstrap and return the cached node.
+    pub fn get_or_create_zone(&self, zone_id: &str) -> Result<Arc<ZoneHandle>> {
+        if let Some(h) = self.get_zone(zone_id) {
+            return Ok(h);
+        }
+        self.create_zone(zone_id, self.default_peers.clone())
     }
 
     /// This node's ID.

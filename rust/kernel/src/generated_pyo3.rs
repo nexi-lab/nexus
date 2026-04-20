@@ -1713,7 +1713,7 @@ impl PyKernel {
         write_fd: Option<i32>,
     ) -> PyResult<Py<PyAny>> {
         // Backend resolution (moved from old add_mount)
-        let backend: Option<Box<dyn ObjectStore>> = if backend_type == "openai" {
+        let backend: Option<Arc<dyn ObjectStore>> = if backend_type == "openai" {
             #[cfg(feature = "connectors")]
             {
                 let base = openai_base_url.unwrap_or("https://api.openai.com/v1");
@@ -1738,7 +1738,7 @@ impl PyKernel {
                     rt,
                 )
                 .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
-                Some(Box::new(b))
+                Some(Arc::new(b))
             }
             #[cfg(not(feature = "connectors"))]
             {
@@ -1768,7 +1768,7 @@ impl PyKernel {
                     rt,
                 )
                 .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
-                Some(Box::new(b))
+                Some(Arc::new(b))
             }
             #[cfg(not(feature = "connectors"))]
             {
@@ -1794,7 +1794,7 @@ impl PyKernel {
                     s3_endpoint,
                 )
                 .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
-                Some(Box::new(b))
+                Some(Arc::new(b))
             }
             #[cfg(not(feature = "connectors"))]
             {
@@ -1810,7 +1810,7 @@ impl PyKernel {
                 let token = access_token.unwrap_or("");
                 let b = crate::gcs_backend::GcsBackend::new(backend_name, bucket, prefix, token)
                     .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
-                Some(Box::new(b))
+                Some(Arc::new(b))
             }
             #[cfg(not(feature = "connectors"))]
             {
@@ -1825,7 +1825,7 @@ impl PyKernel {
                 let folder = root_folder_id.unwrap_or("root");
                 let b = crate::gdrive_backend::GDriveBackend::new(backend_name, token, folder)
                     .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
-                Some(Box::new(b))
+                Some(Arc::new(b))
             }
             #[cfg(not(feature = "connectors"))]
             {
@@ -1839,7 +1839,7 @@ impl PyKernel {
                 let token = access_token.unwrap_or("");
                 let b = crate::gmail_backend::GmailBackend::new(backend_name, token)
                     .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
-                Some(Box::new(b))
+                Some(Arc::new(b))
             }
             #[cfg(not(feature = "connectors"))]
             {
@@ -1854,7 +1854,7 @@ impl PyKernel {
                 let channel = default_channel.unwrap_or("");
                 let b = crate::slack_backend::SlackBackend::new(backend_name, token, channel)
                     .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
-                Some(Box::new(b))
+                Some(Arc::new(b))
             }
             #[cfg(not(feature = "connectors"))]
             {
@@ -1866,11 +1866,11 @@ impl PyKernel {
             if backend_type == "local_connector" {
                 let b = LocalConnectorBackend::new(Path::new(root), follow_symlinks, fsync)
                     .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
-                Some(Box::new(b))
+                Some(Arc::new(b))
             } else if backend_type == "path_local" {
                 let b = PathLocalBackend::new(Path::new(root), fsync)
                     .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
-                Some(Box::new(b))
+                Some(Arc::new(b))
             } else {
                 // Inject the kernel-owned scatter-gather fetcher so local
                 // chunk misses on this mount can fall through to peer RPCs
@@ -1880,11 +1880,13 @@ impl PyKernel {
                         as Arc<dyn crate::cas_remote::RemoteChunkFetcher>;
                 let b = CasLocalBackend::new_with_fetcher(Path::new(root), fsync, fetcher)
                     .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
-                Some(Box::new(b))
+                Some(Arc::new(b))
             }
         } else {
-            py_backend.map(|obj| -> Box<dyn ObjectStore> {
-                Python::attach(|py| Box::new(PyObjectStoreAdapter::new(py, obj)))
+            py_backend.map(|obj| -> Arc<dyn ObjectStore> {
+                Python::attach(|py| {
+                    Arc::new(PyObjectStoreAdapter::new(py, obj)) as Arc<dyn ObjectStore>
+                })
             })
         };
 

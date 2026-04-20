@@ -35,8 +35,11 @@ use crate::metastore::Metastore;
 
 /// Per-mount runtime record.
 ///
-/// `backend` is `Box` because backends are moved into the table at mount
-/// time and never need to be shared with external code.
+/// `backend` is `Arc` so the root-zone mount's backend can be cheaply
+/// cloned into every federation child-zone mount that reuses it
+/// (R20.16). Before that refactor it was `Box`, because backends were
+/// never shared; federation now needs shared ownership without
+/// re-initialising the backend per child zone.
 ///
 /// `metastore` is `Arc` because the same metastore instance may be handed
 /// in from a separate crate (e.g. `rust/raft::ZoneMetastore`) via
@@ -46,7 +49,7 @@ pub struct MountEntry {
     /// Storage backend (CAS local, S3, OpenAI, gRPC remote, …).
     /// `None` means "no Rust backend available" — sys_read/sys_write fall
     /// back to caller-side handling (e.g. Python connector).
-    pub backend: Option<Box<dyn ObjectStore>>,
+    pub backend: Option<Arc<dyn ObjectStore>>,
 
     /// Per-mount metastore for metadata operations. `None` means use the
     /// kernel's global `Kernel::metastore` instead. Federation mode wires a
@@ -75,7 +78,7 @@ impl MountEntry {
     /// and installed later via `MountTable::install_metastore` (federation),
     /// or set up-front via `with_metastore` (standalone redb).
     pub fn new(
-        backend: Option<Box<dyn ObjectStore>>,
+        backend: Option<Arc<dyn ObjectStore>>,
         readonly: bool,
         admin_only: bool,
         io_profile: impl Into<String>,
@@ -201,7 +204,7 @@ impl MountTable {
         admin_only: bool,
         io_profile: &str,
         backend_name: &str,
-        backend: Option<Box<dyn ObjectStore>>,
+        backend: Option<Arc<dyn ObjectStore>>,
         is_external: bool,
     ) {
         self.add(

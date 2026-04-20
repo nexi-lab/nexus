@@ -66,7 +66,7 @@ impl DriverLifecycleCoordinator {
         admin_only: bool,
         io_profile: &str,
         backend_name: &str,
-        backend: Option<Box<dyn crate::backend::ObjectStore>>,
+        backend: Option<Arc<dyn crate::backend::ObjectStore>>,
         metastore: Option<Arc<dyn crate::metastore::Metastore>>,
         raft_backend: Option<(
             nexus_raft::prelude::ZoneConsensus<nexus_raft::prelude::FullStateMachine>,

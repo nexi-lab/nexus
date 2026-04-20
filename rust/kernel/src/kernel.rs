@@ -1238,7 +1238,7 @@ impl Kernel {
         admin_only: bool,
         io_profile: &str,
         backend_name: &str,
-        backend: Option<Box<dyn crate::backend::ObjectStore>>,
+        backend: Option<Arc<dyn crate::backend::ObjectStore>>,
         metastore: Option<Arc<dyn crate::metastore::Metastore>>,
         raft_backend: Option<(
             nexus_raft::prelude::ZoneConsensus<nexus_raft::prelude::FullStateMachine>,
@@ -1416,7 +1416,7 @@ impl Kernel {
         entry_type: i32,
         // -- DT_MOUNT params (entry_type == 2) --
         backend_name: &str,
-        backend: Option<Box<dyn crate::backend::ObjectStore>>,
+        backend: Option<Arc<dyn crate::backend::ObjectStore>>,
         metastore: Option<Arc<dyn crate::metastore::Metastore>>,
         raft_backend: Option<(
             nexus_raft::prelude::ZoneConsensus<nexus_raft::prelude::FullStateMachine>,

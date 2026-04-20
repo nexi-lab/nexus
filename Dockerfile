@@ -242,11 +242,15 @@ COPY --from=builder /usr/local/bin/alembic /usr/local/bin/alembic
 RUN python3 -c "\
 import nexus_kernel; \
 from nexus_kernel import Metastore; \
-import pgvector; \
-import docker; \
-import fastembed; \
-import psutil; \
-print('✓ Core imports passed')"
+print('✓ Core imports passed (always-present subset)')"
+# Extras-gated imports.
+# SANDBOX profile deliberately excludes pgvector/docker/fastembed/psutil (Issue #3778).
+RUN set -eux; \
+    case ",${NEXUS_PROFILE_EXTRAS}," in \
+      *,all,*) \
+        python3 -c "import pgvector; import docker; import fastembed; import psutil; print('✓ all-extras imports passed')" ;; \
+      *) echo "Skipping pgvector/docker/fastembed/psutil smoke test for extras: ${NEXUS_PROFILE_EXTRAS}" ;; \
+    esac
 RUN python3 -c "\
 from nexus_kernel import cosine_similarity_f32, dot_product_f32; \
 s = cosine_similarity_f32([1.0, 0.0, 0.0], [1.0, 0.0, 0.0]); \

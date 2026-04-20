@@ -601,10 +601,6 @@ class RustMetastoreProxy(MetastoreABC):
         self._warn_parsed_text_unavailable_once()
         return None
 
-    def get_searchable_text_bulk(self, paths: Sequence[str]) -> dict[str, str]:  # noqa: ARG002
-        self._warn_parsed_text_unavailable_once()
-        return {}
-
     @property
     def cache_stats(self) -> dict[str, Any]:
         """Return Rust DCache stats (no Python dcache)."""

@@ -77,14 +77,23 @@ class KeyringJwtCache:
         keyring.set_password(self._service, self._username, token)
 
 
-def make_jwt_cache(file_path: Path) -> JwtCache:
+def make_jwt_cache(file_path: Path, *, service: str = _KEYRING_SERVICE) -> JwtCache:
     """Select the best cache for this environment; always succeeds.
+
+    Parameters
+    ----------
+    file_path:
+        Fallback file location if keyring is unavailable.
+    service:
+        Keyring service name — defaults to ``com.nexus.daemon`` but callers
+        pass ``com.nexus.daemon.<profile>`` so multiple daemons on the same
+        laptop don't overwrite each other's cached JWT. See #3788 Blocker 1.
 
     Order of preference:
 
     1. ``NEXUS_DAEMON_JWT_CACHE_BACKEND=file`` → ``FileJwtCache`` (test hook).
     2. Working OS keychain (``keyring`` imports + roundtrip probe succeeds) →
-       ``KeyringJwtCache``.
+       ``KeyringJwtCache(service=...)``.
     3. ``FileJwtCache(file_path)`` as a last-resort fallback.
     """
     if os.environ.get("NEXUS_DAEMON_JWT_CACHE_BACKEND") == "file":
@@ -93,11 +102,11 @@ def make_jwt_cache(file_path: Path) -> JwtCache:
         import keyring
 
         probe = "__nexus_daemon_cache_probe__"
-        keyring.set_password(_KEYRING_SERVICE, probe, "ok")
-        got = keyring.get_password(_KEYRING_SERVICE, probe)
-        keyring.delete_password(_KEYRING_SERVICE, probe)
+        keyring.set_password(service, probe, "ok")
+        got = keyring.get_password(service, probe)
+        keyring.delete_password(service, probe)
         if got == "ok":
-            return KeyringJwtCache()
+            return KeyringJwtCache(service=service)
         log.info("keyring probe returned %r; falling back to file", got)
     except Exception as exc:
         log.info("keyring unavailable (%s); falling back to file cache", exc)

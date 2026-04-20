@@ -72,3 +72,17 @@ def test_make_cache_picks_keyring_when_probe_succeeds(
     with patch.dict("sys.modules", {"keyring": fake}):
         cache = make_jwt_cache(tmp_path / "jwt.cache")
     assert isinstance(cache, KeyringJwtCache)
+
+
+def test_make_cache_passes_custom_service_to_keyring(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Profile-scoped service names isolate JWT caches between daemons (#3788)."""
+    monkeypatch.delenv("NEXUS_DAEMON_JWT_CACHE_BACKEND", raising=False)
+    fake = MagicMock()
+    fake.get_password.return_value = "ok"
+    with patch.dict("sys.modules", {"keyring": fake}):
+        cache = make_jwt_cache(tmp_path / "jwt.cache", service="com.nexus.daemon.work")
+        assert isinstance(cache, KeyringJwtCache)
+        cache.store("tok")
+    fake.set_password.assert_any_call("com.nexus.daemon.work", "jwt", "tok")

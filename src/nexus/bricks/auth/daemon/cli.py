@@ -1,5 +1,11 @@
 """`nexus daemon ...` CLI subcommands (#3804).
 
+State is per-profile at ``~/.nexus/daemons/<profile>/`` so the same laptop
+can enroll into multiple Nexus servers / tenants without clobbering each
+other's keypair, JWT cache, or queue. The ``--profile NAME`` flag picks
+which enrollment to operate on; default is derived from the server URL
+on ``join`` and required (or auto-picked when unambiguous) elsewhere.
+
 Each subcommand imports its dependencies inside the function body so that
 ``nexus daemon --help`` stays fast and doesn't pull in httpx/sqlite/etc.
 until a real invocation runs.
@@ -22,39 +28,90 @@ from typing import Any
 
 import click
 
-_DEFAULT_CFG = Path.home() / ".nexus" / "daemon.toml"
+_NEXUS_HOME = Path.home() / ".nexus"
+_KEYRING_SERVICE_PREFIX = "com.nexus.daemon"
+
+
+def _keyring_service_for(profile: str) -> str:
+    """Keyring entries are namespaced per profile (see jwt_cache.make_jwt_cache)."""
+    return f"{_KEYRING_SERVICE_PREFIX}.{profile}"
+
+
+def _profile_paths(profile: str) -> dict[str, Path]:
+    """All per-profile state paths under ``~/.nexus/daemons/<profile>/``."""
+    from nexus.bricks.auth.daemon.config import profile_dir
+
+    d = profile_dir(_NEXUS_HOME, profile)
+    return {
+        "dir": d,
+        "config": d / "daemon.toml",
+        "key": d / "machine.key",
+        "jwt_cache": d / "jwt.cache",
+        "server_pubkey": d / "server.pub.pem",
+        "queue": d / "queue.db",
+        "status": d / "status.json",
+    }
+
+
+def _resolve_profile(
+    profile: str | None,
+    *,
+    required_action: str,
+) -> str:
+    """Resolve an explicit ``--profile`` flag or auto-pick when unambiguous.
+
+    Raises ``click.ClickException`` if 0 or >1 profiles exist and none was
+    specified — telling the user exactly what to run next.
+    """
+    from nexus.bricks.auth.daemon.config import list_profiles
+
+    if profile is not None:
+        return profile
+    profiles = list_profiles(_NEXUS_HOME)
+    if len(profiles) == 1:
+        return profiles[0]
+    if not profiles:
+        raise click.ClickException(
+            f"no daemon profiles enrolled; run `nexus daemon join ...` before `{required_action}`"
+        )
+    raise click.ClickException(
+        f"multiple profiles enrolled ({', '.join(profiles)}); pass --profile NAME to `{required_action}`"
+    )
 
 
 @click.group("daemon")
 def daemon() -> None:
-    """Local nexus-bot daemon commands."""
+    """Local nexus-bot daemon commands (per-profile at ~/.nexus/daemons/<profile>/)."""
 
 
 @daemon.command("join")
 @click.option("--server", required=True, help="Server base URL.")
 @click.option("--enroll-token", required=True, help="One-shot enroll token from admin.")
 @click.option(
-    "--config",
-    "config_path",
-    default=str(_DEFAULT_CFG),
-    show_default=True,
-    help="Path to write daemon config.",
+    "--profile",
+    default=None,
+    help="Profile name (default: sanitized server host, e.g. 'localhost-2026').",
 )
-def join_cmd(server: str, enroll_token: str, config_path: str) -> None:
-    """Enroll this machine with the server, writing ~/.nexus/daemon.toml."""
+def join_cmd(server: str, enroll_token: str, profile: str | None) -> None:
+    """Enroll this machine with the server, writing ~/.nexus/daemons/<profile>/."""
     import platform
 
     import httpx
     import jwt as pyjwt
 
-    from nexus.bricks.auth.daemon.config import DaemonConfig
+    from nexus.bricks.auth.daemon.config import DaemonConfig, default_profile_for
     from nexus.bricks.auth.daemon.keystore import load_or_create_keypair
 
-    nexus_home = Path(config_path).parent
-    key_path = nexus_home / "daemon" / "machine.key"
-    jwt_cache = nexus_home / "daemon" / "jwt.cache"
-    server_pubkey_path = nexus_home / "daemon" / "server.pub.pem"
-    pub_pem = load_or_create_keypair(key_path)
+    resolved_profile = profile or default_profile_for(server)
+    paths = _profile_paths(resolved_profile)
+
+    if paths["config"].exists():
+        raise click.ClickException(
+            f"profile {resolved_profile!r} already enrolled at {paths['dir']}; "
+            "delete the directory to re-enroll, or pass a different --profile"
+        )
+
+    pub_pem = load_or_create_keypair(paths["key"])
 
     resp = httpx.post(
         f"{server.rstrip('/')}/v1/daemon/enroll",
@@ -70,37 +127,40 @@ def join_cmd(server: str, enroll_token: str, config_path: str) -> None:
         raise click.ClickException(f"enroll failed: {resp.status_code} {resp.text}")
     body = resp.json()
 
-    server_pubkey_path.parent.mkdir(parents=True, exist_ok=True)
-    server_pubkey_path.write_text(body["server_pubkey_pem"])
+    paths["server_pubkey"].parent.mkdir(parents=True, exist_ok=True)
+    paths["server_pubkey"].write_text(body["server_pubkey_pem"])
 
     # Decode JWT (without signature check — we trust the just-joined server) to
     # extract tenant_id + principal_id for the config.
     decoded = pyjwt.decode(body["jwt"], options={"verify_signature": False}, algorithms=["ES256"])
     cfg = DaemonConfig(
+        profile=resolved_profile,
         server_url=server.rstrip("/"),
         tenant_id=uuid.UUID(decoded["tenant_id"]),
         principal_id=uuid.UUID(decoded["principal_id"]),
         machine_id=uuid.UUID(body["machine_id"]),
-        key_path=key_path,
-        jwt_cache_path=jwt_cache,
-        server_pubkey_path=server_pubkey_path,
+        key_path=paths["key"],
+        jwt_cache_path=paths["jwt_cache"],
+        server_pubkey_path=paths["server_pubkey"],
     )
-    cfg.save(Path(config_path))
+    cfg.save(paths["config"])
 
-    jwt_cache.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(str(jwt_cache), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    paths["jwt_cache"].parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(paths["jwt_cache"]), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     try:
         os.write(fd, body["jwt"].encode())
     finally:
         os.close(fd)
-    os.chmod(jwt_cache, 0o600)
+    os.chmod(paths["jwt_cache"], 0o600)
 
-    click.echo(f"daemon joined: machine_id={cfg.machine_id}")
+    click.echo(
+        f"daemon joined: profile={cfg.profile} machine_id={cfg.machine_id} dir={paths['dir']}"
+    )
 
 
 @daemon.command("run")
-@click.option("--config", "config_path", default=str(_DEFAULT_CFG), show_default=True)
-def run_cmd(config_path: str) -> None:
+@click.option("--profile", default=None, help="Profile name (auto-selected if only one exists).")
+def run_cmd(profile: str | None) -> None:
     """Main daemon loop: watch source files + push changes + renew JWT."""
     from nexus.bricks.auth.daemon.adapters import DEFAULT_SUBPROCESS_SOURCES
     from nexus.bricks.auth.daemon.config import DaemonConfig
@@ -109,9 +169,11 @@ def run_cmd(config_path: str) -> None:
     from nexus.bricks.auth.daemon.queue import PushQueue
     from nexus.bricks.auth.daemon.runner import DaemonRunner
 
-    cfg = DaemonConfig.load(Path(config_path))
-    nexus_home = Path(config_path).parent
-    queue = PushQueue(nexus_home / "daemon" / "queue.db")
+    resolved_profile = _resolve_profile(profile, required_action="daemon run")
+    paths = _profile_paths(resolved_profile)
+
+    cfg = DaemonConfig.load(paths["config"])
+    queue = PushQueue(paths["queue"])
     jwt_client = JwtClient(
         server_url=cfg.server_url,
         tenant_id=cfg.tenant_id,
@@ -119,6 +181,7 @@ def run_cmd(config_path: str) -> None:
         key_path=cfg.key_path,
         jwt_cache_path=cfg.jwt_cache_path,
         server_pubkey_path=cfg.server_pubkey_path,
+        keyring_service=_keyring_service_for(cfg.profile),
     )
     ep = _build_encryption_provider()
     pusher = Pusher(
@@ -141,7 +204,7 @@ def run_cmd(config_path: str) -> None:
         queue=queue,
         pusher=pusher,
         jwt_refresh_every=45 * 60,
-        status_path=nexus_home / "daemon" / "status.json",
+        status_path=paths["status"],
         jwt_refresh_callable=_refresh_jwt,
         subprocess_sources=DEFAULT_SUBPROCESS_SOURCES,
         subprocess_poll_every=5 * 60,
@@ -150,14 +213,15 @@ def run_cmd(config_path: str) -> None:
 
 
 @daemon.command("status")
-@click.option("--config", "config_path", default=str(_DEFAULT_CFG), show_default=True)
-def status_cmd(config_path: str) -> None:
+@click.option("--profile", default=None, help="Profile name (auto-selected if only one exists).")
+def status_cmd(profile: str | None) -> None:
     """Print daemon status JSON; exit 0=healthy, 1=degraded, 2=stopped."""
-    status_path = Path(config_path).parent / "daemon" / "status.json"
-    if not status_path.exists():
+    resolved_profile = _resolve_profile(profile, required_action="daemon status")
+    paths = _profile_paths(resolved_profile)
+    if not paths["status"].exists():
         click.echo("stopped")
         sys.exit(2)
-    data = json.loads(status_path.read_text())
+    data = json.loads(paths["status"].read_text())
     click.echo(json.dumps(data, indent=2))
     if data["state"] == "healthy":
         sys.exit(0)
@@ -166,23 +230,58 @@ def status_cmd(config_path: str) -> None:
     sys.exit(2)
 
 
+@daemon.command("list")
+def list_cmd() -> None:
+    """List enrolled profiles and their server URLs."""
+    from nexus.bricks.auth.daemon.config import DaemonConfig, list_profiles
+
+    profiles = list_profiles(_NEXUS_HOME)
+    if not profiles:
+        click.echo("(no profiles enrolled)")
+        return
+    rows = []
+    for p in profiles:
+        cfg_path = _profile_paths(p)["config"]
+        try:
+            cfg = DaemonConfig.load(cfg_path)
+            rows.append((p, cfg.server_url, str(cfg.tenant_id), str(cfg.machine_id)))
+        except Exception as exc:
+            rows.append((p, f"<load failed: {exc}>", "?", "?"))
+    col_widths = [
+        max(len(r[i]) for r in rows + [("PROFILE", "SERVER", "TENANT_ID", "MACHINE_ID")])
+        for i in range(4)
+    ]
+    header = ("PROFILE", "SERVER", "TENANT_ID", "MACHINE_ID")
+    click.echo("  ".join(h.ljust(col_widths[i]) for i, h in enumerate(header)))
+    for r in rows:
+        click.echo("  ".join(r[i].ljust(col_widths[i]) for i in range(4)))
+
+
 @daemon.command("install")
-@click.option("--config", "config_path", default=str(_DEFAULT_CFG), show_default=True)
-def install_cmd(config_path: str) -> None:
-    """Install launchd plist (macOS only)."""
+@click.option("--profile", default=None, help="Profile name (auto-selected if only one exists).")
+def install_cmd(profile: str | None) -> None:
+    """Install launchd plist / systemd user unit for this profile."""
     from nexus.bricks.auth.daemon.installer import install
 
-    plist_path = install(executable=sys.executable, config_path=Path(config_path))
-    click.echo(f"installed: {plist_path}")
+    resolved_profile = _resolve_profile(profile, required_action="daemon install")
+    paths = _profile_paths(resolved_profile)
+    unit_path = install(
+        executable=sys.executable,
+        config_path=paths["config"],
+        profile=resolved_profile,
+    )
+    click.echo(f"installed: {unit_path}")
 
 
 @daemon.command("uninstall")
-def uninstall_cmd() -> None:
-    """Remove launchd plist (macOS only)."""
+@click.option("--profile", default=None, help="Profile name (auto-selected if only one exists).")
+def uninstall_cmd(profile: str | None) -> None:
+    """Remove launchd plist / systemd unit for this profile."""
     from nexus.bricks.auth.daemon.installer import uninstall
 
-    uninstall()
-    click.echo("uninstalled")
+    resolved_profile = _resolve_profile(profile, required_action="daemon uninstall")
+    uninstall(profile=resolved_profile)
+    click.echo(f"uninstalled: profile={resolved_profile}")
 
 
 def _daemon_version() -> str:

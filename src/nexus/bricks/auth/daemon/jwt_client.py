@@ -46,6 +46,7 @@ class JwtClient:
         server_pubkey_path: Path,
         http: httpx.Client | None = None,
         cache: JwtCache | None = None,
+        keyring_service: str | None = None,
     ) -> None:
         self.server_url = server_url.rstrip("/")
         self.tenant_id = tenant_id
@@ -54,8 +55,15 @@ class JwtClient:
         self.jwt_cache_path = jwt_cache_path
         self.server_pubkey_path = server_pubkey_path
         self._http = http if http is not None else httpx.Client()
-        # Pluggable cache: keychain first, fall back to a 0600 file.
-        self._cache: JwtCache = cache if cache is not None else make_jwt_cache(jwt_cache_path)
+        # Pluggable cache: keychain first, fall back to a 0600 file. The
+        # keyring service name is profile-scoped so two daemons on the same
+        # laptop can't see each other's cached JWT (#3788 Blocker 1).
+        if cache is not None:
+            self._cache: JwtCache = cache
+        elif keyring_service is not None:
+            self._cache = make_jwt_cache(jwt_cache_path, service=keyring_service)
+        else:
+            self._cache = make_jwt_cache(jwt_cache_path)
         self._cached: str | None = self._cache.load()
 
     def current(self) -> str | None:

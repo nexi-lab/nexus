@@ -1,12 +1,14 @@
 """Lightweight tests for the `nexus daemon` CLI wiring (#3804).
 
-Only covers things not already exercised by T18 integration tests:
-the ``_build_encryption_provider`` fallback path. The individual
-subcommands are smoke-tested via ``nexus daemon --help`` and covered
-end-to-end by T18.
+Only covers things not already exercised by integration tests:
+the ``_build_encryption_provider`` fallback path and profile helpers.
+The individual subcommands are smoke-tested via ``nexus daemon --help``
+and covered end-to-end by tests/integration/auth.
 """
 
 from __future__ import annotations
+
+from pathlib import Path
 
 import click
 import pytest
@@ -37,7 +39,53 @@ def test_build_encryption_provider_rejects_unknown(monkeypatch: pytest.MonkeyPat
 
 
 def test_daemon_group_exposes_expected_subcommands() -> None:
-    """All 5 MVP subcommands are registered on the group."""
-    expected = {"join", "run", "status", "install", "uninstall"}
+    """All 6 MVP subcommands are registered on the group (incl. `list`)."""
+    expected = {"join", "run", "status", "install", "uninstall", "list"}
     registered = set(daemon_cli.daemon.commands.keys())
     assert expected <= registered, f"missing: {expected - registered}"
+
+
+def test_keyring_service_scoped_per_profile() -> None:
+    assert daemon_cli._keyring_service_for("work") == "com.nexus.daemon.work"
+    assert daemon_cli._keyring_service_for("home") == "com.nexus.daemon.home"
+
+
+def test_profile_paths_layout(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """All per-profile paths live under NEXUS_HOME/daemons/<profile>/."""
+    monkeypatch.setattr(daemon_cli, "_NEXUS_HOME", tmp_path)
+    paths = daemon_cli._profile_paths("work")
+    assert paths["dir"] == tmp_path / "daemons" / "work"
+    assert paths["config"] == tmp_path / "daemons" / "work" / "daemon.toml"
+    assert paths["key"] == tmp_path / "daemons" / "work" / "machine.key"
+    assert paths["jwt_cache"] == tmp_path / "daemons" / "work" / "jwt.cache"
+    assert paths["server_pubkey"] == tmp_path / "daemons" / "work" / "server.pub.pem"
+
+
+def test_resolve_profile_auto_picks_single(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(daemon_cli, "_NEXUS_HOME", tmp_path)
+    d = tmp_path / "daemons" / "work"
+    d.mkdir(parents=True)
+    (d / "daemon.toml").write_text("x")
+    assert daemon_cli._resolve_profile(None, required_action="run") == "work"
+
+
+def test_resolve_profile_errors_when_none_enrolled(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(daemon_cli, "_NEXUS_HOME", tmp_path)
+    with pytest.raises(click.ClickException, match="no daemon profiles enrolled"):
+        daemon_cli._resolve_profile(None, required_action="run")
+
+
+def test_resolve_profile_errors_when_ambiguous(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(daemon_cli, "_NEXUS_HOME", tmp_path)
+    for name in ("work", "home"):
+        d = tmp_path / "daemons" / name
+        d.mkdir(parents=True)
+        (d / "daemon.toml").write_text("x")
+    with pytest.raises(click.ClickException, match="multiple profiles"):
+        daemon_cli._resolve_profile(None, required_action="run")
+    # Explicit pick still works.
+    assert daemon_cli._resolve_profile("home", required_action="run") == "home"

@@ -102,6 +102,7 @@ def join_cmd(server: str, enroll_token: str, config_path: str) -> None:
 @click.option("--config", "config_path", default=str(_DEFAULT_CFG), show_default=True)
 def run_cmd(config_path: str) -> None:
     """Main daemon loop: watch source files + push changes + renew JWT."""
+    from nexus.bricks.auth.daemon.adapters import DEFAULT_SUBPROCESS_SOURCES
     from nexus.bricks.auth.daemon.config import DaemonConfig
     from nexus.bricks.auth.daemon.jwt_client import JwtClient
     from nexus.bricks.auth.daemon.push import Pusher
@@ -142,6 +143,8 @@ def run_cmd(config_path: str) -> None:
         jwt_refresh_every=45 * 60,
         status_path=nexus_home / "daemon" / "status.json",
         jwt_refresh_callable=_refresh_jwt,
+        subprocess_sources=DEFAULT_SUBPROCESS_SOURCES,
+        subprocess_poll_every=5 * 60,
     )
     runner.run()
 

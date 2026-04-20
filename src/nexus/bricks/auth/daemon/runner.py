@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol
 
+from nexus.bricks.auth.daemon.adapters import SubprocessSource
 from nexus.bricks.auth.daemon.queue import PushQueue
 from nexus.bricks.auth.daemon.watcher import SourceWatcher
 
@@ -61,6 +62,8 @@ class DaemonRunner:
         jwt_refresh_every: int,
         status_path: Path,
         jwt_refresh_callable: Callable[[], None] | None = None,
+        subprocess_sources: tuple[SubprocessSource, ...] = (),
+        subprocess_poll_every: int = 300,
     ) -> None:
         self._source_watch_target = source_watch_target
         self._queue = queue
@@ -68,6 +71,8 @@ class DaemonRunner:
         self._jwt_refresh_every = jwt_refresh_every
         self._status_path = status_path
         self._jwt_refresh_callable = jwt_refresh_callable
+        self._subprocess_sources = subprocess_sources
+        self._subprocess_poll_every = subprocess_poll_every
 
         self._stop = threading.Event()
         self._state: str = "healthy"
@@ -75,6 +80,7 @@ class DaemonRunner:
 
         self._watcher: SourceWatcher | None = None
         self._jwt_thread: threading.Thread | None = None
+        self._subprocess_thread: threading.Thread | None = None
 
     # ------------------------------------------------------------------ API
 
@@ -118,6 +124,15 @@ class DaemonRunner:
             )
             t.start()
             self._jwt_thread = t
+
+        if self._subprocess_sources:
+            sp = threading.Thread(
+                target=self._subprocess_poll_loop,
+                name="daemon-subprocess-poll",
+                daemon=True,
+            )
+            sp.start()
+            self._subprocess_thread = sp
 
         try:
             while not self._stop.is_set():
@@ -178,6 +193,32 @@ class DaemonRunner:
             except Exception:
                 log.exception("jwt refresh failed")
                 self._maybe_degrade()
+
+    def _subprocess_poll_loop(self) -> None:
+        """Fetch each SubprocessSource on an interval; hand bytes to pusher.
+
+        Pusher's per-source hash dedupe suppresses no-op writes, so polling
+        a stable token every 5 min is effectively free on the server side.
+        """
+        # Immediate first fetch so first-run can push without waiting a cycle.
+        self._fetch_all_subprocess_sources()
+        while not self._stop.is_set():
+            if self._stop.wait(timeout=float(self._subprocess_poll_every)):
+                return
+            self._fetch_all_subprocess_sources()
+
+    def _fetch_all_subprocess_sources(self) -> None:
+        for src in self._subprocess_sources:
+            content = src.fetch()
+            if content is None:
+                continue
+            try:
+                self._pusher.push_source(src.name, content=content)
+            except Exception:
+                log.exception("subprocess push failed name=%s", src.name)
+                self._maybe_degrade()
+            else:
+                self._mark_success()
 
     def _write_status(self) -> None:
         """Best-effort atomic write of the status file."""

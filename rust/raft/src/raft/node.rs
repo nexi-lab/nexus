@@ -332,6 +332,19 @@ pub struct ZoneConsensus<S: StateMachine + 'static> {
     /// only ``Option<Arc<Fn>>`` swaps serialize through the inner lock.
     #[allow(clippy::type_complexity)]
     invalidate_cb_slot: Option<Arc<parking_lot::RwLock<Option<Arc<dyn Fn(&str) + Send + Sync>>>>>,
+    /// Apply-side DT_MOUNT slot — cached at construction so sync
+    /// callers (kernel federation-mount install) can swap the callback
+    /// without holding the state-machine's async RwLock. Same shape as
+    /// ``invalidate_cb_slot`` (R20.16.2).
+    #[cfg(feature = "grpc")]
+    #[allow(clippy::type_complexity)]
+    mount_apply_cb_slot: Option<
+        Arc<
+            parking_lot::RwLock<
+                Option<Arc<dyn Fn(&super::state_machine::MountApplyEvent) + Send + Sync>>,
+            >,
+        >,
+    >,
 }
 
 impl<S: StateMachine + 'static> Clone for ZoneConsensus<S> {
@@ -349,6 +362,8 @@ impl<S: StateMachine + 'static> Clone for ZoneConsensus<S> {
             #[cfg(all(feature = "grpc", has_protos))]
             forward_ctx: self.forward_ctx.clone(),
             invalidate_cb_slot: self.invalidate_cb_slot.clone(),
+            #[cfg(feature = "grpc")]
+            mount_apply_cb_slot: self.mount_apply_cb_slot.clone(),
         }
     }
 }
@@ -531,6 +546,9 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
         // async callers can touch it, but ``ZoneConsensus::invalidate_cb_slot``
         // is called from sync contexts (kernel DLC::mount).
         let invalidate_cb_slot = state_machine.invalidate_cb_slot();
+        // Same pattern for the DT_MOUNT apply slot (R20.16.2).
+        #[cfg(feature = "grpc")]
+        let mount_apply_cb_slot = state_machine.mount_apply_cb_slot();
         // The state machine is the SSOT for applied index — borrow its
         // atomic so sync readers can observe it without acquiring the
         // async RwLock the SM lives behind. Grabbed before the SM moves
@@ -565,6 +583,8 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
             #[cfg(all(feature = "grpc", has_protos))]
             forward_ctx: None,
             invalidate_cb_slot,
+            #[cfg(feature = "grpc")]
+            mount_apply_cb_slot,
         };
 
         let driver = ZoneConsensusDriver {
@@ -693,6 +713,25 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
         &self,
     ) -> Option<Arc<parking_lot::RwLock<Option<Arc<dyn Fn(&str) + Send + Sync>>>>> {
         self.invalidate_cb_slot.clone()
+    }
+
+    /// Clone the state-machine's apply-side DT_MOUNT slot so the kernel
+    /// (which owns federation mount wiring) can install a callback
+    /// that fires on every committed DT_MOUNT Set / Delete (R20.16.2).
+    /// Returns ``None`` for state machines that don't expose a slot
+    /// (e.g. witness) — kernel callers skip the install in that case.
+    #[cfg(feature = "grpc")]
+    #[allow(clippy::type_complexity)]
+    pub fn mount_apply_cb_slot(
+        &self,
+    ) -> Option<
+        Arc<
+            parking_lot::RwLock<
+                Option<Arc<dyn Fn(&super::state_machine::MountApplyEvent) + Send + Sync>>,
+            >,
+        >,
+    > {
+        self.mount_apply_cb_slot.clone()
     }
 
     /// Stable integer identity of the state machine backing this

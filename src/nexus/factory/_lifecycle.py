@@ -155,17 +155,14 @@ async def _wire_services(
         # Lock manager upgrade handled by Rust kernel: sys_setattr(DT_MOUNT) with
         # py_zone_handle upgrades LockManager to distributed for root zone.
 
-        # Wire DLC into ZoneManager for runtime mount registration
+        # Wire DLC into ZoneManager for runtime mount registration.
+        # R20.16.2: the old ``install_mount_hook`` bridge is gone — Rust
+        # drives federation mount wiring directly via the per-zone
+        # ``mount_apply_cb`` installed by kernel
+        # (R20.16.3+ wires this through ``install_federation_mount_coherence``
+        # once that lands).
         _zone_mgr = federation.zone_manager
         _zone_mgr._coordinator = nx._driver_coordinator
-        # R16.2: register the DT_MOUNT apply-event hook with Rust
-        # PyZoneManager. Replaces the old polling reconciler thread —
-        # Rust fires a MountEvent on every DT_MOUNT commit and runs a
-        # one-shot catch-up scan at registration time so any mounts
-        # replayed before this point are surfaced through the same
-        # callback path.
-        if hasattr(_zone_mgr, "install_mount_hook"):
-            _zone_mgr.install_mount_hook()
 
     # descendant_checker is now accessed via PermissionCheckHook (KernelDispatch INTERCEPT).
     # No kernel DI needed — PermissionCheckHook holds the reference internally.

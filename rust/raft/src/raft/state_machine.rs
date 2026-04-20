@@ -293,6 +293,61 @@ pub trait StateMachine: Send + Sync {
     ) -> Option<Arc<parking_lot::RwLock<Option<Arc<dyn Fn(&str) + Send + Sync>>>>> {
         None
     }
+
+    /// Optional apply-side DT_MOUNT slot (R20.16.2).
+    ///
+    /// Symmetric to [`invalidate_cb_slot`] but fires only for DT_MOUNT
+    /// Set / Delete commits — the kernel installs a closure that wires
+    /// / unwires federation mounts synchronously at apply time on every
+    /// replica. The closure captures the parent ``zone_id`` at install
+    /// time (install is per-zone, mirroring
+    /// ``install_federation_dcache_coherence``), so the event payload
+    /// carries only data that varies per-apply: the mount key and, on
+    /// Set, the decoded proto fields needed for wiring.
+    ///
+    /// Only [`FullStateMachine`] exposes a slot; witness / in-memory
+    /// state machines return ``None`` so apply stays a no-op.
+    #[cfg(feature = "grpc")]
+    #[allow(clippy::type_complexity)]
+    fn mount_apply_cb_slot(
+        &self,
+    ) -> Option<Arc<parking_lot::RwLock<Option<Arc<dyn Fn(&MountApplyEvent) + Send + Sync>>>>> {
+        None
+    }
+}
+
+/// A DT_MOUNT apply event delivered to [`StateMachine::mount_apply_cb_slot`]
+/// callbacks (R20.16.2).
+///
+/// Fires after the apply write transaction commits. All payload fields
+/// derive from replicated state (raft log `Command` + state-machine
+/// `FileMetadata` proto), so every replica firing this event observes
+/// identical data — no node-local truth is introduced.
+///
+/// The callback's parent ``zone_id`` is captured by the install site
+/// (kernel's ``install_federation_mount_coherence(consensus)``) as a
+/// closure binding, not carried on the event. This matches the pattern
+/// used by ``invalidate_cb``.
+#[cfg(feature = "grpc")]
+#[derive(Debug, Clone)]
+pub enum MountApplyEvent {
+    /// DT_MOUNT upsert. ``target_zone_id`` + ``backend_name`` come from
+    /// the decoded ``FileMetadata`` proto written by this apply —
+    /// snapshotted at fire time so a subsequent apply to the same key
+    /// cannot race the callback into wiring the wrong target.
+    ///
+    /// Post-R20.16.8 / R20.16.9 the event does NOT carry io_profile /
+    /// readonly / admin_only — those knobs were retired as YAGNI.
+    Set {
+        key: String,
+        target_zone_id: String,
+        backend_name: String,
+    },
+    /// DT_MOUNT delete. No proto payload — the entry was removed inside
+    /// the same apply txn, so callers look up the prior mount via their
+    /// own reverse index (e.g. kernel ``cross_zone_mounts``) to drive
+    /// cascade-unmount.
+    Delete { key: String },
 }
 
 /// A no-op state machine for witness nodes (in-memory, for testing).
@@ -545,27 +600,28 @@ pub struct FullStateMachine {
     /// RwLock. The state machine is the SSOT; the Arc is how we
     /// surface it, not a shadow copy.
     last_applied: Arc<AtomicU64>,
-    /// DT_MOUNT apply-side event channel (R16.2).
+    /// Apply-side DT_MOUNT slot (R20.16.2) — shared
+    /// ``Arc<RwLock<Option<Arc<Fn(&MountApplyEvent)>>>>`` so the kernel
+    /// mount-wiring owner can install / replace the callback *after*
+    /// this state machine is moved into ``ZoneConsensus``.
     ///
-    /// Populated by ``ZoneRaftRegistry::setup_zone`` via
-    /// ``set_mount_event_tx`` when the registry has been handed a
-    /// sender by ``PyZoneManager``. ``apply`` decodes each
-    /// ``Command::SetMetadata`` value after the write txn commits and,
-    /// if it describes a DT_MOUNT entry, sends one ``MountEvent`` on
-    /// this channel for the Python DLC consumer to pick up.
+    /// Fires on every committed DT_MOUNT ``SetMetadata`` /
+    /// ``DeleteMetadata`` so the kernel can wire / unwire a federation
+    /// child-zone mount into the local ``MountTable`` on every replica
+    /// (including the leader — the leader also goes through apply).
+    /// Set carries the decoded ``FileMetadata`` proto snapshot so the
+    /// callback doesn't race a subsequent apply to the same key; Delete
+    /// carries only the key because the proto was removed in the same
+    /// txn.
     ///
-    /// ``None`` for state machines that aren't attached to a
-    /// ``PyZoneManager`` (tests, witness nodes, direct-drive
-    /// integration harnesses) — the send site is gated on
-    /// ``is_some()`` so apply remains a no-op for those.
+    /// ``None`` when no federation mount coherence is wired (tests,
+    /// witness nodes). Send-site is gated on ``is_some()`` so apply
+    /// stays a no-op when unset. Callback panics are surfaced via
+    /// ``catch_unwind`` so apply can't be poisoned per raft's "apply
+    /// must not fail" rule.
     #[cfg(feature = "grpc")]
-    mount_event_tx: Option<super::mount_event::MountEventTx>,
-    /// The zone this state machine belongs to. Populated when a
-    /// ``mount_event_tx`` is attached so the emitted event carries
-    /// the parent zone id without re-plumbing it through every
-    /// apply call site. ``String::new()`` when no tx is attached.
-    #[cfg(feature = "grpc")]
-    zone_id_for_events: String,
+    #[allow(clippy::type_complexity)]
+    mount_apply_cb: Arc<parking_lot::RwLock<Option<Arc<dyn Fn(&MountApplyEvent) + Send + Sync>>>>,
     /// Apply-side dcache invalidation slot — shared ``Arc<RwLock>``
     /// so the kernel DCache owner can install / replace the callback
     /// *after* this state machine is moved into ``ZoneConsensus``.
@@ -623,9 +679,7 @@ impl FullStateMachine {
             advisory,
             last_applied: Arc::new(AtomicU64::new(last_applied)),
             #[cfg(feature = "grpc")]
-            mount_event_tx: None,
-            #[cfg(feature = "grpc")]
-            zone_id_for_events: String::new(),
+            mount_apply_cb: Arc::new(parking_lot::RwLock::new(None)),
             invalidate_cb: Arc::new(parking_lot::RwLock::new(None)),
         })
     }
@@ -636,20 +690,6 @@ impl FullStateMachine {
     /// SSOT; this is how the value is surfaced, not a shadow.
     pub fn last_applied_shared_arc(&self) -> Arc<AtomicU64> {
         Arc::clone(&self.last_applied)
-    }
-
-    /// Attach a DT_MOUNT apply-event sender + owning zone id (R16.2).
-    ///
-    /// Called once by ``ZoneRaftRegistry::setup_zone`` after the SM is
-    /// constructed but before it's moved into ``ZoneConsensus``; only
-    /// takes effect if the registry was pre-configured with a sender
-    /// by ``PyZoneManager``. Idempotent: replacing an existing sender
-    /// just drops the previous handle — raft contract is preserved
-    /// because the send site never fails the apply path.
-    #[cfg(feature = "grpc")]
-    pub fn set_mount_event_tx(&mut self, zone_id: String, tx: super::mount_event::MountEventTx) {
-        self.mount_event_tx = Some(tx);
-        self.zone_id_for_events = zone_id;
     }
 
     /// Clone the shared advisory-lock handle. Used by the kernel's
@@ -674,72 +714,101 @@ impl FullStateMachine {
         Ok(CommandResult::Success)
     }
 
-    /// Decode a committed ``Command::SetMetadata`` value and, if it
-    /// describes a DT_MOUNT entry with a non-empty ``target_zone_id``,
-    /// push a ``MountEvent`` onto the attached sender (R16.2).
+    /// Peek at a key's current committed value and decide whether it's
+    /// a DT_MOUNT entry. Used by ``apply`` as a pre-read before the
+    /// write txn to capture the pre-delete payload-classification for
+    /// ``DeleteMetadata`` commands (R20.16.2).
     ///
-    /// Failure modes never propagate out of ``apply``:
-    /// - no sender attached → no-op
-    /// - non-SetMetadata command → no-op
-    /// - proto decode fails → ``warn!`` (indicates upstream writer
-    ///   wrote garbage — a bug elsewhere, but apply can't reject
-    ///   committed entries)
-    /// - entry is not DT_MOUNT or has empty target → no-op (normal)
-    /// - channel closed → ``error!`` (consumer gone; PyZoneManager
-    ///   being torn down or the consumer task panicked — in both
-    ///   cases we've lost the DLC wiring side-effect, which is
-    ///   recoverable by restart but worth surfacing)
+    /// Apply is serial, so no concurrent writer can mutate ``key``
+    /// between this pre-read and the write txn that performs the
+    /// delete. The read happens in its own short read txn.
+    ///
+    /// Returns ``true`` iff the current value decodes as a
+    /// ``FileMetadata`` with ``entry_type == DT_MOUNT``. Decode failure
+    /// or missing key both return ``false`` — those cases aren't
+    /// DT_MOUNT and don't need a Delete event.
     #[cfg(feature = "grpc")]
-    fn emit_mount_event(&self, command: &Command) {
+    fn peek_is_dt_mount(&self, key: &str) -> bool {
         use crate::transport::proto::nexus::core::FileMetadata as ProtoFileMetadata;
         use prost::Message as ProstMessage;
 
-        let Some(tx) = self.mount_event_tx.as_ref() else {
+        const DT_MOUNT: i32 = 2;
+        let Ok(Some(bytes)) = self.metadata.get(key.as_bytes()) else {
+            return false;
+        };
+        match ProtoFileMetadata::decode(bytes.as_slice()) {
+            Ok(p) => p.entry_type == DT_MOUNT,
+            Err(_) => false,
+        }
+    }
+
+    /// Fire the apply-side DT_MOUNT callback for a committed command
+    /// (R20.16.2).
+    ///
+    /// Set path: decode the ``SetMetadata`` value; if it's a DT_MOUNT
+    /// with non-empty ``target_zone_id``, build a snapshot event from
+    /// the proto and invoke the callback.
+    ///
+    /// Delete path: the caller has already done the pre-read (inside
+    /// ``apply`` before the write txn) and hands us ``delete_mount_key``
+    /// = ``Some(key)`` iff the deleted entry was DT_MOUNT.
+    ///
+    /// Failure modes never propagate out of ``apply``:
+    /// - no callback installed → no-op
+    /// - non-SetMetadata / non-DeleteMetadata command → no-op
+    /// - proto decode fails on Set → ``warn!`` (upstream writer wrote
+    ///   garbage; apply can't reject committed entries)
+    /// - entry not DT_MOUNT or empty target on Set → no-op (normal)
+    /// - callback panics → ``catch_unwind`` logs ``error!`` and
+    ///   returns; apply proceeds (raft "apply must not fail")
+    #[cfg(feature = "grpc")]
+    fn emit_mount_apply_event(&self, command: &Command, delete_mount_key: Option<&str>) {
+        use crate::transport::proto::nexus::core::FileMetadata as ProtoFileMetadata;
+        use prost::Message as ProstMessage;
+
+        // Snapshot the cb under the read lock, release before invoking
+        // — callback must not reacquire this lock (future installer
+        // would deadlock) and must stay short to not stall apply.
+        let cb_opt = self.mount_apply_cb.read().clone();
+        let Some(cb) = cb_opt else {
             return;
         };
-        let (key, value) = match command {
-            Command::SetMetadata { key, value } => (key, value),
+
+        let event = match command {
+            Command::SetMetadata { key, value } => {
+                let proto = match ProtoFileMetadata::decode(value.as_slice()) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        tracing::warn!(
+                            path = %key,
+                            error = %e,
+                            "mount-apply: FileMetadata decode failed on apply (non-FileMetadata SetMetadata?)",
+                        );
+                        return;
+                    }
+                };
+                const DT_MOUNT: i32 = 2;
+                if proto.entry_type != DT_MOUNT || proto.target_zone_id.is_empty() {
+                    return;
+                }
+                MountApplyEvent::Set {
+                    key: key.clone(),
+                    target_zone_id: proto.target_zone_id,
+                    backend_name: proto.backend_name,
+                }
+            }
+            Command::DeleteMetadata { key } => match delete_mount_key {
+                Some(k) if k == key => MountApplyEvent::Delete { key: key.clone() },
+                _ => return,
+            },
             _ => return,
         };
 
-        // DT_MOUNT entries are the only payloads we route. Decode is
-        // lenient: a decode failure here means some non-FileMetadata
-        // SetMetadata value sneaked in (e.g. an internal counter key
-        // overwritten via SetMetadata by a non-standard caller). Log
-        // once and move on — do NOT fail apply.
-        let proto = match ProtoFileMetadata::decode(value.as_slice()) {
-            Ok(p) => p,
-            Err(e) => {
-                tracing::warn!(
-                    zone = %self.zone_id_for_events,
-                    path = %key,
-                    error = %e,
-                    "mount-event: FileMetadata decode failed on apply (non-FileMetadata SetMetadata?)",
-                );
-                return;
-            }
-        };
-
-        // Only DT_MOUNT (entry_type == 2) with a non-empty target
-        // drives DLC wiring. Every other entry_type (DT_REG, DT_DIR,
-        // DT_PIPE, DT_STREAM, DT_EXTERNAL_STORAGE) is ignored.
-        const DT_MOUNT: i32 = 2;
-        if proto.entry_type != DT_MOUNT || proto.target_zone_id.is_empty() {
-            return;
-        }
-
-        let event = super::mount_event::MountEvent {
-            parent_zone_id: self.zone_id_for_events.clone(),
-            mount_path: key.clone(),
-            target_zone_id: proto.target_zone_id,
-        };
-
-        if let Err(e) = tx.send(event) {
+        if let Err(payload) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| cb(&event)))
+        {
             tracing::error!(
-                zone = %self.zone_id_for_events,
-                path = %key,
-                error = %e,
-                "mount-event: send failed (consumer gone); DT_MOUNT DLC wiring missed on this apply",
+                payload = ?payload,
+                "mount-apply: callback panicked; continuing apply — mount wiring may be incomplete",
             );
         }
     }
@@ -1438,6 +1507,18 @@ impl StateMachine for FullStateMachine {
             return Ok(CommandResult::Success);
         }
 
+        // R20.16.2: capture pre-delete DT_MOUNT classification BEFORE
+        // the write txn removes the entry. Apply is serial, so no
+        // concurrent writer can slip in between this read and the txn
+        // that performs the delete. Only DeleteMetadata needs the
+        // pre-capture — for SetMetadata the proto is on the command
+        // itself, accessible from emit_mount_apply_event.
+        #[cfg(feature = "grpc")]
+        let delete_mount_key: Option<String> = match command {
+            Command::DeleteMetadata { key } if self.peek_is_dt_mount(key) => Some(key.clone()),
+            _ => None,
+        };
+
         // Atomic apply: execute the metadata command AND persist
         // `last_applied` in a single redb write transaction. This
         // matches etcd (boltdb txn), CockroachDB (Pebble WriteBatch),
@@ -1510,12 +1591,13 @@ impl StateMachine for FullStateMachine {
         // value also sees the metadata write that preceded it.
         self.last_applied.store(index, Ordering::Release);
 
-        // R16.2: fire a DT_MOUNT apply event *after* commit. Any send
-        // failure is logged but never propagated — returning Err from
-        // apply poisons the state machine per raft's "apply must not
-        // fail" invariant, and the event is strictly a side-effect.
+        // R20.16.2: fire the DT_MOUNT apply-side callback *after*
+        // commit. Any failure is caught (catch_unwind on panic; no-op
+        // on missing callback) — returning Err from apply poisons the
+        // state machine per raft's "apply must not fail" invariant,
+        // and the callback is strictly a side-effect.
         #[cfg(feature = "grpc")]
-        self.emit_mount_event(command);
+        self.emit_mount_apply_event(command, delete_mount_key.as_deref());
 
         // Cache coherence: notify the kernel DCache that this key's
         // metadata changed so nodes that didn't originate the write
@@ -1654,6 +1736,17 @@ impl StateMachine for FullStateMachine {
     ) -> Option<Arc<parking_lot::RwLock<Option<Arc<dyn Fn(&str) + Send + Sync>>>>> {
         Some(Arc::clone(&self.invalidate_cb))
     }
+
+    /// Return the shared apply-side DT_MOUNT slot so downstream
+    /// holders (``ZoneConsensus``, kernel federation wiring) can
+    /// install a callback that fires on every committed DT_MOUNT
+    /// Set / Delete (R20.16.2).
+    #[cfg(feature = "grpc")]
+    fn mount_apply_cb_slot(
+        &self,
+    ) -> Option<Arc<parking_lot::RwLock<Option<Arc<dyn Fn(&MountApplyEvent) + Send + Sync>>>>> {
+        Some(Arc::clone(&self.mount_apply_cb))
+    }
 }
 
 #[cfg(test)]
@@ -1720,60 +1813,124 @@ mod tests {
         }
     }
 
-    /// R16.2 apply-event hook — one flow covering every branch:
-    /// DT_MOUNT with a sender fires exactly one event with the right
-    /// payload; DT_DIR never fires; a state machine with no sender
-    /// applies normally (hook is pure side-effect — apply must be
-    /// unaffected).
+    /// R20.16.2 apply-side DT_MOUNT callback — one flow covering every
+    /// branch: DT_MOUNT Set with an installed callback fires exactly
+    /// one Set event with the right payload; DT_DIR Set never fires;
+    /// DT_MOUNT Delete fires a Delete event; DT_REG Delete never fires;
+    /// a state machine with no callback applies normally (callback is
+    /// pure side-effect — apply must be unaffected).
     #[cfg(feature = "grpc")]
     #[test]
-    fn apply_mount_event_hook_fires_only_on_dt_mount() {
-        use crate::raft::mount_event::MountEvent;
+    fn apply_mount_apply_cb_fires_only_on_dt_mount() {
         use crate::transport::proto::nexus::core::FileMetadata as ProtoFileMetadata;
         use prost::Message as ProstMessage;
+        use std::sync::Mutex as StdMutex;
 
-        fn encode(entry_type: i32, zone: &str, target: &str) -> Vec<u8> {
+        fn encode(entry_type: i32, zone: &str, target: &str, backend: &str) -> Vec<u8> {
             ProtoFileMetadata {
                 entry_type,
                 zone_id: zone.to_string(),
                 target_zone_id: target.to_string(),
+                backend_name: backend.to_string(),
                 ..Default::default()
             }
             .encode_to_vec()
         }
 
-        // Sender attached: DT_MOUNT emits once with correct payload.
+        // Callback installed: DT_MOUNT Set emits a Set event with the
+        // decoded target + backend snapshot.
         let store = RedbStore::open_temporary().unwrap();
-        let mut sm = FullStateMachine::new(&store).unwrap();
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<MountEvent>();
-        sm.set_mount_event_tx("zone-a".to_string(), tx);
+        let sm = FullStateMachine::new(&store).unwrap();
+        let events: Arc<StdMutex<Vec<MountApplyEvent>>> = Arc::new(StdMutex::new(Vec::new()));
+        let slot = sm
+            .mount_apply_cb_slot()
+            .expect("FullStateMachine exposes a mount-apply slot");
+        let events_cb = Arc::clone(&events);
+        *slot.write() = Some(Arc::new(move |e: &MountApplyEvent| {
+            events_cb.lock().unwrap().push(e.clone());
+        }));
+        let mut sm = sm;
 
         sm.apply(
             1,
             &Command::SetMetadata {
                 key: "/mnt/peer".into(),
-                value: encode(2, "zone-a", "zone-b"), // DT_MOUNT
+                value: encode(2, "zone-a", "zone-b", "cas-local"), // DT_MOUNT
             },
         )
         .unwrap();
-        let event = rx.try_recv().expect("DT_MOUNT apply must emit");
-        assert_eq!(event.parent_zone_id, "zone-a");
-        assert_eq!(event.mount_path, "/mnt/peer");
-        assert_eq!(event.target_zone_id, "zone-b");
-        assert!(rx.try_recv().is_err(), "only one event per apply");
+        {
+            let log = events.lock().unwrap();
+            assert_eq!(log.len(), 1, "DT_MOUNT Set must fire exactly once");
+            match &log[0] {
+                MountApplyEvent::Set {
+                    key,
+                    target_zone_id,
+                    backend_name,
+                } => {
+                    assert_eq!(key, "/mnt/peer");
+                    assert_eq!(target_zone_id, "zone-b");
+                    assert_eq!(backend_name, "cas-local");
+                }
+                other => panic!("expected Set event, got {other:?}"),
+            }
+        }
 
-        // DT_DIR with the same sender → no event.
+        // DT_DIR Set → no event.
         sm.apply(
             2,
             &Command::SetMetadata {
                 key: "/docs".into(),
-                value: encode(1, "zone-a", ""), // DT_DIR
+                value: encode(1, "zone-a", "", ""), // DT_DIR
             },
         )
         .unwrap();
-        assert!(rx.try_recv().is_err(), "DT_DIR must not emit a mount event");
+        assert_eq!(
+            events.lock().unwrap().len(),
+            1,
+            "DT_DIR must not fire a mount-apply event"
+        );
 
-        // No sender attached: DT_MOUNT applies normally, no panic.
+        // DT_MOUNT Delete → fires one Delete event with the key.
+        sm.apply(
+            3,
+            &Command::DeleteMetadata {
+                key: "/mnt/peer".into(),
+            },
+        )
+        .unwrap();
+        {
+            let log = events.lock().unwrap();
+            assert_eq!(log.len(), 2, "DT_MOUNT Delete must fire once");
+            match &log[1] {
+                MountApplyEvent::Delete { key } => assert_eq!(key, "/mnt/peer"),
+                other => panic!("expected Delete event, got {other:?}"),
+            }
+        }
+
+        // DT_REG Set + Delete → no events (DT_REG is not DT_MOUNT).
+        sm.apply(
+            4,
+            &Command::SetMetadata {
+                key: "/file.txt".into(),
+                value: encode(0, "zone-a", "", ""), // DT_REG
+            },
+        )
+        .unwrap();
+        sm.apply(
+            5,
+            &Command::DeleteMetadata {
+                key: "/file.txt".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            events.lock().unwrap().len(),
+            2,
+            "DT_REG set/delete must not fire"
+        );
+
+        // No callback installed: DT_MOUNT applies normally, no panic.
         let store2 = RedbStore::open_temporary().unwrap();
         let mut sm2 = FullStateMachine::new(&store2).unwrap();
         let res = sm2
@@ -1781,12 +1938,46 @@ mod tests {
                 1,
                 &Command::SetMetadata {
                     key: "/mnt/peer".into(),
-                    value: encode(2, "zone-a", "zone-b"),
+                    value: encode(2, "zone-a", "zone-b", "cas-local"),
                 },
             )
             .unwrap();
         assert!(matches!(res, CommandResult::Success));
-        assert_eq!(sm2.last_applied_index(), 1, "apply unaffected without hook");
+        assert_eq!(sm2.last_applied_index(), 1, "apply unaffected without cb");
+    }
+
+    /// Apply-side mount callback panics must not poison apply.
+    #[cfg(feature = "grpc")]
+    #[test]
+    fn apply_mount_apply_cb_panic_does_not_poison_apply() {
+        use crate::transport::proto::nexus::core::FileMetadata as ProtoFileMetadata;
+        use prost::Message as ProstMessage;
+
+        let store = RedbStore::open_temporary().unwrap();
+        let sm = FullStateMachine::new(&store).unwrap();
+        let slot = sm.mount_apply_cb_slot().unwrap();
+        *slot.write() = Some(Arc::new(|_e: &MountApplyEvent| {
+            panic!("intentional test panic");
+        }));
+        let mut sm = sm;
+
+        let value = ProtoFileMetadata {
+            entry_type: 2,
+            target_zone_id: "zone-b".into(),
+            backend_name: "cas-local".into(),
+            ..Default::default()
+        }
+        .encode_to_vec();
+
+        let res = sm.apply(
+            1,
+            &Command::SetMetadata {
+                key: "/mnt/peer".into(),
+                value,
+            },
+        );
+        assert!(res.is_ok(), "callback panic must not fail apply");
+        assert_eq!(sm.last_applied_index(), 1);
     }
 
     /// Apply-side invalidation callback — fires once per committed

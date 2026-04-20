@@ -566,26 +566,6 @@ class ZoneManager:
         # deterministic behavior across tests.
         return min(dlc_global for (_parent, _mpath, dlc_global) in entries)
 
-    def install_mount_hook(self) -> None:
-        """Register the DT_MOUNT apply-event callback with Rust (R16.2).
-
-        Replaces the legacy ``start_mount_reconciler`` polling thread.
-        Called from the service-link phase once the DLC is wired in;
-        the Rust side runs a catch-up scan of every existing DT_MOUNT
-        entry at registration time, so any historic mounts replayed
-        before this call still get wired to DLC.
-        """
-        set_hook = getattr(self._py_mgr, "set_mount_hook", None)
-        if set_hook is None:
-            logger.warning(
-                "PyZoneManager lacks set_mount_hook (stale build?); "
-                "DT_MOUNT apply events will not fire — federation mounts "
-                "replicated from peers will not appear in this node's DLC"
-            )
-            return
-        set_hook(self._on_mount_event)
-        logger.info("DT_MOUNT apply-event hook registered (event-driven reconciler)")
-
     @property
     def node_id(self) -> int:
         return int(self._node_id)

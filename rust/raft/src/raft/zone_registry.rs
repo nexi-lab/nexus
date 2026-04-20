@@ -115,27 +115,6 @@ impl ZoneRaftRegistry {
         }
     }
 
-    /// Install the DT_MOUNT apply-event sender (R16.2).
-    ///
-    /// Called once by ``PyZoneManager`` at construction, before any
-    /// zones are opened. All zones set up after this point clone
-    /// the sender into their state machine; zones opened before
-    /// this call have no sender (no events fire from them).
-    ///
-    /// The registry never drops the sender — ``PyZoneManager::Drop``
-    /// drops its receiver, which triggers ``emit_mount_event`` to log
-    /// at ``error!`` on the next DT_MOUNT apply (shutdown-path race).
-    pub fn set_mount_event_tx(&self, tx: super::mount_event::MountEventTx) {
-        *self.mount_event_tx.write().unwrap() = Some(tx);
-    }
-
-    /// Clone the currently installed mount-event sender (``None`` if
-    /// none has been installed). Called from ``setup_zone`` to attach
-    /// a sender to each new ``FullStateMachine``.
-    pub fn mount_event_tx(&self) -> Option<super::mount_event::MountEventTx> {
-        self.mount_event_tx.read().unwrap().clone()
-    }
-
     /// Get a snapshot of the current TLS config.
     pub fn tls_config(&self) -> Option<TlsConfig> {
         self.tls.read().unwrap().clone()
@@ -442,14 +421,6 @@ impl ZoneRaftRegistry {
         let state_machine = FullStateMachine::new(&store).map_err(|e| {
             TransportError::Connection(format!("Failed to create state machine: {}", e))
         })?;
-
-        // R16.2: wire DT_MOUNT apply-event sender into this zone's SM
-        // if one was installed on the registry. Opens this zone to
-        // event-driven DLC reconciliation without disturbing test /
-        // direct-drive harnesses that leave the sender unset.
-        if let Some(tx) = self.mount_event_tx() {
-            state_machine.set_mount_event_tx(zone_id.to_string(), tx);
-        }
 
         // R14 raft-rs contract fix: rehydrate advisory lock state from
         // any persisted snapshot before raft-rs gets the state machine.

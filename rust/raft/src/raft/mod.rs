@@ -40,8 +40,6 @@
 //! - [`RaftStorage`]: Persistent Raft log storage using sled
 
 mod error;
-#[cfg(feature = "grpc")]
-pub mod mount_event;
 pub mod replication_log;
 #[cfg(all(feature = "grpc", has_protos))]
 pub mod search_caps;
@@ -58,6 +56,8 @@ mod zone_registry;
 
 pub use error::{RaftError, Result};
 pub use replication_log::ReplicationLog;
+#[cfg(feature = "grpc")]
+pub use state_machine::MountApplyEvent;
 pub use state_machine::{
     Command, CommandResult, FullStateMachine, HolderInfo, LockAcquireResult, LockEntry, LockInfo,
     LockMode, LockState, StateMachine, WitnessStateMachine, WitnessStateMachineInMemory,
@@ -73,9 +73,6 @@ pub use storage::RaftStorage;
 pub use zone_persistence::ZonePersistence;
 #[cfg(all(feature = "grpc", has_protos))]
 pub use zone_registry::ZoneRaftRegistry;
-
-#[cfg(feature = "grpc")]
-pub use mount_event::{MountEvent, MountEventTx};
 
 /// A proposal to be replicated through Raft.
 #[derive(Debug)]

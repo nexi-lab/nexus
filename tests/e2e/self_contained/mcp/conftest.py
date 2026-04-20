@@ -137,9 +137,10 @@ def seeded_zones():
     created_zone_ids: list[str] = []
 
     with httpx.Client(base_url=admin_url, headers=headers, timeout=15.0) as client:
+        # Zone IDs must fit in 8 chars (sk-token zone segment cap).
         for i in range(10):
-            zone_id = f"mcphttp{i:02d}"
-            marker = f"MARKER_MCPHTTP_{i:02d}"
+            zone_id = f"mcph{i:02d}"
+            marker = f"MARKER_MCP_{i:02d}"
 
             # Best-effort zone create. Some presets (`shared`) lack a DB auth
             # provider and return 503 on /api/zones; the demo preset's /api/v2

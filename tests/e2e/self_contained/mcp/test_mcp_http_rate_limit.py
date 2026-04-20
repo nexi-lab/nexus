@@ -77,7 +77,10 @@ async def test_different_tokens_isolated(mcp_http_base_url: str, seeded_zones) -
             json=_BODY,
             timeout=10.0,
         )
-        assert resp_b.status_code == 200, (
-            f"token B (zone={seeded_zones[1]['zone_id']}) got {resp_b.status_code}; "
-            f"should be unaffected by token A's burst"
+        # Token B must not inherit A's bucket. Raw POST without MCP session
+        # returns 400 from FastMCP, but anything other than 429 proves
+        # per-token isolation of the rate-limit bucket.
+        assert resp_b.status_code != 429, (
+            f"token B (zone={seeded_zones[1]['zone_id']}) got 429; "
+            f"bucket shared with token A (rate-limit key collision)"
         )

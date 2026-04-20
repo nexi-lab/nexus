@@ -257,23 +257,41 @@ _aws_profile_cannot_resolve() {
 }
 
 # Normalize AWS_SHARED_CREDENTIALS_FILE / AWS_CONFIG_FILE before validation.
-# nexus-stack.yml passes these through from the operator's shell. That means:
-#   * Empty strings arrive when the operator didn't export anything. An empty
-#     value must NOT be treated as "use cwd" (Path('').exists() is True but
-#     points at ``.``, which is misleading); unset it so botocore and our
-#     check both fall back to defaults.
-#   * Host absolute paths (``/Users/alice/.aws/config``) are passed through
-#     verbatim but those paths usually don't exist inside the container.
-#     Rather than fail-closing a legitimate bind-mount-based setup, unset
-#     the env so both botocore and this guard use the container-visible
-#     ``${HOME}/.aws/`` defaults.
+# nexus-stack.yml passes these through from the operator's shell. Two cases:
+#   * Empty string: Compose injects "" when the operator didn't export
+#     anything. That's "no preference" — not a misconfiguration. Unset it
+#     so both botocore and our guard fall back to defaults. (An empty
+#     value also confuses downstream ``Path('').exists()`` checks.)
+#   * Non-empty value pointing at a file that's not visible inside the
+#     container: this is an explicit operator intent that we cannot honor.
+#     Fail closed under the default policy — silently unsetting would
+#     cause botocore to resolve AWS_PROFILE against the mounted
+#     ``~/.aws/`` instead, which could be a *different* account.
+#     ``NEXUS_AWS_PROFILE_FAIL_OPEN=true`` restores the lenient behavior.
 for _aws_env in AWS_SHARED_CREDENTIALS_FILE AWS_CONFIG_FILE; do
     _val="${!_aws_env:-}"
     if [ -z "$_val" ]; then
         unset "$_aws_env"
     elif [ ! -f "$_val" ]; then
-        echo "${YELLOW:-}${_aws_env}=${_val} points to a file that is not visible inside the container; unsetting so the default ${HOME}/.aws/ location can take over.${NC:-}"
-        unset "$_aws_env"
+        if [ "${NEXUS_AWS_PROFILE_FAIL_OPEN:-false}" = "true" ] \
+           || [ "${NEXUS_AWS_PROFILE_FAIL_OPEN:-false}" = "1" ]; then
+            echo "${YELLOW:-}${_aws_env}=${_val} not visible inside container; NEXUS_AWS_PROFILE_FAIL_OPEN=true, unsetting and falling back to ${HOME}/.aws/.${NC:-}"
+            unset "$_aws_env"
+        else
+            echo "${RED:-}ERROR: ${_aws_env}=${_val} is set but that file is not visible inside the container.${NC:-}" >&2
+            echo "  nexus-stack.yml forwards this env var from your shell, but" >&2
+            echo "  host absolute paths (e.g. /Users/you/.aws/config) aren't" >&2
+            echo "  reachable inside the container's filesystem. Silently" >&2
+            echo "  falling back to the default ~/.aws/ mount risks running" >&2
+            echo "  against a different AWS account than you intended." >&2
+            echo "" >&2
+            echo "  Fix: unset ${_aws_env} in your shell (the bind-mounted" >&2
+            echo "       ~/.aws/ location will be used), OR point it at a" >&2
+            echo "       container-visible path, OR set" >&2
+            echo "       NEXUS_AWS_PROFILE_FAIL_OPEN=true to accept the" >&2
+            echo "       fallback." >&2
+            exit 1
+        fi
     fi
 done
 unset _aws_env _val

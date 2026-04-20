@@ -188,14 +188,50 @@ def _daemon_version() -> str:
     return __version__
 
 
-def _build_encryption_provider() -> Any:
-    """Select the envelope-encryption provider from ``NEXUS_KMS_PROVIDER``.
+class _DaemonEnvelope:
+    """Adapter: expose ``encrypt(plaintext, *, tenant_id, aad)`` on top of an
+    ``EncryptionProvider`` (KEK wrap/unwrap) + ``AESGCMEnvelope`` (DEK).
 
-    Returns ``Any`` because the MVP's only supported value ("memory") maps to
-    ``InMemoryEncryptionProvider``, whose public shape (``wrap_dek``/
-    ``unwrap_dek``) differs from the ``encrypt()``-style internal protocol the
-    ``Pusher`` expects. Wiring the two together is owned by T18's integration
-    layer; this helper only enforces the env-var → constructor selection.
+    The daemon's ``Pusher`` expects a single ``encrypt(...)`` call that returns
+    the full 5-field envelope. The repo's ``EncryptionProvider`` protocol only
+    wraps/unwraps a DEK; the DEK is generated per-call and the plaintext is
+    encrypted with it via ``AESGCMEnvelope``.
+    """
+
+    def __init__(self, provider: Any) -> None:
+        from nexus.bricks.auth.envelope import AESGCMEnvelope
+
+        self._provider = provider
+        self._aes = AESGCMEnvelope()
+
+    def encrypt(self, plaintext: bytes, *, tenant_id: uuid.UUID, aad: bytes) -> Any:
+        import secrets
+        from dataclasses import dataclass
+
+        @dataclass(frozen=True)
+        class _Envelope:
+            ciphertext: bytes
+            wrapped_dek: bytes
+            nonce: bytes
+            aad: bytes
+            kek_version: int
+
+        dek = secrets.token_bytes(32)
+        wrapped_dek, kek_version = self._provider.wrap_dek(dek, tenant_id=tenant_id, aad=aad)
+        nonce, ciphertext = self._aes.encrypt(dek, plaintext, aad=aad)
+        return _Envelope(
+            ciphertext=ciphertext,
+            wrapped_dek=wrapped_dek,
+            nonce=nonce,
+            aad=aad,
+            kek_version=kek_version,
+        )
+
+
+def _build_encryption_provider() -> Any:
+    """Build the envelope helper for the Pusher from ``NEXUS_KMS_PROVIDER``.
+
+    MVP only supports ``memory`` (``InMemoryEncryptionProvider``).
     """
     provider_name = os.environ.get("NEXUS_KMS_PROVIDER", "memory")
     if provider_name == "memory":
@@ -203,7 +239,7 @@ def _build_encryption_provider() -> Any:
             InMemoryEncryptionProvider,
         )
 
-        return InMemoryEncryptionProvider()
+        return _DaemonEnvelope(InMemoryEncryptionProvider())
     raise click.ClickException(
         f"unsupported NEXUS_KMS_PROVIDER={provider_name!r}; MVP supports only 'memory'"
     )

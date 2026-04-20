@@ -15,12 +15,17 @@ from nexus.bricks.auth.daemon import cli as daemon_cli
 
 
 def test_build_encryption_provider_defaults_to_memory(monkeypatch: pytest.MonkeyPatch) -> None:
-    """No env → memory provider (the MVP default)."""
-    monkeypatch.delenv("NEXUS_KMS_PROVIDER", raising=False)
-    from nexus.bricks.auth.envelope_providers.in_memory import InMemoryEncryptionProvider
+    """No env → memory provider (the MVP default), wrapped in _DaemonEnvelope."""
+    import uuid
 
+    monkeypatch.delenv("NEXUS_KMS_PROVIDER", raising=False)
     ep = daemon_cli._build_encryption_provider()
-    assert isinstance(ep, InMemoryEncryptionProvider)
+    # _DaemonEnvelope exposes .encrypt(plaintext, tenant_id, aad)
+    env = ep.encrypt(b"hello", tenant_id=uuid.uuid4(), aad=b"tenant|principal|id")
+    assert env.ciphertext != b"hello"
+    assert len(env.nonce) == 12
+    assert env.kek_version >= 1
+    assert len(env.wrapped_dek) > 0
 
 
 def test_build_encryption_provider_rejects_unknown(monkeypatch: pytest.MonkeyPatch) -> None:

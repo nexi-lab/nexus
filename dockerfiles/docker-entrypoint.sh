@@ -224,29 +224,64 @@ _aws_profile_file_has_name() {
     return 1
 }
 
+_aws_profile_fail_open="${NEXUS_AWS_PROFILE_FAIL_OPEN:-false}"
+case "$_aws_profile_fail_open" in
+    true|TRUE|True|1|yes|YES) _aws_profile_fail_open="true" ;;
+    *) _aws_profile_fail_open="false" ;;
+esac
+
+_aws_profile_cannot_resolve() {
+    # Behavior when AWS_PROFILE is set but can't be found. Default is
+    # fail-closed: exit non-zero with a clear error so operators learn of
+    # the typo / missing mount instead of silently sending traffic to the
+    # wrong AWS account via env/IAM fallback. Set
+    # NEXUS_AWS_PROFILE_FAIL_OPEN=true to restore the old lenient behavior.
+    local _reason="$1"
+    if [ "$_aws_profile_fail_open" = "true" ]; then
+        echo "${YELLOW:-}AWS_PROFILE=${AWS_PROFILE} ${_reason}; NEXUS_AWS_PROFILE_FAIL_OPEN=true, unsetting so env/IAM-role creds can take over.${NC:-}"
+        unset AWS_PROFILE
+        return 0
+    fi
+    echo "${RED:-}ERROR: AWS_PROFILE=${AWS_PROFILE} ${_reason}.${NC:-}" >&2
+    echo "  This is almost always a typo, a missing bind mount, or a stale" >&2
+    echo "  shell export. Nexus refuses to start rather than silently fall" >&2
+    echo "  back to env/IAM credentials — which could route operations to" >&2
+    echo "  a different AWS account." >&2
+    echo "" >&2
+    echo "  Fix: unset AWS_PROFILE in your shell, mount the correct ~/.aws," >&2
+    echo "       or point AWS_SHARED_CREDENTIALS_FILE / AWS_CONFIG_FILE at" >&2
+    echo "       the right paths." >&2
+    echo "  Override (accepts the fallback risk):" >&2
+    echo "       NEXUS_AWS_PROFILE_FAIL_OPEN=true" >&2
+    exit 1
+}
+
 if [ -n "${AWS_PROFILE+x}" ]; then
     if [ -z "${AWS_PROFILE:-}" ]; then
+        # Compose's inherent behavior with ``AWS_PROFILE: ${AWS_PROFILE:-}``
+        # injects an empty string when the operator didn't export anything.
+        # That's not a misconfiguration — it's "no preference" — so unset
+        # silently.
         unset AWS_PROFILE
     else
         # Honor botocore's own env overrides before falling back to ~/.aws.
         # Operators who point AWS_SHARED_CREDENTIALS_FILE or AWS_CONFIG_FILE
-        # at a non-default location (supported elsewhere in this repo) must
-        # see their explicit profile checked there first — otherwise this
-        # guard would silently unset a valid profile and route operations
-        # to env/IAM credentials for a *different* AWS account.
+        # at a non-default location must see their explicit profile
+        # checked there first.
         _aws_cred_file="${AWS_SHARED_CREDENTIALS_FILE:-${HOME}/.aws/credentials}"
         _aws_conf_file="${AWS_CONFIG_FILE:-${HOME}/.aws/config}"
         if [ ! -s "$_aws_cred_file" ] && [ ! -s "$_aws_conf_file" ]; then
-            echo "${YELLOW:-}AWS_PROFILE=${AWS_PROFILE} set but neither ${_aws_cred_file} nor ${_aws_conf_file} is present; unsetting so env/IAM-role creds can take over.${NC:-}"
-            unset AWS_PROFILE
+            _aws_profile_cannot_resolve \
+                "set but neither ${_aws_cred_file} nor ${_aws_conf_file} is present"
         elif ! _aws_profile_file_has_name "$_aws_cred_file" "$AWS_PROFILE" \
               && ! _aws_profile_file_has_name "$_aws_conf_file" "$AWS_PROFILE"; then
-            echo "${YELLOW:-}AWS_PROFILE=${AWS_PROFILE} not present in ${_aws_cred_file} or ${_aws_conf_file}; unsetting so env/IAM-role creds can take over.${NC:-}"
-            unset AWS_PROFILE
+            _aws_profile_cannot_resolve \
+                "not present in ${_aws_cred_file} or ${_aws_conf_file}"
         fi
         unset _aws_cred_file _aws_conf_file
     fi
 fi
+unset _aws_profile_fail_open
 
 # -----------------------------------------------------------------------------
 # Functions

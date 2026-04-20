@@ -102,10 +102,21 @@ services:
       # set it explicitly; otherwise it's empty and the entrypoint unsets
       # it, so botocore doesn't raise ProfileNotFound when no ~/.aws file
       # is mounted (env-only + IAM-role setups).
+      #
+      # AWS_SHARED_CREDENTIALS_FILE / AWS_CONFIG_FILE are passed through so
+      # operators running with non-standard credentials layouts (e.g. AWS
+      # Vault, Leapp) can point the container at the right files. When
+      # unset, the entrypoint falls back to the mounted ~/.aws/ defaults.
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
       AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-}
       AWS_PROFILE: ${AWS_PROFILE:-}
+      AWS_SHARED_CREDENTIALS_FILE: ${AWS_SHARED_CREDENTIALS_FILE:-}
+      AWS_CONFIG_FILE: ${AWS_CONFIG_FILE:-}
+      # Opt-in: allow fallback to env/IAM credentials when AWS_PROFILE is
+      # set but unresolvable. Default behavior is fail-closed to prevent
+      # silent account drift — see entrypoint.
+      NEXUS_AWS_PROFILE_FAIL_OPEN: ${NEXUS_AWS_PROFILE_FAIL_OPEN:-}
       # Permissions
       NEXUS_SKIP_PERMISSIONS: ${NEXUS_SKIP_PERMISSIONS:-false}
       NEXUS_ENFORCE_PERMISSIONS: ${NEXUS_ENFORCE_PERMISSIONS:-true}

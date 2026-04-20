@@ -4,7 +4,7 @@ LRU cache that stores file content by hash to avoid disk I/O for frequently
 accessed files. Uses size-based eviction to prevent memory bloat.
 
 Supports transparent LZ4 compression for 3-4x capacity improvement (Issue #908).
-Priority-aware two-pass eviction for IOProfile integration (Issue #2427).
+Priority-aware two-pass eviction (Issue #2427).
 """
 
 import logging

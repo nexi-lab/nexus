@@ -310,7 +310,6 @@ class RustRouteResult:
     mount_point: str
     backend_path: str
     readonly: bool
-    io_profile: str
     is_external: bool
 
 class OperationContext:

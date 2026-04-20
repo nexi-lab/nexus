@@ -208,7 +208,6 @@ class TestSyscallOverhead:
             backend_type="cas",
             readonly=False,
             admin_only=False,
-            io_profile="local",
             zone_id=ROOT_ZONE_ID,
         )
         return d

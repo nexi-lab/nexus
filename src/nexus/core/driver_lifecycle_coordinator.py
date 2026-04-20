@@ -52,7 +52,6 @@ class _PyMountInfo:
     backend: "ObjectStoreABC"
     readonly: bool
     admin_only: bool
-    io_profile: str
     zone_id: str
     is_external: bool = False
 
@@ -141,7 +140,6 @@ class DriverLifecycleCoordinator:
         *,
         readonly: bool = False,
         admin_only: bool = False,
-        io_profile: str = "balanced",
         zone_id: str = ROOT_ZONE_ID,
         is_external: bool = False,
     ) -> None:
@@ -158,7 +156,6 @@ class DriverLifecycleCoordinator:
             backend=backend,
             readonly=readonly,
             admin_only=admin_only,
-            io_profile=io_profile,
             zone_id=zone_id,
             is_external=is_external,
         )

@@ -57,7 +57,6 @@ def _add_mount(
     *,
     readonly: bool = False,
     admin_only: bool = False,
-    io_profile: str = "balanced",
     zone_id: str = ROOT_ZONE_ID,
 ) -> None:
     """Insert a mount into the router's DLC map directly."""
@@ -66,7 +65,6 @@ def _add_mount(
         backend=backend,
         readonly=readonly,
         admin_only=admin_only,
-        io_profile=io_profile,
         zone_id=zone_id,
     )
 

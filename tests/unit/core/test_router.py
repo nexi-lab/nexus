@@ -292,26 +292,6 @@ def test_route_readonly_allows_reads(
     assert result.readonly is True
 
 
-def test_route_io_profile_propagated(
-    mount_table: MountTable, router: PathRouter, temp_backend: CASLocalBackend
-) -> None:
-    """Test that io_profile is propagated in RouteResult."""
-    mount_table.add("/weights", temp_backend, io_profile="fast_read")
-
-    result = router.route("/weights/model.bin")
-    assert result.io_profile == "fast_read"
-
-
-def test_route_default_io_profile(
-    mount_table: MountTable, router: PathRouter, temp_backend: CASLocalBackend
-) -> None:
-    """Test that default io_profile is 'balanced'."""
-    mount_table.add("/data", temp_backend)
-
-    result = router.route("/data/file.txt")
-    assert result.io_profile == "balanced"
-
-
 # === Admin-only mount tests ===
 
 

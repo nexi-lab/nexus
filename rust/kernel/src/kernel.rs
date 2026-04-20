@@ -1236,7 +1236,6 @@ impl Kernel {
         zone_id: &str,
         readonly: bool,
         admin_only: bool,
-        io_profile: &str,
         backend_name: &str,
         backend: Option<Arc<dyn crate::backend::ObjectStore>>,
         metastore: Option<Arc<dyn crate::metastore::Metastore>>,
@@ -1251,7 +1250,6 @@ impl Kernel {
             zone_id,
             readonly,
             admin_only,
-            io_profile,
             backend_name,
             backend,
             is_external,
@@ -1456,7 +1454,6 @@ impl Kernel {
                     zone_id,
                     readonly,
                     admin_only,
-                    io_profile,
                     backend_name,
                     backend,
                     metastore,
@@ -2862,7 +2859,7 @@ impl Kernel {
                     .mount_table
                     .get_canonical(&route.mount_point)
                     .map(|e| e.backend_name.clone())
-                    .unwrap_or_else(|| route.io_profile.clone());
+                    .unwrap_or_else(|| "local".to_string());
                 let backend_display_name = self.origin_backend_name(&raw_backend_name);
                 let created_at_ms = old_entry
                     .as_ref()
@@ -3536,7 +3533,7 @@ impl Kernel {
             .mount_table
             .get_canonical(&dst_route.mount_point)
             .map(|e| e.backend_name.clone())
-            .unwrap_or_else(|| dst_route.io_profile.clone());
+            .unwrap_or_else(|| "local".to_string());
         let backend_display_name = self.origin_backend_name(&raw_backend_name);
 
         let new_version = 1u32;
@@ -3704,10 +3701,15 @@ impl Kernel {
         }
 
         // 6. Create directory metadata in metastore (per-mount or global) — full path
+        let dir_backend_name = self
+            .mount_table
+            .get_canonical(&route.mount_point)
+            .map(|e| e.backend_name.clone())
+            .unwrap_or_else(|| "local".to_string());
         self.with_metastore(&route.mount_point, |ms| {
             let meta = crate::metastore::FileMetadata {
                 path: path.to_string(),
-                backend_name: route.io_profile.clone(),
+                backend_name: dir_backend_name.clone(),
                 physical_path: String::new(),
                 size: 0,
                 etag: None,
@@ -3725,7 +3727,7 @@ impl Kernel {
         self.dcache.put(
             path,
             CachedEntry {
-                backend_name: route.io_profile.clone(),
+                backend_name: dir_backend_name,
                 physical_path: String::new(),
                 size: 0,
                 etag: None,
@@ -4038,10 +4040,15 @@ impl Kernel {
                     let new_version = old_version + 1;
 
                     // Collect metadata for batch put (instead of N individual puts)
-                    let batch_backend_name = self.origin_backend_name(&route.io_profile);
+                    let raw_batch_backend_name = self
+                        .mount_table
+                        .get_canonical(&route.mount_point)
+                        .map(|e| e.backend_name.clone())
+                        .unwrap_or_else(|| "local".to_string());
+                    let batch_backend_name = self.origin_backend_name(&raw_batch_backend_name);
                     let meta = crate::metastore::FileMetadata {
                         path: path.to_string(),
-                        backend_name: batch_backend_name,
+                        backend_name: batch_backend_name.clone(),
                         physical_path: wr.content_id.clone(),
                         size: wr.size,
                         etag: Some(wr.content_id.clone()),
@@ -4058,7 +4065,7 @@ impl Kernel {
                     self.dcache.put(
                         path,
                         CachedEntry {
-                            backend_name: route.io_profile.clone(),
+                            backend_name: batch_backend_name,
                             physical_path: wr.content_id.clone(),
                             size: wr.size,
                             etag: Some(wr.content_id.clone()),
@@ -4926,7 +4933,6 @@ mod tests {
             "root",
             false,
             false,
-            "balanced",
             "test",
             None,
             Some(ms.clone()),
@@ -4979,7 +4985,6 @@ mod tests {
             "root",
             false,
             false,
-            "balanced",
             "test",
             None,
             Some(ms.clone()),

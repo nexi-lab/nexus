@@ -36,7 +36,6 @@ class MountConfig:
     mount_point: str
     backend: Any
     readonly: bool = False
-    io_profile: str = "balanced"
 
 
 class MountManager:
@@ -76,7 +75,6 @@ class MountManager:
         backend_type: str,
         backend_config: dict[str, Any],
         readonly: bool = False,
-        io_profile: str = "balanced",
         owner_user_id: str | None = None,
         zone_id: str | None = None,
         description: str | None = None,
@@ -88,7 +86,6 @@ class MountManager:
             backend_type: Type of backend (e.g., "google_drive", "gcs", "cas_local")
             backend_config: Backend-specific configuration (dict)
             readonly: Whether mount is read-only
-            io_profile: I/O tuning profile (Issue #1413)
             owner_user_id: User ID who owns this mount
             zone_id: Zone ID this mount belongs to
             description: Optional description of the mount
@@ -106,7 +103,6 @@ class MountManager:
             backend_type=backend_type,
             backend_config=backend_config,
             readonly=readonly,
-            io_profile=io_profile,
             owner_user_id=owner_user_id,
             zone_id=zone_id,
             description=description,

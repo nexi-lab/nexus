@@ -1018,8 +1018,6 @@ pub struct PyRustRouteResult {
     #[pyo3(get)]
     pub readonly: bool,
     #[pyo3(get)]
-    pub io_profile: String,
-    #[pyo3(get)]
     pub is_external: bool,
 }
 
@@ -1029,7 +1027,6 @@ impl From<RustRouteResult> for PyRustRouteResult {
             mount_point: r.mount_point,
             backend_path: r.backend_path,
             readonly: r.readonly,
-            io_profile: r.io_profile,
             is_external: r.is_external,
         }
     }

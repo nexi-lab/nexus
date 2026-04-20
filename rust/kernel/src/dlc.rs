@@ -26,7 +26,6 @@ pub(crate) struct MountInfo {
     pub zone_id: String,
     pub readonly: bool,
     pub admin_only: bool,
-    pub io_profile: String,
     pub backend_name: String,
 }
 
@@ -51,7 +50,7 @@ impl DriverLifecycleCoordinator {
     /// - `kernel` — back-reference to the owning Kernel (interior mutability)
     /// - `mount_point` — virtual path (e.g. `/`, `/data`)
     /// - `zone_id` — zone identifier
-    /// - `readonly`, `admin_only`, `io_profile` — access flags
+    /// - `readonly`, `admin_only` — access flags
     /// - `backend_name` — backend identifier string
     /// - `backend` — optional Rust backend (None = Python-side backend)
     /// - `metastore` — optional per-mount metastore (ZoneMetastore or LocalMetastore)
@@ -64,7 +63,6 @@ impl DriverLifecycleCoordinator {
         zone_id: &str,
         readonly: bool,
         admin_only: bool,
-        io_profile: &str,
         backend_name: &str,
         backend: Option<Arc<dyn crate::backend::ObjectStore>>,
         metastore: Option<Arc<dyn crate::metastore::Metastore>>,
@@ -89,7 +87,6 @@ impl DriverLifecycleCoordinator {
             zone_id,
             readonly,
             admin_only,
-            io_profile,
             backend_name,
             backend,
             metastore,
@@ -145,7 +142,6 @@ impl DriverLifecycleCoordinator {
                 zone_id: zone_id.to_string(),
                 readonly,
                 admin_only,
-                io_profile: io_profile.to_string(),
                 backend_name: backend_name.to_string(),
             },
         );

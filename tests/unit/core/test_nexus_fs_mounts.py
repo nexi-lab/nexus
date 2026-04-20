@@ -191,21 +191,6 @@ class TestAddMount:
         assert mount_id == "/mnt/local"
         assert nx.service("mount").has_mount_sync("/mnt/local")
 
-    async def test_add_mount_with_io_profile(self, nx: NexusFS, temp_dir: Path) -> None:
-        """Test adding a mount with custom io_profile."""
-        mount_data_dir = temp_dir / "profile_mount"
-        mount_data_dir.mkdir()
-
-        nx.service("mount").add_mount_sync(
-            mount_point="/mnt/fast_read",
-            backend_type="cas_local",
-            backend_config={"data_dir": str(mount_data_dir)},
-            io_profile="fast_read",
-        )
-
-        mount = nx.service("mount").get_mount_sync("/mnt/fast_read")
-        assert mount is not None
-
     async def test_add_mount_readonly(self, nx: NexusFS, temp_dir: Path) -> None:
         """Test adding a read-only mount."""
         mount_data_dir = temp_dir / "readonly_mount"

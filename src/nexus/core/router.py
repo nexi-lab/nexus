@@ -69,7 +69,6 @@ class RouteResult:
     backend_path: str  # Path relative to backend root
     mount_point: str  # Matched mount point
     readonly: bool
-    io_profile: str = "balanced"  # I/O tuning profile (Issue #1413)
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,7 +96,6 @@ class ExternalRouteResult:
     backend_path: str
     mount_point: str
     readonly: bool
-    io_profile: str = "balanced"
 
 
 class PathRouter:
@@ -179,7 +177,6 @@ class PathRouter:
                     backend_path=rust_result.backend_path,
                     mount_point=user_mp,
                     readonly=rust_result.readonly,
-                    io_profile=rust_result.io_profile,
                 )
             return RouteResult(
                 backend=info.backend,
@@ -187,7 +184,6 @@ class PathRouter:
                 backend_path=rust_result.backend_path,
                 mount_point=user_mp,
                 readonly=rust_result.readonly,
-                io_profile=rust_result.io_profile,
             )
 
         # Python fallback: walk DLC mounts for LPM.
@@ -212,7 +208,6 @@ class PathRouter:
                 backend_path=backend_path,
                 mount_point=user_mp,
                 readonly=info.readonly,
-                io_profile=info.io_profile,
             )
         return RouteResult(
             backend=info.backend,
@@ -220,7 +215,6 @@ class PathRouter:
             backend_path=backend_path,
             mount_point=user_mp,
             readonly=info.readonly,
-            io_profile=info.io_profile,
         )
 
     # ------------------------------------------------------------------

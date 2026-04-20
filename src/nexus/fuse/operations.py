@@ -30,7 +30,6 @@ from nexus.fuse.ops._shared import (
     get_zone_id,
     parse_virtual_path_for_fuse,
     read_range_from_backend,
-    resolve_io_profile,
     rust_available,
     try_rust,
 )
@@ -322,9 +321,6 @@ class NexusFUSEOperations(Operations):
 
     def _get_file_content(self, path: str, view_type: str | None, **kwargs: Any) -> bytes:
         return asyncio.run(get_file_content(self._ctx, path, view_type, **kwargs))
-
-    def _resolve_io_profile(self, path: str) -> str:
-        return resolve_io_profile(self._ctx, path)
 
     def set_event_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         """Set the event loop for async event dispatching."""

@@ -1064,7 +1064,6 @@ class _FakeRoute:
         self.mount_point = mount_point
         self.backend_path = backend_path
         self.readonly = True
-        self.io_profile = "balanced"
         self.metastore = None  # stat path checks meta; we override it anyway
 
 

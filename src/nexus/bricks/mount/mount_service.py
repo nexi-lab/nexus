@@ -494,7 +494,6 @@ class MountService:
         backend_type: str,
         backend_config: dict[str, Any],
         readonly: bool = False,
-        io_profile: str = "balanced",
         context: "OperationContext | None" = None,
     ) -> str:
         """Add a dynamic backend mount (synchronous).
@@ -511,7 +510,6 @@ class MountService:
             backend_type: Backend type identifier
             backend_config: Backend-specific configuration
             readonly: Whether mount is read-only
-            io_profile: I/O tuning profile (Issue #1413)
             context: Operation context for permissions
 
         Returns:
@@ -583,7 +581,6 @@ class MountService:
             entry_type=DT_MOUNT,
             backend=backend,
             readonly=readonly,
-            io_profile=io_profile,
             is_external=(_entry_type == DT_EXTERNAL_STORAGE),
         )
         try:
@@ -945,7 +942,6 @@ class MountService:
         backend_type: str,
         backend_config: dict[str, Any],
         readonly: bool = False,
-        io_profile: str = "balanced",
         context: "OperationContext | None" = None,
     ) -> str:
         """Add a dynamic backend mount to the filesystem.
@@ -960,7 +956,6 @@ class MountService:
             backend_type: Backend type - "cas_local", "cas_gcs", "path_gcs", "google_drive", etc.
             backend_config: Backend-specific configuration dict
             readonly: Whether mount is read-only (default: False)
-            io_profile: I/O tuning profile
             context: Operation context (automatically provided by RPC server)
 
         Returns:
@@ -976,7 +971,6 @@ class MountService:
             backend_type=backend_type,
             backend_config=backend_config,
             readonly=readonly,
-            io_profile=io_profile,
             context=context,
         )
 
@@ -1293,7 +1287,6 @@ class MountService:
         backend_type: str,
         backend_config: dict[str, Any],
         readonly: bool = False,
-        io_profile: str = "balanced",
         owner_user_id: str | None = None,
         zone_id: str | None = None,
         description: str | None = None,
@@ -1311,7 +1304,6 @@ class MountService:
             backend_type: Backend type - "cas_local", "cas_gcs", etc.
             backend_config: Backend-specific configuration dict
             readonly: Whether mount is read-only (default: False)
-            io_profile: I/O tuning profile
             owner_user_id: User who owns this mount (optional)
             zone_id: Zone ID for multi-zone isolation (optional)
             description: Human-readable description (optional)
@@ -1350,7 +1342,6 @@ class MountService:
                 backend_type=backend_type,
                 backend_config=backend_config,
                 readonly=readonly,
-                io_profile=io_profile,
                 owner_user_id=owner_user_id,
                 zone_id=zone_id,
                 description=description,

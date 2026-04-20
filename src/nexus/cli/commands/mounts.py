@@ -60,12 +60,6 @@ def mounts_group() -> None:
 @click.argument("backend_type", type=str)
 @click.argument("config_json", type=str)
 @click.option("--readonly", is_flag=True, help="Mount as read-only")
-@click.option(
-    "--io-profile",
-    type=click.Choice(["fast_read", "fast_write", "edit", "append_only", "balanced", "archive"]),
-    default="balanced",
-    help="I/O profile for the mount (default: balanced)",
-)
 @click.option("--owner", type=str, default=None, help="Owner user ID")
 @click.option("--zone", type=str, default=None, help="Zone ID")
 @add_backend_options
@@ -74,7 +68,6 @@ def add_mount(
     backend_type: str,
     config_json: str,
     readonly: bool,
-    io_profile: str,
     owner: str | None,
     zone: str | None,
     remote_url: str | None,
@@ -109,7 +102,6 @@ def add_mount(
             backend_type,
             config_json,
             readonly,
-            io_profile,
             owner,
             zone,
             remote_url,
@@ -123,7 +115,6 @@ async def _async_add_mount(
     backend_type: str,
     config_json: str,
     readonly: bool,
-    io_profile: str,
     owner: str | None,
     zone: str | None,
     remote_url: str | None,
@@ -180,7 +171,6 @@ async def _async_add_mount(
         console.print(f"  Mount Point: [nexus.path]{mount_point}[/nexus.path]")
         console.print(f"  Backend Type: [nexus.value]{backend_type}[/nexus.value]")
         console.print(f"  Read-Only: [nexus.value]{readonly}[/nexus.value]")
-        console.print(f"  IO Profile: [nexus.value]{io_profile}[/nexus.value]")
         if owner:
             console.print(f"  Owner: [nexus.value]{owner}[/nexus.value]")
         if zone:

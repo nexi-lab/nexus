@@ -927,7 +927,6 @@ class NexusFS(  # type: ignore[misc]
             backend = attrs.get("backend")
             readonly = attrs.get("readonly", False)
             admin_only = attrs.get("admin_only", False)
-            io_profile = attrs.get("io_profile", "balanced")
             zone_id = attrs.get("zone_id", ROOT_ZONE_ID)
             metastore = attrs.get("metastore")
 
@@ -952,7 +951,6 @@ class NexusFS(  # type: ignore[misc]
                     anthropic_blob_root=attrs.get("anthropic_blob_root"),
                     readonly=readonly,
                     admin_only=admin_only,
-                    io_profile=io_profile,
                     zone_id=zone_id,
                 )
                 return result
@@ -983,7 +981,6 @@ class NexusFS(  # type: ignore[misc]
                 py_backend=backend,
                 readonly=readonly,
                 admin_only=admin_only,
-                io_profile=io_profile,
                 zone_id=zone_id,
                 metastore_path=str(_ms_path) if _ms_path else None,
                 py_zone_handle=_zone_handle,
@@ -995,7 +992,6 @@ class NexusFS(  # type: ignore[misc]
                 backend,
                 readonly=readonly,
                 admin_only=admin_only,
-                io_profile=io_profile,
                 zone_id=zone_id,
             )
             return result
@@ -4479,7 +4475,6 @@ class NexusFS(  # type: ignore[misc]
         backend_type: str,
         backend_config: dict[str, Any],
         readonly: bool = False,
-        io_profile: str = "balanced",
         context: Any = None,
     ) -> str:
         return self.mount_service.add_mount_sync(
@@ -4487,7 +4482,6 @@ class NexusFS(  # type: ignore[misc]
             backend_type=backend_type,
             backend_config=backend_config,
             readonly=readonly,
-            io_profile=io_profile,
             context=context,
         )
 

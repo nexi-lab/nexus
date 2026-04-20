@@ -2,8 +2,8 @@
 //!
 //! Mirrors Python `nexus.core.mount_table` (the canonical kernel-namespace
 //! placement for this data type). Each `MountEntry` is the in-memory record
-//! for one mount: storage backend, optional per-mount metastore, mount-level
-//! access flags, and IO profile. Together they form `MountTable`, an LPM-
+//! for one mount: storage backend, optional per-mount metastore, and
+//! mount-level access flags. Together they form `MountTable`, an LPM-
 //! routable container keyed by zone-canonical paths.
 //!
 //! Replaces the older split where:
@@ -62,9 +62,6 @@ pub struct MountEntry {
     /// Mount-level access control: admin-only mount (e.g. `/__sys__`).
     pub admin_only: bool,
 
-    /// IO tuning profile (`balanced`, `latency`, `throughput`, …).
-    pub io_profile: String,
-
     /// Cosmetic name reported by introspection / logs.
     pub backend_name: String,
 
@@ -81,7 +78,6 @@ impl MountEntry {
         backend: Option<Arc<dyn ObjectStore>>,
         readonly: bool,
         admin_only: bool,
-        io_profile: impl Into<String>,
         backend_name: impl Into<String>,
     ) -> Self {
         Self {
@@ -89,7 +85,6 @@ impl MountEntry {
             metastore: None,
             readonly,
             admin_only,
-            io_profile: io_profile.into(),
             backend_name: backend_name.into(),
             is_external: false,
         }
@@ -139,7 +134,6 @@ pub struct RouteResult {
     /// Path relative to the mount root (no leading slash).
     pub backend_path: String,
     pub readonly: bool,
-    pub io_profile: String,
     /// True when the routed mount is an external connector — Python must
     /// dispatch the operation through a Python-side backend adapter.
     pub is_external: bool,
@@ -202,7 +196,6 @@ impl MountTable {
         zone_id: &str,
         readonly: bool,
         admin_only: bool,
-        io_profile: &str,
         backend_name: &str,
         backend: Option<Arc<dyn ObjectStore>>,
         is_external: bool,
@@ -210,7 +203,7 @@ impl MountTable {
         self.add(
             mount_point,
             zone_id,
-            MountEntry::new(backend, readonly, admin_only, io_profile, backend_name)
+            MountEntry::new(backend, readonly, admin_only, backend_name)
                 .with_is_external(is_external),
         );
     }
@@ -234,7 +227,7 @@ impl MountTable {
             entry.metastore = Some(metastore);
             return;
         }
-        let mut entry = MountEntry::new(None, false, false, "balanced", "federation");
+        let mut entry = MountEntry::new(None, false, false, "federation");
         entry.metastore = Some(metastore);
         self.entries.insert(canonical_key.to_string(), entry);
     }
@@ -373,7 +366,6 @@ impl MountTable {
                 let mount_point = current.to_string();
                 let backend_path = strip_mount_prefix(&canonical, current);
                 let readonly = entry.readonly;
-                let io_profile = entry.io_profile.clone();
                 let is_external = entry.is_external;
                 drop(entry);
 
@@ -381,7 +373,6 @@ impl MountTable {
                     mount_point,
                     backend_path,
                     readonly,
-                    io_profile,
                     is_external,
                 });
             }
@@ -590,8 +581,8 @@ fn strip_mount_prefix(path: &str, mount_point: &str) -> String {
 mod tests {
     use super::*;
 
-    fn entry(readonly: bool, admin_only: bool, io_profile: &str) -> MountEntry {
-        MountEntry::new(None, readonly, admin_only, io_profile, "test")
+    fn entry(readonly: bool, admin_only: bool) -> MountEntry {
+        MountEntry::new(None, readonly, admin_only, "test")
     }
 
     #[test]
@@ -633,21 +624,20 @@ mod tests {
     #[test]
     fn test_basic_route() {
         let table = MountTable::new();
-        table.add("/", "root", entry(false, false, "balanced"));
-        table.add("/workspace", "root", entry(false, false, "fast"));
+        table.add("/", "root", entry(false, false));
+        table.add("/workspace", "root", entry(false, false));
 
         let r = table
             .route("/workspace/file.txt", "root", false, false)
             .unwrap();
         assert_eq!(r.mount_point, "/root/workspace");
         assert_eq!(r.backend_path, "file.txt");
-        assert_eq!(r.io_profile, "fast");
     }
 
     #[test]
     fn test_route_falls_back_to_root() {
         let table = MountTable::new();
-        table.add("/", "root", entry(false, false, "balanced"));
+        table.add("/", "root", entry(false, false));
 
         let r = table.route("/unknown/path", "root", false, false).unwrap();
         assert_eq!(r.mount_point, "/root");
@@ -657,7 +647,7 @@ mod tests {
     #[test]
     fn test_route_readonly_blocks_writes() {
         let table = MountTable::new();
-        table.add("/system", "root", entry(true, false, "balanced"));
+        table.add("/system", "root", entry(true, false));
 
         let err = table
             .route("/system/config", "root", false, true)
@@ -668,7 +658,7 @@ mod tests {
     #[test]
     fn test_route_admin_only() {
         let table = MountTable::new();
-        table.add("/admin", "root", entry(false, true, "balanced"));
+        table.add("/admin", "root", entry(false, true));
 
         let err = table
             .route("/admin/secrets", "root", false, false)
@@ -682,8 +672,8 @@ mod tests {
     #[test]
     fn test_cross_zone_isolation() {
         let table = MountTable::new();
-        table.add("/", "root", entry(false, false, "balanced"));
-        table.add("/shared", "zone-beta", entry(false, false, "balanced"));
+        table.add("/", "root", entry(false, false));
+        table.add("/shared", "zone-beta", entry(false, false));
 
         // root zone falls back to root mount
         let r = table
@@ -723,7 +713,7 @@ mod tests {
         }
 
         let table = MountTable::new();
-        table.add("/data", "root", entry(false, false, "balanced"));
+        table.add("/data", "root", entry(false, false));
         let canonical = canonicalize_mount_path("/data", "root");
 
         // Initially no metastore.
@@ -736,7 +726,7 @@ mod tests {
     #[test]
     fn test_mount_management() {
         let table = MountTable::new();
-        table.add("/data", "root", entry(false, false, "balanced"));
+        table.add("/data", "root", entry(false, false));
         assert!(table.has("/data", "root"));
         assert!(!table.has("/data", "other"));
 
@@ -790,7 +780,7 @@ mod tests {
     fn zone_to_global_round_trip() {
         // canonicalize → route → zone_key → zone_to_global should recover original
         let table = MountTable::new();
-        table.add("/corp", "root", entry(false, false, "balanced"));
+        table.add("/corp", "root", entry(false, false));
 
         let global = "/corp/eng/foo.txt";
         let route = table.route(global, "root", true, false).unwrap();
@@ -867,19 +857,17 @@ mod tests {
         table.add(
             "/corp",
             "root",
-            MountEntry::new(None, false, false, "balanced", "backend-corp").with_metastore(corp_a),
+            MountEntry::new(None, false, false, "backend-corp").with_metastore(corp_a),
         );
         table.add(
             "/family/work",
             "root",
-            MountEntry::new(None, false, false, "balanced", "backend-corp-xlink")
-                .with_metastore(corp_b),
+            MountEntry::new(None, false, false, "backend-corp-xlink").with_metastore(corp_b),
         );
         table.add(
             "/family",
             "root",
-            MountEntry::new(None, false, false, "balanced", "backend-family")
-                .with_metastore(family),
+            MountEntry::new(None, false, false, "backend-family").with_metastore(family),
         );
 
         let mut corp_points = table.mount_points_for_coherence_key(CORP_KEY);

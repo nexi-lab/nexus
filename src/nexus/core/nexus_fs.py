@@ -3840,10 +3840,17 @@ class NexusFS(  # type: ignore[misc]
         _rust_ctx = self._build_rust_ctx(context, is_admin)
         _rename_result = self._kernel.sys_rename(old_path, new_path, _rust_ctx)
 
-        # Rust fast path completed the full rename (metastore + backend + dcache).
-        # Do not run Python fallback rename again; that can turn a successful
-        # rename into a false 404 because the source path is already gone.
-        if _rename_result.hit:
+        # Rust may report hit=true even when the authoritative Python metastore
+        # (e.g. dual-write/raft-backed configurations) still requires the
+        # Python rename path to update its own rows. Only short-circuit when the
+        # metastore already reflects old->new; otherwise run Python fallback.
+        _old_still_visible = old_route.metastore.exists(
+            old_path
+        ) or self.metadata.is_implicit_directory(old_path)
+        _new_now_visible = new_route.metastore.exists(
+            new_path
+        ) or self.metadata.is_implicit_directory(new_path)
+        if _rename_result.hit and not _old_still_visible and _new_now_visible:
             if _rename_result.post_hook_needed:
                 from nexus.contracts.vfs_hooks import RenameHookContext
 

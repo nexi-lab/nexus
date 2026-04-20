@@ -968,6 +968,34 @@ def _register_routes(app: FastAPI) -> None:
         app.dependency_overrides[_secrets_service_dep] = _get_secrets_service_override
         app.include_router(secrets_router)
         logger.info("Secrets store routes registered")
+
+        # Password vault endpoints (domain wrapper over SecretsService).
+        # Nested inside the secrets try so the _get_secrets_service_override
+        # closure is guaranteed to exist when we build the vault singleton.
+        try:
+            from nexus.server.api.v2.routers.password_vault import (
+                get_password_vault_service as _pv_service_dep,
+            )
+            from nexus.server.api.v2.routers.password_vault import (
+                router as password_vault_router,
+            )
+            from nexus.services.password_vault.service import PasswordVaultService
+
+            _password_vault_instance: PasswordVaultService | None = None
+
+            def _get_password_vault_override() -> PasswordVaultService:
+                nonlocal _password_vault_instance
+                if _password_vault_instance is None:
+                    _password_vault_instance = PasswordVaultService(
+                        secrets_service=_get_secrets_service_override(),
+                    )
+                return _password_vault_instance
+
+            app.dependency_overrides[_pv_service_dep] = _get_password_vault_override
+            app.include_router(password_vault_router)
+            logger.info("Password vault routes registered")
+        except ImportError as e:
+            logger.warning(f"Failed to import password vault router: {e}")
     except ImportError as e:
         logger.warning(f"Failed to import secrets router: {e}")
 

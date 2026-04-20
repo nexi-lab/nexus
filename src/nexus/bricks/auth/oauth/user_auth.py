@@ -225,8 +225,17 @@ class OAuthUserAuth:
         picture: str | None,
         oauth_credential: Any,
     ) -> tuple[UserModel, bool]:
-        """Get existing user or create from OAuth (with race condition protection)."""
+        """Get existing user or create from OAuth (with race condition protection).
+
+        The new-user path defers ``_provision_oauth_user`` until after the outer
+        transaction commits. ``UserProvisionerProtocol`` opens a second Session
+        on the same engine and writes to ``users`` / ``zones``; invoking it
+        inside the outer ``session.begin()`` block makes the inner INSERT wait
+        on the still-pending users row lock, which deadlocks the request.
+        """
         from nexus.bricks.auth.user_queries import get_user_by_email
+
+        new_user_to_provision: UserModel | None = None
 
         with session.begin():
             stmt = select(UserOAuthAccountModel).where(
@@ -312,18 +321,21 @@ class OAuthUserAuth:
                 )
                 session.flush()
                 session.expunge(user)
-
-                if provider_email:
-                    await self._provision_oauth_user(
-                        user_id=user_id,
-                        email=provider_email,
-                        display_name=user.display_name,
-                    )
-
-                return user, True
-
+                new_user_to_provision = user
             except IntegrityError:
                 return self._retry_oauth_race(session, stmt)
+
+        # Transaction has committed. Safe to invoke the user provisioner — it
+        # opens its own Session and will not deadlock on our released locks.
+        if new_user_to_provision is not None and new_user_to_provision.email:
+            await self._provision_oauth_user(
+                user_id=new_user_to_provision.user_id,
+                email=new_user_to_provision.email,
+                display_name=new_user_to_provision.display_name,
+            )
+
+        assert new_user_to_provision is not None
+        return new_user_to_provision, True
 
     @staticmethod
     def _retry_oauth_race(

@@ -7,6 +7,8 @@ full HTTP + DI + SecretsService + PasswordVaultService stack end-to-end.
 
 from __future__ import annotations
 
+from urllib.parse import quote
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -50,6 +52,11 @@ def client() -> TestClient:
     return setup_server()
 
 
+def _encode(title: str) -> str:
+    """URL-encode a title so embedded ``/`` / ``:`` survive routing."""
+    return quote(title, safe="")
+
+
 @pytest.fixture(autouse=True)
 def _clean_between_tests(client: TestClient):
     """Delete any leftover vault entries between tests (InMemoryRecordStore is session-shared)."""
@@ -57,7 +64,7 @@ def _clean_between_tests(client: TestClient):
     resp = client.get("/api/v2/password_vault")
     if resp.status_code == 200:
         for entry in resp.json().get("entries", []):
-            client.delete(f"/api/v2/password_vault/{entry['title']}")
+            client.delete(f"/api/v2/password_vault/{_encode(entry['title'])}")
 
 
 def _sample_body(title: str = "github", **overrides):
@@ -216,3 +223,48 @@ def test_minimal_entry_just_title(client: TestClient) -> None:
     assert got["title"] == "wifi-home"
     assert got["password"] is None
     assert got["extra"] is None
+
+
+# ---------------------------------------------------------------------------
+# URL-encoding / path regression (real Quip data has URLs as titles)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "https://100moffett.activebuilding.com/portal/wall",
+        "a/b/c/d",  # multi-segment
+        "weird:chars?and=stuff",  # colons + query-looking chars
+    ],
+)
+def test_url_as_title_round_trips(client: TestClient, title: str) -> None:
+    encoded = _encode(title)
+    body = _sample_body(title=title, password="secret-for-" + title)
+
+    assert client.put(f"/api/v2/password_vault/{encoded}", json=body).status_code == 200
+
+    got = client.get(f"/api/v2/password_vault/{encoded}").json()
+    assert got["title"] == title
+    assert got["password"] == "secret-for-" + title
+
+    listed = client.get("/api/v2/password_vault").json()
+    assert any(e["title"] == title for e in listed["entries"])
+
+    versions = client.get(f"/api/v2/password_vault/{encoded}/versions").json()
+    assert versions["title"] == title and versions["count"] == 1
+
+    assert client.delete(f"/api/v2/password_vault/{encoded}").status_code == 200
+    assert client.get(f"/api/v2/password_vault/{encoded}").status_code == 404
+    assert client.post(f"/api/v2/password_vault/{encoded}/restore").status_code == 200
+    assert client.get(f"/api/v2/password_vault/{encoded}").status_code == 200
+
+
+def test_title_length_cap_rejects_at_1025_chars(client: TestClient) -> None:
+    long_title = "a" * 1025
+    resp = client.put(
+        f"/api/v2/password_vault/{_encode(long_title)}",
+        json={"title": long_title},
+    )
+    assert resp.status_code == 400
+    assert "too long" in resp.json()["detail"].lower()

@@ -800,3 +800,114 @@ class TestDaemonSchema:
         assert row.source_file_hash == "deadbeef" * 8
         assert row.daemon_version == "0.9.20"
         assert row.machine_id == machine_id
+
+    def test_upsert_with_envelope_stores_bytes_verbatim(
+        self, pg_engine: Engine, tenant_id: uuid.UUID, principal_id: uuid.UUID
+    ) -> None:
+        """The daemon push path ships pre-built envelope bytes — the store must
+        persist them verbatim without re-encrypting via an encryption_provider.
+        """
+        store = PostgresAuthProfileStore(
+            PG_URL,
+            tenant_id=tenant_id,
+            principal_id=principal_id,
+            engine=pg_engine,
+            # Explicitly NOT passing encryption_provider — bypass must work.
+        )
+        profile = make_profile("codex/user@example.com", provider="codex")
+        machine_id = uuid.uuid4()
+        ciphertext = b"\xaa" * 32
+        wrapped_dek = b"\xbb" * 48
+        nonce = b"\xcc" * 12
+        aad = b"\xdd" * 16
+        store.upsert_with_envelope(
+            profile,
+            envelope={
+                "ciphertext": ciphertext,
+                "wrapped_dek": wrapped_dek,
+                "nonce": nonce,
+                "aad": aad,
+                "kek_version": 7,
+            },
+            source_file_hash="feedface" * 8,
+            daemon_version=None,
+            machine_id=machine_id,
+        )
+        with pg_engine.begin() as conn:
+            conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(tenant_id)})
+            row = conn.execute(
+                text(
+                    "SELECT ciphertext, wrapped_dek, nonce, aad, kek_version, "
+                    "       source_file_hash, daemon_version, machine_id "
+                    "FROM auth_profiles "
+                    "WHERE tenant_id = :t AND principal_id = :p AND id = :pid"
+                ),
+                {"t": tenant_id, "p": principal_id, "pid": profile.id},
+            ).fetchone()
+        assert row is not None
+        assert bytes(row.ciphertext) == ciphertext
+        assert bytes(row.wrapped_dek) == wrapped_dek
+        assert bytes(row.nonce) == nonce
+        assert bytes(row.aad) == aad
+        assert row.kek_version == 7
+        assert row.source_file_hash == "feedface" * 8
+        assert row.daemon_version is None
+        assert row.machine_id == machine_id
+
+    def test_upsert_with_envelope_updates_existing_row(
+        self, pg_engine: Engine, tenant_id: uuid.UUID, principal_id: uuid.UUID
+    ) -> None:
+        """Second push for the same (tenant, principal, id) replaces envelope
+        columns and audit stamps (ON CONFLICT DO UPDATE)."""
+        store = PostgresAuthProfileStore(
+            PG_URL,
+            tenant_id=tenant_id,
+            principal_id=principal_id,
+            engine=pg_engine,
+        )
+        profile = make_profile("codex/user@example.com", provider="codex")
+        m1 = uuid.uuid4()
+        store.upsert_with_envelope(
+            profile,
+            envelope={
+                "ciphertext": b"\x01" * 32,
+                "wrapped_dek": b"\x02" * 48,
+                "nonce": b"\x03" * 12,
+                "aad": b"\x04" * 16,
+                "kek_version": 1,
+            },
+            source_file_hash="a" * 64,
+            daemon_version=None,
+            machine_id=m1,
+        )
+        m2 = uuid.uuid4()
+        store.upsert_with_envelope(
+            profile,
+            envelope={
+                "ciphertext": b"\x11" * 32,
+                "wrapped_dek": b"\x22" * 48,
+                "nonce": b"\x33" * 12,
+                "aad": b"\x44" * 16,
+                "kek_version": 2,
+            },
+            source_file_hash="b" * 64,
+            daemon_version="0.9.21",
+            machine_id=m2,
+        )
+        with pg_engine.begin() as conn:
+            conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(tenant_id)})
+            row = conn.execute(
+                text(
+                    "SELECT ciphertext, kek_version, source_file_hash, "
+                    "       daemon_version, machine_id "
+                    "FROM auth_profiles "
+                    "WHERE tenant_id = :t AND principal_id = :p AND id = :pid"
+                ),
+                {"t": tenant_id, "p": principal_id, "pid": profile.id},
+            ).fetchone()
+        assert row is not None
+        assert bytes(row.ciphertext) == b"\x11" * 32
+        assert row.kek_version == 2
+        assert row.source_file_hash == "b" * 64
+        assert row.daemon_version == "0.9.21"
+        assert row.machine_id == m2

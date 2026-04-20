@@ -1173,6 +1173,60 @@ class PostgresAuthProfileStore:
             )
             conn.execute(text(_UPSERT_WITH_CREDENTIAL_SQL), params)
 
+    def upsert_with_envelope(
+        self,
+        profile: AuthProfile,
+        *,
+        envelope: dict[str, Any],
+        source_file_hash: str | None = None,
+        daemon_version: str | None = None,
+        machine_id: uuid.UUID | None = None,
+    ) -> None:
+        """Upsert ``profile`` with a pre-built envelope — no server-side encrypt.
+
+        Used by the ``/v1/auth-profiles`` push route (issue #3804): the daemon
+        envelope-encrypts on the laptop and ships the 5-field envelope over
+        HTTP. The server persists those bytes verbatim, so this path must
+        bypass ``encryption_provider.encrypt()``.
+
+        Parameters
+        ----------
+        profile:
+            Routing metadata (``id``/``provider``/``backend`` etc.). Same shape
+            as ``upsert_with_credential``.
+        envelope:
+            Mapping with keys ``ciphertext`` / ``wrapped_dek`` / ``nonce`` /
+            ``aad`` (all ``bytes``) and ``kek_version`` (``int``). All five are
+            required — the ``auth_profiles_envelope_all_or_none`` CHECK
+            constraint forbids partial envelopes.
+        source_file_hash / daemon_version / machine_id:
+            Audit stamps landed on every central write.
+        """
+        required = {"ciphertext", "wrapped_dek", "nonce", "aad", "kek_version"}
+        missing = required - envelope.keys()
+        if missing:
+            raise ValueError(f"upsert_with_envelope: envelope missing keys {sorted(missing)}")
+        params = _profile_params(
+            profile, tenant_id=self._tenant_id, principal_id=self._principal_id
+        )
+        params.update(
+            ciphertext=envelope["ciphertext"],
+            wrapped_dek=envelope["wrapped_dek"],
+            nonce=envelope["nonce"],
+            aad=envelope["aad"],
+            kek_version=envelope["kek_version"],
+            source_file_hash=source_file_hash,
+            daemon_version=daemon_version,
+            machine_id=machine_id,
+        )
+        lock_key = f"{self._tenant_id}/{profile.id}"
+        with self._scoped() as conn:
+            conn.execute(
+                text("SELECT pg_advisory_xact_lock(hashtextextended(:k, 0))"),
+                {"k": lock_key},
+            )
+            conn.execute(text(_UPSERT_WITH_CREDENTIAL_SQL), params)
+
     def get_with_credential(
         self, profile_id: str
     ) -> tuple[AuthProfile, ResolvedCredential | None] | None:

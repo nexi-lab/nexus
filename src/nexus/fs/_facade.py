@@ -99,7 +99,49 @@ class SlimNexusFS:
         Raises:
             NexusFileNotFoundError: If file does not exist.
         """
-        return self._kernel.sys_read(path, context=self._ctx)
+        from nexus.contracts.exceptions import NexusFileNotFoundError
+
+        try:
+            return self._kernel.sys_read(path, context=self._ctx)
+        except NexusFileNotFoundError:
+            # Issue #3821: the slim package wires a SQLiteMetastore that the
+            # Rust kernel cannot see (its metastore hook expects a redb path).
+            # Same-session reads succeed via dcache, but a fresh process has
+            # an empty dcache → Rust raises FileNotFound even though the row
+            # exists in SQLite.  Fall back to the Python metastore + backend.
+            data = self._slim_metastore_read(path)
+            if data is None:
+                raise
+            return data
+
+    def _slim_metastore_read(self, path: str) -> bytes | None:
+        """Read via Python metastore + backend.read_content (slim fallback).
+
+        Returns ``None`` when the metadata or backend cannot be resolved so
+        the caller re-raises the original ``NexusFileNotFoundError``.
+        """
+        from nexus.core.path_utils import validate_path
+
+        try:
+            normalized = validate_path(path)
+        except Exception:
+            return None
+        meta = self._kernel.metadata.get(normalized)
+        if meta is None or not meta.etag:
+            return None
+        # backend_name on metadata may be ``name`` or ``name:mount@origin``;
+        # only the bare name is needed to find the live backend instance.
+        bare = meta.backend_name.split(":", 1)[0].split("@", 1)[0]
+        for entry in self._kernel.router._mount_table._entries.values():
+            backend = getattr(entry, "backend", None)
+            if backend is None or getattr(backend, "name", None) != bare:
+                continue
+            read_content = getattr(backend, "read_content", None)
+            if read_content is None:
+                return None
+            data = read_content(meta.etag, context=self._ctx)
+            return bytes(data) if isinstance(data, (bytes, bytearray)) else None
+        return None
 
     def read_range(self, path: str, start: int, end: int) -> bytes:
         """Read a specific byte range from a file.

@@ -737,14 +737,23 @@ impl ZoneManager {
                 (relative, proto.entry_type)
             };
 
-            let rebased_bytes = encode_file_metadata(
-                &rebased_path,
-                &proto.backend_name,
-                &proto.physical_path,
-                rebased_entry_type,
-                new_zone_id,
-                &proto.target_zone_id,
-            );
+            // Clone every existing field (etag / size / mime_type / timestamps /
+            // permissions) so readers on the new zone can find the CAS blob
+            // and serve reads. Only `path`, `zone_id`, and `entry_type` are
+            // overridden for the rebased copy. The previous call went through
+            // `encode_file_metadata` which took a six-arg subset and dropped
+            // every other field — the shared file showed up in sys_stat but
+            // had `etag=None`, so `try_remote_fetch` couldn't look up the
+            // CAS hash and cross-node reads failed with "File not found".
+            use crate::transport::proto::nexus::core::FileMetadata as ProtoFileMetadata;
+            use prost::Message;
+            let rebased_proto = ProtoFileMetadata {
+                path: rebased_path.clone(),
+                zone_id: new_zone_id.to_string(),
+                entry_type: rebased_entry_type,
+                ..proto
+            };
+            let rebased_bytes = rebased_proto.encode_to_vec();
             propose_set_metadata(&handle, &new_node, &rebased_path, rebased_bytes)?;
             copied += 1;
         }

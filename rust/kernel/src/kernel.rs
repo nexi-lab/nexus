@@ -1390,13 +1390,35 @@ impl Kernel {
         )>,
         is_external: bool,
     ) -> Result<(), KernelError> {
-        self.mount_table
-            .add_mount(mount_point, zone_id, backend_name, backend, is_external);
+        self.mount_table.add_mount(
+            mount_point,
+            zone_id,
+            backend_name,
+            backend.clone(),
+            is_external,
+        );
         // Install per-mount metastore if provided. Must come AFTER the
         // entry is inserted so `install_metastore` finds it.
         if let Some(ms) = metastore {
             let canonical = canonicalize(mount_point, zone_id);
             self.mount_table.install_metastore(&canonical, ms);
+        }
+        // Boot-order fix: on restart, `reconcile_mounts_from_zones` runs
+        // before Python mounts root, so every federation mount it
+        // replays gets `backend=None`. Once root lands with its CAS
+        // backend, propagate it back into those stranded federation
+        // mounts so sys_write stops silently missing.
+        if mount_point == "/" && zone_id == contracts::ROOT_ZONE_ID {
+            if let Some(ref root_backend) = backend {
+                let rebound = self.mount_table.rebind_missing_backends(root_backend);
+                if rebound > 0 {
+                    tracing::info!(
+                        rebound_count = rebound,
+                        "add_mount(/): rebound {} federation mounts that replayed before root",
+                        rebound,
+                    );
+                }
+            }
         }
         // Federation DI: the presence of `raft_backend` on a mount means
         // the mount is cross-node replicated (a ZoneConsensus is attached).
@@ -5158,12 +5180,18 @@ fn wire_federation_mount_impl(
 
     // 4. Install into MountTable (routing + backend + metastore) under
     //    the root zone — federation mounts live in the root zone's path
-    //    space on every node.
-    mount_table.add_mount(
+    //    space on every node. Tag the entry with `target_zone_id` so
+    //    routing carries the destination zone (not the caller's ambient)
+    //    — fixes `sys_write` tagging files with `zone_id=root` for
+    //    paths under `/corp/eng` (owning zone is `corp-eng`) and lets
+    //    `federation_share` derive zone-relative prefix from a global
+    //    path via the existing `RouteResult`.
+    mount_table.add_federation_mount(
         &global_path,
         contracts::ROOT_ZONE_ID,
         backend_name,
         root_backend,
+        target_zone_id,
         false,
     );
     let canonical = canonicalize(&global_path, contracts::ROOT_ZONE_ID);

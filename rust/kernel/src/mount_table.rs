@@ -63,6 +63,15 @@ pub struct MountEntry {
     /// True when this mount is an external connector whose reads/writes
     /// must be handled by Python (no Rust fast path available).
     pub is_external: bool,
+
+    /// For federation mounts: the zone id this mount points INTO.
+    /// Populated by `wire_federation_mount_impl`. `None` for plain local
+    /// mounts (backend-only, non-federation). Carried through
+    /// [`RouteResult::zone_id`] so writes tag inode metadata with the
+    /// owning zone rather than the caller's ambient zone, and
+    /// `federation_share` can derive `(parent_zone, zone-relative prefix)`
+    /// from a global path via the existing routing table.
+    pub target_zone_id: Option<String>,
 }
 
 impl MountEntry {
@@ -75,7 +84,14 @@ impl MountEntry {
             metastore: None,
             backend_name: backend_name.into(),
             is_external: false,
+            target_zone_id: None,
         }
+    }
+
+    /// Builder-style target-zone setter (federation mounts only).
+    pub fn with_target_zone(mut self, target_zone_id: impl Into<String>) -> Self {
+        self.target_zone_id = Some(target_zone_id.into());
+        self
     }
 
     /// Builder-style external-flag setter.
@@ -193,6 +209,29 @@ impl MountTable {
         );
     }
 
+    /// Federation variant: install a mount that carries an explicit
+    /// `target_zone_id`. Routing through this mount resolves to the
+    /// target zone, not the caller's ambient one — so writes tag inode
+    /// metadata with the owning zone and `federation_share` can derive
+    /// `(parent_zone, zone-relative prefix)` from a global path.
+    pub fn add_federation_mount(
+        &self,
+        mount_point: &str,
+        zone_id: &str,
+        backend_name: &str,
+        backend: Option<Arc<dyn ObjectStore>>,
+        target_zone_id: &str,
+        is_external: bool,
+    ) {
+        self.add(
+            mount_point,
+            zone_id,
+            MountEntry::new(backend, backend_name)
+                .with_is_external(is_external)
+                .with_target_zone(target_zone_id),
+        );
+    }
+
     /// Remove a mount. Returns `true` if it existed.
     pub fn remove(&self, mount_point: &str, zone_id: &str) -> bool {
         let canonical = canonicalize_mount_path(mount_point, zone_id);
@@ -276,6 +315,32 @@ impl MountTable {
             .collect()
     }
 
+    /// Rebind every federation mount (entries with a metastore but no
+    /// backend) to `new_backend`.
+    ///
+    /// Fixes a boot-order bug: on node restart, `reconcile_mounts_from_zones`
+    /// replays DT_MOUNT entries BEFORE Python installs the root mount
+    /// (which carries this node's CAS backend). Each federation mount
+    /// gets cloned with `backend=None` at replay time, so subsequent
+    /// writes return `Ok(None)` (miss) — they look like they succeeded
+    /// at the Python layer but never persisted. Calling this from
+    /// `Kernel::add_mount` when the root mount arrives wires the
+    /// correct backend into every previously-stranded federation mount.
+    ///
+    /// Only touches entries with `metastore = Some(..)` — that's the
+    /// federation-mount marker. Plain local mounts (backend-only, no
+    /// metastore) are left untouched.
+    pub fn rebind_missing_backends(&self, new_backend: &Arc<dyn ObjectStore>) -> usize {
+        let mut rebound = 0;
+        for mut entry in self.entries.iter_mut() {
+            if entry.backend.is_none() && entry.metastore.is_some() {
+                entry.backend = Some(Arc::clone(new_backend));
+                rebound += 1;
+            }
+        }
+        rebound
+    }
+
     /// All user-facing mount points (zone prefix stripped, sorted).
     pub fn mount_points(&self) -> Vec<String> {
         let mut points: Vec<String> = self
@@ -345,12 +410,19 @@ impl MountTable {
                 let mount_point = current.to_string();
                 let backend_path = strip_mount_prefix(&canonical, current);
                 let is_external = entry.is_external;
+                // Federation mounts override the caller's ambient zone with
+                // the mount's actual target. Plain local mounts keep the
+                // caller's zone (backward-compatible).
+                let resolved_zone = entry
+                    .target_zone_id
+                    .clone()
+                    .unwrap_or_else(|| zone_id.to_string());
                 drop(entry);
 
                 return Ok(RouteResult {
                     mount_point,
                     backend_path,
-                    zone_id: zone_id.to_string(),
+                    zone_id: resolved_zone,
                     is_external,
                 });
             }

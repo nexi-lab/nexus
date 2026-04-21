@@ -225,9 +225,16 @@ class FederationRPCService:
         """
         import uuid
 
+        # RouteResult now carries the mount's target zone (R20.17a) —
+        # `parent_zone_id` is the zone that actually owns the subtree,
+        # not the caller's ambient zone. `backend_path` is the zone-
+        # relative tail; share_subtree_core expects the leading-slash
+        # form, so prepend "/" (empty → "/"). No more `_to_zone_relative`
+        # heuristic (which broke for zones whose id doesn't equal the
+        # mount path, e.g. mount "/corp/eng" target "corp-eng").
         route = self._kernel.route(local_path, "root")
         parent_zone_id = route.zone_id
-        prefix = self._to_zone_relative(parent_zone_id, local_path)
+        prefix = "/" + route.backend_path if route.backend_path else "/"
         new_zone_id = zone_id or f"share-{uuid.uuid4().hex[:8]}"
         # Ensure the target zone exists BEFORE share_subtree_core runs
         # (it requires both parent and new zones to be loaded).

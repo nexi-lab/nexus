@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING
 
 from nexus.backends.base.cas_addressing_engine import CASAddressingEngine
 from nexus.backends.base.registry import ArgType, ConnectionArg, register_connector
+from nexus.backends.base.runtime_deps import PythonDep
 from nexus.contracts.exceptions import BackendError
 
 if TYPE_CHECKING:
@@ -40,7 +41,7 @@ logger = logging.getLogger(__name__)
     "cas_gcs",
     description="Google Cloud Storage with CAS deduplication",
     category="storage",
-    requires=["google-cloud-storage"],
+    runtime_deps=(PythonDep("google.cloud.storage", extras=("gcs",)),),
 )
 class CASGCSBackend(CASAddressingEngine):
     """Google Cloud Storage backend with CAS deduplication.

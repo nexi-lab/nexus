@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 from nexus.backends.base.backend import FileInfo, HandlerStatusResponse
 from nexus.backends.base.path_addressing_engine import PathAddressingEngine
 from nexus.backends.base.registry import ArgType, ConnectionArg, register_connector
+from nexus.backends.base.runtime_deps import PythonDep
 from nexus.backends.engines.multipart import MultipartUpload
 from nexus.contracts.backend_features import BLOB_BACKEND_FEATURES, BackendFeature
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
@@ -34,7 +35,7 @@ logger = logging.getLogger(__name__)
     "path_s3",
     description="AWS S3 with direct path mapping",
     category="storage",
-    requires=["boto3"],
+    runtime_deps=(PythonDep("boto3", extras=("s3",)),),
     service_name="s3",
 )
 class PathS3Backend(PathAddressingEngine, MultipartUpload):

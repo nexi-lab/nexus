@@ -209,6 +209,7 @@ impl Metastore for ZoneMetastore {
         // originating mount's global path, not its own.
         metadata.path = zone_key.clone();
         let value = kernel_to_proto(&metadata);
+        let value_snapshot = value.clone();
         let cmd = Command::SetMetadata {
             key: zone_key.clone(),
             value,
@@ -218,12 +219,51 @@ impl Metastore for ZoneMetastore {
             .block_on(self.node.propose(cmd))
             .map_err(|e| MetastoreError::IOError(format!("ZoneMetastore.put({path}): {e}")))?;
         match result {
-            nexus_raft::prelude::CommandResult::Success => Ok(()),
-            nexus_raft::prelude::CommandResult::Error(e) => Err(MetastoreError::IOError(format!(
-                "ZoneMetastore.put({path}) rejected: {e}"
-            ))),
-            _ => Ok(()),
+            nexus_raft::prelude::CommandResult::Success => {}
+            nexus_raft::prelude::CommandResult::Error(e) => {
+                return Err(MetastoreError::IOError(format!(
+                    "ZoneMetastore.put({path}) rejected: {e}"
+                )));
+            }
+            _ => {}
         }
+
+        // Read-your-writes on follower: `propose` returns as soon as the
+        // raft LEADER commits, but this node's local state-machine apply
+        // runs asynchronously via raft replication (~one tick / 10 ms).
+        // Without waiting, a same-thread `get(path)` right after put
+        // reads the local state and misses the row we just wrote —
+        // same-node writer → stale reader on the same node. Bounded
+        // poll until local state reflects our write; 500 ms cap surfaces
+        // a genuinely stalled apply pipeline instead of masking it.
+        // Mirrors the DistributedLocks.acquire apply-wait; same
+        // underlying raft property.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+        let mut iters = 0;
+        let mut final_match = false;
+        loop {
+            let poll_key = zone_key.clone();
+            let observed = self.runtime.block_on(
+                self.node
+                    .with_state_machine(move |sm: &FullStateMachine| sm.get_metadata(&poll_key)),
+            );
+            if matches!(&observed, Ok(Some(bytes)) if *bytes == value_snapshot) {
+                final_match = true;
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                break;
+            }
+            iters += 1;
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        tracing::info!(
+            key = %zone_key,
+            iters = iters,
+            matched = final_match,
+            "ZoneMetastore.put apply-wait done"
+        );
+        Ok(())
     }
 
     fn delete(&self, path: &str) -> Result<bool, MetastoreError> {

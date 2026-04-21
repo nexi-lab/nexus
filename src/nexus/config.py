@@ -108,6 +108,66 @@ class FeaturesConfig(BaseModel):
         return overrides
 
 
+class SSRFConfig(BaseModel):
+    """SSRF validator configuration (Issue #3792).
+
+    Knobs here are minimal by design — metadata and loopback are always
+    blocked. ``allow_private`` is the opt-in for dev / self-hosted hub
+    deployments that reach internal services by design.
+    """
+
+    allow_private: bool = Field(
+        default=False,
+        description=(
+            "Allow RFC1918 / ULA private ranges through the SSRF validator. "
+            "Metadata and loopback remain blocked. Set True for dev or "
+            "self-hosted hub deployments that must reach internal services."
+        ),
+    )
+    extra_deny_cidrs: tuple[str, ...] = Field(
+        default=(),
+        description=(
+            "Operator-supplied CIDRs to block in addition to the built-in "
+            "ranges (e.g. internal service-mesh subnets)."
+        ),
+    )
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("extra_deny_cidrs", mode="before")
+    @classmethod
+    def _coerce_sequence(cls, v: Any) -> tuple[str, ...]:
+        if v is None:
+            return ()
+        if isinstance(v, str):
+            return (v,)
+        return tuple(v)
+
+    @field_validator("extra_deny_cidrs")
+    @classmethod
+    def _validate_cidrs(cls, v: tuple[str, ...]) -> tuple[str, ...]:
+        import ipaddress
+
+        for cidr in v:
+            try:
+                ipaddress.ip_network(cidr, strict=False)
+            except ValueError as exc:
+                raise ValueError(f"Invalid CIDR in extra_deny_cidrs: {cidr!r}") from exc
+        return v
+
+
+class SecurityConfig(BaseModel):
+    """Top-level security settings.
+
+    Grows as additional security subsections land (e.g. rate limiting,
+    content policy). SSRF is the first subsection (Issue #3792).
+    """
+
+    ssrf: SSRFConfig = Field(default_factory=SSRFConfig)
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class NexusConfig(BaseModel):
     """
     Unified configuration for all Nexus deployment modes.
@@ -284,6 +344,12 @@ class NexusConfig(BaseModel):
     features: FeaturesConfig = Field(
         default_factory=FeaturesConfig,
         description="Feature flags for optional functionality (semantic search, LLM read, etc.)",
+    )
+
+    # Security settings (Issue #3792)
+    security: SecurityConfig = Field(
+        default_factory=SecurityConfig,
+        description="Security settings (SSRF, etc. — Issue #3792)",
     )
 
     # Resiliency configuration (Issue #1366)

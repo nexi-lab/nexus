@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from nexus.backends.base.registry import register_connector
+from nexus.backends.base.runtime_deps import BinaryDep, ServiceDep
 from nexus.backends.connectors.base import (
     ConfirmLevel,
     ErrorDef,
@@ -34,6 +35,11 @@ from nexus.backends.connectors.github.schemas import (
 
 logger = logging.getLogger(__name__)
 
+_GH_RUNTIME_DEPS = (
+    BinaryDep("gh", "brew install gh"),
+    ServiceDep("token_manager"),
+)
+
 
 @register_connector(
     # Primary registry name matches the factory lookup fallback
@@ -44,6 +50,7 @@ logger = logging.getLogger(__name__)
     "github_connector",
     description="GitHub via gh CLI",
     category="cli",
+    runtime_deps=_GH_RUNTIME_DEPS,
 )
 @register_connector(
     # Deprecated alias — kept so persisted mounts stored under the old
@@ -53,6 +60,7 @@ logger = logging.getLogger(__name__)
     "gws_github",
     description="GitHub via gh CLI (deprecated alias, use github_connector)",
     category="cli",
+    runtime_deps=_GH_RUNTIME_DEPS,
 )
 class GitHubConnector(PathCLIBackend):
     """GitHub CLI connector via ``gh``."""

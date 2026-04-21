@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from nexus.backends.base.registry import register_connector
+from nexus.backends.base.runtime_deps import BinaryDep, ServiceDep
 from nexus.backends.connectors.base import (
     ConfirmLevel,
     ErrorDef,
@@ -77,6 +78,11 @@ def _load_gws_config(filename: str) -> CLIConnectorConfig | None:
     return None
 
 
+_GWS_RUNTIME_DEPS = (
+    BinaryDep("gws", "brew install nexi-lab/tap/gws"),
+    ServiceDep("token_manager"),
+)
+
 # ============================================================================
 # Sheets
 # ============================================================================
@@ -86,6 +92,7 @@ def _load_gws_config(filename: str) -> CLIConnectorConfig | None:
     "gws_sheets",
     description="Google Sheets via gws CLI",
     category="cli",
+    runtime_deps=_GWS_RUNTIME_DEPS,
     service_name="gws",
 )
 class SheetsConnector(PathCLIBackend):
@@ -178,6 +185,7 @@ class SheetsConnector(PathCLIBackend):
     "gws_docs",
     description="Google Docs via gws CLI",
     category="cli",
+    runtime_deps=_GWS_RUNTIME_DEPS,
     service_name="gws",
 )
 class DocsConnector(PathCLIBackend):
@@ -369,6 +377,7 @@ class DocsConnector(PathCLIBackend):
     "gws_chat",
     description="Google Chat via gws CLI",
     category="cli",
+    runtime_deps=_GWS_RUNTIME_DEPS,
     service_name="gws",
 )
 class ChatConnector(PathCLIBackend):
@@ -462,6 +471,7 @@ class ChatConnector(PathCLIBackend):
     "gws_drive",
     description="Google Drive via gws CLI",
     category="cli",
+    runtime_deps=_GWS_RUNTIME_DEPS,
     service_name="gws",
 )
 class DriveConnector(PathCLIBackend):
@@ -585,6 +595,7 @@ def _gmail_category_from_labels(labels: list[str] | None) -> str:
     "gws_gmail",
     description="Gmail via gws CLI",
     category="cli",
+    runtime_deps=_GWS_RUNTIME_DEPS,
     service_name="gws",
 )
 class GmailConnector(PathCLIBackend):
@@ -1301,6 +1312,7 @@ class GmailConnector(PathCLIBackend):
     "gws_calendar",
     description="Google Calendar via gws CLI",
     category="cli",
+    runtime_deps=_GWS_RUNTIME_DEPS,
     service_name="gws",
 )
 class CalendarConnector(PathCLIBackend):

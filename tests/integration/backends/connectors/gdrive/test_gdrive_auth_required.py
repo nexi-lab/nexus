@@ -35,11 +35,12 @@ def _build_transport(monkeypatch: pytest.MonkeyPatch) -> Any:
 def test_get_drive_service_raises_authentication_error_when_no_user(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """No user_email + no context -> AuthenticationError with populated provider, not BackendError.
+    """No user_email + no context -> AuthenticationError with populated provider + recovery hint.
 
     auth_url is intentionally None: connector credential recovery goes
     through the connector-scoped POST ``/v2/connectors/auth/init`` endpoint,
-    not a GET-able OAuth URL mintable by a backend transport.
+    not a GET-able OAuth URL mintable by a backend transport.  The
+    machine-actionable recovery target rides on ``recovery_hint``.
     """
     transport = _build_transport(monkeypatch)
 
@@ -52,6 +53,14 @@ def test_get_drive_service_raises_authentication_error_when_no_user(
     # Transport no longer mints an auth_url — see transport._build_auth_url
     # docstring for the reasoning (login-CSRF + wrong-endpoint risks).
     assert err.auth_url is None
+    # Machine-actionable recovery pointer so clients can drive re-auth
+    # without out-of-band knowledge.
+    assert err.recovery_hint is not None
+    assert err.recovery_hint["endpoint"] == "/v2/connectors/auth/init"
+    assert err.recovery_hint["method"] == "POST"
+    assert err.recovery_hint["connector"] == "gdrive"
+    assert err.recovery_hint["provider"] == "google-drive"
+    assert "user_email" not in err.recovery_hint
 
 
 def test_get_drive_service_raises_authentication_error_when_token_missing(
@@ -74,6 +83,10 @@ def test_get_drive_service_raises_authentication_error_when_token_missing(
     assert err.provider == "google-drive"
     assert err.user_email == "user@example.com"
     assert err.auth_url is None
+    assert err.recovery_hint is not None
+    assert err.recovery_hint["endpoint"] == "/v2/connectors/auth/init"
+    assert err.recovery_hint["user_email"] == "user@example.com"
+    assert err.recovery_hint["provider"] == "google-drive"
 
 
 def test_auth_url_is_always_none_regardless_of_env(

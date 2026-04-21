@@ -156,6 +156,7 @@ class DriveTransport:
                 provider=self._provider,
                 user_email=None,
                 auth_url=self._build_auth_url(user_email=None),
+                recovery_hint=self._build_recovery_hint(user_email=None),
             )
 
         from nexus.lib.sync_bridge import run_sync
@@ -179,6 +180,7 @@ class DriveTransport:
                 provider=self._provider,
                 user_email=user_email,
                 auth_url=self._build_auth_url(user_email=user_email),
+                recovery_hint=self._build_recovery_hint(user_email=user_email),
             ) from _auth_exc
         except Exception as e:
             # Non-auth failure (network error, misconfigured token manager, …)
@@ -213,12 +215,35 @@ class DriveTransport:
           fail connector token resolution — a broken remediation loop.
 
         Clients receive ``provider`` and ``user_email`` on
-        :class:`AuthenticationError` and can hit the connector auth init
+        :class:`AuthenticationError` (plus a machine-actionable
+        ``recovery_hint`` naming the connector auth-init endpoint; see
+        :meth:`_build_recovery_hint`) and can hit the connector auth init
         endpoint themselves (it is a POST and needs an authenticated user,
         so it can't be flattened into a single GET-able URL from here).
         """
         del user_email
         return None
+
+    def _build_recovery_hint(self, *, user_email: str | None) -> dict[str, str]:
+        """Structured, machine-actionable re-auth instructions.
+
+        The exception payload carries enough for API/CLI clients to kick
+        off the connector-scoped OAuth flow without out-of-band guesswork:
+        the endpoint (``POST /v2/connectors/auth/init``), the connector
+        name (always ``gdrive`` for this transport), the provider label
+        used by the token manager, and (when known) the user_email the
+        token should be bound to.  Kept as a plain ``dict[str, str]`` so
+        it round-trips through JSON error responses unchanged.
+        """
+        hint: dict[str, str] = {
+            "endpoint": "/v2/connectors/auth/init",
+            "method": "POST",
+            "connector": "gdrive",
+            "provider": self._provider or "google-drive",
+        }
+        if user_email:
+            hint["user_email"] = user_email
+        return hint
 
     # ------------------------------------------------------------------
     # Internal helpers — folder resolution

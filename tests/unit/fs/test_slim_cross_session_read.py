@@ -76,3 +76,41 @@ def test_slim_read_missing_path_still_raises(tmp_path: Path) -> None:
             slim.read("/files/does-not-exist.txt")
     finally:
         slim.close()
+
+
+def test_slim_read_propagates_non_notfound_backend_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Corruption/permission/IO failures must NOT be collapsed into FileNotFound.
+
+    Masking real backend errors as missing-file would let operators silently
+    recreate over corrupted blobs or retry against a permission-denied disk.
+    The slim fallback only swallows genuine ``NexusFileNotFoundError`` from
+    the backend; every other exception propagates unchanged.
+    """
+    from nexus.contracts.exceptions import BackendError
+
+    db_path = tmp_path / "meta.db"
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+
+    writer = _build_slim(db_path, data_dir)
+    writer.write("/files/corrupt.txt", b"payload")
+    writer.close()
+
+    reader = _build_slim(db_path, data_dir)
+    # Force the backend's ``read_content`` to raise a non-not-found error
+    # — this mirrors a corrupt blob or unreadable data file on disk.
+    mount_entry = next(iter(reader._kernel.router._mount_table._entries.values()))
+    backend = mount_entry.backend
+
+    def _raise_backend_error(*_a: object, **_kw: object) -> bytes:
+        raise BackendError("simulated disk corruption", backend="local")
+
+    monkeypatch.setattr(backend, "read_content", _raise_backend_error)
+
+    try:
+        with pytest.raises(BackendError, match="simulated disk corruption"):
+            reader.read("/files/corrupt.txt")
+    finally:
+        reader.close()

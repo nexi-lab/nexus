@@ -174,13 +174,18 @@ class SlimNexusFS:
         read_content = getattr(backend, "read_content", None)
         if read_content is None:
             return None
+        from nexus.contracts.exceptions import NexusFileNotFoundError
+
         try:
             data = read_content(meta.etag, context=self._ctx)
-        except Exception:
-            # Any backend-level failure (permissions, IO, bad etag) should
-            # surface as FileNotFound rather than wrong-content; the slim
-            # fallback is a best-effort rescue, never a retry loop.
+        except NexusFileNotFoundError:
+            # Real not-found at the backend layer — caller re-raises the
+            # original FileNotFound; no signal loss.
             return None
+        # Permission errors, disk IO failures, corruption, BackendError,
+        # etc. propagate unchanged so operators see the real cause instead
+        # of a misleading "missing file" signal masking a data-integrity
+        # incident.
         return bytes(data) if isinstance(data, (bytes, bytearray)) else None
 
     def read_range(self, path: str, start: int, end: int) -> bytes:

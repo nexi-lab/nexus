@@ -21,6 +21,7 @@ from nexus.lib.rpc_decorator import rpc_expose
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    from nexus.config import SSRFConfig
     from nexus.contracts.types import OperationContext
     from nexus.core.nexus_fs import NexusFS
 
@@ -76,6 +77,7 @@ class MCPService:
         *,
         credential_service: Any = None,
         mount_lister: Callable[[], list[tuple[str, str]]] | None = None,
+        ssrf_config: "SSRFConfig | None" = None,
     ):
         """Initialize MCP service.
 
@@ -83,10 +85,15 @@ class MCPService:
             filesystem: Filesystem Protocol for list/read operations and manager creation
             credential_service: OAuthCredentialService for token lookup (mcp_connect)
             mount_lister: Callable returning (mount_point, backend_type) pairs
+            ssrf_config: Optional SSRFConfig override threaded through to
+                MCPMountManager so operator settings in
+                ``NexusConfig.security.ssrf`` take effect for SSE/HTTP mount
+                validation (Issue #3792). When None, conservative defaults apply.
         """
         self._filesystem = filesystem
         self._credential_service = credential_service
         self._mount_lister = mount_lister
+        self._ssrf_config = ssrf_config
 
         logger.info("[MCPService] Initialized")
 
@@ -844,4 +851,4 @@ class MCPService:
         if self._filesystem is None:
             raise RuntimeError("Filesystem not configured for MCPService")
 
-        return MCPMountManager(self._filesystem)
+        return MCPMountManager(self._filesystem, ssrf_config=self._ssrf_config)

@@ -106,3 +106,58 @@ async def test_sse_mount_uses_pinned_factory_for_public_url(mount_manager) -> No
 
     assert recorded["url"] == "https://example.com/mcp"
     assert recorded["factory"] is not None
+
+
+@pytest.mark.asyncio
+async def test_sse_mount_honors_allow_private_override() -> None:
+    """When SSRFConfig.allow_private=True is threaded through the manager,
+    an RFC1918 URL is permitted."""
+    from nexus.bricks.mcp.mount import MCPMountManager
+    from nexus.config import SSRFConfig
+
+    manager = MCPMountManager(ssrf_config=SSRFConfig(allow_private=True))
+    mount = MCPMount(
+        name="intranet",
+        description="permitted private",
+        transport="sse",
+        url="http://10.0.0.1/mcp",
+    )
+
+    # Short-circuit the sse_client call so we only exercise the validation path.
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def fake_sse_client(url, headers=None, httpx_client_factory=None, **kw):
+        raise RuntimeError("short-circuit test")
+        yield None  # unreachable
+
+    with (
+        patch("mcp.client.sse.sse_client", fake_sse_client),
+        pytest.raises(RuntimeError, match="short-circuit"),
+    ):
+        await manager._create_sse_client(mount)
+
+
+@pytest.mark.asyncio
+async def test_sse_mount_honors_extra_deny_cidrs() -> None:
+    """An operator-added CIDR in SSRFConfig.extra_deny_cidrs must block
+    matching URLs even if they would otherwise pass."""
+    from nexus.bricks.mcp.mount import MCPMountManager
+    from nexus.config import SSRFConfig
+
+    manager = MCPMountManager(
+        ssrf_config=SSRFConfig(extra_deny_cidrs=["203.0.113.0/24"]),
+    )
+    mount = MCPMount(
+        name="denied",
+        description="operator deny",
+        transport="sse",
+        url="https://svcmesh.example.com/mcp",
+    )
+
+    with patch("socket.getaddrinfo") as mock_dns, pytest.raises(SSRFBlocked) as excinfo:
+        mock_dns.return_value = [(2, 1, 6, "", ("203.0.113.50", 443))]
+        await manager._create_sse_client(mount)
+
+    assert excinfo.value.reason == "extra_deny_cidr"
+    assert excinfo.value.cidr == "203.0.113.0/24"

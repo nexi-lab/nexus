@@ -124,13 +124,23 @@ class MCPMountManager:
     # Mount configuration filename (per-folder)
     MOUNT_CONFIG_FILENAME = "mount.json"
 
-    def __init__(self, filesystem: "NexusFS | None" = None):
+    def __init__(
+        self,
+        filesystem: "NexusFS | None" = None,
+        *,
+        ssrf_config: "SSRFConfig | None" = None,
+    ) -> None:
         """Initialize MCP mount manager.
 
         Args:
             filesystem: Optional filesystem instance (defaults to local FS)
+            ssrf_config: Optional SSRFConfig override. When provided, the
+                validator for SSE/HTTP mounts uses these operator settings
+                (``allow_private`` / ``extra_deny_cidrs``). When None, a
+                conservative default ``SSRFConfig()`` is used.
         """
         self._filesystem = filesystem
+        self._ssrf_config_override = ssrf_config
 
         # Active mount configurations (keyed by name, may include tier info)
         self._mounts: dict[str, MCPMount] = {}
@@ -425,14 +435,16 @@ class MCPMountManager:
             return session
 
     def _ssrf_config(self) -> SSRFConfig:
-        """Return the effective SSRFConfig; falls back to safe defaults.
+        """Return the effective SSRFConfig.
 
-        MCPMountManager does not currently hold a direct config reference
-        (it is constructed with an optional filesystem). Default to safe
-        settings — operators who need allow_private / extra_deny_cidrs
-        can plumb NexusConfig.security.ssrf through when the manager is
-        constructed. Intentionally conservative by default.
+        Uses the override passed into __init__ when available so operator
+        settings in ``NexusConfig.security.ssrf`` (``allow_private`` /
+        ``extra_deny_cidrs``) take effect at SSE/HTTP mount validation
+        time. Falls back to a conservative default ``SSRFConfig()`` when
+        the manager was constructed without an override.
         """
+        if self._ssrf_config_override is not None:
+            return self._ssrf_config_override
         return SSRFConfig()
 
     def _emit_ssrf_audit(self, mount_config: MCPMount, exc: SSRFBlocked) -> None:

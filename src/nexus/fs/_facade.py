@@ -119,8 +119,21 @@ class SlimNexusFS:
 
         Returns ``None`` when the metadata or backend cannot be resolved so
         the caller re-raises the original ``NexusFileNotFoundError``.
+
+        The backend is resolved via the router's LPM on the *virtual path*,
+        not by scanning the mount table for any backend with a matching bare
+        name.  That keeps the fallback bound to the exact mount/path pair the
+        caller requested — multiple mounts sharing a backend name, external
+        (connector) mounts, and admin-only mounts all behave like the
+        regular ``sys_read`` route.
         """
+        from nexus.contracts.exceptions import (
+            AccessDeniedError,
+            InvalidPathError,
+            PathNotMountedError,
+        )
         from nexus.core.path_utils import validate_path
+        from nexus.core.router import ExternalRouteResult, RouteResult
 
         try:
             normalized = validate_path(path)
@@ -129,19 +142,26 @@ class SlimNexusFS:
         meta = self._kernel.metadata.get(normalized)
         if meta is None or not meta.etag:
             return None
-        # backend_name on metadata may be ``name`` or ``name:mount@origin``;
-        # only the bare name is needed to find the live backend instance.
-        bare = meta.backend_name.split(":", 1)[0].split("@", 1)[0]
-        for entry in self._kernel.router._mount_table._entries.values():
-            backend = getattr(entry, "backend", None)
-            if backend is None or getattr(backend, "name", None) != bare:
-                continue
-            read_content = getattr(backend, "read_content", None)
-            if read_content is None:
-                return None
-            data = read_content(meta.etag, context=self._ctx)
-            return bytes(data) if isinstance(data, (bytes, bytearray)) else None
-        return None
+        try:
+            route = self._kernel.router.route(normalized, is_admin=False)
+        except (PathNotMountedError, AccessDeniedError, InvalidPathError):
+            return None
+        # Only the local CAS route is exercised by this fallback; external
+        # connector mounts (DT_EXTERNAL_STORAGE) have their own access
+        # semantics and must go through ``sys_readdir`` / ``sys_read``.
+        if not isinstance(route, RouteResult) or isinstance(route, ExternalRouteResult):
+            return None
+        backend = route.backend
+        expected_name = (meta.backend_name or "").split(":", 1)[0].split("@", 1)[0]
+        actual_name = getattr(backend, "name", None)
+        if expected_name and actual_name and expected_name != actual_name:
+            # Metadata says a different backend — refuse to read cross-mount.
+            return None
+        read_content = getattr(backend, "read_content", None)
+        if read_content is None:
+            return None
+        data = read_content(meta.etag, context=self._ctx)
+        return bytes(data) if isinstance(data, (bytes, bytearray)) else None
 
     def read_range(self, path: str, start: int, end: int) -> bytes:
         """Read a specific byte range from a file.

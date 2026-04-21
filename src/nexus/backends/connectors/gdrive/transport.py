@@ -195,48 +195,45 @@ class DriveTransport:
         return build("drive", "v3", credentials=creds)
 
     def _build_auth_url(self, *, user_email: str | None) -> str | None:
-        """Build a best-effort OAuth authorization URL for the bound provider.
+        """Return the nexus server's stateful OAuth authorize endpoint.
 
-        Returns ``None`` when the environment is missing OAuth client
-        credentials — the caller still raises ``AuthenticationError`` so the
-        auth-required signal isn't lost, it just ships without a URL.
-        The redirect URI is derived from
-        ``NEXUS_OAUTH_REDIRECT_URI`` (set by the frontend / CLI callback
-        listener) and falls back to ``http://localhost`` so the URL is
-        well-formed even in headless test runs.
+        This transport **never** mints a raw Google OAuth URL.  Google code
+        exchange on Nexus is bound to a signed ``state`` + HttpOnly binding
+        cookie issued by ``/auth/oauth/google/authorize`` on the server
+        (Issue #3815 P2.5).  Returning a bare Google URL from here would
+        bypass that state binding and open a login-CSRF / code-injection
+        window.
+
+        Instead, we point callers at the server's authorize endpoint (which
+        issues state + cookie and redirects to Google itself).  The server
+        URL is read from ``NEXUS_SERVER_URL``; when absent, callers get the
+        ``AuthenticationError`` without a URL and must resolve the server
+        address out-of-band.
         """
         import os
+        from urllib.parse import urlencode
 
-        try:
-            from nexus.fs._oauth_support import get_google_auth_url
-        except Exception:
+        del user_email  # reserved for future per-user hints
+
+        base = (os.getenv("NEXUS_SERVER_URL") or "").rstrip("/")
+        if not base:
             return None
-
+        if not (base.startswith("http://") or base.startswith("https://")):
+            return None
         provider = self._provider or "google-drive"
-        redirect_uri = (
-            os.getenv("NEXUS_OAUTH_REDIRECT_URI")
-            or os.getenv("NEXUS_FS_OAUTH_REDIRECT_URI")
-            or "http://localhost"
-        )
-        # ``get_google_auth_url`` only knows a fixed set of service names
-        # (gws / google-drive / gmail / google-calendar).  Unknown provider
-        # labels fall back to gws-scope so the user gets *some* URL.
-        service = (
-            provider
-            if provider in {"google-drive", "gws", "gmail", "google-calendar"}
-            else "google-drive"
-        )
-        try:
-            return get_google_auth_url(
-                service_name=service,
-                redirect_uri=redirect_uri,
-            )
-        except Exception:
-            # Missing NEXUS_OAUTH_GOOGLE_CLIENT_ID/SECRET, or any other
-            # config miss.  The AuthenticationError still conveys the
-            # auth-required signal; the URL is optional context.
-            del user_email
+        # All Google-family providers route through the single
+        # ``/auth/oauth/google/authorize`` endpoint today.  Non-Google
+        # providers: no URL (state-bound authorize does not exist yet).
+        if provider not in {"google-drive", "gws", "gmail", "google-calendar"}:
             return None
+        query: dict[str, str] = {}
+        redirect_uri = os.getenv("NEXUS_OAUTH_REDIRECT_URI") or os.getenv(
+            "NEXUS_FS_OAUTH_REDIRECT_URI"
+        )
+        if redirect_uri:
+            query["redirect_uri"] = redirect_uri
+        suffix = f"?{urlencode(query)}" if query else ""
+        return f"{base}/auth/oauth/google/authorize{suffix}"
 
     # ------------------------------------------------------------------
     # Internal helpers — folder resolution

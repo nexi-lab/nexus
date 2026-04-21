@@ -22,8 +22,7 @@ def _build_transport(monkeypatch: pytest.MonkeyPatch) -> Any:
     pytest.importorskip("googleapiclient.discovery")
     from nexus.backends.connectors.gdrive.transport import DriveTransport
 
-    monkeypatch.setenv("NEXUS_OAUTH_GOOGLE_CLIENT_ID", "fake-id.apps.googleusercontent.com")
-    monkeypatch.setenv("NEXUS_OAUTH_GOOGLE_CLIENT_SECRET", "fake-secret")
+    monkeypatch.setenv("NEXUS_SERVER_URL", "http://localhost:4567")
     monkeypatch.setenv("NEXUS_OAUTH_REDIRECT_URI", "http://localhost:4567/callback")
 
     token_manager = MagicMock()
@@ -33,7 +32,7 @@ def _build_transport(monkeypatch: pytest.MonkeyPatch) -> Any:
 def test_get_drive_service_raises_authentication_error_when_no_user(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """No user_email + no context -> AuthenticationError with auth_url, not BackendError."""
+    """No user_email + no context -> AuthenticationError with nexus-server auth_url, not BackendError."""
     transport = _build_transport(monkeypatch)
 
     with pytest.raises(AuthenticationError) as exc_info:
@@ -43,8 +42,10 @@ def test_get_drive_service_raises_authentication_error_when_no_user(
     assert err.provider == "google-drive"
     assert err.user_email is None
     assert err.auth_url is not None
-    assert err.auth_url.startswith("https://accounts.google.com/o/oauth2/")
-    assert "client_id=fake-id.apps.googleusercontent.com" in err.auth_url
+    # Must point at the stateful nexus-server authorize endpoint, never
+    # at a raw accounts.google.com URL (which would skip state binding).
+    assert err.auth_url.startswith("http://localhost:4567/auth/oauth/google/authorize")
+    assert "accounts.google.com" not in err.auth_url
     assert "redirect_uri=http%3A%2F%2Flocalhost%3A4567%2Fcallback" in err.auth_url
 
 
@@ -68,18 +69,18 @@ def test_get_drive_service_raises_authentication_error_when_token_missing(
     assert err.provider == "google-drive"
     assert err.user_email == "user@example.com"
     assert err.auth_url is not None
-    assert "accounts.google.com" in err.auth_url
+    assert err.auth_url.startswith("http://localhost:4567/auth/oauth/google/authorize")
+    assert "accounts.google.com" not in err.auth_url
 
 
-def test_auth_url_is_none_when_client_credentials_missing(
+def test_auth_url_is_none_when_server_url_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Missing NEXUS_OAUTH_GOOGLE_CLIENT_ID -> AuthenticationError still raised, auth_url=None."""
+    """Missing NEXUS_SERVER_URL -> AuthenticationError still raised, auth_url=None."""
     pytest.importorskip("googleapiclient.discovery")
     from nexus.backends.connectors.gdrive.transport import DriveTransport
 
-    monkeypatch.delenv("NEXUS_OAUTH_GOOGLE_CLIENT_ID", raising=False)
-    monkeypatch.delenv("NEXUS_OAUTH_GOOGLE_CLIENT_SECRET", raising=False)
+    monkeypatch.delenv("NEXUS_SERVER_URL", raising=False)
 
     transport = DriveTransport(token_manager=MagicMock(), provider="google-drive")
 
@@ -89,6 +90,23 @@ def test_auth_url_is_none_when_client_credentials_missing(
     err = exc_info.value
     assert err.provider == "google-drive"
     assert err.auth_url is None
+
+
+def test_auth_url_rejects_non_http_server_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """NEXUS_SERVER_URL without http/https scheme -> auth_url=None (defense in depth)."""
+    pytest.importorskip("googleapiclient.discovery")
+    from nexus.backends.connectors.gdrive.transport import DriveTransport
+
+    monkeypatch.setenv("NEXUS_SERVER_URL", "javascript:alert(1)")
+
+    transport = DriveTransport(token_manager=MagicMock(), provider="google-drive")
+
+    with pytest.raises(AuthenticationError) as exc_info:
+        transport._get_drive_service()
+
+    assert exc_info.value.auth_url is None
 
 
 def test_connector_list_dir_propagates_authentication_error(

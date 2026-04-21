@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
+from nexus.backends.connectors.cli.display_path import sanitize_filename
 from nexus.backends.connectors.gmail.utils import (
     fetch_emails_batch,
     list_emails_by_folder,
@@ -165,11 +166,14 @@ class GmailTransport:
     def _parse_key(key: str) -> tuple[str | None, str | None, str | None]:
         """Parse a transport key into ``(label, thread_id | None, message_id | sentinel)``.
 
-        Expected formats:
-        - ``"LABEL/threadId-msgId.yaml"``  → ``(LABEL, threadId, msgId)``
-        - ``"LABEL/_new.yaml"``            → ``(LABEL, None, "_new")``  (write sentinel)
-        - ``"LABEL/_reply.yaml"``          → ``(LABEL, None, "_reply")``
-        - ``"LABEL/_forward.yaml"``        → ``(LABEL, None, "_forward")``
+        Accepted formats (both legacy and human-readable):
+        - ``"LABEL/threadId-msgId.yaml"``                       (legacy)
+        - ``"LABEL/{date}_{subject}__threadId-msgId.yaml"``     (readable)
+        - ``"LABEL/_new.yaml"`` etc.                             (write sentinel)
+
+        The readable form embeds ``__threadId-msgId`` as a trailing anchor so
+        ``fetch/exists/remove`` stay id-driven.  Anything between label and the
+        trailing anchor is display-only.
 
         Returns ``(None, None, None)`` for unparseable keys.
         """
@@ -193,12 +197,117 @@ class GmailTransport:
             label = parts[0] if len(parts) == 2 else None
             return label, None, base
 
-        if "-" not in base:
+        # Human-readable form: prefer the trailing "__threadId-msgId" anchor.
+        id_anchor = base
+        if "__" in base:
+            id_anchor = base.rsplit("__", 1)[-1]
+
+        if "-" not in id_anchor:
             return None, None, None
 
-        thread_id, message_id = base.split("-", 1)
+        thread_id, message_id = id_anchor.split("-", 1)
         label = parts[0] if len(parts) == 2 else None
         return label, thread_id, message_id
+
+    # ------------------------------------------------------------------
+    # Human-readable key formatting (Issue #3256 — SDK-transport port)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _date_prefix_for_key(date_str: str) -> str:
+        """Extract ``YYYY-MM-DD`` from ISO-8601 or RFC-2822 date string."""
+        if not date_str:
+            return ""
+        if len(date_str) >= 10 and date_str[4:5] == "-":
+            return date_str[:10]
+        try:
+            from email.utils import parsedate_to_datetime
+
+            dt = parsedate_to_datetime(date_str)
+            return dt.strftime("%Y-%m-%d")
+        except Exception:
+            return ""
+
+    @classmethod
+    def _format_readable_key(
+        cls,
+        label: str,
+        thread_id: str,
+        msg_id: str,
+        meta: dict[str, Any] | None,
+    ) -> str:
+        """Build ``LABEL/{date}_{subject}__{tid}-{mid}.yaml`` when meta is
+        available, else fall back to the legacy hex-only key."""
+        anchor = f"{thread_id}-{msg_id}"
+        if not meta:
+            return f"{label}/{anchor}.yaml"
+        parts: list[str] = []
+        date_prefix = cls._date_prefix_for_key(meta.get("date", "") or "")
+        if date_prefix:
+            parts.append(date_prefix)
+        subject = (meta.get("subject") or "").strip()
+        if subject:
+            parts.append(sanitize_filename(subject, max_len=80))
+        if not parts:
+            return f"{label}/{anchor}.yaml"
+        return f"{label}/{'_'.join(parts)}__{anchor}.yaml"
+
+    def _batch_fetch_headers(self, service: Any, msg_ids: list[str]) -> dict[str, dict[str, str]]:
+        """Batch-fetch Subject/Date/From for *msg_ids* using format=metadata.
+
+        Returns ``{msg_id: {"subject":..., "date":..., "from":...}}``.
+
+        Retries missing ids (including rate-limit 429 losses) up to three
+        times with exponential backoff; anything still missing after the
+        final attempt falls back to the legacy hex-only key in the caller.
+        """
+        if not msg_ids:
+            return {}
+        out: dict[str, dict[str, str]] = {}
+
+        def _cb(request_id: str, response: Any, exception: Exception | None) -> None:
+            if exception or not response:
+                return
+            headers = {
+                h.get("name", ""): h.get("value", "")
+                for h in response.get("payload", {}).get("headers", [])
+            }
+            out[request_id] = {
+                "subject": headers.get("Subject", ""),
+                "date": headers.get("Date", ""),
+                "from": headers.get("From", ""),
+            }
+
+        batch_size = 50
+        remaining = list(msg_ids)
+        for attempt in range(3):
+            if not remaining:
+                break
+            if attempt > 0:
+                import time as _t
+
+                _t.sleep(0.5 * (2**attempt))
+            for i in range(0, len(remaining), batch_size):
+                chunk = remaining[i : i + batch_size]
+                batch = service.new_batch_http_request()
+                for mid in chunk:
+                    req = (
+                        service.users()
+                        .messages()
+                        .get(
+                            userId="me",
+                            id=mid,
+                            format="metadata",
+                            metadataHeaders=["Subject", "Date", "From"],
+                        )
+                    )
+                    batch.add(req, callback=_cb, request_id=mid)
+                try:
+                    batch.execute()
+                except Exception as e:
+                    logger.debug("Gmail metadata batch attempt %d failed: %s", attempt + 1, e)
+            remaining = [m for m in msg_ids if m not in out]
+        return out
 
     # -- Email parsing / formatting (extracted from old connector) --
 
@@ -816,13 +925,15 @@ class GmailTransport:
                     .list(userId="me", maxResults=self._max_message_per_label)
                     .execute()
                 )
-                keys = []
+                pairs: list[tuple[str, str]] = []
                 for draft in result.get("drafts", []):
                     draft_id = draft.get("id", "")
                     msg = draft.get("message", {})
                     thread_id = msg.get("threadId", draft_id)
                     msg_id = msg.get("id", draft_id)
-                    keys.append(f"DRAFTS/{thread_id}-{msg_id}.yaml")
+                    pairs.append((thread_id, msg_id))
+                meta = self._batch_fetch_headers(service, [m for _, m in pairs])
+                keys = [self._format_readable_key("DRAFTS", t, m, meta.get(m)) for t, m in pairs]
                 return sorted(keys), []
             except AuthenticationError:
                 raise
@@ -843,11 +954,12 @@ class GmailTransport:
                     .list(userId="me", labelIds=["TRASH"], maxResults=self._max_message_per_label)
                     .execute()
                 )
-                keys = []
-                for msg in result.get("messages", []):
-                    thread_id = msg.get("threadId", msg["id"])
-                    msg_id = msg["id"]
-                    keys.append(f"TRASH/{thread_id}-{msg_id}.yaml")
+                pairs = [
+                    (msg.get("threadId", msg["id"]), msg["id"])
+                    for msg in result.get("messages", [])
+                ]
+                meta = self._batch_fetch_headers(service, [m for _, m in pairs])
+                keys = [self._format_readable_key("TRASH", t, m, meta.get(m)) for t, m in pairs]
                 return sorted(keys), []
             except AuthenticationError:
                 raise
@@ -867,12 +979,13 @@ class GmailTransport:
                 folder_filter=[prefix],
                 silent=True,
             )
-            keys = []
-            for email in emails:
-                if email.get("folder") == prefix:
-                    thread_id = email.get("threadId")
-                    msg_id = email["id"]
-                    keys.append(f"{prefix}/{thread_id}-{msg_id}.yaml")
+            pairs = [
+                (email.get("threadId") or email["id"], email["id"])
+                for email in emails
+                if email.get("folder") == prefix
+            ]
+            meta = self._batch_fetch_headers(service, [m for _, m in pairs])
+            keys = [self._format_readable_key(prefix, t, m, meta.get(m)) for t, m in pairs]
             return sorted(keys), []
 
         return [], []

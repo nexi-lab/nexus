@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
+from nexus.backends.connectors.cli.display_path import sanitize_filename
 from nexus.contracts.exceptions import AuthenticationError, BackendError, NexusFileNotFoundError
 
 if TYPE_CHECKING:
@@ -120,12 +121,20 @@ class CalendarTransport:
     def _parse_key(key: str) -> tuple[str, str]:
         """Parse ``"calendar_id/event_id.yaml"`` → ``(calendar_id, event_id)``.
 
+        Accepted filename forms:
+        - ``"eventId.yaml"``                       (legacy)
+        - ``"{date}_{summary}__eventId.yaml"``     (readable — same convention
+          as gmail: trailing ``__<id>`` anchor is authoritative)
+
         Returns ``("", "")`` for root or directory-only keys.
         """
         key = key.strip("/")
         parts = key.split("/")
         if len(parts) == 2 and parts[1].endswith(".yaml"):
-            return parts[0], parts[1].removesuffix(".yaml")
+            base = parts[1].removesuffix(".yaml")
+            if "__" in base:
+                base = base.rsplit("__", 1)[-1]
+            return parts[0], base
         if len(parts) == 1:
             return parts[0], ""
         return "", ""
@@ -353,7 +362,20 @@ class CalendarTransport:
         keys = []
         for event in events_result.get("items", []):
             eid = event.get("id")
-            if eid:
+            if not eid:
+                continue
+            start = event.get("start", {}) or {}
+            date_raw = start.get("dateTime") or start.get("date") or ""
+            date_prefix = date_raw[:10] if len(date_raw) >= 10 else ""
+            summary = (event.get("summary") or "").strip()
+            parts: list[str] = []
+            if date_prefix:
+                parts.append(date_prefix)
+            if summary:
+                parts.append(sanitize_filename(summary, max_len=60))
+            if parts:
+                keys.append(f"{prefix}/{'_'.join(parts)}__{eid}.yaml")
+            else:
                 keys.append(f"{prefix}/{eid}.yaml")
         return sorted(keys), []
 

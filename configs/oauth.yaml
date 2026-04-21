@@ -31,8 +31,12 @@ providers:
     display_name: Gmail
     provider_class: nexus.lib.oauth.providers.google.GoogleOAuthProvider
     scopes:
-      - https://www.googleapis.com/auth/gmail.readonly
-      - https://www.googleapis.com/auth/gmail.send
+      # gmail.modify covers readonly + send + drafts.create + messages.trash
+      # — a single scope that spans every operation exposed by the gmail
+      # connector (list_keys, fetch, store for _new/_reply/_forward/_draft,
+      # remove for trash).  Using gmail.readonly+gmail.send together breaks
+      # drafts.create and any modify-label operation.
+      - https://www.googleapis.com/auth/gmail.modify
       - openid
       - email
     client_id_env: NEXUS_OAUTH_GOOGLE_CLIENT_ID

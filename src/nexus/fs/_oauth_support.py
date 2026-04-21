@@ -53,6 +53,14 @@ _GOOGLE_SERVICE_SCOPES: dict[str, list[str]] = {
     "google-calendar": [
         "https://www.googleapis.com/auth/calendar",
     ],
+    # Alias: the Calendar connector identifies itself as ``gcalendar``
+    # (matches configs/oauth.yaml and the connector's SKILL_NAME), so
+    # callers that pass that provider label must resolve to the same
+    # scope set.  Keeping the alias here avoids a silent drop to the
+    # default branch in generate_auth_url.
+    "gcalendar": [
+        "https://www.googleapis.com/auth/calendar",
+    ],
 }
 
 _GOOGLE_SERVICE_PROVIDER_NAMES: dict[str, str] = {
@@ -60,6 +68,7 @@ _GOOGLE_SERVICE_PROVIDER_NAMES: dict[str, str] = {
     "google-drive": "google-drive",
     "gmail": "gmail",
     "google-calendar": "google-calendar",
+    "gcalendar": "gcalendar",
 }
 
 _X_SCOPES: list[str] = [

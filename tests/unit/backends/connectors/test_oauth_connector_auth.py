@@ -117,6 +117,36 @@ class TestResolveOAuthAccessToken:
         )
         assert token == "ya29.fake-token"
 
+    def test_email_shaped_nexus_user_id_resolves_without_index_lookup(self) -> None:
+        """An email-shaped ``nexus_user_id`` should flow straight to
+        ``get_valid_token`` — some deployments issue API keys whose
+        subject *is* the user's email, and credential rows in legacy /
+        mixed-issuance paths may be keyed only by ``user_email`` with no
+        secondary ``user_id`` row, so a credential-index lookup here
+        would miss and the function would emit a false 401.
+        """
+        captured: dict[str, object] = {}
+
+        async def _ok(**kwargs: object) -> str:
+            captured.update(kwargs)
+            return "ya29.fake-token"
+
+        tm = MagicMock()
+        tm.get_valid_token = _ok
+        # list_credentials must NOT be consulted on this path.
+        tm.list_credentials = MagicMock(
+            side_effect=AssertionError("list_credentials should not be called")
+        )
+        token = resolve_oauth_access_token(
+            tm,
+            connector_name="gdrive_connector",
+            provider="google-drive",
+            user_email=None,
+            nexus_user_id="user@example.com",
+        )
+        assert token == "ya29.fake-token"
+        assert captured["user_email"] == "user@example.com"
+
 
 # ---------------------------------------------------------------------------
 # Per-connector transport wiring — each must route through the helper
@@ -239,3 +269,20 @@ class TestXTransportAuthPropagation:
         assert err.user_email == "user@example.com"
         assert err.recovery_hint is not None
         assert err.recovery_hint["connector_name"] == "x_connector"
+
+    def test_cache_principal_is_zone_and_email_scoped(self) -> None:
+        """Two zones sharing a nexus subject id (e.g. ``admin``) must not
+        share cache entries — the principal key must be derived from the
+        resolved OAuth identity + zone, never the raw ``context.user_id``.
+        Otherwise zone A's cached X timeline would be served to zone B.
+        """
+        from nexus.backends.connectors.x.transport import XTransport
+
+        p1 = XTransport._cache_principal("alice@example.com", "zone-a")
+        p2 = XTransport._cache_principal("alice@example.com", "zone-b")
+        p3 = XTransport._cache_principal("bob@example.com", "zone-a")
+        assert p1 != p2, "cache principal must vary with zone"
+        assert p1 != p3, "cache principal must vary with resolved email"
+        # Regression: the raw nexus subject ID (e.g. "admin") must not
+        # reduce to the same principal as any real zone/email pair.
+        assert "admin" not in (p1, p2, p3)

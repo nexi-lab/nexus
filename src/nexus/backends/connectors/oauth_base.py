@@ -165,12 +165,29 @@ def resolve_oauth_access_token(
     """
     from nexus.lib.sync_bridge import run_sync
 
-    # When caller passes a nexus user id in user_email (common API-key
-    # path where context.user_id is a subject id like "admin"), swap in
-    # the linked OAuth email.  user_email=None similarly falls back to
-    # the nexus_user_id hint if one was provided by the caller.
-    resolved_email = user_email if _looks_like_email(user_email) else None
-    candidate_user_id = nexus_user_id or (None if _looks_like_email(user_email) else user_email)
+    # Derive the email to hand to ``get_valid_token``.  Order of preference:
+    #   1. explicit ``user_email`` that already looks like an email (mount pin),
+    #   2. an email-shaped ``nexus_user_id`` — some deployments issue API keys
+    #      whose subject is the user's email, and credential rows may be keyed
+    #      only by ``user_email`` (no secondary ``user_id`` row) for legacy /
+    #      mixed-issuance paths,
+    #   3. credential-index lookup via a non-email nexus user id.
+    # Falling straight through (1) + (2) avoids false 401/re-auth loops when
+    # the caller already handed us a usable email identity.
+    if _looks_like_email(user_email):
+        resolved_email: str | None = user_email
+    elif _looks_like_email(nexus_user_id):
+        resolved_email = nexus_user_id
+    else:
+        resolved_email = None
+
+    # Non-email identifiers get fed into the list_credentials index.
+    candidate_user_id: str | None = None
+    if nexus_user_id and not _looks_like_email(nexus_user_id):
+        candidate_user_id = nexus_user_id
+    elif user_email and not _looks_like_email(user_email):
+        candidate_user_id = user_email
+
     if resolved_email is None and candidate_user_id:
         resolved_email = _resolve_linked_oauth_email(
             token_manager,

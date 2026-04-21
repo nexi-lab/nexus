@@ -56,6 +56,38 @@ logging.getLogger("googleapiclient.discovery_cache").setLevel(logging.ERROR)
 # Gmail system labels exposed as virtual directories (priority order).
 LABEL_FOLDERS = ["SENT", "STARRED", "IMPORTANT", "INBOX", "DRAFTS", "TRASH"]
 
+# Gmail inbox category subfolders — parity with the gws CLI connector
+# (Issue #3256, Decision 16A).  INBOX is presented as a directory of
+# ``PRIMARY / SOCIAL / UPDATES / PROMOTIONS / FORUMS`` subfolders,
+# mirroring the category tabs the Gmail UI shows.  The map goes from
+# Gmail's ``CATEGORY_*`` system labels to the user-visible folder name.
+_GMAIL_CATEGORIES: dict[str, str] = {
+    "CATEGORY_PERSONAL": "PRIMARY",
+    "CATEGORY_SOCIAL": "SOCIAL",
+    "CATEGORY_UPDATES": "UPDATES",
+    "CATEGORY_PROMOTIONS": "PROMOTIONS",
+    "CATEGORY_FORUMS": "FORUMS",
+}
+_GMAIL_CATEGORY_FOLDERS: tuple[str, ...] = tuple(sorted(_GMAIL_CATEGORIES.values()))
+
+
+def _gmail_category_from_labels(labels: list[str] | None) -> str:
+    """Derive the Gmail category subfolder from a message's label IDs.
+
+    Returns the first CATEGORY_* match, defaulting to ``PRIMARY`` when
+    none is set — Gmail normally assigns a category to every INBOX
+    message, and imported/legacy messages that skipped tab-classification
+    naturally fall into the Primary tab, which is what users expect.
+    """
+    if not labels:
+        return "PRIMARY"
+    for label in labels:
+        cat = _GMAIL_CATEGORIES.get(label)
+        if cat:
+            return cat
+    return "PRIMARY"
+
+
 # Explicit write-sentinel basenames recognised by ``store()``.
 # Anything *else* starting with ``_`` is just a sanitized readable
 # filename (e.g. ``_unnamed``, ``_CON``) and must fall through to the
@@ -172,32 +204,41 @@ class GmailTransport:
     def _parse_key(key: str) -> tuple[str | None, str | None, str | None]:
         """Parse a transport key into ``(label, thread_id | None, message_id | sentinel)``.
 
-        Accepted formats (both legacy and human-readable):
-        - ``"LABEL/threadId-msgId.yaml"``                       (legacy)
-        - ``"LABEL/{date}_{subject}__threadId-msgId.yaml"``     (readable)
-        - ``"LABEL/_new.yaml"`` etc.                             (write sentinel)
+        Accepted formats (legacy, human-readable, categorized inbox, and
+        write sentinels):
+        - ``"LABEL/threadId-msgId.yaml"``                           (legacy)
+        - ``"LABEL/{date}_{subject}__threadId-msgId.yaml"``         (readable)
+        - ``"INBOX/<CATEGORY>/{date}_{subject}__tid-mid.yaml"``      (category)
+        - ``"INBOX/<CATEGORY>/threadId-msgId.yaml"``                 (category legacy)
+        - ``"LABEL/_new.yaml"`` etc.                                 (write sentinel)
 
         The readable form embeds ``__threadId-msgId`` as a trailing anchor so
         ``fetch/exists/remove`` stay id-driven.  Anything between label and the
-        trailing anchor is display-only.
+        trailing anchor is display-only.  ``<CATEGORY>`` is one of PRIMARY /
+        SOCIAL / UPDATES / PROMOTIONS / FORUMS and only applies under INBOX —
+        other labels remain flat.
 
         Returns ``(None, None, None)`` for unparseable keys.
         """
         key = key.strip("/")
         parts = key.split("/")
 
-        if len(parts) == 2 and parts[0] in LABEL_FOLDERS:
+        if len(parts) == 3 and parts[0] == "INBOX" and parts[1] in _GMAIL_CATEGORY_FOLDERS:
+            filename = parts[2]
+            label: str | None = f"{parts[0]}/{parts[1]}"
+        elif len(parts) == 2 and parts[0] in LABEL_FOLDERS:
             filename = parts[1]
+            label = parts[0]
         elif len(parts) == 1:
             filename = parts[0]
+            label = None
         else:
             return None, None, None
 
         if not filename.endswith(".yaml"):
-            return parts[0] if len(parts) == 2 else None, None, None
+            return label, None, None
 
         base = filename.removesuffix(".yaml")
-        label = parts[0] if len(parts) == 2 else None
 
         # Explicit write-sentinel names — must match exactly, so readable
         # filenames that happen to start with ``_`` (e.g. subject
@@ -260,18 +301,20 @@ class GmailTransport:
             return f"{label}/{anchor}.yaml"
         return f"{label}/{'_'.join(parts)}__{anchor}.yaml"
 
-    def _batch_fetch_headers(self, service: Any, msg_ids: list[str]) -> dict[str, dict[str, str]]:
-        """Batch-fetch Subject/Date/From for *msg_ids* using format=metadata.
+    def _batch_fetch_headers(self, service: Any, msg_ids: list[str]) -> dict[str, dict[str, Any]]:
+        """Batch-fetch Subject/Date/From/labelIds for *msg_ids* via ``format=metadata``.
 
-        Returns ``{msg_id: {"subject":..., "date":..., "from":...}}``.
-
-        Retries missing ids (including rate-limit 429 losses) up to three
-        times with exponential backoff; anything still missing after the
-        final attempt falls back to the legacy hex-only key in the caller.
+        Returns ``{msg_id: {"subject": str, "date": str, "from": str,
+        "labels": list[str]}}``.  ``labels`` carries the full label-ID list
+        so callers can derive INBOX category subfolders without a second
+        round-trip.  Retries missing ids (including rate-limit 429 losses)
+        up to three times with exponential backoff; anything still missing
+        after the final attempt falls back to the legacy hex-only key in
+        the caller.
         """
         if not msg_ids:
             return {}
-        out: dict[str, dict[str, str]] = {}
+        out: dict[str, dict[str, Any]] = {}
 
         def _cb(request_id: str, response: Any, exception: Exception | None) -> None:
             if exception or not response:
@@ -284,6 +327,7 @@ class GmailTransport:
                 "subject": headers.get("Subject", ""),
                 "date": headers.get("Date", ""),
                 "from": headers.get("From", ""),
+                "labels": list(response.get("labelIds", []) or []),
             }
 
         batch_size = 50
@@ -880,9 +924,14 @@ class GmailTransport:
         """Check whether a message key exists in Gmail."""
         _label, _thread_id, message_id = self._parse_key(key)
         if not message_id:
-            # Could be a label directory check
+            # Could be a label directory check — LABEL_FOLDERS, the root,
+            # or a virtual ``INBOX/<CATEGORY>`` subdirectory.
             stripped = key.strip("/")
-            return stripped in LABEL_FOLDERS or stripped == ""
+            if stripped in LABEL_FOLDERS or stripped == "":
+                return True
+            if stripped.startswith("INBOX/"):
+                return stripped[len("INBOX/") :] in _GMAIL_CATEGORY_FOLDERS
+            return False
 
         try:
             service = self._get_gmail_service()
@@ -914,14 +963,61 @@ class GmailTransport:
     def list_keys(self, prefix: str, delimiter: str = "/") -> tuple[list[str], list[str]]:
         """List email keys under *prefix*.
 
-        - ``list_keys("")`` → ``([], ["SENT/", "STARRED/", "IMPORTANT/", "INBOX/"])``
-        - ``list_keys("INBOX/")`` → ``(["INBOX/thread-msg.yaml", ...], [])``
+        - ``list_keys("")`` → ``([], ["SENT/", "STARRED/", ...])``
+        - ``list_keys("INBOX/")`` → ``([], ["INBOX/PRIMARY/", "INBOX/SOCIAL/", ...])``
+        - ``list_keys("INBOX/PRIMARY/")`` → ``(["INBOX/PRIMARY/<key>.yaml", ...], [])``
+        - ``list_keys("SENT/")`` → ``(["SENT/<key>.yaml", ...], [])``
         """
         prefix = prefix.strip("/")
 
         # Root → return label folders as common prefixes
         if not prefix:
             return [], [f"{label}/" for label in LABEL_FOLDERS]
+
+        # INBOX → category subfolders (matches the gws connector layout).
+        if prefix == "INBOX":
+            return [], [f"INBOX/{cat}/" for cat in _GMAIL_CATEGORY_FOLDERS]
+
+        # INBOX/<CATEGORY> → messages filtered to that category tab.
+        if prefix.startswith("INBOX/"):
+            category = prefix[len("INBOX/") :]
+            if category not in _GMAIL_CATEGORY_FOLDERS:
+                return [], []
+            service = self._get_gmail_service()
+            try:
+                result = (
+                    service.users()
+                    .messages()
+                    .list(
+                        userId="me",
+                        labelIds=["INBOX"],
+                        maxResults=self._max_message_per_label,
+                    )
+                    .execute()
+                )
+                pairs = [
+                    (msg.get("threadId", msg["id"]), msg["id"])
+                    for msg in result.get("messages", [])
+                ]
+                # Batch-fetch metadata once — we need label IDs to derive
+                # the category tab, and the same call supplies Subject /
+                # Date for the readable filename.
+                meta = self._batch_fetch_headers(service, [m for _, m in pairs])
+                keys: list[str] = []
+                for t, m in pairs:
+                    m_meta = meta.get(m) or {}
+                    if _gmail_category_from_labels(m_meta.get("labels")) != category:
+                        continue
+                    keys.append(self._format_readable_key(f"INBOX/{category}", t, m, m_meta))
+                return sorted(keys), []
+            except AuthenticationError:
+                raise
+            except Exception as e:
+                raise BackendError(
+                    f"Failed to list Gmail INBOX/{category}: {e}",
+                    backend="gmail",
+                    path=prefix,
+                ) from e
 
         # DRAFTS folder → use drafts.list API
         if prefix == "DRAFTS":
@@ -933,7 +1029,7 @@ class GmailTransport:
                     .list(userId="me", maxResults=self._max_message_per_label)
                     .execute()
                 )
-                pairs: list[tuple[str, str]] = []
+                pairs = []
                 for draft in result.get("drafts", []):
                     draft_id = draft.get("id", "")
                     msg = draft.get("message", {})

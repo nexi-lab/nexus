@@ -2090,6 +2090,28 @@ _SSE_MOCK_OPENAI_BASE = "http://sse-mock:8080/v1"
 _SSE_MOCK_ANTHROPIC_BASE = "http://sse-mock:8080"
 
 
+def _sse_mock_reachable() -> bool:
+    """Return True if the sse-mock sidecar is up.
+
+    The CI "E2E Tests (Docker)" workflow runs pytest directly without any
+    docker-compose sidecars, so sse-mock is unreachable there. The full
+    docker-compose.dynamic-federation-test.yml stack runs the sidecar and
+    tests resolve it by container hostname. Skip the LLM-streaming tests
+    when unreachable — matches the skip pattern every other class in this
+    file uses for unreachable infrastructure.
+    """
+    try:
+        httpx.get("http://sse-mock:8080/healthz", timeout=2, trust_env=False)
+        return True
+    except httpx.TransportError:
+        return False
+
+
+_SSE_MOCK_SKIP_REASON = (
+    "sse-mock sidecar not reachable (run via docker-compose.dynamic-federation-test.yml)"
+)
+
+
 def _bootstrap_standalone_fs(tmp_path):
     """Create an in-process NexusFS with a local CAS backend.
 
@@ -2136,6 +2158,7 @@ def _llm_round_trip(nx, mount, request, session_suffix="0"):
     return raw[:done_idx], session_hash, envelope
 
 
+@pytest.mark.skipif(not _sse_mock_reachable(), reason=_SSE_MOCK_SKIP_REASON)
 class TestOpenAIBackendRustCAS:
     """End-to-end LLM streaming via Rust OpenAIBackend against sse-mock sidecar.
 
@@ -2193,6 +2216,7 @@ class TestOpenAIBackendRustCAS:
             nx.close()
 
 
+@pytest.mark.skipif(not _sse_mock_reachable(), reason=_SSE_MOCK_SKIP_REASON)
 class TestAnthropicBackendRustCAS:
     """Mirror of TestOpenAIBackendRustCAS with Anthropic-shaped SSE."""
 
@@ -2740,6 +2764,7 @@ class TestMultiZoneAtomicWrite:
 # ===================================================================
 # R13.2 Class 7/7: LLM session end-to-end (via sse-mock sidecar)
 # ===================================================================
+@pytest.mark.skipif(not _sse_mock_reachable(), reason=_SSE_MOCK_SKIP_REASON)
 class TestLLMSessionEndToEnd:
     """Three-turn conversation through the Rust OpenAIBackend, verifying
     CAS dedup (repeat request = same envelope hash) and that each distinct

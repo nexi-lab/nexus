@@ -396,12 +396,30 @@ impl MountTable {
 
     // ── LPM routing ────────────────────────────────────────────────────
 
-    /// Longest-prefix-match routing within a zone.
+    /// Longest-prefix-match routing within a zone, with fallback to the
+    /// root zone's mounts.
     ///
-    /// Walks zone-canonical mount keys from deepest to shallowest until
-    /// one is found. Pure routing — access control (read-only, admin-only,
-    /// RBAC) lives in rebac, not here.
+    /// Walks zone-canonical mount keys from deepest to shallowest. If the
+    /// caller's zone has no matching mount, retries once under the root
+    /// zone — root mounts are the global default visible to every zone
+    /// (federation or standalone). Pure routing — access control
+    /// (read-only, admin-only, RBAC) lives in rebac, not here.
     pub fn route(&self, path: &str, zone_id: &str) -> Result<RouteResult, RouteError> {
+        if let Some(result) = self.route_in_zone(path, zone_id) {
+            return Ok(result);
+        }
+        if zone_id != contracts::ROOT_ZONE_ID {
+            if let Some(result) = self.route_in_zone(path, contracts::ROOT_ZONE_ID) {
+                return Ok(result);
+            }
+        }
+        Err(RouteError::NotMounted(format!(
+            "No mount found for path: {}",
+            path
+        )))
+    }
+
+    fn route_in_zone(&self, path: &str, zone_id: &str) -> Option<RouteResult> {
         let canonical = canonicalize_mount_path(path, zone_id);
         let mut current = canonical.as_str();
 
@@ -410,16 +428,13 @@ impl MountTable {
                 let mount_point = current.to_string();
                 let backend_path = strip_mount_prefix(&canonical, current);
                 let is_external = entry.is_external;
-                // Federation mounts override the caller's ambient zone with
-                // the mount's actual target. Plain local mounts keep the
-                // caller's zone (backward-compatible).
                 let resolved_zone = entry
                     .target_zone_id
                     .clone()
                     .unwrap_or_else(|| zone_id.to_string());
                 drop(entry);
 
-                return Ok(RouteResult {
+                return Some(RouteResult {
                     mount_point,
                     backend_path,
                     zone_id: resolved_zone,
@@ -436,11 +451,7 @@ impl MountTable {
                 None => break,
             }
         }
-
-        Err(RouteError::NotMounted(format!(
-            "No mount found for path: {}",
-            path
-        )))
+        None
     }
 
     // ── Backend-operation delegation ───────────────────────────────────

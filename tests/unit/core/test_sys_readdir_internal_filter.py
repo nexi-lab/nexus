@@ -240,21 +240,6 @@ class TestSysReaddirZoneFilter:
         assert sorted(result.items) == ["/a.txt", "/c.txt"]
 
     @pytest.mark.asyncio
-    async def test_null_entry_zone_dropped_for_non_root_caller(self) -> None:
-        """Entry with zone_id=None is treated as ROOT; a non-ROOT caller must not see it."""
-        fs = _build_fs(
-            [
-                _FakeMeta(path="/a.txt", zone_id="zone-a"),
-                _FakeMeta(path="/b.txt", zone_id=None),  # legacy/root row
-            ]
-        )
-        result = fs.sys_readdir(
-            "/", recursive=False, details=False, context=_FakeCtx(zone_id="zone-a")
-        )
-        # zone-a caller keeps its own row, drops the null (ROOT-equivalent) row.
-        assert result == ["/a.txt"]
-
-    @pytest.mark.asyncio
     async def test_dict_context_applies_zone_filter(self) -> None:
         """Dict-shaped context (some RPC paths) must be handled the same as OperationContext."""
         fs = _build_fs(

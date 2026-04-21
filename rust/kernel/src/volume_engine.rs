@@ -1861,13 +1861,20 @@ impl VolumeEngine {
         let vol_id = vol.volume_id;
         let (sealed_path, _entries) = vol.seal(&self.volumes_dir).map_err(io_err)?;
 
-        // Cache FD for pread access (Issue #3404)
-        if let Err(e) = self.mem_index.write().open_volume(vol_id, &sealed_path) {
-            eprintln!(
-                "Warning: failed to cache volume FD for {}: {}",
-                sealed_path.display(),
-                e
-            );
+        // Cache FD for pread access (Issue #3404).
+        //
+        // `seal_volume` can be reached while `put_impl` is holding a mem_index
+        // write lock during dedup+append. Re-acquiring that same non-reentrant
+        // lock here deadlocks on volume rollover paths. Best-effort cache the
+        // FD only when we can grab the lock immediately.
+        if let Some(mut idx) = self.mem_index.try_write() {
+            if let Err(e) = idx.open_volume(vol_id, &sealed_path) {
+                eprintln!(
+                    "Warning: failed to cache volume FD for {}: {}",
+                    sealed_path.display(),
+                    e
+                );
+            }
         }
 
         // Register sealed volume path (replaces the .tmp entry)

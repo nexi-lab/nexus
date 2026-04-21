@@ -139,9 +139,11 @@ class DriveTransport:
                 backend="gdrive",
             ) from None
 
+        from nexus.backends.connectors.oauth_base import resolve_oauth_access_token
+
         # Resolve user email — absence is an auth-required signal, not a
-        # backend error.  Callers (fs.ls, fs.read, …) need to surface the
-        # authorize URL so UIs can drive the OAuth flow (#3822).
+        # backend error.  Callers (fs.ls, fs.read, …) need the structured
+        # ``recovery_hint`` so UIs can drive the OAuth flow (#3822).
         if self._user_email:
             user_email: str | None = self._user_email
         elif self._context and self._context.user_id:
@@ -149,43 +151,25 @@ class DriveTransport:
         else:
             user_email = None
 
-        if user_email is None:
-            raise AuthenticationError(
-                f"Google Drive requires authorization (provider={self._provider}). "
-                "Configure user_email on the mount or authenticate a user.",
-                provider=self._provider,
-                user_email=None,
-                auth_url=self._build_auth_url(user_email=None),
-                recovery_hint=self._build_recovery_hint(user_email=None),
-            )
-
-        from nexus.lib.sync_bridge import run_sync
-
+        zone_id = (
+            self._context.zone_id
+            if self._context and hasattr(self._context, "zone_id") and self._context.zone_id
+            else "root"
+        )
+        # Raises AuthenticationError with provider/user_email/recovery_hint
+        # for auth-required cases; non-auth failures (network, misconfig)
+        # bubble up as their native exception type so we don't mask them.
         try:
-            zone_id = (
-                self._context.zone_id
-                if self._context and hasattr(self._context, "zone_id") and self._context.zone_id
-                else "root"
-            )
-            access_token = run_sync(
-                self._token_manager.get_valid_token(
-                    provider=self._provider,
-                    user_email=user_email,
-                    zone_id=zone_id,
-                )
-            )
-        except AuthenticationError as _auth_exc:
-            raise AuthenticationError(
-                str(_auth_exc),
-                provider=self._provider,
+            access_token = resolve_oauth_access_token(
+                self._token_manager,
+                connector_name="gdrive_connector",
+                provider=self._provider or "google-drive",
                 user_email=user_email,
-                auth_url=self._build_auth_url(user_email=user_email),
-                recovery_hint=self._build_recovery_hint(user_email=user_email),
-            ) from _auth_exc
+                zone_id=zone_id,
+            )
+        except AuthenticationError:
+            raise
         except Exception as e:
-            # Non-auth failure (network error, misconfigured token manager, …)
-            # stays a BackendError so callers don't get false auth-required
-            # signals for transient problems.
             raise BackendError(
                 f"Failed to get valid OAuth token for user {user_email}: {e}",
                 backend="gdrive",
@@ -195,64 +179,6 @@ class DriveTransport:
 
         creds = Credentials(token=access_token)
         return build("drive", "v3", credentials=creds)
-
-    def _build_auth_url(self, *, user_email: str | None) -> str | None:
-        """Auth URL construction for connector re-auth is intentionally None.
-
-        Earlier iterations of this transport minted OAuth URLs directly
-        (either raw Google endpoints or the nexus-server user-login
-        authorize route).  Both are unsafe as connector credential-recovery
-        targets:
-
-        * A raw Google URL bypasses the signed state + binding-cookie path
-          (P2.5 from #3815) and opens a login-CSRF / code-injection window.
-        * ``/auth/oauth/google/authorize`` is the *user-login* flow for
-          ``provider=google``; connector tokens live under
-          ``provider={google-drive,gws,gmail,google-calendar}`` and are
-          issued by the connector-scoped ``POST /v2/connectors/auth/init``
-          endpoint, not the login authorize route.  Sending the user
-          through the login URL lets them sign in successfully yet still
-          fail connector token resolution — a broken remediation loop.
-
-        Clients receive ``provider`` and ``user_email`` on
-        :class:`AuthenticationError` (plus a machine-actionable
-        ``recovery_hint`` naming the connector auth-init endpoint; see
-        :meth:`_build_recovery_hint`) and can hit the connector auth init
-        endpoint themselves (it is a POST and needs an authenticated user,
-        so it can't be flattened into a single GET-able URL from here).
-        """
-        del user_email
-        return None
-
-    def _build_recovery_hint(self, *, user_email: str | None) -> dict[str, str]:
-        """Structured, machine-actionable re-auth instructions.
-
-        Matches the real connector auth-init contract exactly so clients
-        can POST the hint verbatim:
-
-        * endpoint — ``/api/v2/connectors/auth/init`` (router prefix
-          ``/api/v2/connectors`` + path ``/auth/init``).
-        * connector_name — matches
-          :class:`AuthInitRequest.connector_name`; value is the registered
-          connector name (``gdrive_connector``), not the transport's
-          ``provider`` label.
-        * provider — passed through so the server uses the expected
-          token-manager provider (``google-drive`` / ``gws`` / …) instead
-          of inferring from ``service_name``.
-        * user_email — present only when known.
-
-        Kept as ``dict[str, str]`` so it round-trips through JSON error
-        responses unchanged.
-        """
-        hint: dict[str, str] = {
-            "endpoint": "/api/v2/connectors/auth/init",
-            "method": "POST",
-            "connector_name": "gdrive_connector",
-            "provider": self._provider or "google-drive",
-        }
-        if user_email:
-            hint["user_email"] = user_email
-        return hint
 
     # ------------------------------------------------------------------
     # Internal helpers — folder resolution

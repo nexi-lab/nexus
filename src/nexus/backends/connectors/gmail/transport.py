@@ -119,34 +119,35 @@ class GmailTransport:
                 backend="gmail",
             ) from None
 
-        # Resolve user email
+        from nexus.backends.connectors.oauth_base import resolve_oauth_access_token
+        from nexus.contracts.exceptions import AuthenticationError
+
+        # Resolve user email — None is an auth-required signal handled by
+        # the shared helper, not a BackendError.  Earlier behaviour
+        # (raising BackendError) masked the recoverable 401 case and made
+        # silent-empty bugs possible (see #3822).
         if self._user_email:
-            user_email = self._user_email
+            user_email: str | None = self._user_email
         elif self._context and self._context.user_id:
             user_email = self._context.user_id
         else:
-            raise BackendError(
-                "Gmail transport requires either configured user_email "
-                "or authenticated user in OperationContext",
-                backend="gmail",
-            )
+            user_email = None
 
-        # Get valid access token (auto-refreshes if expired)
-        from nexus.lib.sync_bridge import run_sync
-
+        zone_id = (
+            self._context.zone_id
+            if self._context and hasattr(self._context, "zone_id") and self._context.zone_id
+            else "root"
+        )
         try:
-            zone_id = (
-                self._context.zone_id
-                if self._context and hasattr(self._context, "zone_id") and self._context.zone_id
-                else "root"
+            access_token = resolve_oauth_access_token(
+                self._token_manager,
+                connector_name="gmail_connector",
+                provider=self._provider,
+                user_email=user_email,
+                zone_id=zone_id,
             )
-            access_token = run_sync(
-                self._token_manager.get_valid_token(
-                    provider=self._provider,
-                    user_email=user_email,
-                    zone_id=zone_id,
-                )
-            )
+        except AuthenticationError:
+            raise
         except Exception as e:
             raise BackendError(
                 f"Failed to get valid OAuth token for user {user_email}: {e}",

@@ -21,12 +21,99 @@ from nexus.backends.connectors.base import (
 )
 from nexus.backends.connectors.oauth import OAuthConnectorMixin
 from nexus.contracts.backend_features import OAUTH_BACKEND_FEATURES
+from nexus.contracts.exceptions import AuthenticationError
 
 if TYPE_CHECKING:
     from nexus.bricks.auth.credential_pool import CredentialPool
     from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Connector-agnostic OAuth auth-required helper (Issue #3822 / PR #3825)
+# ---------------------------------------------------------------------------
+
+
+def build_auth_recovery_hint(
+    *,
+    connector_name: str,
+    provider: str,
+    user_email: str | None = None,
+) -> dict[str, str]:
+    """Return a machine-actionable re-auth pointer for the connector auth API.
+
+    Matches the real ``AuthInitRequest`` contract on
+    ``POST /api/v2/connectors/auth/init`` — emitted verbatim on
+    :class:`AuthenticationError.recovery_hint` so clients can drive
+    recovery without out-of-band guesswork.  ``connector_name`` must be
+    the registry-registered name (e.g. ``gmail_connector``,
+    ``gdrive_connector``), not the provider label.
+    """
+    hint: dict[str, str] = {
+        "endpoint": "/api/v2/connectors/auth/init",
+        "method": "POST",
+        "connector_name": connector_name,
+        "provider": provider,
+    }
+    if user_email:
+        hint["user_email"] = user_email
+    return hint
+
+
+def resolve_oauth_access_token(
+    token_manager: Any,
+    *,
+    connector_name: str,
+    provider: str,
+    user_email: str | None,
+    zone_id: str = "root",
+) -> str:
+    """Resolve an OAuth access token or raise a structured ``AuthenticationError``.
+
+    Connector-agnostic replacement for each transport's inline
+    ``try: get_valid_token(...); except Exception: raise BackendError(...)``
+    pattern.  Auth-required conditions — missing ``user_email`` or a
+    bubbling ``AuthenticationError`` from the token manager — are
+    re-raised with ``provider``/``user_email``/``recovery_hint`` so the
+    server error handler maps them to HTTP 401 with actionable payload
+    (Issue #3822).  Non-auth failures (network, misconfig) are *not*
+    caught here so callers can raise them as ``BackendError`` without
+    the silent BackendError-masking-AuthenticationError problem earlier
+    connectors had.
+    """
+    from nexus.lib.sync_bridge import run_sync
+
+    if user_email is None:
+        raise AuthenticationError(
+            f"{connector_name} requires authorization (provider={provider}). "
+            "Configure user_email on the mount or authenticate a user.",
+            provider=provider,
+            user_email=None,
+            recovery_hint=build_auth_recovery_hint(
+                connector_name=connector_name, provider=provider
+            ),
+        )
+    try:
+        access_token: str = run_sync(
+            token_manager.get_valid_token(
+                provider=provider,
+                user_email=user_email,
+                zone_id=zone_id,
+            )
+        )
+        return access_token
+    except AuthenticationError as _auth_exc:
+        raise AuthenticationError(
+            str(_auth_exc),
+            provider=provider,
+            user_email=user_email,
+            recovery_hint=build_auth_recovery_hint(
+                connector_name=connector_name,
+                provider=provider,
+                user_email=user_email,
+            ),
+        ) from _auth_exc
 
 
 class OAuthConnectorBase(

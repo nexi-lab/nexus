@@ -1,6 +1,6 @@
 [package]
 name = "kernel"
-version = "0.9.31"
+version = "0.9.32"
 edition = "2021"
 
 [lib]

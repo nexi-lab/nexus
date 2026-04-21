@@ -1376,30 +1376,10 @@ fn join_cluster(
     let node_id = crate::transport::hostname_to_node_id(hostname);
 
     // Parse join token: K10<password>::server:<ca_fingerprint>
-    let token_prefix = "K10";
-    let separator = "::server:";
-    if !join_token.starts_with(token_prefix) {
-        return Err(PyRuntimeError::new_err(
-            "Invalid join token: must start with 'K10'",
-        ));
-    }
-    let body = &join_token[token_prefix.len()..];
-    let sep_pos = body.find(separator).ok_or_else(|| {
-        PyRuntimeError::new_err("Invalid join token: missing '::server:' separator")
-    })?;
-    let password = &body[..sep_pos];
-    let expected_fingerprint = &body[sep_pos + separator.len()..];
-
-    if password.is_empty() {
-        return Err(PyRuntimeError::new_err(
-            "Invalid join token: empty password",
-        ));
-    }
-    if !expected_fingerprint.starts_with("SHA256:") {
-        return Err(PyRuntimeError::new_err(
-            "Invalid join token: fingerprint must start with 'SHA256:'",
-        ));
-    }
+    let parsed_token =
+        crate::transport::parse_join_token(join_token).map_err(PyRuntimeError::new_err)?;
+    let password = parsed_token.password;
+    let expected_fingerprint = parsed_token.ca_fingerprint;
 
     // Build endpoint URL
     let endpoint = if peer_address.starts_with("http") {
@@ -1417,12 +1397,12 @@ fn join_cluster(
     let result = runtime
         .block_on(call_join_cluster(
             &endpoint, node_id, "", // node_address — not needed for pre-provision
-            "root", password, 30, // timeout_secs
+            "root", &password, 30, // timeout_secs
         ))
         .map_err(|e| PyRuntimeError::new_err(format!("JoinCluster RPC failed: {}", e)))?;
 
     // Verify CA fingerprint matches the join token
-    let ca_fingerprint = crate::transport::certgen::ca_fingerprint_from_pem(&result.ca_pem)
+    let ca_fingerprint = crate::transport::ca_fingerprint_from_pem(&result.ca_pem)
         .map_err(|e| PyRuntimeError::new_err(format!("Failed to compute CA fingerprint: {}", e)))?;
     if ca_fingerprint != expected_fingerprint {
         return Err(PyRuntimeError::new_err(format!(

@@ -183,7 +183,7 @@ class SlackTransport:
     @staticmethod
     def _format_messages_as_yaml(messages: list[dict[str, Any]]) -> bytes:
         """Format messages as YAML bytes."""
-        yaml_output = yaml.dump(
+        yaml_output: str = yaml.dump(
             messages,
             default_flow_style=False,
             allow_unicode=True,

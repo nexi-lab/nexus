@@ -40,7 +40,7 @@ from nexus.backends.connectors.gmail.utils import (
     fetch_emails_batch,
     list_emails_by_folder,
 )
-from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
+from nexus.contracts.exceptions import AuthenticationError, BackendError, NexusFileNotFoundError
 
 if TYPE_CHECKING:
     from googleapiclient.discovery import Resource
@@ -308,7 +308,7 @@ class GmailTransport:
 
         LiteralDumper.add_representer(str, literal_presenter)
 
-        yaml_output = yaml.dump(
+        yaml_output: str = yaml.dump(
             yaml_data,
             Dumper=LiteralDumper,
             default_flow_style=False,
@@ -822,6 +822,8 @@ class GmailTransport:
                     msg_id = msg.get("id", draft_id)
                     keys.append(f"DRAFTS/{thread_id}-{msg_id}.yaml")
                 return sorted(keys), []
+            except AuthenticationError:
+                raise
             except Exception as e:
                 logger.debug("Failed to list drafts: %s", e)
                 return [], []
@@ -842,6 +844,8 @@ class GmailTransport:
                     msg_id = msg["id"]
                     keys.append(f"TRASH/{thread_id}-{msg_id}.yaml")
                 return sorted(keys), []
+            except AuthenticationError:
+                raise
             except Exception as e:
                 logger.debug("Failed to list trash: %s", e)
                 return [], []

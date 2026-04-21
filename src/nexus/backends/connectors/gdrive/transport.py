@@ -546,6 +546,8 @@ class DriveTransport:
             )
             files = self._find_file_in_parent(service, filename, parent_id, fields="files(id)")
             return len(files) > 0
+        except AuthenticationError:
+            raise
         except (NexusFileNotFoundError, BackendError):
             return False
         except Exception:

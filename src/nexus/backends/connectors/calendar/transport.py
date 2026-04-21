@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
-from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
+from nexus.contracts.exceptions import AuthenticationError, BackendError, NexusFileNotFoundError
 
 if TYPE_CHECKING:
     from googleapiclient.discovery import Resource
@@ -293,6 +293,8 @@ class CalendarTransport:
             service = self._get_calendar_service()
             service.events().get(calendarId=calendar_id, eventId=event_id).execute()
             return True
+        except AuthenticationError:
+            raise
         except Exception:
             return False
 

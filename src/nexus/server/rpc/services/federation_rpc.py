@@ -77,22 +77,47 @@ class FederationRPCService:
         remote_path: str,
         local_path: str,
     ) -> dict[str, Any]:
-        """Join a zone advertised by `peer_addr` at `remote_path` and
-        mount it locally at `local_path`.
+        """Join a zone advertised by a peer at `remote_path` and mount
+        it locally at `local_path`.
 
-        Shape matches ``FederationJoinParams`` in
-        ``_rpc_params_generated.py``. Full round-trip requires a
-        peer-side "path → zone_id" discovery RPC that doesn't exist
-        yet (tracked in v20.11 follow-up to R20.17a); for now this
-        surfaces a clear error so the test suite can skip gracefully
-        instead of failing on an unknown-kwarg signature mismatch.
+        Discovery uses the raft-replicated share registry in the root
+        zone — ``remote_path → zone_id`` is already on this node once
+        the sharing node's ``federation_share`` commits. `peer_addr`
+        is informational (accepted for CLI parity with ``nexusd
+        join``); it's not contacted here because raft already mirrors
+        the registry row to every cluster member.
         """
-        _ = (peer_addr, remote_path, local_path)
-        raise NotImplementedError(
-            "federation_join peer discovery not yet implemented — "
-            "need a peer-side RPC mapping remote_path → zone_id before "
-            "local zone_join + mount can land (v20.11 follow-up)."
+        del peer_addr  # reserved for out-of-cluster bootstrap; unused in raft mode
+
+        zone_id = self._kernel.lookup_share(remote_path)
+        if not zone_id:
+            raise LookupError(
+                f"No share registered for '{remote_path}'. "
+                "The sharing node must call federation_share before federation_join."
+            )
+
+        # Join the zone's raft group locally (snapshot install happens
+        # inside the kernel apply-cb wired by `install_federation_mount_coherence`).
+        self._kernel.zone_join(zone_id)
+
+        # Mount the shared zone at `local_path` so VFS routing reaches
+        # it. Derive the local parent zone from the mount LPM; reuse
+        # the federation_mount adapter so Python-DLC mirror + zone-
+        # relative path translation stay DRY.
+        local_route = self._kernel.route(local_path, "root")
+        parent_zone = local_route.zone_id
+        mount_result = self.federation_mount(
+            parent_zone=parent_zone,
+            path=local_path,
+            target_zone=zone_id,
         )
+        return {
+            "zone_id": zone_id,
+            "remote_path": remote_path,
+            "local_path": local_path,
+            "parent_zone": parent_zone,
+            "mount": mount_result,
+        }
 
     # ── Mount topology ─────────────────────────────────────────────
 
@@ -185,6 +210,11 @@ class FederationRPCService:
         zone-relative prefix from the kernel routing table (mount LPM)
         so callers don't have to know where the path is mounted.
 
+        On success, the new zone id is also written into the root zone's
+        share registry (``/__shares__/<local_path>``) so peers can
+        resolve it via their replicated root-zone state — no extra
+        peer-discovery RPC required.
+
         Args:
             local_path: VFS-global path of the subtree to share.
             zone_id: Name for the newly-created zone. When omitted, a
@@ -192,19 +222,20 @@ class FederationRPCService:
 
         Returns:
             ``{"zone_id", "parent_zone_id", "prefix", "entries_copied"}``.
-            The primary key is ``zone_id`` (matches what
-            ``test_share_creates_new_zone`` / federation_join expects).
         """
         import uuid
 
         route = self._kernel.route(local_path, "root")
         parent_zone_id = route.zone_id
-        # Zone-relative prefix: same LPM the Rust side uses for reads/writes.
-        # `_to_zone_relative` covers both root-level (/corp/...) and nested
-        # (/corp/eng/...) cases — lets us reuse the existing heuristic.
         prefix = self._to_zone_relative(parent_zone_id, local_path)
         new_zone_id = zone_id or f"share-{uuid.uuid4().hex[:8]}"
+        # Ensure the target zone exists BEFORE share_subtree_core runs
+        # (it requires both parent and new zones to be loaded).
+        self._kernel.zone_create(new_zone_id)
         copied = self._kernel.zone_share(parent_zone_id, prefix, new_zone_id)
+        # Publish to the raft-replicated share registry so peers can
+        # resolve `local_path → zone_id` without a separate RPC.
+        self._kernel.register_share(local_path, new_zone_id)
         return {
             "zone_id": new_zone_id,
             "parent_zone_id": parent_zone_id,

@@ -29,6 +29,7 @@ use crate::zone_handle::ZoneHandle;
 
 /// DirEntryType codes — must match proto/nexus/core/metadata.proto and
 /// Python constants in `src/nexus/contracts/metadata.py`.
+pub(crate) const DT_REG: i32 = 0;
 pub(crate) const DT_DIR: i32 = 1;
 pub(crate) const DT_MOUNT: i32 = 2;
 
@@ -760,6 +761,86 @@ impl ZoneManager {
         }
 
         Ok(copied)
+    }
+
+    // ── Shared-zone registry (R20.17a peer discovery) ─────────────────
+    //
+    // SSOT for federation share metadata lives in the root zone's raft
+    // state machine, keyed under `SHARE_REGISTRY_PREFIX + origin_path`.
+    // One `FileMetadata` row per shared subtree carries
+    // `target_zone_id = new_zone_id`.  Because the root zone is raft-
+    // replicated to every cluster member, a peer that wants to join a
+    // shared zone just queries its **local** root-zone state — no
+    // separate peer-discovery RPC needed.
+
+    /// Canonical registry key for `origin_path`.
+    fn share_registry_key(origin_path: &str) -> String {
+        // Concatenate the reserved prefix with the absolute origin path.
+        // Origin paths are VFS-global ("/corp/eng/shared-X") → result is
+        // "/__shares__/corp/eng/shared-X". Empty / non-absolute inputs
+        // fall back to prefix itself (caller should have validated).
+        if origin_path.is_empty() || !origin_path.starts_with('/') {
+            contracts::SHARE_REGISTRY_PREFIX.to_string()
+        } else {
+            format!("{}{}", contracts::SHARE_REGISTRY_PREFIX, origin_path)
+        }
+    }
+
+    /// Register `origin_path → zone_id` in the root zone's share
+    /// registry.  Must be called on the raft leader (propose forwards
+    /// to leader on follower, so follower-side calls also work but
+    /// incur one extra RPC hop).  Idempotent: re-registering the same
+    /// pair is a no-op at steady state (raft log gets a duplicate
+    /// SetMetadata, state machine settles to the same value).
+    pub fn register_share(&self, origin_path: &str, zone_id: &str) -> Result<()> {
+        let root = self
+            .registry
+            .get_node(contracts::ROOT_ZONE_ID)
+            .ok_or_else(|| {
+                RaftError::InvalidState(
+                    "root zone not found — share registry requires a live root raft group"
+                        .to_string(),
+                )
+            })?;
+        let key = Self::share_registry_key(origin_path);
+        // Encode as a DT_REG FileMetadata; target_zone_id carries the
+        // advertised zone. backend_name is a marker that tells readers
+        // "this is a share registry row, not a user inode".
+        let value =
+            encode_file_metadata(&key, "share", "", DT_REG, contracts::ROOT_ZONE_ID, zone_id);
+        let handle = self.runtime.handle().clone();
+        propose_set_metadata(&handle, &root, &key, value)
+    }
+
+    /// Resolve `origin_path` back to the zone id a peer shared it as.
+    /// Returns `None` when no share has been registered for that path
+    /// (caller treats as "zone not advertised").
+    pub fn lookup_share(&self, origin_path: &str) -> Result<Option<String>> {
+        let root = self
+            .registry
+            .get_node(contracts::ROOT_ZONE_ID)
+            .ok_or_else(|| {
+                RaftError::InvalidState(
+                    "root zone not found — share registry requires a live root raft group"
+                        .to_string(),
+                )
+            })?;
+        let key = Self::share_registry_key(origin_path);
+        let handle = self.runtime.handle().clone();
+        let bytes = handle
+            .block_on(root.with_state_machine(move |sm: &FullStateMachine| sm.get_metadata(&key)))
+            .map_err(|e| RaftError::Raft(format!("lookup_share: {}", e)))?;
+        let Some(bytes) = bytes else {
+            return Ok(None);
+        };
+        let proto = decode_file_metadata(&bytes).map_err(|e| {
+            RaftError::InvalidState(format!("share registry row decode failed: {}", e))
+        })?;
+        if proto.target_zone_id.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(proto.target_zone_id))
+        }
     }
 
     /// Gracefully shut down all zones and the gRPC server.

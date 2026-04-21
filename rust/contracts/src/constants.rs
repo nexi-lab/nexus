@@ -31,6 +31,19 @@ pub const VFS_ROOT: &str = "/";
 /// ``nexus.core.hash_utils.BLAKE3_EMPTY`` constant.
 pub const BLAKE3_EMPTY: &str = "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262";
 
+/// Path prefix used in the root zone's state machine to hold the
+/// federation share registry (SSOT for `origin_path → zone_id`).
+///
+/// `federation_share` writes one `FileMetadata` entry under this
+/// prefix per shared subtree; `federation_join` looks it up to
+/// discover the zone id advertised by a peer.  Because the registry
+/// lives in root-zone raft state, every cluster member already has
+/// the up-to-date mapping — no separate peer-discovery RPC needed.
+///
+/// Double-underscore convention matches the existing `/__sys__/`
+/// procfs-style reserved prefix.
+pub const SHARE_REGISTRY_PREFIX: &str = "/__shares__";
+
 /// Environment variable names — SSOT for env lookups crossing crate
 /// boundaries. Anything referenced by two or more crates goes here;
 /// crate-local env vars can stay inlined.

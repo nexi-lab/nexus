@@ -12,51 +12,6 @@ use rcgen::{
 };
 use std::net::{Ipv4Addr, Ipv6Addr};
 
-/// Parsed K3s-style join token material used during TLS bootstrap.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParsedJoinToken {
-    /// Shared secret used as JoinCluster password.
-    pub password: String,
-    /// Expected CA fingerprint in `SHA256:<base64-no-padding>` format.
-    pub ca_fingerprint: String,
-}
-
-/// Parse a K3s-style join token (`K10<password>::server:<ca_fingerprint>`).
-pub fn parse_join_token(join_token: &str) -> Result<ParsedJoinToken, String> {
-    const TOKEN_PREFIX: &str = "K10";
-    const SEPARATOR: &str = "::server:";
-
-    let token = join_token.trim();
-    if !token.starts_with(TOKEN_PREFIX) {
-        return Err("Invalid join token: must start with 'K10'".to_string());
-    }
-
-    let body = &token[TOKEN_PREFIX.len()..];
-    let sep_pos = body
-        .find(SEPARATOR)
-        .ok_or_else(|| "Invalid join token: missing '::server:' separator".to_string())?;
-
-    let password = body[..sep_pos].to_string();
-    let ca_fingerprint = body[sep_pos + SEPARATOR.len()..].to_string();
-
-    if password.is_empty() {
-        return Err("Invalid join token: empty password".to_string());
-    }
-
-    if !ca_fingerprint.starts_with("SHA256:") {
-        return Err("Invalid join token: fingerprint must start with 'SHA256:'".to_string());
-    }
-
-    if ca_fingerprint.len() == "SHA256:".len() {
-        return Err("Invalid join token: empty fingerprint body".to_string());
-    }
-
-    Ok(ParsedJoinToken {
-        password,
-        ca_fingerprint,
-    })
-}
-
 /// Generate a node certificate signed by the cluster CA.
 ///
 /// Returns `(node_cert_pem, node_key_pem)` as PEM-encoded bytes.
@@ -233,21 +188,5 @@ mod tests {
         let (ca_cert_pem, _) = generate_test_ca();
         let result = generate_node_cert(1, "root", ca_cert_pem.as_bytes(), b"not-a-key", &[], None);
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_parse_join_token_ok() {
-        let parsed = parse_join_token("K10secret::server:SHA256:abc123").unwrap();
-        assert_eq!(parsed.password, "secret");
-        assert_eq!(parsed.ca_fingerprint, "SHA256:abc123");
-    }
-
-    #[test]
-    fn test_parse_join_token_rejects_invalid_format() {
-        assert!(parse_join_token("not-a-token").is_err());
-        assert!(parse_join_token("K10secret").is_err());
-        assert!(parse_join_token("K10::server:SHA256:x").is_err());
-        assert!(parse_join_token("K10secret::server:not-sha").is_err());
-        assert!(parse_join_token("K10secret::server:SHA256:").is_err());
     }
 }

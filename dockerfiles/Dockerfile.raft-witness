@@ -28,10 +28,12 @@ COPY Cargo.toml Cargo.lock ./
 # Copy proto files (build.rs expects ../../proto relative to rust/raft/)
 COPY proto/ ./proto/
 
-# Copy Rust source — raft is the build target; stub other workspace
-# members so Cargo can resolve the workspace without copying their full source.
+# Copy Rust source — raft is the build target, transport + contracts are real deps.
 COPY rust/raft/ ./rust/raft/
-RUN for d in contracts library transport kernel services tasks; do \
+COPY rust/transport/ ./rust/transport/
+COPY rust/contracts/ ./rust/contracts/
+# Stub out workspace members raft does not depend on at build time.
+RUN for d in library kernel services tasks; do \
         mkdir -p rust/$d/src && \
         printf '[package]\nname = "%s"\nversion = "0.1.0"\nedition = "2021"\n' "$d" > rust/$d/Cargo.toml && \
         echo '' > rust/$d/src/lib.rs; \

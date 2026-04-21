@@ -90,8 +90,7 @@ class VirtualViewResolver(VFSPathResolver):
         logger.info("read: Virtual view detected, reading original file: %s", original_path)
 
         # Route and read original file content
-        is_admin = bool(getattr(context, "is_admin", False)) if context else False
-        route = self._path_router.route(original_path, is_admin=is_admin, check_write=False)
+        route = self._path_router.route(original_path)
         if meta is None or meta.etag is None:
             raise NexusFileNotFoundError(original_path)
 

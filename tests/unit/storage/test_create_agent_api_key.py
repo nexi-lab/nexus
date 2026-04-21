@@ -2,6 +2,7 @@
 
 import pytest
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from tests.helpers.in_memory_record_store import InMemoryRecordStore
 
 
@@ -32,7 +33,7 @@ class TestCreateAgentApiKey:
             agent_id="test-agent-01",
             agent_name="Test Agent",
             owner_id="alice",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
         session.commit()
 
@@ -46,7 +47,7 @@ class TestCreateAgentApiKey:
         assert model.subject_type == "agent"
         assert model.subject_id == "test-agent-01"
         assert model.user_id == "alice"
-        assert model.zone_id == "root"
+        assert model.zone_id == ROOT_ZONE_ID
         assert raw_key.startswith("sk-")
 
     def test_agent_id_passed_as_subject_id(self, session):

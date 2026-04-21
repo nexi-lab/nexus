@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x18nexus/grpc/vfs/vfs.proto\x12\x0enexus.grpc.vfs\"B\n\x0b\x43\x61llRequest\x12\x0e\n\x06method\x18\x01 \x01(\t\x12\x0f\n\x07payload\x18\x02 \x01(\x0c\x12\x12\n\nauth_token\x18\x03 \x01(\t\"1\n\x0c\x43\x61llResponse\x12\x0f\n\x07payload\x18\x01 \x01(\x0c\x12\x10\n\x08is_error\x18\x02 \x01(\x08\"C\n\x0bReadRequest\x12\x0c\n\x04path\x18\x01 \x01(\t\x12\x12\n\nauth_token\x18\x02 \x01(\t\x12\x12\n\ncontent_id\x18\x03 \x01(\t\"d\n\x0cReadResponse\x12\x0f\n\x07\x63ontent\x18\x01 \x01(\x0c\x12\x0c\n\x04\x65tag\x18\x02 \x01(\t\x12\x0c\n\x04size\x18\x03 \x01(\x03\x12\x10\n\x08is_error\x18\x04 \x01(\x08\x12\x15\n\rerror_payload\x18\x05 \x01(\x0c\"O\n\x0cWriteRequest\x12\x0c\n\x04path\x18\x01 \x01(\t\x12\x0f\n\x07\x63ontent\x18\x02 \x01(\x0c\x12\x12\n\nauth_token\x18\x03 \x01(\t\x12\x0c\n\x04\x65tag\x18\x04 \x01(\t\"T\n\rWriteResponse\x12\x0c\n\x04\x65tag\x18\x01 \x01(\t\x12\x0c\n\x04size\x18\x02 \x01(\x03\x12\x10\n\x08is_error\x18\x03 \x01(\x08\x12\x15\n\rerror_payload\x18\x04 \x01(\x0c\"D\n\rDeleteRequest\x12\x0c\n\x04path\x18\x01 \x01(\t\x12\x12\n\nauth_token\x18\x02 \x01(\t\x12\x11\n\trecursive\x18\x03 \x01(\x08\"J\n\x0e\x44\x65leteResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x10\n\x08is_error\x18\x02 \x01(\x08\x12\x15\n\rerror_payload\x18\x03 \x01(\x0c\";\n\x0fReadBlobRequest\x12\x14\n\x0c\x63ontent_hash\x18\x01 \x01(\t\x12\x12\n\nauth_token\x18\x02 \x01(\t\"Z\n\x10ReadBlobResponse\x12\x0f\n\x07\x63ontent\x18\x01 \x01(\x0c\x12\x0c\n\x04size\x18\x02 \x01(\x03\x12\x10\n\x08is_error\x18\x03 \x01(\x08\x12\x15\n\rerror_payload\x18\x04 \x01(\x0c\"!\n\x0bPingRequest\x12\x12\n\nauth_token\x18\x01 \x01(\t\"H\n\x0cPingResponse\x12\x0f\n\x07version\x18\x01 \x01(\t\x12\x0f\n\x07zone_id\x18\x02 \x01(\t\x12\x16\n\x0euptime_seconds\x18\x03 \x01(\x03\x32\xb8\x03\n\x0fNexusVFSService\x12\x41\n\x04\x43\x61ll\x12\x1b.nexus.grpc.vfs.CallRequest\x1a\x1c.nexus.grpc.vfs.CallResponse\x12\x41\n\x04Read\x12\x1b.nexus.grpc.vfs.ReadRequest\x1a\x1c.nexus.grpc.vfs.ReadResponse\x12\x44\n\x05Write\x12\x1c.nexus.grpc.vfs.WriteRequest\x1a\x1d.nexus.grpc.vfs.WriteResponse\x12G\n\x06\x44\x65lete\x12\x1d.nexus.grpc.vfs.DeleteRequest\x1a\x1e.nexus.grpc.vfs.DeleteResponse\x12M\n\x08ReadBlob\x12\x1f.nexus.grpc.vfs.ReadBlobRequest\x1a .nexus.grpc.vfs.ReadBlobResponse\x12\x41\n\x04Ping\x12\x1b.nexus.grpc.vfs.PingRequest\x1a\x1c.nexus.grpc.vfs.PingResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x18nexus/grpc/vfs/vfs.proto\x12\x0enexus.grpc.vfs\"B\n\x0b\x43\x61llRequest\x12\x0e\n\x06method\x18\x01 \x01(\t\x12\x0f\n\x07payload\x18\x02 \x01(\x0c\x12\x12\n\nauth_token\x18\x03 \x01(\t\"1\n\x0c\x43\x61llResponse\x12\x0f\n\x07payload\x18\x01 \x01(\x0c\x12\x10\n\x08is_error\x18\x02 \x01(\x08\"C\n\x0bReadRequest\x12\x0c\n\x04path\x18\x01 \x01(\t\x12\x12\n\nauth_token\x18\x02 \x01(\t\x12\x12\n\ncontent_id\x18\x03 \x01(\t\"d\n\x0cReadResponse\x12\x0f\n\x07\x63ontent\x18\x01 \x01(\x0c\x12\x0c\n\x04\x65tag\x18\x02 \x01(\t\x12\x0c\n\x04size\x18\x03 \x01(\x03\x12\x10\n\x08is_error\x18\x04 \x01(\x08\x12\x15\n\rerror_payload\x18\x05 \x01(\x0c\"O\n\x0cWriteRequest\x12\x0c\n\x04path\x18\x01 \x01(\t\x12\x0f\n\x07\x63ontent\x18\x02 \x01(\x0c\x12\x12\n\nauth_token\x18\x03 \x01(\t\x12\x0c\n\x04\x65tag\x18\x04 \x01(\t\"T\n\rWriteResponse\x12\x0c\n\x04\x65tag\x18\x01 \x01(\t\x12\x0c\n\x04size\x18\x02 \x01(\x03\x12\x10\n\x08is_error\x18\x03 \x01(\x08\x12\x15\n\rerror_payload\x18\x04 \x01(\x0c\"D\n\rDeleteRequest\x12\x0c\n\x04path\x18\x01 \x01(\t\x12\x12\n\nauth_token\x18\x02 \x01(\t\x12\x11\n\trecursive\x18\x03 \x01(\x08\"J\n\x0e\x44\x65leteResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x10\n\x08is_error\x18\x02 \x01(\x08\x12\x15\n\rerror_payload\x18\x03 \x01(\x0c\"!\n\x0bPingRequest\x12\x12\n\nauth_token\x18\x01 \x01(\t\"H\n\x0cPingResponse\x12\x0f\n\x07version\x18\x01 \x01(\t\x12\x0f\n\x07zone_id\x18\x02 \x01(\t\x12\x16\n\x0euptime_seconds\x18\x03 \x01(\x03\x32\xe9\x02\n\x0fNexusVFSService\x12\x41\n\x04\x43\x61ll\x12\x1b.nexus.grpc.vfs.CallRequest\x1a\x1c.nexus.grpc.vfs.CallResponse\x12\x41\n\x04Read\x12\x1b.nexus.grpc.vfs.ReadRequest\x1a\x1c.nexus.grpc.vfs.ReadResponse\x12\x44\n\x05Write\x12\x1c.nexus.grpc.vfs.WriteRequest\x1a\x1d.nexus.grpc.vfs.WriteResponse\x12G\n\x06\x44\x65lete\x12\x1d.nexus.grpc.vfs.DeleteRequest\x1a\x1e.nexus.grpc.vfs.DeleteResponse\x12\x41\n\x04Ping\x12\x1b.nexus.grpc.vfs.PingRequest\x1a\x1c.nexus.grpc.vfs.PingResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -47,14 +47,10 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_DELETEREQUEST']._serialized_end=569
   _globals['_DELETERESPONSE']._serialized_start=571
   _globals['_DELETERESPONSE']._serialized_end=645
-  _globals['_READBLOBREQUEST']._serialized_start=647
-  _globals['_READBLOBREQUEST']._serialized_end=706
-  _globals['_READBLOBRESPONSE']._serialized_start=708
-  _globals['_READBLOBRESPONSE']._serialized_end=798
-  _globals['_PINGREQUEST']._serialized_start=800
-  _globals['_PINGREQUEST']._serialized_end=833
-  _globals['_PINGRESPONSE']._serialized_start=835
-  _globals['_PINGRESPONSE']._serialized_end=907
-  _globals['_NEXUSVFSSERVICE']._serialized_start=910
-  _globals['_NEXUSVFSSERVICE']._serialized_end=1350
+  _globals['_PINGREQUEST']._serialized_start=647
+  _globals['_PINGREQUEST']._serialized_end=680
+  _globals['_PINGRESPONSE']._serialized_start=682
+  _globals['_PINGRESPONSE']._serialized_end=754
+  _globals['_NEXUSVFSSERVICE']._serialized_start=757
+  _globals['_NEXUSVFSSERVICE']._serialized_end=1118
 # @@protoc_insertion_point(module_scope)

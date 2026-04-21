@@ -111,7 +111,6 @@ def _build_nexusfs_stub(entries: list[FileMetadata], *, implicit_dirs: bool = Fa
         fs = NexusFS.__new__(NexusFS)
 
     # Minimal wiring for sys_readdir
-    fs._lock_manager = MagicMock()
     fs._zone_id = ZONE_ID
     fs.router = None  # Skip connector routing
     fs._connectors = {}

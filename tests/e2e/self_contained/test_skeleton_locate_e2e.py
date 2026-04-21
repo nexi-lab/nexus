@@ -27,6 +27,7 @@ from __future__ import annotations
 import pytest
 
 from nexus.bricks.search.daemon import SearchDaemon
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -196,10 +197,10 @@ async def test_locate_works_without_txtai_config() -> None:
         path_id="pid-test",
         virtual_path="/workspace/src/auth/login.py",
         title="User login module",
-        zone_id="root",
+        zone_id=ROOT_ZONE_ID,
     )
 
-    results = await daemon_no_cfg.locate("login", zone_id="root", limit=5)
+    results = await daemon_no_cfg.locate("login", zone_id=ROOT_ZONE_ID, limit=5)
     assert results, "locate() must work without txtai config"
     assert results[0]["path"] == "/workspace/src/auth/login.py"
 

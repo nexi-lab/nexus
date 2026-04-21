@@ -28,6 +28,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.storage.models import Base
 
 # Path to project src
@@ -84,7 +85,7 @@ def db_and_keys(tmp_path_factory):
             session,
             user_id="admin",
             name="Admin E2E Key",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             is_admin=True,
         )
 

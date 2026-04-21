@@ -17,6 +17,7 @@ from nexus.bricks.snapshot.service import (
     TransactionNotActiveError,
     TransactionNotFoundError,
 )
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 
 class TestInit:
@@ -238,7 +239,7 @@ class TestCommit:
 
         model = TransactionSnapshotModel(
             transaction_id="txn-committed",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             status="committed",
             created_at=datetime.now(UTC),
             expires_at=datetime.now(UTC) + timedelta(hours=1),
@@ -269,7 +270,7 @@ class TestCommit:
 
         txn_model = TransactionSnapshotModel(
             transaction_id="txn-1",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             status="active",
             created_at=datetime.now(UTC),
             expires_at=datetime.now(UTC) + timedelta(hours=1),
@@ -318,7 +319,7 @@ class TestCommit:
 
         txn_model = TransactionSnapshotModel(
             transaction_id="txn-1",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             status="active",
             created_at=datetime.now(UTC),
             expires_at=datetime.now(UTC) + timedelta(hours=1),
@@ -378,7 +379,7 @@ class TestRollback:
         now = datetime.now(UTC)
         txn_model = TransactionSnapshotModel(
             transaction_id="txn-1",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             status="active",
             created_at=now,
             expires_at=now + timedelta(hours=1),
@@ -440,7 +441,7 @@ class TestRollback:
         now = datetime.now(UTC)
         txn_model = TransactionSnapshotModel(
             transaction_id="txn-1",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             status="active",
             created_at=now,
             expires_at=now + timedelta(hours=1),
@@ -498,7 +499,7 @@ class TestGetTransaction:
         now = datetime.now(UTC)
         model = TransactionSnapshotModel(
             transaction_id="txn-1",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             status="active",
             created_at=now,
             expires_at=now + timedelta(hours=1),
@@ -527,7 +528,7 @@ class TestListTransactions:
         session.execute.return_value.scalars.return_value.all.return_value = []
         snapshot_service._session_factory.return_value = session
 
-        result = await snapshot_service.list_transactions(zone_id="root")
+        result = await snapshot_service.list_transactions(zone_id=ROOT_ZONE_ID)
         assert result == []
 
 

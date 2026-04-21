@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.services.agent_runtime.system_prompt import (
     _generate_env_block,
     assemble_system_prompt,
@@ -33,7 +34,7 @@ class TestAssembleSystemPrompt:
         )
         result = await assemble_system_prompt(
             sys_read=sys_read,
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             agent_id="test",
         )
         assert "You are helpful." in result
@@ -44,7 +45,7 @@ class TestAssembleSystemPrompt:
         sys_read = _make_sys_read({})
         result = await assemble_system_prompt(
             sys_read=sys_read,
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             agent_id="test",
         )
         # Only env block, no system prompt
@@ -62,7 +63,7 @@ class TestAssembleSystemPrompt:
         )
         result = await assemble_system_prompt(
             sys_read=sys_read,
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             agent_id="test",
         )
         assert "Identity." in result
@@ -79,7 +80,7 @@ class TestAssembleSystemPrompt:
         )
         result = await assemble_system_prompt(
             sys_read=sys_read,
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             agent_id="test",
             cwd="/workspace",
         )
@@ -90,7 +91,7 @@ class TestAssembleSystemPrompt:
         sys_read = _make_sys_read({})
         result = await assemble_system_prompt(
             sys_read=sys_read,
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             agent_id="test",
             model="claude-opus-4",
         )
@@ -106,7 +107,7 @@ class TestAssembleSystemPrompt:
         )
         result = await assemble_system_prompt(
             sys_read=sys_read,
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             agent_id="test",
         )
         assert "Identity." in result

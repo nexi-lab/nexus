@@ -51,7 +51,11 @@ def generate_download_url(
         Dict with download_url, expires_in, method, backend if supported, None otherwise
     """
     try:
+        from nexus.core.router import RouteResult
+
         route = nexus_fs.router.route(path)
+        if not isinstance(route, RouteResult):
+            return None  # Pipe/Stream/External don't support signed URLs
         backend = route.backend
         backend_path = route.backend_path
 
@@ -198,6 +202,10 @@ async def handle_write(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[s
     if isinstance(content, str):
         content = content.encode("utf-8")
 
+    # R20.10: POSIX pwrite offset threaded from RPC params through to
+    # Kernel::sys_write. Default 0 = full-file write (backward compat).
+    offset = int(getattr(params, "offset", 0) or 0)
+
     # OCC: use lib/occ helper if CAS params present
     if_match = getattr(params, "if_match", None) or None
     if_none_match = getattr(params, "if_none_match", False)
@@ -213,9 +221,10 @@ async def handle_write(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[s
             context=context,
             if_match=if_match,
             if_none_match=if_none_match,
+            offset=offset,
         )
     else:
-        write_result = nexus_fs.write(params.path, content, context=context)
+        write_result = nexus_fs.write(params.path, content, context=context, offset=offset)
 
     # write() returns dict with metadata (etag, version, modified_at, size).
     # Merge bytes_written into the response for backward compatibility.
@@ -488,10 +497,7 @@ def _augment_paths_with_virtual_readme(
         return paths_to_index
 
     try:
-        _, _, is_admin = nexus_fs._get_context_identity(context)
-        route = nexus_fs.router.route(
-            target_path, is_admin=is_admin, check_write=False, zone_id=nexus_fs._zone_id
-        )
+        route = nexus_fs.router.route(target_path, zone_id=nexus_fs._zone_id)
     except Exception:
         return paths_to_index
 
@@ -688,7 +694,7 @@ async def handle_semantic_search_index(
                     parse_fn=_parse_fn,
                     content_hash=observed_hash,
                 )
-                doc_id = f"{zone_id}:{file_path}" if zone_id != "root" else file_path
+                doc_id = f"{zone_id}:{file_path}" if zone_id != ROOT_ZONE_ID else file_path
                 if content_str and content_str.strip():
                     documents.append({"id": doc_id, "text": content_str, "path": file_path})
                 elif is_parseable_path(file_path) and parse_status == "empty":
@@ -861,3 +867,41 @@ async def handle_ainitialize_semantic_search(
 async def handle_is_directory(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Handle is_directory method."""
     return {"is_directory": nexus_fs.is_directory(params.path, context=context)}
+
+
+# ---------------------------------------------------------------------------
+# Advisory lock handlers (F4 C5 — Rust kernel-backed)
+# ---------------------------------------------------------------------------
+
+
+def handle_sys_lock(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:  # noqa: ARG001
+    """Acquire or extend advisory lock via NexusFS.sys_lock."""
+    lock_id = nexus_fs.sys_lock(
+        params.path,
+        lock_id=getattr(params, "lock_id", None),
+        mode=getattr(params, "mode", "exclusive"),
+        max_holders=getattr(params, "max_holders", 1),
+        ttl=float(getattr(params, "ttl", 30)),
+    )
+    return {"acquired": lock_id is not None, "lock_id": lock_id}
+
+
+def handle_sys_unlock(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:  # noqa: ARG001
+    """Release advisory lock via NexusFS.sys_unlock."""
+    released = nexus_fs.sys_unlock(
+        params.path,
+        lock_id=getattr(params, "lock_id", None),
+        force=getattr(params, "force", False),
+    )
+    return {"released": released}
+
+
+def handle_lock_acquire(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:  # noqa: ARG001
+    """Tier 2 lock_acquire — dict wrapper over sys_lock for gRPC."""
+    lock_id = nexus_fs.sys_lock(
+        params.path,
+        mode=getattr(params, "mode", "exclusive"),
+        max_holders=getattr(params, "max_holders", 1),
+        ttl=float(getattr(params, "ttl", 30)),
+    )
+    return {"acquired": lock_id is not None, "lock_id": lock_id}

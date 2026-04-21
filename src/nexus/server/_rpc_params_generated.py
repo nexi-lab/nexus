@@ -252,8 +252,6 @@ class AddMountParams:
     mount_point: str
     backend_type: str
     backend_config: dict[str, Any]
-    readonly: bool = False
-    io_profile: str = "balanced"
 
 
 @dataclass
@@ -462,6 +460,7 @@ class FederationRemoveZoneParams:
     """Parameters for federation_remove_zone() method."""
 
     zone_id: str
+    force: bool = False
 
 
 @dataclass
@@ -1137,8 +1136,6 @@ class SaveMountParams:
     mount_point: str
     backend_type: str
     backend_config: dict[str, Any]
-    readonly: bool = False
-    io_profile: str = "balanced"
     owner_user_id: str | None = None
     zone_id: str | None = None
     description: str | None = None

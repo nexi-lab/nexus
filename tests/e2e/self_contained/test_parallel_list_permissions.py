@@ -10,6 +10,7 @@ from unittest.mock import MagicMock
 
 from nexus.bricks.rebac.enforcer import PermissionEnforcer
 from nexus.bricks.search.search_service import SearchService
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.types import OperationContext
 
 # ---------------------------------------------------------------------------
@@ -38,7 +39,7 @@ def _make_backend(tree: dict[str, list[str]]) -> MagicMock:
 
 def _make_context(
     user: str = "alice",
-    zone_id: str = "root",
+    zone_id: str = ROOT_ZONE_ID,
     is_admin: bool = False,
 ) -> OperationContext:
     """Create an OperationContext for testing."""

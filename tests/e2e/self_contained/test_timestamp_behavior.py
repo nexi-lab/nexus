@@ -8,7 +8,7 @@ These tests verify:
 
 import time
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -16,6 +16,11 @@ from nexus import CASLocalBackend
 from nexus.core.config import PermissionConfig
 from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
+
+
+def _floor_ms(dt: datetime) -> datetime:
+    """Truncate microseconds down to millisecond boundary (kernel stores created_at_ms)."""
+    return dt.replace(microsecond=(dt.microsecond // 1000) * 1000)
 
 
 @pytest.fixture
@@ -54,7 +59,13 @@ class TestCreatedAtStability:
         created_at = meta.created_at
         if created_at.tzinfo is None:
             created_at = created_at.replace(tzinfo=UTC)
-        assert before_write <= created_at <= after_write
+        # Kernel metastore stores created_at_ms (millisecond precision); truncate
+        # Python's microsecond-precision bounds to the same resolution before comparing.
+        assert (
+            _floor_ms(before_write)
+            <= created_at
+            <= _floor_ms(after_write) + timedelta(milliseconds=1)
+        )
         print(f"✓ created_at set correctly: {meta.created_at}")
 
     @pytest.mark.asyncio

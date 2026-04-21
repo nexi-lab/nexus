@@ -41,7 +41,11 @@
 
 mod error;
 pub mod replication_log;
+#[cfg(all(feature = "grpc", has_protos))]
+pub mod search_caps;
 mod state_machine;
+#[cfg(all(feature = "grpc", has_protos))]
+pub mod zone_persistence;
 
 #[cfg(feature = "consensus")]
 mod node;
@@ -52,17 +56,23 @@ mod zone_registry;
 
 pub use error::{RaftError, Result};
 pub use replication_log::ReplicationLog;
+#[cfg(feature = "grpc")]
+pub use state_machine::MountApplyEvent;
 pub use state_machine::{
-    Command, CommandResult, FullStateMachine, HolderInfo, LockInfo, LockState, StateMachine,
-    WitnessStateMachine, WitnessStateMachineInMemory,
+    Command, CommandResult, FullStateMachine, HolderInfo, LockAcquireResult, LockEntry, LockInfo,
+    LockMode, LockState, StateMachine, WitnessStateMachine, WitnessStateMachineInMemory,
 };
 
 #[cfg(feature = "consensus")]
 pub use node::{NodeRole, RaftConfig, RaftMsg, ZoneConsensus, ZoneConsensusDriver};
+#[cfg(all(feature = "grpc", has_protos))]
+pub use search_caps::{read_search_caps, write_search_caps, SearchCapabilitiesInfo};
 #[cfg(feature = "consensus")]
 pub use storage::RaftStorage;
 #[cfg(all(feature = "grpc", has_protos))]
-pub use zone_registry::{SearchCapabilitiesInfo, ZoneRaftRegistry};
+pub use zone_persistence::ZonePersistence;
+#[cfg(all(feature = "grpc", has_protos))]
+pub use zone_registry::ZoneRaftRegistry;
 
 /// A proposal to be replicated through Raft.
 #[derive(Debug)]

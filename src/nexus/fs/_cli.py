@@ -275,8 +275,20 @@ def mount_add(
         from nexus.fs import mount
 
         fs = await mount(*uris, at=at, ephemeral=ephemeral, name=name)
-        mounts = fs.list_mounts()
-        return {"mounts": mounts, "uris": list(uris), "name": name}
+        try:
+            mounts = fs.list_mounts()
+            return {"mounts": mounts, "uris": list(uris), "name": name}
+        finally:
+            # Release the kernel + SQLite/redb file lock before returning from
+            # the CLI invocation. Without this, a second ``mount`` call in the
+            # same process (e.g. a test runner reusing CliRunner) cannot
+            # reopen the metastore file and silently no-ops its writes.
+            import contextlib
+
+            _close = getattr(fs, "close", None)
+            if _close is not None:
+                with contextlib.suppress(Exception):
+                    _close()
 
     try:
         data = run_sync(_run())

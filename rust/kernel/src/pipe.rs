@@ -135,13 +135,24 @@ impl MemoryPipeBackend {
         let tail_idx = tail % self.ring_cap;
         let contiguous = self.ring_cap - tail_idx;
 
-        // Physical ring-space check: payloads alone cannot be trusted because
-        // `user_capacity` ignores 4-byte frame headers and potential wrap
-        // sentinels. For tiny payloads (< HEADER_SIZE) the header overhead
-        // alone exceeds the slack between `user_capacity` and `ring_cap`.
-        // Enforce the invariant `(tail - head) + <bytes we are about to
-        // write> <= ring_cap`, where we must include a potential sentinel.
+        // Physical ring-space check: payloads alone cannot be trusted
+        // because `user_capacity` ignores 4-byte frame headers and
+        // potential wrap sentinels. For tiny payloads (< HEADER_SIZE)
+        // the header overhead alone exceeds the slack between
+        // `user_capacity` and `ring_cap`. Enforce the invariant
+        //   (tail - head) + <bytes we are about to write> <= ring_cap
+        // where we must include a potential sentinel AND the sentinel
+        // itself has to fit in the contiguous trailing region
+        // (HEADER_SIZE bytes). Without the contiguous >= HEADER_SIZE
+        // guard, the sentinel write below would panic on a slice
+        // out-of-range for very small rings.
         let need = if frame_len > contiguous {
+            if contiguous < HEADER_SIZE {
+                // Not enough tail-contiguous room for the sentinel
+                // header; rather than partial-writing or silently
+                // wrapping, fail cleanly.
+                return Err(PipeError::Full(used, self.user_capacity));
+            }
             contiguous + frame_len
         } else {
             frame_len
@@ -514,26 +525,19 @@ mod tests {
 
     #[test]
     fn test_sentinel_edge_cases() {
-        // Test wrapping when exactly 4 bytes (header-only) remain at tail
+        // user_capacity=128, ring_cap=256.
+        // Push+pop one at a time to advance head/tail without
+        // exceeding user_capacity.
         let core = make(128);
-        // ring_cap = 256
-        // We need to position tail so that only a few bytes remain
 
-        // Fill with exact-size messages to position tail near end
-        // 60-byte payload = 64-byte frame. 256/64 = 4 frames fit exactly.
-        // Push 3 and pop 3 → head and tail at 192.
-        // Push 1 more → tail at 256 = 0 (wraps perfectly, no sentinel needed)
-        // But if we push a 60-byte msg when tail is at 192 and 64 bytes remain, it fits.
-        // Let's try: push 3×60, pop all, then push another to force near-boundary.
-
+        // 60-byte payload → 64-byte frame (4-byte header).
+        // Push+pop 3× to advance head=tail to 192.
         for _ in 0..3 {
             push(&core, &[0xFF; 60]);
-        }
-        for _ in 0..3 {
             pop(&core);
         }
-        // head=tail=192, 64 bytes remaining to end
-        // Push 56-byte payload (60-byte frame) — fits in 64 bytes
+        // head=tail=192, 64 bytes remaining to ring end.
+        // Push 56-byte payload (60-byte frame) — fits in 64 bytes.
         push(&core, &[0xAA; 56]);
         // tail now at 252. Only 4 bytes left (exactly HEADER_SIZE).
         // Next push must sentinel+wrap.

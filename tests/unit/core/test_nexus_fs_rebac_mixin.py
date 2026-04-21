@@ -25,6 +25,7 @@ from typing import Any, cast
 import pytest
 
 from nexus import CASLocalBackend, NexusFS
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
@@ -213,20 +214,20 @@ class TestRebacCreate:
             subject=("file", "/a"),
             relation="parent",
             object=("file", "/b"),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
         nx.service("rebac").rebac_create_sync(
             subject=("file", "/b"),
             relation="parent",
             object=("file", "/c"),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
         with pytest.raises(ValueError, match="[Cc]ycle"):
             nx.service("rebac").rebac_create_sync(
                 subject=("file", "/c"),
                 relation="parent",
                 object=("file", "/a"),
-                zone_id="root",
+                zone_id=ROOT_ZONE_ID,
             )
 
 
@@ -241,7 +242,7 @@ class TestRebacCheck:
             subject=("user", "alice"),
             relation="direct_owner",
             object=("file", "/test.txt"),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
 
         # Check permission with zone_id
@@ -249,7 +250,7 @@ class TestRebacCheck:
             subject=("user", "alice"),
             permission="read",
             object=("file", "/test.txt"),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
 
         assert has_permission is True
@@ -260,7 +261,7 @@ class TestRebacCheck:
             subject=("user", "bob"),
             permission="read",
             object=("file", "/secret.txt"),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
 
         assert has_permission is False
@@ -322,13 +323,13 @@ class TestRebacExpand:
             subject=("user", "expand_alice"),
             relation="direct_owner",
             object=("file", "/expand_test.txt"),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
         nx.service("rebac").rebac_create_sync(
             subject=("user", "expand_bob"),
             relation="direct_owner",
             object=("file", "/expand_test.txt"),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
 
         # Expand to find all subjects with read permission
@@ -397,14 +398,14 @@ class TestRebacExplain:
             subject=("user", "alice"),
             relation="direct_owner",
             object=("file", "/test.txt"),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
 
         explanation = nx.service("rebac").rebac_explain_sync(
             subject=("user", "alice"),
             permission="read",
             object=("file", "/test.txt"),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
 
         assert isinstance(explanation, dict)
@@ -417,7 +418,7 @@ class TestRebacExplain:
             subject=("user", "bob"),
             permission="write",
             object=("file", "/test.txt"),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
 
         assert isinstance(explanation, dict)
@@ -444,13 +445,13 @@ class TestRebacCheckBatch:
             subject=("user", "batch_alice"),
             relation="direct_owner",
             object=("file", "/batch_file1.txt"),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
         nx.service("rebac").rebac_create_sync(
             subject=("user", "batch_alice"),
             relation="direct_owner",
             object=("file", "/batch_file2.txt"),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
 
         # Batch check - note: rebac_check_batch may not accept zone_id
@@ -702,7 +703,7 @@ class TestConsentAndPrivacy:
         tuple_id = nx.service("rebac").grant_consent_sync(
             from_subject=("profile", "alice"),
             to_subject=("user", "bob"),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
 
         assert tuple_id is not None
@@ -715,7 +716,7 @@ class TestConsentAndPrivacy:
             from_subject=("profile", "alice"),
             to_subject=("user", "bob"),
             expires_at=expires,
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
 
         assert tuple_id is not None
@@ -726,7 +727,7 @@ class TestConsentAndPrivacy:
         tuple_id = nx.service("rebac").grant_consent_sync(
             from_subject=("profile", "consent_alice"),
             to_subject=("user", "consent_bob"),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
 
         assert tuple_id is not None
@@ -736,7 +737,7 @@ class TestConsentAndPrivacy:
             revoked = nx.service("rebac").revoke_consent_sync(
                 from_subject=("profile", "consent_alice"),
                 to_subject=("user", "consent_bob"),
-                zone_id="root",
+                zone_id=ROOT_ZONE_ID,
             )
             assert isinstance(revoked, bool)
         except (ValueError, RuntimeError, TypeError):
@@ -750,7 +751,7 @@ class TestConsentAndPrivacy:
             revoked = nx.service("rebac").revoke_consent_sync(
                 from_subject=("profile", "nonexistent_charlie"),
                 to_subject=("user", "nonexistent_dave"),
-                zone_id="root",
+                zone_id=ROOT_ZONE_ID,
             )
             assert isinstance(revoked, bool)
         except (ValueError, RuntimeError, TypeError):
@@ -759,18 +760,20 @@ class TestConsentAndPrivacy:
 
     def test_make_public(self, nx: NexusFS) -> None:
         """Test making a resource publicly discoverable."""
-        tuple_id = nx.service("rebac").make_public_sync(("profile", "public_alice"), zone_id="root")
+        tuple_id = nx.service("rebac").make_public_sync(
+            ("profile", "public_alice"), zone_id=ROOT_ZONE_ID
+        )
         assert tuple_id is not None
 
     def test_make_private(self, nx: NexusFS) -> None:
         """Test making a resource private."""
         # Make public first
-        nx.service("rebac").make_public_sync(("profile", "private_alice"), zone_id="root")
+        nx.service("rebac").make_public_sync(("profile", "private_alice"), zone_id=ROOT_ZONE_ID)
 
         # Make private - implementation varies
         try:
             made_private = nx.service("rebac").make_private_sync(
-                ("profile", "private_alice"), zone_id="root"
+                ("profile", "private_alice"), zone_id=ROOT_ZONE_ID
             )
             assert isinstance(made_private, bool)
         except (ValueError, RuntimeError, TypeError):
@@ -781,7 +784,7 @@ class TestConsentAndPrivacy:
         """Test making already private resource."""
         try:
             made_private = nx.service("rebac").make_private_sync(
-                ("profile", "already_private_bob"), zone_id="root"
+                ("profile", "already_private_bob"), zone_id=ROOT_ZONE_ID
             )
             assert isinstance(made_private, bool)
         except (ValueError, RuntimeError, TypeError):
@@ -795,7 +798,7 @@ class TestConsentAndPrivacy:
             subject=("user", "privacy_alice"),
             relation="direct_owner",
             object=("file", "/privacy_doc.txt"),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
 
         # Without privacy filtering
@@ -882,21 +885,21 @@ class TestCacheBehavior:
             subject=("user", "cache_alice"),
             permission="read",
             object=("file", "/cache_doc.txt"),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
         # Write tuple
         nx.service("rebac").rebac_create_sync(
             subject=("user", "cache_alice"),
             relation="direct_owner",
             object=("file", "/cache_doc.txt"),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
         # Now should have access (cache invalidated)
         assert nx.service("rebac").rebac_check_sync(
             subject=("user", "cache_alice"),
             permission="read",
             object=("file", "/cache_doc.txt"),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
 
     def test_cache_hit_on_repeated_check(self, nx: NexusFS) -> None:
@@ -905,7 +908,7 @@ class TestCacheBehavior:
             subject=("user", "repeat_alice"),
             relation="direct_owner",
             object=("file", "/repeat_doc.txt"),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
         # Multiple checks should all succeed (using cache)
         for _ in range(5):
@@ -913,7 +916,7 @@ class TestCacheBehavior:
                 subject=("user", "repeat_alice"),
                 permission="read",
                 object=("file", "/repeat_doc.txt"),
-                zone_id="root",
+                zone_id=ROOT_ZONE_ID,
             )
 
 
@@ -932,7 +935,7 @@ class TestConcurrency:
                 subject=("user", f"seq_user_{i}"),
                 relation="direct_owner",
                 object=("file", f"/seq_doc_{i}.txt"),
-                zone_id="root",
+                zone_id=ROOT_ZONE_ID,
             )
             results.append(result)
         assert len(results) == 5
@@ -948,7 +951,7 @@ class TestConcurrency:
                 subject=("user", f"seqcheck_user_{i}"),
                 relation="direct_owner",
                 object=("file", f"/seqcheck_doc_{i}.txt"),
-                zone_id="root",
+                zone_id=ROOT_ZONE_ID,
             )
             time.sleep(0.05)  # Small delay to let background cache operations complete
 
@@ -959,7 +962,7 @@ class TestConcurrency:
                 subject=("user", f"seqcheck_user_{i}"),
                 permission="read",
                 object=("file", f"/seqcheck_doc_{i}.txt"),
-                zone_id="root",
+                zone_id=ROOT_ZONE_ID,
             )
             results.append(result)
             time.sleep(0.05)  # Small delay for cache sync
@@ -991,7 +994,7 @@ class TestRebacIntegration:
             subject=("user", "alice"),
             relation="direct_owner",
             object=("file", "/protected.txt"),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
 
         # This tests that the permission check works
@@ -999,7 +1002,7 @@ class TestRebacIntegration:
             subject=("user", "alice"),
             permission="read",
             object=("file", "/protected.txt"),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
         assert has_read is True
 
@@ -1008,7 +1011,7 @@ class TestRebacIntegration:
             subject=("user", "bob"),
             permission="read",
             object=("file", "/protected.txt"),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
         assert has_read is False
 
@@ -1019,7 +1022,7 @@ class TestRebacIntegration:
             subject=("user", "group_alice"),
             relation="member",
             object=("group", "group_developers"),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
 
         # Developers group has direct_owner access to file
@@ -1027,7 +1030,7 @@ class TestRebacIntegration:
             subject=("group", "group_developers"),
             relation="direct_owner",
             object=("file", "/project/group_code.py"),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
 
         # Test that the relationships were created

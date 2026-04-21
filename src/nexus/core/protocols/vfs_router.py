@@ -28,13 +28,11 @@ class ResolvedPath:
         virtual_path: The original virtual path that was resolved.
         backend_path: Path relative to the matched backend root.
         mount_point: The mount point that matched.
-        readonly: Whether the mount is read-only.
     """
 
     virtual_path: str
     backend_path: str
     mount_point: str
-    readonly: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,16 +44,12 @@ class MountInfo:
 
     Attributes:
         mount_point: Virtual path prefix (e.g. "/workspace").
-        readonly: Whether the mount is read-only.
-        admin_only: Whether the mount requires admin privileges.
         backend: The storage backend instance (ObjectStoreABC), if available.
         priority: Mount priority for ordering (higher = checked first).
         conflict_strategy: Write-back conflict resolution strategy, or None.
     """
 
     mount_point: str
-    readonly: bool
-    admin_only: bool = False
     status: str = "active"  # "active" or "stale"
     backend: "ObjectStoreABC | None" = None
     priority: int = 0
@@ -73,13 +67,7 @@ class VFSRouterProtocol(Protocol):
     via redb's Rust in-memory cache. No async overhead needed.
     """
 
-    def route(
-        self,
-        virtual_path: str,
-        *,
-        is_admin: bool = False,
-        check_write: bool = False,
-    ) -> ResolvedPath: ...
+    def route(self, virtual_path: str) -> ResolvedPath: ...
 
     def list_mounts(self) -> list[MountInfo]: ...
 

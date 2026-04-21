@@ -32,6 +32,7 @@ from collections import deque
 from typing import TYPE_CHECKING, Any
 
 from nexus.bricks.rebac.cache.channel_codec import encode_channel
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
     from nexus.bricks.rebac.cache.read_fence import ReadFence
@@ -82,7 +83,7 @@ class DurableInvalidationStream:
         self,
         redis_client: Any = None,
         *,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
         read_fence: ReadFence | None = None,
         stream_prefix: str = _STREAM_PREFIX,
         max_stream_len: int = _MAX_STREAM_LEN,

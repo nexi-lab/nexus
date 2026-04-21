@@ -6,6 +6,7 @@ from sqlalchemy.exc import ProgrammingError
 
 from nexus.bricks.search.mutation_events import SearchMutationEvent, SearchMutationOp
 from nexus.bricks.search.mutation_resolver import MutationResolver
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 
 class _Result:
@@ -76,7 +77,7 @@ async def test_resolver_batches_path_lookup_and_reuses_cache() -> None:
             operation_id="op-1",
             op=SearchMutationOp.UPSERT,
             path="/zone/root/docs/a.txt",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             timestamp=SimpleNamespace(tzinfo=None),
             sequence_number=1,
         ),
@@ -85,7 +86,7 @@ async def test_resolver_batches_path_lookup_and_reuses_cache() -> None:
             operation_id="op-2",
             op=SearchMutationOp.UPSERT,
             path="/zone/root/docs/b.txt",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             timestamp=SimpleNamespace(tzinfo=None),
             sequence_number=2,
         ),
@@ -123,7 +124,7 @@ async def test_resolver_keeps_zone_isolation_for_duplicate_virtual_paths() -> No
             operation_id="op-root",
             op=SearchMutationOp.UPSERT,
             path="/zone/root/docs/readme.md",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             timestamp=SimpleNamespace(tzinfo=None),
             sequence_number=1,
         ),
@@ -166,7 +167,7 @@ async def test_resolver_uses_values_lookup_batches_instead_of_or_chains() -> Non
             operation_id="op-1",
             op=SearchMutationOp.UPSERT,
             path="/zone/root/docs/a.txt",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             timestamp=SimpleNamespace(tzinfo=None),
             sequence_number=1,
         ),
@@ -175,7 +176,7 @@ async def test_resolver_uses_values_lookup_batches_instead_of_or_chains() -> Non
             operation_id="op-2",
             op=SearchMutationOp.UPSERT,
             path="/zone/root/docs/b.txt",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             timestamp=SimpleNamespace(tzinfo=None),
             sequence_number=2,
         ),
@@ -214,7 +215,7 @@ async def test_resolver_ignores_missing_content_cache_table() -> None:
             operation_id="op-1",
             op=SearchMutationOp.UPSERT,
             path="/zone/root/docs/a.txt",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             timestamp=SimpleNamespace(tzinfo=None),
             sequence_number=1,
         )

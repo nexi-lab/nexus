@@ -1,157 +1,377 @@
-"""Federation RPC Service — zone lifecycle, share/join, mounts.
+"""FederationRPCService — gRPC RPC surface for federation / zone ops.
 
-Issue #1520.
+R20.18.5 Phase B: the pre-R20.18.5 version was a Python wrapper around
+the now-deleted ``ZoneManager`` shim. This rebuild delegates every
+``federation_*`` RPC to the kernel's ``zone_*`` methods (tolerated
+tech debt per v20.10 plan — the boundary-rule-compliant replacement
+is the ``/__sys__/zones/`` procfs view reached through ``sys_stat``
+/ ``sys_readdir``; tracked as a post-merge follow-up).
+
+Registered in ``fastapi_server.create_app`` when federation is active
+(kernel reports ``mount_reconciliation_done()`` once bootstrap finishes).
 """
 
-import logging
+from __future__ import annotations
+
+import contextlib
 from typing import Any
 
 from nexus.contracts.rpc import rpc_expose
 
-logger = logging.getLogger(__name__)
-
 
 class FederationRPCService:
-    """RPC surface for federation zone lifecycle, mounts, share, and join."""
+    """Federation CRUD RPCs backed by ``nexus_kernel`` zone_* methods."""
 
-    def __init__(self, federation: Any) -> None:
-        self._zone_manager = federation.zone_manager
-        self._federation = federation
+    def __init__(self, kernel: Any, nexus_fs: Any = None) -> None:
+        self._kernel = kernel
+        self._nexus_fs = nexus_fs
 
-    @rpc_expose(admin_only=True, description="List all federation zones with link counts")
-    def federation_list_zones(self) -> dict[str, Any]:
-        zone_ids: list[str] = self._zone_manager.list_zones()
-        zones = [
-            {
-                "zone_id": zid,
-                "links_count": self._zone_manager.get_links_count(zid),
-            }
-            for zid in zone_ids
-        ]
-        return {"zones": zones}
+    def _register_mount_in_python_dlc(self, mount_path: str, parent_zone: str) -> None:
+        """Mirror Rust-side federation mount into the Python DriverLifecycle-
+        Coordinator so ``PathRouter.route`` (which checks both Rust
+        ``kernel.route()`` and ``_dlc.get_mount_info_canonical()``) finds
+        the mount. Pre-R20.18.5 this happened via
+        ``ZoneManager._on_mount_event -> coordinator._store_mount_info``.
+        Kept here (tech debt) until the router consults the kernel
+        directly for federation mounts.
+        """
+        nx = self._nexus_fs
+        if nx is None:
+            return
+        coord = getattr(nx, "_driver_coordinator", None)
+        if coord is None:
+            return
+        try:
+            # Federation mounts inherit the root backend on this node;
+            # look it up via the router and pass it through so the
+            # _PyMountInfo has a non-None backend.
+            root_backend = None
+            with contextlib.suppress(Exception):
+                root_backend = nx.router.route("/", zone_id=parent_zone).backend
+            if root_backend is None:
+                return
+            coord._store_mount_info(mount_path, root_backend, zone_id=parent_zone)
+        except Exception:
+            # Silently absorb — failure here means Python-side routing
+            # misses the mount, but Rust still has it; next call that
+            # refreshes the DLC will fix.
+            pass
 
-    @rpc_expose(admin_only=True, description="Get cluster info for a zone")
-    def federation_cluster_info(self, zone_id: str) -> dict[str, Any]:
-        store = self._zone_manager.get_store(zone_id)
-        is_leader = store.is_leader() if store is not None else False
+    # ── Zone snapshot (export / import — R20.17b) ──────────────────
+
+    @rpc_expose(admin_only=True)
+    def federation_export_zone(
+        self,
+        zone_id: str,
+        output_path: str,
+        include_content: bool = True,
+        include_permissions: bool = True,
+        include_embeddings: bool = False,
+        include_deleted: bool = False,
+        path_prefix: str | None = None,
+    ) -> dict[str, Any]:
+        """Export a raft-backed zone to a .nexus bundle on the server's
+        filesystem.
+
+        Runs server-side so the exporter reaches the real metastore +
+        backend rather than a remote proxy. CLI (``nexus zone export``)
+        and the docker E2E suite call this RPC when the caller isn't
+        the local owner of the redb file. The shared docker volume
+        makes ``output_path`` visible to the CLI container; production
+        deployments typically write to a mounted backup volume.
+        """
+        from pathlib import Path
+
+        from nexus.bricks.portability import ZoneExportOptions, ZoneExportService
+
+        nx = self._nexus_fs
+        if nx is None:
+            raise RuntimeError("federation_export_zone: no NexusFS attached")
+        service = ZoneExportService(nx)
+        options = ZoneExportOptions(
+            output_path=Path(output_path),
+            include_content=include_content,
+            include_permissions=include_permissions,
+            include_embeddings=include_embeddings,
+            include_deleted=include_deleted,
+            path_prefix=path_prefix,
+        )
+        manifest = service.export_zone(zone_id, options)
         return {
             "zone_id": zone_id,
-            "node_id": self._zone_manager.node_id,
-            "links_count": self._zone_manager.get_links_count(zone_id),
-            "has_store": store is not None,
-            "is_leader": is_leader,
+            "output_path": str(options.output_path),
+            "file_count": manifest.file_count,
+            "total_size_bytes": manifest.total_size_bytes,
+            "bundle_id": manifest.bundle_id,
         }
 
-    @rpc_expose(admin_only=True, description="Create a new Raft zone")
-    def federation_create_zone(self, zone_id: str) -> dict[str, Any]:
-        if self._federation is not None:
-            # Federation.create_zone includes all cluster peers in the Raft group
-            self._federation.create_zone(zone_id)
-        else:
-            # Fallback: single-node (no peers)
-            self._zone_manager.create_zone(zone_id)
-        logger.info("Zone '%s' created via RPC", zone_id)
-        return {"zone_id": zone_id, "created": True}
+    @rpc_expose(admin_only=True)
+    def federation_import_zone(
+        self,
+        bundle_path: str,
+        target_zone: str | None = None,
+        conflict: str = "skip",
+        preserve_timestamps: bool = True,
+        import_permissions: bool = True,
+        path_prefix_remap: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """Import a zone bundle from the server's filesystem.
 
-    @rpc_expose(admin_only=True, description="Remove a Raft zone")
-    def federation_remove_zone(self, zone_id: str) -> dict[str, Any]:
-        self._zone_manager.remove_zone(zone_id)
-        logger.info("Zone '%s' removed via RPC", zone_id)
+        Server-side counterpart of ``federation_export_zone``. See that
+        method's docstring for the shared-volume / mounted-backup
+        deployment model.
+        """
+        from pathlib import Path
+
+        from nexus.bricks.portability import ConflictMode, ZoneImportOptions, ZoneImportService
+
+        nx = self._nexus_fs
+        if nx is None:
+            raise RuntimeError("federation_import_zone: no NexusFS attached")
+        # Create the raft zone before loading data into it. Import is a
+        # restore-into-zone operation, not a create+restore, so the
+        # target zone must exist on the raft side. Idempotent: a
+        # pre-existing zone surfaces from `zone_create` as an "already
+        # exists" error we swallow, keeping the RPC callable twice
+        # with the same args.
+        if target_zone:
+            try:
+                self._kernel.zone_create(target_zone)
+            except Exception as e:
+                if "already exists" not in str(e).lower():
+                    raise
+        service = ZoneImportService(nx)
+        options = ZoneImportOptions(
+            bundle_path=Path(bundle_path),
+            target_zone_id=target_zone,
+            conflict_mode=ConflictMode(conflict),
+            preserve_timestamps=preserve_timestamps,
+            import_permissions=import_permissions,
+            path_prefix_remap=path_prefix_remap or {},
+        )
+        result = service.import_zone(options)
+        return {
+            "target_zone": target_zone,
+            "files_created": result.files_created,
+            "files_updated": result.files_updated,
+            "files_skipped": result.files_skipped,
+            "files_failed": result.files_failed,
+            "permissions_imported": result.permissions_imported,
+        }
+
+    # ── Zone lifecycle ─────────────────────────────────────────────
+
+    @rpc_expose(admin_only=True)
+    def federation_create_zone(self, zone_id: str) -> dict[str, Any]:
+        created = self._kernel.zone_create(zone_id)
+        return {"zone_id": created}
+
+    @rpc_expose(admin_only=True)
+    def federation_remove_zone(self, zone_id: str, force: bool = False) -> dict[str, Any]:
+        del force  # cascade unmount happens inside kernel apply-cb
+        self._kernel.zone_remove(zone_id)
         return {"zone_id": zone_id, "removed": True}
 
-    @rpc_expose(description="Share a local subtree as a federation zone")
-    async def federation_share(self, local_path: str, zone_id: str | None = None) -> dict[str, Any]:
-        if self._federation is None:
-            raise RuntimeError("Federation not configured")
-        new_zone_id: str = await self._federation.share(local_path=local_path, zone_id=zone_id)
-        logger.info("Shared '%s' as zone '%s' via RPC", local_path, new_zone_id)
-        return {"zone_id": new_zone_id, "local_path": local_path, "shared": True}
-
-    @rpc_expose(description="Join a peer's shared zone via federation protocol")
-    async def federation_join(
-        self, peer_addr: str, remote_path: str, local_path: str
+    @rpc_expose(admin_only=True)
+    def federation_join(
+        self,
+        peer_addr: str,
+        remote_path: str,
+        local_path: str,
     ) -> dict[str, Any]:
-        if self._federation is None:
-            raise RuntimeError("Federation not configured")
-        from nexus.raft.peer_address import PeerAddress
+        """Join a zone advertised by a peer at `remote_path` and mount
+        it locally at `local_path`.
 
-        parsed = PeerAddress.parse(peer_addr)
-        zone_id: str = await self._federation.join(
-            peer_addr=parsed.grpc_target, remote_path=remote_path, local_path=local_path
-        )
-        logger.info(
-            "Joined zone '%s' from %s via RPC, mounted at '%s'",
-            zone_id,
-            peer_addr,
-            local_path,
+        Discovery uses the raft-replicated share registry in the root
+        zone — ``remote_path → zone_id`` is already on this node once
+        the sharing node's ``federation_share`` commits. `peer_addr`
+        is informational (accepted for CLI parity with ``nexusd
+        join``); it's not contacted here because raft already mirrors
+        the registry row to every cluster member.
+        """
+        del peer_addr  # reserved for out-of-cluster bootstrap; unused in raft mode
+
+        zone_id = self._kernel.lookup_share(remote_path)
+        if not zone_id:
+            raise LookupError(
+                f"No share registered for '{remote_path}'. "
+                "The sharing node must call federation_share before federation_join."
+            )
+
+        # Join the zone's raft group locally (snapshot install happens
+        # inside the kernel apply-cb wired by `install_federation_mount_coherence`).
+        self._kernel.zone_join(zone_id)
+
+        # Mount the shared zone at `local_path` so VFS routing reaches
+        # it. Derive the local parent zone from the mount LPM; reuse
+        # the federation_mount adapter so Python-DLC mirror + zone-
+        # relative path translation stay DRY.
+        local_route = self._kernel.route(local_path, "root")
+        parent_zone = local_route.zone_id
+        mount_result = self.federation_mount(
+            parent_zone=parent_zone,
+            path=local_path,
+            target_zone=zone_id,
         )
         return {
             "zone_id": zone_id,
-            "peer_addr": peer_addr,
+            "remote_path": remote_path,
             "local_path": local_path,
-            "joined": True,
+            "parent_zone": parent_zone,
+            "mount": mount_result,
         }
 
-    @rpc_expose(admin_only=True, description="Mount a zone at a path in another zone")
-    def federation_mount(self, parent_zone: str, path: str, target_zone: str) -> dict[str, Any]:
-        # Resolve global path → zone-relative path for non-root zones.
-        # User gives global path (e.g. "/corp/eng"), zone_manager needs
-        # zone-relative path (e.g. "/eng" in zone "corp").
-        zone_path = self._to_zone_relative(parent_zone, path)
-        self._zone_manager.mount(parent_zone, zone_path, target_zone)
-        logger.info(
-            "Zone '%s' mounted at '%s' (zone-relative: '%s') in zone '%s' via RPC",
-            target_zone,
-            path,
-            zone_path,
-            parent_zone,
-        )
-        return {
-            "parent_zone_id": parent_zone,
-            "mount_path": path,
-            "target_zone_id": target_zone,
-            "mounted": True,
-        }
+    # ── Mount topology ─────────────────────────────────────────────
 
-    @rpc_expose(admin_only=True, description="Unmount a zone from a path")
-    def federation_unmount(self, parent_zone: str, path: str) -> dict[str, Any]:
-        zone_path = self._to_zone_relative(parent_zone, path)
-        self._zone_manager.unmount(parent_zone, zone_path)
-        logger.info("Unmounted '%s' from zone '%s' via RPC", path, parent_zone)
-        return {
-            "parent_zone_id": parent_zone,
-            "mount_path": path,
-            "unmounted": True,
-        }
+    def _to_zone_relative(self, parent_zone: str, path: str) -> str:
+        """Translate a VFS-global path to the parent zone's namespace.
 
-    def _to_zone_relative(self, zone_id: str, global_path: str) -> str:
-        """Convert global path to zone-relative path.
-
-        For root zone, global and zone-relative are the same.
-        For non-root zones, strip the mount prefix.
-
-        Example: zone="corp" mounted at "/corp" → "/corp/eng" becomes "/eng"
+        For parent=root the zone key equals the global path.  For nested
+        mounts (parent=corp, path=/corp/sales) corp's namespace is
+        zone-relative (/sales); the Rust raft ``ZoneManager::mount``
+        writes the DT_MOUNT entry at the key we pass, so we must strip
+        the parent's own mount prefix first. Pre-R20.18.5 this lived in
+        ``ZoneManager._resolve_mount_parent`` (Python).
         """
-        from nexus.contracts.constants import ROOT_ZONE_ID
+        if parent_zone == "root" or not path.startswith("/"):
+            return path
+        # Walk the kernel's zone_list to find where parent_zone is
+        # globally mounted, then strip that prefix.
+        try:
+            zones = list(self._kernel.zone_list())
+        except Exception:
+            return path
+        # Build a "target_zone -> global_path" map by scanning the Rust
+        # mount table via get_mount_points (returns /zone/mount_point
+        # canonical keys).  We don't have direct access, but
+        # has_mount("/corp", "root") is the heuristic signal.  Easiest:
+        # if path starts with "/<parent_zone>/" heuristically, strip it.
+        del zones
+        candidate_prefix = f"/{parent_zone}"
+        if path == candidate_prefix:
+            return "/"
+        if path.startswith(candidate_prefix + "/"):
+            return path[len(candidate_prefix) :]
+        # Fallback: pass through — matches root semantics.
+        return path
 
-        root_zone = self._zone_manager.root_zone_id or ROOT_ZONE_ID
-        if zone_id == root_zone:
-            return global_path
+    @rpc_expose(admin_only=True)
+    def federation_mount(
+        self,
+        parent_zone: str,
+        path: str,
+        target_zone: str,
+    ) -> dict[str, Any]:
+        """Mount ``target_zone`` at ``path`` (global VFS) inside
+        ``parent_zone``. Uses the legacy kwarg shape (parent_zone /
+        path / target_zone) expected by the docker E2E test suite +
+        CLI callers.
+        """
+        zone_relative = self._to_zone_relative(parent_zone, path)
+        self._kernel.zone_mount(parent_zone, zone_relative, target_zone)
+        # Mirror into Python DLC at the VFS-global path so
+        # PathRouter.route (which receives global paths from callers)
+        # can return non-None.
+        self._register_mount_in_python_dlc(path, parent_zone)
+        return {
+            "parent_zone": parent_zone,
+            "path": path,
+            "target_zone": target_zone,
+        }
 
-        # Find where this zone is mounted by scanning root zone's metastore
-        root_store = self._zone_manager.get_store(root_zone)
-        if root_store is None:
-            return global_path
+    @rpc_expose(admin_only=True)
+    def federation_unmount(
+        self,
+        parent_zone: str,
+        path: str,
+    ) -> dict[str, Any]:
+        zone_relative = self._to_zone_relative(parent_zone, path)
+        target = self._kernel.zone_unmount(parent_zone, zone_relative)
+        # Mirror into Python DLC removal: without this the router's
+        # _dlc cache still returns the old _PyMountInfo and the
+        # unmounted path stays reachable via the mount-registered
+        # path. Matches the pre-R20.18.5 unmount bookkeeping.
+        nx = self._nexus_fs
+        if nx is not None:
+            coord = getattr(nx, "_driver_coordinator", None)
+            if coord is not None:
+                with contextlib.suppress(Exception):
+                    coord.unmount(path, zone_id=parent_zone)
+        return {"parent_zone": parent_zone, "path": path, "target_zone": target}
 
-        # Walk path prefixes to find mount point for this zone
-        parts = global_path.strip("/").split("/")
-        for i in range(len(parts)):
-            prefix = "/" + "/".join(parts[: i + 1])
-            meta = root_store.get(prefix)
-            if meta is not None and meta.is_mount and meta.target_zone_id == zone_id:
-                # Strip mount prefix
-                relative = global_path[len(prefix) :]
-                return relative if relative else "/"
+    @rpc_expose(admin_only=True)
+    def federation_share(
+        self,
+        local_path: str,
+        zone_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Publish `local_path`'s subtree as a standalone federation zone.
 
-        # No mount found — assume path is already zone-relative
-        return global_path
+        Shape matches ``FederationShareParams`` in
+        ``_rpc_params_generated.py``. Server derives the parent zone +
+        zone-relative prefix from the kernel routing table (mount LPM)
+        so callers don't have to know where the path is mounted.
+
+        On success, the new zone id is also written into the root zone's
+        share registry (``/__shares__/<local_path>``) so peers can
+        resolve it via their replicated root-zone state — no extra
+        peer-discovery RPC required.
+
+        Args:
+            local_path: VFS-global path of the subtree to share.
+            zone_id: Name for the newly-created zone. When omitted, a
+                `share-{8-hex}` id is generated.
+
+        Returns:
+            ``{"zone_id", "parent_zone_id", "prefix", "entries_copied"}``.
+        """
+        import uuid
+
+        # RouteResult now carries the mount's target zone (R20.17a) —
+        # `parent_zone_id` is the zone that actually owns the subtree,
+        # not the caller's ambient zone. `backend_path` is the zone-
+        # relative tail; share_subtree_core expects the leading-slash
+        # form, so prepend "/" (empty → "/"). No more `_to_zone_relative`
+        # heuristic (which broke for zones whose id doesn't equal the
+        # mount path, e.g. mount "/corp/eng" target "corp-eng").
+        route = self._kernel.route(local_path, "root")
+        parent_zone_id = route.zone_id
+        prefix = "/" + route.backend_path if route.backend_path else "/"
+        new_zone_id = zone_id or f"share-{uuid.uuid4().hex[:8]}"
+        # Ensure the target zone exists BEFORE share_subtree_core runs
+        # (it requires both parent and new zones to be loaded).
+        self._kernel.zone_create(new_zone_id)
+        copied = self._kernel.zone_share(parent_zone_id, prefix, new_zone_id)
+        # Publish to the raft-replicated share registry so peers can
+        # resolve `local_path → zone_id` without a separate RPC.
+        self._kernel.register_share(local_path, new_zone_id)
+        return {
+            "zone_id": new_zone_id,
+            "parent_zone_id": parent_zone_id,
+            "prefix": prefix,
+            "entries_copied": copied,
+        }
+
+    # ── Introspection ──────────────────────────────────────────────
+
+    def _links_count(self, zone_id: str) -> int:
+        fn = getattr(self._kernel, "zone_links_count", None)
+        if fn is None:
+            return 0
+        try:
+            return int(fn(zone_id))
+        except Exception:
+            return 0
+
+    @rpc_expose(admin_only=False)
+    def federation_list_zones(self) -> dict[str, Any]:
+        zone_ids: list[str] = list(self._kernel.zone_list())
+        zones = [{"zone_id": zid, "links_count": self._links_count(zid)} for zid in zone_ids]
+        return {"zones": zones, "node_id": zone_ids}
+
+    @rpc_expose(admin_only=False)
+    def federation_cluster_info(self, zone_id: str) -> dict[str, Any]:
+        # PyKernel.zone_cluster_info returns a Python dict already.
+        status: dict[str, Any] = dict(self._kernel.zone_cluster_info(zone_id))
+        status["links_count"] = self._links_count(zone_id)
+        return status

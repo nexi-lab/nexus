@@ -29,10 +29,10 @@ AbstractFixtures = _AbstractFixturesBase
 pytest.importorskip("fsspec", reason="fsspec required for upstream compliance tests")
 
 from nexus.contracts.constants import ROOT_ZONE_ID  # noqa: E402
+from nexus.contracts.metadata import DT_MOUNT  # noqa: E402
 from nexus.contracts.types import OperationContext  # noqa: E402
 from nexus.core.config import PermissionConfig  # noqa: E402
 from nexus.core.nexus_fs import NexusFS  # noqa: E402
-from nexus.core.router import PathRouter  # noqa: E402
 from nexus.fs import _make_mount_entry  # noqa: E402
 from nexus.fs._facade import SlimNexusFS  # noqa: E402
 from nexus.fs._fsspec import NexusFileSystem  # noqa: E402
@@ -47,7 +47,6 @@ pytestmark = pytest.mark.skipif(
 def _build_nexus_fsspec(tmp_path: Path) -> NexusFileSystem:
     """Build a NexusFileSystem backed by a real local CASLocalBackend."""
     from nexus.backends.storage.cas_local import CASLocalBackend
-    from nexus.core.mount_table import MountTable
 
     db_path = str(tmp_path / "metadata.db")
     metastore = SQLiteMetastore(db_path)
@@ -56,16 +55,12 @@ def _build_nexus_fsspec(tmp_path: Path) -> NexusFileSystem:
     data_dir.mkdir()
     backend = CASLocalBackend(root_path=data_dir)
 
-    mount_table = MountTable(metastore)
-    router = PathRouter(mount_table)
-    mount_table.add("/local", backend)
-    metastore.put(_make_mount_entry("/local", backend.name))
-
     kernel = NexusFS(
         metadata_store=metastore,
         permissions=PermissionConfig(enforce=False),
-        router=router,
     )
+    kernel.sys_setattr("/local", entry_type=DT_MOUNT, backend=backend)
+    metastore.put(_make_mount_entry("/local", backend.name))
     kernel._init_cred = OperationContext(
         user_id="test",
         groups=[],

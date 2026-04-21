@@ -110,20 +110,22 @@ def lock_info(
     timing = CommandTiming()
     try:
         with timing.phase("server"):
-            data = rpc_call(remote_url, remote_api_key, "sys_stat", path=path, include_lock=True)
+            data = rpc_call(remote_url, remote_api_key, "sys_stat", path=path)
 
         def _render(d: dict) -> None:
             console.print(f"[bold nexus.value]Lock Status: {path}[/bold nexus.value]")
+            lock = d.get("lock")
+            is_locked = lock is not None and bool(lock.get("holders"))
             console.print(
-                f"  Locked:  {'[nexus.error]Yes[/nexus.error]' if d.get('locked') else '[nexus.success]No[/nexus.success]'}"
+                f"  Locked:  {'[nexus.error]Yes[/nexus.error]' if is_locked else '[nexus.success]No[/nexus.success]'}"
             )
-            info = d.get("lock_info")
-            if info:
-                console.print(f"  Mode:    {info.get('mode', 'N/A')}")
-                console.print(f"  Lock ID: {info.get('lock_id', 'N/A')}")
-                console.print(f"  Fence:   {info.get('fence_token', 'N/A')}")
-                if info.get("expires_at"):
-                    console.print(f"  Expires: {info['expires_at'][:19]}")
+            if is_locked and lock is not None:
+                console.print(f"  Mode:    {lock.get('mode', 'N/A')}")
+                holders = lock.get("holders", [])
+                for h in holders:
+                    console.print(f"  Lock ID: {h.get('lock_id', 'N/A')}")
+                    if h.get("expires_at"):
+                        console.print(f"  Expires: {h['expires_at']}")
 
         render_output(
             data=data,

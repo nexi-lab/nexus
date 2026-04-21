@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Any
 from unittest.mock import MagicMock
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.lib.rebac_filter import (
     REBAC_OVERFETCH_FACTOR as _REBAC_OVERFETCH_FACTOR,
 )
@@ -99,7 +100,7 @@ class TestApplyRebacFilterNoOpPaths:
             results=results,
             permission_enforcer=None,
             auth_result=_auth(),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
         assert filtered is results  # identity, not just equality
         assert filter_ms == 0.0
@@ -112,7 +113,7 @@ class TestApplyRebacFilterNoOpPaths:
             results=results,
             permission_enforcer=bogus,
             auth_result=_auth(),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
         assert filtered is results
         assert filter_ms == 0.0
@@ -124,7 +125,7 @@ class TestApplyRebacFilterNoOpPaths:
             results=[],
             permission_enforcer=enforcer,
             auth_result=_auth(),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
         assert filtered == []
         # filter_ms should still be populated (even if ~0) because we did
@@ -133,7 +134,7 @@ class TestApplyRebacFilterNoOpPaths:
         enforcer.filter_search_results.assert_called_once_with(
             [],
             user_id="user:alice",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             is_admin=False,
         )
 
@@ -156,7 +157,7 @@ class TestApplyRebacFilterBehaviour:
             results=results,
             permission_enforcer=enforcer,
             auth_result=_auth(),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
 
         assert [r.marker for r in filtered] == ["first", "second", "third"]
@@ -174,7 +175,7 @@ class TestApplyRebacFilterBehaviour:
             results=results,
             permission_enforcer=enforcer,
             auth_result=_auth(),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
 
         assert [r.marker for r in filtered] == ["first", "third"]
@@ -187,7 +188,7 @@ class TestApplyRebacFilterBehaviour:
             results=results,
             permission_enforcer=enforcer,
             auth_result=_auth(),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
 
         assert filtered == []
@@ -200,7 +201,7 @@ class TestApplyRebacFilterBehaviour:
             results=results,
             permission_enforcer=enforcer,
             auth_result=_auth(),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
 
         # Enforcer was invoked with absolute paths.
@@ -227,7 +228,7 @@ class TestApplyRebacFilterBehaviour:
             results=results,
             permission_enforcer=enforcer,
             auth_result=_auth(),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
 
         assert len(filtered) == 2
@@ -250,7 +251,7 @@ class TestApplyRebacFilterAuthExtraction:
             results=[_StubResult("/a.py")],
             permission_enforcer=enforcer,
             auth_result=_auth(subject_id="user:subject", user_id="user:legacy"),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
         call = enforcer.filter_search_results.call_args
         assert call.kwargs["user_id"] == "user:subject"
@@ -263,7 +264,7 @@ class TestApplyRebacFilterAuthExtraction:
             results=[_StubResult("/a.py")],
             permission_enforcer=enforcer,
             auth_result=auth,
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
         assert enforcer.filter_search_results.call_args.kwargs["user_id"] == "user:alice"
 
@@ -273,7 +274,7 @@ class TestApplyRebacFilterAuthExtraction:
             results=[_StubResult("/a.py")],
             permission_enforcer=enforcer,
             auth_result={"authenticated": False},
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
         assert enforcer.filter_search_results.call_args.kwargs["user_id"] == "anonymous"
 
@@ -283,7 +284,7 @@ class TestApplyRebacFilterAuthExtraction:
             results=[_StubResult("/a.py")],
             permission_enforcer=enforcer,
             auth_result=_auth(is_admin=True),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
         assert enforcer.filter_search_results.call_args.kwargs["is_admin"] is True
 
@@ -294,7 +295,7 @@ class TestApplyRebacFilterAuthExtraction:
             results=[_StubResult("/a.py")],
             permission_enforcer=enforcer,
             auth_result=_auth(is_admin="yes"),  # non-bool truthy
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
         assert enforcer.filter_search_results.call_args.kwargs["is_admin"] is True
 
@@ -321,7 +322,7 @@ class TestApplyRebacFilterTiming:
             results=[_StubResult("/a.py")],
             permission_enforcer=enforcer,
             auth_result=_auth(),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
         assert filter_ms >= 0.0
 
@@ -340,7 +341,7 @@ class TestApplyRebacFilterTiming:
             results=[_StubResult("/a.py")],
             permission_enforcer=enforcer,
             auth_result=_auth(),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
 
         # Sanity bound: should be > 5ms (well above noise) and < 5000ms (nothing insane).

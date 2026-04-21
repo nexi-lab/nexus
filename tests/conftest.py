@@ -181,14 +181,18 @@ async def make_test_nexus(
         )
 
     if metadata_store is None:
-        if use_raft:
-            from nexus.storage.raft_metadata_store import RaftMetadataStore
+        # F2 C4 routes writes through ``kernel.sys_write``; DictMetastore is a
+        # Python-only dict so the kernel can't persist through it. Default to
+        # the same path production uses — RustMetastoreProxy wired to a fresh
+        # kernel + redb file under tmp_path. ``use_raft`` is now redundant
+        # but kept for API compatibility.
+        del use_raft
+        from nexus_kernel import Kernel as _Kernel
 
-            metadata_store = RaftMetadataStore.embedded(str(tmp_path / "raft"))
-        else:
-            from tests.helpers.dict_metastore import DictMetastore
+        from nexus.core.metastore import RustMetastoreProxy
 
-            metadata_store = DictMetastore()
+        _kernel = _Kernel()
+        metadata_store = RustMetastoreProxy(_kernel, str(tmp_path / "metastore.redb"))
 
     if backend is None:
         from pathlib import Path

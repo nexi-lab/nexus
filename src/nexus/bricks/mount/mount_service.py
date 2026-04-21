@@ -493,8 +493,6 @@ class MountService:
         mount_point: str,
         backend_type: str,
         backend_config: dict[str, Any],
-        readonly: bool = False,
-        io_profile: str = "balanced",
         context: "OperationContext | None" = None,
     ) -> str:
         """Add a dynamic backend mount (synchronous).
@@ -510,8 +508,6 @@ class MountService:
             mount_point: Virtual path where backend is mounted
             backend_type: Backend type identifier
             backend_config: Backend-specific configuration
-            readonly: Whether mount is read-only
-            io_profile: I/O tuning profile (Issue #1413)
             context: Operation context for permissions
 
         Returns:
@@ -573,15 +569,15 @@ class MountService:
         _info = ConnectorRegistry.get_info(backend_type)
         _entry_type = DT_EXTERNAL_STORAGE if (_info and _info.category != "storage") else DT_MOUNT
 
-        # Add to router via DriverLifecycleCoordinator (registers hook_spec +
-        # broadcasts mount event), then setup -- rollback on failure (#2754).
-        # If _setup_mount_point fails after the mount is active in the router,
-        # the mount would be accessible without proper permissions configured.
-        self._driver_coordinator.mount(
+        # Mount via sys_setattr (Rust DLC handles routing + metastore + dcache,
+        # Python DLC stores _PyMountInfo + dispatches event), then setup --
+        # rollback on failure (#2754).
+        from nexus.contracts.metadata import DT_MOUNT
+
+        self.nexus_fs.sys_setattr(
             mount_point,
-            backend,
-            readonly=readonly,
-            io_profile=io_profile,
+            entry_type=DT_MOUNT,
+            backend=backend,
             is_external=(_entry_type == DT_EXTERNAL_STORAGE),
         )
         try:
@@ -773,8 +769,6 @@ class MountService:
                 mounts.append(
                     {
                         "mount_point": mount_info.mount_point,
-                        "readonly": mount_info.readonly,
-                        "admin_only": mount_info.admin_only,
                     }
                 )
 
@@ -802,8 +796,6 @@ class MountService:
         if mount_info:
             return {
                 "mount_point": mount_info.mount_point,
-                "readonly": mount_info.readonly,
-                "admin_only": mount_info.admin_only,
             }
         return None
 
@@ -942,8 +934,6 @@ class MountService:
         mount_point: str,
         backend_type: str,
         backend_config: dict[str, Any],
-        readonly: bool = False,
-        io_profile: str = "balanced",
         context: "OperationContext | None" = None,
     ) -> str:
         """Add a dynamic backend mount to the filesystem.
@@ -957,8 +947,6 @@ class MountService:
             mount_point: Virtual path where backend is mounted (e.g., "/personal/alice")
             backend_type: Backend type - "cas_local", "cas_gcs", "path_gcs", "google_drive", etc.
             backend_config: Backend-specific configuration dict
-            readonly: Whether mount is read-only (default: False)
-            io_profile: I/O tuning profile
             context: Operation context (automatically provided by RPC server)
 
         Returns:
@@ -973,8 +961,6 @@ class MountService:
             mount_point=mount_point,
             backend_type=backend_type,
             backend_config=backend_config,
-            readonly=readonly,
-            io_profile=io_profile,
             context=context,
         )
 
@@ -1244,8 +1230,6 @@ class MountService:
         Returns:
             List of mount info dictionaries, each containing:
                 - mount_point: Virtual path (str)
-                - readonly: Read-only flag (bool)
-                - admin_only: Admin-only flag (bool)
         """
         return await asyncio.to_thread(self.list_mounts_sync, context)
 
@@ -1263,8 +1247,6 @@ class MountService:
         Returns:
             Mount info dict if found, None otherwise. Dict contains:
                 - mount_point: Virtual path (str)
-                - readonly: Read-only flag (bool)
-                - admin_only: Admin-only flag (bool)
         """
         return await asyncio.to_thread(self.get_mount_sync, mount_point, context)
 
@@ -1290,8 +1272,6 @@ class MountService:
         mount_point: str,
         backend_type: str,
         backend_config: dict[str, Any],
-        readonly: bool = False,
-        io_profile: str = "balanced",
         owner_user_id: str | None = None,
         zone_id: str | None = None,
         description: str | None = None,
@@ -1308,8 +1288,6 @@ class MountService:
             mount_point: Virtual path where backend is mounted
             backend_type: Backend type - "cas_local", "cas_gcs", etc.
             backend_config: Backend-specific configuration dict
-            readonly: Whether mount is read-only (default: False)
-            io_profile: I/O tuning profile
             owner_user_id: User who owns this mount (optional)
             zone_id: Zone ID for multi-zone isolation (optional)
             description: Human-readable description (optional)
@@ -1347,8 +1325,6 @@ class MountService:
                 mount_point=mount_point,
                 backend_type=backend_type,
                 backend_config=backend_config,
-                readonly=readonly,
-                io_profile=io_profile,
                 owner_user_id=owner_user_id,
                 zone_id=zone_id,
                 description=description,
@@ -1461,7 +1437,6 @@ class MountService:
             mount_point=mount_config["mount_point"],
             backend_type=mount_config["backend_type"],
             backend_config=backend_config,
-            readonly=bool(mount_config["readonly"]),
         )
 
     @rpc_expose(description="Delete saved mount configuration")

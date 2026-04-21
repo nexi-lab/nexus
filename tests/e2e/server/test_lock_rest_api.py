@@ -1,13 +1,12 @@
 """Integration tests for Lock REST API endpoints (Issue #1110).
 
-These tests use a real RaftLockManager backed by SQLite (no external
-dependencies) to verify the full lock lifecycle through the REST API.
+Tests verify lock model validation and REST API endpoint contracts.
+Lock operations are backed by Rust kernel LockManager (sys_lock/sys_unlock).
 """
 
 import pytest
 from pydantic import ValidationError
 
-from nexus.raft.lock_manager import RaftLockManager
 from nexus.server.api.v2.models.locks import (
     LOCK_MAX_TTL,
     LockAcquireRequest,
@@ -237,112 +236,3 @@ class TestLockRequestValidation:
         """Test that timeout must be >= 0."""
         with pytest.raises(ValidationError):
             LockAcquireRequest(path="/test", timeout=-1)
-
-
-class TestLockManagerIntegration:
-    """Integration tests for RaftLockManager.
-
-    These tests use a real RaftLockManager with in-memory storage,
-    no external dependencies required.
-    """
-
-    @pytest.fixture
-    def lock_manager(self, tmp_path):
-        """Create a RaftLockManager with local sled storage."""
-        try:
-            from nexus.storage.raft_metadata_store import RaftMetadataStore
-
-            store = RaftMetadataStore.embedded(str(tmp_path / "test-raft"))
-            return RaftLockManager(store)
-        except Exception:
-            pytest.skip("RaftMetadataStore not available (Rust bindings not compiled)")
-
-    @pytest.mark.asyncio
-    async def test_full_lock_lifecycle(self, lock_manager):
-        """Test complete lock lifecycle: acquire -> status -> extend -> release."""
-        lock_id = lock_manager.acquire("root", "/test/file.txt", timeout=5, ttl=30)
-        assert lock_id is not None
-
-        # Check status
-        info = lock_manager.get_lock_info("root", "/test/file.txt")
-        assert info is not None
-        assert info.mode == "mutex"
-        assert len(info.holders) == 1
-        assert info.holders[0].lock_id == lock_id
-
-        # Extend
-        result = lock_manager.extend(lock_id, "root", "/test/file.txt", ttl=60)
-        assert result.success is True
-        assert result.lock_info is not None
-
-        # Release
-        released = lock_manager.release(lock_id, "root", "/test/file.txt")
-        assert released is True
-
-        # Verify unlocked
-        info = lock_manager.get_lock_info("root", "/test/file.txt")
-        assert info is None
-
-    @pytest.mark.asyncio
-    async def test_lock_contention(self, lock_manager):
-        """Test lock behavior under contention."""
-        lock_id = lock_manager.acquire("root", "/contested.txt", timeout=1, ttl=30)
-        assert lock_id is not None
-
-        # Second acquire should fail (timeout)
-        lock_id2 = lock_manager.acquire("root", "/contested.txt", timeout=0.1, ttl=30)
-        assert lock_id2 is None
-
-        # Release first lock
-        lock_manager.release(lock_id, "root", "/contested.txt")
-
-        # Now should succeed
-        lock_id3 = lock_manager.acquire("root", "/contested.txt", timeout=1, ttl=30)
-        assert lock_id3 is not None
-        lock_manager.release(lock_id3, "root", "/contested.txt")
-
-    @pytest.mark.asyncio
-    async def test_semaphore_multiple_holders(self, lock_manager):
-        """Test semaphore with multiple concurrent holders."""
-        lock_ids = []
-        for _ in range(3):
-            lid = lock_manager.acquire("root", "/shared.txt", timeout=1, ttl=30, max_holders=3)
-            assert lid is not None
-            lock_ids.append(lid)
-
-        # Fourth should fail
-        lid4 = lock_manager.acquire("root", "/shared.txt", timeout=0.1, ttl=30, max_holders=3)
-        assert lid4 is None
-
-        # Release all
-        for lid in lock_ids:
-            lock_manager.release(lid, "root", "/shared.txt")
-
-    @pytest.mark.asyncio
-    async def test_force_release(self, lock_manager):
-        """Test admin force release."""
-        lock_id = lock_manager.acquire("root", "/force-test.txt", timeout=1, ttl=30)
-        assert lock_id is not None
-
-        released = lock_manager.force_release("root", "/force-test.txt")
-        assert released is True
-
-        # Should be unlocked now
-        info = lock_manager.get_lock_info("root", "/force-test.txt")
-        assert info is None
-
-    @pytest.mark.asyncio
-    async def test_list_locks(self, lock_manager):
-        """Test listing active locks."""
-        ids = []
-        for i in range(3):
-            lid = lock_manager.acquire("root", f"/list-test-{i}.txt", timeout=1, ttl=30)
-            assert lid is not None
-            ids.append((f"/list-test-{i}.txt", lid))
-
-        locks = lock_manager.list_locks("root", limit=100)
-        assert len(locks) >= 3
-
-        # Cleanup
-        for path, lid in ids:
-            lock_manager.release(lid, "root", path)

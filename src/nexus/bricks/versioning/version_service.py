@@ -16,6 +16,7 @@ import difflib
 import logging
 from typing import TYPE_CHECKING, Any
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.lib.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)
@@ -191,13 +192,9 @@ class VersionService:
             raise RuntimeError("Router not configured for VersionService")
 
         # Route to backend
-        is_admin = context.is_admin if context else False
+        zone_id = (context.zone_id if context else None) or ROOT_ZONE_ID
 
-        route = self.router.route(
-            path,
-            is_admin=is_admin,
-            check_write=False,
-        )
+        route = self.router.route(path, zone_id=zone_id)
 
         # Read content from backend using version's content hash (run in thread)
         return await asyncio.to_thread(route.backend.read_content, version_meta.etag)
@@ -307,21 +304,10 @@ class VersionService:
         # Check WRITE permission
         await self._check_write_permission(path, context)
 
-        # Route to backend using context
+        # Router presence is a precondition for rollback (derives from mount context).
         if self.router is None:
             raise RuntimeError("Router not configured for VersionService")
-
-        is_admin = context.is_admin if context else False
-
-        route = self.router.route(
-            path,
-            is_admin=is_admin,
-            check_write=True,
-        )
-
-        # Check readonly
-        if route.readonly:
-            raise PermissionError(f"Cannot rollback read-only path: {path}")
+        self.router.route(path)
 
         # Perform rollback via VersionManager + session_factory
         # (RaftMetadataStore lacks rollback(); use SQL version history instead)

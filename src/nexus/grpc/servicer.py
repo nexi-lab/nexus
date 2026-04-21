@@ -83,14 +83,12 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
         auth_provider: Any = None,
         api_key: str | None = None,
         subscription_manager: Any = None,
-        object_store: Any = None,
     ) -> None:
         self._nexus_fs = nexus_fs
         self._exposed_methods = exposed_methods
         self._auth_provider = auth_provider
         self._api_key = api_key
         self._subscription_manager = subscription_manager
-        self._object_store = object_store
 
     # ------------------------------------------------------------------
     # Authentication
@@ -503,56 +501,6 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
         except Exception as e:
             logger.exception("Error in gRPC Delete %s", request.path)
             return vfs_pb2.DeleteResponse(
-                is_error=True,
-                error_payload=_error_payload(RPCErrorCode.INTERNAL_ERROR, f"Internal error: {e}"),
-            )
-
-    # ------------------------------------------------------------------
-    # CAS-level blob read — driver-to-driver protocol (Issue #1744)
-    # ------------------------------------------------------------------
-
-    async def ReadBlob(
-        self,
-        request: "vfs_pb2.ReadBlobRequest",
-        _context: grpc.aio.ServicerContext,
-    ) -> "vfs_pb2.ReadBlobResponse":
-        """Read a CAS blob by content hash — direct ObjectStore access.
-
-        Driver-to-driver protocol for federation chunk assembly and
-        content replication.  Bypasses VFS path routing entirely.
-
-        No auth required — this is an internal cluster RPC (like NFS
-        kernel-to-kernel), not a user-facing API. Access is controlled
-        by network-level isolation (Docker network / VPC).
-        """
-        try:
-            if self._object_store is None:
-                return vfs_pb2.ReadBlobResponse(
-                    is_error=True,
-                    error_payload=_error_payload(
-                        RPCErrorCode.INTERNAL_ERROR, "ObjectStore not available"
-                    ),
-                )
-
-            content = await asyncio.to_thread(self._object_store.read_content, request.content_hash)
-            return vfs_pb2.ReadBlobResponse(content=content, size=len(content))
-        except NexusPermissionError as e:
-            return vfs_pb2.ReadBlobResponse(
-                is_error=True,
-                error_payload=_error_payload(RPCErrorCode.PERMISSION_ERROR, str(e)),
-            )
-        except (NexusFileNotFoundError, NexusError) as e:
-            code = (
-                RPCErrorCode.FILE_NOT_FOUND
-                if isinstance(e, NexusFileNotFoundError)
-                else RPCErrorCode.INTERNAL_ERROR
-            )
-            return vfs_pb2.ReadBlobResponse(
-                is_error=True, error_payload=_error_payload(code, str(e))
-            )
-        except Exception as e:
-            logger.warning("ReadBlob error for %s: %s", request.content_hash[:16], e)
-            return vfs_pb2.ReadBlobResponse(
                 is_error=True,
                 error_payload=_error_payload(RPCErrorCode.INTERNAL_ERROR, f"Internal error: {e}"),
             )

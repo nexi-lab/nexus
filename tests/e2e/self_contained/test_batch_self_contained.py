@@ -12,6 +12,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.server.api.v2.routers.batch import create_batch_router
 
 
@@ -47,7 +48,7 @@ def _make_mock_fs() -> MagicMock:
 def _make_mock_context() -> MagicMock:
     ctx = MagicMock()
     ctx.user_id = "e2e-test-user"
-    ctx.zone_id = "root"
+    ctx.zone_id = ROOT_ZONE_ID
     ctx.groups = ["testers"]
     ctx.is_admin = False
     ctx.is_system = False

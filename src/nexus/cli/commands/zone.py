@@ -28,10 +28,13 @@ from nexus.cli.dry_run import add_dry_run_option, dry_run_preview, render_dry_ru
 from nexus.cli.output import OutputOptions, add_output_options, render_error, render_output
 from nexus.cli.timing import CommandTiming
 from nexus.cli.utils import (
+    REMOTE_API_KEY_OPTION,
+    REMOTE_URL_OPTION,
     add_backend_options,
     console,
     get_filesystem,
     handle_error,
+    rpc_call,
 )
 from nexus.contracts.constants import DEFAULT_GRPC_BIND_ADDR
 
@@ -59,17 +62,22 @@ def _get_zone_manager(
     hostname: str,
     data_dir: str,
     bind_addr: str,
+    peers: list[str] | None = None,
 ) -> Any:
     """Create a ZoneManager from CLI options.
 
-    Imports lazily to avoid requiring PyO3 for non-federation commands.
+    R20.18.5: Python ZoneManager was deleted — federation is kernel-
+    internal now. CLI commands that relied on a direct-open ZoneManager
+    (create / join / mount / unmount) now raise a clear error; callers
+    should drive zone CRUD via the RPC path through a running server
+    process. Export/import flows (R20.17) will reach raft-backed zones
+    through the same RPC surface.
     """
-    from nexus.raft.zone_manager import ZoneManager
-
-    return ZoneManager(
-        hostname=hostname,
-        base_path=data_dir,
-        bind_addr=bind_addr,
+    del hostname, data_dir, bind_addr, peers
+    raise RuntimeError(
+        "Direct-open ZoneManager is no longer available — the Python "
+        "shim was deleted in R20.18.5. Drive zone CRUD through the "
+        "nexus RPC surface (a running nexus-server) instead."
     )
 
 
@@ -150,7 +158,7 @@ def create_zone_cmd(
             return
 
         peer_list = [p.strip() for p in peers.split(",")] if peers else []
-        mgr = _get_zone_manager(hostname, data_dir, bind)
+        mgr = _get_zone_manager(hostname, data_dir, bind, peers=peer_list)
 
         try:
             store = mgr.create_zone(zone_id, peers=peer_list)
@@ -227,7 +235,7 @@ def join_zone_cmd(
 
     try:
         peer_list = [p.strip() for p in peers.split(",")]
-        mgr = _get_zone_manager(hostname, data_dir, bind)
+        mgr = _get_zone_manager(hostname, data_dir, bind, peers=peer_list)
         store = mgr.join_zone(zone_id, peers=peer_list)
 
         console.print(f"[nexus.success]Joined zone '{zone_id}'[/nexus.success]")
@@ -265,11 +273,15 @@ def join_zone_cmd(
     show_default=True,
     help="gRPC bind address",
 )
+@REMOTE_URL_OPTION
+@REMOTE_API_KEY_OPTION
 @add_output_options
 def list_zones_cmd(
     hostname: str | None,
     data_dir: str,
     bind: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
     output_opts: OutputOptions,
 ) -> None:
     """List all local zones on this node.
@@ -287,10 +299,20 @@ def list_zones_cmd(
     timing = CommandTiming()
 
     try:
-        with timing.phase("server"):
-            mgr = _get_zone_manager(hostname, data_dir, bind)
-            zones = mgr.list_zones()
-            mgr.shutdown()
+        # When NEXUS_URL / --remote-url is set we dispatch through the running
+        # server — this avoids fighting for the redb lock when a node is live.
+        # Kernel-state is owned by the server process; CLI is a thin user-space
+        # tool that reads via RPC. Only fall back to direct ZoneManager open
+        # for maintenance scenarios (no server running).
+        if remote_url:
+            with timing.phase("server"):
+                rpc_data = rpc_call(remote_url, remote_api_key, "federation_list_zones")
+            zones = [z.get("zone_id", "") for z in rpc_data.get("zones", [])]
+        else:
+            with timing.phase("server"):
+                mgr = _get_zone_manager(hostname, data_dir, bind)
+                zones = mgr.list_zones()
+                mgr.shutdown()
 
         data = [{"zone_id": z} for z in sorted(zones)] if zones else []
 
@@ -556,8 +578,6 @@ def export_zone(
         nexus zone export acme-corp -o /backup/acme.nexus --after 2025-01-01T00:00:00
     """
     try:
-        from nexus.bricks.portability import ZoneExportOptions, ZoneExportService
-
         # Parse after time if provided
         after_time = None
         if after:
@@ -569,15 +589,60 @@ def export_zone(
                 console.print(f"[nexus.error]Error:[/nexus.error] Invalid date format: {after}")
                 console.print("Use ISO format: 2025-01-01T00:00:00")
                 sys.exit(1)
-
-        # Get filesystem
-        nx: Any = get_filesystem(remote_url, remote_api_key)
-
-        # Configure export options
+        # Normalise output path (absolute, no suffix munging — honor
+        # whatever the caller passed).
         output_path = Path(output)
-        if not str(output_path).endswith(".nexus"):
-            output_path = output_path.with_suffix(".nexus")
+        if not output_path.is_absolute():
+            output_path = output_path.resolve()
 
+        # Prefer the server-side RPC when a remote URL is available.
+        # Running the exporter locally requires direct access to the
+        # zone's redb file, which is already held open by the running
+        # server (docker + production). The RPC executes
+        # ZoneExportService on the server — same process that owns the
+        # metastore — and writes the bundle to a path the server can
+        # see. Docker E2E test shares `/tmp` between CLI + server
+        # containers; production deployments use a mounted backup
+        # volume.
+        from nexus.cli.config import resolve_connection
+        from nexus.cli.utils import rpc_call
+
+        resolved = resolve_connection(
+            remote_url=remote_url,
+            remote_api_key=remote_api_key,
+        )
+        console.print(f"[nexus.value]Exporting zone:[/nexus.value] {zone_id}")
+        console.print(f"[nexus.path]Output:[/nexus.path] {output_path}")
+        if resolved.is_remote:
+            data = rpc_call(
+                resolved.url,
+                resolved.api_key,
+                "federation_export_zone",
+                zone_id=zone_id,
+                output_path=str(output_path),
+                include_content=include_content,
+                include_permissions=include_permissions,
+                include_embeddings=include_embeddings,
+                include_deleted=include_deleted,
+                path_prefix=path_prefix,
+            )
+            table = Table(title="Export Complete")
+            table.add_column("Metric", style="nexus.value")
+            table.add_column("Value", style="nexus.success")
+            table.add_row("Files exported", f"{data.get('file_count', 0):,}")
+            table.add_row("Total size", f"{data.get('total_size_bytes', 0):,} bytes")
+            table.add_row("Bundle ID", str(data.get("bundle_id", ""))[:8] + "...")
+            table.add_row("Output", str(output_path))
+            console.print(table)
+            return
+
+        # Local-only path: load a bare kernel (only safe when no server
+        # holds the redb open). Kept for offline snapshot workflows.
+        import asyncio as _asyncio
+
+        from nexus.bricks.portability import ZoneExportOptions, ZoneExportService
+
+        nx: Any = _asyncio.run(get_filesystem(remote_url, remote_api_key))
         options = ZoneExportOptions(
             output_path=output_path,
             include_content=include_content,
@@ -585,13 +650,9 @@ def export_zone(
             include_embeddings=include_embeddings,
             include_deleted=include_deleted,
             path_prefix=path_prefix,
-            after_time=after_time,
+            after_time=after_time if after else None,
             compression_level=compression,
         )
-
-        # Run export with progress
-        console.print(f"[nexus.value]Exporting zone:[/nexus.value] {zone_id}")
-        console.print(f"[nexus.path]Output:[/nexus.path] {output_path}")
 
         with Progress(
             SpinnerColumn(),
@@ -607,23 +668,17 @@ def export_zone(
             manifest = service.export_zone(zone_id, options, update_progress)
 
         nx.close()
-
-        # Show results
-        console.print()
         table = Table(title="Export Complete")
         table.add_column("Metric", style="nexus.value")
         table.add_column("Value", style="nexus.success")
-
         table.add_row("Files exported", f"{manifest.file_count:,}")
         table.add_row("Total size", f"{manifest.total_size_bytes:,} bytes")
         table.add_row("Content blobs", f"{manifest.content_blob_count:,}")
         table.add_row("Permissions", f"{manifest.permission_count:,}")
         table.add_row("Bundle ID", manifest.bundle_id[:8] + "...")
         table.add_row("Output", str(output_path))
-
         if output_path.exists():
             table.add_row("Bundle size", f"{output_path.stat().st_size:,} bytes")
-
         console.print(table)
 
     except Exception as e:
@@ -635,6 +690,8 @@ def export_zone(
 @click.option(
     "-t",
     "--target-zone",
+    "--zone-id",
+    "target_zone",
     default=None,
     help="Remap to different zone ID (default: preserve original)",
 )
@@ -696,8 +753,6 @@ def import_zone(
         nexus zone import /backup/acme.nexus --dry-run
     """
     try:
-        from nexus.bricks.portability import ConflictMode, ZoneImportOptions, ZoneImportService
-
         # Parse path remappings
         path_prefix_remap: dict[str, str] = {}
         for remap in path_remap:
@@ -710,8 +765,54 @@ def import_zone(
             old, new = remap.split("=", 1)
             path_prefix_remap[old] = new
 
-        # Get filesystem
-        nx: Any = get_filesystem(remote_url, remote_api_key)
+        # Same remote-first routing as `nexus zone export` — lets a
+        # running server own the write path to its live metastore
+        # instead of the CLI trying to open the zone's redb in a
+        # separate process.
+        from nexus.cli.config import resolve_connection
+        from nexus.cli.utils import rpc_call
+
+        resolved = resolve_connection(
+            remote_url=remote_url,
+            remote_api_key=remote_api_key,
+        )
+        bundle_abs = str(Path(bundle_path).resolve())
+        console.print(f"[nexus.path]Importing from:[/nexus.path] {bundle_abs}")
+        if target_zone:
+            console.print(f"[nexus.value]Target zone:[/nexus.value] {target_zone}")
+        console.print(f"[nexus.value]Conflict mode:[/nexus.value] {conflict}")
+        if resolved.is_remote:
+            if dry_run:
+                console.print("[nexus.warning]DRY RUN not supported via RPC yet[/nexus.warning]")
+                sys.exit(2)
+            data = rpc_call(
+                resolved.url,
+                resolved.api_key,
+                "federation_import_zone",
+                bundle_path=bundle_abs,
+                target_zone=target_zone,
+                conflict=conflict,
+                preserve_timestamps=preserve_timestamps,
+                import_permissions=import_permissions,
+                path_prefix_remap=path_prefix_remap,
+            )
+            table = Table(title="Import Complete")
+            table.add_column("Metric", style="nexus.value")
+            table.add_column("Value", style="nexus.success")
+            table.add_row("Files created", f"{data.get('files_created', 0):,}")
+            table.add_row("Files updated", f"{data.get('files_updated', 0):,}")
+            table.add_row("Files skipped", f"{data.get('files_skipped', 0):,}")
+            table.add_row("Files failed", f"{data.get('files_failed', 0):,}")
+            table.add_row("Permissions imported", f"{data.get('permissions_imported', 0):,}")
+            console.print(table)
+            return
+
+        # Local-only path kept for offline snapshot restore.
+        import asyncio as _asyncio
+
+        from nexus.bricks.portability import ConflictMode, ZoneImportOptions, ZoneImportService
+
+        nx: Any = _asyncio.run(get_filesystem(remote_url, remote_api_key))
 
         # Configure import options
         conflict_mode = ConflictMode(conflict)

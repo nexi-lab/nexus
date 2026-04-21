@@ -10,16 +10,30 @@ authors = ["Nexus Team"]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(has_protos)"] }
 
 [lib]
-# Python module name: nexus._nexus_raft (consistent with _nexus_kernel)
-name = "_nexus_raft"
-crate-type = ["cdylib", "rlib"]  # cdylib for Python, rlib for Rust deps
+# F2 C8 (Option A): raft is rlib-only. Its PyO3 bindings are registered
+# into the kernel crate's ``nexus_kernel`` cdylib so both Kernel and
+# ZoneManager live in a single .so file. The old ``_nexus_raft`` Python
+# module is gone — Python imports ``ZoneManager`` / ``ZoneHandle`` from
+# ``nexus_kernel`` now. Lib name is a regular Rust identifier so kernel
+# can ``use nexus_raft::...`` without the leading-underscore dance.
+name = "nexus_raft"
+crate-type = ["rlib"]
 
 [[bin]]
 name = "nexus-witness"
 path = "src/bin/witness.rs"
 required-features = ["grpc"]
 
+[[bin]]
+name = "nexus-federation-server"
+path = "src/bin/federation_server.rs"
+required-features = ["grpc"]
+
 [dependencies]
+# Cross-tier constants (ROOT_ZONE_ID, …) — mirror of
+# ``nexus.contracts.constants``. Pulled in so raft shares one source
+# of truth with the kernel crate instead of hardcoding ``"root"``.
+contracts = { workspace = true }
 # Embedded KV storage — redb 2.x (stable since 1.0, June 2023).
 # Issue #1330: Replaced sled 0.34 with redb for reliability + maintenance.
 redb = "2"
@@ -34,6 +48,10 @@ slog = { version = "2.8", optional = true }  # Required by raft-rs for logging
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 bincode = "1.3"  # Fast binary serialization for Raft log entries
+
+# Shared in-memory mutex for the advisory-lock SSOT that the kernel
+# and raft state machine both hold via Arc<Mutex<LockState>>.
+parking_lot = "0.12"
 
 # Error handling
 thiserror = "1.0"
@@ -61,9 +79,19 @@ pem = { version = "3", optional = true }  # PEM parsing for CA fingerprint verif
 base64 = { version = "0.22", optional = true }  # Base64 encoding for CA fingerprint
 gethostname = { version = "0.5", optional = true }  # Hostname-based node ID derivation
 
-# Python bindings (PyO3 FFI)
-pyo3 = { version = "0.27.2", features = ["extension-module"], optional = true }
+# Python bindings (PyO3 FFI). ``extension-module`` is dropped — raft is
+# an rlib-only crate now; the final cdylib (nexus_kernel) owns libpython
+# linkage. Raft only needs PyO3's macros / trait impls.
+pyo3 = { version = "0.27.2", optional = true }
 mimalloc = { workspace = true, optional = true }
+
+# NOTE: F2 C1 (d16cfc9a7) tried to pull the kernel rlib into _nexus_raft.so
+# so raft could impl `kernel::Metastore` directly. That turned out to cause
+# a post-start SIGSEGV in tokio worker threads: both nexus_kernel.so and
+# _nexus_raft.so end up with their own copy of kernel's thread_local! state
+# and vtables, and the two cdylibs can't reliably share a single process
+# namespace. Reverted in C7 — federation bridging now happens via the
+# existing `kernel.add_mount(metastore_path=…)` path (Python side).
 
 [build-dependencies]
 tonic-build = { version = "0.13", optional = true }
@@ -78,10 +106,9 @@ mimalloc = ["dep:mimalloc"]
 # Enable async support (Tokio runtime)
 async = ["tokio"]
 
-# Enable Python bindings (PyO3 FFI) — production path.
-# Provides LocalRaft for ~5μs metadata/lock operations.
-# Includes mimalloc allocator for cdylib builds (safe in terminal crate context).
-python = ["pyo3", "mimalloc"]
+# Enable Python bindings (PyO3 FFI) — production path. Raft is an rlib
+# crate after F2 C8; mimalloc moves to the final cdylib (nexus_kernel).
+python = ["pyo3"]
 
 # Enable Raft consensus (tikv/raft-rs) — EXPERIMENTAL, default OFF.
 # Not used in production. Preserved for future multi-node support.

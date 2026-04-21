@@ -84,8 +84,9 @@ def show(data_dir: str | None) -> None:
 @click.option("--data-dir", type=click.Path(), default=None)
 def trusted(data_dir: str | None) -> None:
     """List trusted peer zones (TOFU trust store)."""
+    from nexus_kernel import TofuTrustStore
+
     from nexus.security.tls.config import ZoneTlsConfig
-    from nexus.security.tls.trust_store import TofuTrustStore
 
     base = Path(data_dir) if data_dir else _data_dir()
     cfg = ZoneTlsConfig.from_data_dir(base)
@@ -93,7 +94,7 @@ def trusted(data_dir: str | None) -> None:
         click.echo("No TLS certificates found.  Run: nexus tls init")
         return
 
-    store = TofuTrustStore(cfg.known_zones_path)
+    store = TofuTrustStore(str(cfg.known_zones_path))
     entries = store.list_trusted()
     if not entries:
         click.echo("No trusted zones.")
@@ -107,8 +108,9 @@ def trusted(data_dir: str | None) -> None:
 @click.option("--data-dir", type=click.Path(), default=None)
 def forget_zone(zone_id: str, data_dir: str | None) -> None:
     """Remove a zone from the TOFU trust store (for cert rotation)."""
+    from nexus_kernel import TofuTrustStore
+
     from nexus.security.tls.config import ZoneTlsConfig
-    from nexus.security.tls.trust_store import TofuTrustStore
 
     base = Path(data_dir) if data_dir else _data_dir()
     cfg = ZoneTlsConfig.from_data_dir(base)
@@ -116,7 +118,7 @@ def forget_zone(zone_id: str, data_dir: str | None) -> None:
         click.echo("No TLS certificates found.")
         return
 
-    store = TofuTrustStore(cfg.known_zones_path)
+    store = TofuTrustStore(str(cfg.known_zones_path))
     if store.remove(zone_id):
         click.echo(f"Removed zone '{zone_id}' from trust store.")
     else:

@@ -26,10 +26,10 @@ gcs_storage = pytest.importorskip(
 )
 
 from nexus.contracts.constants import ROOT_ZONE_ID  # noqa: E402
+from nexus.contracts.metadata import DT_MOUNT  # noqa: E402
 from nexus.contracts.types import OperationContext  # noqa: E402
 from nexus.core.config import PermissionConfig  # noqa: E402
 from nexus.core.nexus_fs import NexusFS  # noqa: E402
-from nexus.core.router import PathRouter  # noqa: E402
 from nexus.fs import _make_mount_entry  # noqa: E402
 from nexus.fs._facade import SlimNexusFS  # noqa: E402
 from nexus.fs._sqlite_meta import SQLiteMetastore  # noqa: E402
@@ -127,18 +127,12 @@ def _build_gcs_fs(tmp_path: Path) -> tuple[SlimNexusFS, str]:
     db_path = str(tmp_path / "metadata.db")
     metastore = SQLiteMetastore(db_path)
 
-    # Router (empty — mounts added via coordinator)
-    from nexus.core.mount_table import MountTable
-
     mount_point = "/gcs/test-project/test-gcs-bucket"
-    mount_table = MountTable(metastore)
-    router = PathRouter(mount_table)
 
-    # Kernel
+    # Kernel (constructs DLC + router internally)
     kernel = NexusFS(
         metadata_store=metastore,
         permissions=PermissionConfig(enforce=False),
-        router=router,
     )
     kernel._init_cred = OperationContext(
         user_id="test",
@@ -148,7 +142,7 @@ def _build_gcs_fs(tmp_path: Path) -> tuple[SlimNexusFS, str]:
     )
 
     # Mount via coordinator (registers in backend pool + routing table + hooks)
-    kernel._driver_coordinator.mount(mount_point, backend)
+    kernel.sys_setattr(mount_point, entry_type=DT_MOUNT, backend=backend)
 
     # Create DT_MOUNT entry
     metastore.put(_make_mount_entry(mount_point, backend.name))

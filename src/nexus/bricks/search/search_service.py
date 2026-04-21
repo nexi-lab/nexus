@@ -469,12 +469,8 @@ class SearchService:
         # Check if path routes to a dynamic API-backed connector
         if path and path != "/" and self.router:
             try:
-                zone_id, _agent_id, is_admin = self._get_routing_params(context)
-                route = self.router.route(
-                    path,
-                    is_admin=is_admin,
-                    check_write=False,
-                )
+                zone_id, _agent_id, _is_admin = self._get_routing_params(context)
+                route = self.router.route(path, zone_id=zone_id or ROOT_ZONE_ID)
                 from nexus.core.router import ExternalRouteResult
 
                 if isinstance(route, ExternalRouteResult):

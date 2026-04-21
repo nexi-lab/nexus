@@ -22,6 +22,7 @@ from nexus.backends.wrappers.caching import (
     CacheWrapperConfig,
     CachingBackendWrapper,
 )
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.types import OperationContext
 from nexus.core.config import PermissionConfig
 from nexus.factory import create_nexus_fs
@@ -447,7 +448,7 @@ class TestCachingPermissions:
                 subject=("user", "alice"),
                 relation="direct_viewer",
                 object=("file", "/test/public.txt"),
-                zone_id="root",
+                zone_id=ROOT_ZONE_ID,
             )
 
         # Alice should STILL be denied on private.txt even though it's cached
@@ -608,13 +609,13 @@ class TestCachingWithFastAPIServer:
             subject=("user", "alice"),
             relation="direct_viewer",
             object=("file", "/alice_area/readme.md"),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
         rebac.rebac_write(
             subject=("user", "alice"),
             relation="direct_viewer",
             object=("file", "/shared_area/shared.txt"),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
 
         # bob can only read shared.txt
@@ -622,7 +623,7 @@ class TestCachingWithFastAPIServer:
             subject=("user", "bob"),
             relation="direct_viewer",
             object=("file", "/shared_area/shared.txt"),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
 
         # Clear cache stats from setup writes/reads
@@ -642,7 +643,7 @@ class TestCachingWithFastAPIServer:
         method: str,
         params: dict,
         subject: str = "user:anonymous",
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
     ) -> dict:
         """Make a JSON-RPC call to the FastAPI server."""
         resp = client.post(

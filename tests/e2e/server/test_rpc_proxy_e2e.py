@@ -23,6 +23,7 @@ from pathlib import Path
 import httpx
 import pytest
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import RemoteFilesystemError
 from nexus.core.nexus_fs import NexusFS
 
@@ -388,7 +389,7 @@ class TestAutoDispatchedMethods:
             subject=("user", "admin"),
             permission="read",
             object=("file", "/workspace"),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
         assert result is True
 

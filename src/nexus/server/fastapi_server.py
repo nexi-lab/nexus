@@ -400,12 +400,30 @@ def create_app(
         _version_svc = nexus_fs.service("version_service") if hasattr(nexus_fs, "service") else None
         if _version_svc is not None:
             _rpc_sources.append(_version_svc)
-        # Issue #1520: FederationRPCService — zone lifecycle, share/join, mounts
-        _fed = nexus_fs.service("federation") if hasattr(nexus_fs, "service") else None
-        if _fed is not None:
+        # R20.18.5 Phase B: FederationRPCService backs the federation_*
+        # gRPC surface. It now delegates every call to kernel zone_*
+        # accessors (tolerated tech debt — the boundary-rule-compliant
+        # replacement is /__sys__/zones/ procfs through sys_stat, tracked
+        # as a post-merge follow-up).
+        _kernel = getattr(nexus_fs, "_kernel", None)
+        _fed_active = False
+        if _kernel is not None:
+            _mrd = getattr(_kernel, "mount_reconciliation_done", None)
+            try:
+                _fed_active = bool(_mrd()) if callable(_mrd) else bool(_mrd)
+                # "always ready" semantics: True even when federation is
+                # disabled. Gate the RPC on an actual zone list signal
+                # so we don't mount federation_* on slim profiles.
+                if _fed_active:
+                    _zl = getattr(_kernel, "zone_list", None)
+                    if callable(_zl):
+                        _fed_active = bool(_zl())
+            except Exception:
+                _fed_active = False
+        if _fed_active:
             from nexus.server.rpc.services.federation_rpc import FederationRPCService
 
-            _rpc_sources.append(FederationRPCService(_fed))
+            _rpc_sources.append(FederationRPCService(_kernel, nexus_fs))
         # Lock syscalls (sys_lock, sys_unlock, lock_info, lock_list, etc.)
         # are @rpc_expose on NexusFS — auto-discovered by _discover_exposed_methods.
         # LocksRPCService deleted — no separate RPC service needed.
@@ -908,21 +926,29 @@ def _register_routes(app: FastAPI) -> None:
                 if _sa_rs is None:
                     raise HTTPException(status_code=500, detail="Secrets service not configured")
 
-                # Build a settings_store from metastore so the encryption key
-                # is persisted across restarts instead of being randomly generated.
-                # Use Python RaftMetadataStore directly (not RustMetastoreProxy) to
-                # avoid Rust/Python redb coherency issues with cfg: entries.
+                # Build a settings_store so the encryption key is
+                # persisted across restarts. R20.18.5: route through
+                # RustMetastoreProxy directly — the old
+                # `RaftMetadataStore.embedded` helper was just a shim
+                # that returned the same proxy.
                 _settings_store = None
                 try:
                     from pathlib import Path
 
+                    from nexus.core.metastore import RustMetastoreProxy
                     from nexus.storage.auth_stores.metastore_settings_store import (
                         MetastoreSettingsStore,
                     )
-                    from nexus.storage.raft_metadata_store import RaftMetadataStore
+
+                    try:
+                        from nexus_kernel import Kernel as _Kernel
+                    except ImportError as _imp_err:
+                        raise RuntimeError(
+                            "nexus_kernel not available for OAuth settings store"
+                        ) from _imp_err
 
                     _metadata_path = str(Path.home() / ".nexus" / "metastore")
-                    _py_metastore = RaftMetadataStore.embedded(_metadata_path)
+                    _py_metastore = RustMetastoreProxy(_Kernel(), _metadata_path + ".redb")
                     _settings_store = MetastoreSettingsStore(_py_metastore)
                 except Exception:
                     logger.warning(

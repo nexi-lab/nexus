@@ -172,14 +172,18 @@ impl StreamManager {
         offset: usize,
         timeout_ms: u64,
     ) -> Result<(Vec<u8>, usize), StreamManagerError> {
-        let buf = self
-            .buffers
-            .get(path)
-            .ok_or_else(|| StreamManagerError::NotFound(path.to_string()))?;
-        let notify = self
-            .notify
-            .get(path)
-            .ok_or_else(|| StreamManagerError::NotFound(path.to_string()))?;
+        let buf = Arc::clone(
+            self.buffers
+                .get(path)
+                .ok_or_else(|| StreamManagerError::NotFound(path.to_string()))?
+                .value(),
+        );
+        let notify = Arc::clone(
+            self.notify
+                .get(path)
+                .ok_or_else(|| StreamManagerError::NotFound(path.to_string()))?
+                .value(),
+        );
 
         // Fast path
         match buf.read_at(offset) {

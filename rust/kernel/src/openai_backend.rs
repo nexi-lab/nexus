@@ -1,236 +1,119 @@
-//! OpenAI-compatible connector — pure Rust HTTP client (§10 D3).
+//! OpenAI-compatible connector — CAS-backed HTTP client (R10d-LLM-Port).
 //!
-//! Implements ObjectStore trait for in-memory blob storage (CAS).
-//! Provides chat_completion() for synchronous inference and
-//! chat_completion_stream() for SSE streaming — both GIL-free.
-//!
-//! Compatible with: OpenAI, SudoRouter, OpenRouter, Ollama, vLLM.
-//!
-//! Architecture:
-//!   - ObjectStore methods: in-memory DashMap (blob storage for sessions)
-//!   - chat_completion: reqwest blocking POST → JSON response
-//!   - chat_completion_stream: reqwest streaming POST → SSE token iterator
+//! Owns a `CASEngine` wired with `MessageBoundaryStrategy` so every
+//! conversation JSON we persist gets per-message chunk dedup for free. HTTP
+//! runs on a kernel-shared tokio runtime (passed in at construction) so
+//! workers shut down cleanly on kernel drop. The streaming entry point lives
+//! in `openai_streaming.rs` as an `impl` block on this struct — splitting the
+//! SSE state machine away from the storage + config surface.
 
 #![allow(dead_code)]
 
-use crate::backend::{ObjectStore, StorageError, WriteResult};
-use crate::kernel::OperationContext;
-use dashmap::DashMap;
-use std::io;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::path::Path;
+use std::sync::Arc;
 
-/// OpenAI-compatible backend — in-memory CAS + HTTP inference.
+use crate::backend::{ObjectStore, StorageError, WriteResult};
+use crate::cas_chunking::MessageBoundaryStrategy;
+use crate::cas_engine::CASEngine;
+use crate::cas_transport::LocalCASTransport;
+use crate::kernel::OperationContext;
+
+/// OpenAI-compatible backend — CAS-backed blob storage + HTTP inference.
+///
+/// Storage: `CASEngine(LocalCASTransport, MessageBoundaryStrategy)`. Writes
+/// conversation JSON as per-message chunks — two sessions sharing the first
+/// N messages reuse the same N chunk blobs in the spool.
 pub(crate) struct OpenAIBackend {
-    /// Backend name for routing.
-    backend_name: String,
-    /// Base URL for API calls (e.g. "https://api.openai.com/v1").
-    base_url: String,
-    /// API key for authentication.
-    api_key: String,
-    /// Default model (e.g. "gpt-4o").
-    default_model: String,
-    /// In-memory blob storage (content_id → bytes).
-    blobs: DashMap<String, Vec<u8>>,
-    /// Write counter for content_id generation.
-    write_counter: AtomicU64,
-    /// Tokio runtime for async HTTP calls.
-    runtime: tokio::runtime::Runtime,
+    pub(crate) backend_name: String,
+    pub(crate) base_url: String,
+    pub(crate) api_key: String,
+    pub(crate) default_model: String,
+    /// CAS engine rooted at the per-mount spool dir. `as_cas()` exposes this
+    /// to the `PyKernel::cas_*` surface so Python callers can read/write on
+    /// LLM mounts without the legacy `CASOpenAIBackend` Python wrapper.
+    pub(crate) engine: CASEngine,
+    /// Shared reqwest HTTP client — one TCP/H2 pool is reused across every
+    /// chat completion + streaming call on this mount.
+    pub(crate) http: reqwest::Client,
+    /// Kernel-owned tokio runtime. Cloned from `Kernel::peer_client.runtime()`
+    /// so scatter-gather fetches and LLM calls share workers instead of each
+    /// backend spawning its own pool.
+    pub(crate) runtime: Arc<tokio::runtime::Runtime>,
 }
 
 impl OpenAIBackend {
+    /// Build an OpenAI-compatible backend.
+    ///
+    /// `blob_root` is the spool dir under which CAS blobs are stored — the
+    /// caller (`sys_setattr`) derives this from the kernel root so per-mount
+    /// state is cleanly namespaced and can be removed on unmount.
     pub(crate) fn new(
         name: &str,
         base_url: &str,
         api_key: &str,
         default_model: &str,
-    ) -> Result<Self, io::Error> {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()?;
+        blob_root: &Path,
+        runtime: Arc<tokio::runtime::Runtime>,
+    ) -> std::io::Result<Self> {
+        let transport = LocalCASTransport::new(blob_root, false)?;
+        let engine = CASEngine::with_strategy(transport, Arc::new(MessageBoundaryStrategy));
+        let http = reqwest::Client::builder()
+            .pool_idle_timeout(std::time::Duration::from_secs(60))
+            .build()
+            .map_err(|e| std::io::Error::other(format!("reqwest build: {e}")))?;
         Ok(Self {
             backend_name: name.to_string(),
             base_url: base_url.trim_end_matches('/').to_string(),
             api_key: api_key.to_string(),
             default_model: default_model.to_string(),
-            blobs: DashMap::new(),
-            write_counter: AtomicU64::new(0),
+            engine,
+            http,
             runtime,
         })
     }
 
-    /// Synchronous chat completion — blocking HTTP POST, returns full response JSON.
-    ///
-    /// GIL-free: caller releases GIL before calling this.
-    /// Returns response body as bytes (JSON).
-    #[cfg(feature = "connectors")]
-    pub(crate) fn chat_completion(
-        &self,
-        messages_json: &[u8],
-        model: Option<&str>,
-        temperature: Option<f64>,
-        max_tokens: Option<u32>,
-    ) -> Result<Vec<u8>, StorageError> {
-        let model = model.unwrap_or(&self.default_model);
-        let url = format!("{}/chat/completions", self.base_url);
-
-        // Parse messages from JSON bytes
-        let messages: serde_json::Value = serde_json::from_slice(messages_json)
-            .map_err(|e| StorageError::IOError(io::Error::other(format!("JSON parse: {e}"))))?;
-
-        let mut body = serde_json::json!({
-            "model": model,
-            "messages": messages,
-            "stream": false,
-        });
-        if let Some(t) = temperature {
-            body["temperature"] = serde_json::json!(t);
-        }
-        if let Some(mt) = max_tokens {
-            body["max_tokens"] = serde_json::json!(mt);
-        }
-
-        self.runtime.block_on(async {
-            let client = reqwest::Client::new();
-            let resp = client
-                .post(&url)
-                .header("Authorization", format!("Bearer {}", self.api_key))
-                .header("Content-Type", "application/json")
-                .body(body.to_string())
-                .send()
-                .await
-                .map_err(|e| StorageError::IOError(io::Error::other(format!("HTTP: {e}"))))?;
-
-            if !resp.status().is_success() {
-                let status = resp.status();
-                let body = resp
-                    .text()
-                    .await
-                    .unwrap_or_else(|_| "<no body>".to_string());
-                return Err(StorageError::IOError(io::Error::other(format!(
-                    "OpenAI API {status}: {body}"
-                ))));
-            }
-
-            resp.bytes()
-                .await
-                .map(|b| b.to_vec())
-                .map_err(|e| StorageError::IOError(io::Error::other(format!("read body: {e}"))))
-        })
-    }
-
-    /// Streaming chat completion — SSE, returns collected tokens as string.
-    ///
-    /// For full streaming (token-by-token), use the Python LLMStreamingService
-    /// which calls this backend's chat_completion_stream_raw() and pumps tokens
-    /// into a DT_STREAM.
-    ///
-    /// This convenience method collects all tokens and returns the full response.
-    #[cfg(feature = "connectors")]
-    pub(crate) fn chat_completion_collect(
-        &self,
-        messages_json: &[u8],
-        model: Option<&str>,
-        temperature: Option<f64>,
-        max_tokens: Option<u32>,
-    ) -> Result<String, StorageError> {
-        let model = model.unwrap_or(&self.default_model);
-        let url = format!("{}/chat/completions", self.base_url);
-
-        let messages: serde_json::Value = serde_json::from_slice(messages_json)
-            .map_err(|e| StorageError::IOError(io::Error::other(format!("JSON parse: {e}"))))?;
-
-        let mut body = serde_json::json!({
-            "model": model,
-            "messages": messages,
-            "stream": true,
-        });
-        if let Some(t) = temperature {
-            body["temperature"] = serde_json::json!(t);
-        }
-        if let Some(mt) = max_tokens {
-            body["max_tokens"] = serde_json::json!(mt);
-        }
-
-        self.runtime.block_on(async {
-            let client = reqwest::Client::new();
-            let resp = client
-                .post(&url)
-                .header("Authorization", format!("Bearer {}", self.api_key))
-                .header("Content-Type", "application/json")
-                .body(body.to_string())
-                .send()
-                .await
-                .map_err(|e| StorageError::IOError(io::Error::other(format!("HTTP: {e}"))))?;
-
-            if !resp.status().is_success() {
-                let status = resp.status();
-                let text = resp
-                    .text()
-                    .await
-                    .unwrap_or_else(|_| "<no body>".to_string());
-                return Err(StorageError::IOError(io::Error::other(format!(
-                    "OpenAI API {status}: {text}"
-                ))));
-            }
-
-            // Parse SSE stream and collect content tokens
-            let mut collected = String::new();
-            let body_text = resp
-                .text()
-                .await
-                .map_err(|e| StorageError::IOError(io::Error::other(format!("read: {e}"))))?;
-
-            for line in body_text.lines() {
-                if let Some(data) = line.strip_prefix("data: ") {
-                    if data == "[DONE]" {
-                        break;
-                    }
-                    if let Ok(chunk) = serde_json::from_str::<serde_json::Value>(data) {
-                        if let Some(content) = chunk
-                            .get("choices")
-                            .and_then(|c| c.get(0))
-                            .and_then(|c| c.get("delta"))
-                            .and_then(|d| d.get("content"))
-                            .and_then(|c| c.as_str())
-                        {
-                            collected.push_str(content);
-                        }
-                    }
-                }
-            }
-
-            Ok(collected)
-        })
+    /// Expose the CASEngine to the `PyKernel::cas_*` surface.
+    pub(crate) fn engine(&self) -> &CASEngine {
+        &self.engine
     }
 }
 
-// ── ObjectStore impl (in-memory CAS blob storage) ──────────────────────
+// ── ObjectStore impl — all storage goes through CASEngine ──────────────
 
 impl ObjectStore for OpenAIBackend {
     fn name(&self) -> &str {
         &self.backend_name
     }
 
+    #[allow(private_interfaces)]
+    fn as_cas(&self) -> Option<&CASEngine> {
+        Some(&self.engine)
+    }
+
+    fn as_llm_streaming(&self) -> Option<&dyn crate::openai_streaming::LlmStreamingBackend> {
+        Some(self)
+    }
+
     fn write_content(
         &self,
         content: &[u8],
-        content_id: &str,
+        _content_id: &str,
         _ctx: &OperationContext,
+        offset: u64,
     ) -> Result<WriteResult, StorageError> {
-        // Generate content_id via BLAKE3 hash (CAS addressing)
-        let hash = blake3::hash(content).to_hex().to_string();
-        let cid = if content_id.is_empty() {
-            hash.clone()
-        } else {
-            content_id.to_string()
-        };
-        let size = content.len() as u64;
-        self.blobs.insert(cid.clone(), content.to_vec());
-        self.write_counter.fetch_add(1, Ordering::Relaxed);
+        if offset != 0 {
+            return Err(StorageError::NotSupported(
+                "openai backend does not support offset writes",
+            ));
+        }
+        let hash = self
+            .engine
+            .write_content(content)
+            .map_err(StorageError::from)?;
         Ok(WriteResult {
-            content_id: cid.clone(),
-            version: hash,
-            size,
+            version: hash.clone(),
+            size: content.len() as u64,
+            content_id: hash,
         })
     }
 
@@ -240,21 +123,122 @@ impl ObjectStore for OpenAIBackend {
         _backend_path: &str,
         _ctx: &OperationContext,
     ) -> Result<Vec<u8>, StorageError> {
-        self.blobs
-            .get(content_id)
-            .map(|r| r.value().clone())
-            .ok_or_else(|| StorageError::NotFound(content_id.to_string()))
+        self.engine
+            .read_content(content_id)
+            .map_err(StorageError::from)
     }
 
     fn delete_content(&self, content_id: &str) -> Result<(), StorageError> {
-        self.blobs.remove(content_id);
-        Ok(())
+        if self.engine.is_chunked(content_id) {
+            self.engine
+                .delete_chunked(content_id)
+                .map_err(StorageError::from)
+        } else {
+            self.engine
+                .delete_content(content_id)
+                .map_err(StorageError::from)
+        }
     }
 
     fn get_content_size(&self, content_id: &str) -> Result<u64, StorageError> {
-        self.blobs
-            .get(content_id)
-            .map(|r| r.value().len() as u64)
-            .ok_or_else(|| StorageError::NotFound(content_id.to_string()))
+        self.engine.get_size(content_id).map_err(StorageError::from)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn test_ctx() -> OperationContext {
+        OperationContext::new("test", "root", false, None, false)
+    }
+
+    fn build(tmp: &TempDir) -> OpenAIBackend {
+        let rt = crate::peer_blob_client::build_kernel_runtime();
+        OpenAIBackend::new(
+            "openai_compatible",
+            "https://api.openai.com/v1",
+            "sk-test",
+            "gpt-4o",
+            tmp.path(),
+            rt,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn test_name() {
+        let tmp = TempDir::new().unwrap();
+        let b = build(&tmp);
+        assert_eq!(b.name(), "openai_compatible");
+    }
+
+    #[test]
+    fn test_write_and_read_content_roundtrip() {
+        let tmp = TempDir::new().unwrap();
+        let b = build(&tmp);
+        let ctx = test_ctx();
+        let payload = br#"hello llm backend"#;
+        let wr = b.write_content(payload, "", &ctx, 0).unwrap();
+        assert_eq!(wr.size, payload.len() as u64);
+        let back = b.read_content(&wr.content_id, "", &ctx).unwrap();
+        assert_eq!(back, payload);
+    }
+
+    #[test]
+    fn test_openai_backend_cas_ops_use_message_boundary() {
+        // Two conversations sharing the first two messages must dedup those
+        // chunks — validates that MessageBoundaryStrategy is wired.
+        let tmp = TempDir::new().unwrap();
+        let b = build(&tmp);
+        let ctx = test_ctx();
+
+        let conv_a = br#"[{"role":"user","content":"hi"},{"role":"assistant","content":"hello"},{"role":"user","content":"A"}]"#;
+        let conv_b = br#"[{"role":"user","content":"hi"},{"role":"assistant","content":"hello"},{"role":"user","content":"B"}]"#;
+
+        let wr_a = b.write_content(conv_a, "", &ctx, 0).unwrap();
+        let wr_b = b.write_content(conv_b, "", &ctx, 0).unwrap();
+        assert_ne!(wr_a.content_id, wr_b.content_id);
+
+        // Both must be chunked manifests (MessageBoundary accepts any valid
+        // role-carrying JSON array).
+        assert!(b.engine.is_chunked(&wr_a.content_id));
+        assert!(b.engine.is_chunked(&wr_b.content_id));
+
+        // Dedup check — the shared prefix chunks exist exactly once.
+        let manifest_a_bytes = b.engine.transport().read_blob(&wr_a.content_id).unwrap();
+        let manifest_a: serde_json::Value = serde_json::from_slice(&manifest_a_bytes).unwrap();
+        let manifest_b_bytes = b.engine.transport().read_blob(&wr_b.content_id).unwrap();
+        let manifest_b: serde_json::Value = serde_json::from_slice(&manifest_b_bytes).unwrap();
+
+        let chunks_a = manifest_a["chunks"].as_array().unwrap();
+        let chunks_b = manifest_b["chunks"].as_array().unwrap();
+        assert_eq!(chunks_a.len(), 3);
+        assert_eq!(chunks_b.len(), 3);
+        // First two chunks (shared prefix) match by hash.
+        assert_eq!(chunks_a[0]["chunk_hash"], chunks_b[0]["chunk_hash"]);
+        assert_eq!(chunks_a[1]["chunk_hash"], chunks_b[1]["chunk_hash"]);
+        // Third chunk (divergent last message) differs.
+        assert_ne!(chunks_a[2]["chunk_hash"], chunks_b[2]["chunk_hash"]);
+    }
+
+    #[test]
+    fn test_delete_chunked_content_sweeps_chunks() {
+        let tmp = TempDir::new().unwrap();
+        let b = build(&tmp);
+        let ctx = test_ctx();
+        let conv = br#"[{"role":"user","content":"hi"},{"role":"assistant","content":"hello"}]"#;
+        let wr = b.write_content(conv, "", &ctx, 0).unwrap();
+        assert!(b.engine.is_chunked(&wr.content_id));
+        b.delete_content(&wr.content_id).unwrap();
+        assert!(!b.engine.content_exists(&wr.content_id));
+    }
+
+    #[test]
+    fn test_as_cas_exposes_engine() {
+        let tmp = TempDir::new().unwrap();
+        let b = build(&tmp);
+        assert!(b.as_cas().is_some());
     }
 }

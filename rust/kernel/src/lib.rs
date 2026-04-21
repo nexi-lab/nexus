@@ -4,43 +4,69 @@
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+/// Canonical root zone identifier — re-exported from the ``contracts``
+/// crate (the Rust mirror of ``nexus.contracts.constants``) so kernel
+/// users can reach it via ``nexus_kernel::ROOT_ZONE_ID`` without pulling
+/// another workspace dep. Prefer this constant over hardcoded ``"root"``
+/// literals.
+pub use contracts::ROOT_ZONE_ID;
+
 mod agent_registry;
-mod backend;
+#[cfg(feature = "connectors")]
+mod anthropic_backend;
+#[cfg(feature = "connectors")]
+pub mod anthropic_streaming;
+pub mod backend;
 mod bitmap;
+mod blob_fetcher;
 mod bloom;
 mod cas_chunking;
 mod cas_engine;
+mod cas_remote;
 mod cas_transport;
 mod dcache;
 mod dispatch;
+mod dlc;
+mod federation_client;
 mod file_watch;
 #[cfg(feature = "connectors")]
 mod gcs_backend;
 #[cfg(feature = "connectors")]
 mod gdrive_backend;
-mod generated_pyo3;
 mod glob;
 #[cfg(feature = "connectors")]
 mod gmail_backend;
-mod grpc_backend;
 mod hash;
 mod hook_registry;
 mod io;
 mod kernel;
-mod lock;
-mod metastore;
+pub mod lock_manager;
+pub mod locks;
+pub mod metastore;
+// Mount table (kernel SSOT for mount entries — backend + per-mount
+// metastore + access flags). Mirrors Python `nexus.core.mount_table`.
+pub mod mount_table;
+// `generated_pyo3` kept public so other crates (e.g. `rust/raft`) can
+// reference `PyKernel` via cross-crate PyO3 borrows — needed for
+// `PyZoneHandle::attach_to_kernel_mount()` which wires a Raft-backed
+// `Metastore` into `Kernel::mount_metastores` without surfacing a
+// separate `KernelMetastore` Python class.
+pub mod generated_pyo3;
 #[cfg(feature = "connectors")]
 mod openai_backend;
 #[cfg(feature = "connectors")]
 mod openai_inference;
+#[cfg(feature = "connectors")]
+pub mod openai_streaming;
 mod path_utils;
+mod peer_blob_client;
 mod permission_hook;
 mod pipe;
 mod pipe_manager;
 mod prefix;
+mod raft_metastore;
 mod rebac;
 mod replication;
-mod router;
 #[cfg(feature = "connectors")]
 mod s3_backend;
 mod search;
@@ -52,12 +78,16 @@ mod shm_stream;
 mod simd;
 #[cfg(feature = "connectors")]
 mod slack_backend;
+#[cfg(unix)]
+mod stdio_pipe;
+mod stdio_stream;
 mod stream;
 mod stream_manager;
 mod stream_observer;
 mod trigram;
 mod volume_engine;
 mod volume_index;
+mod wal_stream;
 
 use pyo3::prelude::*;
 
@@ -137,13 +167,21 @@ fn nexus_kernel(m: &Bound<PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(trigram::invalidate_trigram_cache, m)?)?;
     // Classes
     m.add_class::<bloom::BloomFilter>()?;
-    m.add_class::<lock::VFSLockManager>()?;
+    // VFSLockManager deleted — I/O lock is now internal to LockManager,
+    // accessed through Kernel syscalls (sys_read/sys_write/sys_copy).
     // MemoryPipeBackend/MemoryStreamBackend are kernel-internal only (no #[pyclass]).
     // Python accesses IPC buffers through kernel.create_pipe/create_stream.
     #[cfg(unix)]
     m.add_class::<shm_pipe::SharedMemoryPipeBackend>()?;
     #[cfg(unix)]
     m.add_class::<shm_stream::SharedMemoryStreamBackend>()?;
+    // R20.18.6: `WalStreamBackend` pyclass removed. Users reach the
+    // raft-backed stream through `sys_setattr(DT_STREAM, io_profile="wal")`;
+    // `WalStreamCore` now impls `StreamBackend` and registers with
+    // `stream_manager` alongside the other backends.
+    // Subprocess-stdio accumulation stream (Unix raw-fd pump).
+    #[cfg(unix)]
+    m.add_class::<stdio_stream::StdioStreamBackend>()?;
     m.add_class::<semaphore::VFSSemaphore>()?;
     // CAS Volume Engine (Issue #3403)
     m.add_class::<volume_engine::VolumeEngine>()?;
@@ -166,5 +204,13 @@ fn nexus_kernel(m: &Bound<PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(path_utils::unscope_internal_path, m)?)?;
     m.add_function(wrap_pyfunction!(path_utils::canonicalize_path, m)?)?;
     m.add_function(wrap_pyfunction!(path_utils::extract_zone_id, m)?)?;
+
+    // Federation peer gRPC client (R16.5b).
+    m.add_class::<federation_client::PyFederationClient>()?;
+
+    // Register raft's PyO3 classes (ZoneManager, ZoneHandle, …) so
+    // Python sees them under ``nexus_kernel`` alongside ``Kernel``.
+    nexus_raft::pyo3_bindings::register_python_classes(m)?;
+
     Ok(())
 }

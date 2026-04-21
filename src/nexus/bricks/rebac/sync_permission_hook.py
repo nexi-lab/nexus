@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.operation_result import OperationWarning
 
 if TYPE_CHECKING:
@@ -94,7 +95,7 @@ class SyncPermissionWriteHook:
     # ── Hook callbacks ────────────────────────────────────────────────
 
     def on_post_write(self, ctx: WriteHookContext) -> None:
-        zone = ctx.zone_id or "root"
+        zone = ctx.zone_id or ROOT_ZONE_ID
         self._do_hierarchy(ctx.path, zone, ctx.warnings)
 
         if ctx.is_new_file and ctx.context:
@@ -103,7 +104,7 @@ class SyncPermissionWriteHook:
                 self._do_owner_grant(user, ctx.path, zone, ctx.warnings)
 
     def on_post_mkdir(self, ctx: MkdirHookContext) -> None:
-        zone = ctx.zone_id or "root"
+        zone = ctx.zone_id or ROOT_ZONE_ID
         self._do_hierarchy(ctx.path, zone, ctx.warnings)
 
         if ctx.context:
@@ -112,7 +113,7 @@ class SyncPermissionWriteHook:
                 self._do_owner_grant(user, ctx.path, zone, ctx.warnings)
 
     def on_post_write_batch(self, ctx: WriteBatchHookContext) -> None:
-        zone = ctx.zone_id or "root"
+        zone = ctx.zone_id or ROOT_ZONE_ID
 
         # Batch hierarchy tuples
         if self._hierarchy is not None:

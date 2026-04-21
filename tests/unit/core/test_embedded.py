@@ -18,6 +18,18 @@ from nexus.storage.record_store import SQLAlchemyRecordStore
 # Mount points auto-created by factory boot (root + IPC /agents).
 # These are system entries, not user files.
 _SYSTEM_PATHS = frozenset({"/", "/agents", "/nexus/pipes/audit-events"})
+# Anything under these prefixes is also system-internal (e.g. the IPC
+# mount exposes its LocalConnectorBackend's zone-scoped subdirectory
+# at /agents/<zone>). Tests only care about user files so we strip
+# everything under these trees.
+_SYSTEM_PATH_PREFIXES: tuple[str, ...] = ("/agents/", "/nexus/")
+
+
+def _is_user_file(path: str) -> bool:
+    """True when *path* is not a system mount entry or child thereof."""
+    if path in _SYSTEM_PATHS:
+        return False
+    return not path.startswith(_SYSTEM_PATH_PREFIXES)
 
 
 @pytest.fixture
@@ -213,7 +225,7 @@ async def test_list_files(embedded: NexusFS) -> None:
     embedded.write("/dir/subdir/file3.txt", b"Content 3")
 
     # List all files (filter out system mount-point entries)
-    files = [f for f in embedded.sys_readdir() if f not in _SYSTEM_PATHS]
+    files = [f for f in embedded.sys_readdir() if _is_user_file(f)]
 
     assert "/file1.txt" in files
     assert "/dir/file2.txt" in files
@@ -243,7 +255,7 @@ async def test_list_with_prefix(embedded: NexusFS) -> None:
 @pytest.mark.asyncio
 async def test_list_empty(embedded: NexusFS) -> None:
     """Test listing when no user files exist."""
-    files = [f for f in embedded.sys_readdir() if f not in _SYSTEM_PATHS]
+    files = [f for f in embedded.sys_readdir() if _is_user_file(f)]
     assert len(files) == 0
 
 
@@ -497,7 +509,7 @@ async def test_overwrite_preserves_path(embedded: NexusFS) -> None:
     assert embedded.sys_read(path) == b"Content 2"
 
     # Should be accessible in listing
-    files = [f for f in embedded.sys_readdir() if f not in _SYSTEM_PATHS]
+    files = [f for f in embedded.sys_readdir() if _is_user_file(f)]
     assert path in files, f"Expected {path} in {files}"
 
 
@@ -520,11 +532,11 @@ async def test_list_recursive(embedded: NexusFS) -> None:
 
     # Non-recursive list of root — only direct-child *files* are returned
     # (virtual directories like /dir1, /dir2 are NOT materialised in the metastore)
-    files = [f for f in embedded.sys_readdir("/", recursive=False) if f not in _SYSTEM_PATHS]
+    files = [f for f in embedded.sys_readdir("/", recursive=False) if _is_user_file(f)]
     assert "/file1.txt" in files
 
     # Recursive list of root — all files regardless of depth
-    files = [f for f in embedded.sys_readdir("/", recursive=True) if f not in _SYSTEM_PATHS]
+    files = [f for f in embedded.sys_readdir("/", recursive=True) if _is_user_file(f)]
     assert len(files) >= 4
     assert "/file1.txt" in files
     assert "/dir1/file2.txt" in files
@@ -586,18 +598,18 @@ async def test_glob_simple_pattern(embedded: NexusFS) -> None:
     embedded.write("/data.csv", b"Content")
 
     # Glob for .txt files
-    files = embedded.service("search").glob("*.txt")
+    files = [f for f in embedded.service("search").glob("*.txt") if _is_user_file(f)]
     assert len(files) == 2
     assert "/test1.txt" in files
     assert "/test2.txt" in files
 
     # Glob for .py files
-    files = embedded.service("search").glob("*.py")
+    files = [f for f in embedded.service("search").glob("*.py") if _is_user_file(f)]
     assert len(files) == 1
     assert "/file.py" in files
 
     # Glob for test* files
-    files = embedded.service("search").glob("test*")
+    files = [f for f in embedded.service("search").glob("test*") if _is_user_file(f)]
     assert len(files) == 2
     assert "/test1.txt" in files
     assert "/test2.txt" in files
@@ -613,14 +625,14 @@ async def test_glob_recursive_pattern(embedded: NexusFS) -> None:
     embedded.write("/README.md", b"Content")
 
     # Find all Python files recursively
-    files = embedded.service("search").glob("**/*.py")
+    files = [f for f in embedded.service("search").glob("**/*.py") if _is_user_file(f)]
     assert len(files) == 3
     assert "/src/main.py" in files
     assert "/src/utils/helper.py" in files
     assert "/tests/test_main.py" in files
 
     # Find all files recursively (filter out system entries)
-    files = [f for f in embedded.service("search").glob("**/*") if f not in _SYSTEM_PATHS]
+    files = [f for f in embedded.service("search").glob("**/*") if _is_user_file(f)]
     assert len(files) == 4
 
 
@@ -765,5 +777,5 @@ async def test_list_returns_list_type(embedded: NexusFS) -> None:
 
     files = embedded.sys_readdir()
     assert isinstance(files, list)
-    user_files = [f for f in files if f not in _SYSTEM_PATHS]
+    user_files = [f for f in files if _is_user_file(f)]
     assert len(user_files) == 2

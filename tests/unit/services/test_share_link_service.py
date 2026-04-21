@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from nexus.bricks.share_link.share_link_service import ShareLinkService
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import (
     AccessDeniedError,
     ServiceUnavailableError,
@@ -178,7 +179,7 @@ class TestContextExtraction:
     def test_defaults_for_none_context(self):
         """None context returns defaults."""
         zone_id, user_id, is_admin = ShareLinkService._extract_context_info(None)
-        assert zone_id == "root"
+        assert zone_id == ROOT_ZONE_ID
         assert user_id == "anonymous"
         assert is_admin is False
 

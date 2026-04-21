@@ -638,10 +638,7 @@ def rpc_call(
     """
     import asyncio
 
-    method_aliases = {
-        "federation_list_zones": "federation_zones",
-    }
-    method_name = method_aliases.get(rpc_method, rpc_method)
+    method_name = rpc_method
 
     async def _call() -> Any:
         nx = await get_filesystem(remote_url, remote_api_key)

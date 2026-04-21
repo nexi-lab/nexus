@@ -10,6 +10,7 @@ from unittest.mock import MagicMock
 import pytest
 from pydantic import ValidationError
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import (
     InvalidPathError,
     NexusFileNotFoundError,
@@ -64,7 +65,7 @@ def mock_context() -> MagicMock:
     """Create a mock OperationContext."""
     ctx = MagicMock()
     ctx.user_id = "test-user"
-    ctx.zone_id = "root"
+    ctx.zone_id = ROOT_ZONE_ID
     ctx.groups = []
     ctx.is_admin = False
     ctx.is_system = False

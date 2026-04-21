@@ -33,6 +33,7 @@ from nexus.bricks.search.index_scope import (
     ZoneNotFoundError,
     canonical_directory_path,
 )
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
     from nexus.bricks.search.daemon import SearchDaemon
@@ -450,7 +451,7 @@ async def backfill_zone_from_chunks(
         content = "\n".join(p for p in parts if p)
         if not content.strip():
             continue
-        doc_id = f"{zone_id}:{vpath}" if zone_id != "root" else vpath
+        doc_id = f"{zone_id}:{vpath}" if zone_id != ROOT_ZONE_ID else vpath
         docs.append(
             {
                 "id": doc_id,

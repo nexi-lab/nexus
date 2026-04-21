@@ -7,6 +7,7 @@ pytest.importorskip("hypothesis")
 from hypothesis import assume, given, settings
 from hypothesis import strategies as st
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.core.path_utils import path_matches_pattern
 from nexus.services.event_bus.types import FileEvent, FileEventType
 
@@ -230,7 +231,7 @@ class TestEventMatchingProperties:
     @settings(max_examples=50)
     def test_event_matches_own_path(self, path):
         """Property: Event matches pattern equal to its own path."""
-        event = FileEvent(type=FileEventType.FILE_WRITE, path=path, zone_id="root")
+        event = FileEvent(type=FileEventType.FILE_WRITE, path=path, zone_id=ROOT_ZONE_ID)
         assert event.matches_path_pattern(path) is True
 
     @given(
@@ -245,7 +246,7 @@ class TestEventMatchingProperties:
             type=FileEventType.FILE_RENAME,
             path=event_path,
             old_path=old_path,
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
 
         result = event.matches_path_pattern(pattern)

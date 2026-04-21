@@ -20,6 +20,8 @@ import platform
 import subprocess
 from collections.abc import Awaitable, Callable
 
+from nexus.contracts.constants import ROOT_ZONE_ID
+
 logger = logging.getLogger(__name__)
 
 # Type alias for injected kernel callable
@@ -36,7 +38,7 @@ _PROMPT_FRAGMENTS = (
 async def assemble_system_prompt(
     *,
     sys_read: SysReadFn,
-    zone_id: str = "root",
+    zone_id: str = ROOT_ZONE_ID,
     agent_id: str = "",
     cwd: str = "",
     model: str | None = None,

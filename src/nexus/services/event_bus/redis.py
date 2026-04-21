@@ -41,7 +41,7 @@ class RedisEventBus(EventBusBase):
         >>> event = FileEvent(
         ...     type=FileEventType.FILE_WRITE,
         ...     path="/inbox/test.txt",
-        ...     zone_id="root",
+        ...     zone_id=ROOT_ZONE_ID,
         ... )
         >>> await bus.publish(event)
     """

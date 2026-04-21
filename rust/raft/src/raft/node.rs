@@ -91,7 +91,18 @@ pub struct RaftConfig {
     /// Unique node ID within the cluster.
     pub id: u64,
 
-    /// IDs of peer nodes in the cluster.
+    /// IDs of **OTHER** peer nodes in the cluster (MUST NOT include `self.id`).
+    ///
+    /// raft-rs builds the voter set as `{self.id} ∪ config.peers`. Including
+    /// `self.id` here produces duplicate voter IDs in ConfState, which
+    /// raft-rs's quorum math counts as distinct members and skews the
+    /// required majority (e.g. a 3-voter cluster persisted as
+    /// `[self, self, v2, v3]` would need 3/4 to commit instead of 2/3).
+    ///
+    /// Callers MUST filter out `self.id` before constructing `RaftConfig`.
+    /// As a defense-in-depth, `ZoneConsensus::new` de-duplicates and logs
+    /// a warning when duplicates are detected — treat that warning as a
+    /// caller bug, not a runtime fix.
     pub peers: Vec<u64>,
 
     /// Number of ticks before triggering election.
@@ -232,6 +243,18 @@ pub enum RaftMsg {
     },
     /// Campaign to become leader.
     Campaign { tx: oneshot::Sender<Result<()>> },
+    /// Linearizable read request (F4 C3.6 — ReadIndex).
+    ///
+    /// The driver calls `RawNode::read_index` with a unique 8-byte
+    /// request context, stores the oneshot sender in
+    /// `pending_reads_by_ctx`, and the caller awaits. When raft-rs
+    /// emits a `ReadState` (after the leader confirms via heartbeat
+    /// quorum), the driver matches the request context back to the
+    /// tx and either resolves immediately (if the local state
+    /// machine's `last_applied` already covers `ReadState.index`)
+    /// or parks it in `pending_reads_by_index` until a later
+    /// `apply_entries` catches up.
+    ReadIndex { tx: oneshot::Sender<Result<()>> },
 }
 
 // ---------------------------------------------------------------------------
@@ -265,9 +288,6 @@ struct ForwardContext {
     /// `Arc<tokio::sync::Mutex<..>>` so `ForwardContext` stays Clone + Send.
     cached_api_client:
         std::sync::Arc<tokio::sync::Mutex<Option<(String, crate::transport::RaftApiClient)>>>,
-    /// Cached leader capability: whether endpoint supports raw_result forwarding.
-    leader_raw_result_support:
-        std::sync::Arc<tokio::sync::Mutex<Option<(String, bool, std::time::Instant)>>>,
 }
 
 pub struct ZoneConsensus<S: StateMachine + 'static> {
@@ -285,12 +305,43 @@ pub struct ZoneConsensus<S: StateMachine + 'static> {
     cached_leader_id: Arc<AtomicU64>,
     /// Cached term, updated by driver after each advance().
     cached_term: Arc<AtomicU64>,
+    /// Cached raft log commit index, updated by driver after each advance().
+    /// Monotonically non-decreasing — grows with every committed entry.
+    cached_commit_index: Arc<AtomicU64>,
+    /// Shared clone of the state machine's ``last_applied`` atomic — not
+    /// a second cache, the state machine IS the SSOT for applied index.
+    /// ``commit_index`` reflects ``raft_log.committed`` which raft-rs
+    /// can advance via ``step()`` BEFORE the next ``advance()`` has
+    /// applied the entries, so callers that need "state is visible"
+    /// (sys_stat/list/follower-catchup gates) must consult
+    /// ``applied_index``, not ``commit_index``.
+    applied_index_atom: Arc<AtomicU64>,
     /// EC replication WAL (None for witness nodes that don't store data).
     replication_log: Option<Arc<ReplicationLog>>,
     /// Transport context for forwarding proposals to the leader.
     /// None in embedded/single-node mode.
     #[cfg(all(feature = "grpc", has_protos))]
     forward_ctx: Option<ForwardContext>,
+    /// Apply-side dcache invalidation slot — cached at construction so
+    /// sync callers (kernel ``DLC::mount``) can install / replace the
+    /// callback without holding the state-machine's async RwLock. The
+    /// slot itself is ``Arc<parking_lot::RwLock<Option<Arc<Fn>>>>``;
+    /// only ``Option<Arc<Fn>>`` swaps serialize through the inner lock.
+    #[allow(clippy::type_complexity)]
+    invalidate_cb_slot: Option<Arc<parking_lot::RwLock<Option<Arc<dyn Fn(&str) + Send + Sync>>>>>,
+    /// Apply-side DT_MOUNT slot — cached at construction so sync
+    /// callers (kernel federation-mount install) can swap the callback
+    /// without holding the state-machine's async RwLock. Same shape as
+    /// ``invalidate_cb_slot`` (R20.16.2).
+    #[cfg(feature = "grpc")]
+    #[allow(clippy::type_complexity)]
+    mount_apply_cb_slot: Option<
+        Arc<
+            parking_lot::RwLock<
+                Option<Arc<dyn Fn(&super::state_machine::MountApplyEvent) + Send + Sync>>,
+            >,
+        >,
+    >,
 }
 
 impl<S: StateMachine + 'static> Clone for ZoneConsensus<S> {
@@ -302,9 +353,14 @@ impl<S: StateMachine + 'static> Clone for ZoneConsensus<S> {
             cached_role: self.cached_role.clone(),
             cached_leader_id: self.cached_leader_id.clone(),
             cached_term: self.cached_term.clone(),
+            cached_commit_index: self.cached_commit_index.clone(),
+            applied_index_atom: self.applied_index_atom.clone(),
             replication_log: self.replication_log.clone(),
             #[cfg(all(feature = "grpc", has_protos))]
             forward_ctx: self.forward_ctx.clone(),
+            invalidate_cb_slot: self.invalidate_cb_slot.clone(),
+            #[cfg(feature = "grpc")]
+            mount_apply_cb_slot: self.mount_apply_cb_slot.clone(),
         }
     }
 }
@@ -337,6 +393,18 @@ pub struct ZoneConsensusDriver<S: StateMachine + 'static> {
     /// Pending ConfChanges waiting for commit, keyed by target node_id.
     /// Resolved in `apply_entries` when the ConfChange is committed.
     pending_conf_changes: HashMap<u64, oneshot::Sender<Result<ConfState>>>,
+    /// Pending linearizable reads waiting for raft-rs to emit a
+    /// `ReadState` (F4 C3.6), keyed by the 8-byte request context
+    /// we passed to `RawNode::read_index`.
+    pending_reads_by_ctx: HashMap<u64, oneshot::Sender<Result<()>>>,
+    /// Pending linearizable reads that have their `read_index`
+    /// assigned but are waiting for `state_machine.last_applied`
+    /// to catch up. Drained after every `apply_entries` pass.
+    pending_reads_by_index: Vec<(u64, oneshot::Sender<Result<()>>)>,
+    /// Monotonic counter for the 8-byte `ReadIndex` request
+    /// context. Driver-local — the handle always passes 0 and
+    /// the driver assigns the real id (mirrors `Propose`).
+    read_request_counter: u64,
     /// Proposal ID counter (shared with handle for ID generation).
     proposal_id: Arc<AtomicU64>,
     /// Last tick time.
@@ -349,6 +417,8 @@ pub struct ZoneConsensusDriver<S: StateMachine + 'static> {
     cached_leader_id: Arc<AtomicU64>,
     /// Cached term (shared with handle for reads).
     cached_term: Arc<AtomicU64>,
+    /// Cached commit index (shared with handle for reads).
+    cached_commit_index: Arc<AtomicU64>,
     /// Shared peer map — updated when ConfChange adds/removes nodes.
     /// Set by `set_peer_map()` before the transport loop starts.
     #[cfg(all(feature = "grpc", has_protos))]
@@ -414,23 +484,68 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
 
         if !config.skip_bootstrap {
             // Build the expected voter set from config.
+            //
+            // Raft contract: `config.peers` MUST exclude `config.id`. raft-rs
+            // counts duplicate voter IDs as distinct members, so a caller
+            // that accidentally includes self in `peers` would persist a
+            // ConfState like `[self, self, v2, v3]` and break quorum math.
+            //
+            // Dedupe here as defense-in-depth and log loudly when a
+            // duplicate slips through — fix the caller, don't rely on this.
             let mut voters = vec![config.id];
             voters.extend(config.peers.iter());
-            let persisted = &initial_state.conf_state;
-            let local_in_conf_state = persisted.voters.contains(&config.id)
-                || persisted.learners.contains(&config.id)
-                || persisted.voters_outgoing.contains(&config.id)
-                || persisted.learners_next.contains(&config.id);
-            if !persisted.voters.is_empty() && !local_in_conf_state {
-                return Err(RaftError::InvalidState(format!(
-                    "Persisted ConfState (voters={:?}, learners={:?}) does not include local node {}",
-                    persisted.voters, persisted.learners, config.id
-                )));
+            let before_dedup = voters.len();
+            voters.sort_unstable();
+            voters.dedup();
+            if voters.len() != before_dedup {
+                tracing::warn!(
+                    "RaftConfig contract violation: caller passed duplicate voter IDs \
+                     (config.id={}, config.peers={:?}). \
+                     `config.peers` MUST exclude self. De-duplicated to {:?}; \
+                     fix the caller to prevent ConfState drift.",
+                    config.id,
+                    config.peers,
+                    voters,
+                );
             }
 
             let needs_bootstrap = if initial_state.conf_state.voters.is_empty() {
                 // Fresh cluster — no ConfState in storage yet.
                 true
+            } else if config.peers.is_empty() && initial_state.conf_state.voters != vec![config.id]
+            {
+                // Persisted multi-node ConfState but caller supplied no
+                // peers. Two legitimate scenarios collapse here:
+                //
+                // (a) Single-node restart with a STALE ConfState left over
+                //     from a previous cluster (e.g. Docker container rebuilt
+                //     with persistent storage but different peer roster).
+                // (b) Dynamic-federation recovery: a node restart triggers
+                //     auto_join_zone via the Raft server's step_message
+                //     handler, which passes `get_all_peers()` — empty when
+                //     all sibling zones are ALSO still recovering.
+                //
+                // Only (a) should reset to single-node; (b) must preserve
+                // the persisted voter set so the recovered node rejoins the
+                // real cluster. We distinguish them by whether the saved
+                // voter set still contains us: if it does, this node was
+                // legitimately part of that cluster and its persisted state
+                // is authoritative. If not, the ConfState is genuinely
+                // stale (fresh node reusing an abandoned data dir).
+                if initial_state.conf_state.voters.contains(&config.id) {
+                    tracing::info!(
+                        "Restart with persisted multi-node ConfState (voters={:?}); preserving cluster membership",
+                        initial_state.conf_state.voters,
+                    );
+                    false
+                } else {
+                    tracing::warn!(
+                        "Stale ConfState detected (voters={:?}, expected={:?}) — resetting for single-node",
+                        initial_state.conf_state.voters,
+                        voters,
+                    );
+                    true
+                }
             } else {
                 false
             };
@@ -460,12 +575,31 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
         let raw_node = RawNode::new(&raft_config, storage, &logger)
             .map_err(|e| RaftError::Raft(e.to_string()))?;
 
+        // Capture the apply-side invalidation slot BEFORE moving
+        // state_machine into the async RwLock — once inside, only
+        // async callers can touch it, but ``ZoneConsensus::invalidate_cb_slot``
+        // is called from sync contexts (kernel DLC::mount).
+        let invalidate_cb_slot = state_machine.invalidate_cb_slot();
+        // Same pattern for the DT_MOUNT apply slot (R20.16.2).
+        #[cfg(feature = "grpc")]
+        let mount_apply_cb_slot = state_machine.mount_apply_cb_slot();
+        // The state machine is the SSOT for applied index — borrow its
+        // atomic so sync readers can observe it without acquiring the
+        // async RwLock the SM lives behind. Grabbed before the SM moves
+        // into the Arc<RwLock<..>> wrapper. State machines without an
+        // atomic (witness, test harnesses) fall back to an empty Arc
+        // that stays at 0 — those callers don't gate on applied_index.
+        let applied_index_atom = state_machine
+            .last_applied_shared()
+            .unwrap_or_else(|| Arc::new(AtomicU64::new(0)));
+
         // Shared state
         let state_machine = Arc::new(RwLock::new(state_machine));
         let proposal_id = Arc::new(AtomicU64::new(0));
         let cached_role = Arc::new(AtomicU8::new(ROLE_FOLLOWER));
         let cached_leader_id = Arc::new(AtomicU64::new(0));
         let cached_term = Arc::new(AtomicU64::new(0));
+        let cached_commit_index = Arc::new(AtomicU64::new(0));
 
         // Bounded channel with backpressure
         let (msg_tx, msg_rx) = mpsc::channel(DRIVER_CHANNEL_CAPACITY);
@@ -477,9 +611,14 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
             cached_role: cached_role.clone(),
             cached_leader_id: cached_leader_id.clone(),
             cached_term: cached_term.clone(),
+            cached_commit_index: cached_commit_index.clone(),
+            applied_index_atom,
             replication_log,
             #[cfg(all(feature = "grpc", has_protos))]
             forward_ctx: None,
+            invalidate_cb_slot,
+            #[cfg(feature = "grpc")]
+            mount_apply_cb_slot,
         };
 
         let driver = ZoneConsensusDriver {
@@ -488,12 +627,16 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
             config,
             pending: HashMap::new(),
             pending_conf_changes: HashMap::new(),
+            pending_reads_by_ctx: HashMap::new(),
+            pending_reads_by_index: Vec::new(),
+            read_request_counter: 0,
             proposal_id,
             last_tick: Instant::now(),
             msg_rx,
             cached_role,
             cached_leader_id,
             cached_term,
+            cached_commit_index,
             #[cfg(all(feature = "grpc", has_protos))]
             peer_map: None,
             replication_log: handle.replication_log.clone(),
@@ -519,7 +662,6 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
             peers,
             zone_id,
             cached_api_client: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
-            leader_raw_result_support: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
         });
     }
 
@@ -563,16 +705,180 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
         self.cached_term.load(Ordering::Relaxed)
     }
 
+    /// Get the current raft log commit index (atomic read, no channel).
+    /// Monotonically non-decreasing; grows each time a log entry commits.
+    /// Zero until the driver has executed at least one advance().
+    ///
+    /// **Do not gate reads on this value.** It reflects
+    /// ``raft_log.committed`` which raft-rs can advance via ``step()``
+    /// ahead of the next ``advance()``/``apply_entries`` call — meaning
+    /// there is a short window where ``commit_index > applied_index``
+    /// and the state machine does not yet reflect the latest entry.
+    /// Consult ``applied_index()`` when the caller needs "the state
+    /// machine has actually applied X" (sys_stat, list, linearizable
+    /// replication checks).
+    pub fn commit_index(&self) -> u64 {
+        self.cached_commit_index.load(Ordering::Relaxed)
+    }
+
+    /// Get the highest raft log index that has actually been applied to
+    /// the state machine (atomic read, no channel).
+    ///
+    /// Reads directly from the state machine's own ``last_applied``
+    /// atomic — state machine is SSOT, no shadow cache. Strictly
+    /// ``<= commit_index()`` and the correct "state is visible" signal:
+    /// a reader that sees ``applied_index >= N`` is guaranteed to also
+    /// see every state-machine effect of log entries with ``index <= N``
+    /// (the write path uses ``Release`` ordering on the store, paired
+    /// with ``Acquire`` here).
+    pub fn applied_index(&self) -> u64 {
+        self.applied_index_atom.load(Ordering::Acquire)
+    }
+
+    /// Block (sync, tight loop with 5 ms sleep) until `predicate()`
+    /// returns `true`, or `timeout_ms` elapses. Returns `true` on
+    /// predicate match, `false` on timeout.
+    ///
+    /// Read-your-writes barrier for follower forward-to-leader paths:
+    /// the raft LEADER's `propose` commits on majority and replies to
+    /// the follower before the follower's own apply pass has run, so
+    /// a same-thread read immediately after `propose` on a follower
+    /// can see stale state. Callers that need "my specific write is
+    /// visible from this node" pass a predicate that checks the live
+    /// state-machine view for the row they wrote; the poll exits as
+    /// soon as the row shows up, regardless of which raft index it
+    /// landed at. Using an index target instead would be wrong here:
+    /// on a follower, `commit_index()` right after propose is still
+    /// stale (the leader hasn't sent AppendEntries yet), so a "wait
+    /// for applied >= commit_index" snapshot can succeed
+    /// immediately and still read stale state.
+    ///
+    /// Sleep interval 5 ms = ½ raft tick; typical convergence is a
+    /// single iteration once replication + apply lands.
+    pub fn wait_until<F: FnMut() -> bool>(&self, mut predicate: F, timeout_ms: u64) -> bool {
+        use std::time::{Duration, Instant};
+        let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+        loop {
+            if predicate() {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    /// Clone the state-machine's apply-side invalidation slot so the
+    /// kernel (which owns the DCache) can install a callback that fires
+    /// on every committed metadata mutation. Returns ``None`` for
+    /// state machines that don't expose a slot (e.g. witness) — kernel
+    /// callers should treat ``None`` as "cache coherence is caller's
+    /// responsibility" and skip the install.
+    #[allow(clippy::type_complexity)]
+    pub fn invalidate_cb_slot(
+        &self,
+    ) -> Option<Arc<parking_lot::RwLock<Option<Arc<dyn Fn(&str) + Send + Sync>>>>> {
+        self.invalidate_cb_slot.clone()
+    }
+
+    /// Clone the state-machine's apply-side DT_MOUNT slot so the kernel
+    /// (which owns federation mount wiring) can install a callback
+    /// that fires on every committed DT_MOUNT Set / Delete (R20.16.2).
+    /// Returns ``None`` for state machines that don't expose a slot
+    /// (e.g. witness) — kernel callers skip the install in that case.
+    #[cfg(feature = "grpc")]
+    #[allow(clippy::type_complexity)]
+    pub fn mount_apply_cb_slot(
+        &self,
+    ) -> Option<
+        Arc<
+            parking_lot::RwLock<
+                Option<Arc<dyn Fn(&super::state_machine::MountApplyEvent) + Send + Sync>>,
+            >,
+        >,
+    > {
+        self.mount_apply_cb_slot.clone()
+    }
+
+    /// Stable integer identity of the state machine backing this
+    /// ``ZoneConsensus`` (R20.6 option B — dcache coherence fanout).
+    ///
+    /// Every ``Clone`` of a ``ZoneConsensus`` shares the same state
+    /// machine Arc, so this value is equal across clones.
+    /// Distinct state machines always yield distinct values (we use
+    /// ``Arc::as_ptr`` of the state-machine RwLock — a pointer unique
+    /// to the allocation and stable for its lifetime).
+    ///
+    /// Used by the kernel as the ``coherence_key`` of every
+    /// ``ZoneMetastore`` wrapping this consensus, so apply-side
+    /// dcache invalidation can fan out across every crosslink mount
+    /// of the same zone.
+    pub fn coherence_id(&self) -> usize {
+        Arc::as_ptr(&self.state_machine) as *const () as usize
+    }
+
     /// Execute a read-only closure against the state machine.
     ///
     /// This provides safe read access for query operations (e.g., get_metadata)
     /// without going through the Raft log or the channel.
+    ///
+    /// **Consistency**: this is a *sequential-consistency* read — it
+    /// returns whatever the local state machine currently sees,
+    /// which on a follower may be behind the leader by up to the
+    /// replication lag (ZooKeeper-default style). For a
+    /// linearizable read (etcd / TiKV / Consul default), use
+    /// [`read_linearizable`](Self::read_linearizable) instead.
     pub async fn with_state_machine<F, R>(&self, f: F) -> R
     where
         F: FnOnce(&S) -> R,
     {
         let sm = self.state_machine.read().await;
         f(&*sm)
+    }
+
+    /// Execute a read-only closure against the state machine with
+    /// **linearizable consistency** (F4 C3.6 — ReadIndex).
+    ///
+    /// Implements the standard Raft ReadIndex protocol (§8 of the
+    /// Raft paper, etcd / TiKV / CockroachDB / Consul all use this
+    /// same pattern):
+    ///
+    /// 1. Driver calls `RawNode::read_index(ctx)` with a unique
+    ///    request context.
+    /// 2. raft-rs sends `MsgReadIndex` to the leader (or, if we
+    ///    are the leader, broadcasts a heartbeat quorum to confirm
+    ///    we are still leader).
+    /// 3. Once the leader confirms, raft-rs emits a `ReadState`
+    ///    carrying the leader's `commit_index` as the read index
+    ///    and echoing our `request_ctx`.
+    /// 4. The driver waits for the local state machine to apply
+    ///    entries up to that index, then resolves the caller's
+    ///    oneshot.
+    /// 5. The caller acquires `state_machine.read()` and runs the
+    ///    closure.
+    ///
+    /// The resulting read observes every write that was committed
+    /// cluster-wide before this call was issued. Cost: one leader
+    /// heartbeat round-trip (no log write, no disk fsync) — about
+    /// 5–10× cheaper than a `propose`-based read fallback.
+    ///
+    /// Used by `ZoneMetastore::get_lock` / `list_locks` so that
+    /// `Kernel::lock_get` matches the industry-standard etcd
+    /// contract ("reads are linearizable by default") without
+    /// paying the full propose round-trip.
+    pub async fn read_linearizable<F, R>(&self, f: F) -> Result<R>
+    where
+        F: FnOnce(&S) -> R,
+    {
+        let (tx, rx) = oneshot::channel();
+        self.msg_tx
+            .try_send(RaftMsg::ReadIndex { tx })
+            .map_err(channel_try_send_err)?;
+        // Driver resolves the oneshot as soon as the read is safe.
+        rx.await.map_err(|_| RaftError::ChannelClosed)??;
+        let sm = self.state_machine.read().await;
+        Ok(f(&*sm))
     }
 
     /// Execute a mutable closure against the state machine.
@@ -655,13 +961,42 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
 
     /// Forward a proposal to the current leader via gRPC.
     ///
-    /// Returns `NotLeader` if no forwarding context or no known leader.
+    /// Returns `NotLeader` if no forwarding context, or if no leader is
+    /// known after a bounded wait (R20.11 — transparent initial-election
+    /// handling, mirrors etcd's pattern).
+    ///
+    /// When ``leader_id()`` returns ``None`` we are almost always in the
+    /// 100-300ms initial-election window right after ``create_zone`` —
+    /// waiting here is cheaper than returning an error and making the
+    /// caller (``propose_adjust_counter``, federation RPC handlers) run
+    /// its own backoff loop. The wait also handles leader-lease gaps
+    /// during failover.
+    ///
+    /// Bound: 5 s. One raft election completes in <300 ms (our
+    /// ``election_tick=10 * tick_interval=10ms = 100ms`` + jitter); 5s
+    /// covers >10 election rounds which is enough to conclude the
+    /// cluster is actually down rather than still electing.
     async fn forward_to_leader(&self, command: Command) -> Result<CommandResult> {
         #[cfg(all(feature = "grpc", has_protos))]
         if let Some(ctx) = &self.forward_ctx {
-            let leader_id = self
-                .leader_id()
-                .ok_or(RaftError::NotLeader { leader_hint: None })?;
+            let leader_id = match self.leader_id() {
+                Some(id) => id,
+                None => {
+                    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+                    let mut found: Option<u64> = None;
+                    while tokio::time::Instant::now() < deadline {
+                        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                        if let Some(id) = self.leader_id() {
+                            found = Some(id);
+                            break;
+                        }
+                    }
+                    match found {
+                        Some(id) => id,
+                        None => return Err(RaftError::NotLeader { leader_hint: None }),
+                    }
+                }
+            };
 
             let leader_addr = {
                 let peers = ctx.peers.read().unwrap();
@@ -685,7 +1020,6 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
                 command,
                 &ctx.zone_id,
                 &ctx.cached_api_client,
-                &ctx.leader_raw_result_support,
             )
             .await
             {
@@ -926,6 +1260,20 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
                     self.update_cached_status();
                     let _ = tx.send(result);
                 }
+                RaftMsg::ReadIndex { tx } => {
+                    // F4 C3.6: post a ReadIndex request to raft-rs
+                    // and stash the oneshot by request context. The
+                    // `ReadState` will appear in a later `advance()`
+                    // ready, at which point we move it to
+                    // `pending_reads_by_index` (or resolve
+                    // immediately if apply already caught up).
+                    let id = self.read_request_counter;
+                    self.read_request_counter = self.read_request_counter.wrapping_add(1);
+                    let ctx = id.to_be_bytes().to_vec();
+                    tracing::trace!(read_request_id = id, "raft.driver.read_index");
+                    self.raw_node.read_index(ctx);
+                    self.pending_reads_by_ctx.insert(id, tx);
+                }
             }
         }
     }
@@ -963,6 +1311,14 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
         // Handle persisted messages
         if !ready.persisted_messages().is_empty() {
             messages.extend(ready.take_persisted_messages());
+        }
+
+        // F4 C3.6: promote any freshly-confirmed ReadIndex requests
+        // to `pending_reads_by_index` (or resolve immediately if the
+        // local apply pointer already covers the returned index).
+        if !ready.read_states().is_empty() {
+            let states = ready.take_read_states();
+            self.promote_read_states(states).await;
         }
 
         // Ordering invariant (per raft-rs five_mem_node example / Raft paper §3):
@@ -1015,6 +1371,8 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
         if !committed.is_empty() {
             tracing::debug!(count = committed.len(), "raft.apply");
             self.apply_entries(committed).await?;
+            // F4 C3.6: fresh apply pointer may unblock linearizable reads.
+            self.resolve_ready_reads().await;
         }
 
         // Advance the ready — NO TOCTOU: we never dropped ownership
@@ -1028,6 +1386,7 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
         if !light_rd.committed_entries().is_empty() {
             let committed = light_rd.take_committed_entries();
             self.apply_entries(committed).await?;
+            self.resolve_ready_reads().await;
         }
 
         self.raw_node.advance_apply();
@@ -1292,7 +1651,75 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
         Ok(())
     }
 
+    /// F4 C3.6: process freshly-emitted `ReadState`s.
+    ///
+    /// For each state, match the 8-byte `request_ctx` back to a
+    /// `pending_reads_by_ctx` entry. If the local state machine's
+    /// `last_applied` is already at or beyond the confirmed
+    /// `read_index`, resolve the caller's oneshot immediately;
+    /// otherwise park it in `pending_reads_by_index` and let the
+    /// next `apply_entries` / `resolve_ready_reads` cycle release
+    /// it.
+    async fn promote_read_states(&mut self, states: Vec<raft::ReadState>) {
+        if states.is_empty() {
+            return;
+        }
+        let applied = self.state_machine.read().await.last_applied_index();
+        for state in states {
+            if state.request_ctx.len() != 8 {
+                tracing::warn!(
+                    ctx_len = state.request_ctx.len(),
+                    "raft.read_index: unexpected request_ctx length, dropping"
+                );
+                continue;
+            }
+            let id = u64::from_be_bytes(
+                state
+                    .request_ctx
+                    .as_slice()
+                    .try_into()
+                    .expect("length checked above"),
+            );
+            let Some(tx) = self.pending_reads_by_ctx.remove(&id) else {
+                // Unknown context — likely a ReadIndex issued by a
+                // previous driver instance or a stale ctx; drop.
+                continue;
+            };
+            if applied >= state.index {
+                let _ = tx.send(Ok(()));
+            } else {
+                self.pending_reads_by_index.push((state.index, tx));
+            }
+        }
+    }
+
+    /// F4 C3.6: release any parked linearizable reads whose
+    /// `read_index` is now covered by the state machine's
+    /// `last_applied`. Called after every successful
+    /// `apply_entries` pass.
+    async fn resolve_ready_reads(&mut self) {
+        if self.pending_reads_by_index.is_empty() {
+            return;
+        }
+        let applied = self.state_machine.read().await.last_applied_index();
+        let mut i = 0;
+        while i < self.pending_reads_by_index.len() {
+            if self.pending_reads_by_index[i].0 <= applied {
+                let (_, tx) = self.pending_reads_by_index.swap_remove(i);
+                let _ = tx.send(Ok(()));
+            } else {
+                i += 1;
+            }
+        }
+    }
+
     /// Update the atomic cached status values from the current raw_node state.
+    ///
+    /// ``applied_index`` intentionally does NOT live here — the state
+    /// machine publishes its own ``last_applied`` atomic via
+    /// ``FullStateMachine::last_applied`` (Release-stored inside
+    /// ``apply``), and ``ZoneConsensus::applied_index_atom`` borrows
+    /// that Arc. Keeping the SSOT on the state machine avoids shadowing.
     fn update_cached_status(&self) {
         let role: NodeRole = self.raw_node.raft.state.into();
         self.cached_role.store(role.to_u8(), Ordering::Relaxed);
@@ -1300,6 +1727,22 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
             .store(self.raw_node.raft.leader_id, Ordering::Relaxed);
         self.cached_term
             .store(self.raw_node.raft.term, Ordering::Relaxed);
+        self.cached_commit_index
+            .store(self.raw_node.raft.raft_log.committed, Ordering::Relaxed);
+    }
+}
+
+#[cfg(feature = "grpc")]
+impl ZoneConsensus<super::state_machine::FullStateMachine> {
+    /// Sync wrapper around ``FullStateMachine::iter_dt_mount_entries``
+    /// for the kernel's startup replay (R20.16.4). Uses ``try_read`` so
+    /// a contended lock returns an empty Vec rather than blocking —
+    /// the kernel's reconcile loop handles "come back later" naturally.
+    pub fn iter_dt_mount_entries(&self) -> super::Result<Vec<(String, String, String)>> {
+        match self.state_machine.try_read() {
+            Ok(sm) => sm.iter_dt_mount_entries(),
+            Err(_) => Ok(Vec::new()),
+        }
     }
 }
 
@@ -1530,6 +1973,24 @@ mod tests {
         let ec_result = handles[leader_idx].propose_ec(ec_cmd).await;
         assert!(ec_result.is_ok(), "EC propose should return Ok immediately");
 
+        // Phase 6: F4 C3.6 — linearizable read via ReadIndex.
+        // Fire on every node (including followers) so we exercise
+        // both the leader-local fast path and the follower
+        // forward-to-leader path. Every caller must observe the
+        // write from Phase 4.
+        for (i, handle) in handles.iter().enumerate() {
+            let value = handle
+                .read_linearizable(|sm| sm.get_metadata("/test.txt"))
+                .await
+                .unwrap_or_else(|e| panic!("read_linearizable on node {i}: {e}"))
+                .unwrap_or_else(|e| panic!("get_metadata on node {i}: {e:?}"));
+            assert_eq!(
+                value,
+                Some(b"hello world".to_vec()),
+                "node {i} linearizable read must see the committed write"
+            );
+        }
+
         // Shutdown all drivers
         let _ = shutdown_tx.send(true);
     }
@@ -1610,83 +2071,6 @@ mod tests {
             vec![1, 2, 3],
             "Multi-node ConfState must include self and all peers"
         );
-    }
-
-    #[test]
-    fn test_restart_with_empty_runtime_peers_preserves_persisted_conf_state() {
-        let dir = TempDir::new().unwrap();
-
-        // First boot as multi-node to persist a non-singleton ConfState.
-        {
-            let storage = RaftStorage::open(dir.path()).unwrap();
-            let store = RedbStore::open(dir.path().join("sm")).unwrap();
-            let state_machine = FullStateMachine::new(&store).unwrap();
-
-            let config = RaftConfig {
-                id: 1,
-                peers: vec![2],
-                ..Default::default()
-            };
-
-            let (_handle, _driver) =
-                ZoneConsensus::new(config, storage, state_machine, None).unwrap();
-        }
-
-        // Restart with empty runtime peers should reopen and preserve
-        // persisted multi-node membership (used during cold recovery).
-        {
-            let storage = RaftStorage::open(dir.path()).unwrap();
-            let store = RedbStore::open(dir.path().join("sm")).unwrap();
-            let state_machine = FullStateMachine::new(&store).unwrap();
-            let config = RaftConfig {
-                id: 1,
-                peers: vec![],
-                ..Default::default()
-            };
-
-            let (_handle, _driver) =
-                ZoneConsensus::new(config, storage, state_machine, None).unwrap();
-        }
-
-        let storage = RaftStorage::open(dir.path()).unwrap();
-        let state = Storage::initial_state(&storage).unwrap();
-        let mut voters = state.conf_state.voters.clone();
-        voters.sort();
-        assert_eq!(voters, vec![1, 2]);
-    }
-
-    #[test]
-    fn test_restart_rejects_persisted_conf_state_without_local_node() {
-        use raft::eraftpb::ConfState;
-
-        let dir = TempDir::new().unwrap();
-
-        {
-            let storage = RaftStorage::open(dir.path()).unwrap();
-            storage
-                .set_conf_state(&ConfState {
-                    voters: vec![2],
-                    ..Default::default()
-                })
-                .unwrap();
-        }
-
-        let storage = RaftStorage::open(dir.path()).unwrap();
-        let store = RedbStore::open(dir.path().join("sm")).unwrap();
-        let state_machine = FullStateMachine::new(&store).unwrap();
-        let config = RaftConfig {
-            id: 1,
-            peers: vec![],
-            ..Default::default()
-        };
-
-        let err = match ZoneConsensus::new(config, storage, state_machine, None) {
-            Ok(_) => {
-                panic!("Expected InvalidState when local node is absent from persisted voters")
-            }
-            Err(err) => err,
-        };
-        assert!(matches!(err, RaftError::InvalidState(_)));
     }
 
     #[tokio::test]

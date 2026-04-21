@@ -27,6 +27,7 @@ from nexus.bricks.search.chunking import ChunkStrategy, DocumentChunker
 from nexus.bricks.search.indexing import IndexResult
 from nexus.bricks.search.mutation_events import SearchMutationEvent, SearchMutationOp
 from nexus.bricks.search.mutation_resolver import ResolvedMutation
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 # ---------------------------------------------------------------------------
 # HERB data loader
@@ -120,7 +121,7 @@ def _make_events_from_docs(
             operation_id=f"op-{i}",
             op=op,
             path=path,
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             timestamp=now,
             sequence_number=i,
         )
@@ -128,7 +129,7 @@ def _make_events_from_docs(
         resolved.append(
             ResolvedMutation(
                 event=ev,
-                zone_id="root",
+                zone_id=ROOT_ZONE_ID,
                 virtual_path=path.replace("/zone/root", ""),
                 path_id=f"pid-{i}",
                 doc_id=f"doc-{i}",

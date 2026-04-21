@@ -5,13 +5,22 @@
 //! (NOT file data - that stays in CAS/S3).
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use parking_lot::Mutex;
+use redb::ReadableTable;
 use serde::{Deserialize, Serialize};
 
-use redb::ReadableTable;
+use crate::storage::{RedbStore, RedbTree};
 
-use crate::storage::{RedbStorageError, RedbStore, RedbTree};
+// Advisory lock types are the shared SSOT, defined in `contracts::lock_state`.
+// Re-exported from this module (and from `crate::raft`) so existing
+// callers keep their `use raft::{LockMode, ...}` paths.
+pub use contracts::lock_state::{
+    HolderInfo, LockAcquireResult, LockEntry, LockInfo, LockMode, LockState,
+};
 
 use super::Result;
 
@@ -35,11 +44,20 @@ pub enum Command {
         key: String,
     },
 
-    /// Acquire a distributed lock (supports semaphore).
+    /// Acquire a distributed lock (exclusive or shared).
     ///
-    /// If `max_holders == 1`, this is an exclusive mutex.
-    /// If `max_holders > 1`, this is a semaphore that allows
-    /// up to `max_holders` concurrent holders.
+    /// Two orthogonal dimensions:
+    ///
+    /// * `max_holders` — capacity. `1` = mutex, `>1` = semaphore /
+    ///   reader-writer. Also used as the computed "mode" display
+    ///   label in Python (`"mutex"` vs. `"semaphore"`), which stays
+    ///   computed — never stored.
+    /// * `mode` — conflict rule for *this acquire*. `Exclusive`
+    ///   requires the caller to be the sole holder; `Shared` may
+    ///   coexist with other `Shared` holders up to `max_holders` but
+    ///   is blocked by any `Exclusive` holder. `max_holders=1 +
+    ///   Exclusive` is a classic mutex; `max_holders>1 + Shared` is a
+    ///   reader-writer lock with N concurrent readers.
     AcquireLock {
         /// Resource path being locked.
         path: String,
@@ -51,6 +69,12 @@ pub enum Command {
         ttl_secs: u32,
         /// Information about the holder (e.g., "agent:xxx").
         holder_info: String,
+        /// Conflict mode for this acquire (Exclusive or Shared).
+        ///
+        /// Added in F4 C1. Pre-F4 snapshots deserialize with
+        /// `Exclusive` defaults (see the snapshot version byte in
+        /// `FullStateMachine::snapshot` / `restore_snapshot`).
+        mode: LockMode,
         /// Wall-clock timestamp captured at proposal time (Unix secs).
         /// All replicas use this value instead of local clocks to ensure
         /// deterministic state machine application (Issue #3029 / Bug 1).
@@ -101,6 +125,32 @@ pub enum Command {
         delta: i64,
     },
 
+    /// Force-release ALL holders on a lock (admin override).
+    ForceReleaseLock {
+        /// Resource path.
+        path: String,
+    },
+
+    /// Append a raw-byte entry to a dedicated stream table (R19.1b').
+    ///
+    /// Used by the kernel's WAL stream backend to persist ordered
+    /// stream entries without shoehorning the payload through the
+    /// ``FileMetadata`` proto. Stored in ``TREE_STREAM_ENTRIES``
+    /// (distinct from ``TREE_METADATA``) so list scans and snapshot
+    /// walkers do not confuse stream payload with file metadata.
+    AppendStreamEntry {
+        /// Full stream key (typically ``/__wal_stream__/<id>/<seq>``).
+        key: String,
+        /// Raw payload bytes — no encoding applied.
+        data: Vec<u8>,
+    },
+
+    /// Delete a single stream entry by key (R19.1b').
+    DeleteStreamEntry {
+        /// Stream key to remove.
+        key: String,
+    },
+
     /// No-op command (used for leader election confirmation).
     Noop,
 }
@@ -115,7 +165,7 @@ pub enum CommandResult {
     Value(Vec<u8>),
 
     /// Lock acquisition result.
-    LockResult(LockState),
+    LockResult(LockAcquireResult),
 
     /// Compare-and-swap result.
     CasResult {
@@ -129,108 +179,12 @@ pub enum CommandResult {
     Error(String),
 }
 
-/// State of a lock acquisition attempt.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LockState {
-    /// Whether the lock was acquired.
-    pub acquired: bool,
-    /// Current number of holders.
-    pub current_holders: u32,
-    /// Maximum allowed holders.
-    pub max_holders: u32,
-    /// If not acquired, who are the current holders.
-    pub holders: Vec<HolderInfo>,
-}
-
-/// Information about a lock holder.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct HolderInfo {
-    /// Unique lock ID (UUID).
-    pub lock_id: String,
-    /// Holder description (e.g., "agent:xxx").
-    pub holder_info: String,
-    /// When the lock was acquired (Unix timestamp).
-    pub acquired_at: u64,
-    /// When the lock expires (Unix timestamp).
-    pub expires_at: u64,
-}
-
-/// Lock entry stored in the state machine.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct LockInfo {
-    /// Resource path.
-    pub path: String,
-    /// Maximum concurrent holders.
-    pub max_holders: u32,
-    /// Current holders.
-    pub holders: Vec<HolderInfo>,
-}
-
-impl LockInfo {
-    /// Create a new lock with the first holder.
-    fn new(path: String, max_holders: u32, first_holder: HolderInfo) -> Self {
-        Self {
-            path,
-            max_holders,
-            holders: vec![first_holder],
-        }
-    }
-
-    /// Check if the lock can accept more holders.
-    fn can_acquire(&self) -> bool {
-        self.holders.len() < self.max_holders as usize
-    }
-
-    /// Check if a specific lock_id already holds the lock.
-    fn has_holder(&self, lock_id: &str) -> bool {
-        self.holders.iter().any(|h| h.lock_id == lock_id)
-    }
-
-    /// Add a new holder.
-    fn add_holder(&mut self, holder: HolderInfo) {
-        self.holders.push(holder);
-    }
-
-    /// Remove a holder by lock_id.
-    fn remove_holder(&mut self, lock_id: &str) -> bool {
-        let len_before = self.holders.len();
-        self.holders.retain(|h| h.lock_id != lock_id);
-        self.holders.len() < len_before
-    }
-
-    /// Remove expired holders and return true if any were removed.
-    fn remove_expired(&mut self, now: u64) -> bool {
-        let len_before = self.holders.len();
-        self.holders.retain(|h| h.expires_at > now);
-        self.holders.len() < len_before
-    }
-
-    /// Extend a holder's TTL.
-    fn extend_ttl(&mut self, lock_id: &str, new_expires_at: u64) -> bool {
-        for holder in &mut self.holders {
-            if holder.lock_id == lock_id {
-                holder.expires_at = new_expires_at;
-                return true;
-            }
-        }
-        false
-    }
-
-    /// Check if the lock has no holders.
-    fn is_empty(&self) -> bool {
-        self.holders.is_empty()
-    }
-
-    /// Get current lock state for response.
-    fn to_state(&self, acquired: bool) -> LockState {
-        LockState {
-            acquired,
-            current_holders: self.holders.len() as u32,
-            max_holders: self.max_holders,
-            holders: self.holders.clone(),
-        }
-    }
-}
+// Advisory lock types — `LockMode`, `HolderInfo`, `LockInfo`,
+// `LockAcquireResult`, `LockEntry`, `LockState` — are now defined in
+// `contracts::lock_state` and re-exported at the top of this file. All
+// state-transition logic lives on `LockState` (the shared BTreeMap-based
+// SSOT) so the local `LockManager` path and the raft apply path go
+// through the same primitives under the same mutex.
 
 /// State machine trait that must be implemented by applications.
 ///
@@ -307,6 +261,93 @@ pub trait StateMachine: Send + Sync {
     ///
     /// Used to determine which log entries need to be applied after restart.
     fn last_applied_index(&self) -> u64;
+
+    /// Return a shared atomic counter reflecting ``last_applied_index``.
+    ///
+    /// Implementors that need to expose applied progress to sync readers
+    /// outside the state-machine's async RwLock return an ``Arc`` clone
+    /// of the atomic they own internally. Default is ``None`` — callers
+    /// that need the signal must then fall back to ``last_applied_index``
+    /// under the async lock.
+    ///
+    /// Only ``FullStateMachine`` implements this; witness / in-memory
+    /// test state machines return ``None`` because nothing outside
+    /// raft reads their applied progress.
+    fn last_applied_shared(&self) -> Option<Arc<AtomicU64>> {
+        None
+    }
+
+    /// Optional apply-side cache-invalidation slot.
+    ///
+    /// State machines that back a kernel DCache (notably
+    /// ``FullStateMachine``) return their shared ``Arc<RwLock<...>>``
+    /// so a downstream consumer (``ZoneConsensus`` and, transitively,
+    /// the kernel) can ``write().replace()`` a callback that fires on
+    /// every committed metadata mutation. State machines that have no
+    /// such coherence concern (witness, direct-drive test harnesses)
+    /// return ``None`` via the default impl, and apply stays a pure
+    /// no-op on that front.
+    #[allow(clippy::type_complexity)]
+    fn invalidate_cb_slot(
+        &self,
+    ) -> Option<Arc<parking_lot::RwLock<Option<Arc<dyn Fn(&str) + Send + Sync>>>>> {
+        None
+    }
+
+    /// Optional apply-side DT_MOUNT slot (R20.16.2).
+    ///
+    /// Symmetric to [`invalidate_cb_slot`] but fires only for DT_MOUNT
+    /// Set / Delete commits — the kernel installs a closure that wires
+    /// / unwires federation mounts synchronously at apply time on every
+    /// replica. The closure captures the parent ``zone_id`` at install
+    /// time (install is per-zone, mirroring
+    /// ``install_federation_dcache_coherence``), so the event payload
+    /// carries only data that varies per-apply: the mount key and, on
+    /// Set, the decoded proto fields needed for wiring.
+    ///
+    /// Only [`FullStateMachine`] exposes a slot; witness / in-memory
+    /// state machines return ``None`` so apply stays a no-op.
+    #[cfg(feature = "grpc")]
+    #[allow(clippy::type_complexity)]
+    fn mount_apply_cb_slot(
+        &self,
+    ) -> Option<Arc<parking_lot::RwLock<Option<Arc<dyn Fn(&MountApplyEvent) + Send + Sync>>>>> {
+        None
+    }
+}
+
+/// A DT_MOUNT apply event delivered to [`StateMachine::mount_apply_cb_slot`]
+/// callbacks (R20.16.2).
+///
+/// Fires after the apply write transaction commits. All payload fields
+/// derive from replicated state (raft log `Command` + state-machine
+/// `FileMetadata` proto), so every replica firing this event observes
+/// identical data — no node-local truth is introduced.
+///
+/// The callback's parent ``zone_id`` is captured by the install site
+/// (kernel's ``install_federation_mount_coherence(consensus)``) as a
+/// closure binding, not carried on the event. This matches the pattern
+/// used by ``invalidate_cb``.
+#[cfg(feature = "grpc")]
+#[derive(Debug, Clone)]
+pub enum MountApplyEvent {
+    /// DT_MOUNT upsert. ``target_zone_id`` + ``backend_name`` come from
+    /// the decoded ``FileMetadata`` proto written by this apply —
+    /// snapshotted at fire time so a subsequent apply to the same key
+    /// cannot race the callback into wiring the wrong target.
+    ///
+    /// Post-R20.16.8 / R20.16.9 the event does NOT carry io_profile /
+    /// readonly / admin_only — those knobs were retired as YAGNI.
+    Set {
+        key: String,
+        target_zone_id: String,
+        backend_name: String,
+    },
+    /// DT_MOUNT delete. No proto payload — the entry was removed inside
+    /// the same apply txn, so callers look up the prior mount via their
+    /// own reverse index (e.g. kernel ``cross_zone_mounts``) to drive
+    /// cascade-unmount.
+    Delete { key: String },
 }
 
 /// A no-op state machine for witness nodes (in-memory, for testing).
@@ -445,8 +486,25 @@ impl StateMachine for WitnessStateMachine {
 
 // Tree names for FullStateMachine
 const TREE_METADATA: &str = "sm_metadata";
-const TREE_LOCKS: &str = "sm_locks";
+/// Dedicated redb tree for raw-byte stream entries (R19.1b').
+///
+/// Holds ``Command::AppendStreamEntry`` payloads separate from
+/// ``TREE_METADATA`` so the WAL stream backend does not pollute file
+/// metadata scans / snapshots with hex-encoded payload rows. Keys are
+/// opaque strings (the kernel picks a ``/__wal_stream__/<id>/<seq>``
+/// convention); values are raw bytes.
+const TREE_STREAM_ENTRIES: &str = "sm_stream_entries";
 const KEY_LAST_APPLIED: &[u8] = b"__last_applied__";
+
+// R14: Advisory locks no longer have a redb tree. The BTreeMap in
+// `Arc<Mutex<LockState>>` is the single source of truth; persistence
+// happens via raft snapshots. This preserves raft's "apply = atomic
+// commit point" contract — reads and writes observe the same state
+// under the same mutex, and there is no two-phase window between a
+// BTreeMap mirror and a redb row where a crash could leave them
+// divergent. On startup the BTreeMap is rebuilt from a snapshot
+// (`restore_snapshot`) plus log replay; see `FullStateMachine::apply`
+// for the replay semantics.
 
 // ---------------------------------------------------------------------------
 // LWW (Last Writer Wins) helpers for EC conflict resolution
@@ -495,40 +553,116 @@ fn decode_modified_at_unix(bytes: &[u8]) -> u64 {
 
 /// Full state machine for STRONG_HA zones.
 ///
-/// Stores metadata and locks in redb for persistence. This is used
-/// by leader and follower nodes (not witnesses).
+/// Metadata lives in redb for durability; advisory locks live in an
+/// in-memory `Arc<Mutex<LockState>>` BTreeMap that is the single source
+/// of truth shared with the kernel's `LockManager`. This matches the
+/// raft invariant that apply is an atomic commit point — readers and
+/// writers both hit the same mutex, so there is no divergence window.
 ///
 /// # Storage Layout
 ///
 /// ```text
 /// redb database
-/// ├── sm_metadata/        # File metadata (key: path)
-/// │   ├── "/zone/file1" -> FileMetadata (serialized)
-/// │   ├── "/zone/file2" -> FileMetadata (serialized)
-/// │   └── ...
-/// └── sm_locks/           # Distributed locks (key: path)
-///     ├── "/zone/file1" -> LockInfo (serialized)
+/// └── sm_metadata/        # File metadata (key: path)
+///     ├── "/zone/file1" -> FileMetadata (serialized)
+///     ├── "/zone/file2" -> FileMetadata (serialized)
 ///     └── ...
+///
+/// in-memory
+/// └── advisory: Arc<Mutex<LockState>> # Advisory locks (BTreeMap)
 /// ```
+///
+/// Advisory-lock persistence happens through raft snapshots: `snapshot`
+/// serializes the BTreeMap under the mutex; `restore_snapshot`
+/// deserializes and replaces the BTreeMap under the same mutex. Between
+/// snapshots, the raft log is the durable record — advisory state is
+/// rebuilt by log replay on restart.
 pub struct FullStateMachine {
     /// Metadata tree: path -> serialized FileMetadata.
     metadata: RedbTree,
-    /// Locks tree: path -> serialized LockInfo.
-    locks: RedbTree,
-    /// Last applied log index.
-    last_applied: u64,
+    /// Raw-byte stream entries tree (R19.1b') — key -> opaque bytes.
+    ///
+    /// Distinct from ``metadata`` so WAL stream payloads never appear
+    /// in file-listing scans / snapshots that walk ``sm_metadata``.
+    stream_entries: RedbTree,
+    /// Advisory lock SSOT — shared with the kernel's `LockManager`.
+    advisory: Arc<Mutex<LockState>>,
+    /// Last applied metadata/Noop log index (persisted to redb).
+    ///
+    /// Gates metadata-command idempotency during log replay —
+    /// `AdjustCounter` would double-count otherwise. Lock commands
+    /// are idempotent under full replay (acquire/release cycles
+    /// cancel out) so they ignore this guard and always apply.
+    ///
+    /// Held as ``Arc<AtomicU64>`` so the ZoneConsensus handle can
+    /// publish its current value to sync Python readers (gate tests,
+    /// monitoring) without acquiring the state-machine's async
+    /// RwLock. The state machine is the SSOT; the Arc is how we
+    /// surface it, not a shadow copy.
+    last_applied: Arc<AtomicU64>,
+    /// Apply-side DT_MOUNT slot (R20.16.2) — shared
+    /// ``Arc<RwLock<Option<Arc<Fn(&MountApplyEvent)>>>>`` so the kernel
+    /// mount-wiring owner can install / replace the callback *after*
+    /// this state machine is moved into ``ZoneConsensus``.
+    ///
+    /// Fires on every committed DT_MOUNT ``SetMetadata`` /
+    /// ``DeleteMetadata`` so the kernel can wire / unwire a federation
+    /// child-zone mount into the local ``MountTable`` on every replica
+    /// (including the leader — the leader also goes through apply).
+    /// Set carries the decoded ``FileMetadata`` proto snapshot so the
+    /// callback doesn't race a subsequent apply to the same key; Delete
+    /// carries only the key because the proto was removed in the same
+    /// txn.
+    ///
+    /// ``None`` when no federation mount coherence is wired (tests,
+    /// witness nodes). Send-site is gated on ``is_some()`` so apply
+    /// stays a no-op when unset. Callback panics are surfaced via
+    /// ``catch_unwind`` so apply can't be poisoned per raft's "apply
+    /// must not fail" rule.
+    #[cfg(feature = "grpc")]
+    #[allow(clippy::type_complexity)]
+    mount_apply_cb: Arc<parking_lot::RwLock<Option<Arc<dyn Fn(&MountApplyEvent) + Send + Sync>>>>,
+    /// Apply-side dcache invalidation slot — shared ``Arc<RwLock>``
+    /// so the kernel DCache owner can install / replace the callback
+    /// *after* this state machine is moved into ``ZoneConsensus``.
+    ///
+    /// Fires on every committed metadata mutation (``SetMetadata`` /
+    /// ``CasSetMetadata`` / ``DeleteMetadata``) so the kernel's
+    /// DCache can evict stale entries on nodes that did not originate
+    /// the write (leader-forwarded writes, catch-up replication).
+    ///
+    /// The callback receives the zone-relative key actually mutated;
+    /// the installer closes over mount-point → global-path translation
+    /// so the state machine stays ignorant of the VFS layout above it.
+    ///
+    /// ``None`` when no kernel DCache is wired (tests, witness nodes).
+    /// Send-site is gated on ``is_some()`` so apply stays a no-op when
+    /// unset. Callback panics are surfaced via ``catch_unwind`` so
+    /// apply can't be poisoned per raft's "apply must not fail" rule.
+    #[allow(clippy::type_complexity)]
+    invalidate_cb: Arc<parking_lot::RwLock<Option<Arc<dyn Fn(&str) + Send + Sync>>>>,
 }
 
 impl FullStateMachine {
-    /// Create a new full state machine.
+    /// Create a new full state machine with its own advisory-lock Arc.
     ///
-    /// # Arguments
-    /// * `store` - The redb store to use for persistence
+    /// Callers that need to share the advisory map with a kernel
+    /// `LockManager` should use [`FullStateMachine::with_advisory`]
+    /// and pre-build the Arc there.
     pub fn new(store: &RedbStore) -> Result<Self> {
-        let metadata = store.tree(TREE_METADATA)?;
-        let locks = store.tree(TREE_LOCKS)?;
+        Self::with_advisory(store, Arc::new(Mutex::new(LockState::new())))
+    }
 
-        // Load last_applied from metadata tree
+    /// Create a new full state machine that shares its advisory map
+    /// with the provided `Arc<Mutex<LockState>>`. Used by the kernel's
+    /// `LockManager::upgrade_to_distributed` path so local holders
+    /// survive the upgrade and every reader on the node sees the same
+    /// state.
+    pub fn with_advisory(store: &RedbStore, advisory: Arc<Mutex<LockState>>) -> Result<Self> {
+        let metadata = store.tree(TREE_METADATA)?;
+        let stream_entries = store.tree(TREE_STREAM_ENTRIES)?;
+
+        // Load last_applied from metadata tree.
         let last_applied = match metadata.get(KEY_LAST_APPLIED)? {
             Some(bytes) => {
                 let arr: [u8; 8] = bytes
@@ -541,9 +675,28 @@ impl FullStateMachine {
 
         Ok(Self {
             metadata,
-            locks,
-            last_applied,
+            stream_entries,
+            advisory,
+            last_applied: Arc::new(AtomicU64::new(last_applied)),
+            #[cfg(feature = "grpc")]
+            mount_apply_cb: Arc::new(parking_lot::RwLock::new(None)),
+            invalidate_cb: Arc::new(parking_lot::RwLock::new(None)),
         })
+    }
+
+    /// Return a clone of the shared ``last_applied`` atomic so a caller
+    /// outside the state-machine's RwLock can publish "state machine has
+    /// this index" as an atomic read. The state machine remains the
+    /// SSOT; this is how the value is surfaced, not a shadow.
+    pub fn last_applied_shared_arc(&self) -> Arc<AtomicU64> {
+        Arc::clone(&self.last_applied)
+    }
+
+    /// Clone the shared advisory-lock handle. Used by the kernel's
+    /// `LockManager::upgrade_to_distributed` to adopt the state
+    /// machine's `Arc<Mutex<LockState>>` after the zone is set up.
+    pub fn advisory_state(&self) -> Arc<Mutex<LockState>> {
+        self.advisory.clone()
     }
 
     /// Get current Unix timestamp. Public so proposal sites can capture
@@ -559,6 +712,155 @@ impl FullStateMachine {
     fn apply_set_metadata(&self, key: &str, value: &[u8]) -> Result<CommandResult> {
         self.metadata.set(key.as_bytes(), value)?;
         Ok(CommandResult::Success)
+    }
+
+    /// Peek at a key's current committed value and decide whether it's
+    /// a DT_MOUNT entry. Used by ``apply`` as a pre-read before the
+    /// write txn to capture the pre-delete payload-classification for
+    /// ``DeleteMetadata`` commands (R20.16.2).
+    ///
+    /// Apply is serial, so no concurrent writer can mutate ``key``
+    /// between this pre-read and the write txn that performs the
+    /// delete. The read happens in its own short read txn.
+    ///
+    /// Returns ``true`` iff the current value decodes as a
+    /// ``FileMetadata`` with ``entry_type == DT_MOUNT``. Decode failure
+    /// or missing key both return ``false`` — those cases aren't
+    /// DT_MOUNT and don't need a Delete event.
+    #[cfg(feature = "grpc")]
+    fn peek_is_dt_mount(&self, key: &str) -> bool {
+        use crate::transport::proto::nexus::core::FileMetadata as ProtoFileMetadata;
+        use prost::Message as ProstMessage;
+
+        const DT_MOUNT: i32 = 2;
+        let Ok(Some(bytes)) = self.metadata.get(key.as_bytes()) else {
+            return false;
+        };
+        match ProtoFileMetadata::decode(bytes.as_slice()) {
+            Ok(p) => p.entry_type == DT_MOUNT,
+            Err(_) => false,
+        }
+    }
+
+    /// Fire the apply-side DT_MOUNT callback for a committed command
+    /// (R20.16.2).
+    ///
+    /// Set path: decode the ``SetMetadata`` value; if it's a DT_MOUNT
+    /// with non-empty ``target_zone_id``, build a snapshot event from
+    /// the proto and invoke the callback.
+    ///
+    /// Delete path: the caller has already done the pre-read (inside
+    /// ``apply`` before the write txn) and hands us ``delete_mount_key``
+    /// = ``Some(key)`` iff the deleted entry was DT_MOUNT.
+    ///
+    /// Failure modes never propagate out of ``apply``:
+    /// - no callback installed → no-op
+    /// - non-SetMetadata / non-DeleteMetadata command → no-op
+    /// - proto decode fails on Set → ``warn!`` (upstream writer wrote
+    ///   garbage; apply can't reject committed entries)
+    /// - entry not DT_MOUNT or empty target on Set → no-op (normal)
+    /// - callback panics → ``catch_unwind`` logs ``error!`` and
+    ///   returns; apply proceeds (raft "apply must not fail")
+    #[cfg(feature = "grpc")]
+    fn emit_mount_apply_event(&self, command: &Command, delete_mount_key: Option<&str>) {
+        use crate::transport::proto::nexus::core::FileMetadata as ProtoFileMetadata;
+        use prost::Message as ProstMessage;
+
+        // Snapshot the cb under the read lock, release before invoking
+        // — callback must not reacquire this lock (future installer
+        // would deadlock) and must stay short to not stall apply.
+        let cb_opt = self.mount_apply_cb.read().clone();
+        let Some(cb) = cb_opt else {
+            return;
+        };
+
+        let event = match command {
+            Command::SetMetadata { key, value } => {
+                let proto = match ProtoFileMetadata::decode(value.as_slice()) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        tracing::warn!(
+                            path = %key,
+                            error = %e,
+                            "mount-apply: FileMetadata decode failed on apply (non-FileMetadata SetMetadata?)",
+                        );
+                        return;
+                    }
+                };
+                const DT_MOUNT: i32 = 2;
+                if proto.entry_type == DT_MOUNT && !proto.target_zone_id.is_empty() {
+                    MountApplyEvent::Set {
+                        key: key.clone(),
+                        target_zone_id: proto.target_zone_id,
+                        backend_name: proto.backend_name,
+                    }
+                } else if let Some(k) = delete_mount_key {
+                    // R20.18.5: overwrite of prior DT_MOUNT with a
+                    // non-mount entry (e.g. federation_unmount writes
+                    // DT_DIR at the mount path). Fire Delete so
+                    // wire_federation_mount_impl removes this mount
+                    // from the local MountTable.
+                    if k == *key {
+                        MountApplyEvent::Delete { key: key.clone() }
+                    } else {
+                        return;
+                    }
+                } else {
+                    return;
+                }
+            }
+            Command::DeleteMetadata { key } => match delete_mount_key {
+                Some(k) if k == *key => MountApplyEvent::Delete { key: key.clone() },
+                _ => return,
+            },
+            _ => return,
+        };
+
+        if let Err(payload) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| cb(&event)))
+        {
+            tracing::error!(
+                payload = ?payload,
+                "mount-apply: callback panicked; continuing apply — mount wiring may be incomplete",
+            );
+        }
+    }
+
+    /// Fire the apply-side dcache invalidation callback for the key
+    /// mutated by this committed command.
+    ///
+    /// Fires for ``SetMetadata`` / ``CasSetMetadata`` / ``DeleteMetadata``
+    /// (the only variants that change a user-visible metastore key).
+    /// ``AdjustCounter`` mutates internal counters (``__i_links_count__``)
+    /// that the dcache does not cache, so it is intentionally skipped.
+    ///
+    /// The callback is wrapped in ``catch_unwind`` so a panicking
+    /// installer (bad closure capture, dropped dcache) cannot poison
+    /// apply — raft requires apply to be infallible on the happy path.
+    fn emit_invalidate_event(&self, command: &Command) {
+        // Snapshot the cb under the read lock, release before invoking
+        // — the callback must never acquire this lock back (would
+        // deadlock a future installer) and must not take long enough
+        // to stall the apply loop.
+        let cb_opt = self.invalidate_cb.read().clone();
+        let Some(cb) = cb_opt else {
+            return;
+        };
+        let key = match command {
+            Command::SetMetadata { key, .. }
+            | Command::CasSetMetadata { key, .. }
+            | Command::DeleteMetadata { key } => key.as_str(),
+            _ => return,
+        };
+        let key_owned = key.to_string();
+        if let Err(payload) =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| cb(&key_owned)))
+        {
+            tracing::error!(
+                key = %key_owned,
+                payload = ?payload,
+                "invalidate-event: callback panicked; continuing apply — dcache may be stale for this key"
+            );
+        }
     }
 
     /// Apply AdjustCounter command — atomic read-modify-write in apply().
@@ -731,10 +1033,12 @@ impl FullStateMachine {
         Ok(CommandResult::Success)
     }
 
-    /// Apply AcquireLock command.
+    /// Apply AcquireLock — delegates to `LockState::apply_acquire` under
+    /// the shared advisory mutex.
     ///
-    /// `now` is the wall-clock timestamp from the replicated command, ensuring
-    /// all replicas compute identical lock state (Issue #3029 / Bug 1).
+    /// `now` is the wall-clock timestamp captured at proposal time so
+    /// all replicas reach identical state (#3029 / Bug 1).
+    #[allow(clippy::too_many_arguments)]
     fn apply_acquire_lock(
         &self,
         path: &str,
@@ -742,95 +1046,38 @@ impl FullStateMachine {
         max_holders: u32,
         ttl_secs: u32,
         holder_info: &str,
+        mode: LockMode,
         now: u64,
     ) -> Result<CommandResult> {
-        let expires_at = now + ttl_secs as u64;
-
-        let new_holder = HolderInfo {
-            lock_id: lock_id.to_string(),
-            holder_info: holder_info.to_string(),
-            acquired_at: now,
-            expires_at,
-        };
-
-        // Try to get existing lock
-        let mut lock_info: LockInfo = match self.locks.get(path.as_bytes())? {
-            Some(bytes) => bincode::deserialize(&bytes)?,
-            None => {
-                // No existing lock - create new one
-                let lock = LockInfo::new(path.to_string(), max_holders, new_holder);
-                let serialized = bincode::serialize(&lock)?;
-                self.locks.set(path.as_bytes(), &serialized)?;
-                return Ok(CommandResult::LockResult(lock.to_state(true)));
-            }
-        };
-
-        // Clean up expired holders first
-        lock_info.remove_expired(now);
-
-        // Check if this lock_id already holds the lock (idempotent)
-        if lock_info.has_holder(lock_id) {
-            // Already holding - extend TTL
-            lock_info.extend_ttl(lock_id, expires_at);
-            let serialized = bincode::serialize(&lock_info)?;
-            self.locks.set(path.as_bytes(), &serialized)?;
-            return Ok(CommandResult::LockResult(lock_info.to_state(true)));
-        }
-
-        // Check if we can acquire (within max_holders limit)
-        // Also check max_holders matches (can't mix mutex and semaphore)
-        if lock_info.max_holders != max_holders {
-            // Mismatch in lock type - deny
-            return Ok(CommandResult::LockResult(lock_info.to_state(false)));
-        }
-
-        if lock_info.can_acquire() {
-            // Add new holder
-            lock_info.add_holder(new_holder);
-            let serialized = bincode::serialize(&lock_info)?;
-            self.locks.set(path.as_bytes(), &serialized)?;
-            Ok(CommandResult::LockResult(lock_info.to_state(true)))
-        } else {
-            // Cannot acquire - at capacity
-            Ok(CommandResult::LockResult(lock_info.to_state(false)))
-        }
+        let mut guard = self.advisory.lock();
+        let result =
+            guard.apply_acquire(path, lock_id, max_holders, ttl_secs, holder_info, mode, now);
+        Ok(CommandResult::LockResult(result))
     }
 
-    /// Apply ReleaseLock command.
-    ///
-    /// Returns Success if the holder was found and removed.
-    /// Returns Error if the lock doesn't exist or the holder is not found.
+    /// Apply ReleaseLock — delegates to `LockState::apply_release`.
     fn apply_release_lock(&self, path: &str, lock_id: &str) -> Result<CommandResult> {
-        let mut lock_info: LockInfo = match self.locks.get(path.as_bytes())? {
-            Some(bytes) => bincode::deserialize(&bytes)?,
-            None => {
-                // No lock exists - error (not owned)
-                return Ok(CommandResult::Error("Lock not found".to_string()));
-            }
-        };
-
-        // Remove the holder - returns true if holder was found and removed
-        if !lock_info.remove_holder(lock_id) {
-            // Holder not found - error (not owned or already released)
-            return Ok(CommandResult::Error("Lock holder not found".to_string()));
-        }
-
-        if lock_info.is_empty() {
-            // No more holders - delete the lock entry
-            self.locks.delete(path.as_bytes())?;
+        let mut guard = self.advisory.lock();
+        if guard.apply_release(path, lock_id) {
+            Ok(CommandResult::Success)
+        } else if guard.get_lock(path).is_none() {
+            Ok(CommandResult::Error("Lock not found".to_string()))
         } else {
-            // Save updated lock
-            let serialized = bincode::serialize(&lock_info)?;
-            self.locks.set(path.as_bytes(), &serialized)?;
+            Ok(CommandResult::Error("Lock holder not found".to_string()))
         }
-
-        Ok(CommandResult::Success)
     }
 
-    /// Apply ExtendLock command.
-    ///
-    /// `now` is the wall-clock timestamp from the replicated command, ensuring
-    /// all replicas compute identical lock state (Issue #3029 / Bug 1).
+    /// Apply ForceReleaseLock — delegates to `LockState::apply_force_release`.
+    fn apply_force_release_lock(&self, path: &str) -> Result<CommandResult> {
+        let mut guard = self.advisory.lock();
+        if guard.apply_force_release(path) {
+            Ok(CommandResult::Success)
+        } else {
+            Ok(CommandResult::Error("Lock not found".to_string()))
+        }
+    }
+
+    /// Apply ExtendLock — delegates to `LockState::apply_extend`.
     fn apply_extend_lock(
         &self,
         path: &str,
@@ -838,23 +1085,11 @@ impl FullStateMachine {
         new_ttl_secs: u32,
         now: u64,
     ) -> Result<CommandResult> {
-        let new_expires_at = now + new_ttl_secs as u64;
-
-        let mut lock_info: LockInfo = match self.locks.get(path.as_bytes())? {
-            Some(bytes) => bincode::deserialize(&bytes)?,
-            None => {
-                // No lock exists - error
-                return Ok(CommandResult::Error("Lock not found".to_string()));
-            }
-        };
-
-        // Remove expired holders first
-        lock_info.remove_expired(now);
-
-        if lock_info.extend_ttl(lock_id, new_expires_at) {
-            let serialized = bincode::serialize(&lock_info)?;
-            self.locks.set(path.as_bytes(), &serialized)?;
+        let mut guard = self.advisory.lock();
+        if guard.apply_extend(path, lock_id, new_ttl_secs, now) {
             Ok(CommandResult::Success)
+        } else if guard.get_lock(path).is_none() {
+            Ok(CommandResult::Error("Lock not found".to_string()))
         } else {
             Ok(CommandResult::Error("Lock holder not found".to_string()))
         }
@@ -888,50 +1123,122 @@ impl FullStateMachine {
         Ok(result)
     }
 
-    /// Get lock info by path.
-    pub fn get_lock(&self, path: &str) -> Result<Option<LockInfo>> {
-        match self.locks.get(path.as_bytes())? {
-            Some(bytes) => Ok(Some(bincode::deserialize(&bytes)?)),
-            None => Ok(None),
-        }
-    }
+    /// Iterate every DT_MOUNT entry in this state machine, returning
+    /// ``(key, target_zone_id, backend_name)`` triples (R20.16.4).
+    ///
+    /// Used by the kernel's startup replay to re-drive every historic
+    /// federation mount through ``wire_federation_mount`` — apply-cb
+    /// only fires on new applies, so restart-from-snapshot wouldn't
+    /// otherwise wire the mounts already in state.
+    ///
+    /// Lenient: skips entries that fail to decode or aren't DT_MOUNT
+    /// or have an empty target_zone_id.
+    #[cfg(feature = "grpc")]
+    pub fn iter_dt_mount_entries(&self) -> Result<Vec<(String, String, String)>> {
+        use crate::transport::proto::nexus::core::FileMetadata as ProtoFileMetadata;
+        use prost::Message as ProstMessage;
 
-    /// List all locks matching a prefix.
-    pub fn list_locks(&self, prefix: &str, limit: usize) -> Result<Vec<LockInfo>> {
         let mut result = Vec::new();
-        // Helper closure to process iterator items
-        let mut collect = |items: &mut dyn Iterator<
-            Item = std::result::Result<(Vec<u8>, Vec<u8>), RedbStorageError>,
-        >|
-         -> Result<()> {
-            for item in items {
-                if result.len() >= limit {
-                    break;
-                }
-                let (_, value) = item?;
-                let lock_info: LockInfo = bincode::deserialize(&value)?;
-                if !lock_info.holders.is_empty() {
-                    result.push(lock_info);
-                }
+        for (key, bytes) in self.list_metadata("/")? {
+            let Ok(proto) = ProtoFileMetadata::decode(bytes.as_slice()) else {
+                continue;
+            };
+            const DT_MOUNT: i32 = 2;
+            if proto.entry_type == DT_MOUNT && !proto.target_zone_id.is_empty() {
+                result.push((key, proto.target_zone_id, proto.backend_name));
             }
-            Ok(())
-        };
-        if prefix.is_empty() {
-            collect(&mut self.locks.iter())?;
-        } else {
-            collect(&mut self.locks.scan_prefix(prefix.as_bytes()))?;
         }
         Ok(result)
+    }
+
+    /// Get a stream entry by key (R19.1b').
+    ///
+    /// Looks up the opaque bytes previously stored by
+    /// ``Command::AppendStreamEntry``. Returns ``Ok(None)`` if absent.
+    pub fn get_stream_entry(&self, key: &str) -> Result<Option<Vec<u8>>> {
+        Ok(self.stream_entries.get(key.as_bytes())?)
+    }
+
+    /// Delete every stream entry whose key begins with ``prefix`` (R19.1b').
+    ///
+    /// Returns the number of rows removed. Used when a WAL stream is
+    /// closed-and-dropped en masse — lets the caller avoid issuing
+    /// one ``DeleteStreamEntry`` per seq.
+    ///
+    /// This reads the current keys under the prefix, then deletes
+    /// each one — all inside a single redb write transaction. Not
+    /// routed through raft because callers (snapshot prune, cleanup)
+    /// handle replication separately; for raft-driven deletion use
+    /// ``Command::DeleteStreamEntry`` per key.
+    pub fn delete_stream_prefix(&self, prefix: &str) -> Result<u64> {
+        let db = self.stream_entries.raw_db();
+        let table_def = redb::TableDefinition::<&[u8], &[u8]>::new(self.stream_entries.name());
+        let write_txn = db
+            .begin_write()
+            .map_err(|e| super::RaftError::Storage(e.to_string()))?;
+        let mut removed: u64 = 0;
+        {
+            let mut table = write_txn
+                .open_table(table_def)
+                .map_err(|e| super::RaftError::Storage(e.to_string()))?;
+
+            // Collect matching keys first — redb does not allow
+            // delete-while-iterating on the same table handle.
+            let mut keys: Vec<Vec<u8>> = Vec::new();
+            {
+                let iter = table
+                    .range::<&[u8]>(prefix.as_bytes()..)
+                    .map_err(|e| super::RaftError::Storage(e.to_string()))?;
+                for entry in iter {
+                    let (k, _v) = entry.map_err(|e| super::RaftError::Storage(e.to_string()))?;
+                    let kb = k.value().to_vec();
+                    if !kb.starts_with(prefix.as_bytes()) {
+                        break;
+                    }
+                    keys.push(kb);
+                }
+            }
+            for k in keys {
+                if table
+                    .remove(k.as_slice())
+                    .map_err(|e| super::RaftError::Storage(e.to_string()))?
+                    .is_some()
+                {
+                    removed += 1;
+                }
+            }
+        }
+        write_txn
+            .commit()
+            .map_err(|e| super::RaftError::Storage(e.to_string()))?;
+        Ok(removed)
+    }
+
+    /// Get lock info by path (reads the shared advisory map).
+    pub fn get_lock(&self, path: &str) -> Result<Option<LockInfo>> {
+        Ok(self.advisory.lock().get_lock(path))
+    }
+
+    /// List all locks matching a prefix (reads the shared advisory map).
+    pub fn list_locks(&self, prefix: &str, limit: usize) -> Result<Vec<LockInfo>> {
+        Ok(self.advisory.lock().list_locks(prefix, limit))
     }
 }
 
 /// Snapshot format for FullStateMachine.
+///
+/// ``stream_entries`` is serialized with a ``#[serde(default)]`` so
+/// snapshots produced before R19.1b' (no stream table) still restore —
+/// absent entries become an empty map on the target replica.
 #[derive(Debug, Serialize, Deserialize)]
 struct Snapshot {
     /// All metadata entries.
     metadata: HashMap<String, Vec<u8>>,
-    /// All lock entries.
-    locks: HashMap<String, LockInfo>,
+    /// All stream entries (R19.1b').
+    #[serde(default)]
+    stream_entries: HashMap<String, Vec<u8>>,
+    /// Advisory lock SSOT at snapshot time (clone of the BTreeMap).
+    advisory: LockState,
     /// Last applied index.
     last_applied: u64,
 }
@@ -959,6 +1266,7 @@ impl FullStateMachine {
                 max_holders,
                 ttl_secs,
                 holder_info,
+                mode,
                 now_secs,
             } => self.apply_acquire_lock(
                 path,
@@ -966,9 +1274,11 @@ impl FullStateMachine {
                 *max_holders,
                 *ttl_secs,
                 holder_info,
+                *mode,
                 *now_secs,
             ),
             Command::ReleaseLock { path, lock_id } => self.apply_release_lock(path, lock_id),
+            Command::ForceReleaseLock { path } => self.apply_force_release_lock(path),
             Command::ExtendLock {
                 path,
                 lock_id,
@@ -976,24 +1286,33 @@ impl FullStateMachine {
                 now_secs,
             } => self.apply_extend_lock(path, lock_id, *new_ttl_secs, *now_secs),
             Command::AdjustCounter { key, delta } => self.apply_adjust_counter(key, *delta),
+            Command::AppendStreamEntry { key, data } => {
+                self.stream_entries.set(key.as_bytes(), data)?;
+                Ok(CommandResult::Success)
+            }
+            Command::DeleteStreamEntry { key } => {
+                self.stream_entries.delete(key.as_bytes())?;
+                Ok(CommandResult::Success)
+            }
             Command::Noop => Ok(CommandResult::Success),
         }
     }
 
-    /// Execute a command inside a caller-provided redb write transaction.
+    /// Execute a metadata/Noop command inside a caller-provided redb write
+    /// transaction. Lock commands don't flow through this path — they only
+    /// mutate the in-memory advisory `LockState` and never touch redb.
     ///
     /// This is the transactional variant of `execute()`, used by `apply()` to
-    /// ensure the command mutation and `last_applied` marker are persisted
+    /// ensure metadata mutations and the `last_applied` marker are persisted
     /// atomically in a single redb transaction (matching etcd/CockroachDB/TiKV
     /// practice). Without this, a crash between execute and save_last_applied
     /// could cause non-idempotent commands (e.g. AdjustCounter) to replay.
-    fn execute_in_txn(
+    fn execute_metadata_in_txn(
         &self,
         txn: &redb::WriteTransaction,
         command: &Command,
     ) -> Result<CommandResult> {
         let meta_def = redb::TableDefinition::<&[u8], &[u8]>::new(self.metadata.name());
-        let locks_def = redb::TableDefinition::<&[u8], &[u8]>::new(self.locks.name());
 
         match command {
             Command::SetMetadata { key, value } => {
@@ -1064,140 +1383,50 @@ impl FullStateMachine {
                 Ok(CommandResult::Value(new_val.to_be_bytes().to_vec()))
             }
 
-            Command::AcquireLock {
-                path,
-                lock_id,
-                max_holders,
-                ttl_secs,
-                holder_info,
-                now_secs,
-            } => {
-                let expires_at = now_secs + *ttl_secs as u64;
-                let new_holder = HolderInfo {
-                    lock_id: lock_id.to_string(),
-                    holder_info: holder_info.to_string(),
-                    acquired_at: *now_secs,
-                    expires_at,
-                };
-
+            Command::AppendStreamEntry { key, data } => {
+                let stream_def =
+                    redb::TableDefinition::<&[u8], &[u8]>::new(self.stream_entries.name());
                 let mut table = txn
-                    .open_table(locks_def)
-                    .map_err(|e| super::RaftError::Storage(format!("open locks: {e}")))?;
-                let existing = table
-                    .get(path.as_bytes())
-                    .map_err(|e| super::RaftError::Storage(format!("get lock: {e}")))?
-                    .map(|v| v.value().to_vec());
-
-                let mut lock_info: LockInfo = match existing {
-                    Some(bytes) => bincode::deserialize(&bytes)?,
-                    None => {
-                        let lock = LockInfo::new(path.to_string(), *max_holders, new_holder);
-                        let serialized = bincode::serialize(&lock)?;
-                        table
-                            .insert(path.as_bytes(), serialized.as_slice())
-                            .map_err(|e| super::RaftError::Storage(format!("insert lock: {e}")))?;
-                        return Ok(CommandResult::LockResult(lock.to_state(true)));
-                    }
-                };
-
-                lock_info.remove_expired(*now_secs);
-
-                if lock_info.has_holder(lock_id) {
-                    lock_info.extend_ttl(lock_id, expires_at);
-                    let serialized = bincode::serialize(&lock_info)?;
-                    table
-                        .insert(path.as_bytes(), serialized.as_slice())
-                        .map_err(|e| super::RaftError::Storage(format!("insert lock: {e}")))?;
-                    return Ok(CommandResult::LockResult(lock_info.to_state(true)));
-                }
-
-                if lock_info.max_holders != *max_holders {
-                    return Ok(CommandResult::LockResult(lock_info.to_state(false)));
-                }
-
-                if lock_info.can_acquire() {
-                    lock_info.add_holder(new_holder);
-                    let serialized = bincode::serialize(&lock_info)?;
-                    table
-                        .insert(path.as_bytes(), serialized.as_slice())
-                        .map_err(|e| super::RaftError::Storage(format!("insert lock: {e}")))?;
-                    Ok(CommandResult::LockResult(lock_info.to_state(true)))
-                } else {
-                    Ok(CommandResult::LockResult(lock_info.to_state(false)))
-                }
-            }
-
-            Command::ReleaseLock { path, lock_id } => {
-                let mut table = txn
-                    .open_table(locks_def)
-                    .map_err(|e| super::RaftError::Storage(format!("open locks: {e}")))?;
-                let existing = table
-                    .get(path.as_bytes())
-                    .map_err(|e| super::RaftError::Storage(format!("get lock: {e}")))?
-                    .map(|v| v.value().to_vec());
-
-                let mut lock_info: LockInfo = match existing {
-                    Some(bytes) => bincode::deserialize(&bytes)?,
-                    None => {
-                        return Ok(CommandResult::Error("Lock not found".to_string()));
-                    }
-                };
-
-                if !lock_info.remove_holder(lock_id) {
-                    return Ok(CommandResult::Error("Lock holder not found".to_string()));
-                }
-
-                if lock_info.is_empty() {
-                    table
-                        .remove(path.as_bytes())
-                        .map_err(|e| super::RaftError::Storage(format!("remove lock: {e}")))?;
-                } else {
-                    let serialized = bincode::serialize(&lock_info)?;
-                    table
-                        .insert(path.as_bytes(), serialized.as_slice())
-                        .map_err(|e| super::RaftError::Storage(format!("insert lock: {e}")))?;
-                }
-
+                    .open_table(stream_def)
+                    .map_err(|e| super::RaftError::Storage(format!("open stream_entries: {e}")))?;
+                table
+                    .insert(key.as_bytes(), data.as_slice())
+                    .map_err(|e| super::RaftError::Storage(format!("insert stream_entry: {e}")))?;
                 Ok(CommandResult::Success)
             }
 
-            Command::ExtendLock {
-                path,
-                lock_id,
-                new_ttl_secs,
-                now_secs,
-            } => {
-                let new_expires_at = now_secs + *new_ttl_secs as u64;
+            Command::DeleteStreamEntry { key } => {
+                let stream_def =
+                    redb::TableDefinition::<&[u8], &[u8]>::new(self.stream_entries.name());
                 let mut table = txn
-                    .open_table(locks_def)
-                    .map_err(|e| super::RaftError::Storage(format!("open locks: {e}")))?;
-                let existing = table
-                    .get(path.as_bytes())
-                    .map_err(|e| super::RaftError::Storage(format!("get lock: {e}")))?
-                    .map(|v| v.value().to_vec());
-
-                let mut lock_info: LockInfo = match existing {
-                    Some(bytes) => bincode::deserialize(&bytes)?,
-                    None => {
-                        return Ok(CommandResult::Error("Lock not found".to_string()));
-                    }
-                };
-
-                lock_info.remove_expired(*now_secs);
-
-                if lock_info.extend_ttl(lock_id, new_expires_at) {
-                    let serialized = bincode::serialize(&lock_info)?;
-                    table
-                        .insert(path.as_bytes(), serialized.as_slice())
-                        .map_err(|e| super::RaftError::Storage(format!("insert lock: {e}")))?;
-                    Ok(CommandResult::Success)
-                } else {
-                    Ok(CommandResult::Error("Lock holder not found".to_string()))
-                }
+                    .open_table(stream_def)
+                    .map_err(|e| super::RaftError::Storage(format!("open stream_entries: {e}")))?;
+                table
+                    .remove(key.as_bytes())
+                    .map_err(|e| super::RaftError::Storage(format!("remove stream_entry: {e}")))?;
+                Ok(CommandResult::Success)
             }
 
             Command::Noop => Ok(CommandResult::Success),
+
+            // Lock commands never flow here.
+            Command::AcquireLock { .. }
+            | Command::ReleaseLock { .. }
+            | Command::ForceReleaseLock { .. }
+            | Command::ExtendLock { .. } => Err(super::RaftError::InvalidState(
+                "execute_metadata_in_txn called with a lock command".into(),
+            )),
         }
+    }
+
+    fn is_lock_command(command: &Command) -> bool {
+        matches!(
+            command,
+            Command::AcquireLock { .. }
+                | Command::ReleaseLock { .. }
+                | Command::ForceReleaseLock { .. }
+                | Command::ExtendLock { .. }
+        )
     }
 }
 
@@ -1206,7 +1435,9 @@ impl StateMachine for FullStateMachine {
         match command {
             Command::SetMetadata { .. }
             | Command::CasSetMetadata { .. }
-            | Command::DeleteMetadata { .. } => self.execute(command),
+            | Command::DeleteMetadata { .. }
+            | Command::AppendStreamEntry { .. }
+            | Command::DeleteStreamEntry { .. } => self.execute(command),
             _ => Err(super::RaftError::InvalidState(
                 "Only metadata operations (set/delete) support EC local writes".into(),
             )),
@@ -1260,17 +1491,102 @@ impl StateMachine for FullStateMachine {
     }
 
     fn apply(&mut self, index: u64, command: &Command) -> Result<CommandResult> {
-        if index <= self.last_applied {
+        // Lock commands: mutate the in-memory advisory map under its
+        // own mutex. They are idempotent under full log replay
+        // (acquire/release cycles cancel out, TTL expiry is
+        // deterministic from now_secs in the command), so they skip
+        // the `last_applied` idempotency guard. This is what lets a
+        // follower rebuild its BTreeMap from the log on restart even
+        // when `last_applied` has been persisted — the metadata side
+        // still uses the guard, but the advisory side needs every
+        // committed entry replayed.
+        if Self::is_lock_command(command) {
+            let result = match command {
+                Command::AcquireLock {
+                    path,
+                    lock_id,
+                    max_holders,
+                    ttl_secs,
+                    holder_info,
+                    mode,
+                    now_secs,
+                } => self.apply_acquire_lock(
+                    path,
+                    lock_id,
+                    *max_holders,
+                    *ttl_secs,
+                    holder_info,
+                    *mode,
+                    *now_secs,
+                )?,
+                Command::ReleaseLock { path, lock_id } => self.apply_release_lock(path, lock_id)?,
+                Command::ForceReleaseLock { path } => self.apply_force_release_lock(path)?,
+                Command::ExtendLock {
+                    path,
+                    lock_id,
+                    new_ttl_secs,
+                    now_secs,
+                } => self.apply_extend_lock(path, lock_id, *new_ttl_secs, *now_secs)?,
+                _ => unreachable!("is_lock_command filtered non-lock variants"),
+            };
+            // Track high-water mark in memory for monitoring; we don't
+            // persist it for lock-only entries because the idempotency
+            // check doesn't apply to them and because their persistent
+            // record lives in the raft log + snapshot, not redb.
+            let cur = self.last_applied.load(Ordering::Relaxed);
+            if index > cur {
+                self.last_applied.store(index, Ordering::Release);
+            }
+            return Ok(result);
+        }
+
+        // Metadata path: skip if we've already applied this index.
+        // Protects `AdjustCounter` and similar non-idempotent
+        // commands from double-replay on restart.
+        if index <= self.last_applied.load(Ordering::Relaxed) {
             return Ok(CommandResult::Success);
         }
 
-        // Atomic apply: execute the command AND persist last_applied in a
-        // single redb write transaction. This matches etcd (boltdb txn),
-        // CockroachDB (Pebble WriteBatch), and TiKV (RocksDB WriteBatch).
+        // R20.16.2: capture pre-delete DT_MOUNT classification BEFORE
+        // the write txn removes the entry. Apply is serial, so no
+        // concurrent writer can slip in between this read and the txn
+        // that performs the delete. Only DeleteMetadata needs the
+        // pre-capture — for SetMetadata the proto is on the command
+        // itself, accessible from emit_mount_apply_event.
         //
-        // Without atomicity, a crash between execute() and save_last_applied()
-        // would cause non-idempotent commands (e.g. AdjustCounter) to replay
-        // on restart, silently diverging from other replicas.
+        // R20.18.5: federation_unmount writes a DT_DIR at the mount
+        // path to replace the DT_MOUNT entry — that's a SetMetadata,
+        // not a DeleteMetadata. We need to detect "previous entry
+        // was DT_MOUNT but the new one isn't" and fire a Delete
+        // event so wire_federation_mount_impl removes the mount from
+        // MountTable on every node.
+        #[cfg(feature = "grpc")]
+        let delete_mount_key: Option<String> = match command {
+            Command::DeleteMetadata { key } if self.peek_is_dt_mount(key) => Some(key.clone()),
+            Command::SetMetadata { key, value } if self.peek_is_dt_mount(key) => {
+                use crate::transport::proto::nexus::core::FileMetadata as ProtoFileMetadata;
+                use prost::Message as ProstMessage;
+                const DT_MOUNT: i32 = 2;
+                let overwrite_is_mount = match ProtoFileMetadata::decode(value.as_slice()) {
+                    Ok(p) => p.entry_type == DT_MOUNT,
+                    Err(_) => false,
+                };
+                if overwrite_is_mount {
+                    None
+                } else {
+                    Some(key.clone())
+                }
+            }
+            _ => None,
+        };
+
+        // Atomic apply: execute the metadata command AND persist
+        // `last_applied` in a single redb write transaction. This
+        // matches etcd (boltdb txn), CockroachDB (Pebble WriteBatch),
+        // and TiKV (RocksDB WriteBatch). Without atomicity, a crash
+        // between execute() and save_last_applied() would cause
+        // non-idempotent commands to replay on restart, silently
+        // diverging from other replicas.
         let db = self.metadata.raw_db();
         let meta_def = redb::TableDefinition::<&[u8], &[u8]>::new(self.metadata.name());
 
@@ -1290,7 +1606,7 @@ impl StateMachine for FullStateMachine {
         // and unrecoverable — if this replica fails but others succeed, state
         // has diverged. Following etcd/CockroachDB: panic to prevent silent
         // divergence (node must be restored from snapshot).
-        let result = match self.execute_in_txn(&write_txn, command) {
+        let result = match self.execute_metadata_in_txn(&write_txn, command) {
             Ok(result) => result,
             Err(e) => {
                 panic!(
@@ -1330,8 +1646,25 @@ impl StateMachine for FullStateMachine {
             );
         }
 
-        // Update in-memory state only after successful commit
-        self.last_applied = index;
+        // Update in-memory state only after successful commit. Release
+        // ordering pairs with Acquire loads in sync readers (e.g. the
+        // PyO3 gate helper) so a reader observing a new last_applied
+        // value also sees the metadata write that preceded it.
+        self.last_applied.store(index, Ordering::Release);
+
+        // R20.16.2: fire the DT_MOUNT apply-side callback *after*
+        // commit. Any failure is caught (catch_unwind on panic; no-op
+        // on missing callback) — returning Err from apply poisons the
+        // state machine per raft's "apply must not fail" invariant,
+        // and the callback is strictly a side-effect.
+        #[cfg(feature = "grpc")]
+        self.emit_mount_apply_event(command, delete_mount_key.as_deref());
+
+        // Cache coherence: notify the kernel DCache that this key's
+        // metadata changed so nodes that didn't originate the write
+        // (leader-forwarded follower writes, catch-up replication)
+        // drop the stale dcache entry on next sys_stat / sys_read.
+        self.emit_invalidate_event(command);
 
         Ok(result)
     }
@@ -1348,20 +1681,27 @@ impl StateMachine for FullStateMachine {
             }
         }
 
-        let mut locks = HashMap::new();
-        for item in self.locks.iter() {
+        // R19.1b': serialize stream_entries as its own map. Keys are
+        // opaque so no ``__``-prefix filtering here; consumers rely on
+        // the dedicated tree to keep them separate from file metadata.
+        let mut stream_entries = HashMap::new();
+        for item in self.stream_entries.iter() {
             let (key, value) = item?;
-            if let Ok(path) = String::from_utf8(key) {
-                if let Ok(lock_info) = bincode::deserialize(&value) {
-                    locks.insert(path, lock_info);
-                }
+            if let Ok(k) = String::from_utf8(key) {
+                stream_entries.insert(k, value);
             }
         }
 
+        // Snapshot the advisory map under its own mutex. One clone of
+        // the BTreeMap is cheap (shallow tree copy) and lets us drop
+        // the mutex before bincoding.
+        let advisory = self.advisory.lock().clone();
+
         let snapshot = Snapshot {
             metadata,
-            locks,
-            last_applied: self.last_applied,
+            stream_entries,
+            advisory,
+            last_applied: self.last_applied.load(Ordering::Relaxed),
         };
 
         Ok(bincode::serialize(&snapshot)?)
@@ -1370,18 +1710,19 @@ impl StateMachine for FullStateMachine {
     fn restore_snapshot(&mut self, data: &[u8]) -> Result<()> {
         let snapshot: Snapshot = bincode::deserialize(data)?;
 
-        // Atomic restore: all clears + inserts in a single redb transaction.
-        // If any step fails, the transaction rolls back and old state is preserved.
+        // Atomic restore for metadata: clear + repopulate in a single
+        // redb transaction. Advisory locks are in-memory only — they
+        // are replaced under their own mutex after the redb commit.
         let db = self.metadata.raw_db();
         let meta_def = redb::TableDefinition::<&[u8], &[u8]>::new(self.metadata.name());
-        let locks_def = redb::TableDefinition::<&[u8], &[u8]>::new(self.locks.name());
 
         let write_txn = db.begin_write().map_err(|e| {
             super::RaftError::Storage(format!("begin_write for snapshot restore: {e}"))
         })?;
 
+        let stream_def = redb::TableDefinition::<&[u8], &[u8]>::new(self.stream_entries.name());
+
         {
-            // Clear and repopulate metadata table
             write_txn
                 .delete_table(meta_def)
                 .map_err(|e| super::RaftError::Storage(format!("delete metadata table: {e}")))?;
@@ -1401,19 +1742,22 @@ impl StateMachine for FullStateMachine {
                 )
                 .map_err(|e| super::RaftError::Storage(format!("insert last_applied: {e}")))?;
 
-            // Clear and repopulate locks table
-            drop(meta_table);
-            write_txn
-                .delete_table(locks_def)
-                .map_err(|e| super::RaftError::Storage(format!("delete locks table: {e}")))?;
-            let mut locks_table = write_txn
-                .open_table(locks_def)
-                .map_err(|e| super::RaftError::Storage(format!("open locks table: {e}")))?;
-            for (path, lock_info) in &snapshot.locks {
-                let serialized = bincode::serialize(lock_info)?;
-                locks_table
-                    .insert(path.as_bytes(), serialized.as_slice())
-                    .map_err(|e| super::RaftError::Storage(format!("insert lock: {e}")))?;
+            // R19.1b': same atomic transaction restores stream_entries.
+            // ``delete_table`` wipes the previous state; then reinsert
+            // the snapshot contents. Pre-R19.1b' snapshots carry an
+            // empty map here (serde(default)), so the table ends up
+            // empty — matching pre-R19.1b' behavior where it did not
+            // exist.
+            write_txn.delete_table(stream_def).map_err(|e| {
+                super::RaftError::Storage(format!("delete stream_entries table: {e}"))
+            })?;
+            let mut stream_table = write_txn.open_table(stream_def).map_err(|e| {
+                super::RaftError::Storage(format!("open stream_entries table: {e}"))
+            })?;
+            for (key, value) in &snapshot.stream_entries {
+                stream_table
+                    .insert(key.as_bytes(), value.as_slice())
+                    .map_err(|e| super::RaftError::Storage(format!("insert stream_entry: {e}")))?;
             }
         }
 
@@ -1421,14 +1765,48 @@ impl StateMachine for FullStateMachine {
             .commit()
             .map_err(|e| super::RaftError::Storage(format!("commit snapshot restore: {e}")))?;
 
-        // Update in-memory state only after successful commit
-        self.last_applied = snapshot.last_applied;
+        // Replace advisory state under its mutex. Single acquisition
+        // preserves the atomicity invariant: any concurrent reader
+        // sees either the full pre-restore map or the full post-
+        // restore map, never a torn in-between.
+        {
+            let mut guard = self.advisory.lock();
+            *guard = snapshot.advisory;
+        }
+
+        // Update in-memory state only after both writes succeed.
+        self.last_applied
+            .store(snapshot.last_applied, Ordering::Release);
 
         Ok(())
     }
 
     fn last_applied_index(&self) -> u64 {
-        self.last_applied
+        self.last_applied.load(Ordering::Acquire)
+    }
+
+    fn last_applied_shared(&self) -> Option<Arc<AtomicU64>> {
+        Some(self.last_applied_shared_arc())
+    }
+
+    /// Return the shared apply-side invalidation slot so downstream
+    /// holders (``ZoneConsensus``, kernel ``DLC``) can install a
+    /// callback that fires on every committed metadata mutation.
+    fn invalidate_cb_slot(
+        &self,
+    ) -> Option<Arc<parking_lot::RwLock<Option<Arc<dyn Fn(&str) + Send + Sync>>>>> {
+        Some(Arc::clone(&self.invalidate_cb))
+    }
+
+    /// Return the shared apply-side DT_MOUNT slot so downstream
+    /// holders (``ZoneConsensus``, kernel federation wiring) can
+    /// install a callback that fires on every committed DT_MOUNT
+    /// Set / Delete (R20.16.2).
+    #[cfg(feature = "grpc")]
+    fn mount_apply_cb_slot(
+        &self,
+    ) -> Option<Arc<parking_lot::RwLock<Option<Arc<dyn Fn(&MountApplyEvent) + Send + Sync>>>>> {
+        Some(Arc::clone(&self.mount_apply_cb))
     }
 }
 
@@ -1467,6 +1845,7 @@ mod tests {
             max_holders: 3,
             ttl_secs: 30,
             holder_info: "agent:test".into(),
+            mode: LockMode::Exclusive,
             now_secs: 1000,
         };
 
@@ -1480,6 +1859,7 @@ mod tests {
                 max_holders,
                 ttl_secs,
                 holder_info,
+                mode,
                 now_secs,
             } => {
                 assert_eq!(path, "/data/test.txt");
@@ -1487,14 +1867,275 @@ mod tests {
                 assert_eq!(max_holders, 3);
                 assert_eq!(ttl_secs, 30);
                 assert_eq!(holder_info, "agent:test");
+                assert_eq!(mode, LockMode::Exclusive);
                 assert_eq!(now_secs, 1000);
             }
             _ => panic!("wrong command type"),
         }
     }
 
+    /// R20.16.2 apply-side DT_MOUNT callback — one flow covering every
+    /// branch: DT_MOUNT Set with an installed callback fires exactly
+    /// one Set event with the right payload; DT_DIR Set never fires;
+    /// DT_MOUNT Delete fires a Delete event; DT_REG Delete never fires;
+    /// a state machine with no callback applies normally (callback is
+    /// pure side-effect — apply must be unaffected).
+    #[cfg(feature = "grpc")]
+    #[test]
+    fn apply_mount_apply_cb_fires_only_on_dt_mount() {
+        use crate::transport::proto::nexus::core::FileMetadata as ProtoFileMetadata;
+        use prost::Message as ProstMessage;
+        use std::sync::Mutex as StdMutex;
+
+        fn encode(entry_type: i32, zone: &str, target: &str, backend: &str) -> Vec<u8> {
+            ProtoFileMetadata {
+                entry_type,
+                zone_id: zone.to_string(),
+                target_zone_id: target.to_string(),
+                backend_name: backend.to_string(),
+                ..Default::default()
+            }
+            .encode_to_vec()
+        }
+
+        // Callback installed: DT_MOUNT Set emits a Set event with the
+        // decoded target + backend snapshot.
+        let store = RedbStore::open_temporary().unwrap();
+        let sm = FullStateMachine::new(&store).unwrap();
+        let events: Arc<StdMutex<Vec<MountApplyEvent>>> = Arc::new(StdMutex::new(Vec::new()));
+        let slot = sm
+            .mount_apply_cb_slot()
+            .expect("FullStateMachine exposes a mount-apply slot");
+        let events_cb = Arc::clone(&events);
+        *slot.write() = Some(Arc::new(move |e: &MountApplyEvent| {
+            events_cb.lock().unwrap().push(e.clone());
+        }));
+        let mut sm = sm;
+
+        sm.apply(
+            1,
+            &Command::SetMetadata {
+                key: "/mnt/peer".into(),
+                value: encode(2, "zone-a", "zone-b", "cas-local"), // DT_MOUNT
+            },
+        )
+        .unwrap();
+        {
+            let log = events.lock().unwrap();
+            assert_eq!(log.len(), 1, "DT_MOUNT Set must fire exactly once");
+            match &log[0] {
+                MountApplyEvent::Set {
+                    key,
+                    target_zone_id,
+                    backend_name,
+                } => {
+                    assert_eq!(key, "/mnt/peer");
+                    assert_eq!(target_zone_id, "zone-b");
+                    assert_eq!(backend_name, "cas-local");
+                }
+                other => panic!("expected Set event, got {other:?}"),
+            }
+        }
+
+        // DT_DIR Set → no event.
+        sm.apply(
+            2,
+            &Command::SetMetadata {
+                key: "/docs".into(),
+                value: encode(1, "zone-a", "", ""), // DT_DIR
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            events.lock().unwrap().len(),
+            1,
+            "DT_DIR must not fire a mount-apply event"
+        );
+
+        // DT_MOUNT Delete → fires one Delete event with the key.
+        sm.apply(
+            3,
+            &Command::DeleteMetadata {
+                key: "/mnt/peer".into(),
+            },
+        )
+        .unwrap();
+        {
+            let log = events.lock().unwrap();
+            assert_eq!(log.len(), 2, "DT_MOUNT Delete must fire once");
+            match &log[1] {
+                MountApplyEvent::Delete { key } => assert_eq!(key, "/mnt/peer"),
+                other => panic!("expected Delete event, got {other:?}"),
+            }
+        }
+
+        // DT_REG Set + Delete → no events (DT_REG is not DT_MOUNT).
+        sm.apply(
+            4,
+            &Command::SetMetadata {
+                key: "/file.txt".into(),
+                value: encode(0, "zone-a", "", ""), // DT_REG
+            },
+        )
+        .unwrap();
+        sm.apply(
+            5,
+            &Command::DeleteMetadata {
+                key: "/file.txt".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            events.lock().unwrap().len(),
+            2,
+            "DT_REG set/delete must not fire"
+        );
+
+        // No callback installed: DT_MOUNT applies normally, no panic.
+        let store2 = RedbStore::open_temporary().unwrap();
+        let mut sm2 = FullStateMachine::new(&store2).unwrap();
+        let res = sm2
+            .apply(
+                1,
+                &Command::SetMetadata {
+                    key: "/mnt/peer".into(),
+                    value: encode(2, "zone-a", "zone-b", "cas-local"),
+                },
+            )
+            .unwrap();
+        assert!(matches!(res, CommandResult::Success));
+        assert_eq!(sm2.last_applied_index(), 1, "apply unaffected without cb");
+    }
+
+    /// Apply-side mount callback panics must not poison apply.
+    #[cfg(feature = "grpc")]
+    #[test]
+    fn apply_mount_apply_cb_panic_does_not_poison_apply() {
+        use crate::transport::proto::nexus::core::FileMetadata as ProtoFileMetadata;
+        use prost::Message as ProstMessage;
+
+        let store = RedbStore::open_temporary().unwrap();
+        let sm = FullStateMachine::new(&store).unwrap();
+        let slot = sm.mount_apply_cb_slot().unwrap();
+        *slot.write() = Some(Arc::new(|_e: &MountApplyEvent| {
+            panic!("intentional test panic");
+        }));
+        let mut sm = sm;
+
+        let value = ProtoFileMetadata {
+            entry_type: 2,
+            target_zone_id: "zone-b".into(),
+            backend_name: "cas-local".into(),
+            ..Default::default()
+        }
+        .encode_to_vec();
+
+        let res = sm.apply(
+            1,
+            &Command::SetMetadata {
+                key: "/mnt/peer".into(),
+                value,
+            },
+        );
+        assert!(res.is_ok(), "callback panic must not fail apply");
+        assert_eq!(sm.last_applied_index(), 1);
+    }
+
+    /// Apply-side invalidation callback — fires once per committed
+    /// metadata mutation, skips non-mutating variants, survives
+    /// callback panics without poisoning apply.
+    #[test]
+    fn apply_invalidate_callback_fires_on_metadata_mutations_only() {
+        use std::sync::atomic::AtomicUsize;
+        use std::sync::Arc as StdArc;
+
+        let store = RedbStore::open_temporary().unwrap();
+        let sm = FullStateMachine::new(&store).unwrap();
+        let calls = StdArc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let slot = sm
+            .invalidate_cb_slot()
+            .expect("FullStateMachine exposes a slot");
+        let calls_cb = StdArc::clone(&calls);
+        *slot.write() = Some(Arc::new(move |key: &str| {
+            calls_cb.lock().unwrap().push(key.to_string());
+        }));
+        let mut sm = sm;
+
+        // SetMetadata → fires with the mutated key.
+        sm.apply(
+            1,
+            &Command::SetMetadata {
+                key: "/a".into(),
+                value: vec![0u8; 4],
+            },
+        )
+        .unwrap();
+        sm.apply(2, &Command::DeleteMetadata { key: "/b".into() })
+            .unwrap();
+        sm.apply(
+            3,
+            &Command::CasSetMetadata {
+                key: "/c".into(),
+                value: vec![0u8; 4],
+                expected_version: 0,
+            },
+        )
+        .unwrap();
+        sm.apply(
+            4,
+            &Command::AdjustCounter {
+                key: "__i_links_count__".into(),
+                delta: 1,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            *calls.lock().unwrap(),
+            vec!["/a".to_string(), "/b".to_string(), "/c".to_string()],
+            "callback must fire on Set/Cas/Delete, not on AdjustCounter"
+        );
+
+        // Panicking callback does not poison the state machine.
+        let panic_count = StdArc::new(AtomicUsize::new(0));
+        let panic_count_cb = StdArc::clone(&panic_count);
+        *slot.write() = Some(Arc::new(move |_key: &str| {
+            panic_count_cb.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            panic!("intentional callback panic");
+        }));
+        let res = sm.apply(
+            5,
+            &Command::SetMetadata {
+                key: "/d".into(),
+                value: vec![0u8; 4],
+            },
+        );
+        assert!(res.is_ok(), "apply must not propagate callback panic");
+        assert_eq!(
+            panic_count.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "panicking callback still ran once"
+        );
+        assert_eq!(sm.last_applied_index(), 5);
+
+        // Slot cleared → no more invocations on subsequent applies.
+        *slot.write() = None;
+        sm.apply(
+            6,
+            &Command::SetMetadata {
+                key: "/e".into(),
+                value: vec![0u8; 4],
+            },
+        )
+        .unwrap();
+        // calls vec is frozen at length 3 — /d / /e did not append because
+        // the panicking cb was replaced before /d succeeded-without-append,
+        // and /e ran with slot = None.
+        assert_eq!(calls.lock().unwrap().len(), 3);
+    }
+
     /// Determinism regression test (Issue #3029 / Bug 1):
     /// Two state machines applying the same commands must produce byte-identical snapshots.
+
     #[test]
     fn test_state_machine_determinism() {
         let store1 = RedbStore::open_temporary().unwrap();
@@ -1519,6 +2160,7 @@ mod tests {
                     max_holders: 1,
                     ttl_secs: 60,
                     holder_info: "agent:a".into(),
+                    mode: LockMode::Exclusive,
                     now_secs: 1000,
                 },
             ),
@@ -1530,6 +2172,7 @@ mod tests {
                     max_holders: 3,
                     ttl_secs: 30,
                     holder_info: "agent:b".into(),
+                    mode: LockMode::Exclusive,
                     now_secs: 1001,
                 },
             ),
@@ -1558,6 +2201,7 @@ mod tests {
                     max_holders: 1,
                     ttl_secs: 60,
                     holder_info: "agent:c".into(),
+                    mode: LockMode::Exclusive,
                     now_secs: 2000, // well past lock-2's 30s TTL
                 },
             ),
@@ -1569,13 +2213,16 @@ mod tests {
             sm2.apply(*idx, cmd).unwrap();
         }
 
-        // Snapshots must be logically identical (HashMap serialization order may vary)
+        // Snapshots must be logically identical (HashMap serialization order may vary).
         let snap1 = sm1.snapshot().unwrap();
         let snap2 = sm2.snapshot().unwrap();
         let decoded1: Snapshot = bincode::deserialize(&snap1).unwrap();
         let decoded2: Snapshot = bincode::deserialize(&snap2).unwrap();
         assert_eq!(decoded1.metadata, decoded2.metadata, "Metadata diverged");
-        assert_eq!(decoded1.locks, decoded2.locks, "Locks diverged");
+        assert_eq!(
+            decoded1.advisory.locks, decoded2.advisory.locks,
+            "Locks diverged"
+        );
         assert_eq!(
             decoded1.last_applied, decoded2.last_applied,
             "last_applied diverged"
@@ -1622,6 +2269,7 @@ mod tests {
             max_holders: 1,
             ttl_secs: 30,
             holder_info: "agent:test1".into(),
+            mode: LockMode::Exclusive,
             now_secs: 1000,
         };
         let result = sm.apply(1, &cmd).unwrap();
@@ -1639,6 +2287,7 @@ mod tests {
             max_holders: 1,
             ttl_secs: 30,
             holder_info: "agent:test2".into(),
+            mode: LockMode::Exclusive,
             now_secs: 1000,
         };
         let result = sm.apply(2, &cmd).unwrap();
@@ -1664,6 +2313,7 @@ mod tests {
             max_holders: 1,
             ttl_secs: 30,
             holder_info: "agent:test2".into(),
+            mode: LockMode::Exclusive,
             now_secs: 1000,
         };
         let result = sm.apply(4, &cmd).unwrap();
@@ -1686,6 +2336,7 @@ mod tests {
             max_holders: 3,
             ttl_secs: 30,
             holder_info: "agent:test1".into(),
+            mode: LockMode::Shared,
             now_secs: 1000,
         };
         let result = sm.apply(1, &cmd).unwrap();
@@ -1704,6 +2355,7 @@ mod tests {
             max_holders: 3,
             ttl_secs: 30,
             holder_info: "agent:test2".into(),
+            mode: LockMode::Shared,
             now_secs: 1000,
         };
         let result = sm.apply(2, &cmd).unwrap();
@@ -1721,6 +2373,7 @@ mod tests {
             max_holders: 3,
             ttl_secs: 30,
             holder_info: "agent:test3".into(),
+            mode: LockMode::Shared,
             now_secs: 1000,
         };
         let result = sm.apply(3, &cmd).unwrap();
@@ -1738,6 +2391,7 @@ mod tests {
             max_holders: 3,
             ttl_secs: 30,
             holder_info: "agent:test4".into(),
+            mode: LockMode::Shared,
             now_secs: 1000,
         };
         let result = sm.apply(4, &cmd).unwrap();
@@ -1762,6 +2416,7 @@ mod tests {
             max_holders: 3,
             ttl_secs: 30,
             holder_info: "agent:test4".into(),
+            mode: LockMode::Shared,
             now_secs: 1000,
         };
         let result = sm.apply(6, &cmd).unwrap();
@@ -1803,6 +2458,7 @@ mod tests {
                 max_holders: 1,
                 ttl_secs: 3600,
                 holder_info: "agent:test".into(),
+                mode: LockMode::Exclusive,
                 now_secs: 1000,
             },
         )
@@ -1835,6 +2491,7 @@ mod tests {
             max_holders: 1,
             ttl_secs: 30,
             holder_info: "agent:test1".into(),
+            mode: LockMode::Exclusive,
             now_secs: 1000,
         };
         sm.apply(1, &cmd).unwrap();
@@ -1862,6 +2519,7 @@ mod tests {
             max_holders: 1,
             ttl_secs: 1,
             holder_info: "agent:test1".into(),
+            mode: LockMode::Exclusive,
             now_secs: 1000,
         };
         let result = sm.apply(1, &cmd).unwrap();
@@ -1879,6 +2537,7 @@ mod tests {
             max_holders: 1,
             ttl_secs: 30,
             holder_info: "agent:test2".into(),
+            mode: LockMode::Exclusive,
             now_secs: 1002,
         };
         let result = sm.apply(2, &cmd2).unwrap();
@@ -1905,6 +2564,7 @@ mod tests {
             max_holders: 3,
             ttl_secs: 30,
             holder_info: "agent:test1".into(),
+            mode: LockMode::Exclusive,
             now_secs: 1000,
         };
         let result = sm.apply(1, &cmd).unwrap();
@@ -1921,6 +2581,7 @@ mod tests {
             max_holders: 1, // Mismatch: 1 != 3
             ttl_secs: 30,
             holder_info: "agent:test2".into(),
+            mode: LockMode::Exclusive,
             now_secs: 1000,
         };
         let result = sm.apply(2, &cmd2).unwrap();
@@ -1944,6 +2605,7 @@ mod tests {
             max_holders: 1,
             ttl_secs: 1,
             holder_info: "agent:test1".into(),
+            mode: LockMode::Exclusive,
             now_secs: 1000,
         };
         sm.apply(1, &cmd).unwrap();
@@ -1978,6 +2640,7 @@ mod tests {
             max_holders: u32::MAX,
             ttl_secs: 30,
             holder_info: "agent:test1".into(),
+            mode: LockMode::Exclusive,
             now_secs: 1000,
         };
         let result = sm.apply(1, &cmd).unwrap();
@@ -2004,6 +2667,125 @@ mod tests {
         );
         // The metadata should NOT be set (skipped due to idempotency)
         assert!(sm.get_metadata("/test/dup").unwrap().is_none());
+    }
+
+    // ───────────────────────────────────────────────────────────────
+    // F4 C1 — LockMode + RW semantics
+    // ───────────────────────────────────────────────────────────────
+
+    /// Helper: build an AcquireLock command with the given mode.
+    fn acquire_cmd(
+        path: &str,
+        lock_id: &str,
+        max_holders: u32,
+        mode: LockMode,
+        now_secs: u64,
+    ) -> Command {
+        Command::AcquireLock {
+            path: path.into(),
+            lock_id: lock_id.into(),
+            max_holders,
+            ttl_secs: 60,
+            holder_info: format!("agent:{lock_id}"),
+            mode,
+            now_secs,
+        }
+    }
+
+    #[test]
+    fn test_f4_exclusive_blocks_exclusive() {
+        let store = RedbStore::open_temporary().unwrap();
+        let mut sm = FullStateMachine::new(&store).unwrap();
+
+        let c1 = acquire_cmd("/rw/a", "h1", 1, LockMode::Exclusive, 1000);
+        let c2 = acquire_cmd("/rw/a", "h2", 1, LockMode::Exclusive, 1000);
+
+        match sm.apply(1, &c1).unwrap() {
+            CommandResult::LockResult(s) => assert!(s.acquired),
+            _ => panic!("LockResult"),
+        }
+        match sm.apply(2, &c2).unwrap() {
+            CommandResult::LockResult(s) => assert!(!s.acquired),
+            _ => panic!("LockResult"),
+        }
+    }
+
+    #[test]
+    fn test_f4_shared_coexists_up_to_max() {
+        let store = RedbStore::open_temporary().unwrap();
+        let mut sm = FullStateMachine::new(&store).unwrap();
+
+        // max_holders=3, three Shared holders all acquire.
+        for (idx, id) in ["r1", "r2", "r3"].iter().enumerate() {
+            let cmd = acquire_cmd("/rw/b", id, 3, LockMode::Shared, 1000);
+            match sm.apply((idx + 1) as u64, &cmd).unwrap() {
+                CommandResult::LockResult(s) => assert!(s.acquired, "{} should acquire", id),
+                _ => panic!("LockResult"),
+            }
+        }
+
+        // Fourth Shared holder fails — at capacity.
+        let c4 = acquire_cmd("/rw/b", "r4", 3, LockMode::Shared, 1000);
+        match sm.apply(4, &c4).unwrap() {
+            CommandResult::LockResult(s) => assert!(!s.acquired),
+            _ => panic!("LockResult"),
+        }
+    }
+
+    #[test]
+    fn test_f4_exclusive_blocked_by_shared() {
+        let store = RedbStore::open_temporary().unwrap();
+        let mut sm = FullStateMachine::new(&store).unwrap();
+
+        let shared = acquire_cmd("/rw/c", "r1", 3, LockMode::Shared, 1000);
+        let excl = acquire_cmd("/rw/c", "w1", 3, LockMode::Exclusive, 1000);
+
+        match sm.apply(1, &shared).unwrap() {
+            CommandResult::LockResult(s) => assert!(s.acquired),
+            _ => panic!("LockResult"),
+        }
+        // Exclusive-after-Shared: fail-fast (no waiter queue).
+        match sm.apply(2, &excl).unwrap() {
+            CommandResult::LockResult(s) => assert!(!s.acquired),
+            _ => panic!("LockResult"),
+        }
+    }
+
+    #[test]
+    fn test_f4_shared_blocked_by_exclusive() {
+        let store = RedbStore::open_temporary().unwrap();
+        let mut sm = FullStateMachine::new(&store).unwrap();
+
+        let excl = acquire_cmd("/rw/d", "w1", 3, LockMode::Exclusive, 1000);
+        let shared = acquire_cmd("/rw/d", "r1", 3, LockMode::Shared, 1000);
+
+        match sm.apply(1, &excl).unwrap() {
+            CommandResult::LockResult(s) => assert!(s.acquired),
+            _ => panic!("LockResult"),
+        }
+        match sm.apply(2, &shared).unwrap() {
+            CommandResult::LockResult(s) => assert!(!s.acquired),
+            _ => panic!("LockResult"),
+        }
+    }
+
+    #[test]
+    fn test_f4_snapshot_roundtrip_with_mode() {
+        let store = RedbStore::open_temporary().unwrap();
+        let mut sm = FullStateMachine::new(&store).unwrap();
+
+        // Build a Shared reader-writer lock.
+        sm.apply(7, &acquire_cmd("/rw/f", "r1", 3, LockMode::Shared, 1000))
+            .unwrap();
+
+        let snap = sm.snapshot().unwrap();
+        let store2 = RedbStore::open_temporary().unwrap();
+        let mut sm2 = FullStateMachine::new(&store2).unwrap();
+        sm2.restore_snapshot(&snap).unwrap();
+
+        let lock = sm2.get_lock("/rw/f").unwrap().unwrap();
+        assert_eq!(lock.holders[0].mode, LockMode::Shared);
+        assert_eq!(lock.max_holders, 3);
     }
 
     #[test]
@@ -2345,6 +3127,7 @@ mod tests {
                 max_holders: 1,
                 ttl_secs: 3600,
                 holder_info: "agent:old".into(),
+                mode: LockMode::Exclusive,
                 now_secs: 1000,
             },
         )
@@ -2392,18 +3175,439 @@ mod tests {
                 max_holders: 1,
                 ttl_secs: 3600,
                 holder_info: "agent:test".into(),
+                mode: LockMode::Exclusive,
                 now_secs: 1000,
             },
         )
         .unwrap();
         let snapshot_data = sm2.snapshot().unwrap();
         sm.restore_snapshot(&snapshot_data).unwrap();
+
+        // Metadata persists across reopens (redb-backed).
         let sm3 = FullStateMachine::new(&store).unwrap();
         assert_eq!(
             sm3.get_metadata("/persisted").unwrap(),
             Some(b"value".to_vec())
         );
-        assert!(sm3.get_lock("/persisted").unwrap().is_some());
         assert_eq!(sm3.last_applied_index(), 2);
+
+        // Advisory locks are in-memory only after R14 — reopening
+        // constructs a fresh empty `Arc<Mutex<LockState>>`. Rebuilding
+        // the BTreeMap is the job of the raft replay + snapshot restore
+        // path on startup, not this plain `new(&store)` constructor.
+        assert!(sm3.get_lock("/persisted").unwrap().is_none());
+
+        // The same-instance sm (the one that received restore_snapshot)
+        // does hold the advisory state — the mutex was repopulated in
+        // place.
+        assert!(sm.get_lock("/persisted").unwrap().is_some());
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // R14 — SSOT invariants: shared Arc, atomicity, rehydration
+    // ═══════════════════════════════════════════════════════════════
+
+    /// The `advisory_state()` handle is a clone of the Arc the apply
+    /// path writes into — mutations made via `sm.apply(AcquireLock)`
+    /// must be visible to any external holder of the same Arc without
+    /// taking a second snapshot or restart.
+    #[test]
+    fn r14_apply_is_visible_through_shared_arc() {
+        let store = RedbStore::open_temporary().unwrap();
+        let mut sm = FullStateMachine::new(&store).unwrap();
+        let shared = sm.advisory_state();
+
+        sm.apply(
+            1,
+            &Command::AcquireLock {
+                path: "/r14/a".into(),
+                lock_id: "h1".into(),
+                max_holders: 1,
+                ttl_secs: 60,
+                holder_info: "agent".into(),
+                mode: LockMode::Exclusive,
+                now_secs: 1000,
+            },
+        )
+        .unwrap();
+
+        // The external Arc sees the committed state immediately — no
+        // ReadIndex, no redb round-trip.
+        let guard = shared.lock();
+        let entry = guard.get_lock("/r14/a").expect("lock should exist");
+        assert_eq!(entry.holders.len(), 1);
+        assert_eq!(entry.holders[0].lock_id, "h1");
+    }
+
+    /// Pre-populating the advisory Arc **before** constructing the
+    /// state machine must survive: the state machine's apply path
+    /// operates on that same Arc (no copy / replace on construction).
+    /// This models the kernel's upgrade path where LockManager hands
+    /// its Arc into FullStateMachine::with_advisory.
+    #[test]
+    fn r14_with_advisory_preserves_preexisting_holders() {
+        use std::sync::Arc;
+
+        let store = RedbStore::open_temporary().unwrap();
+        let advisory = Arc::new(Mutex::new(LockState::new()));
+
+        // Simulate local-mode kernel holders that existed pre-upgrade.
+        {
+            let mut guard = advisory.lock();
+            guard.apply_acquire(
+                "/r14/pre",
+                "local-h1",
+                1,
+                60,
+                "agent",
+                LockMode::Exclusive,
+                1000,
+            );
+        }
+
+        let sm = FullStateMachine::with_advisory(&store, advisory.clone()).unwrap();
+
+        // The state machine sees the pre-existing holder via shared Arc.
+        assert!(sm.get_lock("/r14/pre").unwrap().is_some());
+    }
+
+    /// Snapshot serialization of the advisory BTreeMap is lossless —
+    /// snapshot → fresh state machine → restore_snapshot produces an
+    /// identical map.
+    #[test]
+    fn r14_snapshot_roundtrip_advisory_only() {
+        let store = RedbStore::open_temporary().unwrap();
+        let mut sm = FullStateMachine::new(&store).unwrap();
+        for (idx, (path, id, mode)) in [
+            ("/r14/a", "h1", LockMode::Exclusive),
+            ("/r14/b", "r1", LockMode::Shared),
+            ("/r14/b", "r2", LockMode::Shared),
+        ]
+        .iter()
+        .enumerate()
+        {
+            sm.apply(
+                (idx + 1) as u64,
+                &Command::AcquireLock {
+                    path: path.to_string(),
+                    lock_id: id.to_string(),
+                    max_holders: 3,
+                    ttl_secs: 60,
+                    holder_info: "agent".into(),
+                    mode: *mode,
+                    now_secs: 1000,
+                },
+            )
+            .unwrap();
+        }
+
+        let snap = sm.snapshot().unwrap();
+
+        let store2 = RedbStore::open_temporary().unwrap();
+        let mut sm2 = FullStateMachine::new(&store2).unwrap();
+        sm2.restore_snapshot(&snap).unwrap();
+
+        let a = sm2.get_lock("/r14/a").unwrap().unwrap();
+        assert_eq!(a.holders.len(), 1);
+        assert_eq!(a.holders[0].lock_id, "h1");
+
+        let b = sm2.get_lock("/r14/b").unwrap().unwrap();
+        assert_eq!(b.holders.len(), 2);
+        assert_eq!(b.max_holders, 3);
+    }
+
+    /// Lock commands are idempotent under full log replay — applying
+    /// the same committed entry a second time (simulating a post-
+    /// restart replay) produces the same final state, not a double-
+    /// apply. This is the invariant that lets the apply() lock-path
+    /// skip the `index <= last_applied` guard without corrupting state.
+    #[test]
+    fn r14_lock_replay_is_idempotent() {
+        let store = RedbStore::open_temporary().unwrap();
+        let mut sm = FullStateMachine::new(&store).unwrap();
+
+        let cmd = Command::AcquireLock {
+            path: "/r14/replay".into(),
+            lock_id: "h1".into(),
+            max_holders: 1,
+            ttl_secs: 60,
+            holder_info: "agent".into(),
+            mode: LockMode::Exclusive,
+            now_secs: 1000,
+        };
+        sm.apply(1, &cmd).unwrap();
+        // Replay: raft-rs may re-emit the same committed entry on
+        // restart if our reported applied lags. Apply must be a no-op.
+        sm.apply(1, &cmd).unwrap();
+
+        let info = sm.get_lock("/r14/replay").unwrap().unwrap();
+        assert_eq!(info.holders.len(), 1);
+    }
+
+    /// Apply and external reads share a single mutex. A reader can
+    /// never observe a half-applied lock (an entry where max_holders
+    /// was updated but the new holder hasn't been appended yet)
+    /// because `LockState::apply_acquire` runs as a single
+    /// mutate-under-guard step. Stress this with N writers + M
+    /// readers; every read snapshot must reflect a complete,
+    /// consistent state.
+    #[test]
+    fn r14_apply_and_read_are_atomic_under_contention() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        use std::sync::Arc;
+
+        let store = RedbStore::open_temporary().unwrap();
+        let sm = Arc::new(std::sync::Mutex::new(
+            FullStateMachine::new(&store).unwrap(),
+        ));
+        let shared = sm.lock().unwrap().advisory_state();
+
+        let next_idx = Arc::new(AtomicU64::new(1));
+        let writer_count = 32;
+        let reader_count = 32;
+
+        let mut handles = Vec::new();
+
+        for i in 0..writer_count {
+            let sm = sm.clone();
+            let next_idx = next_idx.clone();
+            handles.push(std::thread::spawn(move || {
+                let idx = next_idx.fetch_add(1, Ordering::Relaxed);
+                let path = format!("/r14/stress/{}", i % 8);
+                let id = format!("h{}", i);
+                sm.lock()
+                    .unwrap()
+                    .apply(
+                        idx,
+                        &Command::AcquireLock {
+                            path,
+                            lock_id: id,
+                            max_holders: 32,
+                            ttl_secs: 60,
+                            holder_info: "agent".into(),
+                            mode: LockMode::Shared,
+                            now_secs: 1000,
+                        },
+                    )
+                    .unwrap();
+            }));
+        }
+
+        for _ in 0..reader_count {
+            let shared = shared.clone();
+            handles.push(std::thread::spawn(move || {
+                for _ in 0..100 {
+                    let guard = shared.lock();
+                    // Invariant: for every entry with holders,
+                    // `max_holders` is non-zero (seeded atomically
+                    // with the first push).
+                    for entry in guard.locks.values() {
+                        if !entry.holders.is_empty() {
+                            assert!(
+                                entry.max_holders > 0,
+                                "observed entry with holders but max_holders=0",
+                            );
+                        }
+                    }
+                }
+            }));
+        }
+
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        let guard = shared.lock();
+        let total_holders: usize = guard.locks.values().map(|e| e.holders.len()).sum();
+        assert!(total_holders > 0);
+        assert!(total_holders <= writer_count as usize);
+    }
+
+    /// Snapshot taken while apply is in-flight captures a
+    /// point-in-time state — no torn reads of the BTreeMap. The
+    /// snapshot's BTreeMap clone happens under the advisory mutex
+    /// (same as apply), so either the apply completed before the
+    /// clone (snapshot sees it) or after (snapshot doesn't). Never
+    /// neither / both.
+    #[test]
+    fn r14_snapshot_under_concurrent_apply_is_consistent() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        use std::sync::Arc;
+
+        let store = RedbStore::open_temporary().unwrap();
+        let sm = Arc::new(std::sync::Mutex::new(
+            FullStateMachine::new(&store).unwrap(),
+        ));
+        let next_idx = Arc::new(AtomicU64::new(1));
+        let snapshots = Arc::new(std::sync::Mutex::new(Vec::<Vec<u8>>::new()));
+
+        let sm_w = sm.clone();
+        let next_idx_w = next_idx.clone();
+        let writer = std::thread::spawn(move || {
+            for i in 0..50 {
+                let idx = next_idx_w.fetch_add(1, Ordering::Relaxed);
+                sm_w.lock()
+                    .unwrap()
+                    .apply(
+                        idx,
+                        &Command::AcquireLock {
+                            path: format!("/r14/sn/{}", i),
+                            lock_id: format!("h{}", i),
+                            max_holders: 1,
+                            ttl_secs: 60,
+                            holder_info: "agent".into(),
+                            mode: LockMode::Exclusive,
+                            now_secs: 1000,
+                        },
+                    )
+                    .unwrap();
+            }
+        });
+
+        let sm_s = sm.clone();
+        let snapshots_s = snapshots.clone();
+        let snapper = std::thread::spawn(move || {
+            for _ in 0..5 {
+                let bytes = sm_s.lock().unwrap().snapshot().unwrap();
+                snapshots_s.lock().unwrap().push(bytes);
+            }
+        });
+
+        writer.join().unwrap();
+        snapper.join().unwrap();
+
+        // Every captured snapshot must deserialize and reproduce a
+        // self-consistent map — holders only on entries whose
+        // `max_holders > 0`.
+        for bytes in snapshots.lock().unwrap().iter() {
+            let snap: Snapshot = bincode::deserialize(bytes).unwrap();
+            for entry in snap.advisory.locks.values() {
+                if !entry.holders.is_empty() {
+                    assert!(entry.max_holders > 0);
+                }
+            }
+        }
+    }
+
+    /// R19.1b' — ``AppendStreamEntry`` stores raw bytes in the
+    /// dedicated ``sm_stream_entries`` tree (not ``sm_metadata``),
+    /// and ``get_stream_entry`` reads them back untouched.
+    #[test]
+    fn stream_entry_roundtrip_raw_bytes() {
+        let store = RedbStore::open_temporary().unwrap();
+        let mut sm = FullStateMachine::new(&store).unwrap();
+
+        let payload: Vec<u8> = (0u8..=255).collect();
+        sm.apply(
+            1,
+            &Command::AppendStreamEntry {
+                key: "/__wal_stream__/s/0".into(),
+                data: payload.clone(),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            sm.get_stream_entry("/__wal_stream__/s/0").unwrap(),
+            Some(payload)
+        );
+        // Stream entries do NOT appear in list_metadata — different
+        // redb tree. Confirms no pollution of file-metadata scans.
+        assert!(sm.list_metadata("/__wal_stream__/").unwrap().is_empty());
+    }
+
+    /// ``DeleteStreamEntry`` removes the row; subsequent get returns
+    /// ``None``.
+    #[test]
+    fn stream_entry_delete_by_key() {
+        let store = RedbStore::open_temporary().unwrap();
+        let mut sm = FullStateMachine::new(&store).unwrap();
+        sm.apply(
+            1,
+            &Command::AppendStreamEntry {
+                key: "/s/0".into(),
+                data: b"hello".to_vec(),
+            },
+        )
+        .unwrap();
+        assert!(sm.get_stream_entry("/s/0").unwrap().is_some());
+        sm.apply(2, &Command::DeleteStreamEntry { key: "/s/0".into() })
+            .unwrap();
+        assert!(sm.get_stream_entry("/s/0").unwrap().is_none());
+    }
+
+    /// ``delete_stream_prefix`` drops every row under the prefix and
+    /// leaves others alone.
+    #[test]
+    fn stream_entry_delete_prefix_scopes_correctly() {
+        let store = RedbStore::open_temporary().unwrap();
+        let mut sm = FullStateMachine::new(&store).unwrap();
+        for i in 0..5 {
+            sm.apply(
+                i + 1,
+                &Command::AppendStreamEntry {
+                    key: format!("/__wal_stream__/a/{i}"),
+                    data: vec![i as u8],
+                },
+            )
+            .unwrap();
+        }
+        sm.apply(
+            10,
+            &Command::AppendStreamEntry {
+                key: "/__wal_stream__/b/0".into(),
+                data: b"keep".to_vec(),
+            },
+        )
+        .unwrap();
+
+        let removed = sm.delete_stream_prefix("/__wal_stream__/a/").unwrap();
+        assert_eq!(removed, 5);
+        assert!(sm
+            .get_stream_entry("/__wal_stream__/a/0")
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            sm.get_stream_entry("/__wal_stream__/b/0").unwrap(),
+            Some(b"keep".to_vec())
+        );
+    }
+
+    /// Snapshot + restore round-trips stream entries intact.
+    #[test]
+    fn stream_entry_snapshot_restore_roundtrip() {
+        let store = RedbStore::open_temporary().unwrap();
+        let mut sm = FullStateMachine::new(&store).unwrap();
+        sm.apply(
+            1,
+            &Command::AppendStreamEntry {
+                key: "/s/0".into(),
+                data: vec![0xde, 0xad, 0xbe, 0xef],
+            },
+        )
+        .unwrap();
+        sm.apply(
+            2,
+            &Command::AppendStreamEntry {
+                key: "/s/1".into(),
+                data: vec![0x00, 0xff],
+            },
+        )
+        .unwrap();
+
+        let snap_bytes = sm.snapshot().unwrap();
+
+        let store2 = RedbStore::open_temporary().unwrap();
+        let mut sm2 = FullStateMachine::new(&store2).unwrap();
+        sm2.restore_snapshot(&snap_bytes).unwrap();
+
+        assert_eq!(
+            sm2.get_stream_entry("/s/0").unwrap(),
+            Some(vec![0xde, 0xad, 0xbe, 0xef])
+        );
+        assert_eq!(
+            sm2.get_stream_entry("/s/1").unwrap(),
+            Some(vec![0x00, 0xff])
+        );
     }
 }

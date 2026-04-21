@@ -14,7 +14,7 @@ Requirements:
 
 Architecture Notes (Raft Zone Migration):
 - Metadata is stored in sled (RaftMetadataStore) - each instance has its own database
-- Locks are Raft-based (per-instance RaftLockManager)
+- Locks are kernel-owned (Rust LockManager with optional Raft backend)
 - Events propagate via Redis (shared event bus)
 - For multi-instance lock testing with shared locks, use:
   - test_raft_locks.py (single-instance Raft locks)
@@ -261,7 +261,7 @@ class TestLockThenWrite:
         test_path = "/shared/config.json"
         nexus_fs.mkdir("/shared", parents=True)
 
-        lock_id = nexus_fs._lock_manager.acquire(test_path, timeout=5.0)
+        lock_id = nexus_fs.sys_lock(test_path, ttl=5.0)
         assert lock_id is not None
 
         try:
@@ -269,7 +269,7 @@ class TestLockThenWrite:
             content = nexus_fs.sys_read(test_path)
             assert content == b'{"version": 1}'
         finally:
-            released = nexus_fs._lock_manager.release(lock_id, test_path)
+            released = nexus_fs.sys_unlock(test_path, lock_id=lock_id)
             assert released is True
 
     @pytest.mark.asyncio
@@ -282,7 +282,7 @@ class TestLockThenWrite:
         lock_released = False
         operation_failed = False
 
-        lock_id = nexus_fs._lock_manager.acquire(test_path, timeout=5.0)
+        lock_id = nexus_fs.sys_lock(test_path, ttl=5.0)
         if lock_id:
             lock_acquired = True
             try:
@@ -291,7 +291,7 @@ class TestLockThenWrite:
             except ValueError:
                 operation_failed = True
             finally:
-                released = nexus_fs._lock_manager.release(lock_id, test_path)
+                released = nexus_fs.sys_unlock(test_path, lock_id=lock_id)
                 lock_released = released
 
         assert lock_acquired is True
@@ -521,15 +521,14 @@ class TestErrorHandling:
         test_path = "/expired/lock.txt"
         nexus_fs.mkdir("/expired", parents=True)
 
-        lock_id = nexus_fs._lock_manager.acquire(test_path, timeout=5.0, ttl=0.3)
+        lock_id = nexus_fs.sys_lock(test_path, ttl=0.3)
         assert lock_id is not None
 
         # Wait for TTL to expire
         await asyncio.sleep(0.5)
 
-        # Raft single-node: unlock still succeeds (no TTL auto-expiry)
-        released = nexus_fs._lock_manager.release(lock_id, test_path)
-        assert released is True
+        # After TTL expiry, unlock may return False (holder already pruned)
+        nexus_fs.sys_unlock(test_path, lock_id=lock_id)
 
     @pytest.mark.asyncio
     async def test_extend_wrong_lock_id(self, nexus_fs):
@@ -537,11 +536,12 @@ class TestErrorHandling:
         test_path = "/wrong/lock.txt"
         nexus_fs.mkdir("/wrong", parents=True)
 
-        lock_id = nexus_fs._lock_manager.acquire(test_path, timeout=5.0)
+        lock_id = nexus_fs.sys_lock(test_path, ttl=5.0)
         assert lock_id is not None
 
         try:
-            result = nexus_fs._lock_manager.extend("wrong-id", test_path, ttl=30.0)
-            assert result.success is False
+            # Extend with wrong lock_id → returns None (not found)
+            result = nexus_fs.sys_lock(test_path, lock_id="wrong-id", ttl=30.0)
+            assert result is None
         finally:
-            nexus_fs._lock_manager.release(lock_id, test_path)
+            nexus_fs.sys_unlock(test_path, lock_id=lock_id)

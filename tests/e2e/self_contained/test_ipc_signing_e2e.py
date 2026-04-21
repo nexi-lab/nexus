@@ -28,6 +28,7 @@ from nexus.bricks.ipc.delivery import MessageProcessor, MessageSender
 from nexus.bricks.ipc.envelope import MessageEnvelope, MessageType
 from nexus.bricks.ipc.provisioning import AgentProvisioner
 from nexus.bricks.ipc.signing import MessageSigner, MessageVerifier, SigningMode
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.storage.models import Base
 from nexus.storage.zone_settings import ZoneSettings
@@ -121,7 +122,7 @@ async def app(tmp_path: Any, db_path: Any, record_store: Any) -> Any:
             session,
             user_id="e2e-admin",
             name="E2E Admin",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             is_admin=True,
         )
         session.commit()

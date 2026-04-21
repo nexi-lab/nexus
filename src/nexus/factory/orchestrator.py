@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from nexus.contracts.constants import ROOT_ZONE_ID
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -220,13 +222,10 @@ async def create_nexus_fs(
     from nexus.core.config import (
         DistributedConfig as _DistributedConfig,
     )
-    from nexus.core.mount_table import MountTable
     from nexus.core.nexus_fs import NexusFS
-    from nexus.core.router import PathRouter
 
-    # Create mount table + router (root mount deferred to coordinator.mount after kernel construction)
-    mount_table = MountTable(metadata_store)
-    router = PathRouter(mount_table)
+    # Mount table is owned by the Rust kernel (F2). Root mount is deferred
+    # to sys_setattr(DT_MOUNT) + _store_mount_info() after NexusFS construction.
 
     # KERNEL-ARCHITECTURE §2: No CacheStore AND no Redis/Dragonfly → EventBus disabled.
     # EventBus uses Redis/Dragonfly pub/sub independently of CacheStore, so only
@@ -249,6 +248,33 @@ async def create_nexus_fs(
                 distributed = _dc_replace(_base_dist, enable_events=False)
                 logger.debug("EventBus disabled: no CacheStore or Redis/Dragonfly URL")
 
+    from nexus.contracts.types import OperationContext as _OC
+    from nexus.factory._lifecycle import _initialize_services, _wire_services
+
+    _init_cred = (
+        init_cred if init_cred is not None else _OC(user_id="system", groups=[], is_admin=is_admin)
+    )
+
+    # F2: construct NexusFS first so it owns the PathRouter. Services are
+    # built next using nx.router (the router needs nx._driver_coordinator,
+    # which only exists after NexusFS.__init__).
+    nx = NexusFS(
+        metadata_store=metadata_store,
+        record_store=record_store,
+        cache_store=cache_store,
+        cache=cache,
+        permissions=permissions,
+        distributed=distributed,
+        memory=memory,
+        parsing=parsing,
+        init_cred=_init_cred,
+    )
+
+    # Root mount — Rust kernel DLC handles routing + metastore + dcache.
+    from nexus.contracts.metadata import DT_MOUNT
+
+    nx.sys_setattr("/", entry_type=DT_MOUNT, backend=backend)
+
     # Create services if record_store is provided and no pre-built services.
     # KERNEL mode (Issue #2194): When record_store is None (e.g. profile=kernel),
     # this branch is skipped — bare kernel with no services.
@@ -257,7 +283,7 @@ async def create_nexus_fs(
             record_store=record_store,
             metadata_store=metadata_store,
             backend=backend,
-            router=router,
+            router=nx.router,
             permissions=permissions,
             audit=audit,
             cache=cache,
@@ -271,29 +297,6 @@ async def create_nexus_fs(
     # Default to empty dict when not provided
     if services is None:
         services = {}
-
-    from nexus.contracts.types import OperationContext as _OC
-    from nexus.factory._lifecycle import _initialize_services, _wire_services
-
-    _init_cred = (
-        init_cred if init_cred is not None else _OC(user_id="system", groups=[], is_admin=is_admin)
-    )
-
-    nx = NexusFS(
-        metadata_store=metadata_store,
-        record_store=record_store,
-        cache_store=cache_store,
-        cache=cache,
-        permissions=permissions,
-        distributed=distributed,
-        memory=memory,
-        parsing=parsing,
-        router=router,
-        init_cred=_init_cred,
-    )
-
-    # Root mount — through coordinator (unified lifecycle: pool + hooks + notify)
-    nx._driver_coordinator.mount("/", backend)
 
     # Linearized lifecycle — no partial injection (PR #3371 Phase 2)
     init_ctx = await _wire_services(
@@ -492,7 +495,7 @@ async def _register_vfs_hooks(
         def _metadata_list_iter(
             prefix: str,
             recursive: bool = True,
-            zone_id: str = "root",  # noqa: ARG001
+            zone_id: str = ROOT_ZONE_ID,  # noqa: ARG001
         ) -> Any:
             return nx.metadata.list(prefix=prefix, recursive=recursive)
 

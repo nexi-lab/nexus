@@ -7,6 +7,7 @@ import pytest
 
 from nexus.bricks.search.daemon import SearchDaemon
 from nexus.bricks.search.mutation_events import SearchMutationEvent, SearchMutationOp
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 
 class _SettingsStore:
@@ -34,7 +35,7 @@ async def test_consumer_checkpoint_advances_only_after_success() -> None:
         operation_id="op-1",
         op=SearchMutationOp.UPSERT,
         path="/zone/root/docs/readme.md",
-        zone_id="root",
+        zone_id=ROOT_ZONE_ID,
         timestamp=datetime.now(UTC).replace(tzinfo=None),
         sequence_number=7,
     )
@@ -55,7 +56,7 @@ async def test_legacy_delete_paths_call_delete_backends() -> None:
     daemon._resolve_mutations = AsyncMock(
         return_value=[
             SimpleNamespace(
-                zone_id="root",
+                zone_id=ROOT_ZONE_ID,
                 doc_id="/docs/readme.md",
                 path_id="pid-1",
                 virtual_path="/docs/readme.md",
@@ -66,7 +67,7 @@ async def test_legacy_delete_paths_call_delete_backends() -> None:
     await daemon._delete_indexes_for_paths(["/zone/root/docs/readme.md"])
 
     daemon._chunk_store.delete_document_chunks.assert_awaited_once_with("pid-1")
-    daemon._backend.delete.assert_awaited_once_with(["/docs/readme.md"], zone_id="root")
+    daemon._backend.delete.assert_awaited_once_with(["/docs/readme.md"], zone_id=ROOT_ZONE_ID)
 
 
 class _RowsResult:
@@ -100,10 +101,10 @@ async def test_txtai_bootstrap_groups_chunks_without_postgres_aggregates() -> No
     daemon._async_session = lambda: _SessionCtx(  # noqa: E731
         [
             SimpleNamespace(
-                zone_id="root", virtual_path="/docs/a.md", chunk_index=0, chunk_text="A1"
+                zone_id=ROOT_ZONE_ID, virtual_path="/docs/a.md", chunk_index=0, chunk_text="A1"
             ),
             SimpleNamespace(
-                zone_id="root", virtual_path="/docs/a.md", chunk_index=1, chunk_text="A2"
+                zone_id=ROOT_ZONE_ID, virtual_path="/docs/a.md", chunk_index=1, chunk_text="A2"
             ),
             SimpleNamespace(
                 zone_id="other", virtual_path="/docs/b.md", chunk_index=0, chunk_text="B1"
@@ -123,7 +124,7 @@ async def test_txtai_bootstrap_groups_chunks_without_postgres_aggregates() -> No
                 "zone_id": "root",
             }
         ],
-        zone_id="root",
+        zone_id=ROOT_ZONE_ID,
     )
     daemon._backend.upsert.assert_any_await(
         [
@@ -149,7 +150,7 @@ async def test_consumers_share_one_fetched_mutation_window() -> None:
             SimpleNamespace(
                 operation_id="op-1",
                 operation_type="write",
-                zone_id="root",
+                zone_id=ROOT_ZONE_ID,
                 path="/zone/root/docs/a.md",
                 new_path=None,
                 created_at=datetime.now(UTC).replace(tzinfo=None),
@@ -159,7 +160,7 @@ async def test_consumers_share_one_fetched_mutation_window() -> None:
             SimpleNamespace(
                 operation_id="op-2",
                 operation_type="write",
-                zone_id="root",
+                zone_id=ROOT_ZONE_ID,
                 path="/zone/root/docs/b.md",
                 new_path=None,
                 created_at=datetime.now(UTC).replace(tzinfo=None),
@@ -185,7 +186,7 @@ async def test_txtai_consumer_collapses_duplicate_document_mutations() -> None:
     daemon._resolve_mutations = AsyncMock(
         return_value=[
             SimpleNamespace(
-                zone_id="root",
+                zone_id=ROOT_ZONE_ID,
                 doc_id="/docs/plan.md",
                 path_id="pid-1",
                 virtual_path="/docs/plan.md",
@@ -193,7 +194,7 @@ async def test_txtai_consumer_collapses_duplicate_document_mutations() -> None:
                 event=SimpleNamespace(op=SearchMutationOp.UPSERT),
             ),
             SimpleNamespace(
-                zone_id="root",
+                zone_id=ROOT_ZONE_ID,
                 doc_id="/docs/plan.md",
                 path_id="pid-1",
                 virtual_path="/docs/plan.md",
@@ -214,5 +215,5 @@ async def test_txtai_consumer_collapses_duplicate_document_mutations() -> None:
                 "zone_id": "root",
             }
         ],
-        zone_id="root",
+        zone_id=ROOT_ZONE_ID,
     )

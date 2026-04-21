@@ -8,6 +8,8 @@ import asyncio
 from datetime import UTC, datetime
 from typing import Any
 
+from nexus.contracts.constants import ROOT_ZONE_ID
+
 
 class _MetadataStub:
     """Stub metadata accessor for InMemoryStorageDriver.metadata property."""
@@ -33,7 +35,7 @@ class InMemoryStorageDriver:
         self._metadata_stub = _MetadataStub(self)
 
     def _zone_id(self, context: Any) -> str:
-        return getattr(context, "zone_id", "root") if context is not None else "root"
+        return getattr(context, "zone_id", ROOT_ZONE_ID) if context is not None else "root"
 
     @property
     def metadata(self) -> Any:

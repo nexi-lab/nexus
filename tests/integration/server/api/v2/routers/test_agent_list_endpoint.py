@@ -13,6 +13,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.server.api.v2.routers.agent_status import (
     _get_agent_registry,
     _get_nexus_fs,
@@ -145,7 +146,7 @@ class TestListAgents:
         assert second["agent_id"] == "agent-2"
         assert second["state"] == "DISCONNECTED"
 
-        _mock_agent_registry.list_processes.assert_called_once_with(zone_id="root")
+        _mock_agent_registry.list_processes.assert_called_once_with(zone_id=ROOT_ZONE_ID)
 
     def test_200_empty_zone(self) -> None:
         _mock_agent_registry.list_processes = MagicMock(return_value=[])
@@ -179,4 +180,4 @@ class TestListAgents:
 
         resp = client.get("/api/v2/agents")
         assert resp.status_code == 200
-        _mock_agent_registry.list_processes.assert_called_once_with(zone_id="root")
+        _mock_agent_registry.list_processes.assert_called_once_with(zone_id=ROOT_ZONE_ID)

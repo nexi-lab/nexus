@@ -48,8 +48,6 @@ class MetastoreMountStore:
         mount_point: str,
         backend_type: str,
         backend_config: dict[str, Any],
-        readonly: bool = False,
-        io_profile: str = "balanced",
         owner_user_id: str | None = None,
         zone_id: str | None = None,
         description: str | None = None,
@@ -70,8 +68,6 @@ class MetastoreMountStore:
                 "mount_point": mount_point,
                 "backend_type": backend_type,
                 "backend_config": backend_config,
-                "readonly": readonly,
-                "io_profile": io_profile,
                 "owner_user_id": owner_user_id,
                 "zone_id": zone_id,
                 "description": description,
@@ -93,7 +89,6 @@ class MetastoreMountStore:
         self,
         mount_point: str,
         backend_config: dict[str, Any] | None = None,
-        readonly: bool | None = None,
         description: str | None = None,
         replication: str | None = None,
     ) -> bool:
@@ -110,8 +105,6 @@ class MetastoreMountStore:
 
         if backend_config is not None:
             data["backend_config"] = backend_config
-        if readonly is not None:
-            data["readonly"] = readonly
         if description is not None:
             data["description"] = description
         if replication is not None:

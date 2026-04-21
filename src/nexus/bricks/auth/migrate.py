@@ -29,6 +29,7 @@ from nexus.bricks.auth.profile import (
     AuthProfileStore,
     ProfileUsageStats,
 )
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +104,7 @@ def build_migration_plan(
 
         # Include zone_id in profile identity to avoid collapsing distinct
         # zone-scoped credentials onto one profile (adversarial finding #1).
-        if zone_id and zone_id != "root":
+        if zone_id and zone_id != ROOT_ZONE_ID:
             profile_id = f"{provider}/{user_email}/{zone_id}"
         else:
             profile_id = f"{provider}/{user_email}"
@@ -161,7 +162,7 @@ def execute_migration(
         user_email = cred.get("user_email", "")
         zone_id = cred.get("zone_id") or ""
         if provider and user_email:
-            if zone_id and zone_id != "root":
+            if zone_id and zone_id != ROOT_ZONE_ID:
                 key = f"{provider}/{user_email}/{zone_id}"
             else:
                 key = f"{provider}/{user_email}"
@@ -256,14 +257,14 @@ class OldStoreAdapter:
             if not provider or not user_email:
                 continue
             zone_id = cred.get("zone_id") or ""
-            if zone_id and zone_id != "root":
+            if zone_id and zone_id != ROOT_ZONE_ID:
                 profile_id = f"{provider}/{user_email}/{zone_id}"
             else:
                 profile_id = f"{provider}/{user_email}"
             backend_key = NexusTokenManagerBackend.make_backend_key(
                 provider,
                 user_email,
-                zone_id if zone_id and zone_id != "root" else None,
+                zone_id if zone_id and zone_id != ROOT_ZONE_ID else None,
             )
             self._raw[profile_id] = cred
             self._profiles[profile_id] = AuthProfile(

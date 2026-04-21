@@ -30,10 +30,10 @@ use super::proto::nexus::raft::EcReplicationEntry;
 use super::{NodeAddress, SharedPeerMap};
 use crate::raft::{StateMachine, ZoneConsensusDriver};
 use protobuf::Message as ProtobufV2Message;
-use std::collections::{HashMap, VecDeque};
-use std::sync::{Arc, RwLock};
+use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{watch, Semaphore};
+use tokio::sync::watch;
 use tokio::task::JoinSet;
 
 use std::time::Duration as StdDuration;
@@ -46,24 +46,6 @@ const EC_BACKOFF_CAP: Duration = Duration::from_secs(60);
 /// Timeout for individual Raft consensus message sends.
 /// Kept short because Raft heartbeats/votes must be fast.
 const RAFT_SEND_TIMEOUT: StdDuration = StdDuration::from_secs(5);
-
-/// Upper bound for concurrent in-flight Raft send tasks per peer.
-///
-/// Per-peer isolation prevents one unhealthy destination from starving all
-/// other peers in the transport loop.
-const MAX_INFLIGHT_RAFT_SENDS_PER_PEER: usize = 64;
-/// Buffered unsent Raft messages retained per peer while permits are saturated.
-const MAX_PENDING_RAFT_MESSAGES_PER_PEER: usize = 1024;
-/// Hard cap for non-evictable control traffic per peer.
-const MAX_PENDING_CRITICAL_RAFT_MESSAGES_PER_PEER: usize = 4096;
-/// Per-peer byte budget for pending Raft messages.
-const MAX_PENDING_RAFT_BYTES_PER_PEER: usize = 64 * 1024 * 1024;
-/// Global byte budget for pending Raft messages across peers.
-const MAX_PENDING_RAFT_BYTES_GLOBAL: usize = 256 * 1024 * 1024;
-/// Per-peer byte budget for pending snapshot messages.
-const MAX_PENDING_SNAPSHOT_BYTES_PER_PEER: usize = 256 * 1024 * 1024;
-/// Global byte budget for pending snapshot messages.
-const MAX_PENDING_SNAPSHOT_BYTES_GLOBAL: usize = 512 * 1024 * 1024;
 
 /// Maximum entries to send per peer per EC replication cycle.
 /// Caps memory and prevents the tonic request timeout from being exceeded
@@ -124,14 +106,6 @@ pub struct TransportLoop<S: StateMachine + 'static> {
     node_id: u64,
     /// Per-peer EC replication tracking (peer_id → state).
     ec_peer_state: HashMap<u64, PeerReplicationState>,
-    /// Per-peer limiter for detached send tasks.
-    peer_send_permits: Arc<RwLock<HashMap<u64, Arc<Semaphore>>>>,
-    /// Per-peer pending Raft messages awaiting available send permits.
-    pending_peer_messages: HashMap<u64, VecDeque<raft::eraftpb::Message>>,
-    /// Per-peer pending byte accounting.
-    pending_peer_bytes: HashMap<u64, usize>,
-    /// Global pending byte accounting.
-    pending_total_bytes: usize,
 }
 
 impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
@@ -154,10 +128,6 @@ impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
             zone_id: String::new(),
             node_id,
             ec_peer_state: HashMap::new(),
-            peer_send_permits: Arc::new(RwLock::new(HashMap::new())),
-            pending_peer_messages: HashMap::new(),
-            pending_peer_bytes: HashMap::new(),
-            pending_total_bytes: 0,
         }
     }
 
@@ -206,7 +176,9 @@ impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
             // 2. Advance raft state + apply entries + get outgoing messages
             match self.driver.advance().await {
                 Ok(messages) => {
-                    self.send_messages_with_backpressure(messages);
+                    if !messages.is_empty() {
+                        self.send_messages_fire_and_forget(messages);
+                    }
                 }
                 Err(e) => {
                     tracing::error!("advance() error: {}", e);
@@ -231,303 +203,60 @@ impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
             .collect()
     }
 
-    fn peer_send_semaphore_from_map(
-        peer_send_permits: &Arc<RwLock<HashMap<u64, Arc<Semaphore>>>>,
-        peer_id: u64,
-    ) -> Arc<Semaphore> {
-        if let Some(existing) = peer_send_permits.read().unwrap().get(&peer_id) {
-            return existing.clone();
-        }
-
-        let mut permits = peer_send_permits.write().unwrap();
-        permits
-            .entry(peer_id)
-            .or_insert_with(|| Arc::new(Semaphore::new(MAX_INFLIGHT_RAFT_SENDS_PER_PEER)))
-            .clone()
-    }
-
     /// Send Raft messages to peers concurrently using JoinSet.
     ///
     /// Each peer send gets its own task with an independent timeout.
     /// Slow peers don't block fast peers. If a send fails or times out,
     /// the error is logged and the client is evicted from the pool.
-    /// Send Raft messages to peers with bounded per-peer concurrency.
+    /// Send Raft messages to peers — fire and forget.
     ///
-    /// Messages for saturated peers are queued (bounded) and retried on later
-    /// ticks, so one slow peer does not block dispatch to other peers.
+    /// Each message is spawned as an independent task with its own timeout.
+    /// The transport loop does NOT await results — this ensures tick() is
+    /// never blocked by slow/unreachable peers.  Raft handles retransmission
+    /// via its own heartbeat/election timeout mechanism.
     ///
     /// Failed sends log a warning and evict the client from the pool
     /// (reconnected on next attempt).
-    fn send_messages_with_backpressure(&mut self, messages: Vec<raft::eraftpb::Message>) {
+    fn send_messages_fire_and_forget(&self, messages: Vec<raft::eraftpb::Message>) {
         let peers_snapshot = self.snapshot_peers();
-        let peer_send_permits = self.peer_send_permits.clone();
 
-        let removed_peers: Vec<u64> = self
-            .pending_peer_messages
-            .keys()
-            .copied()
-            .filter(|peer_id| !peers_snapshot.contains_key(peer_id))
-            .collect();
-        for peer_id in removed_peers {
-            if let Some(queue) = self.pending_peer_messages.remove(&peer_id) {
-                if !queue.is_empty() {
-                    tracing::warn!(
-                        peer = peer_id,
-                        dropped = queue.len(),
-                        "Dropping pending Raft messages for removed peer",
-                    );
-                }
-                let dropped_bytes = self.pending_peer_bytes.remove(&peer_id).unwrap_or_else(|| {
-                    queue
-                        .iter()
-                        .map(Self::raft_message_size_bytes)
-                        .sum::<usize>()
-                });
-                self.pending_total_bytes = self.pending_total_bytes.saturating_sub(dropped_bytes);
-            } else {
-                self.pending_peer_bytes.remove(&peer_id);
-            }
-        }
-        {
-            let mut permits = peer_send_permits.write().unwrap();
-            permits.retain(|peer_id, _| peers_snapshot.contains_key(peer_id));
-        }
-
-        'enqueue: for msg in messages {
+        for msg in messages {
             let target_id = msg.to;
-            if !peers_snapshot.contains_key(&target_id) {
-                tracing::warn!("No address for peer {} — dropping message", target_id);
-                continue;
-            }
-
-            let msg_bytes = Self::raft_message_size_bytes(&msg);
-            let is_snapshot = Self::is_snapshot_raft_message(&msg);
-            let per_peer_budget = if is_snapshot {
-                MAX_PENDING_SNAPSHOT_BYTES_PER_PEER
-            } else {
-                MAX_PENDING_RAFT_BYTES_PER_PEER
-            };
-            let global_budget = if is_snapshot {
-                MAX_PENDING_SNAPSHOT_BYTES_GLOBAL
-            } else {
-                MAX_PENDING_RAFT_BYTES_GLOBAL
-            };
-            if msg_bytes > per_peer_budget || msg_bytes > global_budget {
-                tracing::warn!(
-                    peer = target_id,
-                    msg_type = ?msg.get_msg_type(),
-                    msg_bytes,
-                    per_peer_budget,
-                    global_budget,
-                    "Dropping oversized Raft message that exceeds configured budget",
-                );
-                continue;
-            }
-
-            let queue = self.pending_peer_messages.entry(target_id).or_default();
-            let peer_bytes = self.pending_peer_bytes.entry(target_id).or_default();
-            if is_snapshot {
-                while let Some(pos) = queue.iter().position(Self::is_snapshot_raft_message) {
-                    if let Some(evicted) = queue.remove(pos) {
-                        let evicted_bytes = Self::raft_message_size_bytes(&evicted);
-                        *peer_bytes = peer_bytes.saturating_sub(evicted_bytes);
-                        self.pending_total_bytes =
-                            self.pending_total_bytes.saturating_sub(evicted_bytes);
-                        tracing::warn!(
-                            peer = target_id,
-                            evicted_bytes,
-                            "Replacing older queued snapshot for peer",
-                        );
-                    }
-                }
-            }
-
-            if queue.len() >= MAX_PENDING_RAFT_MESSAGES_PER_PEER {
-                // Preserve safety-critical traffic by evicting only low-priority
-                // messages when possible.
-                if let Some(pos) = queue.iter().position(Self::is_evictable_raft_message) {
-                    if let Some(evicted) = queue.remove(pos) {
-                        let evicted_bytes = Self::raft_message_size_bytes(&evicted);
-                        *peer_bytes = peer_bytes.saturating_sub(evicted_bytes);
-                        self.pending_total_bytes =
-                            self.pending_total_bytes.saturating_sub(evicted_bytes);
-                    }
-                    tracing::warn!(
-                        peer = target_id,
-                        limit = MAX_PENDING_RAFT_MESSAGES_PER_PEER,
-                        "Pending queue full; evicting low-priority Raft message",
-                    );
-                } else if Self::is_evictable_raft_message(&msg) {
-                    tracing::warn!(
-                        peer = target_id,
-                        limit = MAX_PENDING_RAFT_MESSAGES_PER_PEER,
-                        "Pending queue full; dropping low-priority Raft message",
-                    );
+            let addr = match peers_snapshot.get(&target_id) {
+                Some(a) => a.clone(),
+                None => {
+                    tracing::warn!("No address for peer {} — dropping message", target_id);
                     continue;
-                } else if queue.len() >= MAX_PENDING_CRITICAL_RAFT_MESSAGES_PER_PEER {
-                    tracing::warn!(
-                        peer = target_id,
-                        limit = MAX_PENDING_CRITICAL_RAFT_MESSAGES_PER_PEER,
-                        msg_type = ?msg.get_msg_type(),
-                        "Critical Raft queue hard limit reached; dropping message",
-                    );
-                    continue;
-                } else {
-                    tracing::warn!(
-                        peer = target_id,
-                        limit = MAX_PENDING_RAFT_MESSAGES_PER_PEER,
-                        msg_type = ?msg.get_msg_type(),
-                        "Pending queue full; reserving overflow capacity for control traffic",
-                    );
                 }
-            }
-
-            while *peer_bytes + msg_bytes > per_peer_budget
-                || self.pending_total_bytes + msg_bytes > global_budget
-            {
-                if let Some(pos) = queue.iter().position(Self::is_evictable_raft_message) {
-                    if let Some(evicted) = queue.remove(pos) {
-                        let evicted_bytes = Self::raft_message_size_bytes(&evicted);
-                        *peer_bytes = peer_bytes.saturating_sub(evicted_bytes);
-                        self.pending_total_bytes =
-                            self.pending_total_bytes.saturating_sub(evicted_bytes);
-                        tracing::warn!(
-                            peer = target_id,
-                            evicted_bytes,
-                            peer_bytes = *peer_bytes,
-                            total_bytes = self.pending_total_bytes,
-                            "Evicted low-priority Raft message to satisfy byte budget",
-                        );
-                    } else {
-                        break;
-                    }
-                } else if Self::is_evictable_raft_message(&msg) {
-                    tracing::warn!(
-                        peer = target_id,
-                        msg_type = ?msg.get_msg_type(),
-                        msg_bytes,
-                        peer_bytes = *peer_bytes,
-                        total_bytes = self.pending_total_bytes,
-                        "Dropping low-priority Raft message due byte budget saturation",
-                    );
-                    continue 'enqueue;
-                } else {
-                    tracing::warn!(
-                        peer = target_id,
-                        msg_type = ?msg.get_msg_type(),
-                        msg_bytes,
-                        peer_bytes = *peer_bytes,
-                        total_bytes = self.pending_total_bytes,
-                        per_peer_budget,
-                        global_budget,
-                        "Dropping control Raft message due hard byte budget saturation",
-                    );
-                    continue 'enqueue;
-                }
-            }
-
-            queue.push_back(msg);
-            *peer_bytes = peer_bytes.saturating_add(msg_bytes);
-            self.pending_total_bytes = self.pending_total_bytes.saturating_add(msg_bytes);
-        }
-
-        for (peer_id, queue) in self.pending_peer_messages.iter_mut() {
-            if queue.is_empty() {
-                continue;
-            }
-            let addr = match peers_snapshot.get(peer_id) {
-                Some(addr) => addr.clone(),
-                None => continue,
             };
 
             let client_pool = self.client_pool.clone();
             let zone_id = self.zone_id.clone();
-            let permits = Self::peer_send_semaphore_from_map(&peer_send_permits, *peer_id);
 
-            while let Some(msg) = queue.pop_front() {
-                let msg_bytes = Self::raft_message_size_bytes(&msg);
-                if let Some(peer_bytes) = self.pending_peer_bytes.get_mut(peer_id) {
-                    *peer_bytes = peer_bytes.saturating_sub(msg_bytes);
+            tokio::spawn(async move {
+                let result = tokio::time::timeout(
+                    RAFT_SEND_TIMEOUT,
+                    send_raft_message(&client_pool, target_id, &addr, msg, zone_id),
+                )
+                .await;
+
+                match result {
+                    Ok(Ok(())) => {}
+                    Ok(Err(e)) => {
+                        tracing::warn!(peer = target_id, "Raft message send failed: {}", e);
+                        client_pool.remove(target_id).await;
+                    }
+                    Err(_elapsed) => {
+                        tracing::warn!(
+                            peer = target_id,
+                            "Raft message send timeout after {:?}",
+                            RAFT_SEND_TIMEOUT,
+                        );
+                        client_pool.remove(target_id).await;
+                    }
                 }
-                self.pending_total_bytes = self.pending_total_bytes.saturating_sub(msg_bytes);
-
-                let permit = match permits.clone().try_acquire_owned() {
-                    Ok(permit) => permit,
-                    Err(_) => {
-                        queue.push_front(msg);
-                        if let Some(peer_bytes) = self.pending_peer_bytes.get_mut(peer_id) {
-                            *peer_bytes = peer_bytes.saturating_add(msg_bytes);
-                        }
-                        self.pending_total_bytes =
-                            self.pending_total_bytes.saturating_add(msg_bytes);
-                        break;
-                    }
-                };
-                let target_id = *peer_id;
-                let send_client_pool = client_pool.clone();
-                let send_addr = addr.clone();
-                let send_zone_id = zone_id.clone();
-
-                tokio::spawn(async move {
-                    let _permit = permit;
-                    let result = tokio::time::timeout(
-                        RAFT_SEND_TIMEOUT,
-                        send_raft_message(
-                            &send_client_pool,
-                            target_id,
-                            &send_addr,
-                            msg,
-                            send_zone_id,
-                        ),
-                    )
-                    .await;
-
-                    match result {
-                        Ok(Ok(())) => {}
-                        Ok(Err(e)) => {
-                            tracing::warn!(peer = target_id, "Raft message send failed: {}", e);
-                            send_client_pool.remove(target_id).await;
-                        }
-                        Err(_elapsed) => {
-                            tracing::warn!(
-                                peer = target_id,
-                                "Raft message send timeout after {:?}",
-                                RAFT_SEND_TIMEOUT,
-                            );
-                            send_client_pool.remove(target_id).await;
-                        }
-                    }
-                });
-            }
+            });
         }
-        let stale_byte_entries: Vec<u64> = self
-            .pending_peer_bytes
-            .keys()
-            .copied()
-            .filter(|peer_id| !self.pending_peer_messages.contains_key(peer_id))
-            .collect();
-        for peer_id in stale_byte_entries {
-            if let Some(bytes) = self.pending_peer_bytes.remove(&peer_id) {
-                self.pending_total_bytes = self.pending_total_bytes.saturating_sub(bytes);
-            }
-        }
-    }
-
-    fn is_evictable_raft_message(msg: &raft::eraftpb::Message) -> bool {
-        use raft::eraftpb::MessageType;
-        matches!(
-            msg.get_msg_type(),
-            MessageType::MsgHeartbeat | MessageType::MsgHeartbeatResponse
-        )
-    }
-
-    fn is_snapshot_raft_message(msg: &raft::eraftpb::Message) -> bool {
-        use raft::eraftpb::MessageType;
-        matches!(msg.get_msg_type(), MessageType::MsgSnapshot)
-    }
-
-    fn raft_message_size_bytes(msg: &raft::eraftpb::Message) -> usize {
-        std::cmp::max(msg.compute_size() as usize, 1)
     }
 
     // =========================================================================

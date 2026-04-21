@@ -10,6 +10,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.lib.rpc_decorator import rpc_expose
 
 # ============================================================================
@@ -72,7 +73,7 @@ class FakeContext:
 
     is_admin: bool = False
     user: str = "testuser"
-    zone_id: str = "root"
+    zone_id: str = ROOT_ZONE_ID
 
 
 # Real functions with proper signatures for inspect.signature to work

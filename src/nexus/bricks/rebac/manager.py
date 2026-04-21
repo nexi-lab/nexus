@@ -2768,7 +2768,9 @@ class ReBACManager:
                     import json
 
                     ring.write(
-                        json.dumps({"zone_id": zone_id or "root", "revision": new_rev}).encode()
+                        json.dumps(
+                            {"zone_id": zone_id or ROOT_ZONE_ID, "revision": new_rev}
+                        ).encode()
                     )
                 except Exception:
                     pass  # best-effort broadcast

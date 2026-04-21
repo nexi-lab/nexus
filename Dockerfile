@@ -114,6 +114,11 @@ ENV CARGO_TARGET_DIR=/build/target \
     CARGO_BUILD_JOBS=2 \
     CARGO_NET_RETRY=10 \
     CARGO_HTTP_TIMEOUT=120
+# F2 C8 (Option A): one cdylib. raft is an rlib dependency of kernel, so
+# ``maturin build -m rust/kernel/Cargo.toml`` builds both kernel and raft
+# together into a single ``nexus_kernel`` wheel. The separate
+# ``nexus_raft`` wheel is gone — ``ZoneManager`` / ``ZoneHandle`` /
+# ``Metastore`` classes are re-exported from ``nexus_kernel``.
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
     --mount=type=cache,id=cargo-target-${TARGETARCH},target=/build/target \
@@ -125,18 +130,7 @@ RUN --mount=type=cache,target=/root/.cargo/registry \
                SIMSIMD_TARGET_SVE_I8=0; \
     fi && \
     maturin build --release --out /build/dist -m rust/kernel/Cargo.toml
-RUN --mount=type=cache,target=/root/.cargo/registry \
-    --mount=type=cache,target=/root/.cargo/git \
-    --mount=type=cache,id=cargo-target-${TARGETARCH},target=/build/target \
-    if [ "${TARGETARCH}" = "arm64" ]; then \
-        export SIMSIMD_TARGET_SVE=0 \
-               SIMSIMD_TARGET_SVE2=0 \
-               SIMSIMD_TARGET_SVE_BF16=0 \
-               SIMSIMD_TARGET_SVE_F16=0 \
-               SIMSIMD_TARGET_SVE_I8=0; \
-    fi && \
-    maturin build --release --features full --out /build/dist -m rust/raft/Cargo.toml
-RUN pip install --no-cache-dir /build/dist/nexus_kernel-*.whl /build/dist/nexus_raft-*.whl
+RUN pip install --no-cache-dir /build/dist/nexus_kernel-*.whl
 
 # ---------- Copy real application source and reinstall local package ----------
 COPY src/ ./src/
@@ -247,7 +241,7 @@ COPY --from=builder /usr/local/bin/alembic /usr/local/bin/alembic
 # Always verifiable (present regardless of extras): Rust extensions.
 RUN python3 -c "\
 import nexus_kernel; \
-from _nexus_raft import Metastore; \
+from nexus_kernel import Metastore; \
 print('✓ Core imports passed (always-present subset)')"
 # Extras-gated imports.
 # SANDBOX profile deliberately excludes pgvector/docker/fastembed/psutil (Issue #3778).

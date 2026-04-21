@@ -23,6 +23,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.services.event_bus.types import FileEventType
 from nexus.services.event_log.delivery import EventDeliveryWorker
 from nexus.storage.models import OperationLogModel
@@ -46,7 +47,7 @@ def _insert_undelivered(
     session_factory,
     path: str = "/test.txt",
     operation_type: str = "write",
-    zone_id: str = "root",
+    zone_id: str = ROOT_ZONE_ID,
     agent_id: str | None = None,
     new_path: str | None = None,
 ) -> str:
@@ -89,7 +90,7 @@ class TestBuildFileEvent:
 
         assert event.type == FileEventType.FILE_WRITE
         assert event.path == "/test.txt"
-        assert event.zone_id == "root"
+        assert event.zone_id == ROOT_ZONE_ID
 
     def test_delete_maps_to_file_delete(self, record_store: SQLAlchemyRecordStore) -> None:
         worker = EventDeliveryWorker(record_store)

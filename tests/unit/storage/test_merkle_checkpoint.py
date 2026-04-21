@@ -11,6 +11,7 @@ import pytest
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import sessionmaker
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.storage.exchange_audit_logger import ExchangeAuditLogger, _build_merkle_root
 from nexus.storage.merkle_checkpoint import MerkleCheckpointTask
 from nexus.storage.models._base import Base
@@ -68,7 +69,7 @@ def _seed_records(audit_logger: ExchangeAuditLogger, count: int) -> list[str]:
             amount=Decimal("10"),
             status="settled",
             application="gateway",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             transfer_id=f"merkle-seed-{i}",
         )
         ids.append(rid)

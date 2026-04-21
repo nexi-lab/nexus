@@ -30,8 +30,11 @@ services:
       --proactor_threads=1
       --logtostderr
       --cache_mode=true
-    ports:
-      - "${DRAGONFLY_PORT:-6379}:6379"
+    # No host port publish — the test cluster uses the internal
+    # dyn-nexus-network, and Windows Docker Desktop reserves 6339-6440
+    # (Hyper-V excluded range) which blocks the default 6379 bind.
+    expose:
+      - "6379"
     volumes:
       - dyn_dragonfly_data:/data
     networks:
@@ -83,9 +86,14 @@ services:
       # Runtime
       NEXUS_USE_UVLOOP: "true"
       RUST_LOG: info,nexus_raft=debug
-    ports:
-      - "${NEXUS_PORT:-2026}:2026"
-      - "2126:2126"
+    # Local workaround: host ports commented out because Windows Docker
+    # Desktop's Hyper-V reserves 2085-2184 after boot (random on each
+    # restart). E2E tests use internal dyn-nexus-network hostnames
+    # (nexus-1:2026, nexus-1:2028) from the in-compose `test` service,
+    # so host publishing is not required.
+    # ports:
+    #   - "${NEXUS_PORT:-2026}:2026"
+    #   - "2126:2126"
     volumes:
       - dyn_nexus1_data:/app/data
     networks:
@@ -126,9 +134,10 @@ services:
       NEXUS_BACKEND: ${NEXUS_BACKEND:-local}
       NEXUS_USE_UVLOOP: "true"
       RUST_LOG: info,nexus_raft=debug
-    ports:
-      - "2027:2026"
-      - "2127:2126"
+    # Local workaround (see nexus-1 note): host publish commented out.
+    # ports:
+    #   - "2027:2026"
+    #   - "2127:2126"
     volumes:
       - dyn_nexus2_data:/app/data
     networks:
@@ -158,8 +167,12 @@ services:
       NEXUS_PEERS: "nexus-1:2126,nexus-2:2126,witness:2126"
       NEXUS_DATA_DIR: /home/nexus/data
       RUST_LOG: info,nexus_raft=debug
-    ports:
-      - "2128:2126"
+    # Local workaround: host port publish commented out because Windows
+    # Docker Desktop reserves 2085-2184 in Hyper-V excluded-range after
+    # boot (random on each restart). Witness is only reached via the
+    # internal dyn-nexus-network — tests do not hit it from host.
+    # ports:
+    #   - "2128:2126"
     volumes:
       - dyn_witness_data:/home/nexus/data
     networks:
@@ -172,16 +185,40 @@ services:
       start_period: 10s
 
   # ==========================================================================
+  # SSE mock sidecar — OpenAI + Anthropic streaming responses for the
+  # Rust OpenAIBackend / AnthropicBackend E2E tests.
+  # ==========================================================================
+  sse-mock:
+    build:
+      context: sse-mock
+      dockerfile: Dockerfile
+    image: nexus-sse-mock:latest
+    container_name: nexus-dyn-sse-mock
+    hostname: sse-mock
+    networks:
+      - dyn-nexus-network
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import urllib.request, sys; sys.exit(0 if urllib.request.urlopen(\"http://localhost:8080/healthz\").status == 200 else 1)' || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ==========================================================================
   # E2E Test Runner — dynamic federation tests
   # ==========================================================================
   test:
     image: nexus-fullnode:latest
     container_name: nexus-dyn-test
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     working_dir: /app
     depends_on:
       nexus-1:
         condition: service_healthy
       nexus-2:
+        condition: service_healthy
+      sse-mock:
         condition: service_healthy
     entrypoint: []
     volumes:
@@ -193,9 +230,9 @@ services:
     command: >
       bash -c '
         echo "Installing test dependencies..."
-        pip install -q pytest pytest-asyncio pytest-timeout httpx grpcio grpcio-tools protobuf docker
+        pip install -q -i "${PIP_INDEX_URL:-https://mirrors.cloud.tencent.com/pypi/simple}" pytest pytest-asyncio pytest-timeout httpx grpcio grpcio-tools protobuf docker
         echo "Running dynamic federation E2E tests..."
-        python -m pytest tests/e2e/docker/test_federation_e2e.py -v --no-header -o "addopts=" -x --timeout=180
+        python -m pytest tests/e2e/docker/test_federation_e2e.py -v --no-header -o "addopts=" --timeout=300
       '
     networks:
       - dyn-nexus-network

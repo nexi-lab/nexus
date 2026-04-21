@@ -10,7 +10,7 @@ returns one line (matching JSON-lines ACP/IPC protocol).
 
     stdio_pipe.py = PipeBackend adapter for OS pipes
     pipe.py       = MemoryPipeBackend (kfifo, in-process, ~0.5μs)
-    shm_pipe.py   = SharedMemoryPipeBackend (mmap, cross-process, ~1-5μs)
+    Rust SharedMemoryPipeBackend = mmap ring buffer (cross-process, ~1-5μs)
 
 See: core/pipe.py for PipeBackend protocol.
 """

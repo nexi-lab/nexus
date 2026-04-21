@@ -22,6 +22,8 @@ from pathlib import Path
 import httpx
 import pytest
 
+from nexus.contracts.constants import ROOT_ZONE_ID
+
 _src_path = Path(__file__).parent.parent.parent / "src"
 
 
@@ -131,7 +133,7 @@ def operations_server(tmp_path_factory):
                 session,
                 user_id="admin",
                 name="Operations E2E key",
-                zone_id="root",
+                zone_id=ROOT_ZONE_ID,
                 is_admin=True,
             )
             session.commit()

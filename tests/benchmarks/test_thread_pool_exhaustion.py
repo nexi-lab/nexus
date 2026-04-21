@@ -27,6 +27,7 @@ from pathlib import Path
 
 import pytest
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.core.config import PermissionConfig
 from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
@@ -261,7 +262,7 @@ async def test_in_process_thread_exhaustion(
         context = OperationContext(
             user_id="test_user",
             groups=[],
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             subject_type="user",
             subject_id="test_user",
         )
@@ -271,7 +272,7 @@ async def test_in_process_thread_exhaustion(
             subject=("user", "test_user"),
             relation="reader",
             object=("file", "/"),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
 
         print("Created 50 test files")
@@ -377,7 +378,7 @@ async def test_async_thread_exhaustion(
         context = OperationContext(
             user_id="test_user",
             groups=[],
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             subject_type="user",
             subject_id="test_user",
         )
@@ -387,7 +388,7 @@ async def test_async_thread_exhaustion(
             subject=("user", "test_user"),
             relation="reader",
             object=("file", "/"),
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
 
         print("Created 100 test files")

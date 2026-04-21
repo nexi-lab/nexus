@@ -23,6 +23,7 @@ from nexus.bricks.auth.credential_backend import (
     NexusTokenManagerBackend,
 )
 from nexus.bricks.auth.oauth.token_resolver import ResolvedToken
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 # ---------------------------------------------------------------------------
 # Fake TokenResolver for tests
@@ -47,7 +48,7 @@ class FakeTokenResolver:
         self.resolve_calls: list[dict] = []
 
     async def resolve(
-        self, provider: str, user_email: str, *, zone_id: str = "root"
+        self, provider: str, user_email: str, *, zone_id: str = ROOT_ZONE_ID
     ) -> ResolvedToken:
         self.resolve_calls.append(
             {"provider": provider, "user_email": user_email, "zone_id": zone_id}

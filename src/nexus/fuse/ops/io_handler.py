@@ -12,7 +12,6 @@ from nexus.fuse.ops._shared import (
     check_namespace_visible,
     get_file_content,
     parse_virtual_path_for_fuse,
-    resolve_io_profile,
     try_rust,
 )
 
@@ -63,14 +62,11 @@ class IOHandler:
             ctx.fd_counter += 1
             fd = ctx.fd_counter
 
-            io_profile_str = resolve_io_profile(ctx, original_path)
-
             ctx.open_files[fd] = {
                 "path": original_path,
                 "view_type": view_type,
                 "flags": flags,
                 "auth_verified": ctx.context is not None,
-                "io_profile": io_profile_str,
             }
 
         # Trigger prefetch-on-open for readahead
@@ -82,15 +78,7 @@ class IOHandler:
                     if stat_result:
                         file_size = stat_result.get("st_size")
 
-                io_profile_arg = None
-                try:
-                    from nexus.contracts.io_profile import IOProfile
-
-                    io_profile_arg = IOProfile(io_profile_str)
-                except (ImportError, ValueError):
-                    pass
-
-                ctx.readahead.on_open(fd, original_path, file_size, io_profile=io_profile_arg)
+                ctx.readahead.on_open(fd, original_path, file_size)
             except Exception as e:
                 logger.debug(f"[FUSE-OPEN] Readahead on_open failed (non-critical): {e}")
         elif content_cached:
@@ -125,18 +113,7 @@ class IOHandler:
                 )
                 return cast("bytes", prefetched)
 
-        cache_priority = 0
-        io_profile_str = file_info.get("io_profile", "balanced")
-        try:
-            from nexus.contracts.io_profile import IOProfile
-
-            cache_priority = IOProfile(io_profile_str).config().cache_priority
-        except (ImportError, ValueError):
-            pass
-
-        content = await get_file_content(
-            ctx, original_path, view_type, cache_priority=cache_priority
-        )
+        content = await get_file_content(ctx, original_path, view_type, cache_priority=0)
 
         return content[offset : offset + size]
 

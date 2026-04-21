@@ -32,7 +32,7 @@ use pyo3::prelude::*;
 
 use crate::raft::{
     Command, CommandResult, FullStateMachine, HolderInfo as RustHolderInfo,
-    LockInfo as RustLockInfo, LockState as RustLockState, StateMachine,
+    LockAcquireResult as RustLockAcquireResult, LockInfo as RustLockInfo, StateMachine,
 };
 use crate::storage::RedbStore;
 
@@ -56,6 +56,36 @@ fn validate_consistency(consistency: &str) -> PyResult<()> {
     }
 }
 
+/// Python lock-mode string constants (F4 C2).
+const LOCK_MODE_EXCLUSIVE: &str = "exclusive";
+const LOCK_MODE_SHARED: &str = "shared";
+
+/// Parse the Python `mode` parameter into a Rust `LockMode`.
+///
+/// Accepts `"exclusive"` / `"shared"`, case-insensitive. `"mutex"`
+/// and `"semaphore"` are explicitly rejected — those are the
+/// computed display labels for `max_holders`, not the per-holder
+/// conflict mode.
+fn parse_lock_mode(s: &str) -> PyResult<crate::prelude::LockMode> {
+    use crate::prelude::LockMode;
+    match s.to_ascii_lowercase().as_str() {
+        LOCK_MODE_EXCLUSIVE => Ok(LockMode::Exclusive),
+        LOCK_MODE_SHARED => Ok(LockMode::Shared),
+        other => Err(PyRuntimeError::new_err(format!(
+            "Invalid lock mode '{}': expected '{}' or '{}'",
+            other, LOCK_MODE_EXCLUSIVE, LOCK_MODE_SHARED
+        ))),
+    }
+}
+
+/// Render a `LockMode` back to its string form for the Python side.
+fn lock_mode_str(mode: crate::prelude::LockMode) -> &'static str {
+    match mode {
+        crate::prelude::LockMode::Exclusive => LOCK_MODE_EXCLUSIVE,
+        crate::prelude::LockMode::Shared => LOCK_MODE_SHARED,
+    }
+}
+
 /// Python-compatible holder info.
 #[pyclass(name = "HolderInfo")]
 #[derive(Clone)]
@@ -64,6 +94,12 @@ pub struct PyHolderInfo {
     pub lock_id: String,
     #[pyo3(get)]
     pub holder_info: String,
+    /// Per-holder conflict mode (F4 C2): `"exclusive"` or
+    /// `"shared"`. Not to be confused with the lock-level display
+    /// label ("mutex"/"semaphore"), which is computed from
+    /// `max_holders` on the Python side and never stored.
+    #[pyo3(get)]
+    pub mode: String,
     #[pyo3(get)]
     pub acquired_at: u64,
     #[pyo3(get)]
@@ -75,6 +111,7 @@ impl From<RustHolderInfo> for PyHolderInfo {
         Self {
             lock_id: h.lock_id,
             holder_info: h.holder_info,
+            mode: lock_mode_str(h.mode).to_string(),
             acquired_at: h.acquired_at,
             expires_at: h.expires_at,
         }
@@ -95,8 +132,8 @@ pub struct PyLockState {
     pub holders: Vec<PyHolderInfo>,
 }
 
-impl From<RustLockState> for PyLockState {
-    fn from(s: RustLockState) -> Self {
+impl From<RustLockAcquireResult> for PyLockState {
+    fn from(s: RustLockAcquireResult) -> Self {
         Self {
             acquired: s.acquired,
             current_holders: s.current_holders,
@@ -406,7 +443,7 @@ impl PyMetastore {
     ///
     /// Returns:
     ///     LockState with acquisition result.
-    #[pyo3(signature = (path, lock_id, max_holders=1, ttl_secs=30, holder_info=""))]
+    #[pyo3(signature = (path, lock_id, max_holders=1, ttl_secs=30, holder_info="", mode="exclusive"))]
     pub fn acquire_lock(
         &mut self,
         path: &str,
@@ -414,6 +451,7 @@ impl PyMetastore {
         max_holders: u32,
         ttl_secs: u32,
         holder_info: &str,
+        mode: &str,
     ) -> PyResult<PyLockState> {
         let cmd = Command::AcquireLock {
             path: path.to_string(),
@@ -421,6 +459,7 @@ impl PyMetastore {
             max_holders,
             ttl_secs,
             holder_info: holder_info.to_string(),
+            mode: parse_lock_mode(mode)?,
             now_secs: crate::prelude::FullStateMachine::now(),
         };
 
@@ -628,725 +667,19 @@ impl PyMetastore {
 }
 
 // =============================================================================
-// ZoneManager: Multi-zone Raft registry exposed to Python
+// R20.18.6: PyZoneManager + PyZoneHandle pyclass shells deleted.
+//
+// Both wrappers previously existed only to let Python construct /
+// interact with raft zones. R20.18.2-R20.18.5 moved federation
+// bootstrap into Kernel::init_federation_from_env and cut every
+// Python caller over to PyKernel syscalls + zone_* thin shims. The
+// pure-Rust `crate::zone_manager::ZoneManager` and
+// `crate::zone_handle::ZoneHandle` types remain as kernel-internal
+// SSOT; nothing crosses the PyO3 boundary as a ZoneHandle any more.
+//
+// `parse_consistency` helper was only used by the deleted pymethods;
+// it went with them.
 // =============================================================================
-
-/// Multi-zone Raft manager — owns the registry, runtime, and gRPC server.
-///
-/// Supports creating/removing multiple independent Raft zones that share
-/// a single gRPC port and Tokio runtime.
-///
-/// # Python Usage
-///
-/// ```python
-/// from _nexus_raft import ZoneManager
-///
-/// mgr = ZoneManager("nexus-1", "/var/lib/nexus/zones", "0.0.0.0:2126")
-/// handle = mgr.create_zone("alpha", ["2@peer:2126"], lazy=False)
-/// handle.set_metadata("/file.txt", b"...")
-/// handle.get_metadata("/file.txt")
-/// mgr.list_zones()  # ["alpha"]
-/// ```
-#[cfg(all(feature = "grpc", has_protos))]
-#[pyclass(name = "ZoneManager")]
-pub struct PyZoneManager {
-    registry: std::sync::Arc<crate::raft::ZoneRaftRegistry>,
-    runtime: tokio::runtime::Runtime,
-    shutdown_tx: Option<tokio::sync::watch::Sender<bool>>,
-    node_id: u64,
-    use_tls: bool,
-}
-
-#[cfg(all(feature = "grpc", has_protos))]
-#[pymethods]
-impl PyZoneManager {
-    /// Create a new ZoneManager.
-    ///
-    /// Starts a Tokio runtime and gRPC server. Zones are added dynamically
-    /// with `create_zone()`.
-    ///
-    /// Args:
-    ///     hostname: This node's hostname (node_id derived via SHA-256).
-    ///     base_path: Base directory for zone sled databases.
-    ///     bind_addr: gRPC bind address (e.g., "0.0.0.0:2126").
-    ///     tls_cert_path: Path to PEM certificate file (mTLS). All three TLS paths must be set, or none.
-    ///     tls_key_path: Path to PEM private key file (mTLS).
-    ///     tls_ca_path: Path to PEM CA certificate file (mTLS).
-    ///     ca_key_path: Path to CA private key file (read once at startup for server-side cert signing).
-    ///     join_token_hash: SHA-256 hash of join token password (for JoinCluster verification).
-    #[new]
-    #[pyo3(signature = (hostname, base_path, bind_addr="0.0.0.0:2126", tls_cert_path=None, tls_key_path=None, tls_ca_path=None, ca_key_path=None, join_token_hash=None))]
-    #[allow(clippy::too_many_arguments)] // PyO3 constructor — Python API needs flat keyword args
-    pub fn new(
-        hostname: &str,
-        base_path: &str,
-        bind_addr: &str,
-        tls_cert_path: Option<&str>,
-        tls_key_path: Option<&str>,
-        tls_ca_path: Option<&str>,
-        ca_key_path: Option<&str>,
-        join_token_hash: Option<&str>,
-    ) -> PyResult<Self> {
-        use crate::raft::ZoneRaftRegistry;
-        use crate::transport::{RaftGrpcServer, ServerConfig, TlsConfig};
-        use std::sync::Arc;
-
-        let node_id = crate::transport::hostname_to_node_id(hostname);
-
-        // Initialize Rust tracing (once) so gRPC server logs are visible.
-        // Uses RUST_LOG env var (e.g., "info,nexus_raft=debug").
-        static TRACING_INIT: std::sync::Once = std::sync::Once::new();
-        TRACING_INIT.call_once(|| {
-            let _ = tracing_subscriber::fmt()
-                .with_env_filter(
-                    tracing_subscriber::EnvFilter::from_default_env()
-                        .add_directive("info".parse().unwrap()),
-                )
-                .try_init();
-        });
-
-        // Parse TLS config from file paths (all-or-nothing)
-        let tls_config = match (tls_cert_path, tls_key_path, tls_ca_path) {
-            (Some(cert), Some(key), Some(ca)) => {
-                let cert_pem = std::fs::read(cert).map_err(|e| {
-                    PyRuntimeError::new_err(format!("Failed to read TLS cert '{}': {}", cert, e))
-                })?;
-                let key_pem = std::fs::read(key).map_err(|e| {
-                    PyRuntimeError::new_err(format!("Failed to read TLS key '{}': {}", key, e))
-                })?;
-                let ca_pem = std::fs::read(ca).map_err(|e| {
-                    PyRuntimeError::new_err(format!("Failed to read TLS CA '{}': {}", ca, e))
-                })?;
-                Some(TlsConfig {
-                    cert_pem,
-                    key_pem,
-                    ca_pem,
-                })
-            }
-            (None, None, None) => None,
-            _ => {
-                return Err(PyRuntimeError::new_err(
-                    "TLS requires all three: tls_cert_path, tls_key_path, tls_ca_path",
-                ))
-            }
-        };
-
-        let bind_socket: std::net::SocketAddr = bind_addr.parse().map_err(|e| {
-            PyRuntimeError::new_err(format!("Invalid bind address '{}': {}", bind_addr, e))
-        })?;
-
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
-            .enable_all()
-            .thread_name("nexus-zone-mgr")
-            .build()
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create runtime: {}", e)))?;
-
-        let registry = Arc::new(ZoneRaftRegistry::with_tls(
-            std::path::PathBuf::from(base_path),
-            node_id,
-            tls_config.clone(),
-        ));
-
-        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-
-        let config = ServerConfig {
-            bind_address: bind_socket,
-            tls: tls_config.clone(),
-            ..Default::default()
-        };
-        let use_tls = tls_config.is_some();
-        let mut server = RaftGrpcServer::new(registry.clone(), config);
-        // Configure JoinCluster RPC support if join token is available.
-        // Read CA key from disk once — held in memory for server-side cert signing.
-        if let (Some(ca_key_path), Some(token_hash)) = (ca_key_path, join_token_hash) {
-            let ca_key_pem = std::fs::read(ca_key_path).map_err(|e| {
-                PyRuntimeError::new_err(format!("Failed to read CA key for JoinCluster: {}", e))
-            })?;
-            server = server.with_join_config(ca_key_pem, token_hash.to_string());
-        }
-        let shutdown_rx_server = shutdown_rx.clone();
-        runtime.spawn(async move {
-            let shutdown = async move {
-                let mut rx = shutdown_rx_server;
-                let _ = rx.changed().await;
-            };
-            if let Err(e) = server.serve_with_shutdown(shutdown).await {
-                tracing::error!("ZoneManager gRPC server error: {}", e);
-            }
-        });
-
-        tracing::info!(
-            "ZoneManager node {} started (bind={}, tls={})",
-            node_id,
-            bind_addr,
-            use_tls,
-        );
-
-        Ok(Self {
-            registry,
-            runtime,
-            shutdown_tx: Some(shutdown_tx),
-            node_id,
-            use_tls,
-        })
-    }
-
-    /// Create a new zone with its own Raft group.
-    ///
-    /// Args:
-    ///     zone_id: Unique zone identifier.
-    ///     peers: Peer addresses in "id@host:port" format.
-    ///
-    /// Returns:
-    ///     ZoneHandle for the new zone.
-    #[pyo3(signature = (zone_id, peers=vec![]))]
-    pub fn create_zone(&self, zone_id: &str, peers: Vec<String>) -> PyResult<PyZoneHandle> {
-        use crate::transport::NodeAddress;
-
-        let peer_addrs: Vec<NodeAddress> = peers
-            .iter()
-            .map(|s| {
-                NodeAddress::parse(s.trim(), self.use_tls)
-                    .map_err(|e| PyRuntimeError::new_err(format!("Invalid peer '{}': {}", s, e)))
-            })
-            .collect::<PyResult<Vec<_>>>()?;
-
-        let node = self
-            .registry
-            .create_zone(zone_id, peer_addrs, self.runtime.handle())
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create zone: {}", e)))?;
-
-        Ok(PyZoneHandle {
-            node,
-            runtime_handle: self.runtime.handle().clone(),
-            zone_id: zone_id.to_string(),
-        })
-    }
-
-    /// Join an existing zone as a new Voter.
-    ///
-    /// Creates a local ZoneConsensus for this zone without bootstrapping ConfState.
-    /// After calling this, send a JoinZone RPC to the leader — the leader will
-    /// propose ConfChange(AddNode) and auto-send a snapshot.
-    ///
-    /// Args:
-    ///     zone_id: Zone to join.
-    ///     peers: Existing peer addresses in "id@host:port" format.
-    ///
-    /// Returns:
-    ///     ZoneHandle for the joined zone.
-    #[pyo3(signature = (zone_id, peers=vec![]))]
-    pub fn join_zone(&self, zone_id: &str, peers: Vec<String>) -> PyResult<PyZoneHandle> {
-        use crate::transport::NodeAddress;
-
-        let peer_addrs: Vec<NodeAddress> = peers
-            .iter()
-            .map(|s| {
-                NodeAddress::parse(s.trim(), self.use_tls)
-                    .map_err(|e| PyRuntimeError::new_err(format!("Invalid peer '{}': {}", s, e)))
-            })
-            .collect::<PyResult<Vec<_>>>()?;
-
-        let node = self
-            .registry
-            .join_zone(zone_id, peer_addrs, self.runtime.handle())
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to join zone: {}", e)))?;
-
-        Ok(PyZoneHandle {
-            node,
-            runtime_handle: self.runtime.handle().clone(),
-            zone_id: zone_id.to_string(),
-        })
-    }
-
-    /// Get a handle for an existing zone.
-    ///
-    /// Returns:
-    ///     ZoneHandle if zone exists, None otherwise.
-    pub fn get_zone(&self, zone_id: &str) -> Option<PyZoneHandle> {
-        self.registry.get_node(zone_id).map(|node| PyZoneHandle {
-            node,
-            runtime_handle: self.runtime.handle().clone(),
-            zone_id: zone_id.to_string(),
-        })
-    }
-
-    /// Remove a zone, shutting down its transport loop.
-    pub fn remove_zone(&self, zone_id: &str) -> PyResult<()> {
-        self.registry
-            .remove_zone(zone_id)
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to remove zone: {}", e)))
-    }
-
-    /// List all zone IDs.
-    pub fn list_zones(&self) -> Vec<String> {
-        self.registry.list_zones()
-    }
-
-    /// Get this node's ID.
-    #[getter]
-    pub fn node_id(&self) -> u64 {
-        self.node_id
-    }
-
-    /// Set search capabilities for a zone (Issue #3147, Phase 2).
-    ///
-    /// Called by Python search daemon at startup to register real capabilities.
-    /// The Rust gRPC handler reads these when remote nodes query capabilities.
-    ///
-    /// # Arguments
-    /// * `zone_id` — Zone to set capabilities for.
-    /// * `device_tier` — "phone", "laptop", or "server".
-    /// * `search_modes` — List of supported modes: "keyword", "semantic", "hybrid".
-    /// * `has_graph` — Whether graph search is available.
-    /// * `embedding_model` — Embedding model name (empty string if none).
-    /// * `embedding_dimensions` — Embedding vector dimensions (0 if none).
-    pub fn set_search_capabilities(
-        &self,
-        zone_id: &str,
-        device_tier: &str,
-        search_modes: Vec<String>,
-        has_graph: bool,
-        embedding_model: &str,
-        embedding_dimensions: i32,
-    ) -> PyResult<()> {
-        use crate::raft::SearchCapabilitiesInfo;
-
-        self.registry.set_search_capabilities(
-            zone_id,
-            SearchCapabilitiesInfo {
-                device_tier: device_tier.to_string(),
-                search_modes,
-                embedding_model: embedding_model.to_string(),
-                embedding_dimensions,
-                has_graph,
-            },
-        );
-        Ok(())
-    }
-
-    /// Gracefully shut down all zones and the gRPC server.
-    pub fn shutdown(&mut self) -> PyResult<()> {
-        self.registry.shutdown_all();
-        if let Some(tx) = self.shutdown_tx.take() {
-            let _ = tx.send(true);
-        }
-        tracing::info!("ZoneManager node {} shut down", self.node_id);
-        Ok(())
-    }
-}
-
-#[cfg(all(feature = "grpc", has_protos))]
-impl Drop for PyZoneManager {
-    fn drop(&mut self) {
-        self.registry.shutdown_all();
-        if let Some(tx) = self.shutdown_tx.take() {
-            let _ = tx.send(true);
-        }
-    }
-}
-
-// =============================================================================
-// ZoneHandle: Per-zone Raft node handle (lightweight, returned by ZoneManager)
-// =============================================================================
-
-/// Handle to a single zone's Raft node.
-///
-/// Provides metadata/lock operations scoped to one zone.
-/// Obtained from `ZoneManager.create_zone()` or `.get_zone()`.
-#[cfg(all(feature = "grpc", has_protos))]
-#[pyclass(name = "ZoneHandle")]
-pub struct PyZoneHandle {
-    node: crate::raft::ZoneConsensus<FullStateMachine>,
-    runtime_handle: tokio::runtime::Handle,
-    zone_id: String,
-}
-
-#[cfg(all(feature = "grpc", has_protos))]
-#[pymethods]
-impl PyZoneHandle {
-    /// Get this zone's ID.
-    pub fn zone_id(&self) -> &str {
-        &self.zone_id
-    }
-
-    // =========================================================================
-    // Metadata Operations (all writes go through Raft consensus)
-    // =========================================================================
-
-    /// Set metadata for a path.
-    ///
-    /// Args:
-    ///     path: The file path (key).
-    ///     value: Serialized metadata bytes.
-    ///     consistency: "sc" (default, wait for commit) or "ec" (local write + WAL token).
-    ///
-    /// Returns:
-    ///     EC mode: write token (int) for polling via is_committed().
-    ///     SC mode: None (write is already committed when this returns).
-    #[pyo3(signature = (path, value, consistency="sc"))]
-    pub fn set_metadata(
-        &self,
-        py: Python<'_>,
-        path: &str,
-        value: Vec<u8>,
-        consistency: &str,
-    ) -> PyResult<Option<u64>> {
-        validate_consistency(consistency)?;
-        let cmd = Command::SetMetadata {
-            key: path.to_string(),
-            value,
-        };
-        match consistency {
-            CONSISTENCY_EC => Ok(Some(self.propose_command_ec_local(py, cmd)?)),
-            _ => {
-                self.propose_command(py, cmd)?;
-                Ok(None)
-            }
-        }
-    }
-
-    /// Compare-and-swap metadata for a path (replicated through consensus).
-    ///
-    /// Args:
-    ///     path: The file path (key).
-    ///     value: Serialized metadata bytes.
-    ///     expected_version: Expected current version (0 = create-only).
-    ///     consistency: "sc" (default, wait for commit) or "ec" (local write).
-    ///
-    /// Returns:
-    ///     Tuple of (success: bool, current_version: int).
-    #[pyo3(signature = (path, value, expected_version, consistency="sc"))]
-    pub fn cas_set_metadata(
-        &self,
-        py: Python<'_>,
-        path: &str,
-        value: Vec<u8>,
-        expected_version: u32,
-        consistency: &str,
-    ) -> PyResult<(bool, u32)> {
-        validate_consistency(consistency)?;
-        let cmd = Command::CasSetMetadata {
-            key: path.to_string(),
-            value,
-            expected_version,
-        };
-        let result = self.propose_command_raw(py, cmd)?;
-        match result {
-            CommandResult::CasResult {
-                success,
-                current_version,
-            } => Ok((success, current_version)),
-            _ => Err(PyRuntimeError::new_err("Unexpected CAS result type")),
-        }
-    }
-
-    /// Atomically adjust a metadata counter by a signed delta (Raft-replicated).
-    ///
-    /// The read-modify-write happens during apply() on each node,
-    /// serialized by Raft — no lost updates under concurrency.
-    ///
-    /// Args:
-    ///     key: The metadata key (e.g., "__i_links_count__").
-    ///     delta: Signed adjustment (+1 to increment, -1 to decrement).
-    ///
-    /// Returns:
-    ///     New counter value after adjustment.
-    pub fn adjust_counter(&self, py: Python<'_>, key: &str, delta: i64) -> PyResult<i64> {
-        let cmd = Command::AdjustCounter {
-            key: key.to_string(),
-            delta,
-        };
-        let result = self.propose_command_raw(py, cmd)?;
-        match result {
-            CommandResult::Value(bytes) => {
-                let arr: [u8; 8] = bytes
-                    .try_into()
-                    .map_err(|_| PyRuntimeError::new_err("Invalid counter value"))?;
-                Ok(i64::from_be_bytes(arr))
-            }
-            _ => Err(PyRuntimeError::new_err("Unexpected result type")),
-        }
-    }
-
-    /// Get metadata for a path (local read, no consensus).
-    pub fn get_metadata(&self, py: Python<'_>, path: &str) -> PyResult<Option<Vec<u8>>> {
-        let node = self.node.clone();
-        let path = path.to_string();
-        py.detach(|| {
-            self.runtime_handle.block_on(async {
-                node.with_state_machine(|sm| sm.get_metadata(&path))
-                    .await
-                    .map_err(|e| PyRuntimeError::new_err(format!("Failed to get metadata: {}", e)))
-            })
-        })
-    }
-
-    /// Delete metadata for a path.
-    ///
-    /// Args:
-    ///     path: The file path.
-    ///     consistency: "sc" (default, wait for commit) or "ec" (local write + WAL token).
-    ///
-    /// Returns:
-    ///     EC mode: write token (int) for polling via is_committed().
-    ///     SC mode: None (write is already committed when this returns).
-    #[pyo3(signature = (path, consistency="sc"))]
-    pub fn delete_metadata(
-        &self,
-        py: Python<'_>,
-        path: &str,
-        consistency: &str,
-    ) -> PyResult<Option<u64>> {
-        validate_consistency(consistency)?;
-        let cmd = Command::DeleteMetadata {
-            key: path.to_string(),
-        };
-        match consistency {
-            CONSISTENCY_EC => Ok(Some(self.propose_command_ec_local(py, cmd)?)),
-            _ => {
-                self.propose_command(py, cmd)?;
-                Ok(None)
-            }
-        }
-    }
-
-    /// List all metadata with a prefix (local read, no consensus).
-    pub fn list_metadata(&self, py: Python<'_>, prefix: &str) -> PyResult<Vec<(String, Vec<u8>)>> {
-        let node = self.node.clone();
-        let prefix = prefix.to_string();
-        py.detach(|| {
-            self.runtime_handle.block_on(async {
-                node.with_state_machine(|sm| sm.list_metadata(&prefix))
-                    .await
-                    .map_err(|e| PyRuntimeError::new_err(format!("Failed to list metadata: {}", e)))
-            })
-        })
-    }
-
-    /// Check if an EC write token has been replicated to a majority.
-    ///
-    /// Args:
-    ///     token: Write token returned by set_metadata/delete_metadata with consistency="ec".
-    ///
-    /// Returns:
-    ///     "committed" — replicated to majority.
-    ///     "pending" — local only, awaiting replication.
-    ///     None — invalid token or no replication log.
-    pub fn is_committed(&self, token: u64) -> Option<String> {
-        self.node.is_committed(token).map(|s| s.to_string())
-    }
-
-    // =========================================================================
-    // Lock Operations (always SC)
-    // =========================================================================
-
-    /// Acquire a distributed lock (always replicated through consensus).
-    #[pyo3(signature = (path, lock_id, max_holders=1, ttl_secs=30, holder_info=""))]
-    pub fn acquire_lock(
-        &self,
-        py: Python<'_>,
-        path: &str,
-        lock_id: &str,
-        max_holders: u32,
-        ttl_secs: u32,
-        holder_info: &str,
-    ) -> PyResult<PyLockState> {
-        let cmd = Command::AcquireLock {
-            path: path.to_string(),
-            lock_id: lock_id.to_string(),
-            max_holders,
-            ttl_secs,
-            holder_info: holder_info.to_string(),
-            now_secs: crate::prelude::FullStateMachine::now(),
-        };
-        let result = self.propose_command_raw(py, cmd)?;
-        match result {
-            CommandResult::LockResult(state) => Ok(state.into()),
-            _ => Err(PyRuntimeError::new_err("Unexpected result type")),
-        }
-    }
-
-    /// Release a distributed lock (replicated through consensus).
-    pub fn release_lock(&self, py: Python<'_>, path: &str, lock_id: &str) -> PyResult<bool> {
-        let cmd = Command::ReleaseLock {
-            path: path.to_string(),
-            lock_id: lock_id.to_string(),
-        };
-        let result = self.propose_command_raw(py, cmd)?;
-        Ok(matches!(result, CommandResult::Success))
-    }
-
-    /// Extend a lock's TTL (replicated through consensus).
-    pub fn extend_lock(
-        &self,
-        py: Python<'_>,
-        path: &str,
-        lock_id: &str,
-        new_ttl_secs: u32,
-    ) -> PyResult<bool> {
-        let cmd = Command::ExtendLock {
-            path: path.to_string(),
-            lock_id: lock_id.to_string(),
-            new_ttl_secs,
-            now_secs: crate::prelude::FullStateMachine::now(),
-        };
-        let result = self.propose_command_raw(py, cmd)?;
-        Ok(matches!(result, CommandResult::Success))
-    }
-
-    /// Get lock info (local read, no consensus).
-    pub fn get_lock(&self, py: Python<'_>, path: &str) -> PyResult<Option<PyLockInfo>> {
-        let node = self.node.clone();
-        let path = path.to_string();
-        py.detach(|| {
-            self.runtime_handle.block_on(async {
-                node.with_state_machine(|sm| sm.get_lock(&path))
-                    .await
-                    .map(|opt| opt.map(|l| l.into()))
-                    .map_err(|e| PyRuntimeError::new_err(format!("Failed to get lock: {}", e)))
-            })
-        })
-    }
-
-    /// List all locks matching a prefix (local read, no consensus).
-    #[pyo3(signature = (prefix="", limit=1000))]
-    pub fn list_locks(
-        &self,
-        py: Python<'_>,
-        prefix: &str,
-        limit: usize,
-    ) -> PyResult<Vec<PyLockInfo>> {
-        let node = self.node.clone();
-        let prefix = prefix.to_string();
-        py.detach(|| {
-            self.runtime_handle.block_on(async {
-                node.with_state_machine(|sm| sm.list_locks(&prefix, limit))
-                    .await
-                    .map(|locks| locks.into_iter().map(|l| l.into()).collect())
-                    .map_err(|e| PyRuntimeError::new_err(format!("Failed to list locks: {}", e)))
-            })
-        })
-    }
-
-    // =========================================================================
-    // Batch Operations
-    // =========================================================================
-
-    /// Get metadata for multiple paths in a single FFI call (local read, no consensus).
-    ///
-    /// Args:
-    ///     paths: List of file paths to look up.
-    ///
-    /// Returns:
-    ///     List of (path, metadata_bytes_or_none) tuples.
-    pub fn get_metadata_multi(
-        &self,
-        py: Python<'_>,
-        paths: Vec<String>,
-    ) -> PyResult<Vec<(String, Option<Vec<u8>>)>> {
-        let node = self.node.clone();
-        py.detach(|| {
-            self.runtime_handle.block_on(async {
-                node.with_state_machine(|sm| sm.get_metadata_multi(&paths))
-                    .await
-                    .map_err(|e| {
-                        PyRuntimeError::new_err(format!("Failed to get metadata multi: {}", e))
-                    })
-            })
-        })
-    }
-
-    /// Set multiple metadata entries via Raft consensus.
-    ///
-    /// Each entry is proposed as an individual Raft command (matching
-    /// Metastore's per-item semantics). Not batch-atomic — partial
-    /// success is possible if a proposal fails mid-batch.
-    ///
-    /// Args:
-    ///     items: List of (path, value_bytes) tuples to set.
-    ///
-    /// Returns:
-    ///     Number of entries set.
-    pub fn batch_set_metadata(
-        &self,
-        py: Python<'_>,
-        items: Vec<(String, Vec<u8>)>,
-    ) -> PyResult<usize> {
-        let count = items.len();
-        for (path, value) in items {
-            let cmd = Command::SetMetadata { key: path, value };
-            self.propose_command(py, cmd)?;
-        }
-        Ok(count)
-    }
-
-    /// Delete multiple metadata entries via Raft consensus.
-    ///
-    /// Each entry is proposed as an individual Raft command.
-    ///
-    /// Args:
-    ///     keys: List of paths to delete.
-    ///
-    /// Returns:
-    ///     Number of entries deleted.
-    pub fn batch_delete_metadata(&self, py: Python<'_>, keys: Vec<String>) -> PyResult<usize> {
-        let count = keys.len();
-        for key in keys {
-            let cmd = Command::DeleteMetadata { key };
-            self.propose_command(py, cmd)?;
-        }
-        Ok(count)
-    }
-
-    // =========================================================================
-    // Cluster Status
-    // =========================================================================
-
-    /// Check if this node is the current leader (atomic read, no I/O).
-    pub fn is_leader(&self) -> bool {
-        self.node.is_leader()
-    }
-
-    /// Get the current leader ID (None if unknown).
-    pub fn leader_id(&self) -> Option<u64> {
-        self.node.leader_id()
-    }
-}
-
-#[cfg(all(feature = "grpc", has_protos))]
-impl PyZoneHandle {
-    /// True Local-First EC write — bypasses Raft, returns WAL token.
-    fn propose_command_ec_local(&self, py: Python<'_>, cmd: Command) -> PyResult<u64> {
-        let node = self.node.clone();
-        py.detach(|| {
-            self.runtime_handle
-                .block_on(node.propose_ec_local(cmd))
-                .map_err(|e| PyRuntimeError::new_err(format!("EC local write failed: {}", e)))
-        })
-    }
-
-    fn propose_command(&self, py: Python<'_>, cmd: Command) -> PyResult<bool> {
-        let result = self.propose_command_raw(py, cmd)?;
-        match result {
-            CommandResult::Success => Ok(true),
-            CommandResult::Error(e) => Err(PyRuntimeError::new_err(e)),
-            CommandResult::LockResult(state) => Ok(state.acquired),
-            CommandResult::CasResult { success, .. } => Ok(success),
-            CommandResult::Value(_) => Ok(true),
-        }
-    }
-
-    fn propose_command_raw(&self, py: Python<'_>, cmd: Command) -> PyResult<CommandResult> {
-        let node = self.node.clone();
-        py.detach(|| {
-            self.runtime_handle
-                .block_on(node.propose(cmd))
-                .map_err(|e| PyRuntimeError::new_err(format!("Propose failed: {}", e)))
-        })
-    }
-}
 
 // =============================================================================
 // Standalone join_cluster function (K3s-style pre-provision)
@@ -1376,10 +709,30 @@ fn join_cluster(
     let node_id = crate::transport::hostname_to_node_id(hostname);
 
     // Parse join token: K10<password>::server:<ca_fingerprint>
-    let parsed_token =
-        crate::transport::parse_join_token(join_token).map_err(PyRuntimeError::new_err)?;
-    let password = parsed_token.password;
-    let expected_fingerprint = parsed_token.ca_fingerprint;
+    let token_prefix = "K10";
+    let separator = "::server:";
+    if !join_token.starts_with(token_prefix) {
+        return Err(PyRuntimeError::new_err(
+            "Invalid join token: must start with 'K10'",
+        ));
+    }
+    let body = &join_token[token_prefix.len()..];
+    let sep_pos = body.find(separator).ok_or_else(|| {
+        PyRuntimeError::new_err("Invalid join token: missing '::server:' separator")
+    })?;
+    let password = &body[..sep_pos];
+    let expected_fingerprint = &body[sep_pos + separator.len()..];
+
+    if password.is_empty() {
+        return Err(PyRuntimeError::new_err(
+            "Invalid join token: empty password",
+        ));
+    }
+    if !expected_fingerprint.starts_with("SHA256:") {
+        return Err(PyRuntimeError::new_err(
+            "Invalid join token: fingerprint must start with 'SHA256:'",
+        ));
+    }
 
     // Build endpoint URL
     let endpoint = if peer_address.starts_with("http") {
@@ -1397,12 +750,12 @@ fn join_cluster(
     let result = runtime
         .block_on(call_join_cluster(
             &endpoint, node_id, "", // node_address — not needed for pre-provision
-            "root", &password, 30, // timeout_secs
+            "root", password, 30, // timeout_secs
         ))
         .map_err(|e| PyRuntimeError::new_err(format!("JoinCluster RPC failed: {}", e)))?;
 
     // Verify CA fingerprint matches the join token
-    let ca_fingerprint = crate::transport::ca_fingerprint_from_pem(&result.ca_pem)
+    let ca_fingerprint = crate::transport::certgen::ca_fingerprint_from_pem(&result.ca_pem)
         .map_err(|e| PyRuntimeError::new_err(format!("Failed to compute CA fingerprint: {}", e)))?;
     if ca_fingerprint != expected_fingerprint {
         return Err(PyRuntimeError::new_err(format!(
@@ -1450,22 +803,118 @@ fn hostname_to_node_id(hostname: &str) -> u64 {
     crate::transport::hostname_to_node_id(hostname)
 }
 
-/// Python module initialization.
-/// Module name: _nexus_raft (consistent with _nexus_kernel)
-/// Import as: from _nexus_raft import Metastore, ZoneManager, ZoneHandle
-#[pymodule]
-fn _nexus_raft(m: &Bound<'_, PyModule>) -> PyResult<()> {
+/// Register raft's PyO3 classes on the calling crate's Python module.
+///
+/// F2 C8 (Option A): raft is an rlib inside the ``nexus_kernel`` cdylib
+/// now — the old ``#[pymodule] fn _nexus_raft`` is gone. Kernel's own
+/// ``#[pymodule]`` calls this function to expose ``Metastore`` /
+/// ``ZoneManager`` / ``ZoneHandle`` from the single ``nexus_kernel``
+/// Python module. Kept ``pub`` so ``kernel::lib::nexus_kernel`` can
+/// reach it via the ``nexus_raft_lib::register_python_classes`` path.
+pub fn register_python_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyMetastore>()?;
     m.add_class::<PyLockState>()?;
     m.add_class::<PyLockInfo>()?;
     m.add_class::<PyHolderInfo>()?;
-    #[cfg(all(feature = "grpc", has_protos))]
-    m.add_class::<PyZoneManager>()?;
-    #[cfg(all(feature = "grpc", has_protos))]
-    m.add_class::<PyZoneHandle>()?;
+    // R20.18.6: PyZoneManager + PyZoneHandle pyclass registrations removed
+    // with the pyclasses themselves. Python drives zones via kernel's
+    // zone_* PyO3 methods + federation_rpc shim.
     #[cfg(all(feature = "grpc", has_protos))]
     m.add_function(wrap_pyfunction!(join_cluster, m)?)?;
     #[cfg(all(feature = "grpc", has_protos))]
     m.add_function(wrap_pyfunction!(hostname_to_node_id, m)?)?;
+
+    #[cfg(feature = "grpc")]
+    {
+        use crate::federation::tofu::{PyTofuTrustStore, PyTrustedZone};
+        m.add_class::<PyTofuTrustStore>()?;
+        m.add_class::<PyTrustedZone>()?;
+    }
     Ok(())
+}
+
+// =============================================================================
+// Unit tests: federation mount helpers (R16.1b)
+// =============================================================================
+//
+// End-to-end mount success / idempotent / auto-create paths need a full
+// ZoneConsensus + tokio runtime; those are exercised by the federation
+// E2E suite (docker) gated at R12. Here we cover the pure helper
+// surface that backs those flows — encoder, decoder, and field fidelity.
+
+#[cfg(all(test, feature = "grpc", has_protos))]
+mod mount_helpers_tests {
+    use crate::zone_manager::{
+        decode_file_metadata, encode_file_metadata, path_matches_prefix, DT_DIR, DT_MOUNT,
+        I_LINKS_COUNT_KEY,
+    };
+
+    /// Mount + dir entries round-trip through encode/decode with the
+    /// expected field fidelity: DT_MOUNT keeps ``target_zone_id``,
+    /// DT_DIR carries empty ``target_zone_id``, and at a shared path
+    /// the two only differ in ``entry_type`` / ``backend_name`` /
+    /// ``target_zone_id`` (the identifying triplet).
+    #[test]
+    fn encode_file_metadata_roundtrip_fidelity() {
+        let mount_bytes = encode_file_metadata("/x", "mount", "", DT_MOUNT, "zone-a", "zone-b");
+        let dir_bytes = encode_file_metadata("/x", "virtual", "", DT_DIR, "zone-a", "");
+
+        let m = decode_file_metadata(&mount_bytes).unwrap();
+        assert_eq!(m.path, "/x");
+        assert_eq!(m.entry_type, DT_MOUNT);
+        assert_eq!(m.backend_name, "mount");
+        assert_eq!(m.zone_id, "zone-a");
+        assert_eq!(m.target_zone_id, "zone-b");
+
+        let d = decode_file_metadata(&dir_bytes).unwrap();
+        assert_eq!(d.entry_type, DT_DIR);
+        assert_eq!(d.target_zone_id, "");
+
+        // Mount + dir at the same path differ only in the identifying triplet.
+        assert_eq!(m.path, d.path);
+        assert_eq!(m.zone_id, d.zone_id);
+        assert_ne!(m.entry_type, d.entry_type);
+        assert_ne!(m.backend_name, d.backend_name);
+        assert_ne!(m.target_zone_id, d.target_zone_id);
+    }
+
+    /// R16.3 boundary: accepts self + descendants separated by ``/``,
+    /// rejects siblings with shared stems and non-descendants, matches
+    /// everything when the normalized prefix is empty (share-the-whole-
+    /// zone path). Covered in one table-driven test.
+    #[test]
+    fn path_matches_prefix_matrix() {
+        let cases: &[(&str, &str, bool)] = &[
+            // (path, prefix, expected)
+            ("/usr/alice", "/usr/alice", true),         // self
+            ("/usr/alice/", "/usr/alice", true),        // trailing slash
+            ("/usr/alice/foo", "/usr/alice", true),     // direct child
+            ("/usr/alice/foo/bar", "/usr/alice", true), // grandchild
+            ("/usr/alicebob", "/usr/alice", false),     // sibling — shared stem
+            ("/usr/alice-temp", "/usr/alice", false),   // sibling — shared stem
+            ("/usr", "/usr/alice", false),              // ancestor, not descendant
+            ("/etc/passwd", "/usr/alice", false),       // unrelated
+            ("/", "", true),                            // empty prefix ≡ whole zone
+            ("/a", "", true),
+            ("/foo/bar", "", true),
+        ];
+        for (path, prefix, expected) in cases {
+            assert_eq!(
+                path_matches_prefix(path, prefix),
+                *expected,
+                "path_matches_prefix({path:?}, {prefix:?})",
+            );
+        }
+    }
+
+    #[test]
+    fn i_links_count_key_matches_python_constant() {
+        // Guard rail: the Rust constant must match
+        // ``RaftMetadataStore._KEY_LINKS_COUNT`` in
+        // ``src/nexus/storage/raft_metadata_store.py`` — a mismatch here
+        // means Rust-side AdjustCounter writes to a different raft-log key
+        // than the Python reader expects, and federation nlink tracking
+        // silently diverges.
+        assert_eq!(I_LINKS_COUNT_KEY, "__i_links_count__");
+    }
 }

@@ -10,6 +10,8 @@ import logging
 import os
 from typing import TYPE_CHECKING
 
+from nexus.contracts.constants import ROOT_ZONE_ID
+
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
@@ -311,21 +313,14 @@ def _init_zone_registry(app: "FastAPI", svc: "LifespanServices") -> None:
     if zone_manager is not None:
         try:
             zone_ids = zone_manager.list_zones()
+            # R20.12: capabilities persist to `{base_path}/{zone_id}/search_caps.json`.
+            # Rust GetSearchCapabilities gRPC handler reads this file per RPC.
+            base_path = getattr(zone_manager, "_base_path", None)
             for zone_id in zone_ids:
                 caps = ZoneSearchCapabilities.from_daemon_stats(zone_id, daemon)
                 registry.register(zone_id, daemon, capabilities=caps)
-                # Phase 2: Push real capabilities to the Rust gRPC server so
-                # remote nodes get accurate data from GetSearchCapabilities RPC.
-                _py_mgr = getattr(zone_manager, "_py_mgr", None)
-                if _py_mgr is not None and hasattr(_py_mgr, "set_search_capabilities"):
-                    _py_mgr.set_search_capabilities(
-                        zone_id,
-                        caps.device_tier,
-                        list(caps.search_modes),
-                        caps.has_graph,
-                        caps.embedding_model or "",
-                        caps.embedding_dimensions,
-                    )
+                if base_path is not None:
+                    _write_search_caps_file(base_path, zone_id, caps)
             logger.info(
                 "[ZONE-REGISTRY] Registered %d zones from ZoneManager",
                 len(zone_ids),
@@ -334,6 +329,34 @@ def _init_zone_registry(app: "FastAPI", svc: "LifespanServices") -> None:
             logger.warning("[ZONE-REGISTRY] Failed to register zones: %s", e)
 
     app.state.zone_search_registry = registry
+
+
+def _write_search_caps_file(base_path: str, zone_id: str, caps: object) -> None:
+    """Write per-zone search capabilities JSON (R20.12).
+
+    Atomic: writes to `search_caps.json.tmp` then renames. Non-fatal on error
+    — federation GetSearchCapabilities falls back to keyword-only defaults.
+    """
+    import json
+    import os
+    from pathlib import Path
+
+    try:
+        zone_dir = Path(base_path) / zone_id
+        zone_dir.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "device_tier": getattr(caps, "device_tier", "server"),
+            "search_modes": list(getattr(caps, "search_modes", ["keyword"])),
+            "embedding_model": getattr(caps, "embedding_model", None) or "",
+            "embedding_dimensions": int(getattr(caps, "embedding_dimensions", 0) or 0),
+            "has_graph": bool(getattr(caps, "has_graph", False)),
+        }
+        final_path = zone_dir / "search_caps.json"
+        tmp_path = zone_dir / "search_caps.json.tmp"
+        tmp_path.write_text(json.dumps(payload, indent=2))
+        os.replace(tmp_path, final_path)
+    except Exception as e:
+        logger.warning("[ZONE-REGISTRY] Failed to write search_caps for %s: %s", zone_id, e)
 
 
 async def _wire_skeleton_indexer(app: "FastAPI", svc: "LifespanServices") -> None:
@@ -396,7 +419,7 @@ async def _wire_skeleton_indexer(app: "FastAPI", svc: "LifespanServices") -> Non
         if not hasattr(_nx, "register_intercept_write"):
             return  # NexusFS doesn't support VFS hooks in this mode
 
-        _zone_id = svc.zone_id or "root"
+        _zone_id = svc.zone_id or ROOT_ZONE_ID
 
         class _SkeletonWriteHook:
             @property

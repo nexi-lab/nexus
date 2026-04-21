@@ -5,7 +5,7 @@ import warnings
 
 from nexus.grpc.vfs import vfs_pb2 as nexus_dot_grpc_dot_vfs_dot_vfs__pb2
 
-GRPC_GENERATED_VERSION = '1.78.0'
+GRPC_GENERATED_VERSION = '1.75.1'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 
@@ -18,7 +18,7 @@ except ImportError:
 if _version_not_supported:
     raise RuntimeError(
         f'The grpc package installed is at version {GRPC_VERSION},'
-        + ' but the generated code in nexus/grpc/vfs/vfs_pb2_grpc.py depends on'
+        + f' but the generated code in nexus/grpc/vfs/vfs_pb2_grpc.py depends on'
         + f' grpcio>={GRPC_GENERATED_VERSION}.'
         + f' Please upgrade your grpc module to grpcio>={GRPC_GENERATED_VERSION}'
         + f' or downgrade your generated code using grpcio-tools<={GRPC_VERSION}.'
@@ -53,11 +53,6 @@ class NexusVFSServiceStub(object):
                 '/nexus.grpc.vfs.NexusVFSService/Delete',
                 request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.DeleteRequest.SerializeToString,
                 response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.DeleteResponse.FromString,
-                _registered_method=True)
-        self.ReadBlob = channel.unary_unary(
-                '/nexus.grpc.vfs.NexusVFSService/ReadBlob',
-                request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.ReadBlobRequest.SerializeToString,
-                response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.ReadBlobResponse.FromString,
                 _registered_method=True)
         self.Ping = channel.unary_unary(
                 '/nexus.grpc.vfs.NexusVFSService/Ping',
@@ -96,15 +91,6 @@ class NexusVFSServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def ReadBlob(self, request, context):
-        """CAS-level blob read by content hash — driver-to-driver protocol.
-        Used by federation chunk assembly (PeerBlobClient) and content replication.
-        Bypasses VFS path routing — direct ObjectStore access.
-        """
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
     def Ping(self, request, context):
         """Health check with server metadata.
         """
@@ -134,11 +120,6 @@ def add_NexusVFSServiceServicer_to_server(servicer, server):
                     servicer.Delete,
                     request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.DeleteRequest.FromString,
                     response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.DeleteResponse.SerializeToString,
-            ),
-            'ReadBlob': grpc.unary_unary_rpc_method_handler(
-                    servicer.ReadBlob,
-                    request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.ReadBlobRequest.FromString,
-                    response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.ReadBlobResponse.SerializeToString,
             ),
             'Ping': grpc.unary_unary_rpc_method_handler(
                     servicer.Ping,
@@ -254,33 +235,6 @@ class NexusVFSService(object):
             '/nexus.grpc.vfs.NexusVFSService/Delete',
             nexus_dot_grpc_dot_vfs_dot_vfs__pb2.DeleteRequest.SerializeToString,
             nexus_dot_grpc_dot_vfs_dot_vfs__pb2.DeleteResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def ReadBlob(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/nexus.grpc.vfs.NexusVFSService/ReadBlob',
-            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.ReadBlobRequest.SerializeToString,
-            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.ReadBlobResponse.FromString,
             options,
             channel_credentials,
             insecure,

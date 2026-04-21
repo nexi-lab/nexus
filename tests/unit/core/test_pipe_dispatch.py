@@ -11,12 +11,35 @@ from __future__ import annotations
 
 import pytest
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.metadata import DT_PIPE, FileMetadata
+from nexus.core.driver_lifecycle_coordinator import DriverLifecycleCoordinator, _PyMountInfo
+from nexus.core.path_utils import canonicalize_path
 from nexus.core.router import PathRouter, PipeRouteResult, RouteResult
 
 # ======================================================================
 # Shared mock + setup
 # ======================================================================
+
+
+def _make_router(ms) -> PathRouter:
+    """Build a PathRouter backed by a bare DLC (no kernel).
+
+    F2 MountTable migration: tests used to instantiate MountTable directly.
+    Now we populate ``DriverLifecycleCoordinator._mounts`` and let
+    ``PathRouter`` use its Python LPM fallback (kernel=None).
+    """
+    dlc = DriverLifecycleCoordinator(dispatch=None, kernel=None)
+    return PathRouter(dlc, ms, None)
+
+
+def _add_mount(router: PathRouter, mount_point: str, backend, zone_id: str = ROOT_ZONE_ID) -> None:
+    """Insert a mount into the router's DLC map directly."""
+    canonical = canonicalize_path(mount_point, zone_id)
+    router._dlc._mounts[canonical] = _PyMountInfo(
+        backend=backend,
+        zone_id=zone_id,
+    )
 
 
 class MockMetastore:
@@ -69,10 +92,7 @@ def _create_pipe_inode(ms: MockMetastore, path: str) -> None:
 class TestPathRouterPipeRoute:
     def test_pipe_path_returns_pipe_route_result(self) -> None:
         ms = MockMetastore()
-        from nexus.core.mount_table import MountTable
-
-        mount_table = MountTable(ms)
-        router = PathRouter(mount_table)
+        router = _make_router(ms)
         _create_pipe_inode(ms, "/pipes/inbox")
 
         result = router.route("/pipes/inbox")
@@ -85,14 +105,11 @@ class TestPathRouterPipeRoute:
         # Need a mount for the regular file to route through
         from unittest.mock import MagicMock
 
-        from nexus.core.mount_table import MountTable
-
-        mount_table = MountTable(ms)
-        router = PathRouter(mount_table)
+        router = _make_router(ms)
 
         backend = MagicMock()
         backend.name = "local"
-        mount_table.add("/workspace", backend)
+        _add_mount(router, "/workspace", backend)
 
         result = router.route("/workspace/file.txt")
         assert isinstance(result, RouteResult)
@@ -100,10 +117,7 @@ class TestPathRouterPipeRoute:
 
     def test_nonexistent_path_raises(self) -> None:
         ms = MockMetastore()
-        from nexus.core.mount_table import MountTable
-
-        mount_table = MountTable(ms)
-        router = PathRouter(mount_table)
+        router = _make_router(ms)
 
         from nexus.contracts.exceptions import PathNotMountedError
 
@@ -113,10 +127,7 @@ class TestPathRouterPipeRoute:
     def test_pipe_at_exact_path_only(self) -> None:
         """DT_PIPE only matches at exact target path, not parent paths."""
         ms = MockMetastore()
-        from nexus.core.mount_table import MountTable
-
-        mount_table = MountTable(ms)
-        router = PathRouter(mount_table)
+        router = _make_router(ms)
         _create_pipe_inode(ms, "/pipes/inbox")
 
         # /pipes/inbox is a pipe

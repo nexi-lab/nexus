@@ -5,10 +5,15 @@ edition = "2021"
 
 [lib]
 name = "nexus_kernel"
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]  # cdylib for Python, rlib for Rust deps (e.g. raft::zone_metastore)
 
 [dependencies]
+contracts = { workspace = true }
 library = { workspace = true }
+# F2 C8 (Option A): raft rlib pulled in so kernel can impl Metastore over
+# raft's ZoneConsensus directly, no cross-cdylib Rust trait object
+# dispatch. See rust/kernel/src/raft_metastore.rs.
+raft = { workspace = true }
 pyo3 = { version = "0.27.2", features = ["extension-module", "hashbrown"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -17,6 +22,7 @@ regex = { workspace = true }
 memchr = { workspace = true }
 globset = { workspace = true }
 blake3 = { workspace = true }
+fastcdc = { workspace = true }
 string-interner = { workspace = true }
 roaring = { workspace = true }
 encoding_rs = "0.8.35"
@@ -36,7 +42,9 @@ crc32fast = { workspace = true }
 transport = { workspace = true }
 tonic = { workspace = true }
 prost = { workspace = true }
-tokio = { version = "1", features = ["rt", "rt-multi-thread", "net", "sync"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "net", "sync", "time", "macros"] }
+futures = "0.3"
+tracing = "0.1"
 reqwest = { version = "0.12", features = ["json", "stream", "rustls-tls"], default-features = false, optional = true }
 hmac = { version = "0.12", optional = true }
 sha2 = { version = "0.10", optional = true }
@@ -58,6 +66,7 @@ tonic-build = "0.13"
 
 [dev-dependencies]
 criterion = "0.5"
+rcgen = { version = "0.13", features = ["pem", "x509-parser"] }  # Self-signed CAs for federation_client tests
 tempfile = "3"
 
 [[bench]]

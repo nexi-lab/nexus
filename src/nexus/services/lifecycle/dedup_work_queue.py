@@ -33,7 +33,7 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Generic, TypeVar
 
 if TYPE_CHECKING:
-    from nexus_kernel import PyKernel as Kernel
+    from nexus_kernel import Kernel
 
 logger = logging.getLogger(__name__)
 

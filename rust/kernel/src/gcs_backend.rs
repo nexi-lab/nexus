@@ -67,7 +67,16 @@ impl ObjectStore for GcsBackend {
         content: &[u8],
         content_id: &str,
         _ctx: &OperationContext,
+        offset: u64,
     ) -> Result<WriteResult, StorageError> {
+        if offset != 0 {
+            // R20.10: GCS object upload replaces the whole object; no
+            // native pwrite equivalent (resumable uploads are for append-
+            // style streaming, not seekable writes).
+            return Err(StorageError::NotSupported(
+                "gcs backend does not support offset writes (API limitation)",
+            ));
+        }
         let object_name = self.object_name(content_id);
         let encoded = urlencoding::encode(&object_name);
         let url = format!(

@@ -90,27 +90,23 @@ def llm(
         _stream_path = stream_path or f"/root/llm/.streams/{uuid.uuid4().hex[:12]}"
 
         try:
-            from nexus.backends.compute.openai_compatible import CASOpenAIBackend
-
-            _router = getattr(nx, "router", None)
-            if _router is None:
-                click.echo(
-                    "Error: LLM streaming requires a local NexusFS (no router on remote client)",
-                    err=True,
-                )
-                return
-            route = _router.route(_stream_path)
-            if not isinstance(route.backend, CASOpenAIBackend):
-                click.echo(
-                    f"Error: No LLM backend at {_stream_path} (got {type(route.backend).__name__})",
-                    err=True,
-                )
-                return
+            # Rust-kernel-owned streaming. `nx.llm_start_streaming` blocks
+            # the worker thread until the SSE completes, so we wrap it in
+            # `asyncio.to_thread` to keep the event loop free for readers.
             request_bytes = json.dumps(request, separators=(",", ":")).encode("utf-8")
-            result = await route.backend.start_streaming(
-                request_bytes=request_bytes,
-                stream_path=_stream_path,
+            llm_mount = "/llm" if _stream_path.startswith("/llm") else "/root/llm"
+            _task = asyncio.create_task(
+                asyncio.to_thread(
+                    nx._kernel.llm_start_streaming,
+                    llm_mount,
+                    "root",
+                    request_bytes,
+                    _stream_path,
+                )
             )
+            # Small sleep to let the stream register before we tail-read.
+            await asyncio.sleep(0)
+            result = {"stream_path": _stream_path, "status": "streaming"}
         except Exception as e:
             handle_error(e)
             return

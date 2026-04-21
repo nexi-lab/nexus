@@ -634,7 +634,7 @@ class TestPlaygroundApp:
             backend_path = ""
 
         class _Router:
-            def route(self, path, is_admin=True, check_write=False):
+            def route(self, path):
                 assert path == "/gws/docs"
                 return _Route()
 
@@ -675,7 +675,7 @@ class TestPlaygroundApp:
                 self.backend_path = ""
 
         class _Router:
-            def route(self, path, is_admin=True, check_write=False):
+            def route(self, path):
                 assert path == "/gws/docs"
                 return _Route()
 
@@ -714,7 +714,7 @@ class TestPlaygroundApp:
                 self.backend_path = ""
 
         class _Router:
-            def route(self, path, is_admin=True, check_write=False):
+            def route(self, path):
                 assert path == "/gws/docs"
                 return _Route()
 
@@ -771,7 +771,7 @@ class TestPlaygroundApp:
                 self.backend_path = ""
 
         class _Router:
-            def route(self, path, is_admin=True, check_write=False):
+            def route(self, path):
                 assert path in {"/gws/docs", "/gws/docs/Doc Alpha [docA]"}
                 return _Route()
 

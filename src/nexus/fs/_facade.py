@@ -360,8 +360,15 @@ class SlimNexusFS:
 
         normalized = validate_path(path, allow_root=True)
 
-        # Single metadata lookup
-        meta: FileMetadata | None = self._kernel.metadata.get(normalized)
+        # Route through the kernel's sys_stat so zone-relative key translation
+        # is handled centrally. Direct ``metadata.get(global_path)`` returns
+        # ``None`` after F4 zone-relative key refactor for paths under mounts
+        # (the entry lives at the mount's zone-local key).
+        _kstat = self._kernel.sys_stat(normalized, context=self._ctx)
+        if _kstat is not None:
+            return _kstat
+
+        meta: FileMetadata | None = None
 
         if meta is not None:
             is_dir = (

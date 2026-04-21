@@ -88,7 +88,6 @@ def test_route_with_backend_still_uses_mapper(monkeypatch, caplog) -> None:
             metastore=MagicMock(),
             backend_path="/foo",
             mount_point="/",
-            readonly=False,
         )
     )
     enf = _enforcer_with_router(router)

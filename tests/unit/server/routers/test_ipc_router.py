@@ -11,6 +11,7 @@ from nexus.bricks.ipc.conventions import inbox_path
 from nexus.bricks.ipc.provisioning import AgentProvisioner
 from nexus.bricks.ipc.wakeup import CacheStoreEventPublisher
 from nexus.cache import InMemoryCacheStore
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.server.api.v2.routers.ipc import (
     SendMessageRequest,
     router,
@@ -48,7 +49,7 @@ def _override_auth_zone(app: FastAPI, zone_id: str) -> None:
 
 def test_post_send_enqueues_message() -> None:
     storage = InMemoryStorageDriver()
-    provisioner = AgentProvisioner(storage, zone_id="root")
+    provisioner = AgentProvisioner(storage, zone_id=ROOT_ZONE_ID)
     asyncio.run(provisioner.provision("agent:alice", name="Alice"))
     asyncio.run(provisioner.provision("agent:bob", name="Bob"))
 
@@ -56,7 +57,7 @@ def test_post_send_enqueues_message() -> None:
     app.state.ipc_nexus_fs = storage
     app.state.ipc_event_publisher = None
     app.state.ipc_cache_store = None
-    app.state.zone_id = "root"
+    app.state.zone_id = ROOT_ZONE_ID
     app.include_router(router)
     _override_auth(app)
 
@@ -91,7 +92,7 @@ def test_post_send_enqueues_message() -> None:
 
 def test_post_send_generates_message_id_when_omitted() -> None:
     storage = InMemoryStorageDriver()
-    provisioner = AgentProvisioner(storage, zone_id="root")
+    provisioner = AgentProvisioner(storage, zone_id=ROOT_ZONE_ID)
     asyncio.run(provisioner.provision("agent:alice", name="Alice"))
     asyncio.run(provisioner.provision("agent:bob", name="Bob"))
 
@@ -125,7 +126,7 @@ def test_post_send_generates_message_id_when_omitted() -> None:
 
 def test_inbox_and_count_return_compatibility_shapes() -> None:
     storage = InMemoryStorageDriver()
-    provisioner = AgentProvisioner(storage, zone_id="root")
+    provisioner = AgentProvisioner(storage, zone_id=ROOT_ZONE_ID)
     asyncio.run(provisioner.provision("agent:alice", name="Alice"))
     asyncio.run(provisioner.provision("agent:bob", name="Bob"))
 
@@ -133,7 +134,7 @@ def test_inbox_and_count_return_compatibility_shapes() -> None:
     app.state.ipc_nexus_fs = storage
     app.state.ipc_event_publisher = None
     app.state.ipc_cache_store = None
-    app.state.zone_id = "root"
+    app.state.zone_id = ROOT_ZONE_ID
     app.include_router(router)
     _override_auth(app)
 
@@ -174,7 +175,7 @@ def test_rest_endpoints_use_authenticated_zone_instead_of_app_state() -> None:
     app.state.ipc_nexus_fs = storage
     app.state.ipc_event_publisher = None
     app.state.ipc_cache_store = None
-    app.state.zone_id = "root"
+    app.state.zone_id = ROOT_ZONE_ID
     app.include_router(router)
     _override_auth_zone(app, "tenant-a")
 
@@ -212,7 +213,7 @@ def test_rest_endpoints_use_authenticated_zone_instead_of_app_state() -> None:
 
 def test_sse_stream_emits_connected_and_delivery_event() -> None:
     storage = InMemoryStorageDriver()
-    provisioner = AgentProvisioner(storage, zone_id="root")
+    provisioner = AgentProvisioner(storage, zone_id=ROOT_ZONE_ID)
     asyncio.run(provisioner.provision("agent:alice", name="Alice"))
     asyncio.run(provisioner.provision("agent:bob", name="Bob"))
 

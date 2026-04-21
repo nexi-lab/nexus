@@ -22,6 +22,7 @@ from nexus.bricks.mcp.auth_bridge import (
 )
 from nexus.bricks.mcp.formatters import format_response
 from nexus.bricks.mcp.tool_utils import handle_tool_errors, tool_error
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.lib.pagination import build_paginated_list_response
 
 if TYPE_CHECKING:
@@ -873,7 +874,7 @@ async def create_mcp_server(
                 "Per-request API key could not be verified; search denied.",
             )
         auth_result = _op_context_to_auth_dict(op_context)
-        zone_id = auth_result.get("zone_id", "root")
+        zone_id = auth_result.get("zone_id", ROOT_ZONE_ID)
 
         all_matches = _search.glob(pattern, path, files=files, context=op_context)
 
@@ -1028,7 +1029,7 @@ async def create_mcp_server(
         # #3731: Build auth_result dict from OperationContext for
         # _apply_rebac_filter. Falls back to anonymous if no context.
         auth_result = _op_context_to_auth_dict(op_context)
-        zone_id = auth_result.get("zone_id", "root")
+        zone_id = auth_result.get("zone_id", ROOT_ZONE_ID)
 
         # Sentinel fetch + ReBAC over-fetch (#3731).
         window_size = limit + offset

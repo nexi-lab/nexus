@@ -87,8 +87,6 @@ class TestListMounts:
 
         mount = mounts[0]
         assert "mount_point" in mount
-        assert "readonly" in mount
-        assert "admin_only" in mount
 
     async def test_list_mounts_after_add_mount(self, nx: NexusFS, temp_dir: Path) -> None:
         """Test list_mounts includes newly added mounts."""
@@ -108,11 +106,6 @@ class TestListMounts:
         mounts = nx.service("mount").list_mounts_sync()
         mount_points = [m["mount_point"] for m in mounts]
         assert "/mnt/test" in mount_points
-
-        # Verify mount properties
-        test_mount = next(m for m in mounts if m["mount_point"] == "/mnt/test")
-        assert test_mount["readonly"] is False
-        assert test_mount["admin_only"] is False
 
 
 class TestGetMount:
@@ -138,13 +131,11 @@ class TestGetMount:
             mount_point="/mnt/test",
             backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
-            readonly=True,
         )
 
         mount = nx.service("mount").get_mount_sync("/mnt/test")
         assert mount is not None
         assert mount["mount_point"] == "/mnt/test"
-        assert mount["readonly"] is True
 
 
 class TestHasMount:
@@ -190,37 +181,6 @@ class TestAddMount:
 
         assert mount_id == "/mnt/local"
         assert nx.service("mount").has_mount_sync("/mnt/local")
-
-    async def test_add_mount_with_io_profile(self, nx: NexusFS, temp_dir: Path) -> None:
-        """Test adding a mount with custom io_profile."""
-        mount_data_dir = temp_dir / "profile_mount"
-        mount_data_dir.mkdir()
-
-        nx.service("mount").add_mount_sync(
-            mount_point="/mnt/fast_read",
-            backend_type="cas_local",
-            backend_config={"data_dir": str(mount_data_dir)},
-            io_profile="fast_read",
-        )
-
-        mount = nx.service("mount").get_mount_sync("/mnt/fast_read")
-        assert mount is not None
-
-    async def test_add_mount_readonly(self, nx: NexusFS, temp_dir: Path) -> None:
-        """Test adding a read-only mount."""
-        mount_data_dir = temp_dir / "readonly_mount"
-        mount_data_dir.mkdir()
-
-        nx.service("mount").add_mount_sync(
-            mount_point="/mnt/readonly",
-            backend_type="cas_local",
-            backend_config={"data_dir": str(mount_data_dir)},
-            readonly=True,
-        )
-
-        mount = nx.service("mount").get_mount_sync("/mnt/readonly")
-        assert mount is not None
-        assert mount["readonly"] is True
 
     async def test_add_mount_unsupported_backend_raises_error(self, nx: NexusFS) -> None:
         """Test adding an unsupported backend type raises RuntimeError."""
@@ -347,7 +307,6 @@ class TestSaveMount:
             mount_point="/mnt/saved",
             backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
-            readonly=False,
             owner_user_id="alice",
             zone_id="test_zone",
             description="Test saved mount",

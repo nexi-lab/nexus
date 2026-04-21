@@ -20,6 +20,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from nexus.contracts.aspects import LineageAspect
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.storage.aspect_service import AspectService
 from nexus.storage.models.lineage_reverse_index import LineageReverseIndexModel
 
@@ -88,7 +89,7 @@ class LineageService:
                 LineageReverseIndexModel(
                     upstream_path=upstream["path"],
                     downstream_urn=entity_urn,
-                    zone_id=zone_id or "root",
+                    zone_id=zone_id or ROOT_ZONE_ID,
                     upstream_version=upstream.get("version", 0),
                     upstream_etag=upstream.get("etag", ""),
                     access_type=upstream.get("access_type", "content"),

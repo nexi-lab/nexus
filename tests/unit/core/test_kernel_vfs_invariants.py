@@ -17,9 +17,10 @@ from hypothesis import example, given, settings
 from hypothesis import strategies as st
 
 from nexus.backends.storage.cas_local import CASLocalBackend
-from nexus.core.mount_table import MountTable
+from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.core.driver_lifecycle_coordinator import DriverLifecycleCoordinator, _PyMountInfo
+from nexus.core.path_utils import canonicalize_path
 from nexus.core.router import (
-    AccessDeniedError,
     InvalidPathError,
     PathNotMountedError,
     PathRouter,
@@ -37,18 +38,43 @@ from tests.strategies.kernel import (
 # ---------------------------------------------------------------------------
 
 
+def _new_router(metastore: DictMetastore) -> PathRouter:
+    """Build a PathRouter over a bare DriverLifecycleCoordinator (no kernel).
+
+    F2 MountTable migration: the standalone Python MountTable was deleted.
+    Tests that only need the router's Python LPM fallback now talk to a
+    kernel-less DLC directly via ``_mounts``.
+    """
+    dlc = DriverLifecycleCoordinator(dispatch=None, kernel=None)
+    return PathRouter(dlc, metastore, None)
+
+
+def _add_mount(
+    router: PathRouter,
+    mount_point: str,
+    backend,
+    *,
+    zone_id: str = ROOT_ZONE_ID,
+) -> None:
+    """Insert a mount into the router's DLC map directly."""
+    canonical = canonicalize_path(mount_point, zone_id)
+    router._dlc._mounts[canonical] = _PyMountInfo(
+        backend=backend,
+        zone_id=zone_id,
+    )
+
+
 def _make_router_with_mounts() -> tuple[PathRouter, CASLocalBackend]:
     """Create a PathRouter with standard mounts for testing."""
     tmpdir = tempfile.mkdtemp()
     backend = CASLocalBackend(tmpdir)
     metastore = DictMetastore()
-    mount_table = MountTable(metastore)
-    router = PathRouter(mount_table)
-    mount_table.add("/workspace", backend)
-    mount_table.add("/shared", backend)
-    mount_table.add("/external", backend)
-    mount_table.add("/system", backend, admin_only=True, readonly=True)
-    mount_table.add("/archives", backend, readonly=True)
+    router = _new_router(metastore)
+    _add_mount(router, "/workspace", backend)
+    _add_mount(router, "/shared", backend)
+    _add_mount(router, "/external", backend)
+    _add_mount(router, "/system", backend)
+    _add_mount(router, "/archives", backend)
     return router, backend
 
 
@@ -66,9 +92,7 @@ class TestPathNormalizationInvariants:
     @example(path="/workspace/data/file.txt")
     def test_normalize_is_idempotent(self, path: str) -> None:
         """normalize(normalize(p)) == normalize(p) for all valid paths."""
-        metastore = DictMetastore()
-        mount_table = MountTable(metastore)
-        router = PathRouter(mount_table)
+        router = _new_router(DictMetastore())
         once = router._normalize_path(path)
         twice = router._normalize_path(once)
         assert once == twice
@@ -76,27 +100,21 @@ class TestPathNormalizationInvariants:
     @given(path=valid_path())
     def test_normalized_path_starts_with_slash(self, path: str) -> None:
         """All normalized paths are absolute (start with /)."""
-        metastore = DictMetastore()
-        mount_table = MountTable(metastore)
-        router = PathRouter(mount_table)
+        router = _new_router(DictMetastore())
         normalized = router._normalize_path(path)
         assert normalized.startswith("/")
 
     @given(path=valid_path())
     def test_normalized_path_has_no_double_slashes(self, path: str) -> None:
         """Normalized paths never contain //."""
-        metastore = DictMetastore()
-        mount_table = MountTable(metastore)
-        router = PathRouter(mount_table)
+        router = _new_router(DictMetastore())
         normalized = router._normalize_path(path)
         assert "//" not in normalized
 
     @given(path=valid_path())
     def test_normalized_path_has_no_trailing_slash(self, path: str) -> None:
         """Normalized paths have no trailing slash (except root /)."""
-        metastore = DictMetastore()
-        mount_table = MountTable(metastore)
-        router = PathRouter(mount_table)
+        router = _new_router(DictMetastore())
         normalized = router._normalize_path(path)
         if normalized != "/":
             assert not normalized.endswith("/")
@@ -113,9 +131,7 @@ class TestPathTraversalInvariants:
     @given(attempt=path_traversal_attempt())
     def test_traversal_attempts_rejected(self, attempt: str) -> None:
         """All path traversal attempts are rejected by validate_path."""
-        metastore = DictMetastore()
-        mount_table = MountTable(metastore)
-        router = PathRouter(mount_table)
+        router = _new_router(DictMetastore())
         try:
             result = router.validate_path(attempt)
             # If validation succeeds, the path must still be within the
@@ -135,9 +151,7 @@ class TestPathTraversalInvariants:
     @example(path="/workspace/./../../etc")
     def test_arbitrary_strings_never_escape_root(self, path: str) -> None:
         """No arbitrary string can produce a path outside /."""
-        metastore = DictMetastore()
-        mount_table = MountTable(metastore)
-        router = PathRouter(mount_table)
+        router = _new_router(DictMetastore())
         try:
             result = router.validate_path(path)
             assert result.startswith("/"), f"Escaped root: {path!r} -> {result!r}"
@@ -147,9 +161,7 @@ class TestPathTraversalInvariants:
     @given(path=valid_path())
     def test_validate_roundtrip(self, path: str) -> None:
         """validate_path is idempotent: validate(validate(p)) == validate(p)."""
-        metastore = DictMetastore()
-        mount_table = MountTable(metastore)
-        router = PathRouter(mount_table)
+        router = _new_router(DictMetastore())
         try:
             once = router.validate_path(path)
             twice = router.validate_path(once)
@@ -176,8 +188,7 @@ class TestLongestPrefixMatchInvariants:
             r2 = router.route(path)
             assert r1.mount_point == r2.mount_point
             assert r1.backend_path == r2.backend_path
-            assert r1.readonly == r2.readonly
-        except (PathNotMountedError, InvalidPathError, AccessDeniedError):
+        except (PathNotMountedError, InvalidPathError):
             pass
 
     @given(
@@ -198,52 +209,13 @@ class TestLongestPrefixMatchInvariants:
         backend_shallow = CASLocalBackend(tmpdir)
         backend_deep = CASLocalBackend(tmpdir)
 
-        metastore = DictMetastore()
-        mount_table = MountTable(metastore)
-        router = PathRouter(mount_table)
-        mount_table.add(mount1, backend_shallow)
-        mount_table.add(deeper_path, backend_deep)
+        router = _new_router(DictMetastore())
+        _add_mount(router, mount1, backend_shallow)
+        _add_mount(router, deeper_path, backend_deep)
 
         try:
             result = router.route(query_path)
             # The deeper mount should match
             assert result.backend is backend_deep
-        except (InvalidPathError, AccessDeniedError):
+        except InvalidPathError:
             pass  # Path validation may reject generated paths
-
-
-# ---------------------------------------------------------------------------
-# Invariant 4: Read-only mount enforcement
-# ---------------------------------------------------------------------------
-
-
-class TestReadOnlyMountInvariants:
-    """Read-only mount properties."""
-
-    @given(path=valid_path(max_depth=3))
-    @settings(deadline=None)
-    def test_system_mount_rejects_writes(self, path: str) -> None:
-        """System mount (admin_only + readonly) always rejects write access."""
-        router, _ = _make_router_with_mounts()
-        full_path = f"/system{path}"
-        try:
-            router.route(full_path, is_admin=True, check_write=True)
-            raise AssertionError(f"System mount accepted write: {full_path}")
-        except AccessDeniedError:
-            pass  # Correctly rejected
-        except (InvalidPathError, PathNotMountedError):
-            pass  # Path issues, also acceptable
-
-    @given(path=valid_path(max_depth=3))
-    @settings(deadline=None)
-    def test_archives_mount_rejects_writes(self, path: str) -> None:
-        """Archives mount (readonly) always rejects write access."""
-        router, _ = _make_router_with_mounts()
-        full_path = f"/archives{path}"
-        try:
-            router.route(full_path, is_admin=False, check_write=True)
-            raise AssertionError(f"Archives mount accepted write: {full_path}")
-        except AccessDeniedError:
-            pass  # Correctly rejected
-        except (InvalidPathError, PathNotMountedError):
-            pass  # Path issues, also acceptable

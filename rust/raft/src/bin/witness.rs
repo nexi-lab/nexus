@@ -41,14 +41,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive("_nexus_raft=debug".parse()?)
+                .add_directive("nexus_raft=debug".parse()?)
                 .add_directive("tonic=info".parse()?),
         )
         .init();
 
     let hostname = env::var("NEXUS_HOSTNAME")
         .unwrap_or_else(|_| gethostname::gethostname().to_string_lossy().into_owned());
-    let node_id = _nexus_raft::transport::hostname_to_node_id(&hostname);
+    let node_id = nexus_raft::transport::hostname_to_node_id(&hostname);
 
     let bind_addr: SocketAddr = env::var("NEXUS_BIND_ADDR")
         .unwrap_or_else(|_| "0.0.0.0:2126".to_string())
@@ -66,26 +66,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .collect();
-    let max_auto_join_zones: usize = env::var("NEXUS_WITNESS_MAX_AUTO_ZONES")
-        .ok()
-        .and_then(|v| v.trim().parse::<usize>().ok())
-        .filter(|v| *v > 0)
-        .unwrap_or(128);
 
     tracing::info!(
-        "Starting Nexus Witness Node\n  Hostname: {}\n  Node ID: {}\n  Bind: {}\n  Data: {}\n  Federation zones: {:?}\n  Max auto-join zones: {}",
+        "Starting Nexus Witness Node\n  Hostname: {}\n  Node ID: {}\n  Bind: {}\n  Data: {}\n  Federation zones: {:?}",
         hostname,
         node_id,
         bind_addr,
         data_path.display(),
         federation_zones,
-        max_auto_join_zones,
     );
 
     #[cfg(all(feature = "grpc", has_protos))]
     {
-        use _nexus_raft::transport::{
-            parse_join_token, NodeAddress, RaftWitnessServer, ServerConfig, WitnessZoneRegistry,
+        use nexus_raft::transport::{
+            NodeAddress, RaftWitnessServer, ServerConfig, WitnessZoneRegistry,
         };
 
         let tls_dir = data_path.join("tls");
@@ -126,12 +120,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Create registry + zones
         let mut registry = WitnessZoneRegistry::new(data_path.clone(), node_id, tls_config.clone());
         registry.set_peers(peers.clone());
-        registry.set_max_auto_join_zones(max_auto_join_zones);
         let registry = Arc::new(registry);
         let runtime_handle = tokio::runtime::Handle::current();
 
         registry
-            .create_zone("root", peers.clone(), &runtime_handle)
+            .create_zone(contracts::ROOT_ZONE_ID, peers.clone(), &runtime_handle)
             .map_err(|e| format!("Failed to create root zone: {}", e))?;
         for zone_id in &federation_zones {
             registry
@@ -156,13 +149,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Token is file-only (no env var) — consistent with file-based design.
         if needs_bootstrap && !peers.is_empty() {
             let token_path = tls_dir.join("join-token");
-            let join_token = if token_path.exists() {
+            let password = if token_path.exists() {
                 let token = std::fs::read_to_string(&token_path).unwrap_or_default();
-                let token = token.trim().to_string();
-                if token.is_empty() {
-                    tracing::warn!("Join token file is empty: {}", token_path.display());
+                let token = token.trim();
+                if let Some(body) = token.strip_prefix("K10") {
+                    body.split("::server:").next().unwrap_or("").to_string()
+                } else {
+                    tracing::warn!("Join token file has invalid format (expected K10...)");
+                    String::new()
                 }
-                token
             } else {
                 tracing::warn!(
                     "No join token at {} — cannot provision TLS certs",
@@ -171,36 +166,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 String::new()
             };
 
-            if !join_token.is_empty() {
-                let parsed = match parse_join_token(&join_token) {
-                    Ok(parsed) => Some(parsed),
-                    Err(e) => {
-                        tracing::warn!("Join token file has invalid format: {}", e);
-                        None
-                    }
-                };
-                if let Some(parsed) = parsed {
-                    let password = parsed.password;
-                    let expected_ca_fingerprint = parsed.ca_fingerprint;
-                    let tls_dir_bg = tls_dir.clone();
-                    let peers_bg = peers.clone();
-                    let my_addr = peers
-                        .iter()
-                        .find(|p| p.id == node_id)
-                        .map(|p| p.endpoint.clone())
-                        .unwrap_or_else(|| format!("http://{}", bind_addr));
-                    tokio::spawn(async move {
-                        tls_bootstrap_loop(
-                            node_id,
-                            &my_addr,
-                            &peers_bg,
-                            &tls_dir_bg,
-                            &password,
-                            &expected_ca_fingerprint,
-                        )
-                        .await;
-                    });
-                }
+            if !password.is_empty() {
+                let tls_dir_bg = tls_dir.clone();
+                let peers_bg = peers.clone();
+                let my_addr = peers
+                    .iter()
+                    .find(|p| p.id == node_id)
+                    .map(|p| p.endpoint.clone())
+                    .unwrap_or_else(|| format!("http://{}", bind_addr));
+                tokio::spawn(async move {
+                    tls_bootstrap_loop(node_id, &my_addr, &peers_bg, &tls_dir_bg, &password).await;
+                });
             }
         }
 
@@ -236,8 +212,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 /// Load TLS certs from disk if all three files exist.
 #[cfg(all(feature = "grpc", has_protos))]
-fn load_tls_from_disk(tls_dir: &std::path::Path) -> Option<_nexus_raft::transport::TlsConfig> {
-    use _nexus_raft::transport::TlsConfig;
+fn load_tls_from_disk(tls_dir: &std::path::Path) -> Option<nexus_raft::transport::TlsConfig> {
+    use nexus_raft::transport::TlsConfig;
 
     let ca = tls_dir.join("ca.pem");
     let cert = tls_dir.join("node.pem");
@@ -261,12 +237,11 @@ fn load_tls_from_disk(tls_dir: &std::path::Path) -> Option<_nexus_raft::transpor
 async fn tls_bootstrap_loop(
     node_id: u64,
     node_address: &str,
-    peers: &[_nexus_raft::transport::NodeAddress],
+    peers: &[nexus_raft::transport::NodeAddress],
     tls_dir: &std::path::Path,
     password: &str,
-    expected_ca_fingerprint: &str,
 ) {
-    use _nexus_raft::transport::call_join_cluster;
+    use nexus_raft::transport::call_join_cluster;
 
     // Wait a bit for leader election
     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
@@ -290,36 +265,13 @@ async fn tls_bootstrap_loop(
                 &peer.endpoint,
                 node_id,
                 node_address,
-                "root",
+                contracts::ROOT_ZONE_ID,
                 password,
                 10, // timeout
             )
             .await
             {
                 Ok(result) => {
-                    let ca_fingerprint =
-                        match _nexus_raft::transport::ca_fingerprint_from_pem(&result.ca_pem) {
-                            Ok(fingerprint) => fingerprint,
-                            Err(e) => {
-                                tracing::warn!(
-                                "TLS bootstrap: failed to compute CA fingerprint from peer {}: {}",
-                                peer.id,
-                                e
-                            );
-                                continue;
-                            }
-                        };
-
-                    if ca_fingerprint != expected_ca_fingerprint {
-                        tracing::error!(
-                            "TLS bootstrap: CA fingerprint mismatch from peer {} (expected '{}', got '{}')",
-                            peer.id,
-                            expected_ca_fingerprint,
-                            ca_fingerprint
-                        );
-                        continue;
-                    }
-
                     // Save certs to disk
                     std::fs::create_dir_all(tls_dir).expect("create tls dir");
                     std::fs::write(tls_dir.join("ca.pem"), &result.ca_pem).expect("write CA");

@@ -59,7 +59,13 @@ impl ObjectStore for SlackBackend {
         content: &[u8],
         content_id: &str,
         _ctx: &OperationContext,
+        offset: u64,
     ) -> Result<WriteResult, StorageError> {
+        if offset != 0 {
+            return Err(StorageError::NotSupported(
+                "slack backend does not support offset writes (messages are immutable)",
+            ));
+        }
         let token = self.token();
         let text = String::from_utf8_lossy(content).to_string();
         let channel = if content_id.is_empty() {

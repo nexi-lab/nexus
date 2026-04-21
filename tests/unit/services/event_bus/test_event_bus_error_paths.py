@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.services.event_bus import RedisEventBus
 from nexus.services.event_bus.types import FileEvent, FileEventType
 
@@ -27,7 +28,7 @@ def sample_event():
     return FileEvent(
         type=FileEventType.FILE_WRITE,
         path="/test.txt",
-        zone_id="root",
+        zone_id=ROOT_ZONE_ID,
     )
 
 
@@ -41,7 +42,7 @@ class TestSerializationErrors:
         await bus.start()
 
         # Create event and mock to_json to raise error
-        event = FileEvent(type=FileEventType.FILE_WRITE, path="/test.txt", zone_id="root")
+        event = FileEvent(type=FileEventType.FILE_WRITE, path="/test.txt", zone_id=ROOT_ZONE_ID)
 
         with (
             patch.object(FileEvent, "to_json", side_effect=TypeError("circular reference")),
@@ -57,7 +58,7 @@ class TestSerializationErrors:
         bus = RedisEventBus(mock_redis_client)
         await bus.start()
 
-        event = FileEvent(type=FileEventType.FILE_WRITE, path="/test.txt", zone_id="root")
+        event = FileEvent(type=FileEventType.FILE_WRITE, path="/test.txt", zone_id=ROOT_ZONE_ID)
 
         with (
             patch.object(FileEvent, "to_json", side_effect=ValueError("NaN not supported")),
@@ -81,7 +82,7 @@ class TestConnectionErrors:
         bus = RedisEventBus(mock_redis_client)
         await bus.start()
 
-        event = FileEvent(type=FileEventType.FILE_WRITE, path="/test.txt", zone_id="root")
+        event = FileEvent(type=FileEventType.FILE_WRITE, path="/test.txt", zone_id=ROOT_ZONE_ID)
 
         with pytest.raises(ConnectionError, match="Redis connection lost"):
             await bus.publish(event)
@@ -98,7 +99,7 @@ class TestConnectionErrors:
         bus = RedisEventBus(mock_redis_client)
         await bus.start()
 
-        event = FileEvent(type=FileEventType.FILE_WRITE, path="/test.txt", zone_id="root")
+        event = FileEvent(type=FileEventType.FILE_WRITE, path="/test.txt", zone_id=ROOT_ZONE_ID)
 
         with pytest.raises(asyncio.TimeoutError):
             await bus.publish(event)
@@ -164,7 +165,9 @@ class TestInvalidMessages:
         mock_pubsub.aclose = AsyncMock()
 
         # Mix of invalid and valid messages
-        valid_event = FileEvent(type=FileEventType.FILE_WRITE, path="/valid.txt", zone_id="root")
+        valid_event = FileEvent(
+            type=FileEventType.FILE_WRITE, path="/valid.txt", zone_id=ROOT_ZONE_ID
+        )
 
         mock_pubsub.get_message = AsyncMock(
             side_effect=[
@@ -202,7 +205,7 @@ class TestLifecycleErrors:
         bus = RedisEventBus(mock_redis_client)
         # Don't call start()
 
-        event = FileEvent(type=FileEventType.FILE_WRITE, path="/test.txt", zone_id="root")
+        event = FileEvent(type=FileEventType.FILE_WRITE, path="/test.txt", zone_id=ROOT_ZONE_ID)
 
         with pytest.raises(RuntimeError, match="not started"):
             await bus.publish(event)
@@ -235,7 +238,7 @@ class TestLifecycleErrors:
         await bus.start()  # Should not raise or cause issues
 
         # Verify we can still publish
-        event = FileEvent(type=FileEventType.FILE_WRITE, path="/test.txt", zone_id="root")
+        event = FileEvent(type=FileEventType.FILE_WRITE, path="/test.txt", zone_id=ROOT_ZONE_ID)
         await bus.publish(event)
 
         await bus.stop()
@@ -256,7 +259,7 @@ class TestLifecycleErrors:
         await bus.start()
         await bus.stop()
 
-        event = FileEvent(type=FileEventType.FILE_WRITE, path="/test.txt", zone_id="root")
+        event = FileEvent(type=FileEventType.FILE_WRITE, path="/test.txt", zone_id=ROOT_ZONE_ID)
 
         with pytest.raises(RuntimeError, match="not started"):
             await bus.publish(event)

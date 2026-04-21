@@ -16,6 +16,8 @@ import uuid
 
 import pytest
 
+from nexus.contracts.constants import ROOT_ZONE_ID
+
 # Skip if Docker Postgres isn't available
 DB_URL = os.environ.get("DATABASE_URL", "")
 pytestmark = pytest.mark.skipif(
@@ -82,7 +84,7 @@ class TestLineageE2EFlow:
         test_id = uuid.uuid4().hex[:8]
         agent_id = f"e2e-agent-{test_id}"
         agent_gen = 1
-        zone_id = "root"
+        zone_id = ROOT_ZONE_ID
 
         input_paths = [
             f"/e2e-test/{test_id}/data/input_a.csv",
@@ -186,7 +188,7 @@ class TestLineageE2EFlow:
             registry.register("lineage", LineageAspect, max_versions=5)
 
         test_id = uuid.uuid4().hex[:8]
-        zone_id = "root"
+        zone_id = ROOT_ZONE_ID
         output_path = f"/e2e-test/{test_id}/declared_output.json"
         output_urn = str(NexusURN.for_file(zone_id, output_path))
 
@@ -224,7 +226,7 @@ class TestLineageE2EFlow:
             registry.register("lineage", LineageAspect, max_versions=5)
 
         test_id = uuid.uuid4().hex[:8]
-        zone_id = "root"
+        zone_id = ROOT_ZONE_ID
         output_path = f"/e2e-test/{test_id}/rewritten.json"
         output_urn = str(NexusURN.for_file(zone_id, output_path))
         svc = LineageService(session)
@@ -269,7 +271,7 @@ class TestLineageE2EFlow:
             registry.register("lineage", LineageAspect, max_versions=5)
 
         test_id = uuid.uuid4().hex[:8]
-        zone_id = "root"
+        zone_id = ROOT_ZONE_ID
         src_path = f"/e2e-test/{test_id}/original.txt"
         dst_path = f"/e2e-test/{test_id}/copy.txt"
         dst_urn = str(NexusURN.for_file(zone_id, dst_path))
@@ -315,7 +317,7 @@ class TestLineageE2EFlow:
         test_id = uuid.uuid4().hex[:8]
         agent_id = f"e2e-scope-agent-{test_id}"
         agent_gen = 1
-        zone_id = "root"
+        zone_id = ROOT_ZONE_ID
         acc = get_accumulator()
 
         # --- Task 1: read A, B, C → write output1 ---

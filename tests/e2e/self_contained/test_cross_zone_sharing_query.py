@@ -14,6 +14,8 @@ from typing import Any
 
 import pytest
 
+from nexus.contracts.constants import ROOT_ZONE_ID
+
 # ---------------------------------------------------------------------------
 # Minimal ReBAC manager fake for cross-zone sharing query
 # ---------------------------------------------------------------------------
@@ -119,7 +121,9 @@ def _make_search_service(rebac_manager: FakeReBACManager | None = None) -> Any:
     from nexus.storage.raft_metadata_store import RaftMetadataStore
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        metadata_store = RaftMetadataStore.embedded(str(Path(tmpdir) / "meta"), zone_id="root")
+        metadata_store = RaftMetadataStore.embedded(
+            str(Path(tmpdir) / "meta"), zone_id=ROOT_ZONE_ID
+        )
 
         from nexus.bricks.search.search_service import SearchService
 

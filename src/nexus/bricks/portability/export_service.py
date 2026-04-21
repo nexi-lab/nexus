@@ -66,7 +66,9 @@ class ZoneExportService:
         """
         self.nexus_fs = nexus_fs
         self.metadata_store = nexus_fs.metadata
-        self.backend = nexus_fs.backend
+        # R20.18.x: `NexusFS.backend` is gone — the kernel owns mount
+        # routing now. Content reads go through `nexus_fs.sys_read`;
+        # see `_export_content_blobs`.
 
     def export_zone(
         self,
@@ -126,6 +128,7 @@ class ZoneExportService:
 
             # Export metadata to JSONL
             content_hashes: set[str] = set()
+            hash_to_path: dict[str, str] = {}
             files_path = temp_path / BUNDLE_PATHS["files"]
 
             file_count, total_size = self._export_metadata_to_jsonl(
@@ -133,6 +136,7 @@ class ZoneExportService:
                 output_path=files_path,
                 options=options,
                 content_hashes=content_hashes,
+                hash_to_path=hash_to_path,
                 progress_callback=progress_callback,
             )
 
@@ -147,6 +151,7 @@ class ZoneExportService:
             if options.include_content and content_hashes:
                 blob_count = self._export_content_blobs(
                     content_hashes=content_hashes,
+                    hash_to_path=hash_to_path,
                     output_dir=temp_path / "content" / "cas",
                     progress_callback=progress_callback,
                 )
@@ -192,6 +197,7 @@ class ZoneExportService:
         output_path: Path,
         options: ZoneExportOptions,
         content_hashes: set[str],
+        hash_to_path: dict[str, str],
         progress_callback: ProgressCallback | None = None,
     ) -> tuple[int, int]:
         """Export file metadata to JSONL format.
@@ -255,9 +261,14 @@ class ZoneExportService:
                 # Write JSONL line
                 f.write(record.to_jsonl() + "\n")
 
-                # Collect content hash for blob export
-                if file_meta.etag:
+                # Collect content hash for blob export (CAS dedup): first
+                # path wins. Later iterations that see the same hash
+                # (identical content at a different path) are no-ops —
+                # `_export_content_blobs` reads via sys_read(path) once
+                # per unique hash.
+                if file_meta.etag and file_meta.etag not in content_hashes:
                     content_hashes.add(file_meta.etag)
+                    hash_to_path[file_meta.etag] = file_meta.path
 
                 file_count += 1
                 total_size += file_meta.size
@@ -275,28 +286,34 @@ class ZoneExportService:
     def _export_content_blobs(
         self,
         content_hashes: set[str],
+        hash_to_path: dict[str, str],
         output_dir: Path,
         progress_callback: ProgressCallback | None = None,
     ) -> int:
         """Export content blobs to CAS directory structure.
 
-        Args:
-            content_hashes: Set of content hashes to export
-            output_dir: Output directory for CAS structure
-            progress_callback: Optional progress callback
-
-        Returns:
-            Number of blobs exported
+        Reads each blob by path via `nexus_fs.sys_read` — the kernel
+        resolves the correct mount + backend internally. The legacy
+        `nexus_fs.backend.read_content(hash)` path was removed with
+        `NexusFS.backend` in R20.18; post-migration the only way to
+        reach a CAS blob is via a VFS path, so we carry one path per
+        unique hash (first-seen wins — CAS dedup makes the choice
+        arbitrary).
         """
         blob_count = 0
         total_hashes = len(content_hashes)
 
         for idx, content_hash in enumerate(content_hashes):
+            path = hash_to_path.get(content_hash)
+            if not path:
+                logger.warning("No source path recorded for hash %s; skipping", content_hash[:12])
+                continue
             try:
-                # Read content from backend
-                response = self.backend.read_content(content_hash)
-                if not response.success or response.data is None:
-                    logger.warning("Failed to read content %s: %s", content_hash, response.error)
+                data = self.nexus_fs.sys_read(path)
+                if data is None:
+                    logger.warning(
+                        "sys_read returned no data for %s (hash %s)", path, content_hash[:12]
+                    )
                     continue
 
                 # Write to CAS structure (2-char prefix directories)
@@ -305,7 +322,7 @@ class ZoneExportService:
                     blob_dir = output_dir / prefix
                     blob_dir.mkdir(parents=True, exist_ok=True)
                     blob_path = blob_dir / content_hash
-                    blob_path.write_bytes(response.data)
+                    blob_path.write_bytes(data if isinstance(data, bytes) else bytes(data))
                     blob_count += 1
 
                 # Progress callback
@@ -384,9 +401,11 @@ class ZoneExportService:
         """
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Ensure .nexus extension
-        if not str(output_path).endswith(".nexus"):
-            output_path = output_path.with_suffix(".nexus")
+        # Honor the caller's chosen suffix. Bundle format is tar.gz
+        # regardless of filename; `.nexus` is just the conventional
+        # extension but not enforced. Previous version force-rewrote
+        # the path to `.nexus`, which silently broke callers that
+        # passed a different suffix (e.g., E2E tests using `.tar`).
 
         # Create tar.gz bundle
         # Note: tarfile "w:gz" uses default gzip compression level

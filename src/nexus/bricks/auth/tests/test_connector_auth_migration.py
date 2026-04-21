@@ -12,6 +12,7 @@ import pytest
 
 from nexus.bricks.auth.credential_pool import CredentialPoolRegistry
 from nexus.bricks.auth.profile import AuthProfile, InMemoryAuthProfileStore, ProfileUsageStats
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 
 class TestPathCLIBackendAuthSource:
@@ -648,7 +649,7 @@ class TestZoneScopedRequestsSkipExternalCli:
         connector = _TestConnector()
         from nexus.contracts.types import OperationContext
 
-        ctx = OperationContext(user_id="alice@example.com", zone_id="root", groups=[])
+        ctx = OperationContext(user_id="alice@example.com", zone_id=ROOT_ZONE_ID, groups=[])
 
         with (
             patch(

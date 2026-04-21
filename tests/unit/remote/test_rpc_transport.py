@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 import grpc
 import pytest
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import (
     NexusFileNotFoundError,
     RemoteConnectionError,
@@ -289,7 +290,7 @@ class TestRPCTransportTypedMethods:
         """ping returns version/zone_id/uptime dict."""
         mock_response = MagicMock()
         mock_response.version = "0.7.2"
-        mock_response.zone_id = "root"
+        mock_response.zone_id = ROOT_ZONE_ID
         mock_response.uptime_seconds = 3600
         transport._mock_stub.Ping.return_value = mock_response
 
@@ -320,7 +321,7 @@ class TestRPCTransportLifecycle:
         """health_check delegates to ping()."""
         mock_response = MagicMock()
         mock_response.version = "0.7.2"
-        mock_response.zone_id = "root"
+        mock_response.zone_id = ROOT_ZONE_ID
         mock_response.uptime_seconds = 0
         transport._mock_stub.Ping.return_value = mock_response
 

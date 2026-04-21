@@ -3,33 +3,27 @@
 Derives deterministic node IDs from hostnames using SHA-256, eliminating
 the need for manually assigned NEXUS_NODE_ID environment variables.
 
-The algorithm matches the Rust implementation in transport/mod.rs:
-    SHA-256(hostname) -> first 8 bytes as little-endian u64 -> 0 mapped to 1
+The SSOT algorithm lives in Rust (``nexus_kernel.hostname_to_node_id``,
+``rust/raft/src/transport/mod.rs``); this module re-exports it so
+Python callers keep their existing import path.
 """
 
 from __future__ import annotations
 
-import hashlib
 import socket
 from dataclasses import dataclass
 
+from nexus_kernel import hostname_to_node_id as _rust_hostname_to_node_id
+
 
 def hostname_to_node_id(hostname: str) -> int:
-    """Derive a deterministic node ID from a hostname.
+    """Derive a deterministic node ID from a hostname (SHA-256 → u64).
 
-    Uses SHA-256 of the hostname, takes the first 8 bytes as a
-    little-endian unsigned 64-bit integer. Maps 0 to 1 (raft-rs
-    reserves 0 as "no node").
-
-    Args:
-        hostname: The hostname string (e.g., "nexus-1", "witness").
-
-    Returns:
-        A non-zero u64 node ID.
+    Delegates to the native Rust helper so node IDs are identical
+    across Python ``ZoneManager`` callers and the Rust raft layer.
     """
-    digest = hashlib.sha256(hostname.encode("utf-8")).digest()
-    value = int.from_bytes(digest[:8], byteorder="little", signed=False)
-    return value if value != 0 else 1
+    value: int = _rust_hostname_to_node_id(hostname)
+    return value
 
 
 @dataclass(frozen=True)
@@ -50,14 +44,7 @@ class PeerAddress:
     def parse(cls, s: str) -> PeerAddress:
         """Parse a "host:port" string into a PeerAddress.
 
-        Args:
-            s: Peer address string like "nexus-1:2126".
-
-        Returns:
-            PeerAddress with hostname-derived node_id.
-
-        Raises:
-            ValueError: If the string is not in "host:port" format.
+        Raises ``ValueError`` if the string is not in ``host:port`` form.
         """
         s = s.strip()
         if ":" not in s:
@@ -67,42 +54,26 @@ class PeerAddress:
             port = int(port_str)
         except ValueError:
             raise ValueError(f"Invalid port in '{s}'") from None
-        nid = hostname_to_node_id(host)
-        return cls(hostname=host, port=port, node_id=nid)
+        return cls(hostname=host, port=port, node_id=hostname_to_node_id(host))
 
     @classmethod
     def parse_peer_list(cls, peers_str: str) -> list[PeerAddress]:
-        """Parse a comma-separated list of "host:port" peers.
-
-        Args:
-            peers_str: Comma-separated peer addresses (e.g., "nexus-1:2126,nexus-2:2126").
-
-        Returns:
-            List of PeerAddress instances.
-        """
+        """Parse a comma-separated list of ``host:port`` peers."""
         if not peers_str or not peers_str.strip():
             return []
         return [cls.parse(p) for p in peers_str.split(",") if p.strip()]
 
     @classmethod
     def from_local(cls, port: int = 2126) -> PeerAddress:
-        """Create a PeerAddress for the local machine.
-
-        Args:
-            port: Local port number (default: 2126).
-
-        Returns:
-            PeerAddress using socket.gethostname() as hostname.
-        """
+        """Create a PeerAddress for the local machine via ``socket.gethostname()``."""
         hostname = socket.gethostname()
-        nid = hostname_to_node_id(hostname)
-        return cls(hostname=hostname, port=port, node_id=nid)
+        return cls(hostname=hostname, port=port, node_id=hostname_to_node_id(hostname))
 
     @property
     def grpc_target(self) -> str:
-        """Return "host:port" for gRPC connection target."""
+        """Return ``host:port`` for gRPC connection target."""
         return f"{self.hostname}:{self.port}"
 
     def to_raft_peer_str(self) -> str:
-        """Return "id@host:port" for Raft peer configuration."""
+        """Return ``id@host:port`` for Raft peer configuration."""
         return f"{self.node_id}@{self.hostname}:{self.port}"

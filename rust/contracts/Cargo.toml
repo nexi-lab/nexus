@@ -7,3 +7,9 @@ description = "Shared Rust traits and types — MutationObserver, FileEvent, Met
 [lib]
 name = "contracts"
 crate-type = ["rlib"]
+
+[dependencies]
+# Serialization for shared state types (lock_state snapshots travel through
+# raft-rs's bincode pipeline). Kept behind a dep on a tiny subset of serde
+# to avoid pulling the full macro crate into every dependent.
+serde = { version = "1.0", features = ["derive"] }

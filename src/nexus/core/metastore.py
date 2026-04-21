@@ -36,6 +36,19 @@ from nexus.contracts.metadata import FileMetadata
 logger = logging.getLogger(__name__)
 
 
+def _is_direct_child(path: str, prefix: str) -> bool:
+    """Return True when ``path`` is an immediate child of ``prefix``.
+
+    Matches the Python-side filter ``RaftMetadataStore._list_iter_raw``
+    applies for ``recursive=False`` — strip the prefix, then drop any
+    entry whose remainder still contains a ``/`` (i.e. sits in a
+    deeper subdirectory). Used by ``KernelBackedMetastoreABC.list[/_iter]``
+    so recursive-vs-not semantics match across metastore impls.
+    """
+    rel = path[len(prefix) :].lstrip("/") if path.startswith(prefix) else path
+    return "/" not in rel
+
+
 def _sync_to_rust(kernel: Any, meta: FileMetadata) -> None:
     """Push a FileMetadata into the Rust DashMap (hot-path projection).
 
@@ -332,7 +345,7 @@ class MetastoreABC(ABC):
 
 
 class RustMetastoreProxy(MetastoreABC):
-    """MetastoreABC implementation backed by Rust RedbMetastore.
+    """MetastoreABC implementation backed by Rust LocalMetastore.
 
     Delegates all operations to the Rust kernel's metastore via PyKernel
     methods (metastore_get, metastore_put, etc.). Rust kernel exclusively
@@ -347,10 +360,18 @@ class RustMetastoreProxy(MetastoreABC):
         metadata_store = RustMetastoreProxy(kernel)
     """
 
-    def __init__(self, kernel: Any, redb_path: str) -> None:
+    def __init__(self, kernel: Any, redb_path: str | None = None, /) -> None:
         super().__init__()
         self._rust_kernel = kernel
-        kernel.set_metastore_path(redb_path)
+        # Federation mode: kernel has no global redb — every call routes
+        # via ``mount_table.route(path, ROOT_ZONE_ID, ...)`` and hits a
+        # per-mount ZoneMetastore installed by ``kernel.add_mount()``
+        # (via ``py_zone_handle``). Skipping
+        # ``set_metastore_path`` keeps the global fallback unset so an
+        # accidental route miss blows up loudly instead of silently
+        # returning empty.
+        if redb_path is not None:
+            kernel.set_metastore_path(redb_path)
 
     # ── Public API (bypass Python dcache — Rust DCache is authoritative) ─
 
@@ -378,26 +399,40 @@ class RustMetastoreProxy(MetastoreABC):
     def list(
         self,
         prefix: str = "",
-        recursive: bool = True,  # noqa: ARG002
+        recursive: bool = True,
         **kwargs: Any,  # noqa: ARG002
     ) -> builtins.list[FileMetadata]:
-        """List metadata from Rust metastore."""
+        """List metadata from Rust metastore.
+
+        The Rust ``metastore_list`` is prefix-only — it returns every entry
+        whose path starts with ``prefix``. When the caller asks for
+        ``recursive=False`` we post-filter in Python to keep entries that
+        live directly under the prefix (no further ``/`` separator). This
+        matches the ``RaftMetadataStore._list_iter_raw`` contract and makes
+        ``sys_readdir(recursive=False, limit=N)`` return only the immediate
+        children it's supposed to.
+        """
         result: builtins.list[FileMetadata] = self._rust_kernel.metastore_list(prefix)
-        return result
+        if recursive:
+            return result
+        return [e for e in result if _is_direct_child(e.path, prefix)]
 
     def list_iter(
         self,
         prefix: str = "",
-        recursive: bool = True,  # noqa: ARG002
+        recursive: bool = True,
         **kwargs: Any,  # noqa: ARG002
     ) -> Iterator[FileMetadata]:
         """Iterate metadata from Rust metastore (bypasses Python dcache).
 
-        Issue #3706: like list(), delegates directly to Rust without populating
-        the Python-side _dcache, avoiding unbounded cache growth on repeated
-        large directory listings.
+        Issue #3706: like list(), delegates directly to Rust without
+        populating the Python-side _dcache. Honors ``recursive=False`` via
+        the same post-filter as list() — the Rust call returns everything
+        under ``prefix`` and we drop deeper entries here.
         """
-        yield from self._rust_kernel.metastore_list(prefix)
+        for e in self._rust_kernel.metastore_list(prefix):
+            if recursive or _is_direct_child(e.path, prefix):
+                yield e
 
     def dcache_evict_prefix(self, prefix: str) -> int:
         """Evict all dcache entries under prefix (Rust DCache only)."""
@@ -431,9 +466,86 @@ class RustMetastoreProxy(MetastoreABC):
 
     def is_implicit_directory(self, path: str) -> bool:
         """Check if path is an implicit directory (has children but no metadata)."""
-        prefix = path.rstrip("/") + "/"
-        entries = self._rust_kernel.metastore_list(prefix)
-        return len(entries) > 0
+        return bool(self._rust_kernel.metastore_is_implicit_directory(path))
+
+    # ── Auxiliary per-path metadata (F3 C2 kernel bindings) ───────────────
+    #
+    # These route through ``kernel.metastore_set/get_file_metadata`` so
+    # tests that previously stored ``parsed_text`` / ``parser_name`` /
+    # tag blobs on a Python DictMetastore hit the kernel's DashMap
+    # side-car instead. The kernel boundary stores strings — callers
+    # that want to persist structured data JSON-encode themselves.
+
+    def set_file_metadata(self, path: str, key: str, value: Any) -> None:
+        if value is None:
+            # Sentinel used by parser hooks to clear a field — the kernel
+            # treats "absent" and "None" identically, so do nothing.
+            return
+        if not isinstance(value, str):
+            import json
+
+            value = json.dumps(value)
+        self._rust_kernel.metastore_set_file_metadata(path, key, value)
+
+    def get_file_metadata(self, path: str, key: str) -> Any:
+        return self._rust_kernel.metastore_get_file_metadata(path, key)
+
+    def get_file_metadata_bulk(self, paths: Sequence[str], key: str) -> dict[str, Any]:
+        return dict(self._rust_kernel.metastore_get_file_metadata_bulk(list(paths), key))
+
+    def rename_path(self, old_path: str, new_path: str) -> None:
+        self._rust_kernel.metastore_rename_path(old_path, new_path)
+
+    def list_paginated(
+        self,
+        prefix: str = "",
+        recursive: bool = True,
+        limit: int = 1000,
+        cursor: str | None = None,
+        _zone_id: str | None = None,  # noqa: ARG002 — API compat
+    ) -> Any:
+        """Return a page of entries matching ``prefix``.
+
+        Thin wrapper over ``kernel.metastore_list_paginated`` (F3 C2) — the
+        kernel returns a ``{items, next_cursor, has_more, total_count}``
+        dict; we wrap it in a ``PaginatedResult`` dataclass so callers
+        keep using ``.items`` / ``.next_cursor`` attribute access.
+        """
+        from nexus.core.pagination import PaginatedResult
+
+        page = self._rust_kernel.metastore_list_paginated(prefix, recursive, limit, cursor)
+        return PaginatedResult(
+            items=page["items"],
+            next_cursor=page["next_cursor"],
+            has_more=page["has_more"],
+            total_count=page["total_count"],
+        )
+
+    def put_if_version(
+        self,
+        metadata: FileMetadata,
+        expected_version: int,
+        *,
+        consistency: str = "sc",  # noqa: ARG002
+    ) -> Any:
+        return self._rust_kernel.metastore_put_if_version(metadata, expected_version)
+
+    # ── Search service compatibility ─────────────────────────────────────
+
+    def get_searchable_text_bulk(
+        self,
+        paths: "Sequence[str]",  # noqa: F821 — forward-ref to avoid circular import
+    ) -> dict[str, str]:
+        """Return cached ``parsed_text`` for the given paths.
+
+        F3 C2 wired ``parsed_text`` storage into the kernel's file_metadata
+        side-car; this call fans out to
+        ``kernel.metastore_get_file_metadata_bulk`` and drops paths with
+        no cached text so search_service grep / pipeline_indexer fall
+        through to the raw-content path for un-parsed files.
+        """
+        bulk = self._rust_kernel.metastore_get_file_metadata_bulk(list(paths), "parsed_text")
+        return {p: v for p, v in bulk.items() if v is not None}
 
     # ── Abstract method implementations (fallback, used by base class) ───
 
@@ -488,10 +600,6 @@ class RustMetastoreProxy(MetastoreABC):
     def get_searchable_text(self, path: str) -> str | None:  # noqa: ARG002
         self._warn_parsed_text_unavailable_once()
         return None
-
-    def get_searchable_text_bulk(self, paths: Sequence[str]) -> dict[str, str]:  # noqa: ARG002
-        self._warn_parsed_text_unavailable_once()
-        return {}
 
     @property
     def cache_stats(self) -> dict[str, Any]:

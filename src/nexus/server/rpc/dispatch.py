@@ -79,6 +79,7 @@ def build_dispatch_table() -> dict[str, DispatchEntry]:
         handle_grep,
         handle_is_directory,
         handle_list,
+        handle_lock_acquire,
         handle_mkdir,
         handle_read_async,
         handle_rename,
@@ -87,6 +88,8 @@ def build_dispatch_table() -> dict[str, DispatchEntry]:
         handle_semantic_search,
         handle_semantic_search_index,
         handle_set_metadata,
+        handle_sys_lock,
+        handle_sys_unlock,
         handle_write,
     )
 
@@ -128,6 +131,10 @@ def build_dispatch_table() -> dict[str, DispatchEntry]:
             event_old_path_attr="old_path",
         ),
         "is_directory": DispatchEntry(handle_is_directory, is_async=True),
+        # Advisory lock syscalls (Rust kernel-backed)
+        "sys_lock": DispatchEntry(handle_sys_lock),
+        "sys_unlock": DispatchEntry(handle_sys_unlock),
+        "lock_acquire": DispatchEntry(handle_lock_acquire),
         # User-space utilities (not syscalls, but dispatched via RPC)
         "glob": DispatchEntry(handle_glob),
         "grep": DispatchEntry(handle_grep, is_async=True),

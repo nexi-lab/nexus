@@ -7,67 +7,87 @@ Services have singleton cardinality and are boot-triggered.
 Drivers have N-per-type cardinality and are mount-triggered.
 
 Responsibilities:
-    1. Add/remove backend in PathRouter (routing table)
+    1. Add/remove backend in kernel MountTable (via ``PyKernel.add_mount``)
     2. Register/unregister backend's hook_spec with KernelDispatch
     3. Broadcast mount/unmount events via KernelDispatch hooks
+    4. Own a Python-side map of ``_PyMountInfo`` records for fields the
+       Rust kernel does not track (connector
+       backend refs) — the kernel is the single source of truth for
+       routing (F2 MountTable migration).
 
 Kernel-owned: created in ``NexusFS.__init__()`` (like ServiceRegistry).
 Always available after kernel construction.
 
-Boot timing:
-    NexusFS.__init__()     → creates DriverLifecycleCoordinator
-    create_nexus_fs()      → coordinator.mount("/", backend)  # unified lifecycle
-
-Issue #1811, #1320.
+Issue #1811, #1320, #3584.
 """
 
 from __future__ import annotations
 
 import contextlib
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from nexus.contracts.protocols.service_hooks import HookSpec
+from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.core.path_utils import canonicalize_path, extract_zone_id, normalize_path
 
 if TYPE_CHECKING:
-    from nexus.core.metastore import MetastoreABC
-    from nexus.core.mount_table import MountTable
     from nexus.core.object_store import ObjectStoreABC
     from nexus.remote.rpc_transport import RPCTransportPool
 
 logger = logging.getLogger(__name__)
 
 
-class DriverLifecycleCoordinator:
-    """Kernel primitive: driver mount lifecycle.
+@dataclass(frozen=True, slots=True)
+class _PyMountInfo:
+    """Python-only fields for a mount.
 
-    Manages driver mount lifecycle: routing table + VFS hook registration
-    + mount/unmount notification via KernelDispatch.
+    The kernel (``PyKernel``) is the single source of truth for routing —
+    it owns mount points and backend adapters plus per-zone metastores.
+    This dataclass keeps the Python-only references the kernel does not
+    carry: connector backend objects (some backends are still Python)
+    and the zone id of the mount.
+    """
+
+    backend: "ObjectStoreABC"
+    zone_id: str
+    is_external: bool = False
+
+
+class DriverLifecycleCoordinator:
+    """Kernel primitive: driver mount lifecycle (Python bookkeeping).
+
+    Rust DLC (``dlc.rs``) owns routing table + metastore + dcache.
+    Python DLC stores ``_PyMountInfo`` (backend refs) + dispatches events.
 
     Parallel to ServiceRegistry lifecycle orchestration (services vs drivers).
     """
 
     __slots__ = (
-        "_mount_table",
+        "_mounts",
         "_dispatch",
-        "_mount_specs",
+        "_kernel",
         "_self_address",
         "_transport_pool",
     )
 
     def __init__(
         self,
-        mount_table: "MountTable",
         dispatch: Any,
         *,
+        kernel: Any,
         self_address: str | None = None,
         transport_pool: "RPCTransportPool | None" = None,
     ) -> None:
-        self._mount_table = mount_table
+        self._mounts: dict[str, _PyMountInfo] = {}
         self._dispatch = dispatch
-        self._mount_specs: dict[str, HookSpec] = {}
+        self._kernel = kernel
         self._self_address: str | None = self_address
         self._transport_pool: RPCTransportPool | None = transport_pool
+
+    # ------------------------------------------------------------------
+    # Backend key helpers
+    # ------------------------------------------------------------------
 
     def backend_key(self, backend: "ObjectStoreABC", mount_point: str = "") -> str:
         """Canonical key for a backend.
@@ -82,24 +102,19 @@ class DriverLifecycleCoordinator:
         return f"{base}@{self._self_address}" if self._self_address else base
 
     def resolve_backend(self, backend_name: str) -> "ObjectStoreABC":
-        """Resolve backend by scanning mount_table entries.
+        """Resolve backend by scanning the DLC mount map.
 
-        Local name → scan mount table for matching backend.name.
+        Local name → scan mounts for a matching ``backend.name``.
         Remote origin → lazy-create RemoteBackend via transport pool.
-
-        Raises:
-            KeyError: backend_name not found and cannot create remote.
         """
         from nexus.contracts.backend_address import BackendAddress
 
-        # Scan mount table for matching backend
         bare_name = backend_name.split(":")[0] if ":" in backend_name else backend_name
         bare_name = bare_name.split("@")[0] if "@" in bare_name else bare_name
-        for entry in self._mount_table._entries.values():
-            if entry.backend.name == bare_name:
-                return entry.backend
+        for info in self._mounts.values():
+            if info.backend.name == bare_name:
+                return info.backend
 
-        # Check for remote origin
         addr = BackendAddress.parse(backend_name)
         if addr.has_origin:
             origin = addr.origins[0]
@@ -112,110 +127,99 @@ class DriverLifecycleCoordinator:
 
         raise KeyError(f"Backend '{backend_name}' not found in mount table")
 
-    def mount(
+    # ------------------------------------------------------------------
+    # Mount / unmount
+    # ------------------------------------------------------------------
+
+    def _store_mount_info(
         self,
         mount_point: str,
         backend: "ObjectStoreABC",
         *,
-        metastore: "MetastoreABC | None" = None,
-        readonly: bool = False,
-        admin_only: bool = False,
-        io_profile: str = "balanced",
+        zone_id: str = ROOT_ZONE_ID,
         is_external: bool = False,
     ) -> None:
-        """Mount a backend with full lifecycle: routing + hooks + notification."""
-        self._mount_table.add(
-            mount_point,
-            backend,
-            metastore=metastore,
-            readonly=readonly,
-            admin_only=admin_only,
-            io_profile=io_profile,
+        """Store Python-side mount info + dispatch mount event.
+
+        Kernel-side wiring (routing table, metastore, dcache, lock manager)
+        is handled by Rust ``Kernel::sys_setattr(DT_MOUNT)`` before this
+        method is called.
+        """
+        normalized = normalize_path(mount_point)
+        canonical = canonicalize_path(normalized, zone_id)
+
+        info = _PyMountInfo(
+            backend=backend,
+            zone_id=zone_id,
             is_external=is_external,
         )
-        self._register_backend_hooks(mount_point, backend)
-        self._dispatch.dispatch_event("mount", mount_point)
+        self._mounts[canonical] = info
+        self._dispatch.dispatch_event("mount", normalized)
 
-    def unmount(self, mount_point: str, zone_id: str = "root") -> bool:
-        """Unmount with full lifecycle: unhook + notify + remove.
+    def unmount(self, mount_point: str, zone_id: str = ROOT_ZONE_ID) -> bool:
+        """Unmount: notify + Rust DLC unmount + remove Python bookkeeping.
 
         Returns True if mount was removed, False if not found.
         """
-        entry = self._mount_table.get(mount_point)
-        if entry is None:
+        try:
+            normalized = normalize_path(mount_point)
+        except ValueError:
+            return False
+        canonical = canonicalize_path(normalized, zone_id)
+        if canonical not in self._mounts:
             return False
 
-        # Fire unmount event BEFORE unregistering hooks (observers must still be active)
+        # Fire unmount event BEFORE removing state
         try:
-            self._dispatch.dispatch_event("unmount", mount_point)
+            self._dispatch.dispatch_event("unmount", normalized)
         except Exception as exc:
-            logger.warning("[DRIVER] on_unmount notification failed for %s: %s", mount_point, exc)
+            logger.warning("[DRIVER] on_unmount notification failed for %s: %s", normalized, exc)
 
-        spec = self._mount_specs.pop(mount_point, None)
-        if spec is not None:
-            self._unregister_hooks_for_spec(spec)
-
-        _kernel = getattr(self._mount_table, "_kernel", None)
-        if _kernel is not None:
+        # Rust DLC handles metastore delete + dcache evict + routing remove
+        if self._kernel is not None:
             with contextlib.suppress(Exception):
-                _kernel.kernel_unmount(mount_point, zone_id)
-        self._mount_table.remove(mount_point, zone_id)
+                self._kernel.kernel_unmount(normalized, zone_id)
+
+        del self._mounts[canonical]
         return True
 
     # ------------------------------------------------------------------
-    # Internal hook registration
+    # DLC read helpers (used by PathRouter, zone_manager, etc.)
     # ------------------------------------------------------------------
 
-    def _register_backend_hooks(self, mount_point: str, backend: "ObjectStoreABC") -> None:
-        if not hasattr(backend, "hook_spec"):
-            return
-        spec: HookSpec = backend.hook_spec()
-        if spec is None or spec.is_empty:
-            return
-        self._mount_specs[mount_point] = spec
-        self._register_hooks_for_spec(spec)
-        logger.debug("[DRIVER] registered %d hooks for mount %s", spec.total_hooks, mount_point)
+    def get_mount_info(
+        self, mount_point: str, zone_id: str = ROOT_ZONE_ID
+    ) -> "_PyMountInfo | None":
+        """Return the ``_PyMountInfo`` for an exact mount point, or None."""
+        try:
+            normalized = normalize_path(mount_point)
+        except ValueError:
+            return None
+        canonical = canonicalize_path(normalized, zone_id)
+        return self._mounts.get(canonical)
 
-    def _register_hooks_for_spec(self, spec: HookSpec) -> None:
-        d = self._dispatch
-        for h in spec.resolvers:
-            d.register_resolver(h)
-        for h in spec.read_hooks:
-            d.register_intercept_read(h)
-        for h in spec.write_hooks:
-            d.register_intercept_write(h)
-        for h in spec.write_batch_hooks:
-            d.register_intercept_write_batch(h)
-        for h in spec.delete_hooks:
-            d.register_intercept_delete(h)
-        for h in spec.rename_hooks:
-            d.register_intercept_rename(h)
-        for h in spec.copy_hooks:
-            d.register_intercept_copy(h)
-        for h in spec.mkdir_hooks:
-            d.register_intercept_mkdir(h)
-        for h in spec.rmdir_hooks:
-            d.register_intercept_rmdir(h)
-        # spec.observers: no-op — observer dispatch is fully Rust-native.
+    def get_mount_info_canonical(self, canonical: str) -> "_PyMountInfo | None":
+        """Direct lookup by canonical key (``/{zone_id}{mount_point}``)."""
+        return self._mounts.get(canonical)
 
-    def _unregister_hooks_for_spec(self, spec: HookSpec) -> None:
-        d = self._dispatch
-        for h in spec.resolvers:
-            d.unregister_resolver(h)
-        for h in spec.read_hooks:
-            d.unregister_intercept_read(h)
-        for h in spec.write_hooks:
-            d.unregister_intercept_write(h)
-        for h in spec.write_batch_hooks:
-            d.unregister_intercept_write_batch(h)
-        for h in spec.delete_hooks:
-            d.unregister_intercept_delete(h)
-        for h in spec.rename_hooks:
-            d.unregister_intercept_rename(h)
-        for h in spec.copy_hooks:
-            d.unregister_intercept_copy(h)
-        for h in spec.mkdir_hooks:
-            d.unregister_intercept_mkdir(h)
-        for h in spec.rmdir_hooks:
-            d.unregister_intercept_rmdir(h)
-        # spec.observers: no-op — observer dispatch is fully Rust-native.
+    def list_mounts(self) -> "list[tuple[str, _PyMountInfo]]":
+        """Return all ``(canonical_key, _PyMountInfo)`` pairs."""
+        return list(self._mounts.items())
+
+    def get_root_backend(self, zone_id: str = ROOT_ZONE_ID) -> "ObjectStoreABC | None":
+        """Return the backend mounted at ``/`` for the given zone, or None."""
+        info = self.get_mount_info("/", zone_id)
+        return info.backend if info is not None else None
+
+    def mount_points(self, zone_id: str | None = None) -> list[str]:
+        """Return user-facing mount points (no zone prefix).
+
+        If ``zone_id`` is provided, only mounts in that zone are returned.
+        """
+        result: list[str] = []
+        for canonical in self._mounts:
+            z, user_mp = extract_zone_id(canonical)
+            if zone_id is not None and z != zone_id:
+                continue
+            result.append(user_mp)
+        return sorted(result)

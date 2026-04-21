@@ -17,9 +17,14 @@ use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tonic::transport::{Channel, Endpoint};
 
-/// Default TTL for cached gRPC clients. Connections older than this
-/// are evicted on next access and a fresh connection is established.
-const DEFAULT_CLIENT_TTL: Duration = Duration::from_secs(300); // 5 minutes
+/// Default TTL for cached gRPC clients. Connections older than this are
+/// evicted on next access and a fresh connection is established.
+///
+/// 60s is a balance: long enough that normal send/heartbeat traffic reuses
+/// the Channel for many RPCs, short enough that a peer-restart-induced dead
+/// connection not caught by HTTP/2 keep-alive is still forcibly refreshed
+/// within a minute.
+const DEFAULT_CLIENT_TTL: Duration = Duration::from_secs(60);
 
 /// Configuration for Raft transport client.
 #[derive(Debug, Clone)]
@@ -39,11 +44,25 @@ pub struct ClientConfig {
 
 impl Default for ClientConfig {
     fn default() -> Self {
+        // Raft peer transport: tight timeouts + aggressive HTTP/2 keep-alive so
+        // a dead peer's Channel is invalidated by the TCP/H2 stack in a few
+        // seconds, not after the default 10s/20s defaults. When a node restarts
+        // (test failover or a real operator bounce), the next raft send on a
+        // stale cached client must NOT pay a 5-second connect timeout while the
+        // kernel's ``SYN_SENT`` retries finally give up — that latency is the
+        // post-restart catchup flake we keep seeing in the federation E2E.
+        //
+        // The numbers below are load-bearing:
+        // - ``connect_timeout=2s``: raft peers are same-LAN/docker-network; a
+        //   connect that takes longer means the peer is not accepting.
+        // - ``keep_alive_interval=2s`` + ``keep_alive_timeout=3s``: H2 PING
+        //   every 2s, connection declared dead after 3s of no PONG. Total
+        //   detection latency ~5s even when no raft message is in flight.
         Self {
-            connect_timeout: Duration::from_secs(5),
+            connect_timeout: Duration::from_secs(2),
             request_timeout: Duration::from_secs(10),
-            keep_alive_interval: Duration::from_secs(10),
-            keep_alive_timeout: Duration::from_secs(20),
+            keep_alive_interval: Duration::from_secs(2),
+            keep_alive_timeout: Duration::from_secs(3),
             tls: Arc::new(std::sync::RwLock::new(None)),
         }
     }
@@ -177,7 +196,12 @@ impl RaftClient {
             .connect_timeout(config.connect_timeout)
             .timeout(config.request_timeout)
             .http2_keep_alive_interval(config.keep_alive_interval)
-            .keep_alive_timeout(config.keep_alive_timeout);
+            .keep_alive_timeout(config.keep_alive_timeout)
+            // Ping even when the connection is idle — raft heartbeats are
+            // frequent enough that this rarely matters in steady state, but
+            // when a peer is temporarily down and no outbound messages queue
+            // to it, this is what keeps detection latency bounded.
+            .keep_alive_while_idle(true);
 
         if let Some(ref tls) = tls_snapshot {
             let identity = tonic::transport::Identity::from_pem(&tls.cert_pem, &tls.key_pem);
@@ -533,8 +557,6 @@ impl RaftApiClient {
             term: resp.term,
             is_leader: resp.is_leader,
             leader_address: resp.leader_address,
-            supports_raw_result: resp.supports_raw_result,
-            protocol_version: resp.protocol_version,
         })
     }
 }
@@ -578,10 +600,6 @@ pub struct ClusterInfoResult {
     pub is_leader: bool,
     /// Leader address (if known).
     pub leader_address: Option<String>,
-    /// Whether leader supports raw_result in ProposeResponse.
-    pub supports_raw_result: bool,
-    /// Forwarded result protocol version.
-    pub protocol_version: String,
 }
 
 // =============================================================================
@@ -658,8 +676,10 @@ mod tests {
     #[test]
     fn test_client_config_default() {
         let config = ClientConfig::default();
-        assert_eq!(config.connect_timeout, Duration::from_secs(5));
+        assert_eq!(config.connect_timeout, Duration::from_secs(2));
         assert_eq!(config.request_timeout, Duration::from_secs(10));
+        assert_eq!(config.keep_alive_interval, Duration::from_secs(2));
+        assert_eq!(config.keep_alive_timeout, Duration::from_secs(3));
     }
 
     // ---------------------------------------------------------------

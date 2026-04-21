@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from nexus.cli.clients.base import BaseServiceClient
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 
 class ManifestClient(BaseServiceClient):
@@ -16,7 +17,7 @@ class ManifestClient(BaseServiceClient):
         *,
         name: str,
         entries: list[dict[str, Any]],
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
         valid_hours: int = 720,
     ) -> dict[str, Any]:
         """Create an access manifest for an agent.

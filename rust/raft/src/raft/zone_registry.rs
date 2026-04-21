@@ -16,19 +16,30 @@
 //!   └── ...
 //! ```
 
-use crate::raft::{FullStateMachine, RaftConfig, RaftStorage, ReplicationLog, ZoneConsensus};
+use crate::raft::{
+    FullStateMachine, RaftConfig, RaftStorage, ReplicationLog, StateMachine, ZoneConsensus,
+    ZonePersistence,
+};
 use crate::storage::RedbStore;
 use crate::transport::{
     ClientConfig, NodeAddress, RaftClientPool, SharedPeerMap, TlsConfig, TransportError,
     TransportLoop,
 };
 use dashmap::DashMap;
-use raft::Storage as RaftStorageTrait;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
+
+/// Per-zone concurrent-op guard. Prevents concurrent `setup_zone` and
+/// `remove_zone` calls for the same zone_id from interleaving their
+/// disk-dir ops (R20.13). Different zone_ids proceed in parallel.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ZoneOp {
+    Creating,
+    Removing,
+}
 
 /// A single zone entry in the registry.
 struct ZoneEntry {
@@ -45,33 +56,11 @@ struct ZoneEntry {
     /// Shutdown signal for the transport loop.
     shutdown_tx: watch::Sender<bool>,
     /// Transport loop task handle (for join on removal).
-    _transport_handle: JoinHandle<()>,
-}
-
-/// Per-zone search capabilities set by the Python search daemon (Issue #3147).
-///
-/// Stored in the registry so the Rust gRPC handler can return real capabilities
-/// instead of static defaults. Python sets these at daemon startup via
-/// `ZoneManager.set_search_capabilities()`.
-#[derive(Debug, Clone)]
-pub struct SearchCapabilitiesInfo {
-    pub device_tier: String,
-    pub search_modes: Vec<String>,
-    pub embedding_model: String,
-    pub embedding_dimensions: i32,
-    pub has_graph: bool,
-}
-
-impl Default for SearchCapabilitiesInfo {
-    fn default() -> Self {
-        Self {
-            device_tier: "server".to_string(),
-            search_modes: vec!["keyword".to_string()],
-            embedding_model: String::new(),
-            embedding_dimensions: 0,
-            has_graph: false,
-        }
-    }
+    transport_handle: JoinHandle<()>,
+    /// On-disk lifecycle owner (R20.13). Committed (not armed) post-insert —
+    /// Drop on process shutdown is a no-op; explicit `destroy()` during
+    /// `remove_zone` deletes the dir.
+    persistence: ZonePersistence,
 }
 
 /// Registry of multiple Raft zones running in a single process.
@@ -80,8 +69,6 @@ impl Default for SearchCapabilitiesInfo {
 pub struct ZoneRaftRegistry {
     /// zone_id → ZoneEntry
     zones: DashMap<String, ZoneEntry>,
-    /// zone_id → SearchCapabilitiesInfo (set by Python search daemon)
-    search_capabilities: DashMap<String, SearchCapabilitiesInfo>,
     /// Base path for sled databases. Each zone gets `{base_path}/{zone_id}/`.
     base_path: PathBuf,
     /// This node's global ID (same across all zones on this node).
@@ -89,13 +76,12 @@ pub struct ZoneRaftRegistry {
     /// Shared TLS config — can be updated at runtime for plaintext→mTLS upgrade.
     /// All zones' client pools read from this on new connections.
     tls: Arc<RwLock<Option<TlsConfig>>>,
-    /// Per-zone creation guard: tracks zone_ids currently being set up.
-    /// Prevents two threads from concurrently opening the same RedbStore
-    /// ("Database already open") without a global mutex that would serialize
-    /// creation of *different* zones.
-    creating: DashMap<String, ()>,
-    /// Cached persisted membership from on-disk ConfState (zone_id -> node IDs).
-    persisted_members: DashMap<String, HashSet<u64>>,
+    /// Per-zone concurrent-op guard: tracks zone_ids currently undergoing
+    /// setup or removal. Prevents two threads from concurrently opening
+    /// the same RedbStore ("Database already open") and from racing a
+    /// removal against a re-create. Not a global mutex, so different
+    /// zone_ids proceed in parallel.
+    creating: DashMap<String, ZoneOp>,
 }
 
 impl ZoneRaftRegistry {
@@ -107,12 +93,10 @@ impl ZoneRaftRegistry {
     pub fn new(base_path: PathBuf, node_id: u64) -> Self {
         Self {
             zones: DashMap::new(),
-            search_capabilities: DashMap::new(),
             base_path,
             node_id,
             tls: Arc::new(RwLock::new(None)),
             creating: DashMap::new(),
-            persisted_members: DashMap::new(),
         }
     }
 
@@ -120,12 +104,10 @@ impl ZoneRaftRegistry {
     pub fn with_tls(base_path: PathBuf, node_id: u64, tls: Option<TlsConfig>) -> Self {
         Self {
             zones: DashMap::new(),
-            search_capabilities: DashMap::new(),
             base_path,
             node_id,
             tls: Arc::new(RwLock::new(tls)),
             creating: DashMap::new(),
-            persisted_members: DashMap::new(),
         }
     }
 
@@ -138,24 +120,39 @@ impl ZoneRaftRegistry {
     ///
     /// # Arguments
     /// * `zone_id` — Unique zone identifier.
-    /// * `peers` — Peer nodes in this zone's Raft group.
+    /// * `peers` — The full cluster roster for this zone (may include
+    ///   this node's own `NodeAddress`; self is filtered out before
+    ///   passing to raft-rs per the `RaftConfig.peers` contract).
     /// * `runtime_handle` — Tokio runtime handle for spawning the transport loop.
     #[allow(clippy::result_large_err)]
-    pub fn create_zone(
+    pub async fn create_zone(
         &self,
         zone_id: &str,
         peers: Vec<NodeAddress>,
         runtime_handle: &tokio::runtime::Handle,
     ) -> Result<ZoneConsensus<FullStateMachine>, TransportError> {
-        let peer_ids: Vec<u64> = peers.iter().map(|p| p.id).collect();
+        // Filter self out of the voter ID list. Callers (federation bootstrap,
+        // zone_manager) commonly pass the full cluster roster from NEXUS_PEERS
+        // which includes this node's own address; raft-rs expects
+        // `config.peers` to list OTHER peers only, so including self would
+        // produce a duplicate voter ID in ConfState.
+        let peer_ids: Vec<u64> = peers
+            .iter()
+            .map(|p| p.id)
+            .filter(|&id| id != self.node_id)
+            .collect();
         let config = RaftConfig {
             id: self.node_id,
             peers: peer_ids,
             ..Default::default()
         };
 
-        let campaign = peers.is_empty(); // single-node: campaign immediately
+        // Single-node vs multi-node: campaign immediately only if we are
+        // the sole voter. peers may contain self, so check the filtered
+        // ID list instead of the raw NodeAddress vec.
+        let campaign = config.peers.is_empty();
         self.setup_zone(zone_id, config, peers, campaign, runtime_handle)
+            .await
     }
 
     /// Join an existing zone as a new Voter.
@@ -165,7 +162,7 @@ impl ZoneRaftRegistry {
     ///
     /// After calling this, send a JoinZone RPC to the leader.
     #[allow(clippy::result_large_err)]
-    pub fn join_zone(
+    pub async fn join_zone(
         &self,
         zone_id: &str,
         peers: Vec<NodeAddress>,
@@ -182,11 +179,126 @@ impl ZoneRaftRegistry {
         };
 
         self.setup_zone(zone_id, config, peers, false, runtime_handle)
+            .await
+    }
+
+    /// Open a previously-persisted zone from disk WITHOUT bootstrapping.
+    ///
+    /// Used by `open_existing_zones_from_disk` at startup. Unlike
+    /// `create_zone`, this uses `skip_bootstrap=true` so the ConfState
+    /// restored from `RaftStorage::initial_state()` is the authority —
+    /// no new voters are written and no campaign is triggered.
+    ///
+    /// R15.e: replaces the old `step_message` auto-reopen-from-disk
+    /// side-effect. Enumeration at startup runs before the gRPC server
+    /// accepts traffic, so by the time a vote/append arrives the zone
+    /// is already registered.
+    #[allow(clippy::result_large_err)]
+    pub async fn open_persisted_zone(
+        &self,
+        zone_id: &str,
+        peers: Vec<NodeAddress>,
+        runtime_handle: &tokio::runtime::Handle,
+    ) -> Result<ZoneConsensus<FullStateMachine>, TransportError> {
+        let config = RaftConfig {
+            id: self.node_id,
+            peers: vec![],
+            skip_bootstrap: true,
+            ..Default::default()
+        };
+        self.setup_zone(zone_id, config, peers, false, runtime_handle)
+            .await
+    }
+
+    /// Enumerate `base_path/*/raft/` and reopen every previously-persisted zone.
+    ///
+    /// Called once from `PyZoneManager::new` before the gRPC server starts
+    /// accepting RPCs. Subsequent step_message traffic for unknown zones
+    /// returns `NotFound` — dynamic zones arrive via `federation_create_zone`
+    /// or the leader's snapshot delivery, never via a side-effectful
+    /// step_message branch.
+    ///
+    /// This is the etcd / CockroachDB / TiKV pattern: local storage is the
+    /// source of truth for "which groups does this node host?".
+    ///
+    /// Idempotent — re-enumeration fast-paths zones already in `self.zones`.
+    #[allow(clippy::result_large_err)]
+    pub async fn open_existing_zones_from_disk(
+        &self,
+        peers: Vec<NodeAddress>,
+        runtime_handle: &tokio::runtime::Handle,
+    ) -> Result<usize, TransportError> {
+        if !self.base_path.exists() {
+            return Ok(0);
+        }
+        let entries = std::fs::read_dir(&self.base_path).map_err(|e| {
+            TransportError::Connection(format!(
+                "Failed to read base_path {}: {}",
+                self.base_path.display(),
+                e
+            ))
+        })?;
+        let mut count: usize = 0;
+        for entry in entries {
+            let entry = entry.map_err(|e| {
+                TransportError::Connection(format!("Failed to read dir entry: {}", e))
+            })?;
+            // Only consider directories: each zone lives under its own
+            // `{base_path}/{zone_id}/` subdir.
+            if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                continue;
+            }
+            let zone_id = entry.file_name().to_string_lossy().into_owned();
+
+            // R20.13: a tombstone means the prior run started removing this
+            // zone but died before `destroy()`. Finish the cleanup rather
+            // than resurrecting a zombie zone that would send raft messages
+            // to peers who (correctly) return NotFound.
+            if ZonePersistence::has_tombstone(&self.base_path, &zone_id) {
+                if let Err(e) = ZonePersistence::cleanup_tombstoned(&self.base_path, &zone_id) {
+                    tracing::warn!(
+                        zone = %zone_id,
+                        error = %e,
+                        "Failed to clean up tombstoned zone dir at startup",
+                    );
+                } else {
+                    tracing::info!(
+                        zone = %zone_id,
+                        "Cleaned up tombstoned zone dir at startup",
+                    );
+                }
+                continue;
+            }
+
+            // Existence check: if `{zone}/raft/` doesn't exist, this dir
+            // wasn't a persisted zone — skip. Matches the pattern used by
+            // RaftStorage::open (which creates this subdir).
+            let raft_dir = entry.path().join("raft");
+            if !raft_dir.exists() {
+                continue;
+            }
+            self.open_persisted_zone(&zone_id, peers.clone(), runtime_handle)
+                .await?;
+            count += 1;
+        }
+
+        // R20.13 invariant: post-enumeration, the in-memory zone count must
+        // match the on-disk zone count. Violation means we failed to open
+        // something that should have been opened — a regression of the
+        // "disk is SSOT for zone membership" rule.
+        debug_assert_eq!(
+            self.zones.len(),
+            count,
+            "zones DashMap length ({}) != on-disk zone count ({}) after enumeration",
+            self.zones.len(),
+            count,
+        );
+        Ok(count)
     }
 
     /// Internal: open sled, create ZoneConsensus + driver, spawn transport loop, register zone.
     #[allow(clippy::result_large_err)]
-    fn setup_zone(
+    async fn setup_zone(
         &self,
         zone_id: &str,
         config: RaftConfig,
@@ -199,17 +311,18 @@ impl ZoneRaftRegistry {
             return Ok(entry.node.clone());
         }
 
-        // Per-zone creation guard using DashMap::entry for atomic check-and-insert.
-        // Prevents two threads from concurrently opening the same RedbStore
-        // ("Database already open") without a global mutex that would serialize
-        // creation of *different* zones. No PoisonError — DashMap is lock-free.
-        // If another thread is already creating this zone, wait and return its result.
+        // R20.13: per-zone concurrent-op guard using DashMap::entry for atomic
+        // check-and-insert. Prevents (a) two threads concurrently opening the
+        // same RedbStore ("Database already open") and (b) a fresh setup
+        // racing an in-progress remove on the same zone_id. Different
+        // zone_ids proceed in parallel — no global mutex.
         {
             use dashmap::mapref::entry::Entry;
             match self.creating.entry(zone_id.to_string()) {
                 Entry::Occupied(_occupied) => {
-                    // Drop the entry ref before sleeping so we don't hold the shard lock.
                     drop(_occupied);
+                    // Another setup is in progress, or a remove is tearing the
+                    // zone down. Wait briefly and return whatever we see.
                     std::thread::sleep(std::time::Duration::from_millis(50));
                     return self
                         .zones
@@ -217,20 +330,20 @@ impl ZoneRaftRegistry {
                         .map(|e| e.node.clone())
                         .ok_or_else(|| {
                             TransportError::Connection(format!(
-                                "Zone '{}' creation in progress by another thread",
+                                "Zone '{}' concurrent op in progress",
                                 zone_id,
                             ))
                         });
                 }
                 Entry::Vacant(v) => {
-                    v.insert(());
+                    v.insert(ZoneOp::Creating);
                 }
             }
         }
 
-        // Ensure the per-zone guard is removed when we're done (success or failure).
+        // Release the guard on any exit path (success or failure).
         struct CreatingGuard<'a> {
-            creating: &'a DashMap<String, ()>,
+            creating: &'a DashMap<String, ZoneOp>,
             zone_id: String,
         }
         impl<'a> Drop for CreatingGuard<'a> {
@@ -249,32 +362,81 @@ impl ZoneRaftRegistry {
             return Ok(entry.node.clone());
         }
 
+        // R20.13: open the zone dir via ZonePersistence. Existing dir →
+        // `open()` (not armed). Fresh zone → `create()` (armed; rolled back
+        // on any `?` return between here and the DashMap insert). Tombstone
+        // check is redundant in practice — `open_existing_zones_from_disk`
+        // cleans these up at startup before setup_zone is called for them
+        // — but the guard below means a crash mid-remove produces a clean
+        // error on the next create attempt.
+        if ZonePersistence::has_tombstone(&self.base_path, zone_id) {
+            return Err(TransportError::Connection(format!(
+                "Zone '{}' has a pending tombstone; cleanup before recreate",
+                zone_id
+            )));
+        }
+        let zone_dir = self.base_path.join(zone_id);
+        let mut persistence = if zone_dir.exists() {
+            ZonePersistence::open(&self.base_path, zone_id).map_err(|e| {
+                TransportError::Connection(format!(
+                    "Failed to open existing zone dir for '{}': {}",
+                    zone_id, e
+                ))
+            })?
+        } else {
+            ZonePersistence::create(&self.base_path, zone_id).map_err(|e| {
+                TransportError::Connection(format!(
+                    "Failed to create zone dir for '{}': {}",
+                    zone_id, e
+                ))
+            })?
+        };
+
         // Open zone-specific redb + state machine
-        let zone_path = self.base_path.join(zone_id);
-        let store = RedbStore::open(zone_path.join("sm"))
+        let store = RedbStore::open(persistence.sm_path())
             .map_err(|e| TransportError::Connection(format!("Failed to open store: {}", e)))?;
-        let raft_storage = RaftStorage::open(zone_path.join("raft")).map_err(|e| {
+        let raft_storage = RaftStorage::open(persistence.raft_path()).map_err(|e| {
             TransportError::Connection(format!("Failed to open raft storage: {}", e))
         })?;
-        let mut persisted_members = HashSet::new();
-        if let Ok(initial_state) = RaftStorageTrait::initial_state(&raft_storage) {
-            let conf_state = initial_state.conf_state;
-            persisted_members.extend(conf_state.voters);
-            persisted_members.extend(conf_state.learners);
-            persisted_members.extend(conf_state.voters_outgoing);
-            persisted_members.extend(conf_state.learners_next);
-        }
-        if persisted_members.is_empty() {
-            persisted_members.insert(config.id);
-            persisted_members.extend(config.peers.iter().copied());
-        }
-        if !persisted_members.is_empty() {
-            self.persisted_members
-                .insert(zone_id.to_string(), persisted_members);
-        }
-        let state_machine = FullStateMachine::new(&store).map_err(|e| {
+        let mut state_machine = FullStateMachine::new(&store).map_err(|e| {
             TransportError::Connection(format!("Failed to create state machine: {}", e))
         })?;
+
+        // R14 raft-rs contract fix: rehydrate advisory lock state from
+        // any persisted snapshot before raft-rs gets the state machine.
+        //
+        // raft-rs's RaftLog::new sets `applied = first_index - 1`. If
+        // the log was compacted at index X, first_index = X+1 and
+        // raft-rs will only re-emit committed entries in [X+1..commit]
+        // on startup. It does NOT re-emit the stored snapshot itself
+        // — Ready's `snapshot` field is only populated by a *new*
+        // snapshot received from the leader at runtime.
+        //
+        // Pre-R14 this didn't matter: advisory lock state was persisted
+        // row-by-row in redb, so FullStateMachine::new loaded it from
+        // there. After R14 the BTreeMap is in-memory only; without
+        // this rehydration, any advisory holders committed before the
+        // last compact would be lost on restart. Rehydrating here
+        // keeps the post-restart state machine consistent with other
+        // replicas that are caught up via the normal log-replay path.
+        use raft::Storage;
+        if let Ok(snap) = raft_storage.snapshot(0, 0) {
+            let meta = snap.get_metadata();
+            if meta.index > 0 && !snap.data.is_empty() {
+                state_machine.restore_snapshot(&snap.data).map_err(|e| {
+                    TransportError::Connection(format!(
+                        "Failed to rehydrate state machine from stored snapshot at index {}: {}",
+                        meta.index, e
+                    ))
+                })?;
+                tracing::info!(
+                    zone = %zone_id,
+                    snapshot_index = meta.index,
+                    snapshot_term = meta.term,
+                    "Rehydrated advisory lock state from stored snapshot on startup",
+                );
+            }
+        }
 
         // Create EC replication log (non-witness nodes only)
         let replication_log = if !config.is_witness {
@@ -323,13 +485,28 @@ impl ZoneRaftRegistry {
         let transport_handle = runtime_handle.spawn(transport_loop.run(shutdown_rx));
 
         if campaign {
-            // Block until campaign is processed by the driver.
             // Per raft contract: for single-node, campaign() grants self-vote
             // (quorum=1) and the node becomes leader immediately. For multi-node,
             // campaign() sends MsgVote to peers and returns (election is async).
-            // This ensures the node is ready before returning to the caller.
-            runtime_handle
-                .block_on(async { handle.campaign().await })
+            // Awaiting it here ensures the node is ready before we return.
+            //
+            // History note: this used to be a sync `setup_zone` that called
+            // `runtime_handle.block_on(handle.campaign())`. That violated
+            // tokio's contract — `Handle::block_on` panics when called from an
+            // async context, and the gRPC step_message handler's auto-join path
+            // IS async. The panic silently unwound through setup_zone, dropped
+            // the local `shutdown_tx`, and the transport loop we had just
+            // spawned shut down before the zone was registered — which
+            // manifested as the failover catch-up timeout (node-1 never
+            // actually became a voter of its own zones after restart).
+            //
+            // The proper fix is to respect tokio's sync/async boundary: keep
+            // setup_zone async, let sync callers bridge at their own boundary
+            // (PyO3 uses its runtime_handle.block_on), and let async callers
+            // just await. No `block_on` inside setup_zone.
+            handle
+                .campaign()
+                .await
                 .map_err(|e| TransportError::Connection(format!("Campaign failed: {}", e)))?;
         }
 
@@ -341,6 +518,12 @@ impl ZoneRaftRegistry {
             shared_peers.read().unwrap().len()
         );
 
+        // R20.13: commit the on-disk handle before publishing the entry.
+        // Post-commit, Drop is a no-op on disk (process shutdown preserves
+        // persisted zones). Only explicit `destroy()` in `remove_zone`
+        // deletes the dir.
+        persistence.commit();
+
         self.zones.insert(
             zone_id.to_string(),
             ZoneEntry {
@@ -348,7 +531,8 @@ impl ZoneRaftRegistry {
                 peers: shared_peers,
                 node_id: self.node_id,
                 shutdown_tx,
-                _transport_handle: transport_handle,
+                transport_handle,
+                persistence,
             },
         );
 
@@ -372,71 +556,6 @@ impl ZoneRaftRegistry {
             .map(|e| e.peers.read().unwrap().clone())
     }
 
-    fn load_persisted_members(&self, zone_id: &str) -> Option<HashSet<u64>> {
-        let zone_raft_path = self.base_path.join(zone_id).join("raft");
-        let storage = RaftStorage::open(&zone_raft_path).ok()?;
-        let initial_state = RaftStorageTrait::initial_state(&storage).ok()?;
-        let conf_state = initial_state.conf_state;
-
-        let mut members = HashSet::new();
-        members.extend(conf_state.voters);
-        members.extend(conf_state.learners);
-        members.extend(conf_state.voters_outgoing);
-        members.extend(conf_state.learners_next);
-
-        if members.is_empty() {
-            None
-        } else {
-            Some(members)
-        }
-    }
-
-    /// Check persisted on-disk ConfState membership, using an in-memory cache.
-    pub fn is_persisted_member(&self, zone_id: &str, node_id: u64) -> bool {
-        if let Some(entry) = self.zones.get(zone_id) {
-            let peers = entry.peers.read().unwrap();
-            if !peers.is_empty() {
-                let mut members: HashSet<u64> = peers.keys().copied().collect();
-                members.insert(self.node_id);
-                let is_member = members.contains(&node_id);
-                self.persisted_members.insert(zone_id.to_string(), members);
-                return is_member;
-            }
-        }
-
-        if let Some(cached) = self.persisted_members.get(zone_id) {
-            return cached.contains(&node_id);
-        }
-
-        let members = match self.load_persisted_members(zone_id) {
-            Some(members) => members,
-            None => return false,
-        };
-        let is_member = members.contains(&node_id);
-        self.persisted_members.insert(zone_id.to_string(), members);
-        is_member
-    }
-
-    /// Refresh persisted membership from disk when possible, then evaluate membership.
-    pub fn is_persisted_member_fresh(&self, zone_id: &str, node_id: u64) -> bool {
-        if let Some(members) = self.load_persisted_members(zone_id) {
-            let is_member = members.contains(&node_id);
-            self.persisted_members.insert(zone_id.to_string(), members);
-            return is_member;
-        }
-
-        // Fall back to cached membership when refresh is temporarily unavailable.
-        if let Some(cached) = self.persisted_members.get(zone_id) {
-            tracing::warn!(
-                zone = zone_id,
-                "Using cached membership because persisted refresh was unavailable"
-            );
-            return cached.contains(&node_id);
-        }
-
-        false
-    }
-
     /// Get cluster peer addresses from any existing zone (all zones share the same peers).
     /// Used by auto-join for new zones that don't have their own peer map yet.
     pub fn get_all_peers(&self) -> Vec<NodeAddress> {
@@ -456,7 +575,6 @@ impl ZoneRaftRegistry {
     pub fn add_peer(&self, zone_id: &str, node_id: u64, address: NodeAddress) -> bool {
         if let Some(entry) = self.zones.get(zone_id) {
             entry.peers.write().unwrap().insert(node_id, address);
-            self.persisted_members.remove(zone_id);
             true
         } else {
             false
@@ -468,41 +586,131 @@ impl ZoneRaftRegistry {
         self.node_id
     }
 
-    /// Remove a zone, shutting down its transport loop.
+    /// Remove a zone — shut down its transport loop and delete its on-disk
+    /// dir atomically via tombstone (R20.13).
+    ///
+    /// Sequence:
+    /// 1. Take the entry out of the DashMap (further `get_node` returns None).
+    /// 2. Write the tombstone file — the durable commit point of "this zone
+    ///    is being torn down". A crash after this leaves a tombstoned dir;
+    ///    next startup's `open_existing_zones_from_disk` completes cleanup.
+    /// 3. Signal shutdown to the transport loop, await its JoinHandle so
+    ///    the spawned task has fully exited before we drop `ZoneConsensus`.
+    /// 4. Drop `ZoneConsensus` (entry goes out of scope). Driver task
+    ///    exits, closing all redb table handles so `remove_dir_all` can
+    ///    succeed on Windows (which refuses to delete open-handle files).
+    /// 5. `persistence.destroy()` — the `rmdir -r`.
     #[allow(clippy::result_large_err)]
-    pub fn remove_zone(&self, zone_id: &str) -> Result<(), TransportError> {
-        match self.zones.remove(zone_id) {
-            Some((_, entry)) => {
-                // Signal shutdown to transport loop
-                let _ = entry.shutdown_tx.send(true);
-                self.persisted_members.remove(zone_id);
-                tracing::info!("Zone '{}' removed", zone_id);
-                Ok(())
+    pub async fn remove_zone(&self, zone_id: &str) -> Result<(), TransportError> {
+        // Serialize against setup_zone on the same zone_id.
+        {
+            use dashmap::mapref::entry::Entry;
+            match self.creating.entry(zone_id.to_string()) {
+                Entry::Occupied(_occupied) => {
+                    drop(_occupied);
+                    return Err(TransportError::Connection(format!(
+                        "Zone '{}' concurrent op in progress; retry remove shortly",
+                        zone_id,
+                    )));
+                }
+                Entry::Vacant(v) => {
+                    v.insert(ZoneOp::Removing);
+                }
             }
-            None => Err(TransportError::Connection(format!(
-                "Zone '{}' not found",
-                zone_id
-            ))),
         }
+        struct RemovingGuard<'a> {
+            creating: &'a DashMap<String, ZoneOp>,
+            zone_id: String,
+        }
+        impl<'a> Drop for RemovingGuard<'a> {
+            fn drop(&mut self) {
+                self.creating.remove(&self.zone_id);
+            }
+        }
+        let _guard = RemovingGuard {
+            creating: &self.creating,
+            zone_id: zone_id.to_string(),
+        };
+
+        let (_, entry) = self
+            .zones
+            .remove(zone_id)
+            .ok_or_else(|| TransportError::Connection(format!("Zone '{}' not found", zone_id)))?;
+
+        let ZoneEntry {
+            node,
+            peers: _,
+            node_id: _,
+            shutdown_tx,
+            transport_handle,
+            persistence,
+        } = entry;
+
+        // Commit point: the tombstone is what makes teardown crash-safe.
+        // If this write fails, the caller sees the error and the zone is
+        // re-registered (we already did `zones.remove`). Accept this edge
+        // case: the zone is gone from memory, dir is still on disk; on
+        // next restart `open_existing_zones_from_disk` reopens it. No
+        // zombie — no remote peers were told this zone is dying.
+        if let Err(e) = persistence.write_tombstone() {
+            // Best-effort: put the zone back so state isn't lost from memory.
+            self.zones.insert(
+                zone_id.to_string(),
+                ZoneEntry {
+                    node,
+                    peers: Arc::new(RwLock::new(HashMap::new())),
+                    node_id: self.node_id,
+                    shutdown_tx,
+                    transport_handle,
+                    persistence,
+                },
+            );
+            return Err(TransportError::Connection(format!(
+                "Failed to write tombstone for zone '{}': {}",
+                zone_id, e
+            )));
+        }
+
+        // Signal transport shutdown and await its exit so Windows release
+        // of file handles completes before we try to rmdir.
+        let _ = shutdown_tx.send(true);
+        if let Err(e) = transport_handle.await {
+            tracing::warn!(
+                zone = %zone_id,
+                error = %e,
+                "Transport loop task failed during remove_zone; continuing with destroy",
+            );
+        }
+
+        // Explicitly drop the ZoneConsensus handle so the driver task's
+        // last reference goes away. On Windows, any surviving redb handle
+        // would fail remove_dir_all with PermissionDenied.
+        drop(node);
+
+        // Short yield to let the driver task observe the dropped handle
+        // and exit before we attempt rmdir. The driver uses an internal
+        // channel with this as the only external reference (besides the
+        // clones given to the zone's own transport/gRPC surfaces, all of
+        // which are already gone by this point).
+        tokio::task::yield_now().await;
+
+        if let Err(e) = persistence.destroy() {
+            // Dir deletion failed — log but don't resurrect the zone.
+            // Tombstone is still on disk; next startup will retry cleanup.
+            tracing::warn!(
+                zone = %zone_id,
+                error = %e,
+                "Failed to delete zone dir; tombstone preserved for startup cleanup",
+            );
+        }
+
+        tracing::info!("Zone '{}' removed", zone_id);
+        Ok(())
     }
 
     /// List all zone IDs.
     pub fn list_zones(&self) -> Vec<String> {
         self.zones.iter().map(|e| e.key().clone()).collect()
-    }
-
-    /// Set search capabilities for a zone (Issue #3147).
-    ///
-    /// Called by Python search daemon at startup to register what search
-    /// backends are available for each zone. The Rust gRPC handler reads
-    /// these to respond to GetSearchCapabilities RPCs from remote nodes.
-    pub fn set_search_capabilities(&self, zone_id: &str, caps: SearchCapabilitiesInfo) {
-        self.search_capabilities.insert(zone_id.to_string(), caps);
-    }
-
-    /// Get search capabilities for a zone, or None if not set.
-    pub fn get_search_capabilities(&self, zone_id: &str) -> Option<SearchCapabilitiesInfo> {
-        self.search_capabilities.get(zone_id).map(|v| v.clone())
     }
 
     /// Shutdown all zones.
@@ -512,5 +720,215 @@ impl ZoneRaftRegistry {
         }
         self.zones.clear();
         tracing::info!("All zones shut down");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[tokio::test]
+    async fn test_open_existing_zones_empty_base_path() {
+        // Empty (nonexistent) base_path returns Ok(0) — no zones to open.
+        let tmp = TempDir::new().unwrap();
+        let missing = tmp.path().join("does-not-exist");
+        let reg = ZoneRaftRegistry::new(missing, 1);
+        let n = reg
+            .open_existing_zones_from_disk(vec![], &tokio::runtime::Handle::current())
+            .await
+            .unwrap();
+        assert_eq!(n, 0);
+        assert!(reg.list_zones().is_empty());
+    }
+
+    /// Wait for a transport task's held Arc<RedbStore> to be released
+    /// after `shutdown_all`. The transport loop's tick period is ~100ms,
+    /// so 500ms is a generous margin. Test-only — production paths use
+    /// the explicit transport shutdown handshake, not a sleep.
+    async fn await_shutdown_cleanup() {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+
+    #[tokio::test]
+    async fn test_open_existing_zones_from_disk_restores_confstate() {
+        // Create a single-voter zone (campaign=true), confirm it's registered,
+        // drop the registry, reopen via open_existing_zones_from_disk, assert
+        // the zone is restored without a fresh campaign (skip_bootstrap=true)
+        // — the ConfState from RaftStorage::initial_state() is authoritative.
+        let tmp = TempDir::new().unwrap();
+        let base = tmp.path().to_path_buf();
+
+        let reg = ZoneRaftRegistry::new(base.clone(), 1);
+        reg.create_zone("corp-eng", vec![], &tokio::runtime::Handle::current())
+            .await
+            .unwrap();
+        assert_eq!(reg.list_zones(), vec!["corp-eng".to_string()]);
+        // Simulate process restart: shutdown tasks, release file locks.
+        reg.shutdown_all();
+        drop(reg);
+        await_shutdown_cleanup().await;
+
+        // New registry, same base_path — enumerate from disk.
+        let reg2 = ZoneRaftRegistry::new(base, 1);
+        let n = reg2
+            .open_existing_zones_from_disk(vec![], &tokio::runtime::Handle::current())
+            .await
+            .unwrap();
+        assert_eq!(n, 1);
+        let zones = reg2.list_zones();
+        assert_eq!(zones, vec!["corp-eng".to_string()]);
+        assert!(reg2.get_node("corp-eng").is_some());
+
+        reg2.shutdown_all();
+        await_shutdown_cleanup().await;
+    }
+
+    #[tokio::test]
+    async fn test_open_existing_zones_idempotent() {
+        // Second enumeration is a no-op: setup_zone fast-paths zones
+        // already registered in self.zones.
+        let tmp = TempDir::new().unwrap();
+        let base = tmp.path().to_path_buf();
+        let reg = ZoneRaftRegistry::new(base.clone(), 1);
+        reg.create_zone("zone-a", vec![], &tokio::runtime::Handle::current())
+            .await
+            .unwrap();
+        reg.shutdown_all();
+        drop(reg);
+        await_shutdown_cleanup().await;
+
+        let reg2 = ZoneRaftRegistry::new(base, 1);
+        let first = reg2
+            .open_existing_zones_from_disk(vec![], &tokio::runtime::Handle::current())
+            .await
+            .unwrap();
+        let second = reg2
+            .open_existing_zones_from_disk(vec![], &tokio::runtime::Handle::current())
+            .await
+            .unwrap();
+        assert_eq!(first, 1);
+        assert_eq!(second, 1);
+        assert_eq!(reg2.list_zones().len(), 1);
+
+        reg2.shutdown_all();
+        await_shutdown_cleanup().await;
+    }
+
+    // R20.13 regression tests — zone lifecycle is crash-safe and
+    // disk-dir existence is the authoritative answer to "does this
+    // node host zone X?".
+
+    #[tokio::test]
+    async fn test_remove_zone_deletes_disk_dir() {
+        // remove_zone() must delete {base}/{zone_id}/ so the next
+        // open_existing_zones_from_disk doesn't resurrect it as a zombie.
+        let tmp = TempDir::new().unwrap();
+        let base = tmp.path().to_path_buf();
+        let reg = ZoneRaftRegistry::new(base.clone(), 1);
+        reg.create_zone("temp-zone", vec![], &tokio::runtime::Handle::current())
+            .await
+            .unwrap();
+        assert!(
+            base.join("temp-zone").exists(),
+            "zone dir should exist after create"
+        );
+
+        reg.remove_zone("temp-zone").await.unwrap();
+        assert!(
+            !base.join("temp-zone").exists(),
+            "zone dir must be gone after remove_zone",
+        );
+        assert!(reg.get_node("temp-zone").is_none());
+        assert!(reg.list_zones().is_empty());
+
+        reg.shutdown_all();
+        await_shutdown_cleanup().await;
+    }
+
+    #[tokio::test]
+    async fn test_remove_then_reopen_existing_excludes_removed_zone() {
+        // After a remove, a fresh registry on the same base_path must not
+        // resurrect the removed zone — matching the zombie-zone fix.
+        let tmp = TempDir::new().unwrap();
+        let base = tmp.path().to_path_buf();
+        let reg = ZoneRaftRegistry::new(base.clone(), 1);
+        reg.create_zone("keep", vec![], &tokio::runtime::Handle::current())
+            .await
+            .unwrap();
+        reg.create_zone("gone", vec![], &tokio::runtime::Handle::current())
+            .await
+            .unwrap();
+        reg.remove_zone("gone").await.unwrap();
+        reg.shutdown_all();
+        drop(reg);
+        await_shutdown_cleanup().await;
+
+        let reg2 = ZoneRaftRegistry::new(base.clone(), 1);
+        let n = reg2
+            .open_existing_zones_from_disk(vec![], &tokio::runtime::Handle::current())
+            .await
+            .unwrap();
+        assert_eq!(n, 1);
+        assert_eq!(reg2.list_zones(), vec!["keep".to_string()]);
+        assert!(!base.join("gone").exists());
+
+        reg2.shutdown_all();
+        await_shutdown_cleanup().await;
+    }
+
+    #[tokio::test]
+    async fn test_tombstone_cleanup_on_startup() {
+        // Simulate a crash between write_tombstone() and destroy(): the
+        // zone dir is still on disk along with a .removed marker. Startup
+        // must finish the cleanup instead of resurrecting the zombie.
+        let tmp = TempDir::new().unwrap();
+        let base = tmp.path().to_path_buf();
+        let reg = ZoneRaftRegistry::new(base.clone(), 1);
+        reg.create_zone("crash-zone", vec![], &tokio::runtime::Handle::current())
+            .await
+            .unwrap();
+        reg.shutdown_all();
+        drop(reg);
+        await_shutdown_cleanup().await;
+
+        // Plant a tombstone by hand to mimic a crashed-mid-teardown run.
+        std::fs::write(base.join("crash-zone").join(".removed"), b"").unwrap();
+        assert!(base.join("crash-zone").exists());
+
+        let reg2 = ZoneRaftRegistry::new(base.clone(), 1);
+        let n = reg2
+            .open_existing_zones_from_disk(vec![], &tokio::runtime::Handle::current())
+            .await
+            .unwrap();
+        assert_eq!(n, 0, "tombstoned zone must not be reopened");
+        assert!(
+            !base.join("crash-zone").exists(),
+            "tombstoned dir must be cleaned up on startup",
+        );
+        assert!(reg2.list_zones().is_empty());
+
+        reg2.shutdown_all();
+        await_shutdown_cleanup().await;
+    }
+
+    #[tokio::test]
+    async fn test_shutdown_all_preserves_disk() {
+        // Regression guard: process shutdown must NOT delete zone dirs
+        // (post-commit `armed == false`; Drop is a no-op on disk).
+        let tmp = TempDir::new().unwrap();
+        let base = tmp.path().to_path_buf();
+        let reg = ZoneRaftRegistry::new(base.clone(), 1);
+        reg.create_zone("persist", vec![], &tokio::runtime::Handle::current())
+            .await
+            .unwrap();
+        reg.shutdown_all();
+        drop(reg);
+        await_shutdown_cleanup().await;
+
+        assert!(
+            base.join("persist").exists(),
+            "shutdown must preserve zone dir"
+        );
     }
 }

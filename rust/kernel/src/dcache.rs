@@ -16,11 +16,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 // ── Entry type constants (mirror proto/nexus/core/metadata.proto) ───────────
 pub(crate) const DT_REG: u8 = 0;
 pub(crate) const DT_DIR: u8 = 1;
+pub(crate) const DT_MOUNT: u8 = 2;
 pub(crate) const DT_PIPE: u8 = 3;
 pub(crate) const DT_STREAM: u8 = 4;
 
 /// Hot-path projection of FileMetadata.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
+#[allow(dead_code)]
 pub(crate) struct CachedEntry {
     pub(crate) backend_name: String,
     pub(crate) physical_path: String,
@@ -30,6 +32,25 @@ pub(crate) struct CachedEntry {
     pub(crate) entry_type: u8,
     pub(crate) zone_id: Option<String>,
     pub(crate) mime_type: Option<String>,
+    pub(crate) created_at_ms: Option<i64>,
+    pub(crate) modified_at_ms: Option<i64>,
+}
+
+impl From<&crate::metastore::FileMetadata> for CachedEntry {
+    fn from(m: &crate::metastore::FileMetadata) -> Self {
+        Self {
+            backend_name: m.backend_name.clone(),
+            physical_path: m.physical_path.clone(),
+            size: m.size,
+            etag: m.etag.clone(),
+            version: m.version,
+            entry_type: m.entry_type,
+            zone_id: m.zone_id.clone(),
+            mime_type: m.mime_type.clone(),
+            created_at_ms: m.created_at_ms,
+            modified_at_ms: m.modified_at_ms,
+        }
+    }
 }
 
 /// Dentry cache — owned directly by Kernel.
@@ -186,6 +207,8 @@ mod tests {
                 entry_type: DT_REG,
                 zone_id: Some("root".to_string()),
                 mime_type: Some("text/markdown".to_string()),
+                created_at_ms: None,
+                modified_at_ms: None,
             },
         );
 
@@ -221,6 +244,8 @@ mod tests {
                 entry_type: DT_DIR,
                 zone_id: None,
                 mime_type: None,
+                created_at_ms: None,
+                modified_at_ms: None,
             },
         );
         assert!(dc.contains("/a"));
@@ -241,6 +266,8 @@ mod tests {
                 entry_type: DT_REG,
                 zone_id: None,
                 mime_type: None,
+                created_at_ms: None,
+                modified_at_ms: None,
             },
         );
 
@@ -276,6 +303,8 @@ mod tests {
                 entry_type: DT_REG,
                 zone_id: None,
                 mime_type: None,
+                created_at_ms: None,
+                modified_at_ms: None,
             },
         );
         assert!(dc.evict("/tmp"));
@@ -299,6 +328,8 @@ mod tests {
                     entry_type: DT_REG,
                     zone_id: None,
                     mime_type: None,
+                    created_at_ms: None,
+                    modified_at_ms: None,
                 },
             );
         }
@@ -323,6 +354,8 @@ mod tests {
                 entry_type: DT_REG,
                 zone_id: None,
                 mime_type: None,
+                created_at_ms: None,
+                modified_at_ms: None,
             },
         );
         let (bn, pp, et) = dc.get_hot("/file").unwrap();
@@ -346,6 +379,8 @@ mod tests {
                 entry_type: DT_REG,
                 zone_id: None,
                 mime_type: None,
+                created_at_ms: None,
+                modified_at_ms: None,
             },
         );
         dc.get_entry("/a"); // hit
@@ -370,6 +405,8 @@ mod tests {
                 entry_type: DT_REG,
                 zone_id: None,
                 mime_type: None,
+                created_at_ms: None,
+                modified_at_ms: None,
             },
         );
         dc.get_entry("/a"); // hit

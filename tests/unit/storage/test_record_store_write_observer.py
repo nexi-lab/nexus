@@ -15,6 +15,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from sqlalchemy.exc import OperationalError
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import AuditLogError
 from nexus.contracts.metadata import FileMetadata
 from nexus.storage.models import FilePathModel, OperationLogModel, VersionHistoryModel
@@ -46,7 +47,7 @@ def _make_metadata(
     etag: str = "abc123",
     size: int = 100,
     version: int = 1,
-    zone_id: str = "root",
+    zone_id: str = ROOT_ZONE_ID,
     owner_id: str | None = "user1",
 ) -> FileMetadata:
     """Create a FileMetadata for testing."""
@@ -77,7 +78,7 @@ class TestOnWriteHappyPath:
         self, syncer: RecordStoreWriteObserver, record_store: SQLAlchemyRecordStore
     ) -> None:
         metadata = _make_metadata("/new.txt", etag="hash1")
-        syncer.on_write(metadata, is_new=True, path="/new.txt", zone_id="root")
+        syncer.on_write(metadata, is_new=True, path="/new.txt", zone_id=ROOT_ZONE_ID)
 
         with record_store.session_factory() as session:
             ops = session.query(OperationLogModel).all()
@@ -101,11 +102,11 @@ class TestOnWriteHappyPath:
     ) -> None:
         # Create initial file
         m1 = _make_metadata("/file.txt", etag="v1hash")
-        syncer.on_write(m1, is_new=True, path="/file.txt", zone_id="root")
+        syncer.on_write(m1, is_new=True, path="/file.txt", zone_id=ROOT_ZONE_ID)
 
         # Update file
         m2 = _make_metadata("/file.txt", etag="v2hash", version=2)
-        syncer.on_write(m2, is_new=False, path="/file.txt", zone_id="root")
+        syncer.on_write(m2, is_new=False, path="/file.txt", zone_id=ROOT_ZONE_ID)
 
         with record_store.session_factory() as session:
             fp = (
@@ -142,10 +143,10 @@ class TestOnDeleteHappyPath:
     ) -> None:
         # Create file first
         m = _make_metadata("/del.txt", etag="delhash")
-        syncer.on_write(m, is_new=True, path="/del.txt", zone_id="root")
+        syncer.on_write(m, is_new=True, path="/del.txt", zone_id=ROOT_ZONE_ID)
 
         # Delete it
-        syncer.on_delete(path="/del.txt", zone_id="root")
+        syncer.on_delete(path="/del.txt", zone_id=ROOT_ZONE_ID)
 
         with record_store.session_factory() as session:
             # Should be soft-deleted (deleted_at set)
@@ -172,7 +173,7 @@ class TestOnDeleteHappyPath:
         self, syncer: RecordStoreWriteObserver, record_store: SQLAlchemyRecordStore
     ) -> None:
         """Deleting a file that doesn't exist in RecordStore should not raise."""
-        syncer.on_delete(path="/nonexistent.txt", zone_id="root")
+        syncer.on_delete(path="/nonexistent.txt", zone_id=ROOT_ZONE_ID)
 
         with record_store.session_factory() as session:
             ops = (
@@ -194,7 +195,7 @@ class TestOnRenameHappyPath:
         syncer.on_rename(
             old_path="/old.txt",
             new_path="/new.txt",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             agent_id="agent1",
         )
 
@@ -220,7 +221,7 @@ class TestOnWriteBatchHappyPath:
             (_make_metadata("/b.txt", etag="hb"), True),
             (_make_metadata("/c.txt", etag="hc"), True),
         ]
-        syncer.on_write_batch(items, zone_id="root")
+        syncer.on_write_batch(items, zone_id=ROOT_ZONE_ID)
 
         with record_store.session_factory() as session:
             ops = session.query(OperationLogModel).all()
@@ -377,7 +378,7 @@ class TestBatchPartialFailure:
             patch.object(VersionRecorder, "record_write", failing_on_second_call),
             pytest.raises(AuditLogError),
         ):
-            syncer.on_write_batch(items, zone_id="root")
+            syncer.on_write_batch(items, zone_id=ROOT_ZONE_ID)
 
         # Nothing committed
         with record_store.session_factory() as session:
@@ -398,7 +399,7 @@ class TestDeliveredColumn:
     ) -> None:
         """on_write() should create operation_log with delivered=FALSE."""
         metadata = _make_metadata("/outbox.txt", etag="ohash")
-        syncer.on_write(metadata, is_new=True, path="/outbox.txt", zone_id="root")
+        syncer.on_write(metadata, is_new=True, path="/outbox.txt", zone_id=ROOT_ZONE_ID)
 
         with record_store.session_factory() as session:
             ops = session.query(OperationLogModel).all()
@@ -409,7 +410,7 @@ class TestDeliveredColumn:
         self, syncer: RecordStoreWriteObserver, record_store: SQLAlchemyRecordStore
     ) -> None:
         """on_delete() should create operation_log with delivered=FALSE."""
-        syncer.on_delete(path="/del-outbox.txt", zone_id="root")
+        syncer.on_delete(path="/del-outbox.txt", zone_id=ROOT_ZONE_ID)
 
         with record_store.session_factory() as session:
             ops = (
@@ -424,7 +425,7 @@ class TestDeliveredColumn:
         self, syncer: RecordStoreWriteObserver, record_store: SQLAlchemyRecordStore
     ) -> None:
         """on_rename() should create operation_log rows with delivered=FALSE."""
-        syncer.on_rename(old_path="/old.txt", new_path="/new.txt", zone_id="root")
+        syncer.on_rename(old_path="/old.txt", new_path="/new.txt", zone_id=ROOT_ZONE_ID)
 
         with record_store.session_factory() as session:
             ops = session.query(OperationLogModel).all()
@@ -440,7 +441,7 @@ class TestDeliveredColumn:
             (_make_metadata("/x.txt", etag="hx"), True),
             (_make_metadata("/y.txt", etag="hy"), True),
         ]
-        syncer.on_write_batch(items, zone_id="root")
+        syncer.on_write_batch(items, zone_id=ROOT_ZONE_ID)
 
         with record_store.session_factory() as session:
             ops = session.query(OperationLogModel).all()
@@ -464,7 +465,7 @@ class TestPostFlushHookSync:
         syncer.register_post_flush_hook(lambda events: captured.extend(events))
 
         metadata = _make_metadata("/hook.csv", etag="h1")
-        syncer.on_write(metadata, is_new=True, path="/hook.csv", zone_id="root")
+        syncer.on_write(metadata, is_new=True, path="/hook.csv", zone_id=ROOT_ZONE_ID)
 
         assert len(captured) == 1
         assert captured[0]["op"] == "write"
@@ -481,7 +482,7 @@ class TestPostFlushHookSync:
             (_make_metadata("/a.csv", etag="ha"), True),
             (_make_metadata("/b.csv", etag="hb"), True),
         ]
-        syncer.on_write_batch(items, zone_id="root")
+        syncer.on_write_batch(items, zone_id=ROOT_ZONE_ID)
 
         assert len(captured) == 2
         paths = {e["path"] for e in captured}
@@ -495,7 +496,7 @@ class TestPostFlushHookSync:
 
         metadata = _make_metadata("/safe.txt", etag="hs")
         # Should not raise
-        syncer.on_write(metadata, is_new=True, path="/safe.txt", zone_id="root")
+        syncer.on_write(metadata, is_new=True, path="/safe.txt", zone_id=ROOT_ZONE_ID)
 
         # Audit trail still committed
         with record_store.session_factory() as session:

@@ -23,6 +23,8 @@ from typing import Any
 import httpx
 import pytest
 
+from nexus.contracts.constants import ROOT_ZONE_ID
+
 # ==============================================================================
 # Mock Webhook Server
 # ==============================================================================
@@ -335,7 +337,7 @@ class TestEventBusIntegration:
             event = FileEvent(
                 type=FileEventType.FILE_WRITE,
                 path="/test/event_bus_test.txt",
-                zone_id="root",
+                zone_id=ROOT_ZONE_ID,
                 size=100,
             )
 

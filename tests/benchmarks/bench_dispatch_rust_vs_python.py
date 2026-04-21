@@ -16,6 +16,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.vfs_hooks import ReadHookContext, WriteHookContext
 from nexus.core.nexus_fs_dispatch import DispatchMixin
 
@@ -197,15 +198,17 @@ class TestSyscallOverhead:
     def mounted_dispatch(self, tmp_path):
         """Dispatch with CAS backend mounted at /bench."""
         d = _BenchDispatch()
-        d._kernel.add_mount(
-            mount_point="/bench",
-            zone_id="root",
-            readonly=False,
-            admin_only=False,
-            io_profile="local",
+        # F4 Rust-ification: mount via sys_setattr(DT_MOUNT) instead of legacy add_mount.
+        d._kernel.sys_setattr(
+            path="/bench",
+            entry_type=2,  # DT_MOUNT
             backend_name="local",
             local_root=str(tmp_path / "cas"),
             fsync=False,
+            backend_type="cas",
+            readonly=False,
+            admin_only=False,
+            zone_id=ROOT_ZONE_ID,
         )
         return d
 
@@ -215,7 +218,7 @@ class TestSyscallOverhead:
         """sys_write 1KB, no hooks."""
         from nexus_kernel import OperationContext
 
-        ctx = OperationContext(user_id="bench", zone_id="root")
+        ctx = OperationContext(user_id="bench", zone_id=ROOT_ZONE_ID)
         content = b"x" * 1024
 
         def _write():
@@ -229,7 +232,7 @@ class TestSyscallOverhead:
         """sys_read 1KB, no hooks (after write)."""
         from nexus_kernel import OperationContext
 
-        ctx = OperationContext(user_id="bench", zone_id="root")
+        ctx = OperationContext(user_id="bench", zone_id=ROOT_ZONE_ID)
         mounted_dispatch._kernel.sys_write("/bench/read_target.txt", ctx, b"y" * 1024)
 
         def _read():
@@ -245,7 +248,7 @@ class TestSyscallOverhead:
         for i in range(3):
             mounted_dispatch.register_intercept_write(_make_hook(f"h{i}"))
 
-        ctx = OperationContext(user_id="bench", zone_id="root")
+        ctx = OperationContext(user_id="bench", zone_id=ROOT_ZONE_ID)
         content = b"x" * 1024
 
         def _write():
@@ -261,7 +264,7 @@ class TestSyscallOverhead:
         for i in range(3):
             mounted_dispatch.register_intercept_read(_make_hook(f"h{i}"))
 
-        ctx = OperationContext(user_id="bench", zone_id="root")
+        ctx = OperationContext(user_id="bench", zone_id=ROOT_ZONE_ID)
         mounted_dispatch._kernel.sys_write("/bench/hooked_read.txt", ctx, b"z" * 1024)
 
         def _read():

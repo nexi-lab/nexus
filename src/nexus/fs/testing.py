@@ -52,12 +52,13 @@ def ephemeral_mount(*uris: str, **kwargs: Any) -> Iterator[Any]:
     from nexus.fs._sync import run_sync
 
     fs: Any = None
-    try:
-        fs = run_sync(mount(*uris, **kwargs))
-        yield fs
-    finally:
-        if fs is not None:
-            _close_fs_sync(fs)
+    with _isolated_state_dir():
+        try:
+            fs = run_sync(mount(*uris, **kwargs))
+            yield fs
+        finally:
+            if fs is not None:
+                _close_fs_sync(fs)
 
 
 @contextlib.asynccontextmanager
@@ -75,12 +76,44 @@ async def async_ephemeral_mount(*uris: str, **kwargs: Any) -> AsyncIterator[Any]
     from nexus.fs import mount
 
     fs: Any = None
+    with _isolated_state_dir():
+        try:
+            fs = await mount(*uris, **kwargs)
+            yield fs
+        finally:
+            if fs is not None:
+                await _close_fs_async(fs)
+
+
+@contextlib.contextmanager
+def _isolated_state_dir() -> Iterator[None]:
+    """Give each ephemeral_mount its own NEXUS_FS_STATE_DIR so nested calls
+    don't collide on the same redb/SQLite metadata file.
+
+    Each ephemeral_mount spins up its own ``Kernel`` + metastore. Two kernels
+    opening the same redb file raise ``"Database already open. Cannot acquire
+    lock."`` — redb enforces exclusive-access per file. We keep the outer
+    caller's override (if set) intact on exit so the caller's monkeypatched
+    state_dir is still the one mounts.json (or its absence) is asserted on.
+    """
+    import os
+    import tempfile
+
+    outer = os.environ.get("NEXUS_FS_STATE_DIR")
+    tmp = tempfile.mkdtemp(prefix="nexus-ephemeral-")
+    os.environ["NEXUS_FS_STATE_DIR"] = tmp
     try:
-        fs = await mount(*uris, **kwargs)
-        yield fs
+        yield
     finally:
-        if fs is not None:
-            await _close_fs_async(fs)
+        if outer is None:
+            os.environ.pop("NEXUS_FS_STATE_DIR", None)
+        else:
+            os.environ["NEXUS_FS_STATE_DIR"] = outer
+        # Best-effort cleanup — on Windows SQLite/redb may still hold file
+        # handles briefly even after close(), so ignore removal errors.
+        import shutil
+
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def _close_fs_sync(fs: Any) -> None:

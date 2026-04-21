@@ -21,6 +21,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.services.event_log.delivery import EventDeliveryWorker
 from nexus.services.event_log.replay import EventReplayService
 from nexus.storage.models import OperationLogModel
@@ -69,7 +70,7 @@ def _insert_undelivered(session_factory, path: str, seq: int | None = None) -> s
             operation_id=op_id,
             operation_type="write",
             path=path,
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             status="success",
             delivered=False,
             created_at=datetime.now(UTC),
@@ -87,7 +88,7 @@ def _insert_delivered(session_factory, path: str, seq: int) -> str:
             operation_id=op_id,
             operation_type="write",
             path=path,
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             status="success",
             delivered=True,
             created_at=datetime.now(UTC),
@@ -117,9 +118,11 @@ class TestDeliveryLatency:
         await worker.start()
 
         latencies_ms: list[float] = []
+        WARMUP = 5
+        SAMPLES = 30
 
         try:
-            for i in range(20):
+            for i in range(WARMUP + SAMPLES):
                 op_id = _insert_undelivered(record_store.session_factory, f"/lat-{i}.txt")
 
                 t0 = time.monotonic()
@@ -131,14 +134,15 @@ class TestDeliveryLatency:
                         row = session.get(OperationLogModel, op_id)
                         if row and row.delivered:
                             latency = (time.monotonic() - t0) * 1000
-                            latencies_ms.append(latency)
+                            if i >= WARMUP:
+                                latencies_ms.append(latency)
                             break
                     await asyncio.sleep(0.001)
 
                 # Reset for next iteration
                 await asyncio.sleep(0.01)
 
-            assert len(latencies_ms) == 20, f"Only {len(latencies_ms)}/20 delivered"
+            assert len(latencies_ms) == SAMPLES, f"Only {len(latencies_ms)}/{SAMPLES} delivered"
 
             p50 = statistics.median(latencies_ms)
             p95 = _percentile(latencies_ms, 95)

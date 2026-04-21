@@ -401,7 +401,6 @@ class TestMountOperations:
         """list_mounts returns formatted mount list."""
         mount_info = MagicMock()
         mount_info.mount_point = "/mnt/test"
-        mount_info.readonly = False
         mount_info.backend = MagicMock()
         type(mount_info.backend).__name__ = "CASLocalBackend"
         mount_info.conflict_strategy = "latest"
@@ -416,7 +415,6 @@ class TestMountOperations:
         """get_mount_for_path returns mount info."""
         mount_info = MagicMock()
         mount_info.mount_point = "/mnt"
-        mount_info.readonly = False
         mount_info.backend = MagicMock()
         mount_info.backend.name = "my_backend"
         mount_info.conflict_strategy = "latest"
@@ -431,7 +429,6 @@ class TestMountOperations:
         """get_mount_for_path handles root mount."""
         mount_info = MagicMock()
         mount_info.mount_point = "/"
-        mount_info.readonly = False
         mount_info.backend = MagicMock()
         mount_info.backend.name = "root_backend"
         mount_info.conflict_strategy = "latest"

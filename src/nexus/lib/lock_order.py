@@ -15,8 +15,8 @@ Activation:
     (Default: disabled — zero overhead in production)
 
 Lock layers:
-    L1 = VFS I/O locks      (core/lock_fast.py, lib/lock_order.py)
-    L2 = Advisory/Raft locks (lib/distributed_lock.py, raft/lock_manager.py)
+    L1 = VFS I/O locks      (Rust kernel LockManager, blocking_acquire/do_release)
+    L2 = Advisory/Raft locks (Rust kernel LockManager, sys_lock/sys_unlock)
     L3 = asyncio primitives  (pipes, streams)
     L4 = threading locks     (semaphore._mu)
 

@@ -90,11 +90,14 @@ class TestReadinessProbe:
         for phase in _REQUIRED_FOR_READY:
             tracker.complete(phase)
 
-        # Mock NexusFS with federation service that returns topology not ready
-        mock_fed = MagicMock()
-        mock_fed.ensure_topology.return_value = False
+        # R20.18.5: federation readiness moved from the Python
+        # FederationService.ensure_topology() to a kernel atomic flipped
+        # by Kernel::init_federation_from_env after reconcile finishes
+        # (Kernel.mount_reconciliation_done()). Mock that instead.
+        mock_kernel = MagicMock()
+        mock_kernel.mount_reconciliation_done.return_value = False
         mock_fs = MagicMock()
-        mock_fs.service.return_value = mock_fed
+        mock_fs._kernel = mock_kernel
 
         app = _make_app(tracker)
         app.state.nexus_fs = mock_fs

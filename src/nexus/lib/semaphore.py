@@ -1,11 +1,9 @@
 """VFS Counting Semaphore with Rust acceleration.
 
 Provides name-addressed counting semaphore with holder tracking, SSOT
-max_holders enforcement, TTL expiry, and UUID holder IDs.  This is the
-**local, in-process** counterpart to ``RaftLockManager.acquire(max_holders=N)``
-(~200ns vs ~5-10ms Raft round-trip).
+max_holders enforcement, TTL expiry, and UUID holder IDs.
 
-Semantics mirror the Raft semaphore exactly:
+Semantics:
     - holder IDs are UUID4 strings
     - first acquirer sets ``max_holders`` (SSOT); mismatch → ``ValueError``
     - TTL: lazy expiry on acquire (evict expired before capacity check)
@@ -17,7 +15,6 @@ Fallback chain:
 
 References:
     - docs/architecture/lock-architecture.md §3.2
-    - src/nexus/raft/lock_manager.py  (Raft semaphore to match)
 """
 
 from __future__ import annotations

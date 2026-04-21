@@ -18,6 +18,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.server.api.v2.routers.search import router
 
 # ---------------------------------------------------------------------------
@@ -28,7 +29,7 @@ from nexus.server.api.v2.routers.search import router
 def _make_app(
     daemon: Any,
     permission_enforcer: Any | None,
-    zone_id: str = "root",
+    zone_id: str = ROOT_ZONE_ID,
 ) -> FastAPI:
     """Build a minimal FastAPI app with the search router and mocked state."""
     app = FastAPI()
@@ -60,7 +61,7 @@ def _make_enforcer(permitted_paths: list[str]) -> MagicMock:
 
 
 # Override require_auth to inject a test user without needing JWT infrastructure
-def _auth_override(zone_id: str = "root") -> dict[str, Any]:
+def _auth_override(zone_id: str = ROOT_ZONE_ID) -> dict[str, Any]:
     return {"subject_id": "test-user", "zone_id": zone_id, "is_admin": False}
 
 

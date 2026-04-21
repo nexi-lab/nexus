@@ -55,7 +55,12 @@ class PortabilityFSProtocol(Protocol):
         """Metastore for reading/writing file metadata."""
         ...
 
-    @property
-    def backend(self) -> Any:
-        """Backend for reading content blobs."""
+    def sys_read(self, path: str, **kwargs: Any) -> bytes | None:
+        """Read file content by path. R20.18.x routes through the
+        kernel's mount LPM; replaced the `backend.read_content(hash)`
+        direct access NexusFS no longer exposes."""
+        ...
+
+    def write(self, path: str, buf: bytes, **kwargs: Any) -> dict[str, Any]:
+        """Write file content. Used by import_zone to restore blobs."""
         ...

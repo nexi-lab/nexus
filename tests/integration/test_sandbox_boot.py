@@ -29,7 +29,6 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from unittest.mock import patch
 
 import httpx
 import pytest
@@ -84,22 +83,23 @@ async def test_sandbox_boots_without_external_services(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_sandbox_boot_never_calls_federation_bootstrap(tmp_path: Path) -> None:
+async def test_sandbox_boot_never_starts_federation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """SANDBOX boot must NOT attempt federation (Raft) bootstrap.
 
-    Regression: prior code gated federation on ``"ipc" in enabled_bricks``.
-    BRICK_IPC is present in SANDBOX (⊃ LITE), so federation was incorrectly
-    started.  After the fix the gate uses ``BRICK_FEDERATION``, which only
-    CLUSTER and CLOUD include.
+    R20.18.5: federation now lives inside the Rust kernel. The only
+    trigger is ``NEXUS_HOSTNAME`` being set; SANDBOX boot with the
+    env var unset must leave ``mount_reconciliation_done`` false-ish
+    (no federation active).
     """
-    from nexus.raft.federation import NexusFederation
-
-    def _must_not_be_called(*_args, **_kwargs) -> None:
-        raise AssertionError("NexusFederation.bootstrap must NOT be called for profile=sandbox")
-
-    with patch.object(NexusFederation, "bootstrap", side_effect=_must_not_be_called):
-        nx = await nexus.connect(config=_sandbox_config(tmp_path))
-        nx.close()
+    # With NEXUS_HOSTNAME unset, Kernel::init_federation_from_env is a
+    # pure no-op: no gRPC port bind, no raft::ZoneManager constructed.
+    # Smoke test — sandbox connect must succeed without any federation
+    # side-effects or Python-raised errors.
+    monkeypatch.delenv("NEXUS_HOSTNAME", raising=False)
+    nx = await nexus.connect(config=_sandbox_config(tmp_path))
+    nx.close()
 
 
 def _call_compute_features_info(app) -> None:

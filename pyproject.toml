@@ -698,10 +698,6 @@ disable_error_code = ["no-any-return"]
 [[tool.mypy.overrides]]
 module = [
     "nexus.core.metadata_pb2",
-    "nexus.raft.commands_pb2",
-    "nexus.raft.commands_pb2_grpc",
-    "nexus.raft.transport_pb2",
-    "nexus.raft.transport_pb2_grpc",
     "nexus.grpc.vfs.vfs_pb2",
     "nexus.grpc.vfs.vfs_pb2_grpc",
     "nexus.grpc.vfs",
@@ -709,12 +705,6 @@ module = [
 # Generated gRPC/protobuf stubs — no type info available
 follow_imports = "skip"
 ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
-module = "nexus.raft.client"
-# gRPC client interacts heavily with generated pb2 modules (metadata_pb2, commands_pb2)
-# that have no type stubs — attribute access on implicit Any modules
-disable_error_code = ["attr-defined"]
 
 [[tool.mypy.overrides]]
 module = ["nexus.server.rpc.grpc_servicer", "nexus.remote.rpc_transport"]
@@ -845,8 +835,6 @@ ignore = [
 "src/nexus/core/nexus_fs.py" = ["ARG002"]  # Constructor accepts cache params for public API
 "src/nexus/raft/__init__.py" = ["E402"]  # Conditional imports require try/except after TYPE_CHECKING
 "src/nexus/server/rpc/handlers/filesystem.py" = ["ARG001"]  # Handler signature requires context param
-"src/nexus/raft/transport_pb2_grpc.py" = ["ARG002"]  # Auto-generated gRPC stubs
-"src/nexus/raft/client.py" = ["SIM105"]  # datetime parsing with fallback
 "src/nexus/storage/raft_metadata_store.py" = ["ARG002", "SIM105", "SIM108", "SIM102"]  # Interface + datetime parsing + style
 "scripts/*.py" = ["ARG001"]  # Utility scripts
 

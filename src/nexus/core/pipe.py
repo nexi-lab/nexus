@@ -78,8 +78,8 @@ class PipeBackend(Protocol):
     add per-pipe asyncio.Lock for MPMC safety).
 
     Implementations:
-        Rust kernel IPC registry       — in-process SPSC ring buffer (Rust, ~0.5μs)
-        SharedMemoryPipeBackend (shm_pipe.py) — cross-process mmap'd ring buffer (~1–5μs)
+        Rust kernel IPC registry              — in-process SPSC ring buffer (~0.5μs)
+        Rust ``SharedMemoryPipeBackend``      — cross-process mmap'd ring buffer (~1–5μs)
     """
 
     async def write(self, data: bytes, *, blocking: bool = True) -> int: ...
@@ -95,21 +95,3 @@ class PipeBackend(Protocol):
 
     @property
     def stats(self) -> dict: ...
-
-
-# ---------------------------------------------------------------------------
-# Error translation (used by shm_pipe.py)
-# ---------------------------------------------------------------------------
-
-
-def _translate_rust_error(exc: RuntimeError) -> None:
-    """Translate Rust RuntimeError tags to Python exception classes."""
-    msg = str(exc)
-    if msg.startswith("PipeClosed:"):
-        raise PipeClosedError(msg.split(":", 1)[1]) from None
-    if msg.startswith("PipeFull:"):
-        raise PipeFullError(msg.split(":", 1)[1]) from None
-    if msg.startswith("PipeEmpty:"):
-        raise PipeEmptyError(msg.split(":", 1)[1]) from None
-    # Unknown RuntimeError — re-raise as-is
-    raise exc

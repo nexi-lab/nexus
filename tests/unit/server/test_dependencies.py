@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from nexus.cache.inmemory import InMemoryCacheStore
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.server.dependencies import (
     _get_cached_auth,
     _reset_auth_cache,
@@ -295,7 +296,7 @@ class TestGetAuthResultAuthProvider:
         result.is_admin = overrides.get("is_admin", False)
         result.subject_type = overrides.get("subject_type", "user")
         result.subject_id = overrides.get("subject_id", "alice")
-        result.zone_id = overrides.get("zone_id", "root")
+        result.zone_id = overrides.get("zone_id", ROOT_ZONE_ID)
         result.inherit_permissions = overrides.get("inherit_permissions", True)
         result.metadata = overrides.get("metadata", {})
         result.agent_generation = overrides.get("agent_generation")
@@ -502,7 +503,7 @@ class TestGetOperationContext:
         ctx = get_operation_context({})
         assert ctx.user_id == "anonymous"
         assert ctx.subject_type == "user"
-        assert ctx.zone_id == "root"
+        assert ctx.zone_id == ROOT_ZONE_ID
         assert ctx.is_admin is False
 
     def test_agent_generation_from_auth_result(self):

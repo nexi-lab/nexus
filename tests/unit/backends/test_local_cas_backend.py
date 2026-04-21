@@ -224,20 +224,20 @@ class TestConcurrentWrites:
         assert len({r.content_id for r in results}) == 50
 
 
-# === Bloom Filter ===
+# === content_exists smoke (Bloom filter was dropped in R10f) ===
 
 
-class TestBloomFilter:
-    def test_bloom_populated_from_disk(self, tmp_path):
-        """Write content, create new backend → Bloom should be populated from disk scan."""
+class TestContentExists:
+    def test_existing_content_survives_new_backend_instance(self, tmp_path):
+        """Write content, open a fresh backend handle on the same root →
+        the hash is still findable (disk is the source of truth)."""
         b1 = CASLocalBackend(root_path=tmp_path)
-        r = b1.write_content(b"bloom test")
+        r = b1.write_content(b"content survives")
 
-        # Create new backend from same root — Bloom should be populated from disk
         b2 = CASLocalBackend(root_path=tmp_path)
         assert b2.content_exists(r.content_id)
 
-    def test_bloom_fast_miss(self, backend):
+    def test_missing_content_reports_false(self, backend):
         assert not backend.content_exists("deadbeef" * 8)
 
 
@@ -314,39 +314,6 @@ class TestIncrementalChunkWrite:
         # Delete — blob gone
         cdc_backend.delete_content(r.content_id)
         assert not cdc_backend.content_exists(r.content_id)
-
-    def test_no_bloom_skips_optimization(self, tmp_path):
-        """Backend without bloom filter should always write (backward compat)."""
-        b = CASLocalBackend(root_path=tmp_path)
-        b._cdc.threshold = 1024
-        b._cdc.min_chunk = 256
-        b._cdc.avg_chunk = 512
-        b._cdc.max_chunk = 1024
-        b._bloom = None  # Disable bloom
-
-        content = b"N" * 2048
-        b.write_content(content)
-
-        # Patch store to count non-meta blob writes on second write
-        original_store = b._transport.store
-        blob_writes = []
-
-        def counting_store(key, data, *args, **kwargs):
-            if not key.endswith(".meta"):
-                blob_writes.append(key)
-            return original_store(key, data, *args, **kwargs)
-
-        b._transport.store = counting_store
-
-        r2 = b.write_content(content)
-
-        # Without bloom, all chunk blobs + manifest should be written
-        meta = b._read_meta(r2.content_id)
-        chunk_count = meta.get("chunk_count", 0)
-        assert len(blob_writes) == chunk_count + 1, (
-            f"Without bloom, expected {chunk_count + 1} blob writes "
-            f"(all chunks + manifest), got {len(blob_writes)}"
-        )
 
 
 # === On-Write Callback ===

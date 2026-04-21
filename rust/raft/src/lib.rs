@@ -44,9 +44,9 @@
 //!
 //! Part of Issue #1159: P2P Federation and Consensus Zones
 
-#[cfg(feature = "mimalloc")]
-#[global_allocator]
-static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+// F2 C8: mimalloc allocator moved to the final cdylib (nexus_kernel).
+// An rlib cannot declare ``#[global_allocator]`` — only the final
+// binary (cdylib/bin) can.
 
 pub mod storage;
 
@@ -56,6 +56,32 @@ pub mod storage;
 /// metadata and lock operations. Requires `consensus` feature for
 /// full ZoneConsensus support (leader election, log replication).
 pub mod raft;
+
+/// Federation orchestration layer — cross-node zone share / join
+/// flows and the TOFU peer-CA trust store. See [`federation`] for
+/// the sub-module layout.
+#[cfg(feature = "grpc")]
+pub mod federation;
+
+/// Pure-Rust zone handle — kernel-internal, not exposed to Python.
+#[cfg(all(feature = "grpc", has_protos))]
+pub mod zone_handle;
+
+/// Pure-Rust zone manager — kernel-internal, not exposed to Python.
+#[cfg(all(feature = "grpc", has_protos))]
+pub mod zone_manager;
+
+/// BlobFetcher trait — lets the raft gRPC server serve peer-facing
+/// `ReadBlob` without depending on kernel types. The kernel crate
+/// installs the impl at bootstrap. See [`blob_fetcher`] module.
+#[cfg(all(feature = "grpc", has_protos))]
+pub mod blob_fetcher;
+
+#[cfg(all(feature = "grpc", has_protos))]
+pub use zone_handle::{Consistency, ZoneHandle};
+
+#[cfg(all(feature = "grpc", has_protos))]
+pub use zone_manager::{ClusterStatus, TlsFiles, ZoneManager};
 
 /// gRPC transport layer (requires `grpc` feature).
 ///
@@ -72,18 +98,12 @@ pub mod transport;
 
 /// Python bindings via PyO3 (requires `python` feature).
 ///
-/// This module provides direct FFI access to the Raft state machine
-/// for same-box deployments, bypassing gRPC for better performance (~5μs vs ~200μs).
-///
-/// Enable with:
-/// ```toml
-/// [dependencies]
-/// nexus_raft = { version = "0.1", features = ["python"] }
-/// ```
+/// F2 C8 (Option A): raft is an rlib inside the ``nexus_kernel`` cdylib.
+/// The PyO3 classes are registered by calling
+/// ``_nexus_raft::register_python_classes(m)`` from kernel's
+/// ``#[pymodule]`` entry point.
 #[cfg(feature = "python")]
-mod pyo3_bindings;
-#[cfg(feature = "python")]
-pub use pyo3_bindings::*;
+pub mod pyo3_bindings;
 
 // Stub module when grpc feature is disabled
 #[cfg(not(feature = "grpc"))]
@@ -111,8 +131,8 @@ pub mod prelude {
     pub use crate::storage::{RedbBatch, RedbStore, RedbTree, RedbTreeBatch, StorageError};
 
     pub use crate::raft::{
-        Command, CommandResult, FullStateMachine, HolderInfo, LockInfo, LockState, RaftError,
-        StateMachine, WitnessStateMachine,
+        Command, CommandResult, FullStateMachine, HolderInfo, LockAcquireResult, LockEntry,
+        LockInfo, LockMode, LockState, RaftError, StateMachine, WitnessStateMachine,
     };
 
     #[cfg(feature = "consensus")]

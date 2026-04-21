@@ -4,8 +4,7 @@ Migrates scattered hardcoded performance thresholds to deployment profiles.
 Each DeploymentProfile maps to a ProfileTuning frozen dataclass composed
 of 11 domain-specific tuning slices.
 
-Pattern follows IOProfile (Issue #1413): frozen dataclasses, profile-selected,
-wired via DI in factory.py.
+Frozen dataclasses per domain, profile-selected, wired via DI in factory.py.
 
 Domain configs:
 - ConcurrencyTuning: worker counts, thread pool sizes

@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.services.acp.service import AcpService, _ActiveAgent
 
 # ---------------------------------------------------------------------------
@@ -19,7 +20,7 @@ class MockProcessDescriptor:
     pid: str = "test-pid-1"
     name: str = "acp:claude"
     owner_id: str = "user1"
-    zone_id: str = "root"
+    zone_id: str = ROOT_ZONE_ID
     labels: dict[str, str] = field(default_factory=dict)
 
 
@@ -224,7 +225,7 @@ class TestAcpServiceCallAgent:
                 agent_id="test-agent",
                 prompt="test",
                 owner_id="user1",
-                zone_id="root",
+                zone_id=ROOT_ZONE_ID,
             )
 
             assert result.exit_code == 127
@@ -248,7 +249,7 @@ class TestAcpServiceCallAgent:
                 agent_id="nonexistent",
                 prompt="test",
                 owner_id="user1",
-                zone_id="root",
+                zone_id=ROOT_ZONE_ID,
             )
 
 

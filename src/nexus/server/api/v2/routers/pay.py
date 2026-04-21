@@ -17,6 +17,8 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
+from nexus.contracts.constants import ROOT_ZONE_ID
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/pay", tags=["payments"])
@@ -635,7 +637,7 @@ async def create_policy(
         with record_store.session_factory() as session:
             policy = SpendingPolicyModel(
                 id=policy_id,
-                zone_id="root",
+                zone_id=ROOT_ZONE_ID,
                 enabled=True,
                 priority=10,
             )

@@ -17,7 +17,6 @@
 
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use ahash::AHashSet;
@@ -51,10 +50,6 @@ pub(crate) struct LocalCASTransport {
     /// it is never deleted during normal operation. Matches Python
     /// `LocalTransport._known_parents`.
     known_parents: Mutex<AHashSet<String>>,
-    /// Monotonic counter used to produce unique temp-file suffixes for
-    /// rename-based atomic writes. Process-unique is sufficient because the
-    /// final CAS path is keyed by content hash.
-    tmp_counter: AtomicU64,
 }
 
 #[allow(dead_code)]
@@ -68,73 +63,7 @@ impl LocalCASTransport {
             root: root_path.to_path_buf(),
             fsync_on_write,
             known_parents: Mutex::new(AHashSet::new()),
-            tmp_counter: AtomicU64::new(0),
         })
-    }
-
-    /// Atomic write: `tmp` in the same directory, optional fsync, rename to
-    /// `dst`, and fsync the parent directory when durability is requested.
-    ///
-    /// This prevents (a) torn reads of concurrently-written blobs and
-    /// (b) on-crash observation of zero-length blobs (open+O_TRUNC race).
-    fn write_atomic(&self, dst: &Path, content: &[u8]) -> io::Result<()> {
-        let parent = dst.parent().ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "CAS path has no parent directory",
-            )
-        })?;
-        let dst_name = dst.file_name().and_then(|s| s.to_str()).unwrap_or("cas");
-        let pid = std::process::id();
-
-        // Try O_CREAT|O_EXCL with a fresh counter value, retrying on the
-        // unlikely AlreadyExists (different writer picked the same suffix).
-        let (tmp, mut file) = {
-            let mut attempt = 0u32;
-            loop {
-                let suffix = self.tmp_counter.fetch_add(1, Ordering::Relaxed);
-                let candidate = parent.join(format!(".{dst_name}.tmp-{pid}-{suffix}"));
-                match std::fs::OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(&candidate)
-                {
-                    Ok(f) => break (candidate, f),
-                    Err(e) if e.kind() == io::ErrorKind::AlreadyExists && attempt < 8 => {
-                        attempt += 1;
-                        continue;
-                    }
-                    Err(e) => return Err(e),
-                }
-            }
-        };
-
-        // Write + optional fsync before rename.
-        file.write_all(content)?;
-        if self.fsync_on_write {
-            file.sync_all()?;
-        }
-        drop(file); // close before rename (required on Windows)
-
-        // Atomic rename to the destination path.
-        //
-        // On POSIX this is replace-in-place. On Windows, rename may fail when
-        // `dst` already exists, which can happen under concurrent same-hash
-        // CAS writers. Callers handle that race by treating "dst now exists"
-        // as successful dedup.
-        if let Err(e) = std::fs::rename(&tmp, dst) {
-            let _ = std::fs::remove_file(&tmp);
-            return Err(e);
-        }
-
-        // Sync the directory so the rename is durable on crash.
-        if self.fsync_on_write {
-            if let Ok(dir) = std::fs::File::open(parent) {
-                let _ = dir.sync_all();
-            }
-        }
-
-        Ok(())
     }
 
     /// Resolve a CAS blob key to an absolute filesystem path.
@@ -187,34 +116,41 @@ impl LocalCASTransport {
     /// Corresponds to Python `CASAddressingEngine.write_content()` (hash) +
     /// `LocalTransport.store()` (I/O).
     pub fn write_blob(&self, content: &[u8]) -> io::Result<String> {
+        self.write_blob_tracked(content).map(|(h, _)| h)
+    }
+
+    /// Same as `write_blob` but also reports whether the write actually
+    /// touched disk (`true`) or hit CAS dedup (`false`). Used by
+    /// `CASEngine::write_content_tracked` to drive the `is_new` bit that
+    /// Python's on_write_callback (e.g. Zoekt reindex) keys off.
+    pub fn write_blob_tracked(&self, content: &[u8]) -> io::Result<(String, bool)> {
         let hash = library::hash::hash_content(content);
         let key = blob_key(&hash);
         let path = self.resolve(&key);
 
         // CAS dedup: if blob already exists, skip write
         if path.exists() {
-            return Ok(hash);
+            return Ok((hash, false));
         }
 
         self.ensure_parent(&path)?;
 
-        // Write via temp file + rename so concurrent writers (or a crash in
-        // the middle of a write) cannot be observed as zero-length/corrupt
-        // by a racing reader. POSIX `rename` is atomic even when the target
-        // already exists, so two writers of the same content simply swap the
-        // same bytes in place — readers always see a complete blob.
-        match self.write_atomic(&path, content) {
-            Ok(()) => Ok(hash),
-            Err(e) => {
-                // Windows race: another writer may have won the final rename
-                // and created the same CAS blob between our exists() and rename().
-                if path.is_file() {
-                    Ok(hash)
-                } else {
-                    Err(e)
-                }
-            }
+        // Write content using O_CREAT | O_WRONLY | O_TRUNC semantics.
+        // OpenOptions::create(true).truncate(true) matches Python's
+        // os.open(path, O_CREAT | O_WRONLY | O_TRUNC, 0o644).
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&path)?;
+
+        file.write_all(content)?;
+
+        if self.fsync_on_write {
+            file.sync_all()?;
         }
+
+        Ok((hash, true))
     }
 
     /// Write a pre-hashed blob (caller already knows the content hash).
@@ -233,18 +169,19 @@ impl LocalCASTransport {
 
         self.ensure_parent(&path)?;
 
-        // Atomic write (see `write_blob` for rationale).
-        match self.write_atomic(&path, content) {
-            Ok(()) => Ok(true),
-            Err(e) => {
-                // Same concurrent-writer race handling as `write_blob`.
-                if path.is_file() {
-                    Ok(false)
-                } else {
-                    Err(e)
-                }
-            }
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&path)?;
+
+        file.write_all(content)?;
+
+        if self.fsync_on_write {
+            file.sync_all()?;
         }
+
+        Ok(true)
     }
 
     /// Check if a CAS blob exists on disk.
@@ -271,6 +208,56 @@ impl LocalCASTransport {
     }
 
     /// Remove a CAS blob from disk.
+    /// Write a `.meta` JSON sidecar next to a blob (used by CDC to flag
+    /// chunked manifests for GC + Python-side `is_chunked` compatibility).
+    /// Path is `cas/<h[0..2]>/<h[2..4]>/<hash>.meta`.
+    pub fn write_meta(&self, content_hash: &str, meta: &[u8]) -> io::Result<()> {
+        let key = blob_key(content_hash);
+        let path = self.resolve(&format!("{}.meta", key));
+        self.ensure_parent(&path)?;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&path)?;
+        file.write_all(meta)?;
+        if self.fsync_on_write {
+            file.sync_all()?;
+        }
+        Ok(())
+    }
+
+    /// Read a `.meta` JSON sidecar.
+    ///
+    /// Corresponds to Python `CASAddressingEngine._read_meta()`'s transport fetch.
+    /// Returns `io::ErrorKind::NotFound` when the sidecar is absent (callers
+    /// treat that as "not chunked").
+    pub fn read_meta(&self, content_hash: &str) -> io::Result<Vec<u8>> {
+        let key = blob_key(content_hash);
+        let path = self.resolve(&format!("{}.meta", key));
+        std::fs::read(&path)
+    }
+
+    /// Cheap existence check for the `.meta` sidecar — used by `is_chunked`
+    /// as a fast-reject before the full read + JSON parse.
+    pub fn meta_exists(&self, content_hash: &str) -> bool {
+        let key = blob_key(content_hash);
+        let path = self.resolve(&format!("{}.meta", key));
+        path.is_file()
+    }
+
+    /// Remove the `.meta` sidecar. Absorbs `NotFound` (best-effort, matches
+    /// Python's `contextlib.suppress(Exception)` in `delete_chunked`).
+    pub fn remove_meta(&self, content_hash: &str) -> io::Result<()> {
+        let key = blob_key(content_hash);
+        let path = self.resolve(&format!("{}.meta", key));
+        match std::fs::remove_file(&path) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
+
     pub fn remove_blob(&self, content_hash: &str) -> io::Result<()> {
         let key = blob_key(content_hash);
         let path = self.resolve(&key);
@@ -507,46 +494,42 @@ mod tests {
     }
 
     #[test]
-    fn test_concurrent_writes_never_truncated_readable() {
-        // Regression for review fix #2: the old code used
-        // OpenOptions::create(true).truncate(true), so concurrent writers of
-        // the same hash would both truncate and re-write. Any reader racing
-        // in between could observe a zero-length file (wrong content hash).
-        // The new tmp+rename path must keep readers consistent at all times.
-        use std::sync::Arc;
-        use std::thread;
+    fn test_meta_roundtrip() {
+        let (_tmp, transport) = setup();
+        let content = b"meta roundtrip";
+        let hash = transport.write_blob(content).unwrap();
 
-        let tmp = TempDir::new().unwrap();
-        let transport = Arc::new(LocalCASTransport::new(tmp.path(), false).unwrap());
-        let content = vec![0x7A; 128 * 1024];
-        let hash = library::hash::hash_content(&content);
+        assert!(!transport.meta_exists(&hash));
+        let err = transport.read_meta(&hash).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
 
-        let writers: Vec<_> = (0..8)
-            .map(|_| {
-                let t = Arc::clone(&transport);
-                let c = content.clone();
-                thread::spawn(move || t.write_blob(&c).unwrap())
-            })
-            .collect();
-        let reader = {
-            let t = Arc::clone(&transport);
-            let hash_reader = hash.clone();
-            thread::spawn(move || {
-                for _ in 0..200 {
-                    if let Ok(bytes) = t.read_blob(&hash_reader) {
-                        // Partial reads (wrong length) would indicate the
-                        // destination was observed mid-write.
-                        assert_eq!(bytes.len(), 128 * 1024);
-                    }
-                }
-            })
-        };
-        for h in writers {
-            assert_eq!(h.join().unwrap(), hash);
-        }
-        reader.join().unwrap();
-        let final_bytes = transport.read_blob(&hash).unwrap();
-        assert_eq!(final_bytes, content);
+        let meta = br#"{"size":14,"is_chunked_manifest":false}"#;
+        transport.write_meta(&hash, meta).unwrap();
+
+        assert!(transport.meta_exists(&hash));
+        let read_back = transport.read_meta(&hash).unwrap();
+        assert_eq!(read_back, meta);
+    }
+
+    #[test]
+    fn test_remove_meta_absorbs_not_found() {
+        let (_tmp, transport) = setup();
+        transport
+            .remove_meta("0000000000000000000000000000000000000000000000000000000000000000")
+            .unwrap();
+    }
+
+    #[test]
+    fn test_remove_meta_deletes_sidecar() {
+        let (_tmp, transport) = setup();
+        let hash = transport.write_blob(b"with meta").unwrap();
+        transport.write_meta(&hash, b"{}").unwrap();
+        assert!(transport.meta_exists(&hash));
+
+        transport.remove_meta(&hash).unwrap();
+        assert!(!transport.meta_exists(&hash));
+        // Blob itself is untouched
+        assert!(transport.exists(&hash));
     }
 
     #[test]

@@ -20,6 +20,7 @@ from typing import Any
 
 import pytest
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.storage.models import Base
 from tests.helpers.dict_metastore import DictMetastore
@@ -66,14 +67,14 @@ def api_keys(session_factory: Any) -> dict[str, Any]:
             session,
             user_id="e2e-admin",
             name="E2E Admin Key",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             is_admin=True,
         )
         normal_key_id, normal_raw = DatabaseAPIKeyAuth.create_key(
             session,
             user_id="e2e-user",
             name="E2E User Key",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             is_admin=False,
         )
         session.commit()

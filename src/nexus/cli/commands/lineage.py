@@ -14,6 +14,7 @@ from urllib.parse import quote
 import click
 
 from nexus.cli.utils import add_backend_options, console
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +49,7 @@ def lineage_upstream(
     conn = resolve_connection(
         remote_url=remote_url, remote_api_key=remote_api_key, profile_name=profile_name
     )
-    zone_id = conn.zone_id or "root"
+    zone_id = conn.zone_id or ROOT_ZONE_ID
     client = get_api_client_from_options(remote_url, remote_api_key, profile_name=profile_name)
     urn = str(NexusURN.for_file(zone_id, path))
 

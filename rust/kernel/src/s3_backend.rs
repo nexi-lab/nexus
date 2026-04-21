@@ -145,7 +145,19 @@ impl ObjectStore for S3Backend {
         content: &[u8],
         content_id: &str,
         _ctx: &OperationContext,
+        offset: u64,
     ) -> Result<WriteResult, StorageError> {
+        if offset != 0 {
+            // R20.10: S3 PutObject replaces the whole object; there is no
+            // native pwrite(2) equivalent. A read-splice-PUT fallback
+            // would silently turn O(content.len()) writes into O(blob)
+            // network I/O — never acceptable for a file-system surface.
+            // Caller should use CAS or a local PAS mount when partial
+            // writes are required.
+            return Err(StorageError::NotSupported(
+                "s3 backend does not support offset writes (API limitation — use CAS or local PAS)",
+            ));
+        }
         let key = self.object_key(content_id);
         let url = format!("{}/{}", self.base_url(), key);
         let content_sha256 = hex::encode(Sha256::digest(content));

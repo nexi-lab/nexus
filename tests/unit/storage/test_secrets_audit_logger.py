@@ -12,6 +12,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.storage.models._base import Base
 from nexus.storage.record_store import RecordStoreABC
 from nexus.storage.secrets_audit_logger import (
@@ -53,7 +54,7 @@ class TestSecretsAuditLoggerWrite:
             actor_id="alice@example.com",
             provider="google",
             credential_id="cred-123",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
         assert record_id is not None
 
@@ -101,7 +102,7 @@ class TestSecretsAuditLoggerIntegrity:
             event_type="credential_created",
             actor_id="alice@example.com",
             provider="google",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
         assert audit_logger.verify_integrity(record_id) is True
 
@@ -116,7 +117,7 @@ class TestSecretsAuditLoggerIntegrity:
             provider="google",
             credential_id=None,
             token_family_id=None,
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             ip_address=None,
             created_at=now,
         )
@@ -126,7 +127,7 @@ class TestSecretsAuditLoggerIntegrity:
             provider="google",
             credential_id=None,
             token_family_id=None,
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             ip_address=None,
             created_at=now,
         )
@@ -149,7 +150,7 @@ class TestSecretsAuditLoggerImmutability:
         record_id = audit_logger.log_event(
             event_type="credential_created",
             actor_id="alice@example.com",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
 
         session = session_factory()
@@ -173,7 +174,7 @@ class TestSecretsAuditLoggerImmutability:
         record_id = audit_logger.log_event(
             event_type="credential_created",
             actor_id="alice@example.com",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
         )
 
         session = session_factory()
@@ -202,7 +203,7 @@ class TestSecretsAuditLoggerQuery:
             audit_logger.log_event(
                 event_type="credential_created",
                 actor_id=f"user{i}@example.com",
-                zone_id="root",
+                zone_id=ROOT_ZONE_ID,
             )
 
         rows, cursor = audit_logger.list_events_cursor(limit=10)
@@ -214,7 +215,7 @@ class TestSecretsAuditLoggerQuery:
             audit_logger.log_event(
                 event_type="credential_created",
                 actor_id=f"user{i}@example.com",
-                zone_id="root",
+                zone_id=ROOT_ZONE_ID,
             )
 
         rows1, cursor1 = audit_logger.list_events_cursor(limit=3)
@@ -238,16 +239,16 @@ class TestSecretsAuditLoggerQuery:
             audit_logger.log_event(
                 event_type="credential_created",
                 actor_id="alice",
-                zone_id="root",
+                zone_id=ROOT_ZONE_ID,
             )
-        assert audit_logger.count_events(zone_id="root") == 3
+        assert audit_logger.count_events(zone_id=ROOT_ZONE_ID) == 3
 
     def test_iter_events(self, audit_logger):
         for i in range(3):
             audit_logger.log_event(
                 event_type="credential_created",
                 actor_id=f"user{i}",
-                zone_id="root",
+                zone_id=ROOT_ZONE_ID,
             )
         rows = audit_logger.iter_events(filters={"zone_id": "root"})
         assert len(rows) == 3

@@ -31,6 +31,7 @@ from nexus.bricks.mcp.server import (
     reset_request_api_key,
     set_request_api_key,
 )
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.types import OperationContext
 
 # ---------------------------------------------------------------------------
@@ -87,7 +88,7 @@ class TestOpContextToAuthDict:
         ctx = OperationContext(
             user_id="admin",
             subject_id="admin",
-            zone_id="root",
+            zone_id=ROOT_ZONE_ID,
             is_admin=True,
             groups=["admins"],
         )

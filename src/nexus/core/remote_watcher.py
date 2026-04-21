@@ -39,7 +39,7 @@ class StreamRemoteWatcher:
     offset-based stream reads.
 
     Single-node: in-memory Rust MemoryStreamBackend (~0.5μs/op).
-    Multi-node:  WALStreamBackend for Raft-replicated event delivery (future).
+    Multi-node:  ``nexus_kernel.WalStreamBackend`` (native Rust, raft-replicated).
     """
 
     def __init__(self, nx: "NexusFS") -> None:

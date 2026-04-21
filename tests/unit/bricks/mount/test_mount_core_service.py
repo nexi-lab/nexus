@@ -43,7 +43,10 @@ def _build_service(
     """Build a MountService with mocked gateway."""
     if gateway is None:
         gateway = _mock_gateway(permission_ok=permission_ok)
-    service = MountService(router=gateway.router, gateway=gateway)
+    # nexus_fs is required for sys_setattr(DT_MOUNT) — kernel-backed mount path
+    # after F4 Rust-ification.
+    mock_nexus_fs = MagicMock()
+    service = MountService(router=gateway.router, gateway=gateway, nexus_fs=mock_nexus_fs)
     # DriverLifecycleCoordinator is kernel-owned; mock it for unit tests.
     service._driver_coordinator = MagicMock()
     return service, gateway
@@ -80,7 +83,9 @@ class TestAddMountRollback:
             context=_op_context(),
         )
         assert result == "/mnt/test"
-        service._driver_coordinator.mount.assert_called_once()
+        # R7c: kernel-backed mount path goes through ``nexus_fs.sys_setattr``
+        # (entry_type=DT_MOUNT) instead of the legacy ``DLC.mount()`` facade.
+        service.nexus_fs.sys_setattr.assert_called_once()
         # unmount should NOT be called on success
         service._driver_coordinator.unmount.assert_not_called()
 
@@ -97,8 +102,9 @@ class TestAddMountRollback:
                 context=_op_context(),
             )
 
-        # Coordinator mount was called, then rollback via unmount
-        service._driver_coordinator.mount.assert_called_once()
+        # Kernel mount call via sys_setattr fires first, then rollback via
+        # DLC.unmount() runs in the except branch of add_mount_sync.
+        service.nexus_fs.sys_setattr.assert_called_once()
         service._driver_coordinator.unmount.assert_called_once_with("/mnt/test")
 
     def test_mkdir_failure_is_best_effort_no_rollback(self) -> None:

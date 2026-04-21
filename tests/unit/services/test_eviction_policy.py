@@ -12,6 +12,7 @@ Post-AgentRegistry deletion: tests use AgentDescriptor instead of AgentRecord.
 from datetime import UTC, datetime, timedelta
 
 from nexus.contracts.agent_types import EvictionReason
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.process_types import (
     AgentDescriptor,
     AgentKind,
@@ -39,7 +40,7 @@ def _make_agent(
         ppid=None,
         name=agent_id,
         owner_id="test-owner",
-        zone_id="root",
+        zone_id=ROOT_ZONE_ID,
         kind=AgentKind.UNMANAGED,
         state=AgentState.BUSY,
         generation=1,

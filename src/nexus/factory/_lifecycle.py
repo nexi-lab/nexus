@@ -133,8 +133,8 @@ async def _wire_services(
     await enlist_services(nx, _wired)
 
     # Issue #1811: DriverLifecycleCoordinator is kernel-owned (created in
-    # NexusFS.__init__). Root mount ("/") registered via coordinator.mount()
-    # in create_nexus_fs() — unified lifecycle (pool + hooks + notify).
+    # NexusFS.__init__). Root mount ("/") registered via sys_setattr(DT_MOUNT)
+    # + _store_mount_info() in create_nexus_fs().
     nx.sys_setattr("/__sys__/services/driver_coordinator", service=nx._driver_coordinator)
 
     # Issue #1811 Phase 2: Inject coordinator into MountService so dynamic
@@ -147,26 +147,15 @@ async def _wire_services(
     # Canonical name mapping consolidated in service_routing.py.
     await enlist_services(nx, _svc)
 
-    # Federation — wire from parameter (profile-gated, created before kernel).
-    if federation is not None:
-        nx.sys_setattr("/__sys__/services/federation", service=federation)
-        logger.debug("[LINK] Federation service enlisted")
-
-        # Upgrade lock manager: LocalLockManager → RaftLockManager (kernel owns)
-        try:
-            from nexus.raft.lock_manager import RaftLockManager
-
-            _raft_lm = RaftLockManager(nx.metadata)
-            nx._upgrade_lock_manager(_raft_lm)
-            logger.info("[LINK] RaftLockManager upgraded into kernel")
-        except Exception as exc:
-            logger.debug("[LINK] RaftLockManager upgrade skipped: %s", exc)
+    # R20.18.5: federation is kernel-internal now. The federation
+    # parameter is vestigial (always None post-cutover). Kernel::new()
+    # reads env vars and bootstraps raft::ZoneManager in Rust. DLC
+    # wiring is driven by the per-zone mount_apply_cb installed by
+    # Kernel::install_federation_mount_coherence — no Python bridge.
+    _ = federation  # kept in signature for caller compat; unused
 
     # descendant_checker is now accessed via PermissionCheckHook (KernelDispatch INTERCEPT).
     # No kernel DI needed — PermissionCheckHook holds the reference internally.
-
-    # Issue #1788: Lock manager kernel-owned (NexusFS._lock_manager).
-    # LocalLockManager by default, upgraded to RaftLockManager above if federation available.
 
     # --- Register close callbacks (Issue #1793, #1789) ---
     # Services that need cleanup at close() register callbacks here.

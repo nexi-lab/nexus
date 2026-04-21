@@ -14,6 +14,7 @@ import pytest
 from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import sessionmaker
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import AuditLogError
 from nexus.contracts.metadata import DT_DIR, DT_REG, FileMetadata
 from nexus.storage.models import Base, FilePathModel
@@ -166,7 +167,7 @@ class TestBatchWriteErrorHandling:
         with contextlib.suppress(Exception):
             write_observer.on_write_batch(
                 [(_make_metadata(), True)],
-                zone_id="root",
+                zone_id=ROOT_ZONE_ID,
             )
 
         # Error was silently suppressed — this is the bug

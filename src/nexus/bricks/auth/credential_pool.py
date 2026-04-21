@@ -184,9 +184,9 @@ class CredentialPool:
         # round_robin increments before reading; -1 ensures first call returns index 0
         self._last_index: int = -1
         # threading.Lock (not asyncio.Lock) so the same lock protects both
-        # async select() callers and sync select_sync() callers from thread
-        # executors (e.g. CASOpenAIBackend.generate_streaming runs in a thread).
-        # The critical section is nanoseconds — no meaningful event-loop blocking.
+        # async select() callers and sync select_sync() callers invoked from
+        # worker threads. The critical section is nanoseconds — no meaningful
+        # event-loop blocking.
         self._lock = threading.Lock()
         self._cooldown_policy: dict[AuthProfileFailureReason, timedelta | None] = {
             **_DEFAULT_COOLDOWN_POLICY,

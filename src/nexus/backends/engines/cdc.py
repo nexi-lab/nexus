@@ -190,8 +190,7 @@ class CDCEngine:
     """CDC chunking engine — composed into CASAddressingEngine subclasses.
 
     Uses CASAddressingEngine's internal methods directly:
-    ``_transport``, ``_blob_key()``, ``_read_meta()``, ``_write_meta()``,
-    ``_write_meta()``, ``_bloom``.
+    ``_transport``, ``_blob_key()``, ``_read_meta()``, ``_write_meta()``.
     """
 
     __slots__ = ("_backend", "threshold", "min_chunk", "avg_chunk", "max_chunk", "workers")
@@ -274,9 +273,6 @@ class CDCEngine:
         }
         b._write_meta(manifest_hash, manifest_meta)
 
-        if b._bloom is not None:
-            b._bloom.add(manifest_hash)
-
         written = len(chunk_infos) - dedup_count
         elapsed_ms = (time.perf_counter() - start_time) * 1000
         logger.info(
@@ -295,10 +291,11 @@ class CDCEngine:
         chunk_hash = hash_content(chunk_bytes)
         key = b._blob_key(chunk_hash)
 
-        # Skip store if chunk already exists in local CAS
-        deduped = False
-        if b._bloom is not None and b._bloom.might_exist(chunk_hash):
-            deduped = b._transport.exists(key)
+        # Skip store if chunk already exists in local CAS. Bloom membership
+        # pre-check was dropped in R10f — a direct `_transport.exists()` is
+        # fast enough on the hot path; the Bloom filter saved a single
+        # redb lookup per chunk, not a noticeable fraction of throughput.
+        deduped = b._transport.exists(key)
 
         if not deduped:
             b._transport.store(key, chunk_bytes)
@@ -307,8 +304,6 @@ class CDCEngine:
         meta: dict[str, Any] = {"size": len(chunk_bytes), "is_chunk": True}
         b._write_meta(chunk_hash, meta)
 
-        if not deduped and b._bloom is not None:
-            b._bloom.add(chunk_hash)
         return chunk_hash, deduped
 
     def write_chunked_partial(
@@ -427,9 +422,6 @@ class CDCEngine:
             "chunk_count": len(all_chunks),
         }
         b._write_meta(manifest_hash, manifest_meta)
-
-        if b._bloom is not None:
-            b._bloom.add(manifest_hash)
 
         logger.info(
             "Partial write: offset=%d len=%d -> %d chunks (%d reused) total_size=%d",

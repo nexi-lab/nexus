@@ -17,6 +17,11 @@ contracts = { path = "rust/contracts" }
 library = { path = "rust/library" }
 transport = { path = "rust/transport" }
 services = { path = "rust/services" }
+# F2 C8 (Option A): raft is an rlib inside the nexus_kernel cdylib.
+# kernel pulls it in as a Rust dependency to reach ZoneConsensus /
+# FullStateMachine for federation metastore wiring. Direction is
+# kernel -> raft only (no cycle).
+raft = { path = "rust/raft", default-features = false, features = ["python", "grpc"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 ahash = "0.8"
@@ -28,6 +33,7 @@ blake3 = "1.5"
 string-interner = "0.17"
 regex-syntax = "0.8"
 crc32fast = "1.4"
+fastcdc = "3.2"
 mimalloc = { version = "0.1", default-features = false }
 tonic = { version = "0.13", features = ["transport", "tls-ring"] }
 prost = "0.13"

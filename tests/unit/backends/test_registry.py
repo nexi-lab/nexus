@@ -774,3 +774,125 @@ class TestRegisterRuntimeDeps:
 
         info = ConnectorRegistry.get_info("t_match")
         assert info.runtime_deps == matching_deps
+
+
+class TestPlaceholderRegistration:
+    def setup_method(self) -> None:
+        from nexus.backends.base.registry import ConnectorRegistry
+
+        ConnectorRegistry.clear()
+
+    def teardown_method(self) -> None:
+        from nexus.backends.base.registry import ConnectorRegistry
+
+        ConnectorRegistry.clear()
+
+    def test_register_placeholder_stores_entry(self) -> None:
+        from nexus.backends._manifest import ConnectorManifestEntry
+        from nexus.backends.base.registry import ConnectorRegistry
+        from nexus.backends.base.runtime_deps import PythonDep
+
+        entry = ConnectorManifestEntry(
+            name="placeholder_test",
+            module_path="nowhere.real",
+            class_name="Nope",
+            description="Placeholder for test",
+            category="storage",
+            runtime_deps=(PythonDep("boto3", extras=("s3",)),),
+        )
+        ConnectorRegistry.register_placeholder(entry)
+
+        info = ConnectorRegistry.get_info("placeholder_test")
+        assert info.connector_class is None
+        assert info.runtime_deps == (PythonDep("boto3", extras=("s3",)),)
+        assert info.description == "Placeholder for test"
+        assert info.category == "storage"
+
+    def test_register_binds_class_into_placeholder(self) -> None:
+        from nexus.backends._manifest import ConnectorManifestEntry
+        from nexus.backends.base.registry import (
+            ConnectorRegistry,
+            register_connector,
+        )
+        from nexus.backends.base.runtime_deps import PythonDep
+
+        entry = ConnectorManifestEntry(
+            name="bind_test",
+            module_path="nowhere.real",
+            class_name="DummyBackend",
+            description="Bind test",
+            category="storage",
+            runtime_deps=(PythonDep("json"),),
+            service_name="bind-svc",
+        )
+        ConnectorRegistry.register_placeholder(entry)
+
+        @register_connector("bind_test")
+        class T(DummyBackend):
+            pass
+
+        info = ConnectorRegistry.get_info("bind_test")
+        assert info.connector_class is T
+        # manifest metadata preserved
+        assert info.runtime_deps == (PythonDep("json"),)
+        assert info.description == "Bind test"
+        assert info.category == "storage"
+        assert info.service_name == "bind-svc"
+
+    def test_register_emits_warning_when_builtin_passes_metadata(self) -> None:
+        import warnings
+
+        from nexus.backends._manifest import ConnectorManifestEntry
+        from nexus.backends.base.registry import (
+            ConnectorRegistry,
+            register_connector,
+        )
+
+        entry = ConnectorManifestEntry(
+            name="warn_test",
+            module_path="nowhere.real",
+            class_name="DummyBackend",
+            description="Manifest description",
+            category="storage",
+        )
+        ConnectorRegistry.register_placeholder(entry)
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+
+            @register_connector(
+                "warn_test",
+                description="Decorator description",  # should trigger warning
+            )
+            class T(DummyBackend):
+                pass
+
+            assert any(
+                issubclass(w.category, UserWarning) and "manifest" in str(w.message).lower()
+                for w in caught
+            ), "expected UserWarning about manifest overriding decorator kwargs"
+
+        # Manifest values preserved despite decorator kwargs
+        info = ConnectorRegistry.get_info("warn_test")
+        assert info.description == "Manifest description"
+
+    def test_external_plugin_still_registers_without_placeholder(self) -> None:
+        from nexus.backends.base.registry import (
+            ConnectorRegistry,
+            register_connector,
+        )
+        from nexus.backends.base.runtime_deps import PythonDep
+
+        @register_connector(
+            "external_plugin",
+            description="External plugin",
+            category="external",
+            runtime_deps=(PythonDep("json"),),
+        )
+        class T(DummyBackend):
+            pass
+
+        info = ConnectorRegistry.get_info("external_plugin")
+        assert info.connector_class is T
+        assert info.description == "External plugin"
+        assert info.runtime_deps == (PythonDep("json"),)

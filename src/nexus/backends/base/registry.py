@@ -49,6 +49,7 @@ from nexus.contracts.backend_features import BackendFeature
 from nexus.lib.registry import BaseRegistry
 
 if TYPE_CHECKING:
+    from nexus.backends._manifest import ConnectorManifestEntry
     from nexus.backends.base.backend import Backend
 
 
@@ -206,8 +207,12 @@ class ConnectorInfo:
     name: str
     """Unique identifier for the connector (e.g., 'gcs_connector', 's3_connector')."""
 
-    connector_class: "type[Backend]"
-    """The connector class."""
+    connector_class: "type[Backend] | None"
+    """The connector class, or None if this is a manifest-registered
+    placeholder whose module has not yet been imported (or whose import
+    failed). ``BackendFactory.create()`` raises ``MissingDependencyError``
+    or a clear ``RuntimeError`` when attempting to mount a placeholder
+    whose deps are satisfied."""
 
     description: str = ""
     """Human-readable description of the connector."""
@@ -346,6 +351,31 @@ class ConnectorRegistry:
     _base: BaseRegistry[ConnectorInfo] = BaseRegistry("connectors")
 
     @classmethod
+    def register_placeholder(cls, entry: "ConnectorManifestEntry") -> None:
+        """Register a manifest-sourced placeholder ConnectorInfo.
+
+        Called during Phase 1 of ``_register_optional_backends()``, before
+        any connector module is imported. The placeholder carries the
+        manifest's metadata and runtime_deps but has ``connector_class=None``.
+
+        If the connector module imports successfully later, its
+        ``@register_connector("name")`` call hits the placeholder-binding
+        path in :meth:`register` and attaches the real class (preserving
+        manifest metadata). If the import fails, the placeholder remains
+        — ``BackendFactory.create()`` will raise ``MissingDependencyError``
+        with the manifest's install hints.
+        """
+        info = ConnectorInfo(
+            name=entry.name,
+            connector_class=None,
+            description=entry.description,
+            category=entry.category,
+            runtime_deps=entry.runtime_deps,
+            service_name=entry.service_name,
+        )
+        cls._base.register(entry.name, info, allow_overwrite=True)
+
+    @classmethod
     def register(
         cls,
         name: str,
@@ -385,12 +415,59 @@ class ConnectorRegistry:
 
         existing = cls._base.get(name)
         if existing is not None:
+            if existing.connector_class is None:
+                # Placeholder-binding path. The manifest (via
+                # register_placeholder) already set runtime_deps,
+                # description, category, service_name. We attach
+                # the real class and derive class-scoped fields
+                # (user_scoped, config_mapping, backend_features).
+                # Decorator kwargs other than `name` are IGNORED
+                # here — manifest is the single source of truth for
+                # built-in connectors. If the caller passed any such
+                # kwargs, emit a UserWarning pointing them at the
+                # manifest.
+                decorator_provided_metadata = (
+                    (description and description != existing.description)
+                    or (category and category != "storage" and category != existing.category)
+                    or requires is not None
+                    or service_name is not None
+                    or runtime_deps is not None
+                )
+                if decorator_provided_metadata:
+                    warnings.warn(
+                        f"@register_connector('{name}', ...): metadata kwargs "
+                        f"ignored because '{name}' is declared in the manifest "
+                        f"(src/nexus/backends/_manifest.py). Edit the manifest "
+                        f"to change metadata for built-in connectors.",
+                        UserWarning,
+                        stacklevel=3,
+                    )
+
+                user_scoped = getattr(connector_class, "user_scoped", False)
+                if isinstance(user_scoped, property):
+                    user_scoped = False
+
+                bound = ConnectorInfo(
+                    name=name,
+                    connector_class=connector_class,
+                    description=existing.description,
+                    category=existing.category,
+                    user_scoped=user_scoped,
+                    config_mapping=derive_config_mapping(connector_class),
+                    service_name=existing.service_name,
+                    backend_features=getattr(connector_class, "_BACKEND_FEATURES", frozenset()),
+                    runtime_deps=existing.runtime_deps,
+                )
+                cls._base.register(name, bound, allow_overwrite=True)
+                return
+
             if existing.connector_class is not connector_class:
                 raise ValueError(
                     f"Connector '{name}' is already registered to "
                     f"{existing.connector_class.__name__}. "
                     f"Cannot register {connector_class.__name__}."
                 )
+            # Same class; idempotent re-registration.
             return
 
         user_scoped = getattr(connector_class, "user_scoped", False)
@@ -459,10 +536,18 @@ class ConnectorRegistry:
             KeyError: If connector is not found
         """
         try:
-            return cls._base.get_or_raise(name).connector_class
+            info = cls._base.get_or_raise(name)
         except KeyError:
             available = ", ".join(cls._base.list_names())
             raise KeyError(f"Unknown connector '{name}'. Available: {available}") from None
+        if info.connector_class is None:
+            raise KeyError(
+                f"Connector '{name}' is registered as a manifest placeholder but "
+                f"its module has not been imported (likely due to missing runtime "
+                f"dependencies). Use BackendFactory.create() for a helpful "
+                f"MissingDependencyError with install hints."
+            )
+        return info.connector_class
 
     @classmethod
     def get_info(cls, name: str) -> ConnectorInfo:

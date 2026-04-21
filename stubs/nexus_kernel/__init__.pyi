@@ -295,6 +295,7 @@ class VolumeEngine:
 class RustRouteResult:
     mount_point: str
     backend_path: str
+    zone_id: str
     is_external: bool
 
 class OperationContext:

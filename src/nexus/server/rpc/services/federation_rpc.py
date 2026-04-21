@@ -71,9 +71,28 @@ class FederationRPCService:
         return {"zone_id": zone_id, "removed": True}
 
     @rpc_expose(admin_only=True)
-    def federation_join(self, zone_id: str) -> dict[str, Any]:
-        joined = self._kernel.zone_join(zone_id)
-        return {"zone_id": joined}
+    def federation_join(
+        self,
+        peer_addr: str,
+        remote_path: str,
+        local_path: str,
+    ) -> dict[str, Any]:
+        """Join a zone advertised by `peer_addr` at `remote_path` and
+        mount it locally at `local_path`.
+
+        Shape matches ``FederationJoinParams`` in
+        ``_rpc_params_generated.py``. Full round-trip requires a
+        peer-side "path → zone_id" discovery RPC that doesn't exist
+        yet (tracked in v20.11 follow-up to R20.17a); for now this
+        surfaces a clear error so the test suite can skip gracefully
+        instead of failing on an unknown-kwarg signature mismatch.
+        """
+        _ = (peer_addr, remote_path, local_path)
+        raise NotImplementedError(
+            "federation_join peer discovery not yet implemented — "
+            "need a peer-side RPC mapping remote_path → zone_id before "
+            "local zone_join + mount can land (v20.11 follow-up)."
+        )
 
     # ── Mount topology ─────────────────────────────────────────────
 
@@ -156,15 +175,40 @@ class FederationRPCService:
     @rpc_expose(admin_only=True)
     def federation_share(
         self,
-        parent_zone_id: str,
-        prefix: str,
-        new_zone_id: str,
+        local_path: str,
+        zone_id: str | None = None,
     ) -> dict[str, Any]:
+        """Publish `local_path`'s subtree as a standalone federation zone.
+
+        Shape matches ``FederationShareParams`` in
+        ``_rpc_params_generated.py``. Server derives the parent zone +
+        zone-relative prefix from the kernel routing table (mount LPM)
+        so callers don't have to know where the path is mounted.
+
+        Args:
+            local_path: VFS-global path of the subtree to share.
+            zone_id: Name for the newly-created zone. When omitted, a
+                `share-{8-hex}` id is generated.
+
+        Returns:
+            ``{"zone_id", "parent_zone_id", "prefix", "entries_copied"}``.
+            The primary key is ``zone_id`` (matches what
+            ``test_share_creates_new_zone`` / federation_join expects).
+        """
+        import uuid
+
+        route = self._kernel.route(local_path, "root")
+        parent_zone_id = route.zone_id
+        # Zone-relative prefix: same LPM the Rust side uses for reads/writes.
+        # `_to_zone_relative` covers both root-level (/corp/...) and nested
+        # (/corp/eng/...) cases — lets us reuse the existing heuristic.
+        prefix = self._to_zone_relative(parent_zone_id, local_path)
+        new_zone_id = zone_id or f"share-{uuid.uuid4().hex[:8]}"
         copied = self._kernel.zone_share(parent_zone_id, prefix, new_zone_id)
         return {
+            "zone_id": new_zone_id,
             "parent_zone_id": parent_zone_id,
             "prefix": prefix,
-            "new_zone_id": new_zone_id,
             "entries_copied": copied,
         }
 

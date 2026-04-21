@@ -1016,6 +1016,8 @@ pub struct PyRustRouteResult {
     #[pyo3(get)]
     pub backend_path: String,
     #[pyo3(get)]
+    pub zone_id: String,
+    #[pyo3(get)]
     pub is_external: bool,
 }
 
@@ -1024,6 +1026,7 @@ impl From<RustRouteResult> for PyRustRouteResult {
         Self {
             mount_point: r.mount_point,
             backend_path: r.backend_path,
+            zone_id: r.zone_id,
             is_external: r.is_external,
         }
     }

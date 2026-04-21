@@ -15,16 +15,17 @@ use library::trigram::format::{
 use library::trigram::posting::{intersect, union, PostingList};
 use library::trigram::query::{build_trigram_query, TrigramQuery};
 use library::trigram::write_index;
+use lru::LruCache;
 use memmap2::Mmap;
-use parking_lot::RwLock;
+use parking_lot::Mutex;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use rayon::prelude::*;
 use roaring::RoaringBitmap;
 use simdutf8::basic::from_utf8 as simd_from_utf8;
-use std::collections::HashMap;
 use std::fs::File;
 use std::io::Write;
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -385,26 +386,42 @@ fn verify_file(
 // ---------------------------------------------------------------------------
 
 /// Global index cache: zone_path → reader.
-static INDEX_CACHE: std::sync::LazyLock<RwLock<HashMap<PathBuf, Arc<TrigramIndexReader>>>> =
-    std::sync::LazyLock::new(|| RwLock::new(HashMap::new()));
+///
+/// Bounded LRU (§ review fix #14). Previous `HashMap` grew forever — each
+/// entry pins a mmap + file handle, so long-lived processes touching many
+/// zones would eventually exhaust fds. Capacity picked to fit typical
+/// workloads (a few dozen active zones) while still being easy to tune.
+const TRIGRAM_CACHE_CAPACITY: usize = 64;
+
+static INDEX_CACHE: std::sync::LazyLock<Mutex<LruCache<PathBuf, Arc<TrigramIndexReader>>>> =
+    std::sync::LazyLock::new(|| {
+        Mutex::new(LruCache::new(
+            NonZeroUsize::new(TRIGRAM_CACHE_CAPACITY).unwrap(),
+        ))
+    });
 
 /// Get or open a cached index reader.
 fn get_cached_reader(path: &Path) -> Result<Arc<TrigramIndexReader>, TrigramError> {
-    // Fast path: read lock.
+    // Cheap lookup (LruCache::get is &mut, so a single Mutex is simpler
+    // than RwLock + two-phase lookup, and the critical section is tiny).
     {
-        let cache = INDEX_CACHE.read();
+        let mut cache = INDEX_CACHE.lock();
         if let Some(reader) = cache.get(path) {
             return Ok(Arc::clone(reader));
         }
     }
 
-    // Slow path: write lock, re-check to avoid TOCTOU race.
-    let mut cache = INDEX_CACHE.write();
-    if let Some(reader) = cache.get(path) {
-        return Ok(Arc::clone(reader));
-    }
+    // Slow path: open outside the lock (mmap + CRC verification can be
+    // expensive; holding the lock across it would serialize first-time
+    // access to distinct indices).
     let reader = Arc::new(TrigramIndexReader::open(path)?);
-    cache.insert(path.to_path_buf(), Arc::clone(&reader));
+
+    // Re-check under the lock to avoid a duplicate open racing in.
+    let mut cache = INDEX_CACHE.lock();
+    if let Some(existing) = cache.get(path) {
+        return Ok(Arc::clone(existing));
+    }
+    cache.put(path.to_path_buf(), Arc::clone(&reader));
     Ok(reader)
 }
 
@@ -415,32 +432,43 @@ fn get_cached_reader(path: &Path) -> Result<Arc<TrigramIndexReader>, TrigramErro
 /// Build a trigram index from a list of file paths and write to output_path.
 #[pyfunction]
 #[pyo3(signature = (file_paths, output_path))]
-pub fn build_trigram_index(file_paths: Vec<String>, output_path: &str) -> PyResult<()> {
-    let mut builder = TrigramIndexBuilder::new();
+pub fn build_trigram_index(
+    py: Python<'_>,
+    file_paths: Vec<String>,
+    output_path: &str,
+) -> PyResult<()> {
+    let output = output_path.to_string();
 
-    for path in &file_paths {
-        let content = match std::fs::read(path) {
-            Ok(c) => c,
-            Err(_) => continue, // Skip unreadable files.
-        };
-        builder.add_file(path, &content);
-    }
+    // File I/O and index construction can take seconds on large corpora;
+    // hold the GIL only for the final cache-invalidation step (§ review
+    // fix #15).
+    let build_result: Result<Vec<u8>, String> = py.detach(|| {
+        let mut builder = TrigramIndexBuilder::new();
+        for path in &file_paths {
+            let content = match std::fs::read(path) {
+                Ok(c) => c,
+                Err(_) => continue, // Skip unreadable files.
+            };
+            builder.add_file(path, &content);
+        }
+        write_index(&builder).map_err(|e| format!("Failed to build index: {e}"))
+    });
 
-    let bytes = write_index(&builder).map_err(|e| {
-        pyo3::exceptions::PyRuntimeError::new_err(format!("Failed to build index: {}", e))
-    })?;
+    let bytes = build_result.map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
 
-    let mut file = File::create(output_path).map_err(|e| {
-        pyo3::exceptions::PyIOError::new_err(format!("Failed to create index file: {}", e))
-    })?;
-    file.write_all(&bytes).map_err(|e| {
-        pyo3::exceptions::PyIOError::new_err(format!("Failed to write index: {}", e))
-    })?;
+    py.detach(|| -> Result<(), String> {
+        let mut file =
+            File::create(&output).map_err(|e| format!("Failed to create index file: {e}"))?;
+        file.write_all(&bytes)
+            .map_err(|e| format!("Failed to write index: {e}"))?;
+        Ok(())
+    })
+    .map_err(pyo3::exceptions::PyIOError::new_err)?;
 
     // Invalidate cache for this path.
     let path = PathBuf::from(output_path);
-    let mut cache = INDEX_CACHE.write();
-    cache.remove(&path);
+    let mut cache = INDEX_CACHE.lock();
+    let _ = cache.pop(&path);
 
     Ok(())
 }
@@ -452,30 +480,36 @@ pub fn build_trigram_index(file_paths: Vec<String>, output_path: &str) -> PyResu
 #[pyfunction]
 #[pyo3(signature = (entries, output_path))]
 pub fn build_trigram_index_from_entries(
+    py: Python<'_>,
     entries: Vec<(String, Vec<u8>)>,
     output_path: &str,
 ) -> PyResult<()> {
-    let mut builder = TrigramIndexBuilder::new();
+    let output = output_path.to_string();
 
-    for (path, content) in &entries {
-        builder.add_file(path, content);
-    }
+    // Index construction + disk write are done off the GIL (§ review fix #15).
+    let bytes: Vec<u8> = py
+        .detach(|| -> Result<Vec<u8>, String> {
+            let mut builder = TrigramIndexBuilder::new();
+            for (path, content) in &entries {
+                builder.add_file(path, content);
+            }
+            write_index(&builder).map_err(|e| format!("Failed to build index: {e}"))
+        })
+        .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
 
-    let bytes = write_index(&builder).map_err(|e| {
-        pyo3::exceptions::PyRuntimeError::new_err(format!("Failed to build index: {}", e))
-    })?;
-
-    let mut file = File::create(output_path).map_err(|e| {
-        pyo3::exceptions::PyIOError::new_err(format!("Failed to create index file: {}", e))
-    })?;
-    file.write_all(&bytes).map_err(|e| {
-        pyo3::exceptions::PyIOError::new_err(format!("Failed to write index: {}", e))
-    })?;
+    py.detach(|| -> Result<(), String> {
+        let mut file =
+            File::create(&output).map_err(|e| format!("Failed to create index file: {e}"))?;
+        file.write_all(&bytes)
+            .map_err(|e| format!("Failed to write index: {e}"))?;
+        Ok(())
+    })
+    .map_err(pyo3::exceptions::PyIOError::new_err)?;
 
     // Invalidate cache for this path.
     let path = PathBuf::from(output_path);
-    let mut cache = INDEX_CACHE.write();
-    cache.remove(&path);
+    let mut cache = INDEX_CACHE.lock();
+    let _ = cache.pop(&path);
 
     Ok(())
 }
@@ -569,7 +603,7 @@ pub fn trigram_index_stats<'py>(
 #[pyo3(signature = (index_path,))]
 pub fn invalidate_trigram_cache(index_path: &str) -> PyResult<()> {
     let path = PathBuf::from(index_path);
-    let mut cache = INDEX_CACHE.write();
-    cache.remove(&path);
+    let mut cache = INDEX_CACHE.lock();
+    let _ = cache.pop(&path);
     Ok(())
 }

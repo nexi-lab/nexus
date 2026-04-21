@@ -443,8 +443,10 @@ pub struct Kernel {
     zone_revisions: DashMap<String, Arc<ZoneRevisionEntry>>,
     // FileWatcher — inotify equivalent. Arc-shared with observer registry.
     file_watches: Arc<FileWatcher>,
-    // Agent registry — DashMap backing store (§10 B1)
-    pub(crate) agent_registry: crate::agent_registry::AgentRegistry,
+    // Agent registry — DashMap backing store (§10 B1).
+    // Held in an Arc so components like `AgentStatusResolver` can share
+    // ownership without relying on raw pointers / field address stability.
+    pub(crate) agent_registry: Arc<crate::agent_registry::AgentRegistry>,
     // Per-mount metastores — federation zones have independent redb instances.
     // Keyed by zone-canonical mount point (e.g. "/zone-beta/shared").
     // Syscalls check here first, then fall back to self.metastore (global).
@@ -483,7 +485,7 @@ impl Kernel {
             observers: Mutex::new(KernelObserverRegistry::new()),
             zone_revisions: DashMap::new(),
             file_watches: Arc::new(FileWatcher::new()),
-            agent_registry: crate::agent_registry::AgentRegistry::new(),
+            agent_registry: Arc::new(crate::agent_registry::AgentRegistry::new()),
             mount_metastores: DashMap::new(),
             pipe_manager: crate::pipe_manager::PipeManager::new(),
             stream_manager: Arc::new(crate::stream_manager::StreamManager::new()),

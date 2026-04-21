@@ -1765,12 +1765,15 @@ def _dispatch_adapter_bodies(traits: list[TraitDef]) -> list[str]:
             lines.append(f"    {cached_name}: String,")
         lines.append("}")
         lines.append("")
+        lines.append('#[cfg(feature = "py-hook-adapters")]')
         lines.append(f"unsafe impl Send for {adapter_name} {{}}")
+        lines.append('#[cfg(feature = "py-hook-adapters")]')
         lines.append(f"unsafe impl Sync for {adapter_name} {{}}")
 
         # Constructor (only for those with cached_name)
         if cached_name:
             lines.append("")
+            lines.append('#[cfg(feature = "py-hook-adapters")]')
             lines.append(f"impl {adapter_name} {{")
             lines.append("    pub(crate) fn new(py: Python<'_>, hook: Py<PyAny>) -> Self {")
             lines.append("        let name = hook")
@@ -1787,6 +1790,7 @@ def _dispatch_adapter_bodies(traits: list[TraitDef]) -> list[str]:
 
         # Trait impl
         lines.append("")
+        lines.append('#[cfg(feature = "py-hook-adapters")]')
         lines.append(f"impl {trait_name} for {adapter_name} {{")
         for method in trait.methods:
             method_lines = _gen_dispatch_method(trait_name, method)
@@ -1842,8 +1846,11 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "    CasLocalBackend, LocalConnectorBackend, ObjectStore, PathLocalBackend, StorageError,",
             "    WriteResult,",
             "};",
+            '#[cfg(feature = "py-hook-adapters")]',
             "use crate::dispatch::PathResolver;",
-            "use crate::hook_registry::{HookRegistry, InterceptHook};",
+            "use crate::hook_registry::HookRegistry;",
+            '#[cfg(feature = "py-hook-adapters")]',
+            "use crate::hook_registry::InterceptHook;",
             "use crate::kernel::{Kernel, KernelError, OperationContext};",
             "use crate::lock::VFSLockManager;",
             "use crate::metastore::{FileMetadata, MetastoreError};",
@@ -2583,6 +2590,25 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "        metastore_path: Option<&str>,",
             "        is_external: bool,",
             "    ) -> PyResult<()> {",
+            '        #[cfg(not(feature = "connectors"))]',
+            "        let _ = (",
+            "            openai_base_url,",
+            "            openai_api_key,",
+            "            openai_model,",
+            "            s3_bucket,",
+            "            s3_prefix,",
+            "            aws_region,",
+            "            aws_access_key,",
+            "            aws_secret_key,",
+            "            s3_endpoint,",
+            "            gcs_bucket,",
+            "            gcs_prefix,",
+            "            access_token,",
+            "            root_folder_id,",
+            "            bot_token,",
+            "            default_channel,",
+            "        );",
+            "",
             "        // Backend resolution: grpc_addr -> GrpcObjectStoreAdapter (zero GIL)",
             "        //                     local_root -> CasLocalBackend/PathLocalBackend/LocalConnectorBackend",
             "        //                     openai_* -> OpenAIBackend (§10 D3)",
@@ -2872,11 +2898,22 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "            Err(_) => false,",
             "        };",
             "",
-            "        let adapter = PyInterceptHookAdapter::new(py, hook.clone_ref(py));",
-            "        self.hooks",
-            "            .lock()",
-            "            .register(op, Box::new(adapter), hook, has_pre, is_async_post, name);",
-            "        Ok(())",
+            '        #[cfg(feature = "py-hook-adapters")]',
+            "        {",
+            "            let adapter = PyInterceptHookAdapter::new(py, hook.clone_ref(py));",
+            "            self.hooks",
+            "                .lock()",
+            "                .register(op, Box::new(adapter), hook, has_pre, is_async_post, name);",
+            "            Ok(())",
+            "        }",
+            "",
+            '        #[cfg(not(feature = "py-hook-adapters"))]',
+            "        {",
+            "            let _ = (hook, has_pre, is_async_post, name);",
+            "            Err(pyo3::exceptions::PyRuntimeError::new_err(",
+            "                \"register_hook requires feature 'py-hook-adapters'\",",
+            "            ))",
+            "        }",
             "    }",
             "",
             "    fn unregister_hook(&self, py: Python<'_>, op: &str, hook: &Bound<'_, PyAny>) -> bool {",

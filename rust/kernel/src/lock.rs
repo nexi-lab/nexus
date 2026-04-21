@@ -185,18 +185,11 @@ impl VFSLockManagerInner {
         // Blocking wait with Condvar — woken on every release().
         let deadline = start + Duration::from_millis(timeout_ms);
 
+        // Try-before-wait: if the lock became free between the fast-path
+        // attempt and entering this loop, succeed without burning a
+        // scheduler round trip (§ review fix #11).
         loop {
-            self.contention_count.fetch_add(1, Ordering::Relaxed);
-
             let mut state = self.state.lock();
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                self.timeout_count.fetch_add(1, Ordering::Relaxed);
-                return 0;
-            }
-
-            let wait_result = self.notify.wait_for(&mut state, remaining);
-
             if let Some(handle) =
                 Self::try_acquire_locked(&mut state, &self.next_handle, &norm_path, mode)
             {
@@ -206,7 +199,26 @@ impl VFSLockManagerInner {
                 return handle;
             }
 
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                self.timeout_count.fetch_add(1, Ordering::Relaxed);
+                return 0;
+            }
+
+            // Count one contended wait (not one per loop iteration).
+            self.contention_count.fetch_add(1, Ordering::Relaxed);
+            let wait_result = self.notify.wait_for(&mut state, remaining);
             if wait_result.timed_out() {
+                // Give the lock a final try — a release may have raced in
+                // while we were marked as timed out.
+                if let Some(handle) =
+                    Self::try_acquire_locked(&mut state, &self.next_handle, &norm_path, mode)
+                {
+                    let elapsed = start.elapsed().as_nanos() as u64;
+                    self.total_acquire_ns.fetch_add(elapsed, Ordering::Relaxed);
+                    self.acquire_count.fetch_add(1, Ordering::Relaxed);
+                    return handle;
+                }
                 self.timeout_count.fetch_add(1, Ordering::Relaxed);
                 return 0;
             }
@@ -215,7 +227,7 @@ impl VFSLockManagerInner {
 
     /// Release a previously acquired lock by handle (for Rust-internal callers).
     pub(crate) fn do_release(&self, handle: u64) -> bool {
-        let released = {
+        let wake_all = {
             let mut state = self.state.lock();
 
             let info = match state.handles.remove(&handle) {
@@ -240,15 +252,19 @@ impl VFSLockManagerInner {
                 }
             }
 
-            true
+            // Releasing a writer can unblock multiple readers, so broadcast.
+            // Releasing a reader usually frees at most one writer contender.
+            matches!(info.mode, LockMode::Write)
         };
 
-        if released {
+        if wake_all {
             self.notify.notify_all();
-            self.release_count.fetch_add(1, Ordering::Relaxed);
+        } else {
+            self.notify.notify_one();
         }
+        self.release_count.fetch_add(1, Ordering::Relaxed);
 
-        released
+        true
     }
 
     /// Check whether `path` in `mode` conflicts with any *ancestor* locks.
@@ -288,7 +304,16 @@ impl VFSLockManagerInner {
         upper.pop();
         upper.push('0');
 
-        for (_key, entry) in locks.range(prefix..upper) {
+        // `path == "/"` produces `prefix = "/"`, which makes the range
+        // `["/", "0")` include the root lock entry itself. Exclude it so
+        // the descendant check is strictly about descendants, not the path
+        // under consideration (§ review fix #12). For non-root paths the
+        // path itself is not a member of the prefix-sentinel range, so
+        // this exclusion is a no-op there.
+        for (key, entry) in locks.range(prefix..upper) {
+            if key == path {
+                continue;
+            }
             match mode {
                 LockMode::Read => {
                     if entry.writer.is_some() {

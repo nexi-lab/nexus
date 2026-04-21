@@ -127,7 +127,13 @@ fn compute_permission_interned_shared(
             let result = check_relation_with_usersets_interned_shared(
                 subject, permission, object, graph, namespaces, memo_cache, visited, depth,
             );
-            memo_cache.insert(memo_key, result);
+            // Cross-request shared memoization must not persist `false`:
+            // a cycle-specific visited set can produce a local false that is
+            // not globally valid for another traversal. Positive results are
+            // monotonic and safe to share across workers.
+            if result {
+                memo_cache.insert(memo_key, true);
+            }
             return result;
         }
     };
@@ -221,7 +227,10 @@ fn compute_permission_interned_shared(
         )
     };
 
-    memo_cache.insert(memo_key, result);
+    // See note above: cache only positive results in the shared map.
+    if result {
+        memo_cache.insert(memo_key, true);
+    }
     result
 }
 
@@ -255,6 +264,40 @@ fn parse_tuples_from_py(tuples: &Bound<PyList>) -> PyResult<Vec<ReBACTuple>> {
         .collect()
 }
 
+/// Convert one (obj_type, config_dict) pair into a `NamespaceConfig`,
+/// using the thread-local LRU to skip re-parsing identical JSON blobs.
+///
+/// Extracted from the two callers below so they don't diverge
+/// (§ review fix #26).
+fn namespace_config_from_py_entry(
+    py: Python<'_>,
+    obj_type: &str,
+    config_dict: &Bound<'_, PyDict>,
+) -> PyResult<NamespaceConfig> {
+    let json_module = py.import("json")?;
+    let config_json_py = json_module.call_method1("dumps", (config_dict,))?;
+    let config_json: String = config_json_py.extract()?;
+
+    let mut hasher = DefaultHasher::new();
+    obj_type.hash(&mut hasher);
+    config_json.hash(&mut hasher);
+    let cache_key = hasher.finish();
+
+    NAMESPACE_CONFIG_CACHE.with(|cache| {
+        let mut cache_ref = cache.borrow_mut();
+        if let Some((cached_type, cached_config)) = cache_ref.get(&cache_key) {
+            if cached_type == obj_type {
+                return Ok::<NamespaceConfig, pyo3::PyErr>(cached_config.clone());
+            }
+        }
+        let parsed: NamespaceConfig = serde_json::from_str(&config_json).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("JSON parse error: {}", e))
+        })?;
+        cache_ref.put(cache_key, (obj_type.to_string(), parsed.clone()));
+        Ok(parsed)
+    })
+}
+
 fn parse_namespace_configs_from_py(
     py: Python<'_>,
     namespace_configs: &Bound<PyDict>,
@@ -263,28 +306,7 @@ fn parse_namespace_configs_from_py(
     for (key, value) in namespace_configs.iter() {
         let obj_type: String = key.extract()?;
         let config_dict: Bound<'_, PyDict> = value.extract()?;
-        let json_module = py.import("json")?;
-        let config_json_py = json_module.call_method1("dumps", (config_dict,))?;
-        let config_json: String = config_json_py.extract()?;
-
-        let mut hasher = DefaultHasher::new();
-        obj_type.hash(&mut hasher);
-        config_json.hash(&mut hasher);
-        let cache_key = hasher.finish();
-
-        let config: NamespaceConfig = NAMESPACE_CONFIG_CACHE.with(|cache| {
-            let mut cache_ref = cache.borrow_mut();
-            if let Some((cached_type, cached_config)) = cache_ref.get(&cache_key) {
-                if cached_type == &obj_type {
-                    return Ok::<NamespaceConfig, pyo3::PyErr>(cached_config.clone());
-                }
-            }
-            let parsed: NamespaceConfig = serde_json::from_str(&config_json).map_err(|e| {
-                pyo3::exceptions::PyValueError::new_err(format!("JSON parse error: {}", e))
-            })?;
-            cache_ref.put(cache_key, (obj_type.clone(), parsed.clone()));
-            Ok(parsed)
-        })?;
+        let config = namespace_config_from_py_entry(py, &obj_type, &config_dict)?;
         namespaces.insert(obj_type, config);
     }
     Ok(namespaces)
@@ -315,25 +337,45 @@ pub fn check_permission_bitmap(user_bitmap_bytes: &[u8], resource_bitmap_bytes: 
 }
 
 /// Batch permission check: intersect user bitmap with each resource bitmap.
-/// Returns Vec<bool> — one result per resource.
+/// Returns `Vec<bool>` — one result per resource.
+///
+/// § review fix #25: releases the GIL and parallelizes the
+/// deserialize+intersect work above a threshold. For small batches the
+/// sequential path avoids rayon's scheduling overhead.
 #[pyfunction]
 pub fn check_permission_bitmap_batch(
-    user_bitmap_bytes: &[u8],
+    py: Python<'_>,
+    user_bitmap_bytes: Vec<u8>,
     resource_bitmaps: Vec<Vec<u8>>,
 ) -> Vec<bool> {
     use roaring::RoaringBitmap;
-    let user = match RoaringBitmap::deserialize_from(user_bitmap_bytes) {
-        Ok(bm) => bm,
-        Err(_) => return vec![false; resource_bitmaps.len()],
-    };
-    resource_bitmaps
-        .iter()
-        .map(|rb| {
-            RoaringBitmap::deserialize_from(rb.as_slice())
-                .map(|res| !(&user & &res).is_empty())
-                .unwrap_or(false)
-        })
-        .collect()
+    const PARALLEL_THRESHOLD: usize = 16;
+
+    py.detach(move || {
+        let user = match RoaringBitmap::deserialize_from(user_bitmap_bytes.as_slice()) {
+            Ok(bm) => bm,
+            Err(_) => return vec![false; resource_bitmaps.len()],
+        };
+        if resource_bitmaps.len() >= PARALLEL_THRESHOLD {
+            resource_bitmaps
+                .par_iter()
+                .map(|rb| {
+                    RoaringBitmap::deserialize_from(rb.as_slice())
+                        .map(|res| !(&user & &res).is_empty())
+                        .unwrap_or(false)
+                })
+                .collect()
+        } else {
+            resource_bitmaps
+                .iter()
+                .map(|rb| {
+                    RoaringBitmap::deserialize_from(rb.as_slice())
+                        .map(|res| !(&user & &res).is_empty())
+                        .unwrap_or(false)
+                })
+                .collect()
+        }
+    })
 }
 
 // ============================================================================
@@ -425,33 +467,13 @@ pub fn compute_permissions_bulk<'py>(
         InternedGraph::from_tuples(&interned_tuples, &mut interner)
     };
 
+    // § review fix #26: share the parsing + cache path with
+    // `parse_namespace_configs_from_py` via `namespace_config_from_py_entry`.
     let mut interned_namespaces: AHashMap<Sym, InternedNamespaceConfig> = AHashMap::new();
     for (key, value) in namespace_configs.iter() {
         let obj_type: String = key.extract()?;
         let config_dict: Bound<'_, PyDict> = value.extract()?;
-        let json_module = py.import("json")?;
-        let config_json_py = json_module.call_method1("dumps", (config_dict,))?;
-        let config_json: String = config_json_py.extract()?;
-
-        let mut hasher = DefaultHasher::new();
-        obj_type.hash(&mut hasher);
-        config_json.hash(&mut hasher);
-        let cache_key = hasher.finish();
-
-        let config: NamespaceConfig = NAMESPACE_CONFIG_CACHE.with(|cache| {
-            let mut cache_ref = cache.borrow_mut();
-            if let Some((cached_type, cached_config)) = cache_ref.get(&cache_key) {
-                if cached_type == &obj_type {
-                    return Ok::<NamespaceConfig, pyo3::PyErr>(cached_config.clone());
-                }
-            }
-            let parsed: NamespaceConfig = serde_json::from_str(&config_json).map_err(|e| {
-                pyo3::exceptions::PyValueError::new_err(format!("JSON parse error: {}", e))
-            })?;
-            cache_ref.put(cache_key, (obj_type.clone(), parsed.clone()));
-            Ok(parsed)
-        })?;
-
+        let config = namespace_config_from_py_entry(py, &obj_type, &config_dict)?;
         let interned_config = InternedNamespaceConfig::from_config(&config, &mut interner);
         interned_namespaces.insert(interner.get_or_intern(&obj_type), interned_config);
     }

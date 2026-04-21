@@ -160,8 +160,11 @@ pub fn validate_path(path: &str, allow_root: bool) -> PyResult<String> {
         }
     }
 
-    // Parent directory traversal
-    if result.contains("..") {
+    // Parent directory traversal. Check segment-by-segment instead of a
+    // substring match — `..b.txt` or `/a/..b` are legitimate file names
+    // and must not be rejected (§ review fix #22). Only whole-component
+    // `.` / `..` segments are traversal.
+    if result.split('/').any(|seg| seg == ".." || seg == ".") {
         return Err(PyValueError::new_err("Path contains '..' segments"));
     }
 

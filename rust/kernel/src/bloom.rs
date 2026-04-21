@@ -5,9 +5,13 @@ use pyo3::prelude::*;
 use std::sync::RwLock;
 
 /// Bloom filter for fast cache miss detection.
+///
+/// §review fix #17: store the filter over `str` (`Bloom<str>`) so `set`/
+/// `check` accept a borrowed `&str` directly; previously we allocated a
+/// `String` per call to match the `Bloom<String>` generic.
 #[pyclass]
 pub struct BloomFilter {
-    bloom: RwLock<Bloom<String>>,
+    bloom: RwLock<Bloom<str>>,
     capacity: usize,
     fp_rate: f64,
 }
@@ -33,25 +37,33 @@ impl BloomFilter {
     }
 
     fn add(&self, key: &str) -> PyResult<()> {
-        self.bloom.write().map_err(lock_err)?.set(&key.to_string());
+        self.bloom.write().map_err(lock_err)?.set(key);
         Ok(())
     }
 
-    fn add_bulk(&self, keys: Vec<String>) -> PyResult<()> {
-        let mut bloom = self.bloom.write().map_err(lock_err)?;
-        for key in keys {
-            bloom.set(&key);
-        }
-        Ok(())
+    fn add_bulk(&self, py: Python<'_>, keys: Vec<String>) -> PyResult<()> {
+        // Take the lock *inside* `py.detach` — std's RwLockWriteGuard is not
+        // Send, so the closure must acquire and release within the same
+        // thread. Holding the GIL across bloom hashing of a large batch is
+        // what we want to avoid here.
+        py.detach(|| -> PyResult<()> {
+            let mut bloom = self.bloom.write().map_err(lock_err)?;
+            for key in &keys {
+                bloom.set(key.as_str());
+            }
+            Ok(())
+        })
     }
 
     fn might_exist(&self, key: &str) -> PyResult<bool> {
-        Ok(self.bloom.read().map_err(lock_err)?.check(&key.to_string()))
+        Ok(self.bloom.read().map_err(lock_err)?.check(key))
     }
 
-    fn check_bulk(&self, keys: Vec<String>) -> PyResult<Vec<bool>> {
-        let bloom = self.bloom.read().map_err(lock_err)?;
-        Ok(keys.iter().map(|k| bloom.check(k)).collect())
+    fn check_bulk(&self, py: Python<'_>, keys: Vec<String>) -> PyResult<Vec<bool>> {
+        py.detach(|| -> PyResult<Vec<bool>> {
+            let bloom = self.bloom.read().map_err(lock_err)?;
+            Ok(keys.iter().map(|k| bloom.check(k.as_str())).collect())
+        })
     }
 
     fn clear(&self) -> PyResult<()> {

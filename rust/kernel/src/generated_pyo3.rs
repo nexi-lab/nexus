@@ -23,8 +23,11 @@ use crate::backend::{
     CasLocalBackend, LocalConnectorBackend, ObjectStore, PathLocalBackend, StorageError,
     WriteResult,
 };
+#[cfg(feature = "py-hook-adapters")]
 use crate::dispatch::PathResolver;
-use crate::hook_registry::{HookRegistry, InterceptHook};
+use crate::hook_registry::HookRegistry;
+#[cfg(feature = "py-hook-adapters")]
+use crate::hook_registry::InterceptHook;
 use crate::kernel::{Kernel, KernelError, OperationContext};
 use crate::lock::VFSLockManager;
 use crate::metastore::{FileMetadata, MetastoreError};
@@ -491,9 +494,12 @@ pub(crate) struct PyInterceptHookAdapter {
     hook_name: String,
 }
 
+#[cfg(feature = "py-hook-adapters")]
 unsafe impl Send for PyInterceptHookAdapter {}
+#[cfg(feature = "py-hook-adapters")]
 unsafe impl Sync for PyInterceptHookAdapter {}
 
+#[cfg(feature = "py-hook-adapters")]
 impl PyInterceptHookAdapter {
     pub(crate) fn new(py: Python<'_>, hook: Py<PyAny>) -> Self {
         let name = hook
@@ -508,6 +514,7 @@ impl PyInterceptHookAdapter {
     }
 }
 
+#[cfg(feature = "py-hook-adapters")]
 impl InterceptHook for PyInterceptHookAdapter {
     fn name(&self) -> &str {
         &self.hook_name
@@ -712,9 +719,12 @@ pub(crate) struct PyPathResolverAdapter {
     inner: Py<PyAny>,
 }
 
+#[cfg(feature = "py-hook-adapters")]
 unsafe impl Send for PyPathResolverAdapter {}
+#[cfg(feature = "py-hook-adapters")]
 unsafe impl Sync for PyPathResolverAdapter {}
 
+#[cfg(feature = "py-hook-adapters")]
 impl PathResolver for PyPathResolverAdapter {
     fn try_read(&self, path: &str) -> Option<Vec<u8>> {
         Python::attach(|py| {
@@ -1160,6 +1170,25 @@ impl PyKernel {
         metastore_path: Option<&str>,
         is_external: bool,
     ) -> PyResult<()> {
+        #[cfg(not(feature = "connectors"))]
+        let _ = (
+            openai_base_url,
+            openai_api_key,
+            openai_model,
+            s3_bucket,
+            s3_prefix,
+            aws_region,
+            aws_access_key,
+            aws_secret_key,
+            s3_endpoint,
+            gcs_bucket,
+            gcs_prefix,
+            access_token,
+            root_folder_id,
+            bot_token,
+            default_channel,
+        );
+
         // Backend resolution: grpc_addr -> GrpcObjectStoreAdapter (zero GIL)
         //                     local_root -> CasLocalBackend/PathLocalBackend/LocalConnectorBackend
         //                     openai_* -> OpenAIBackend (§10 D3)
@@ -1498,11 +1527,22 @@ impl PyKernel {
             Err(_) => false,
         };
 
-        let adapter = PyInterceptHookAdapter::new(py, hook.clone_ref(py));
-        self.hooks
-            .lock()
-            .register(op, Box::new(adapter), hook, has_pre, is_async_post, name);
-        Ok(())
+        #[cfg(feature = "py-hook-adapters")]
+        {
+            let adapter = PyInterceptHookAdapter::new(py, hook.clone_ref(py));
+            self.hooks
+                .lock()
+                .register(op, Box::new(adapter), hook, has_pre, is_async_post, name);
+            Ok(())
+        }
+
+        #[cfg(not(feature = "py-hook-adapters"))]
+        {
+            let _ = (hook, has_pre, is_async_post, name);
+            Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "register_hook requires feature 'py-hook-adapters'",
+            ))
+        }
     }
 
     fn unregister_hook(&self, py: Python<'_>, op: &str, hook: &Bound<'_, PyAny>) -> bool {

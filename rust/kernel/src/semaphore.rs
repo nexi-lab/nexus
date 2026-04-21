@@ -102,7 +102,10 @@ impl VFSSemaphore {
         ttl_ms: u64,
     ) -> Result<Option<String>, String> {
         let now_ns = monotonic_ns();
-        let expires_at_ns = now_ns + ttl_ms * 1_000_000;
+        // Saturating arithmetic so callers passing very large TTLs (or
+        // `u64::MAX` for "effectively forever") do not wrap past 0 and
+        // make the holder appear already expired (§ review fix #21).
+        let expires_at_ns = ttl_ms.saturating_mul(1_000_000).saturating_add(now_ns);
 
         let entry = state.semaphores.get_mut(name);
 
@@ -217,11 +220,23 @@ impl VFSSemaphore {
                 return Ok(None);
             }
 
-            // Blocking wait with Condvar
+            // Blocking wait with Condvar. Try-before-wait: a release may
+            // have raced in between the fast-path attempt above and us
+            // acquiring the mutex; detect that before sleeping (§ review
+            // fix #11).
             let deadline = Instant::now() + Duration::from_millis(timeout_ms);
 
             loop {
                 let mut state = self.state.lock();
+                match Self::try_acquire_locked(&mut state, &name, max_holders, ttl_ms) {
+                    Ok(Some(holder_id)) => {
+                        self.acquire_count.fetch_add(1, Ordering::Relaxed);
+                        return Ok(Some(holder_id));
+                    }
+                    Ok(None) => {}
+                    Err(msg) => return Err(msg),
+                }
+
                 let remaining = deadline.saturating_duration_since(Instant::now());
                 if remaining.is_zero() {
                     self.timeout_count.fetch_add(1, Ordering::Relaxed);
@@ -229,17 +244,16 @@ impl VFSSemaphore {
                 }
 
                 let wait_result = self.notify.wait_for(&mut state, remaining);
-
-                match Self::try_acquire_locked(&mut state, &name, max_holders, ttl_ms) {
-                    Ok(Some(holder_id)) => {
-                        self.acquire_count.fetch_add(1, Ordering::Relaxed);
-                        return Ok(Some(holder_id));
-                    }
-                    Ok(None) => {} // still full
-                    Err(msg) => return Err(msg),
-                }
-
                 if wait_result.timed_out() {
+                    // Final try after timeout (a release may race in).
+                    match Self::try_acquire_locked(&mut state, &name, max_holders, ttl_ms) {
+                        Ok(Some(holder_id)) => {
+                            self.acquire_count.fetch_add(1, Ordering::Relaxed);
+                            return Ok(Some(holder_id));
+                        }
+                        Ok(None) => {}
+                        Err(msg) => return Err(msg),
+                    }
                     self.timeout_count.fetch_add(1, Ordering::Relaxed);
                     return Ok(None);
                 }
@@ -274,7 +288,9 @@ impl VFSSemaphore {
         };
 
         if released {
-            self.notify.notify_all();
+            // One release frees one slot, so wake a single waiter to avoid a
+            // thundering-herd of futile wakeups under contention.
+            self.notify.notify_one();
             self.release_count.fetch_add(1, Ordering::Relaxed);
         }
 
@@ -294,7 +310,8 @@ impl VFSSemaphore {
 
         match entry.holders.get_mut(holder_id) {
             Some(holder) => {
-                holder.expires_at_ns = now_ns + ttl_ms * 1_000_000;
+                // Saturating arithmetic (§ review fix #21).
+                holder.expires_at_ns = ttl_ms.saturating_mul(1_000_000).saturating_add(now_ns);
                 true
             }
             None => false,

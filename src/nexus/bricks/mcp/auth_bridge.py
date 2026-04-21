@@ -46,43 +46,87 @@ def op_context_to_auth_dict(op_context: Any) -> dict[str, Any]:
 def authenticate_api_key(auth_provider: Any, api_key: str) -> Any:
     """Call ``auth_provider.authenticate(api_key)`` from sync context.
 
-    ``authenticate()`` is always async in the Nexus auth provider
-    contract.  This helper handles the async-to-sync bridge regardless
-    of whether an event loop is already running (MCP grep is async,
-    MCP glob is sync).
-
-    Returns the ``AuthResult`` on success, ``None`` on any failure.
+    Uses ``AuthIdentityCache`` (TTL 60s) to avoid the 10s async→sync
+    bridge on every MCP tool call. Only positive results are cached.
     """
-    try:
-        coro = auth_provider.authenticate(api_key)
-    except Exception:
-        logger.warning(
-            "auth_provider.authenticate() raised synchronously; "
-            "falling through to NexusFS-based identity resolution.",
-            exc_info=True,
+    from nexus.bricks.mcp.auth_cache import (
+        ResolvedIdentity,
+        get_auth_identity_cache,
+        hash_api_key,
+    )
+
+    cache = get_auth_identity_cache()
+    key_hash = hash_api_key(api_key)
+
+    def _resolve() -> Any:
+        try:
+            coro = auth_provider.authenticate(api_key)
+        except Exception:
+            logger.warning(
+                "auth_provider.authenticate() raised synchronously; "
+                "falling through to NexusFS-based identity resolution.",
+                exc_info=True,
+            )
+            return None
+
+        if not inspect.isawaitable(coro):
+            return coro
+
+        try:
+            from collections.abc import Coroutine as CoroutineABC
+            from typing import cast
+
+            from nexus.lib.sync_bridge import run_sync
+
+            return run_sync(cast(CoroutineABC[Any, Any, Any], coro), timeout=10.0)
+        except Exception:
+            logger.warning(
+                "Failed to authenticate per-request API key via auth_provider; "
+                "falling through to NexusFS-based identity resolution.",
+                exc_info=True,
+            )
+            return None
+
+    # Fast path: cache hit (via get_or_resolve to hold lock across resolve).
+    from types import SimpleNamespace
+
+    def _resolve_and_cache() -> ResolvedIdentity | None:
+        auth_result = _resolve()
+        if auth_result is None:
+            return None
+        subject_id = getattr(auth_result, "subject_id", None) or getattr(
+            auth_result, "user_id", None
         )
+        zone_id = getattr(auth_result, "zone_id", None)
+        is_admin = bool(getattr(auth_result, "is_admin", False))
+        # Default authenticated=True when absent: a non-None return from the provider
+        # implies success (matches original fail-closed behavior where the check was implicit).
+        authenticated = bool(getattr(auth_result, "authenticated", True))
+        if not authenticated or not subject_id or not zone_id:
+            return None
+        return ResolvedIdentity(
+            subject_id=subject_id,
+            zone_id=zone_id,
+            is_admin=is_admin,
+            tier="premium" if is_admin else "authenticated",
+            subject_type=getattr(auth_result, "subject_type", None) or "user",
+            agent_generation=getattr(auth_result, "agent_generation", None),
+            inherit_permissions=getattr(auth_result, "inherit_permissions", None),
+        )
+
+    resolved = cache.get_or_resolve(key_hash, _resolve_and_cache)
+    if resolved is None:
         return None
 
-    # If not actually a coroutine (mock / sync provider), return directly.
-    if not inspect.isawaitable(coro):
-        return coro
-
-    # Use the repo's shared sync bridge which handles event-loop
-    # detection, timeout, and clean thread management (#3731 R5).
-    try:
-        from collections.abc import Coroutine as CoroutineABC
-        from typing import cast
-
-        from nexus.lib.sync_bridge import run_sync
-
-        return run_sync(cast(CoroutineABC[Any, Any, Any], coro), timeout=10.0)
-    except Exception:
-        logger.warning(
-            "Failed to authenticate per-request API key via auth_provider; "
-            "falling through to NexusFS-based identity resolution.",
-            exc_info=True,
-        )
-        return None
+    return SimpleNamespace(
+        authenticated=True,
+        subject_type=resolved.subject_type,
+        subject_id=resolved.subject_id,
+        zone_id=resolved.zone_id,
+        is_admin=resolved.is_admin,
+        agent_generation=resolved.agent_generation,
+        inherit_permissions=resolved.inherit_permissions,
+    )
 
 
 def resolve_mcp_operation_context(

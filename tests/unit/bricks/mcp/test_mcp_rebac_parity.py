@@ -110,6 +110,16 @@ class TestOpContextToAuthDict:
 class TestAuthenticateApiKey:
     """Verify the async-to-sync bridge for auth provider."""
 
+    def setup_method(self):
+        from nexus.bricks.mcp import auth_cache
+
+        auth_cache._reset_singleton_for_tests()
+
+    def teardown_method(self):
+        from nexus.bricks.mcp import auth_cache
+
+        auth_cache._reset_singleton_for_tests()
+
     def test_sync_provider_returns_directly(self):
         """Non-coroutine return value should be returned as-is."""
         provider = Mock()

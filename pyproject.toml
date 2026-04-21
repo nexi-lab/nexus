@@ -67,10 +67,10 @@ dependencies = [
     "aiosqlite>=0.20.0", # SQLite driver (async)
     # Caching
     "cachetools>=6.2.2",
-    "cachebox>=4.0.0",  # Rust-backed TTLCache via PyO3 (Issue #3192)
-    "fastbloom-rs>=0.5.0",  # Rust Bloom filter for Tiger cache pre-gate (Issue #3192)
+    "cachebox>=4.0.0", # Rust-backed TTLCache via PyO3 (Issue #3192)
+    "fastbloom-rs>=0.5.0", # Rust Bloom filter for Tiger cache pre-gate (Issue #3192)
     "redis>=7.0.0", # Redis/Dragonfly client (async support)
-    "nats-py>=2.9.0",  # NATS JetStream event bus (Issue #1331)
+    "nats-py>=2.9.0", # NATS JetStream event bus (Issue #1331)
     # Authentication
     "authlib>=1.6.5", # JWT and OAuth support for OIDC auth
     "bcrypt>=4.0.0", # Password hashing for local auth
@@ -135,6 +135,8 @@ dependencies = [
     "networkx>=3.2",
     # Governance: sparse matrices for EigenTrust (Issue #2129)
     "scipy>=1.11.0",
+    "pytest-xdist>=3.8.0",
+    "types-cachetools>=6.2.0.20250827",
 ]
 
 [project.optional-dependencies]

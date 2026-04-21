@@ -2171,12 +2171,17 @@ async def _async_main() -> None:
 
     mcp = await create_mcp_server(nx=nx, remote_url=remote_url, api_key=api_key)
 
-    # Add API key middleware for HTTP transports
-    # Note: We add it to the underlying Starlette app, not FastMCP's middleware system
-    # because FastMCP's middleware works with MCP messages, not HTTP requests
+    # Middleware chain for HTTP transports (#3779).
+    # Order (outermost to innermost, applied via Starlette's reverse-registration):
+    #   1. RateLimit — enforce per-token quotas before work is done
+    #   2. AuditLog  — wrap every request with structured logging
+    #   3. APIKey    — set `_request_api_key` contextvar for tool handlers
     if transport in ["http", "sse"]:
         try:
             from starlette.middleware.base import BaseHTTPMiddleware
+
+            from nexus.bricks.mcp.middleware_audit import MCPAuditLogMiddleware
+            from nexus.bricks.mcp.middleware_ratelimit import install_rate_limit
 
             class APIKeyMiddleware(BaseHTTPMiddleware):
                 """Extract API key from HTTP headers and set in context."""
@@ -2193,17 +2198,19 @@ async def _async_main() -> None:
                         if token:
                             reset_request_api_key(token)
 
-            # Add middleware to the underlying Starlette app
-            # FastMCP's http_app is a method that returns the Starlette application
             if hasattr(mcp, "http_app"):
                 app = mcp.http_app()
+                # Innermost first: APIKey sets contextvar before tool dispatch.
                 app.add_middleware(APIKeyMiddleware)
-        except (ImportError, Exception) as e:
-            # If middleware addition fails, log but don't crash
+                # Middle: audit sees the final response status.
+                app.add_middleware(MCPAuditLogMiddleware)
+                # Outermost: rate-limit short-circuits before any work.
+                install_rate_limit(app)
+        except Exception as e:
             import logging
 
-            logger = logging.getLogger(__name__)
-            logger.warning(f"Failed to add API key middleware: {e}")
+            logger_ = logging.getLogger(__name__)
+            logger_.warning("Failed to add MCP HTTP middleware: %s", e)
 
     # Run with selected transport
     if transport == "stdio":

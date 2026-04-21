@@ -503,12 +503,25 @@ class SearchService:
             path = path + "/"
         list_prefix = path if path != "/" else ""
 
-        # Zone-scope the list prefix when called from internal methods (e.g., glob)
-        # that bypass the RPC layer's _scope_params_for_zone path prefixing.
-        if list_zone_id and list_zone_id != ROOT_ZONE_ID:
-            zone_scope = f"/zone/{list_zone_id}"
-            if list_prefix and not list_prefix.startswith(zone_scope):
-                list_prefix = f"{zone_scope}{list_prefix}"
+        # Issue #3779 follow-up: in standalone mode, files are stored flat
+        # (``/marker.txt``) with zone_id as a metadata column — NOT under
+        # ``/zone/<id>/`` in the key. The RPC layer's
+        # ``scope_params_for_zone`` prefixes incoming paths with
+        # ``/zone/<id>/`` anyway (for federation mode). Strip that prefix
+        # here when the backing store is not zone-partitioned so the
+        # metastore query finds the flat-stored entries; the zone-column
+        # post-filter below enforces isolation.
+        # list_prefix is either "" or ends with "/" (set above), so only the
+        # trailing-slash case can match.
+        _engine_zone_id: str | None = getattr(self.metadata, "_zone_id", None)
+        _standalone_flat_paths = _engine_zone_id is None
+        if (
+            _standalone_flat_paths
+            and list_zone_id
+            and list_zone_id != ROOT_ZONE_ID
+            and list_prefix.startswith(f"/zone/{list_zone_id}/")
+        ):
+            list_prefix = list_prefix[len(f"/zone/{list_zone_id}") :]
 
         # OPTIMIZATION: For non-recursive, try sparse directory index + Tiger bitmap
         _use_fast_path = False
@@ -545,6 +558,21 @@ class SearchService:
             )
             sample_paths = [m.path for m in all_files[:5]]
             logger.info(f"[LIST-DEBUG] FALLBACK all_files sample: {sample_paths}")
+
+        # Issue #3779 follow-up: when the caller is in a specific zone, drop
+        # rows whose zone_id column doesn't match. The metastore is shared
+        # across zones (each row carries a zone_id) and filtering here is
+        # the cheapest place to enforce isolation without changing the
+        # engine-level list API. Admins and root-zone callers see everything;
+        # cross-zone shared files are re-added below via
+        # _get_cross_zone_shared_paths.
+        _is_admin_caller = bool(getattr(context, "is_admin", False)) if context else False
+        if list_zone_id and list_zone_id != ROOT_ZONE_ID and not _is_admin_caller:
+            all_files = [
+                m
+                for m in all_files
+                if (getattr(m, "zone_id", None) or ROOT_ZONE_ID) == list_zone_id
+            ]
 
         # Issue #904: Fetch cross-zone shared files
         if list_zone_id and subject_type and subject_id:
@@ -1290,9 +1318,17 @@ class SearchService:
                     _accessible_int_ids = None
 
         _meta_start = _time.time()
+        # Issue #3779 follow-up: when the backing store is not zone-scoped
+        # (standalone/embedded metastore has self._zone_id=None), passing a
+        # non-root zone_id raises in RaftMetadataStore._list_raw. In that
+        # case we fetch everything and rely on the service-layer zone
+        # post-filter (applied by list()). Pass zone_id through only when
+        # the store is already zone-partitioned.
+        _engine_zone_id: str | None = getattr(self.metadata, "_zone_id", None)
+        _metadata_zone_kwarg = list_zone_id if _engine_zone_id else None
         all_files = self.metadata.list(
             list_prefix,
-            zone_id=list_zone_id,
+            zone_id=_metadata_zone_kwarg,
         )
         logger.info(
             f"[LIST-TIMING] metadata.list(): {(_time.time() - _meta_start) * 1000:.1f}ms, "
@@ -1825,6 +1861,22 @@ class SearchService:
         if path and path != "/":
             path = self._validate_path(path)
 
+        # Issue #3779 follow-up: when the caller's zone has been applied by
+        # the RPC layer's scope_params_for_zone, the incoming path is
+        # ``/zone/<id>/...`` even though files are stored flat in standalone
+        # mode. Strip that prefix here so pattern assembly and list() see
+        # the flat path universe; the zone-column post-filter in list()
+        # enforces isolation.
+        _engine_zone_id: str | None = getattr(self.metadata, "_zone_id", None)
+        if _engine_zone_id is None and context is not None:
+            _caller_zone = getattr(context, "zone_id", None)
+            if _caller_zone and _caller_zone != ROOT_ZONE_ID and isinstance(path, str):
+                _zone_prefix = f"/zone/{_caller_zone}"
+                if path == _zone_prefix or path == f"{_zone_prefix}/":
+                    path = "/"
+                elif path.startswith(f"{_zone_prefix}/"):
+                    path = path[len(_zone_prefix) :]
+
         import time
 
         glob_start = time.time()
@@ -1910,9 +1962,15 @@ class SearchService:
             matches = self._glob_regex_match(full_pattern, accessible_files)
 
         if strategy == GlobStrategy.FNMATCH_SIMPLE and not matches:
+            # Strip leading "/" from BOTH sides so absolute patterns like
+            # "/marker-*.txt" match absolute paths like "/marker-foo.txt".
+            # Previously only the path lost its leading slash, which made
+            # fnmatch miss every absolute pattern when the Rust bulk matcher
+            # fell back to this branch.
+            pattern_for_match = full_pattern[1:] if full_pattern.startswith("/") else full_pattern
             for file_path in accessible_files:
                 path_for_match = file_path[1:] if file_path.startswith("/") else file_path
-                if fnmatch.fnmatch(path_for_match, full_pattern):
+                if fnmatch.fnmatch(path_for_match, pattern_for_match):
                     matches.append(file_path)
 
         logger.debug(

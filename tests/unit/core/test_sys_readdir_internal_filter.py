@@ -145,3 +145,128 @@ class TestSysReaddirInternalFilter:
         result = fs.sys_readdir("/workspace/demo", recursive=False, details=False)
 
         assert len(result) == 2
+
+
+# ---------------------------------------------------------------------------
+# sys_readdir zone-column filter (Issue #3779 follow-up)
+# ---------------------------------------------------------------------------
+
+
+class _FakeCtx:
+    """Minimal stand-in for OperationContext with only the fields the filter reads."""
+
+    def __init__(self, zone_id: str | None, is_admin: bool = False) -> None:
+        self.zone_id = zone_id
+        self.is_admin = is_admin
+
+
+class TestSysReaddirZoneFilter:
+    """sys_readdir drops rows whose zone_id column doesn't match the caller."""
+
+    @pytest.mark.asyncio
+    async def test_own_zone_rows_kept(self) -> None:
+        fs = _build_fs(
+            [
+                _FakeMeta(path="/a.txt", zone_id="zone-a"),
+                _FakeMeta(path="/b.txt", zone_id="zone-b"),
+            ]
+        )
+        result = fs.sys_readdir(
+            "/", recursive=False, details=False, context=_FakeCtx(zone_id="zone-a")
+        )
+        assert result == ["/a.txt"]
+
+    @pytest.mark.asyncio
+    async def test_sibling_zone_rows_dropped(self) -> None:
+        fs = _build_fs(
+            [
+                _FakeMeta(path="/a.txt", zone_id="zone-a"),
+                _FakeMeta(path="/b.txt", zone_id="zone-b"),
+                _FakeMeta(path="/c.txt", zone_id="zone-c"),
+            ]
+        )
+        result = fs.sys_readdir(
+            "/", recursive=False, details=False, context=_FakeCtx(zone_id="zone-b")
+        )
+        assert result == ["/b.txt"]
+
+    @pytest.mark.asyncio
+    async def test_admin_sees_all_zones(self) -> None:
+        fs = _build_fs(
+            [
+                _FakeMeta(path="/a.txt", zone_id="zone-a"),
+                _FakeMeta(path="/b.txt", zone_id="zone-b"),
+            ]
+        )
+        result = fs.sys_readdir(
+            "/",
+            recursive=False,
+            details=False,
+            context=_FakeCtx(zone_id="zone-a", is_admin=True),
+        )
+        assert sorted(result) == ["/a.txt", "/b.txt"]
+
+    @pytest.mark.asyncio
+    async def test_root_zone_caller_sees_all(self) -> None:
+        from nexus.contracts.constants import ROOT_ZONE_ID
+
+        fs = _build_fs(
+            [
+                _FakeMeta(path="/a.txt", zone_id="zone-a"),
+                _FakeMeta(path="/b.txt", zone_id=ROOT_ZONE_ID),
+            ]
+        )
+        result = fs.sys_readdir(
+            "/", recursive=False, details=False, context=_FakeCtx(zone_id=ROOT_ZONE_ID)
+        )
+        assert sorted(result) == ["/a.txt", "/b.txt"]
+
+    @pytest.mark.asyncio
+    async def test_paginated_applies_zone_filter(self) -> None:
+        fs = _build_fs(
+            [
+                _FakeMeta(path="/a.txt", zone_id="zone-a"),
+                _FakeMeta(path="/b.txt", zone_id="zone-b"),
+                _FakeMeta(path="/c.txt", zone_id="zone-a"),
+            ]
+        )
+        result = fs.sys_readdir(
+            "/",
+            recursive=False,
+            details=False,
+            limit=10,
+            context=_FakeCtx(zone_id="zone-a"),
+        )
+        assert sorted(result.items) == ["/a.txt", "/c.txt"]
+
+    @pytest.mark.asyncio
+    async def test_null_entry_zone_dropped_for_non_root_caller(self) -> None:
+        """Entry with zone_id=None is treated as ROOT; a non-ROOT caller must not see it."""
+        fs = _build_fs(
+            [
+                _FakeMeta(path="/a.txt", zone_id="zone-a"),
+                _FakeMeta(path="/b.txt", zone_id=None),  # legacy/root row
+            ]
+        )
+        result = fs.sys_readdir(
+            "/", recursive=False, details=False, context=_FakeCtx(zone_id="zone-a")
+        )
+        # zone-a caller keeps its own row, drops the null (ROOT-equivalent) row.
+        assert result == ["/a.txt"]
+
+    @pytest.mark.asyncio
+    async def test_dict_context_applies_zone_filter(self) -> None:
+        """Dict-shaped context (some RPC paths) must be handled the same as OperationContext."""
+        fs = _build_fs(
+            [
+                _FakeMeta(path="/a.txt", zone_id="zone-a"),
+                _FakeMeta(path="/b.txt", zone_id="zone-b"),
+            ]
+        )
+        result = fs.sys_readdir(
+            "/",
+            recursive=False,
+            details=False,
+            context={"zone_id": "zone-a", "is_admin": False},
+        )
+        assert result == ["/a.txt"]

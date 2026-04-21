@@ -5349,13 +5349,37 @@ class NexusFS(  # type: ignore[misc]
         if prefix and not prefix.endswith("/"):
             prefix = prefix + "/"
 
+        # Issue #3779 follow-up: filter list results by the caller's zone_id.
+        # The metastore is a single store shared across zones (each row carries
+        # a zone_id column). Without this filter, V2 API callers see every
+        # zone's files. Admins and root-zone callers keep the global view.
+        # Handle OperationContext, dict, and None uniformly — missing zone
+        # falls open to ROOT (admin-equivalent view) by design: a caller
+        # without a zone claim is either the kernel or an unauthenticated
+        # path, neither of which should be zone-restricted here.
+        if isinstance(context, dict):
+            caller_zone = context.get("zone_id") or ROOT_ZONE_ID
+            caller_is_admin = bool(context.get("is_admin", False))
+        elif context is not None:
+            caller_zone = getattr(context, "zone_id", None) or ROOT_ZONE_ID
+            caller_is_admin = bool(getattr(context, "is_admin", False))
+        else:
+            caller_zone = ROOT_ZONE_ID
+            caller_is_admin = False
+
+        def _zone_allowed(entry: Any) -> bool:
+            if caller_is_admin or caller_zone == ROOT_ZONE_ID:
+                return True
+            entry_zone = getattr(entry, "zone_id", None) or ROOT_ZONE_ID
+            return entry_zone == caller_zone
+
         if limit is not None:
             from nexus.core.pagination import paginate_iter
 
             items_iter = (
                 e
                 for e in self.metadata.list_iter(prefix=prefix, recursive=recursive)
-                if not self._is_internal_path(e.path)
+                if not self._is_internal_path(e.path) and _zone_allowed(e)
             )
             result = paginate_iter(items_iter, limit=limit, cursor_path=cursor)
             if details:
@@ -5372,7 +5396,7 @@ class NexusFS(  # type: ignore[misc]
         entries_iter = (
             e
             for e in self.metadata.list_iter(prefix=prefix, recursive=recursive)
-            if not self._is_internal_path(e.path)
+            if not self._is_internal_path(e.path) and _zone_allowed(e)
         )
         if details:
             return [self._entry_to_detail_dict(e, recursive) for e in entries_iter]

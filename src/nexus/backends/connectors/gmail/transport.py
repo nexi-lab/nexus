@@ -771,6 +771,8 @@ class GmailTransport:
             service = self._get_gmail_service()
             service.users().messages().get(userId="me", id=message_id, format="minimal").execute()
             return True
+        except AuthenticationError:
+            raise
         except Exception:
             return False
 
@@ -825,8 +827,11 @@ class GmailTransport:
             except AuthenticationError:
                 raise
             except Exception as e:
-                logger.debug("Failed to list drafts: %s", e)
-                return [], []
+                raise BackendError(
+                    f"Failed to list Gmail drafts: {e}",
+                    backend="gmail",
+                    path=prefix,
+                ) from e
 
         # TRASH folder → use messages.list with TRASH label
         if prefix == "TRASH":
@@ -847,8 +852,11 @@ class GmailTransport:
             except AuthenticationError:
                 raise
             except Exception as e:
-                logger.debug("Failed to list trash: %s", e)
-                return [], []
+                raise BackendError(
+                    f"Failed to list Gmail trash: {e}",
+                    backend="gmail",
+                    path=prefix,
+                ) from e
 
         # Other label folders → list messages via categorized listing
         if prefix in LABEL_FOLDERS:

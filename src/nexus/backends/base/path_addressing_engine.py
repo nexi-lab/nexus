@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, ClassVar
 from nexus.backends.base.backend import Backend
 from nexus.backends.base.transport import Transport
 from nexus.contracts.backend_features import BLOB_BACKEND_FEATURES, BackendFeature
-from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
+from nexus.contracts.exceptions import AuthenticationError, BackendError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
 from nexus.core.object_store import WriteResult
 
@@ -240,8 +240,16 @@ class PathAddressingEngine(Backend):
         try:
             blob_path = self._get_key_path(context.backend_path)
             return self._transport.exists(blob_path)
-        except Exception:
+        except NexusFileNotFoundError:
+            # The only failure mode that legitimately maps to "does not exist".
             return False
+        except AuthenticationError:
+            # Auth-required is not "missing" — the server needs to surface
+            # 401 + recovery_hint so clients can re-auth.  Collapsing this
+            # into False lets exists-checks become silent no-ops (Issue #3822).
+            raise
+        # BackendError and any other failure propagate — a storage outage is
+        # not the same as "file not found".
 
     def get_content_size(self, content_id: str, context: "OperationContext | None" = None) -> int:
         if not context or not context.backend_path:

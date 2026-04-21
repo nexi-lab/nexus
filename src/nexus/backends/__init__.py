@@ -7,7 +7,9 @@ per-connector implementation details.
 
 import importlib
 import logging
+import os
 import threading
+from pathlib import Path
 
 from nexus.backends.base.backend import Backend, HandlerStatusResponse
 from nexus.backends.base.cas_addressing_engine import CASAddressingEngine
@@ -24,59 +26,22 @@ from nexus.backends.base.registry import (
 )
 from nexus.core.object_store import ObjectStoreABC, WriteResult
 
-# Optional backends — loaded on first access via __getattr__.
-# Backends whose dependencies may be unavailable in slim images (e.g. remote-only)
-# are loaded lazily to avoid ImportError on startup.
-_OPTIONAL_BACKENDS: dict[str, tuple[str, str]] = {
-    # Storage backends
-    "CASLocalBackend": ("nexus.backends.storage.cas_local", "CASLocalBackend"),
-    "PathLocalBackend": ("nexus.backends.storage.path_local", "PathLocalBackend"),
-    "CASGCSBackend": ("nexus.backends.storage.cas_gcs", "CASGCSBackend"),
-    "PathGDriveBackend": (
-        "nexus.backends.connectors.gdrive.connector",
-        "PathGDriveBackend",
-    ),
-    "PathGCSBackend": ("nexus.backends.storage.path_gcs", "PathGCSBackend"),
-    "PathS3Backend": ("nexus.backends.storage.path_s3", "PathS3Backend"),
-    "PathXBackend": ("nexus.backends.connectors.x.connector", "PathXBackend"),
-    "PathHNBackend": ("nexus.backends.connectors.hn.connector", "PathHNBackend"),
-    "PathSlackBackend": ("nexus.backends.connectors.slack.connector", "PathSlackBackend"),
-    "LocalConnectorBackend": ("nexus.backends.storage.local_connector", "LocalConnectorBackend"),
-    "PathGmailBackend": ("nexus.backends.connectors.gmail.connector", "PathGmailBackend"),
-    "PathCalendarBackend": (
-        "nexus.backends.connectors.calendar.connector",
-        "PathCalendarBackend",
-    ),
-    # GWS CLI connectors (Issue #3148 — gws-backed replacements)
-    "GmailCLIConnector": (
-        "nexus.backends.connectors.gws.connector",
-        "GmailConnector",
-    ),
-    "CalendarCLIConnector": (
-        "nexus.backends.connectors.gws.connector",
-        "CalendarConnector",
-    ),
-    "SheetsCLIConnector": (
-        "nexus.backends.connectors.gws.connector",
-        "SheetsConnector",
-    ),
-    "DocsCLIConnector": (
-        "nexus.backends.connectors.gws.connector",
-        "DocsConnector",
-    ),
-    "ChatCLIConnector": (
-        "nexus.backends.connectors.gws.connector",
-        "ChatConnector",
-    ),
-    "DriveCLIConnector": (
-        "nexus.backends.connectors.gws.connector",
-        "DriveConnector",
-    ),
-    "GitHubCLIConnector": (
-        "nexus.backends.connectors.github.connector",
-        "GitHubConnector",
-    ),
-}
+# Derived from CONNECTOR_MANIFEST for backward-compatible attribute access:
+#   `from nexus.backends import PathGCSBackend` → lazily imports the module
+# and returns the named attribute. Populated at import time from the
+# single source of truth in ``nexus.backends._manifest``.
+_OPTIONAL_BACKENDS: dict[str, tuple[str, str]] = {}
+
+
+def _populate_optional_backends_map() -> None:
+    """Populate _OPTIONAL_BACKENDS from the manifest (one-time)."""
+    from nexus.backends._manifest import CONNECTOR_MANIFEST
+
+    for entry in CONNECTOR_MANIFEST:
+        _OPTIONAL_BACKENDS[entry.class_name] = (entry.module_path, entry.class_name)
+
+
+_populate_optional_backends_map()
 
 _optional_backends_registered = False
 _registration_lock = threading.Lock()
@@ -99,10 +64,18 @@ def __getattr__(name: str) -> object:
 
 
 def _register_optional_backends() -> None:
-    """Import all optional backend modules to trigger @register_connector.
+    """Pre-register manifest placeholders, then attempt module imports.
 
-    Also scans Python entry points in the ``nexus.connectors`` group
-    for externally installed connector plugins.
+    Phase 1: read ``CONNECTOR_MANIFEST`` and register a placeholder
+    ``ConnectorInfo`` for every entry. No imports happen.
+
+    Phase 2: import each manifest entry's ``module_path``. On success the
+    module's ``@register_connector("name")`` binds the real class into
+    the placeholder (see ``ConnectorRegistry.register()``). On ImportError
+    the placeholder remains — ``BackendFactory.create()`` will raise
+    ``MissingDependencyError`` with the manifest's install hints.
+
+    Phase 3: scan external entry points + YAML configs (unchanged).
     """
     global _optional_backends_registered
 
@@ -113,18 +86,30 @@ def _register_optional_backends() -> None:
             return
         _optional_backends_registered = True
 
-        # --- Built-in optional backends ---
-        seen_modules: set[str] = set()
-        for module_path, _ in _OPTIONAL_BACKENDS.values():
-            if module_path in seen_modules:
-                continue
-            seen_modules.add(module_path)
-            try:
-                importlib.import_module(module_path)
-            except ImportError as e:
-                _logger.debug("Optional backend module %s not available: %s", module_path, e)
+        from nexus.backends._manifest import CONNECTOR_MANIFEST
 
-        # --- External connector plugins via entry points (Issue #3148, Decision #4) ---
+        # Phase 1: placeholders from manifest
+        for entry in CONNECTOR_MANIFEST:
+            ConnectorRegistry.register_placeholder(entry)
+
+        # Phase 2: attempt module imports; successful imports run
+        # @register_connector which binds the class into the placeholder.
+        seen_modules: set[str] = set()
+        for entry in CONNECTOR_MANIFEST:
+            if entry.module_path in seen_modules:
+                continue
+            seen_modules.add(entry.module_path)
+            try:
+                importlib.import_module(entry.module_path)
+            except ImportError as e:
+                _logger.debug(
+                    "Connector module %s not available: %s "
+                    "(placeholder stays; mount will raise MissingDependencyError)",
+                    entry.module_path,
+                    e,
+                )
+
+        # Phase 3: external plugins via entry points (Issue #3148, Decision #4)
         try:
             from importlib.metadata import entry_points
 
@@ -138,11 +123,8 @@ def _register_optional_backends() -> None:
         except Exception:
             _logger.debug("Entry point scanning unavailable")
 
-        # --- CLI connector configs from config directory (Issue #3148, Phase 5) ---
+        # Phase 3 (cont.): CLI connector configs from config directory
         # Scan ~/.nexus/connectors/ or NEXUS_CONNECTORS_DIR for YAML configs
-        import os
-        from pathlib import Path
-
         config_dir_env = os.getenv("NEXUS_CONNECTORS_DIR")
         config_dirs = []
         if config_dir_env:
@@ -161,8 +143,6 @@ def _register_optional_backends() -> None:
                 configs = load_all_configs(config_dir)
                 for name, config in configs.items():
                     try:
-                        from nexus.backends.base.registry import ConnectorRegistry
-
                         # Create a dedicated subclass with baked-in config
                         # so ConnectorRegistry gets a proper class, not a
                         # generic PathCLIBackend that lost its config.

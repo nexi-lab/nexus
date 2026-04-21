@@ -5198,14 +5198,37 @@ fn wire_federation_mount_impl(
     mount_table.install_metastore(&canonical, metastore);
 
     // 5. LockManager upgrade on first federated mount — idempotent.
+    //    Bind distributed locks to the ROOT zone's consensus, not this
+    //    mount's `target_consensus`. Root is the one zone every
+    //    federation peer always has loaded, so every node agrees on
+    //    which state machine holds lock state. Binding to the caller's
+    //    target meant reconcile-order differences (DashMap iteration,
+    //    restart replay) picked different zones on different nodes —
+    //    locks then lived in disjoint state machines and cross-node
+    //    `lock_acquire` couldn't see each other, letting two peers
+    //    "acquire" the same path concurrently (test_contended_write_ordering).
     if !lock_manager.locks_installed() {
-        let kernel_state = lock_manager.advisory_state_arc();
-        let (backend, shared_state) = nexus_raft::federation::DistributedLocks::new(
-            target_consensus.clone(),
-            runtime.clone(),
-            kernel_state,
-        );
-        lock_manager.install_locks(Arc::new(backend), shared_state);
+        match registry.get_node(contracts::ROOT_ZONE_ID) {
+            Some(root_consensus) => {
+                tracing::info!(
+                    parent_zone = %parent_zone_id,
+                    mount_path = %mount_path,
+                    "wire_federation_mount: installing distributed locks bound to ROOT zone"
+                );
+                let kernel_state = lock_manager.advisory_state_arc();
+                let (backend, shared_state) = nexus_raft::federation::DistributedLocks::new(
+                    root_consensus,
+                    runtime.clone(),
+                    kernel_state,
+                );
+                lock_manager.install_locks(Arc::new(backend), shared_state);
+            }
+            None => {
+                tracing::warn!(
+                    "wire_federation_mount: root zone not loaded — distributed locks NOT installed; sys_lock will stay local-only until next mount"
+                );
+            }
+        }
     }
 
     // 6. DCache seed so sys_stat on the mount point resolves locally

@@ -34,7 +34,6 @@ MODULE_CAPABILITY_GROUPS: dict[str, tuple[str, ...]] = {
         "SharedMemoryPipeBackend",
         "SharedMemoryStreamBackend",
         "StdioStreamBackend",
-        "WalStreamBackend",
     ),
     "io": (
         "read_file",

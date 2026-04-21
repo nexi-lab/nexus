@@ -115,7 +115,6 @@ CAPABILITY_GROUP_CONFIG: dict[str, tuple[str, ...]] = {
         "SharedMemoryPipeBackend",
         "SharedMemoryStreamBackend",
         "StdioStreamBackend",
-        "WalStreamBackend",
     ),
     "io": ("read_file", "read_files_bulk"),
     "search": ("grep_bulk", "grep_files_mmap", "glob_match_bulk"),

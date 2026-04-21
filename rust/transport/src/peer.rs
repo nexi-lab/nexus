@@ -9,12 +9,81 @@ use crate::error::{Result, TransportError};
 pub fn hostname_to_node_id(hostname: &str) -> u64 {
     use sha2::{Digest, Sha256};
     let hash = Sha256::digest(hostname.as_bytes());
-    let value = u64::from_le_bytes(hash[..8].try_into().unwrap());
+    let mut first_eight = [0u8; 8];
+    first_eight.copy_from_slice(&hash[..8]);
+    let value = u64::from_le_bytes(first_eight);
     if value == 0 {
         1
     } else {
         value
     }
+}
+
+fn format_host_port(hostname: &str, port: u16) -> String {
+    let needs_brackets =
+        hostname.contains(':') && !hostname.starts_with('[') && !hostname.ends_with(']');
+    if needs_brackets {
+        format!("[{}]:{}", hostname, port)
+    } else {
+        format!("{}:{}", hostname, port)
+    }
+}
+
+#[allow(clippy::result_large_err)]
+fn parse_host_port(addr: &str, original: &str) -> Result<(String, u16)> {
+    let (hostname, port_str) = if let Some(rest) = addr.strip_prefix('[') {
+        let Some(close_idx) = rest.find(']') else {
+            return Err(TransportError::InvalidAddress(format!(
+                "missing closing ']' in '{}'",
+                original
+            )));
+        };
+        let hostname = &rest[..close_idx];
+        let remainder = &rest[close_idx + 1..];
+        let Some(port_str) = remainder.strip_prefix(':') else {
+            return Err(TransportError::InvalidAddress(format!(
+                "expected ':port' after host in '{}'",
+                original
+            )));
+        };
+        (hostname, port_str)
+    } else {
+        let Some((hostname, port_str)) = addr.rsplit_once(':') else {
+            return Err(TransportError::InvalidAddress(format!(
+                "expected 'host:port', got '{}'",
+                original
+            )));
+        };
+
+        // Require bracketed IPv6 to avoid ambiguous host/port parsing.
+        if hostname.contains(':') {
+            return Err(TransportError::InvalidAddress(format!(
+                "IPv6 addresses must be bracketed: '{}'",
+                original
+            )));
+        }
+        (hostname, port_str)
+    };
+
+    let hostname = hostname.trim();
+    if hostname.is_empty() {
+        return Err(TransportError::InvalidAddress(format!(
+            "host cannot be empty: '{}'",
+            original
+        )));
+    }
+
+    let port: u16 = port_str.parse().map_err(|_| {
+        TransportError::InvalidAddress(format!("invalid port in '{}': '{}'", original, port_str))
+    })?;
+    if port == 0 {
+        return Err(TransportError::InvalidAddress(format!(
+            "port must be 1-65535 in '{}'",
+            original
+        )));
+    }
+
+    Ok((hostname.to_string(), port))
 }
 
 /// Address of a network peer (Raft node, gRPC endpoint).
@@ -57,22 +126,11 @@ impl PeerAddress {
             None => addr,
         };
 
-        let parts: Vec<&str> = addr.rsplitn(2, ':').collect();
-        if parts.len() != 2 {
-            return Err(TransportError::InvalidAddress(format!(
-                "expected 'host:port', got '{}'",
-                s
-            )));
-        }
-
-        let port: u16 = parts[0]
-            .parse()
-            .map_err(|_| TransportError::InvalidAddress(format!("invalid port: '{}'", parts[0])))?;
-        let hostname = parts[1].to_string();
+        let (hostname, port) = parse_host_port(addr, s)?;
         let id = hostname_to_node_id(&hostname);
 
         let scheme = if use_tls { "https" } else { "http" };
-        let endpoint = format!("{}://{}:{}", scheme, hostname, port);
+        let endpoint = format!("{}://{}", scheme, format_host_port(&hostname, port));
 
         Ok(Self {
             hostname,
@@ -99,7 +157,7 @@ impl PeerAddress {
                 .trim_start_matches("https://")
                 .to_string()
         } else {
-            format!("{}:{}", self.hostname, self.port)
+            format_host_port(&self.hostname, self.port)
         }
     }
 
@@ -142,5 +200,30 @@ mod tests {
     fn test_peer_address_parse_tls() {
         let addr = PeerAddress::parse("nexus-2:2126", true).unwrap();
         assert_eq!(addr.endpoint, "https://nexus-2:2126");
+    }
+
+    #[test]
+    fn test_peer_address_parse_ipv6() {
+        let addr = PeerAddress::parse("[::1]:2126", false).unwrap();
+        assert_eq!(addr.hostname, "::1");
+        assert_eq!(addr.port, 2126);
+        assert_eq!(addr.endpoint, "http://[::1]:2126");
+        assert_eq!(addr.grpc_target(), "[::1]:2126");
+    }
+
+    #[test]
+    fn test_peer_address_parse_rejects_invalid_host_port() {
+        assert!(matches!(
+            PeerAddress::parse("2001:db8::1:2126", false),
+            Err(TransportError::InvalidAddress(_))
+        ));
+        assert!(matches!(
+            PeerAddress::parse(":2126", false),
+            Err(TransportError::InvalidAddress(_))
+        ));
+        assert!(matches!(
+            PeerAddress::parse("nexus-1:0", false),
+            Err(TransportError::InvalidAddress(_))
+        ));
     }
 }

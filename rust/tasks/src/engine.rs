@@ -1,3 +1,4 @@
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::error::{Result, TaskError};
@@ -9,6 +10,8 @@ pub struct Engine {
     store: TaskStore,
     max_pending: usize,
     max_wait_secs: u64,
+    /// Serializes admission check + insert so max_pending is enforced under concurrency.
+    submit_lock: Mutex<()>,
 }
 
 fn now_secs() -> u64 {
@@ -26,6 +29,7 @@ impl Engine {
             store,
             max_pending,
             max_wait_secs,
+            submit_lock: Mutex::new(()),
         })
     }
 
@@ -38,6 +42,12 @@ impl Engine {
         max_retries: u32,
         run_at: u64,
     ) -> Result<u64> {
+        // Keep admission control and insertion atomic at the engine level.
+        let _submit_guard = self
+            .submit_lock
+            .lock()
+            .map_err(|e| TaskError::Storage(format!("submit lock poisoned: {e}")))?;
+
         // Admission control
         if self.max_pending > 0 {
             let pending = self.store.count_pending()?;
@@ -185,6 +195,7 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Barrier, Mutex as StdMutex};
     use tempfile::TempDir;
 
     fn test_engine() -> (Engine, TempDir) {
@@ -340,6 +351,62 @@ mod tests {
         // Third should be rejected
         let result = engine.submit("c", b"", TaskPriority::Normal, 0, 0);
         assert!(matches!(result, Err(TaskError::QueueFull { .. })));
+    }
+
+    #[test]
+    fn test_admission_control_concurrent() {
+        let dir = TempDir::new().unwrap();
+        let engine = Arc::new(Engine::open(dir.path().to_str().unwrap(), 2, 0).unwrap());
+        let workers = 8;
+        let barrier = Arc::new(Barrier::new(workers + 1));
+        let success_count = Arc::new(StdMutex::new(0usize));
+        let mut handles = Vec::new();
+
+        for i in 0..workers {
+            let engine = Arc::clone(&engine);
+            let barrier = Arc::clone(&barrier);
+            let success_count = Arc::clone(&success_count);
+
+            handles.push(std::thread::spawn(move || {
+                barrier.wait();
+                if engine
+                    .submit(&format!("task-{i}"), b"", TaskPriority::Normal, 0, 0)
+                    .is_ok()
+                {
+                    *success_count.lock().unwrap() += 1;
+                }
+            }));
+        }
+
+        barrier.wait();
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        let succeeded = *success_count.lock().unwrap();
+        assert_eq!(
+            succeeded, 2,
+            "exactly max_pending submissions should succeed"
+        );
+
+        let stats = engine.stats().unwrap();
+        assert_eq!(stats.pending, 2);
+    }
+
+    #[test]
+    fn test_submit_lock_poison_returns_error_not_panic() {
+        let dir = TempDir::new().unwrap();
+        let engine = Arc::new(Engine::open(dir.path().to_str().unwrap(), 10, 0).unwrap());
+        let engine_for_panic = Arc::clone(&engine);
+
+        let h = std::thread::spawn(move || {
+            let _guard = engine_for_panic.submit_lock.lock().unwrap();
+            panic!("poison submit lock");
+        });
+        assert!(h.join().is_err());
+
+        let result = engine.submit("x", b"", TaskPriority::Normal, 0, 0);
+        assert!(matches!(result, Err(TaskError::Storage(_))));
     }
 
     #[test]

@@ -8,7 +8,7 @@ use crate::error::{Result, TaskError};
 use crate::priority::{
     decode_pending_key, decode_running_key, encode_pending_key, encode_running_key,
 };
-use crate::task::{TaskRecord, TaskStatus};
+use crate::task::{TaskPriority, TaskRecord, TaskStatus};
 
 /// Fjall-backed task storage with 5 keyspaces (column families).
 ///
@@ -185,6 +185,70 @@ impl TaskStore {
         }
     }
 
+    /// Return the first pending index key for a given priority, if any.
+    fn first_pending_key_for_priority(&self, priority: u8) -> Option<Vec<u8>> {
+        self.pending_idx
+            .prefix([priority])
+            .next()
+            .and_then(|guard| guard.into_inner().ok())
+            .map(|(key, _)| key.as_ref().to_vec())
+    }
+
+    /// Whether there is a due Critical task that must not be preempted.
+    ///
+    /// If the first key is corrupt, conservatively treat it as due so we avoid
+    /// promoting lower-priority work before self-healing the critical band.
+    fn has_due_critical(&self, now: u64) -> bool {
+        let Some(key_bytes) = self.first_pending_key_for_priority(TaskPriority::Critical as u8)
+        else {
+            return false;
+        };
+        match decode_pending_key(&key_bytes) {
+            Some((_, run_at, _)) => run_at <= now,
+            None => true,
+        }
+    }
+
+    /// Select the highest-priority due key in O(priority bands), or return a
+    /// corrupt key candidate so the caller can self-heal the index.
+    fn first_due_or_corrupt_pending_key(&self, now: u64) -> Option<Vec<u8>> {
+        for priority in TaskPriority::Critical as u8..=TaskPriority::BestEffort as u8 {
+            let Some(key_bytes) = self.first_pending_key_for_priority(priority) else {
+                continue;
+            };
+            match decode_pending_key(&key_bytes) {
+                Some((_, run_at, _)) if run_at <= now => return Some(key_bytes),
+                Some(_) => continue, // earliest key in this priority is future-scheduled
+                None => return Some(key_bytes),
+            }
+        }
+        None
+    }
+
+    /// Select a starving non-critical task for anti-starvation promotion.
+    ///
+    /// Promotion is disabled while any due Critical task exists.
+    fn select_starved_pending_key(&self, now: u64, max_wait_secs: u64) -> Option<Vec<u8>> {
+        if max_wait_secs == 0 || self.has_due_critical(now) {
+            return None;
+        }
+
+        // Check non-Critical priority bands from lowest (BestEffort=4)
+        // to highest (High=1). Promote the oldest starving task found.
+        for priority in (TaskPriority::High as u8..=TaskPriority::BestEffort as u8).rev() {
+            let Some(key_bytes) = self.first_pending_key_for_priority(priority) else {
+                continue;
+            };
+            if let Some((_, run_at, _)) = decode_pending_key(&key_bytes) {
+                if crate::priority::should_promote_oldest(run_at, now, max_wait_secs) {
+                    return Some(key_bytes);
+                }
+            }
+        }
+
+        None
+    }
+
     /// Claim the next pending task. Atomically moves from pending_idx to running_idx.
     /// Returns None if no eligible tasks are available.
     ///
@@ -197,99 +261,76 @@ impl TaskStore {
         now: u64,
         max_wait_secs: u64,
     ) -> Result<Option<TaskRecord>> {
-        let _guard = self.claim_lock.lock().unwrap();
+        let _guard = self
+            .claim_lock
+            .lock()
+            .map_err(|e| TaskError::Storage(format!("claim lock poisoned: {e}")))?;
 
-        // Check for anti-starvation: if the oldest low-priority task has waited too long, promote it
-        let mut target_key = None;
+        loop {
+            // Normal path: select the first due task by checking the head entry
+            // of each priority band (O(priority bands)).
+            let target_key = self
+                .select_starved_pending_key(now, max_wait_secs)
+                .or_else(|| self.first_due_or_corrupt_pending_key(now));
 
-        if max_wait_secs > 0 {
-            // Only promote starved tasks if no Critical (priority 0) tasks are
-            // pending — Critical work must always be serviced first.
-            let has_critical = self.pending_idx.prefix([0u8]).next().is_some();
-            if !has_critical {
-                // Check non-Critical priority bands from lowest (BestEffort=4)
-                // to highest (High=1). Promote the oldest starving task found.
-                for priority in (1..=4u8).rev() {
-                    let prefix_bytes = [priority];
-                    if let Some(guard) = self.pending_idx.prefix(prefix_bytes).next() {
-                        if let Ok((key, _)) = guard.into_inner() {
-                            if let Some((_, run_at, _)) = decode_pending_key(key.as_ref()) {
-                                if crate::priority::should_promote_oldest(
-                                    run_at,
-                                    now,
-                                    max_wait_secs,
-                                ) {
-                                    target_key = Some(key.as_ref().to_vec());
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
+            let Some(key_bytes) = target_key else {
+                return Ok(None);
+            };
+
+            let Some((_, _, task_id)) = decode_pending_key(&key_bytes) else {
+                // Corrupt key: remove and continue scanning.
+                self.pending_idx.remove(&key_bytes)?;
+                continue;
+            };
+
+            // Load the task record
+            let Some(mut task) = self.get_task(task_id)? else {
+                // Stale index entry — remove and continue scanning.
+                self.pending_idx.remove(&key_bytes)?;
+                continue;
+            };
+
+            // Self-heal stale pending index entries so terminal/running tasks
+            // cannot be claimed again.
+            if task.status != TaskStatus::Pending {
+                self.pending_idx.remove(&key_bytes)?;
+                continue;
             }
-        }
 
-        // Normal path: scan pending_idx for the first due task, skipping future-scheduled ones.
-        // The index is sorted by (priority, run_at, task_id), so within a priority band
-        // run_at increases monotonically — but a lower-priority band may have due tasks.
-        if target_key.is_none() {
-            for guard in self.pending_idx.iter() {
-                match guard.into_inner() {
-                    Ok((key, _)) => {
-                        if let Some((_, run_at, _)) = decode_pending_key(key.as_ref()) {
-                            if run_at <= now {
-                                target_key = Some(key.as_ref().to_vec());
-                                break;
-                            }
-                        }
-                    }
-                    Err(_) => continue,
-                }
+            // If the index key is stale (due in index, but future in record),
+            // rewrite the key from canonical task data and keep scanning.
+            if task.run_at > now {
+                let corrected_key = encode_pending_key(task.priority, task.run_at, task_id);
+                let mut repair = self.db.batch();
+                repair.remove(&self.pending_idx, &key_bytes);
+                repair.insert(&self.pending_idx, corrected_key, vec![]);
+                repair.commit()?;
+                continue;
             }
+
+            // Update the task record
+            let lease_expires = now + lease_secs as u64;
+            task.status = TaskStatus::Running;
+            task.claimed_at = Some(now);
+            task.claimed_by = Some(worker_id.to_string());
+            task.lease_secs = lease_secs;
+            task.attempt += 1;
+
+            let task_value = bincode::serialize(&task)?;
+            let running_key = encode_running_key(lease_expires, task_id);
+
+            // Atomic: remove from pending, add to running + reverse lookup, update task
+            let mut batch = self.db.batch();
+            batch.remove(&self.pending_idx, &key_bytes);
+            batch.insert(&self.running_idx, running_key, vec![]);
+            batch.insert(&self.running_task_key, task_id.to_be_bytes(), running_key);
+            batch.insert(&self.tasks, task_id.to_be_bytes(), task_value);
+            batch.commit()?;
+            self.pending_count.fetch_sub(1, Ordering::Relaxed);
+            self.running_count.fetch_add(1, Ordering::Relaxed);
+
+            return Ok(Some(task));
         }
-
-        let Some(key_bytes) = target_key else {
-            return Ok(None);
-        };
-
-        let Some((_, _, task_id)) = decode_pending_key(&key_bytes) else {
-            return Ok(None);
-        };
-
-        // Load the task record
-        let Some(mut task) = self.get_task(task_id)? else {
-            // Stale index entry — remove and return None
-            self.pending_idx.remove(&key_bytes)?;
-            return Ok(None);
-        };
-
-        // Skip tasks scheduled for the future
-        if task.run_at > now {
-            return Ok(None);
-        }
-
-        // Update the task record
-        let lease_expires = now + lease_secs as u64;
-        task.status = TaskStatus::Running;
-        task.claimed_at = Some(now);
-        task.claimed_by = Some(worker_id.to_string());
-        task.lease_secs = lease_secs;
-        task.attempt += 1;
-
-        let task_value = bincode::serialize(&task)?;
-        let running_key = encode_running_key(lease_expires, task_id);
-
-        // Atomic: remove from pending, add to running + reverse lookup, update task
-        let mut batch = self.db.batch();
-        batch.remove(&self.pending_idx, &key_bytes);
-        batch.insert(&self.running_idx, running_key, vec![]);
-        batch.insert(&self.running_task_key, task_id.to_be_bytes(), running_key);
-        batch.insert(&self.tasks, task_id.to_be_bytes(), task_value);
-        batch.commit()?;
-        self.pending_count.fetch_sub(1, Ordering::Relaxed);
-        self.running_count.fetch_add(1, Ordering::Relaxed);
-
-        Ok(Some(task))
     }
 
     /// Move a running task to completed state. Atomically removes from running_idx
@@ -1205,6 +1246,104 @@ mod tests {
         assert_eq!(stats.running, 0);
     }
 
+    #[test]
+    fn test_claim_next_skips_stale_non_pending_entry() {
+        let (store, _dir) = test_store();
+
+        let done = make_task(&store, "done", TaskPriority::Normal);
+        let done_id = done.task_id;
+        let pending = make_task(&store, "pending", TaskPriority::Normal);
+
+        store.insert_task(&done).unwrap();
+        store.insert_task(&pending).unwrap();
+
+        store.claim_next("w-0", 300, 1700000000, 0).unwrap();
+        store
+            .complete_task(done_id, b"ok", 1700000001, "w-0")
+            .unwrap();
+
+        // Inject a stale pending_idx entry for a completed task.
+        let stale_key = encode_pending_key(TaskPriority::Critical, 0, done_id);
+        store.pending_idx.insert(stale_key, vec![]).unwrap();
+
+        // claim_next should self-heal stale index entries and return a truly pending task.
+        let claimed = store
+            .claim_next("w-1", 300, 1700000002, 0)
+            .unwrap()
+            .unwrap();
+        assert_eq!(claimed.task_type, "pending");
+
+        // Verify stale key is removed.
+        let stale_still_present = store.pending_idx.iter().any(|guard| {
+            guard
+                .into_inner()
+                .ok()
+                .and_then(|(key, _)| decode_pending_key(key.as_ref()))
+                .is_some_and(|(_, _, task_id)| task_id == done_id)
+        });
+        assert!(
+            !stale_still_present,
+            "stale pending index entry should be removed"
+        );
+    }
+
+    #[test]
+    fn test_claim_next_repairs_mismatched_pending_key() {
+        let (store, _dir) = test_store();
+        let mut task = make_task(&store, "future", TaskPriority::Normal);
+        task.run_at = 2000;
+        let task_id = task.task_id;
+        store.insert_task(&task).unwrap();
+
+        let canonical_key = encode_pending_key(task.priority, task.run_at, task_id);
+        let stale_due_key = encode_pending_key(task.priority, 1000, task_id);
+        store.pending_idx.remove(canonical_key).unwrap();
+        store.pending_idx.insert(stale_due_key, vec![]).unwrap();
+
+        // At now=1500, stale key looks due but task record is still scheduled for 2000.
+        let claimed = store.claim_next("w-0", 300, 1500, 0).unwrap();
+        assert!(claimed.is_none());
+
+        // claim_next should rewrite stale key to canonical run_at.
+        let mut has_canonical = false;
+        let mut has_stale = false;
+        for guard in store.pending_idx.iter() {
+            if let Ok((key, _)) = guard.into_inner() {
+                if key.as_ref() == canonical_key {
+                    has_canonical = true;
+                }
+                if key.as_ref() == stale_due_key {
+                    has_stale = true;
+                }
+            }
+        }
+        assert!(has_canonical, "canonical pending key should be restored");
+        assert!(!has_stale, "stale pending key should be removed");
+
+        // Once due, the task should be claimable.
+        let claimed = store
+            .claim_next("w-0", 300, 2000, 0)
+            .unwrap()
+            .expect("task should become claimable at run_at");
+        assert_eq!(claimed.task_id, task_id);
+    }
+
+    #[test]
+    fn test_claim_lock_poison_returns_error_not_panic() {
+        let dir = TempDir::new().unwrap();
+        let store = Arc::new(TaskStore::open(dir.path().to_str().unwrap()).unwrap());
+        let store_for_panic = Arc::clone(&store);
+
+        let h = std::thread::spawn(move || {
+            let _guard = store_for_panic.claim_lock.lock().unwrap();
+            panic!("poison claim lock");
+        });
+        assert!(h.join().is_err());
+
+        let result = store.claim_next("w-0", 300, 0, 0);
+        assert!(matches!(result, Err(TaskError::Storage(_))));
+    }
+
     /// E2E anti-starvation test: a starved BestEffort task should be promoted
     /// over a newer High-priority task when max_wait_secs is exceeded.
     /// Also verifies multi-band promotion with a Low-priority starved task.
@@ -1296,6 +1435,80 @@ mod tests {
         let claimed2 = store.claim_next("w-0", 300, now, 60).unwrap().unwrap();
         assert_eq!(claimed2.task_id, starved_id);
         assert_eq!(claimed2.task_type, "starved_be");
+
+        verify_index_consistency(&store);
+    }
+
+    #[test]
+    fn test_anti_starvation_allows_promotion_when_critical_is_future() {
+        let (store, _dir) = test_store();
+        let now = 1_700_000_100u64;
+
+        // Starved low-priority task.
+        let mut starved_be = make_task(&store, "starved_be", TaskPriority::BestEffort);
+        starved_be.run_at = 0;
+        store.insert_task(&starved_be).unwrap();
+
+        // Due High-priority task.
+        let mut fresh_high = make_task(&store, "fresh_high", TaskPriority::High);
+        fresh_high.run_at = now;
+        store.insert_task(&fresh_high).unwrap();
+
+        // Critical exists, but it's scheduled far in the future.
+        let mut future_critical = make_task(&store, "future_critical", TaskPriority::Critical);
+        future_critical.run_at = now + 3600;
+        store.insert_task(&future_critical).unwrap();
+
+        // Since no Critical task is due yet, anti-starvation may still promote.
+        let claimed1 = store.claim_next("w-0", 300, now, 60).unwrap().unwrap();
+        assert_eq!(claimed1.task_type, "starved_be");
+
+        // Then due High should be claimed.
+        let claimed2 = store.claim_next("w-0", 300, now, 60).unwrap().unwrap();
+        assert_eq!(claimed2.task_type, "fresh_high");
+
+        // No due tasks remain at 'now' (Critical is future scheduled).
+        assert!(store.claim_next("w-0", 300, now, 60).unwrap().is_none());
+
+        // When Critical becomes due, it should be claimable.
+        let claimed3 = store
+            .claim_next("w-0", 300, now + 3600, 60)
+            .unwrap()
+            .unwrap();
+        assert_eq!(claimed3.task_type, "future_critical");
+
+        verify_index_consistency(&store);
+    }
+
+    #[test]
+    fn test_anti_starvation_recovers_after_stale_critical_cleanup() {
+        let (store, _dir) = test_store();
+        let now = 1_700_000_100u64;
+
+        let mut starved_be = make_task(&store, "starved_be", TaskPriority::BestEffort);
+        starved_be.run_at = 0;
+        store.insert_task(&starved_be).unwrap();
+
+        let mut fresh_high = make_task(&store, "fresh_high", TaskPriority::High);
+        fresh_high.run_at = now;
+        store.insert_task(&fresh_high).unwrap();
+
+        // Inject a stale due Critical index entry that references no task.
+        let stale_task_id = u64::MAX - 1;
+        let stale_critical_key = encode_pending_key(TaskPriority::Critical, 0, stale_task_id);
+        store
+            .pending_idx
+            .insert(stale_critical_key, vec![])
+            .unwrap();
+
+        // claim_next should remove stale Critical entry, then re-evaluate anti-starvation
+        // and still promote the starving BestEffort task.
+        let claimed1 = store.claim_next("w-0", 300, now, 60).unwrap().unwrap();
+        assert_eq!(claimed1.task_type, "starved_be");
+
+        // The due High task should be next.
+        let claimed2 = store.claim_next("w-0", 300, now, 60).unwrap().unwrap();
+        assert_eq!(claimed2.task_type, "fresh_high");
 
         verify_index_consistency(&store);
     }

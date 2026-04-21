@@ -135,13 +135,24 @@ impl MemoryPipeBackend {
         let tail_idx = tail % self.ring_cap;
         let contiguous = self.ring_cap - tail_idx;
 
-        // Physical ring-space check: payloads alone cannot be trusted because
-        // `user_capacity` ignores 4-byte frame headers and potential wrap
-        // sentinels. For tiny payloads (< HEADER_SIZE) the header overhead
-        // alone exceeds the slack between `user_capacity` and `ring_cap`.
-        // Enforce the invariant `(tail - head) + <bytes we are about to
-        // write> <= ring_cap`, where we must include a potential sentinel.
+        // Physical ring-space check: payloads alone cannot be trusted
+        // because `user_capacity` ignores 4-byte frame headers and
+        // potential wrap sentinels. For tiny payloads (< HEADER_SIZE)
+        // the header overhead alone exceeds the slack between
+        // `user_capacity` and `ring_cap`. Enforce the invariant
+        //   (tail - head) + <bytes we are about to write> <= ring_cap
+        // where we must include a potential sentinel AND the sentinel
+        // itself has to fit in the contiguous trailing region
+        // (HEADER_SIZE bytes). Without the contiguous >= HEADER_SIZE
+        // guard, the sentinel write below would panic on a slice
+        // out-of-range for very small rings.
         let need = if frame_len > contiguous {
+            if contiguous < HEADER_SIZE {
+                // Not enough tail-contiguous room for the sentinel
+                // header; rather than partial-writing or silently
+                // wrapping, fail cleanly.
+                return Err(PipeError::Full(used, self.user_capacity));
+            }
             contiguous + frame_len
         } else {
             frame_len

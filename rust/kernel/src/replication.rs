@@ -9,10 +9,8 @@
 #![allow(dead_code)]
 
 use crate::kernel::OperationContext;
-use parking_lot::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::thread::JoinHandle;
 
 /// Replication scanner — scans metastore for entries needing replication.
 pub(crate) struct ReplicationScanner {
@@ -26,9 +24,6 @@ pub(crate) struct ReplicationScanner {
     target_mount: String,
     /// Running flag — set to false to stop the background loop.
     running: Arc<AtomicBool>,
-    /// Handle to the background worker, so `stop()` can join and callers
-    /// can verify the thread has actually exited (§ review fix #27).
-    worker: Mutex<Option<JoinHandle<()>>>,
     /// Counters for monitoring.
     pub scanned_count: Arc<AtomicU64>,
     pub replicated_count: Arc<AtomicU64>,
@@ -49,56 +44,11 @@ impl ReplicationScanner {
             source_mount: source_mount.to_string(),
             target_mount: target_mount.to_string(),
             running: Arc::new(AtomicBool::new(false)),
-            worker: Mutex::new(None),
             scanned_count: Arc::new(AtomicU64::new(0)),
             replicated_count: Arc::new(AtomicU64::new(0)),
             error_count: Arc::new(AtomicU64::new(0)),
             last_scan_ms: Arc::new(AtomicU64::new(0)),
         }
-    }
-
-    /// Normalize mount path into zone-canonical form.
-    ///
-    /// Examples for `zone_id = "z1"`:
-    /// - `"/z1/source"` -> `"/z1/source"` (already canonical)
-    /// - `"/source"`    -> `"/z1/source"`
-    /// - `"source"`     -> `"/z1/source"`
-    fn canonical_mount_for_zone(&self, mount: &str) -> String {
-        let normalized = if mount.starts_with('/') {
-            mount.to_string()
-        } else {
-            format!("/{mount}")
-        };
-        let zone_root = format!("/{}", self.zone_id);
-        let zone_prefix = format!("{zone_root}/");
-        if normalized == zone_root || normalized.starts_with(&zone_prefix) {
-            normalized
-        } else if normalized == "/" {
-            zone_root
-        } else {
-            format!("{zone_root}/{}", normalized.trim_start_matches('/'))
-        }
-    }
-
-    /// Map a source path under `source_mount` to the corresponding target path
-    /// under `target_mount`.
-    ///
-    /// Returns `None` when `source_path` is outside the source mount subtree.
-    fn map_source_to_target_path(
-        source_path: &str,
-        source_mount: &str,
-        target_mount: &str,
-    ) -> Option<String> {
-        if source_path == source_mount {
-            return Some(target_mount.to_string());
-        }
-        let source_prefix = format!("{}/", source_mount.trim_end_matches('/'));
-        if !source_path.starts_with(&source_prefix) {
-            return None;
-        }
-        let suffix = &source_path[source_prefix.len()..];
-        let target_base = target_mount.trim_end_matches('/');
-        Some(format!("{target_base}/{suffix}"))
     }
 
     /// Run one scan-and-replicate pass using the kernel.
@@ -119,8 +69,6 @@ impl ReplicationScanner {
         };
 
         let ctx = OperationContext::new(&self.zone_id, &self.zone_id, true, None, true);
-        let source_mount = self.canonical_mount_for_zone(&self.source_mount);
-        let target_mount = self.canonical_mount_for_zone(&self.target_mount);
         let mut scanned = 0;
         let mut replicated = 0;
         let mut errors = 0;
@@ -189,7 +137,7 @@ impl ReplicationScanner {
         }
         let scanner = Arc::clone(self);
         let interval = std::time::Duration::from_millis(self.interval_ms);
-        let handle = std::thread::Builder::new()
+        std::thread::Builder::new()
             .name("replication-scanner".to_string())
             .spawn(move || {
                 while scanner.running.load(Ordering::Relaxed) {
@@ -201,7 +149,6 @@ impl ReplicationScanner {
                 }
             })
             .expect("failed to spawn replication-scanner thread");
-        *self.worker.lock() = Some(handle);
     }
 
     /// Check if the scanner is running.
@@ -209,24 +156,9 @@ impl ReplicationScanner {
         self.running.load(Ordering::Relaxed)
     }
 
-    /// Signal the scanner to stop. Returns without waiting; prefer
-    /// `stop_and_join` when deterministic shutdown matters.
+    /// Signal the scanner to stop.
     pub(crate) fn stop(&self) {
         self.running.store(false, Ordering::Relaxed);
-    }
-
-    /// Signal stop and block until the worker has actually exited
-    /// (§ review fix #27). Safe to call multiple times; a no-op if the
-    /// worker has already been joined.
-    #[allow(dead_code)]
-    pub(crate) fn stop_and_join(&self) {
-        self.running.store(false, Ordering::Relaxed);
-        let handle = self.worker.lock().take();
-        if let Some(handle) = handle {
-            // Swallow panics here — the scanner is background; we should
-            // not propagate a worker panic to the caller of shutdown.
-            let _ = handle.join();
-        }
     }
 
     /// Get stats: (scanned, replicated, errors, last_scan_ms).

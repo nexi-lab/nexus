@@ -17,7 +17,6 @@
 
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use ahash::AHashSet;
@@ -51,10 +50,6 @@ pub(crate) struct LocalCASTransport {
     /// it is never deleted during normal operation. Matches Python
     /// `LocalTransport._known_parents`.
     known_parents: Mutex<AHashSet<String>>,
-    /// Monotonic counter used to produce unique temp-file suffixes for
-    /// rename-based atomic writes. Process-unique is sufficient because the
-    /// final CAS path is keyed by content hash.
-    tmp_counter: AtomicU64,
 }
 
 #[allow(dead_code)]
@@ -68,73 +63,7 @@ impl LocalCASTransport {
             root: root_path.to_path_buf(),
             fsync_on_write,
             known_parents: Mutex::new(AHashSet::new()),
-            tmp_counter: AtomicU64::new(0),
         })
-    }
-
-    /// Atomic write: `tmp` in the same directory, optional fsync, rename to
-    /// `dst`, and fsync the parent directory when durability is requested.
-    ///
-    /// This prevents (a) torn reads of concurrently-written blobs and
-    /// (b) on-crash observation of zero-length blobs (open+O_TRUNC race).
-    fn write_atomic(&self, dst: &Path, content: &[u8]) -> io::Result<()> {
-        let parent = dst.parent().ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "CAS path has no parent directory",
-            )
-        })?;
-        let dst_name = dst.file_name().and_then(|s| s.to_str()).unwrap_or("cas");
-        let pid = std::process::id();
-
-        // Try O_CREAT|O_EXCL with a fresh counter value, retrying on the
-        // unlikely AlreadyExists (different writer picked the same suffix).
-        let (tmp, mut file) = {
-            let mut attempt = 0u32;
-            loop {
-                let suffix = self.tmp_counter.fetch_add(1, Ordering::Relaxed);
-                let candidate = parent.join(format!(".{dst_name}.tmp-{pid}-{suffix}"));
-                match std::fs::OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(&candidate)
-                {
-                    Ok(f) => break (candidate, f),
-                    Err(e) if e.kind() == io::ErrorKind::AlreadyExists && attempt < 8 => {
-                        attempt += 1;
-                        continue;
-                    }
-                    Err(e) => return Err(e),
-                }
-            }
-        };
-
-        // Write + optional fsync before rename.
-        file.write_all(content)?;
-        if self.fsync_on_write {
-            file.sync_all()?;
-        }
-        drop(file); // close before rename (required on Windows)
-
-        // Atomic rename to the destination path.
-        //
-        // On POSIX this is replace-in-place. On Windows, rename may fail when
-        // `dst` already exists, which can happen under concurrent same-hash
-        // CAS writers. Callers handle that race by treating "dst now exists"
-        // as successful dedup.
-        if let Err(e) = std::fs::rename(&tmp, dst) {
-            let _ = std::fs::remove_file(&tmp);
-            return Err(e);
-        }
-
-        // Sync the directory so the rename is durable on crash.
-        if self.fsync_on_write {
-            if let Ok(dir) = std::fs::File::open(parent) {
-                let _ = dir.sync_all();
-            }
-        }
-
-        Ok(())
     }
 
     /// Resolve a CAS blob key to an absolute filesystem path.
@@ -206,22 +135,19 @@ impl LocalCASTransport {
 
         self.ensure_parent(&path)?;
 
-        // Write via temp file + rename so concurrent writers (or a crash in
-        // the middle of a write) cannot be observed as zero-length/corrupt
-        // by a racing reader. POSIX `rename` is atomic even when the target
-        // already exists, so two writers of the same content simply swap the
-        // same bytes in place — readers always see a complete blob.
-        match self.write_atomic(&path, content) {
-            Ok(()) => Ok(hash),
-            Err(e) => {
-                // Windows race: another writer may have won the final rename
-                // and created the same CAS blob between our exists() and rename().
-                if path.is_file() {
-                    Ok(hash)
-                } else {
-                    Err(e)
-                }
-            }
+        // Write content using O_CREAT | O_WRONLY | O_TRUNC semantics.
+        // OpenOptions::create(true).truncate(true) matches Python's
+        // os.open(path, O_CREAT | O_WRONLY | O_TRUNC, 0o644).
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&path)?;
+
+        file.write_all(content)?;
+
+        if self.fsync_on_write {
+            file.sync_all()?;
         }
 
         Ok((hash, true))
@@ -243,18 +169,19 @@ impl LocalCASTransport {
 
         self.ensure_parent(&path)?;
 
-        // Atomic write (see `write_blob` for rationale).
-        match self.write_atomic(&path, content) {
-            Ok(()) => Ok(true),
-            Err(e) => {
-                // Same concurrent-writer race handling as `write_blob`.
-                if path.is_file() {
-                    Ok(false)
-                } else {
-                    Err(e)
-                }
-            }
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&path)?;
+
+        file.write_all(content)?;
+
+        if self.fsync_on_write {
+            file.sync_all()?;
         }
+
+        Ok(true)
     }
 
     /// Check if a CAS blob exists on disk.

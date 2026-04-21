@@ -1332,6 +1332,7 @@ dependencies = [
  "encoding_rs",
  "fastcdc",
  "futures",
+ "futures-util",
  "globset",
  "hmac",
  "libc",

@@ -3290,31 +3290,38 @@ class NexusFS(  # type: ignore[misc]
         _rust_ctx = self._build_rust_ctx(context, is_admin)
         _rename_result = self._kernel.sys_rename(old_path, new_path, _rust_ctx)
 
-        # F2 C5: Rust kernel already performed the rename atomically
-        # (metastore put-then-delete + dcache evict + backend rename + OBSERVE
-        # event). Skip the Python re-execution which would otherwise trip
-        # over its own success (the post-rename ``exists(old_path)`` check
-        # would now return False and raise ``NexusFileNotFoundError``).
-        if _rename_result.hit and _rename_result.success:
+        # Rust may report hit=true even when the authoritative Python metastore
+        # (e.g. dual-write / raft-backed configurations) still requires the
+        # Python rename path to update its own rows. Only short-circuit when
+        # the metastore already reflects old→new; otherwise run the Python
+        # fallback. (Develop hardening — more conservative than the pre-R20
+        # "always short-circuit" path so dual-write / federation mount setups
+        # get the authoritative metastore updated.)
+        _old_still_visible = old_route.metastore.exists(
+            old_path
+        ) or self.metadata.is_implicit_directory(old_path)
+        _new_now_visible = new_route.metastore.exists(
+            new_path
+        ) or self.metadata.is_implicit_directory(new_path)
+        if _rename_result.hit and not _old_still_visible and _new_now_visible:
             if _rename_result.post_hook_needed:
                 from nexus.contracts.vfs_hooks import RenameHookContext
 
-                self._kernel.dispatch_post_hooks(
-                    "rename",
-                    RenameHookContext(
-                        old_path=old_path,
-                        new_path=new_path,
-                        context=context,
-                        zone_id=zone_id,
-                        agent_id=agent_id,
-                        is_directory=bool(_rename_result.is_directory),
-                        metadata=None,
-                    ),
+                _rename_ctx = RenameHookContext(
+                    old_path=old_path,
+                    new_path=new_path,
+                    context=context,
+                    zone_id=zone_id,
+                    agent_id=agent_id,
+                    is_directory=bool(_rename_result.is_directory),
+                    metadata=meta,
                 )
+                self._kernel.dispatch_post_hooks("rename", _rename_ctx)
             return {}
 
-        # Python fallback for DT_MOUNT/DT_EXTERNAL_STORAGE rename.
-        # VFS lock handled by Rust kernel; fallback is for edge cases only.
+        # Python fallback for DT_MOUNT/DT_EXTERNAL_STORAGE or dual-write
+        # configurations. VFS lock handled by Rust kernel; fallback is for
+        # edge cases only.
         is_implicit_dir = not old_route.metastore.exists(
             old_path
         ) and self.metadata.is_implicit_directory(old_path)
@@ -4670,13 +4677,37 @@ class NexusFS(  # type: ignore[misc]
         if prefix and not prefix.endswith("/"):
             prefix = prefix + "/"
 
+        # Issue #3779 follow-up: filter list results by the caller's zone_id.
+        # The metastore is a single store shared across zones (each row carries
+        # a zone_id column). Without this filter, V2 API callers see every
+        # zone's files. Admins and root-zone callers keep the global view.
+        # Handle OperationContext, dict, and None uniformly — missing zone
+        # falls open to ROOT (admin-equivalent view) by design: a caller
+        # without a zone claim is either the kernel or an unauthenticated
+        # path, neither of which should be zone-restricted here.
+        if isinstance(context, dict):
+            caller_zone = context.get("zone_id") or ROOT_ZONE_ID
+            caller_is_admin = bool(context.get("is_admin", False))
+        elif context is not None:
+            caller_zone = getattr(context, "zone_id", None) or ROOT_ZONE_ID
+            caller_is_admin = bool(getattr(context, "is_admin", False))
+        else:
+            caller_zone = ROOT_ZONE_ID
+            caller_is_admin = False
+
+        def _zone_allowed(entry: Any) -> bool:
+            if caller_is_admin or caller_zone == ROOT_ZONE_ID:
+                return True
+            entry_zone = getattr(entry, "zone_id", None) or ROOT_ZONE_ID
+            return entry_zone == caller_zone
+
         if limit is not None:
             from nexus.core.pagination import paginate_iter
 
             items_iter = (
                 e
                 for e in self.metadata.list_iter(prefix=prefix, recursive=recursive)
-                if not self._is_internal_path(e.path)
+                if not self._is_internal_path(e.path) and _zone_allowed(e)
             )
             result = paginate_iter(items_iter, limit=limit, cursor_path=cursor)
             if details:
@@ -4693,7 +4724,7 @@ class NexusFS(  # type: ignore[misc]
         entries_iter = (
             e
             for e in self.metadata.list_iter(prefix=prefix, recursive=recursive)
-            if not self._is_internal_path(e.path)
+            if not self._is_internal_path(e.path) and _zone_allowed(e)
         )
         if details:
             return [self._entry_to_detail_dict(e, recursive) for e in entries_iter]

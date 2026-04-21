@@ -410,10 +410,12 @@ async def connect(
             project_id=cfg.gcs_project_id,
             credentials_path=cfg.gcs_credentials_path,
         )
-        nexus_root = NEXUS_STATE_DIR
+        nexus_root = _resolve_state_dir()
         data_dir = str(Path(nexus_root) / "data")
     else:
-        data_dir = cfg.data_dir if cfg.data_dir is not None else str(Path(NEXUS_STATE_DIR) / "data")
+        data_dir = (
+            cfg.data_dir if cfg.data_dir is not None else str(Path(_resolve_state_dir()) / "data")
+        )
         # nexus_root hosts sibling state directories (metastore, record_store).
         # When data_dir is explicitly provided (e.g. --data-dir /some/path), USE
         # data_dir itself as nexus_root so metastore goes inside it — this avoids

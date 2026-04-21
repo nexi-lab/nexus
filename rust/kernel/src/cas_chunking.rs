@@ -171,13 +171,18 @@ pub(crate) fn read_and_verify_chunk(
 }
 
 /// Reassemble CDC chunks from manifest chunk array (full-content path).
+///
+/// Validates that chunks cover `[0, total)` exactly — no gaps, no overlaps,
+/// no negative offsets (develop § review fix #7). A malformed manifest
+/// that once produced silently corrupt content now surfaces as
+/// `CASError::IOError`.
 pub(crate) fn reassemble_chunks(
     chunks: &[Value],
     transport: &LocalCASTransport,
     fetcher: Option<&dyn RemoteChunkFetcher>,
     origins: &[String],
 ) -> Result<Vec<u8>, CASError> {
-    let mut parts: Vec<(i64, Vec<u8>)> = Vec::with_capacity(chunks.len());
+    let mut parts: Vec<(u64, Vec<u8>)> = Vec::with_capacity(chunks.len());
     for chunk in chunks {
         let hash = chunk
             .get("chunk_hash")
@@ -189,8 +194,14 @@ pub(crate) fn reassemble_chunks(
                 ))
             })?;
         let offset = chunk.get("offset").and_then(|o| o.as_i64()).unwrap_or(0);
+        if offset < 0 {
+            return Err(CASError::IOError(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("negative chunk offset {offset} for {hash}"),
+            )));
+        }
         let data = read_and_verify_chunk(transport, hash, fetcher, origins)?;
-        parts.push((offset, data));
+        parts.push((offset as u64, data));
     }
 
     parts.sort_by_key(|(offset, _)| *offset);

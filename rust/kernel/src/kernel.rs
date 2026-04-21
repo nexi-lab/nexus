@@ -553,13 +553,18 @@ pub struct Kernel {
     zone_revisions: DashMap<String, Arc<ZoneRevisionEntry>>,
     // FileWatcher — inotify equivalent. Arc-shared with observer registry.
     file_watches: Arc<FileWatcher>,
-    // Agent registry — DashMap backing store (§10 B1)
-    pub(crate) agent_registry: crate::agent_registry::AgentRegistry,
+    // Agent registry — DashMap backing store (§10 B1).
+    // Held in an Arc so components like `AgentStatusResolver` can share
+    // ownership without relying on raw pointers / field address stability.
+    // (Develop introduced the Arc wrapping; we take it to avoid silent
+    // revert of that hardening.)
+    pub(crate) agent_registry: Arc<crate::agent_registry::AgentRegistry>,
     // Per-mount metastores now live inside `MountTable::entries` as
-    // `MountEntry::metastore: Option<Arc<dyn Metastore>>`. Federation
-    // installs them via `MountTable::install_metastore` after the mount
-    // is registered; standalone mode sets them during `add_mount` when
-    // `metastore_path` is provided.
+    // `MountEntry::metastore: Option<Arc<dyn Metastore>>` (our v20
+    // SSOT cleanup — kept against develop's legacy split map).
+    // Federation installs them via `MountTable::install_metastore`
+    // after the mount is registered; standalone mode sets them during
+    // `add_mount` when `metastore_path` is provided.
     // IPC registry — PipeManager owns DashMap<String, Arc<dyn PipeBackend>>
     pub(crate) pipe_manager: crate::pipe_manager::PipeManager,
     // IPC registry — StreamManager owns DashMap<String, Arc<dyn StreamBackend>>
@@ -665,7 +670,7 @@ impl Kernel {
             observers: Mutex::new(KernelObserverRegistry::new()),
             zone_revisions: DashMap::new(),
             file_watches: Arc::new(FileWatcher::new()),
-            agent_registry: crate::agent_registry::AgentRegistry::new(),
+            agent_registry: Arc::new(crate::agent_registry::AgentRegistry::new()),
             pipe_manager: crate::pipe_manager::PipeManager::new(),
             stream_manager: Arc::new(crate::stream_manager::StreamManager::new()),
             native_hooks: Mutex::new(NativeHookRegistry::new()),

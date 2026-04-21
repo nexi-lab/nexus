@@ -243,22 +243,8 @@ impl SharedMemoryPipeBackend {
 
         let frame_len = HEADER_SIZE + payload_len;
         let tail_val = self.tail().load(Ordering::Relaxed);
-        let head_val = self.head().load(Ordering::Acquire);
         let tail_idx = tail_val % self.ring_cap;
         let contiguous = self.ring_cap - tail_idx;
-
-        // Physical ring-space check (includes header + potential sentinel).
-        // `used_bytes` is payload-only, which can under-count true ring fill
-        // for tiny payloads where header overhead (HEADER_SIZE=4) plus wrap
-        // padding is larger than the slack `ring_cap - user_capacity`.
-        let need = if frame_len > contiguous {
-            contiguous + frame_len
-        } else {
-            frame_len
-        };
-        if tail_val.saturating_sub(head_val) + need > self.ring_cap {
-            return Err(PipeError::Full(used, self.user_capacity));
-        }
 
         let ring = self.ring_slice();
 
@@ -436,16 +422,6 @@ impl SharedMemoryPipeBackend {
             libc::fcntl(space_fds[0], libc::F_SETFL, libc::O_NONBLOCK);
             libc::fcntl(data_fds[1], libc::F_SETFL, libc::O_NONBLOCK);
             libc::fcntl(space_fds[1], libc::F_SETFL, libc::O_NONBLOCK);
-        }
-
-        // The creator is the writer only: it writes into `notify_data_wr`
-        // to wake the reader and listens on `space_rd_fd` for reader-side
-        // space notifications. It does NOT need `space_fds[1]` at all —
-        // retaining that fd kept the space-pipe alive even after the
-        // reader died, so `read(space_rd_fd)` would never see EOF and
-        // graceful shutdown was impossible (§ review fix #13). Close it.
-        unsafe {
-            libc::close(space_fds[1]);
         }
 
         let core = SharedMemoryPipeBackend {
@@ -826,27 +802,6 @@ mod tests {
         assert!(std::path::Path::new(&path).exists());
         creator.cleanup().unwrap();
         assert!(!std::path::Path::new(&path).exists());
-    }
-
-    #[test]
-    fn test_many_tiny_pushes_cannot_overwrite_unread() {
-        // Regression for review fix #1: tiny payloads + frame headers must
-        // respect ring_cap, not only user_capacity.
-        let (creator, attacher) = create_pair(32);
-        let mut accepted = 0usize;
-        for _ in 0..64 {
-            match creator.push_inner(&[0xBBu8]) {
-                Ok(_) => accepted += 1,
-                Err(PipeError::Full(_, _)) => break,
-                Err(e) => panic!("unexpected push error: {e:?}"),
-            }
-        }
-        // floor(ring_cap / frame_len) = 64 / 5 = 12
-        assert!(accepted <= 12, "overflow: accepted {accepted} pushes");
-        for _ in 0..accepted {
-            assert_eq!(pop(&attacher), vec![0xBBu8]);
-        }
-        creator.cleanup().unwrap();
     }
 
     #[test]

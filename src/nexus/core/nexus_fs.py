@@ -14,6 +14,7 @@ from typing import Any, NamedTuple
 from nexus.contracts.cache_store import CacheStoreABC, NullCacheStore
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import (
+    AuthenticationError,
     BackendError,
     ConflictError,
     InvalidPathError,
@@ -5368,6 +5369,11 @@ class NexusFS(  # type: ignore[misc]
                             f"{path.rstrip('/')}/{e}" if not e.startswith("/") else e
                             for e in external_entries
                         ]
+            except AuthenticationError:
+                # Issue #3822: auth-required must surface so UIs can drive the
+                # OAuth flow.  Silently falling through to the metastore path
+                # returns [] (empty drive) and masks the missing token.
+                raise
             except Exception as exc:
                 logger.debug("sys_readdir connector route failed for %s: %s", path, exc)
 

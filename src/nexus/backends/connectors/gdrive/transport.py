@@ -139,16 +139,23 @@ class DriveTransport:
                 backend="gdrive",
             ) from None
 
-        # Resolve user email
+        # Resolve user email — absence is an auth-required signal, not a
+        # backend error.  Callers (fs.ls, fs.read, …) need to surface the
+        # authorize URL so UIs can drive the OAuth flow (#3822).
         if self._user_email:
-            user_email = self._user_email
+            user_email: str | None = self._user_email
         elif self._context and self._context.user_id:
             user_email = self._context.user_id
         else:
-            raise BackendError(
-                "Google Drive transport requires either configured user_email "
-                "or authenticated user in OperationContext",
-                backend="gdrive",
+            user_email = None
+
+        if user_email is None:
+            raise AuthenticationError(
+                f"Google Drive requires authorization (provider={self._provider}). "
+                "Configure user_email on the mount or authenticate a user.",
+                provider=self._provider,
+                user_email=None,
+                auth_url=self._build_auth_url(user_email=None),
             )
 
         from nexus.lib.sync_bridge import run_sync
@@ -171,8 +178,12 @@ class DriveTransport:
                 str(_auth_exc),
                 provider=self._provider,
                 user_email=user_email,
+                auth_url=self._build_auth_url(user_email=user_email),
             ) from _auth_exc
         except Exception as e:
+            # Non-auth failure (network error, misconfigured token manager, …)
+            # stays a BackendError so callers don't get false auth-required
+            # signals for transient problems.
             raise BackendError(
                 f"Failed to get valid OAuth token for user {user_email}: {e}",
                 backend="gdrive",
@@ -182,6 +193,50 @@ class DriveTransport:
 
         creds = Credentials(token=access_token)
         return build("drive", "v3", credentials=creds)
+
+    def _build_auth_url(self, *, user_email: str | None) -> str | None:
+        """Build a best-effort OAuth authorization URL for the bound provider.
+
+        Returns ``None`` when the environment is missing OAuth client
+        credentials — the caller still raises ``AuthenticationError`` so the
+        auth-required signal isn't lost, it just ships without a URL.
+        The redirect URI is derived from
+        ``NEXUS_OAUTH_REDIRECT_URI`` (set by the frontend / CLI callback
+        listener) and falls back to ``http://localhost`` so the URL is
+        well-formed even in headless test runs.
+        """
+        import os
+
+        try:
+            from nexus.fs._oauth_support import get_google_auth_url
+        except Exception:
+            return None
+
+        provider = self._provider or "google-drive"
+        redirect_uri = (
+            os.getenv("NEXUS_OAUTH_REDIRECT_URI")
+            or os.getenv("NEXUS_FS_OAUTH_REDIRECT_URI")
+            or "http://localhost"
+        )
+        # ``get_google_auth_url`` only knows a fixed set of service names
+        # (gws / google-drive / gmail / google-calendar).  Unknown provider
+        # labels fall back to gws-scope so the user gets *some* URL.
+        service = (
+            provider
+            if provider in {"google-drive", "gws", "gmail", "google-calendar"}
+            else "google-drive"
+        )
+        try:
+            return get_google_auth_url(
+                service_name=service,
+                redirect_uri=redirect_uri,
+            )
+        except Exception:
+            # Missing NEXUS_OAUTH_GOOGLE_CLIENT_ID/SECRET, or any other
+            # config miss.  The AuthenticationError still conveys the
+            # auth-required signal; the URL is optional context.
+            del user_email
+            return None
 
     # ------------------------------------------------------------------
     # Internal helpers — folder resolution

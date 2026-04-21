@@ -128,6 +128,18 @@ class FederationRPCService:
         nx = self._nexus_fs
         if nx is None:
             raise RuntimeError("federation_import_zone: no NexusFS attached")
+        # Create the raft zone before loading data into it. Import is a
+        # restore-into-zone operation, not a create+restore, so the
+        # target zone must exist on the raft side. Idempotent: a
+        # pre-existing zone surfaces from `zone_create` as an "already
+        # exists" error we swallow, keeping the RPC callable twice
+        # with the same args.
+        if target_zone:
+            try:
+                self._kernel.zone_create(target_zone)
+            except Exception as e:
+                if "already exists" not in str(e).lower():
+                    raise
         service = ZoneImportService(nx)
         options = ZoneImportOptions(
             bundle_path=Path(bundle_path),

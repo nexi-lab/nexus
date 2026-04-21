@@ -65,6 +65,8 @@ class BackendFactory:
             ConnectorRegistry,
             _ensure_optional_backends_registered,
         )
+        from nexus.backends.base.runtime_deps import check_runtime_deps
+        from nexus.contracts.exceptions import MissingDependencyError
 
         _ensure_optional_backends_registered()
 
@@ -72,6 +74,11 @@ class BackendFactory:
             info = ConnectorRegistry.get_info(backend_type)
         except KeyError:
             raise RuntimeError(f"Unsupported backend type: {backend_type}") from None
+
+        missing = check_runtime_deps(info.runtime_deps)
+        if missing:
+            raise MissingDependencyError(backend=backend_type, missing=missing)
+
         connector_cls = info.connector_class
         mapping = info.config_mapping
 

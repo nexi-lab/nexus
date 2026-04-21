@@ -174,8 +174,10 @@ fn nexus_kernel(m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<shm_pipe::SharedMemoryPipeBackend>()?;
     #[cfg(unix)]
     m.add_class::<shm_stream::SharedMemoryStreamBackend>()?;
-    // Raft-backed durable stream (replaces Python `WALStreamBackend`).
-    m.add_class::<wal_stream::WalStreamBackend>()?;
+    // R20.18.6: `WalStreamBackend` pyclass removed. Users reach the
+    // raft-backed stream through `sys_setattr(DT_STREAM, io_profile="wal")`;
+    // `WalStreamCore` now impls `StreamBackend` and registers with
+    // `stream_manager` alongside the other backends.
     // Subprocess-stdio accumulation stream (Unix raw-fd pump).
     #[cfg(unix)]
     m.add_class::<stdio_stream::StdioStreamBackend>()?;

@@ -950,9 +950,11 @@ class NexusFS(  # type: ignore[misc]
             ).__name__.startswith("CAS")
             _local_root = str(getattr(backend, "root_path", None)) if _is_cas_local else None
 
-            # Metastore resolution: redb path or ZoneHandle for federation DI.
+            # R20.18.6: federation DT_MOUNT auto-resolves its raft backing via
+            # kernel-internal `resolve_federation_mount_backing`; no Python
+            # ZoneHandle crosses the PyO3 boundary here. Non-federation mounts
+            # may still ship a LocalMetastore redb path.
             _ms_path = getattr(metastore, "_redb_path", None) if metastore is not None else None
-            _zone_handle = getattr(metastore, "_engine", None) if metastore is not None else None
 
             result = self._kernel.sys_setattr(
                 path,
@@ -963,7 +965,6 @@ class NexusFS(  # type: ignore[misc]
                 py_backend=backend,
                 zone_id=zone_id,
                 metastore_path=str(_ms_path) if _ms_path else None,
-                py_zone_handle=_zone_handle,
             )
 
             # Python-side bookkeeping: store _PyMountInfo + dispatch event

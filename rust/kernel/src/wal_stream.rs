@@ -5,12 +5,14 @@
 //! ``sm_stream_entries`` redb table. No ``FileMetadata`` round-trip,
 //! no hex encoding, no overlap with file-metadata scans.
 //!
-//! Python wiring: ``from nexus_kernel import WalStreamBackend;
-//! WalStreamBackend(zone_handle, "stream-id")``.
+//! R20.18.6: the pyclass wrapper is gone. Users reach WAL-backed
+//! streams through the normal syscall surface — `sys_setattr(DT_STREAM,
+//! io_profile="wal")` registers a `WalStreamCore` (which now impls
+//! `StreamBackend`) with the kernel's `stream_manager`, after which
+//! read/write land on the replicated raft log via the same Python
+//! stream API as any other backend. No PyZoneHandle crosses the
+//! boundary; kernel looks the zone up through `zone_manager_arc`.
 
-use pyo3::exceptions::{PyRuntimeError, PyStopIteration};
-use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict, PyList};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -140,6 +142,9 @@ impl WalStreamCore {
         self.closed.store(true, Ordering::Release);
     }
 
+    /// Reachable via the `StreamBackend` trait impl below; retained as
+    /// an inherent method for unit tests and future Rust-side probes.
+    #[allow(dead_code)]
     pub fn is_closed(&self) -> bool {
         self.closed.load(Ordering::Acquire)
     }
@@ -148,128 +153,58 @@ impl WalStreamCore {
         self.next_seq.load(Ordering::Acquire)
     }
 
+    #[allow(dead_code)]
     pub fn stream_id(&self) -> &str {
         &self.stream_id
     }
 }
 
 // ---------------------------------------------------------------------------
-// PyO3 binding: WalStreamBackend
+// StreamBackend impl for WalStreamCore — lets io_profile="wal" register a
+// raft-backed stream with stream_manager alongside MemoryStreamBackend and
+// SharedMemoryStreamBackend. Python never sees WalStreamCore directly;
+// dispatch goes through the standard stream syscalls.
 // ---------------------------------------------------------------------------
 
-/// Durable StreamBackend backed by Raft WAL.
-///
-/// Constructed with a ZoneHandle + stream_id. All writes go through Raft
-/// consensus (SC); reads are local state-machine lookups.
-#[pyclass(name = "WalStreamBackend")]
-pub struct WalStreamBackend {
-    core: Arc<WalStreamCore>,
-}
-
-#[pymethods]
-impl WalStreamBackend {
-    /// Create a new WAL stream backend bound to a raft zone.
-    ///
-    /// Args:
-    ///     zone_handle: A `nexus_kernel.ZoneHandle` instance.
-    ///     stream_id: Unique identifier for this stream (used as key prefix).
-    #[new]
-    fn new(py: Python<'_>, zone_handle: Bound<'_, PyAny>, stream_id: String) -> PyResult<Self> {
-        let _ = py;
-        let zh_ref = zone_handle
-            .cast::<nexus_raft::pyo3_bindings::PyZoneHandle>()
-            .map_err(|e| {
-                pyo3::exceptions::PyTypeError::new_err(format!("expected ZoneHandle, got: {e}"))
-            })?;
-        let zh = zh_ref.borrow();
-        let consensus: Arc<dyn WalConsensus> = Arc::new(RaftWalConsensus::new(
-            zh.consensus_node(),
-            zh.runtime_handle(),
-        ));
-        Ok(Self {
-            core: Arc::new(WalStreamCore::new(consensus, stream_id)),
-        })
+impl crate::stream::StreamBackend for WalStreamCore {
+    fn push(&self, data: &[u8]) -> Result<usize, crate::stream::StreamError> {
+        self.write_nowait(data)
+            .map(|seq| seq as usize)
+            .map_err(|_| crate::stream::StreamError::Closed("wal stream closed"))
     }
 
-    /// Append `data` to the WAL. Returns the sequence number (offset).
-    fn write_nowait(&self, py: Python<'_>, data: &[u8]) -> PyResult<u64> {
-        let core = self.core.clone();
-        let data = data.to_vec();
-        py.detach(|| core.write_nowait(&data).map_err(PyRuntimeError::new_err))
-    }
-
-    /// Async write — raft append is synchronous, so this just calls
-    /// `write_nowait`. The `blocking` kwarg is accepted for StreamBackend
-    /// protocol parity.
-    #[pyo3(signature = (data, *, blocking=true))]
-    fn write(&self, py: Python<'_>, data: &[u8], blocking: bool) -> PyResult<u64> {
-        let _ = blocking;
-        self.write_nowait(py, data)
-    }
-
-    /// Read entry at `byte_offset` (sequence number). Returns
-    /// `(bytes, next_offset)`. Empty bytes means "no data yet" —
-    /// caller polls or uses async `read()` for blocking semantics.
-    fn read_at<'py>(
-        &self,
-        py: Python<'py>,
-        byte_offset: u64,
-    ) -> PyResult<(Bound<'py, PyBytes>, u64)> {
-        let core = self.core.clone();
-        let result = py.detach(|| core.read_at(byte_offset));
-        match result {
-            Ok(Some(data)) => Ok((PyBytes::new(py, &data), byte_offset + 1)),
-            Ok(None) => Ok((PyBytes::new(py, b""), byte_offset)),
-            Err(e) => Err(PyStopIteration::new_err(e)),
+    fn read_at(&self, offset: usize) -> Result<(Vec<u8>, usize), crate::stream::StreamError> {
+        match WalStreamCore::read_at(self, offset as u64) {
+            Ok(Some(data)) => Ok((data, offset + 1)),
+            Ok(None) => Err(crate::stream::StreamError::Empty),
+            Err(_) => Err(crate::stream::StreamError::ClosedEmpty),
         }
     }
 
-    /// Read up to `count` entries starting at `byte_offset`.
-    #[pyo3(signature = (byte_offset=0, count=10))]
-    fn read_batch<'py>(
+    fn read_batch(
         &self,
-        py: Python<'py>,
-        byte_offset: u64,
+        offset: usize,
         count: usize,
-    ) -> PyResult<(Bound<'py, PyList>, u64)> {
-        let core = self.core.clone();
-        let (items, next) = py
-            .detach(|| core.read_batch(byte_offset, count))
-            .map_err(PyRuntimeError::new_err)?;
-        let list = PyList::empty(py);
-        for item in items {
-            list.append(PyBytes::new(py, &item))?;
-        }
-        Ok((list, next))
+    ) -> Result<(Vec<Vec<u8>>, usize), crate::stream::StreamError> {
+        WalStreamCore::read_batch(self, offset as u64, count)
+            .map(|(items, next)| (items, next as usize))
+            .map_err(|_| crate::stream::StreamError::ClosedEmpty)
     }
 
-    /// Mark the stream closed (readers past tail will get StopIteration).
     fn close(&self) {
-        self.core.close();
+        WalStreamCore::close(self);
     }
 
-    /// True if `close()` has been called.
-    #[getter]
-    fn closed(&self) -> bool {
-        self.core.is_closed()
+    fn is_closed(&self) -> bool {
+        WalStreamCore::is_closed(self)
     }
 
-    /// Read-only stats dict. Shape matches the Python `WALStreamBackend.stats`
-    /// property: `{stream_id, next_seq, closed, backend}`.
-    #[getter]
-    fn stats<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        let dict = PyDict::new(py);
-        dict.set_item("stream_id", self.core.stream_id())?;
-        dict.set_item("next_seq", self.core.tail())?;
-        dict.set_item("closed", self.core.is_closed())?;
-        dict.set_item("backend", "wal")?;
-        Ok(dict)
+    fn tail_offset(&self) -> usize {
+        WalStreamCore::tail(self) as usize
     }
 
-    /// Current tail (== next seq to be written == number of entries).
-    #[getter]
-    fn tail(&self) -> u64 {
-        self.core.tail()
+    fn msg_count(&self) -> usize {
+        WalStreamCore::tail(self) as usize
     }
 }
 

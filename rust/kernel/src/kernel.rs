@@ -1720,6 +1720,31 @@ impl Kernel {
                     "shared_memory streams require unix".into(),
                 ));
             }
+        } else if io_profile == "wal" {
+            // R20.18.6: raft-backed durable stream. Previously constructed
+            // via the deleted `WalStreamBackend` pyclass; now the kernel
+            // picks the zone's consensus off `zone_manager_arc()` directly
+            // so no ZoneHandle crosses the PyO3 boundary.
+            let zm = self.zone_manager_arc().ok_or_else(|| {
+                KernelError::IOError("io_profile=wal requires federation (set NEXUS_PEERS)".into())
+            })?;
+            // Stream inode lives inside the zone whose raft group we use —
+            // for now we wire against the root zone (the only zone Python
+            // currently writes DT_STREAM into). When streams need to
+            // follow the mount tree, swap this for MountTable::route(path).
+            let root_zone = "root";
+            let consensus = zm.registry().get_node(root_zone).ok_or_else(|| {
+                KernelError::IOError(format!("io_profile=wal: zone {root_zone} not loaded"))
+            })?;
+            let runtime = zm.runtime_handle();
+            let wal_consensus: Arc<dyn crate::wal_stream::WalConsensus> =
+                Arc::new(crate::wal_stream::RaftWalConsensus::new(consensus, runtime));
+            let backend = crate::wal_stream::WalStreamCore::new(wal_consensus, path.to_string());
+            self.stream_manager
+                .register(path, Arc::new(backend))
+                .map_err(stream_mgr_err)?;
+            self.write_stream_inode(path, capacity);
+            (None, None)
         } else {
             self.create_stream(path, capacity)?;
             (None, None)

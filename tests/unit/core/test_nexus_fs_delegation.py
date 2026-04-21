@@ -41,11 +41,18 @@ def mock_fs():
 
 @pytest.fixture
 def context():
-    """Standard operation context."""
+    """Standard operation context.
+
+    Uses ROOT_ZONE_ID so the sys_readdir zone-column filter (Issue #3779
+    follow-up) doesn't apply — these tests exercise delegation to
+    metadata, not zone isolation.
+    """
+    from nexus.contracts.constants import ROOT_ZONE_ID
+
     return OperationContext(
         user_id="test_user",
         groups=["test_group"],
-        zone_id="test_zone",
+        zone_id=ROOT_ZONE_ID,
         is_system=False,
         is_admin=False,
     )

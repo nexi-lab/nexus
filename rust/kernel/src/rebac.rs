@@ -19,7 +19,7 @@ use string_interner::DefaultStringInterner;
 // Re-use all domain types and algorithms from library.
 use library::rebac::graph::{compute_permission_interned, InternedGraph};
 use library::rebac::{
-    collect_candidate_objects_for_subject, compute_permission, expand_permission,
+    collect_candidate_objects_for_subjects, compute_permission, expand_permission,
     find_subject_groups, ReBACGraph, MAX_DEPTH,
 };
 use library::types::{
@@ -168,33 +168,27 @@ fn compute_permission_interned_shared(
                 skip_reverse,
             } => {
                 // Forward: object as subject → find objects it relates to
-                let forward = graph
-                    .find_related_objects(object, *tupleset)
-                    .iter()
-                    .any(|&obj| {
-                        compute_permission_interned_shared(
-                            subject,
-                            *computed_userset,
-                            obj,
-                            graph,
-                            namespaces,
-                            memo_cache,
-                            &mut visited.clone(),
-                            depth + 1,
-                        )
-                    });
-                if forward {
-                    true
-                } else if *skip_reverse {
-                    // Fix nexi-lab/nexus#3733 Bug A: skip the reverse pattern
-                    // for ``parent`` tuplesets. See graph.rs for the full
-                    // rationale — the reverse direction inverts parent
-                    // semantics and causes privilege escalation.
-                    false
-                } else {
+                let mut allowed =
+                    graph
+                        .find_related_objects(object, *tupleset)
+                        .iter()
+                        .any(|&obj| {
+                            compute_permission_interned_shared(
+                                subject,
+                                *computed_userset,
+                                obj,
+                                graph,
+                                namespaces,
+                                memo_cache,
+                                &mut visited.clone(),
+                                depth + 1,
+                            )
+                        });
+
+                if !allowed && !*skip_reverse {
                     // Reverse: find subjects that have tupleset relation ON object
                     // (H25: must match graph.rs which checks both directions)
-                    graph
+                    allowed = graph
                         .find_subjects_for_object(object, *tupleset)
                         .iter()
                         .any(|&target| {
@@ -208,8 +202,17 @@ fn compute_permission_interned_shared(
                                 &mut visited.clone(),
                                 depth + 1,
                             )
-                        })
+                        });
                 }
+
+                // Direct tuples always apply (match library::rebac::graph).
+                if !allowed {
+                    allowed = check_relation_with_usersets_interned_shared(
+                        subject, permission, object, graph, namespaces, memo_cache, visited, depth,
+                    );
+                }
+
+                allowed
             }
         }
     } else {
@@ -631,27 +634,19 @@ pub fn list_objects_for_subject<'py>(
         let graph = ReBACGraph::from_tuples(&rebac_tuples);
 
         let mut candidate_objects: AHashSet<Entity> = AHashSet::new();
+        let groups = find_subject_groups(&subject, &graph);
+        let mut subjects_for_candidates = Vec::with_capacity(groups.len() + 1);
+        subjects_for_candidates.push(subject.clone());
+        subjects_for_candidates.extend(groups);
 
-        collect_candidate_objects_for_subject(
-            &subject,
+        collect_candidate_objects_for_subjects(
+            &subjects_for_candidates,
             &permission,
             &object_type,
             &graph,
             &namespaces,
             &mut candidate_objects,
         );
-
-        let groups = find_subject_groups(&subject, &graph);
-        for group in &groups {
-            collect_candidate_objects_for_subject(
-                group,
-                &permission,
-                &object_type,
-                &graph,
-                &namespaces,
-                &mut candidate_objects,
-            );
-        }
 
         let mut verified_objects: Vec<Entity> = Vec::new();
         let mut memo_cache: MemoCache = AHashMap::new();
@@ -693,4 +688,59 @@ pub fn list_objects_for_subject<'py>(
     }
 
     Ok(py_list)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shared_parallel_tuple_to_userset_keeps_direct_fallback() {
+        let mut interner = DefaultStringInterner::new();
+
+        let tuples = vec![InternedTuple {
+            subject_type: interner.get_or_intern("user"),
+            subject_id: interner.get_or_intern("alice"),
+            subject_relation: None,
+            relation: interner.get_or_intern("viewer"),
+            object_type: interner.get_or_intern("file"),
+            object_id: interner.get_or_intern("/doc"),
+        }];
+        let graph = InternedGraph::from_tuples(&tuples, &mut interner);
+
+        let config_json = r#"{"relations":{
+            "parent":"direct",
+            "viewer":{"tupleToUserset":{"tupleset":"parent","computedUserset":"viewer"}}
+        },"permissions":{"read":["viewer"]}}"#;
+        let config: NamespaceConfig = serde_json::from_str(config_json).unwrap();
+        let interned_config = InternedNamespaceConfig::from_config(&config, &mut interner);
+        let mut namespaces: AHashMap<Sym, InternedNamespaceConfig> = AHashMap::new();
+        namespaces.insert(interner.get_or_intern("file"), interned_config);
+
+        let subject = InternedEntity {
+            entity_type: interner.get_or_intern("user"),
+            entity_id: interner.get_or_intern("alice"),
+        };
+        let object = InternedEntity {
+            entity_type: interner.get_or_intern("file"),
+            entity_id: interner.get_or_intern("/doc"),
+        };
+        let read = interner.get_or_intern("read");
+
+        let shared_memo_cache: SharedInternedMemoCache =
+            DashMap::with_hasher(ahash::RandomState::new());
+        let mut visited: AHashSet<InternedMemoKey> = AHashSet::new();
+
+        let allowed = compute_permission_interned_shared(
+            subject,
+            read,
+            object,
+            &graph,
+            &namespaces,
+            &shared_memo_cache,
+            &mut visited,
+            0,
+        );
+        assert!(allowed);
+    }
 }

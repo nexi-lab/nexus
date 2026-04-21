@@ -30,7 +30,10 @@ pub fn filter_paths_exclude(
     Ok(paths
         .iter()
         .filter(|path| {
-            let filename = path.rsplit('/').next().unwrap_or(path);
+            let filename = path
+                .rsplit(|c| ['/', '\\'].contains(&c))
+                .next()
+                .unwrap_or(path);
             !globset.is_match(path.as_str()) && !globset.is_match(filename)
         })
         .cloned()
@@ -96,5 +99,17 @@ mod tests {
         let exclude = vec![".*".to_string(), "target/**".to_string()];
         let filtered = filter_paths_exclude(&paths, &exclude).unwrap();
         assert_eq!(filtered, vec!["src/main.rs"]);
+    }
+
+    #[test]
+    fn exclude_windows_style_basename() {
+        let paths = vec![
+            "src\\main.rs".to_string(),
+            "src\\ignore.tmp".to_string(),
+            "docs\\readme.md".to_string(),
+        ];
+        let exclude = vec!["*.tmp".to_string()];
+        let filtered = filter_paths_exclude(&paths, &exclude).unwrap();
+        assert_eq!(filtered, vec!["src\\main.rs", "docs\\readme.md"]);
     }
 }

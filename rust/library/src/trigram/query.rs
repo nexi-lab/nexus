@@ -174,7 +174,9 @@ fn extract_trigrams_for_query_bytes(bytes: &[u8]) -> Vec<[u8; 3]> {
     for window in bytes.windows(3) {
         seen.insert([window[0], window[1], window[2]]);
     }
-    seen.into_iter().collect()
+    let mut trigrams: Vec<[u8; 3]> = seen.into_iter().collect();
+    trigrams.sort();
+    trigrams
 }
 
 #[cfg(test)]

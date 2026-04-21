@@ -459,7 +459,7 @@ pub fn expand_permission(
                         graph,
                         namespaces,
                         subjects,
-                        &mut visited.clone(),
+                        visited,
                         depth + 1,
                     );
                 }
@@ -475,24 +475,28 @@ pub fn expand_permission(
                         graph,
                         namespaces,
                         subjects,
-                        &mut visited.clone(),
+                        visited,
                         depth + 1,
                     );
                 }
 
-                // Reverse: find subjects that have tupleset relation ON object
-                let reverse_targets =
-                    graph.find_subjects_for_object(object, &tuple_to_userset.tupleset);
-                for target in &reverse_targets {
-                    expand_permission(
-                        &tuple_to_userset.computed_userset,
-                        target,
-                        graph,
-                        namespaces,
-                        subjects,
-                        &mut visited.clone(),
-                        depth + 1,
-                    );
+                // Reverse: find subjects that have tupleset relation ON object.
+                // Skip for "parent" tuplesets to match compute_permission() and
+                // avoid the known Bug A privilege-escalation direction.
+                if tuple_to_userset.tupleset != "parent" {
+                    let reverse_targets =
+                        graph.find_subjects_for_object(object, &tuple_to_userset.tupleset);
+                    for target in &reverse_targets {
+                        expand_permission(
+                            &tuple_to_userset.computed_userset,
+                            target,
+                            graph,
+                            namespaces,
+                            subjects,
+                            visited,
+                            depth + 1,
+                        );
+                    }
                 }
 
                 // Direct tuples always apply (Zanzibar: direct fallback)
@@ -533,17 +537,19 @@ pub fn get_permission_relations(
     let mut expanded: AHashSet<String> = AHashSet::new();
     let mut to_expand: Vec<String> = vec![permission.to_string()];
 
-    if let Some(namespace) = namespaces.get(object_type) {
-        if let Some(usersets) = namespace.permissions.get(permission) {
-            to_expand.extend(usersets.iter().cloned());
+    while let Some(rel) = to_expand.pop() {
+        if !expanded.insert(rel.clone()) {
+            continue;
         }
 
-        while let Some(rel) = to_expand.pop() {
-            if expanded.contains(&rel) {
-                continue;
+        if let Some(namespace) = namespaces.get(object_type) {
+            if let Some(usersets) = namespace.permissions.get(&rel) {
+                for userset in usersets {
+                    if !expanded.contains(userset) {
+                        to_expand.push(userset.clone());
+                    }
+                }
             }
-            expanded.insert(rel.clone());
-
             if let Some(RelationConfig::Union { union }) = namespace.relations.get(&rel) {
                 for member in union {
                     if !expanded.contains(member) {
@@ -555,6 +561,210 @@ pub fn get_permission_relations(
     }
 
     expanded.into_iter().collect()
+}
+
+#[derive(Default)]
+struct TupleToUsersetCandidateIndex {
+    forward_keys_by_relation: AHashMap<String, Vec<AdjacencyKey>>,
+    reverse_keys_by_relation: AHashMap<String, Vec<AdjacencyKey>>,
+}
+
+#[derive(Default)]
+struct UsersetRelationCandidateIndex {
+    keys_by_relation: AHashMap<String, Vec<UsersetKey>>,
+}
+
+fn build_userset_relation_candidate_index(
+    object_type: &str,
+    relations: &[String],
+    graph: &ReBACGraph,
+) -> UsersetRelationCandidateIndex {
+    let relation_set: AHashSet<String> = relations.iter().cloned().collect();
+    if relation_set.is_empty() {
+        return UsersetRelationCandidateIndex::default();
+    }
+
+    let mut index = UsersetRelationCandidateIndex::default();
+    for key in graph.userset_index.keys() {
+        if key.0 == object_type && relation_set.contains(&key.2) {
+            index
+                .keys_by_relation
+                .entry(key.2.clone())
+                .or_default()
+                .push(key.clone());
+        }
+    }
+
+    index
+}
+
+fn build_tuple_to_userset_candidate_index(
+    object_type: &str,
+    relations: &[String],
+    graph: &ReBACGraph,
+    namespaces: &AHashMap<String, NamespaceConfig>,
+) -> TupleToUsersetCandidateIndex {
+    let mut tuplesets: AHashSet<String> = AHashSet::new();
+
+    if let Some(namespace) = namespaces.get(object_type) {
+        for relation in relations {
+            if let Some(RelationConfig::TupleToUserset { tuple_to_userset }) =
+                namespace.relations.get(relation)
+            {
+                tuplesets.insert(tuple_to_userset.tupleset.clone());
+            }
+        }
+    }
+
+    if tuplesets.is_empty() {
+        return TupleToUsersetCandidateIndex::default();
+    }
+
+    let mut index = TupleToUsersetCandidateIndex::default();
+
+    for key in graph.adjacency_list.keys() {
+        if key.0 == object_type && tuplesets.contains(&key.2) {
+            index
+                .forward_keys_by_relation
+                .entry(key.2.clone())
+                .or_default()
+                .push(key.clone());
+        }
+    }
+
+    for key in graph.reverse_adjacency.keys() {
+        if key.0 == object_type && tuplesets.contains(&key.2) {
+            index
+                .reverse_keys_by_relation
+                .entry(key.2.clone())
+                .or_default()
+                .push(key.clone());
+        }
+    }
+
+    index
+}
+
+fn add_userset_relation_candidates(
+    subject: &Entity,
+    relation: &str,
+    graph: &ReBACGraph,
+    namespaces: &AHashMap<String, NamespaceConfig>,
+    index: &UsersetRelationCandidateIndex,
+    memo_cache: &mut MemoCache,
+    candidates: &mut AHashSet<Entity>,
+) {
+    let Some(keys) = index.keys_by_relation.get(relation) else {
+        return;
+    };
+
+    for key in keys {
+        if let Some(usersets) = graph.userset_index.get(key) {
+            if usersets.iter().any(|userset| {
+                let userset_entity = Entity {
+                    entity_type: userset.subject_type.clone(),
+                    entity_id: userset.subject_id.clone(),
+                };
+                compute_permission(
+                    subject,
+                    &userset.subject_relation,
+                    &userset_entity,
+                    graph,
+                    namespaces,
+                    memo_cache,
+                    &mut AHashSet::new(),
+                    0,
+                )
+            }) {
+                candidates.insert(Entity {
+                    entity_type: key.0.clone(),
+                    entity_id: key.1.clone(),
+                });
+            }
+        }
+    }
+}
+
+/// Add candidates reachable through tupleToUserset relations.
+///
+/// This complements direct adjacency-based candidate collection and prevents
+/// false negatives for inheritance/group patterns where the subject does not
+/// hold the final relation directly on the candidate object.
+#[allow(clippy::too_many_arguments)]
+fn add_tuple_to_userset_candidates(
+    subject: &Entity,
+    relation: &str,
+    object_type: &str,
+    graph: &ReBACGraph,
+    namespaces: &AHashMap<String, NamespaceConfig>,
+    index: &TupleToUsersetCandidateIndex,
+    memo_cache: &mut MemoCache,
+    candidates: &mut AHashSet<Entity>,
+) {
+    let tuple_to_userset = match namespaces
+        .get(object_type)
+        .and_then(|ns| ns.relations.get(relation))
+    {
+        Some(RelationConfig::TupleToUserset { tuple_to_userset }) => tuple_to_userset,
+        _ => return,
+    };
+
+    let tupleset = &tuple_to_userset.tupleset;
+    let computed_userset = &tuple_to_userset.computed_userset;
+
+    // Forward pattern: object --tupleset--> target, then subject has
+    // computed_userset on target.
+    if let Some(forward_keys) = index.forward_keys_by_relation.get(tupleset) {
+        for key in forward_keys {
+            if let Some(targets) = graph.adjacency_list.get(key) {
+                if targets.iter().any(|target| {
+                    compute_permission(
+                        subject,
+                        computed_userset,
+                        target,
+                        graph,
+                        namespaces,
+                        memo_cache,
+                        &mut AHashSet::new(),
+                        0,
+                    )
+                }) {
+                    candidates.insert(Entity {
+                        entity_type: key.0.clone(),
+                        entity_id: key.1.clone(),
+                    });
+                }
+            }
+        }
+    }
+
+    // Reverse pattern: related_subject --tupleset--> object, then subject has
+    // computed_userset on related_subject. Skip for parent tuplesets (Bug A).
+    if tupleset != "parent" {
+        if let Some(reverse_keys) = index.reverse_keys_by_relation.get(tupleset) {
+            for key in reverse_keys {
+                if let Some(related_subjects) = graph.reverse_adjacency.get(key) {
+                    if related_subjects.iter().any(|related_subject| {
+                        compute_permission(
+                            subject,
+                            computed_userset,
+                            related_subject,
+                            graph,
+                            namespaces,
+                            memo_cache,
+                            &mut AHashSet::new(),
+                            0,
+                        )
+                    }) {
+                        candidates.insert(Entity {
+                            entity_type: key.0.clone(),
+                            entity_id: key.1.clone(),
+                        });
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Find all groups that a subject belongs to.
@@ -583,19 +793,77 @@ pub fn collect_candidate_objects_for_subject(
     namespaces: &AHashMap<String, NamespaceConfig>,
     candidates: &mut AHashSet<Entity>,
 ) {
+    collect_candidate_objects_for_subjects(
+        std::slice::from_ref(subject),
+        permission,
+        object_type,
+        graph,
+        namespaces,
+        candidates,
+    );
+}
+
+/// Collect candidate objects for one or more subjects with shared indexes.
+pub fn collect_candidate_objects_for_subjects(
+    subjects: &[Entity],
+    permission: &str,
+    object_type: &str,
+    graph: &ReBACGraph,
+    namespaces: &AHashMap<String, NamespaceConfig>,
+    candidates: &mut AHashSet<Entity>,
+) {
     let relations = get_permission_relations(permission, object_type, namespaces);
-    for relation in relations {
-        let adj_key = (
-            subject.entity_type.clone(),
-            subject.entity_id.clone(),
-            relation,
-        );
-        if let Some(objects) = graph.adjacency_list.get(&adj_key) {
-            for obj in objects {
-                if obj.entity_type == object_type {
-                    candidates.insert(obj.clone());
+    let userset_relation_index =
+        build_userset_relation_candidate_index(object_type, &relations, graph);
+    let tuple_to_userset_index =
+        build_tuple_to_userset_candidate_index(object_type, &relations, graph, namespaces);
+    let mut candidate_eval_memo: MemoCache = AHashMap::new();
+
+    for subject in subjects {
+        for relation in &relations {
+            let adj_key = (
+                subject.entity_type.clone(),
+                subject.entity_id.clone(),
+                relation.clone(),
+            );
+            if let Some(objects) = graph.adjacency_list.get(&adj_key) {
+                for obj in objects {
+                    if obj.entity_type == object_type {
+                        candidates.insert(obj.clone());
+                    }
                 }
             }
+
+            // Include wildcard grants (*:*) for this relation.
+            let wildcard_key = ("*".to_string(), "*".to_string(), relation.clone());
+            if let Some(objects) = graph.adjacency_list.get(&wildcard_key) {
+                for obj in objects {
+                    if obj.entity_type == object_type {
+                        candidates.insert(obj.clone());
+                    }
+                }
+            }
+
+            add_userset_relation_candidates(
+                subject,
+                relation,
+                graph,
+                namespaces,
+                &userset_relation_index,
+                &mut candidate_eval_memo,
+                candidates,
+            );
+
+            add_tuple_to_userset_candidates(
+                subject,
+                relation,
+                object_type,
+                graph,
+                namespaces,
+                &tuple_to_userset_index,
+                &mut candidate_eval_memo,
+                candidates,
+            );
         }
     }
 }

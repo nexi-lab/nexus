@@ -530,6 +530,220 @@ fn find_groups_for_subject() {
     assert!(group_ids.contains(&"admins"));
 }
 
+#[test]
+fn expand_subjects_skips_parent_reverse_pattern() {
+    // file:/child --parent--> file:/parent
+    // user:alice --viewer--> file:/child
+    //
+    // With parent reverse traversal disabled (Bug A), expanding read on /parent
+    // must NOT include alice via child ownership/viewership.
+    let tuples = vec![
+        tuple_direct("file", "/child", "parent", "file", "/parent"),
+        tuple_direct("user", "alice", "viewer", "file", "/child"),
+    ];
+    let graph = ReBACGraph::from_tuples(&tuples);
+    let config_json = r#"{"relations":{
+        "parent":"direct",
+        "viewer":{"tupleToUserset":{"tupleset":"parent","computedUserset":"viewer"}}
+    },"permissions":{"read":["viewer"]}}"#;
+    let mut namespaces = AHashMap::new();
+    namespaces.insert("file".to_string(), ns_config(config_json));
+
+    let mut subjects = AHashSet::new();
+    let mut visited = AHashSet::new();
+    expand_permission(
+        "read",
+        &entity("file", "/parent"),
+        &graph,
+        &namespaces,
+        &mut subjects,
+        &mut visited,
+        0,
+    );
+
+    assert!(!subjects.contains(&("user".to_string(), "alice".to_string())));
+}
+
+#[test]
+fn collect_candidates_without_namespace_uses_permission_directly() {
+    let tuples = vec![tuple_direct("user", "alice", "viewer", "doc", "d1")];
+    let graph = ReBACGraph::from_tuples(&tuples);
+    let namespaces = AHashMap::new();
+
+    let mut candidates = AHashSet::new();
+    collect_candidate_objects_for_subject(
+        &entity("user", "alice"),
+        "viewer",
+        "doc",
+        &graph,
+        &namespaces,
+        &mut candidates,
+    );
+
+    assert!(candidates.contains(&entity("doc", "d1")));
+}
+
+#[test]
+fn collect_candidates_include_wildcard_grants() {
+    let tuples = vec![tuple_direct("*", "*", "viewer", "file", "/public.txt")];
+    let graph = ReBACGraph::from_tuples(&tuples);
+    let config_json = r#"{"relations":{"viewer":"direct"},"permissions":{"read":["viewer"]}}"#;
+    let mut namespaces = AHashMap::new();
+    namespaces.insert("file".to_string(), ns_config(config_json));
+
+    let mut candidates = AHashSet::new();
+    collect_candidate_objects_for_subject(
+        &entity("user", "anyone"),
+        "read",
+        "file",
+        &graph,
+        &namespaces,
+        &mut candidates,
+    );
+
+    assert!(candidates.contains(&entity("file", "/public.txt")));
+}
+
+#[test]
+fn collect_candidates_include_parent_inheritance() {
+    let tuples = vec![
+        tuple_direct("user", "alice", "viewer", "file", "/parent"),
+        tuple_direct("file", "/child", "parent", "file", "/parent"),
+    ];
+    let graph = ReBACGraph::from_tuples(&tuples);
+    let config_json = r#"{"relations":{
+        "parent":"direct",
+        "viewer":{"tupleToUserset":{"tupleset":"parent","computedUserset":"viewer"}}
+    },"permissions":{"read":["viewer"]}}"#;
+    let mut namespaces = AHashMap::new();
+    namespaces.insert("file".to_string(), ns_config(config_json));
+
+    let mut candidates = AHashSet::new();
+    collect_candidate_objects_for_subject(
+        &entity("user", "alice"),
+        "read",
+        "file",
+        &graph,
+        &namespaces,
+        &mut candidates,
+    );
+
+    assert!(candidates.contains(&entity("file", "/parent")));
+    assert!(candidates.contains(&entity("file", "/child")));
+}
+
+#[test]
+fn collect_candidates_include_group_tuple_to_userset_reverse() {
+    // user:alice --member--> group:eng
+    // group:eng --direct_viewer--> file:/shared.txt
+    // viewer = union(direct_viewer, group_viewer)
+    // group_viewer = tupleToUserset(direct_viewer, member)
+    let tuples = vec![
+        tuple_direct("user", "alice", "member", "group", "eng"),
+        tuple_direct("group", "eng", "direct_viewer", "file", "/shared.txt"),
+    ];
+    let graph = ReBACGraph::from_tuples(&tuples);
+    let config_json = r#"{"relations":{
+        "direct_viewer":"direct",
+        "group_viewer":{"tupleToUserset":{"tupleset":"direct_viewer","computedUserset":"member"}},
+        "viewer":{"union":["direct_viewer","group_viewer"]}
+    },"permissions":{"read":["viewer"]}}"#;
+    let mut namespaces = AHashMap::new();
+    namespaces.insert("file".to_string(), ns_config(config_json));
+
+    let mut candidates = AHashSet::new();
+    collect_candidate_objects_for_subject(
+        &entity("user", "alice"),
+        "read",
+        "file",
+        &graph,
+        &namespaces,
+        &mut candidates,
+    );
+
+    assert!(candidates.contains(&entity("file", "/shared.txt")));
+}
+
+#[test]
+fn collect_candidates_expand_nested_permission_aliases() {
+    // read -> can_read -> viewer -> direct tuple
+    // Candidate discovery must recursively expand permission aliases.
+    let tuples = vec![tuple_direct("user", "alice", "viewer", "file", "/nested.txt")];
+    let graph = ReBACGraph::from_tuples(&tuples);
+    let config_json = r#"{"relations":{"viewer":"direct"},"permissions":{
+        "read":["can_read"],
+        "can_read":["viewer"]
+    }}"#;
+    let mut namespaces = AHashMap::new();
+    namespaces.insert("file".to_string(), ns_config(config_json));
+
+    let mut memo = MemoCache::new();
+    assert!(compute_permission(
+        &entity("user", "alice"),
+        "read",
+        &entity("file", "/nested.txt"),
+        &graph,
+        &namespaces,
+        &mut memo,
+        &mut AHashSet::new(),
+        0,
+    ));
+
+    let mut candidates = AHashSet::new();
+    collect_candidate_objects_for_subject(
+        &entity("user", "alice"),
+        "read",
+        "file",
+        &graph,
+        &namespaces,
+        &mut candidates,
+    );
+
+    assert!(candidates.contains(&entity("file", "/nested.txt")));
+}
+
+#[test]
+fn collect_candidates_include_transitive_userset_subject_chain() {
+    // group:A#member -> member -> group:B
+    // group:B#member -> viewer -> file:/doc
+    // user:alice -> member -> group:A
+    //
+    // compute_permission(alice, read, /doc) is true via recursive usersets.
+    // Candidate collection must include /doc as well.
+    let tuples = vec![
+        tuple_userset("group", "A", "member", "member", "group", "B"),
+        tuple_userset("group", "B", "member", "viewer", "file", "/doc"),
+        tuple_direct("user", "alice", "member", "group", "A"),
+    ];
+    let graph = ReBACGraph::from_tuples(&tuples);
+    let config_json = r#"{"relations":{"viewer":"direct"},"permissions":{"read":["viewer"]}}"#;
+    let mut namespaces = AHashMap::new();
+    namespaces.insert("file".to_string(), ns_config(config_json));
+
+    let mut memo = MemoCache::new();
+    assert!(compute_permission(
+        &entity("user", "alice"),
+        "read",
+        &entity("file", "/doc"),
+        &graph,
+        &namespaces,
+        &mut memo,
+        &mut AHashSet::new(),
+        0,
+    ));
+
+    let mut candidates = AHashSet::new();
+    collect_candidate_objects_for_subject(
+        &entity("user", "alice"),
+        "read",
+        "file",
+        &graph,
+        &namespaces,
+        &mut candidates,
+    );
+    assert!(candidates.contains(&entity("file", "/doc")));
+}
+
 // ============================================================================
 // Cross-implementation parity: string-keyed vs interned must agree
 // ============================================================================

@@ -48,45 +48,47 @@ pub fn extract_original_match(
     byte_start: usize,
     byte_end: usize,
 ) -> String {
-    let mut orig_chars = original.chars();
-    let mut lower_chars = lowered.chars();
-    let mut lower_byte_pos: usize = 0;
-    let mut orig_byte_start: Option<usize> = None;
-    let mut orig_byte_pos: usize = 0;
+    if byte_start >= byte_end || byte_start >= lowered.len() {
+        return String::new();
+    }
+    let clamped_end = byte_end.min(lowered.len());
 
-    loop {
-        if lower_byte_pos >= byte_end {
-            let end = orig_byte_pos;
-            let start = orig_byte_start.unwrap_or(end);
-            return original[start..end].to_string();
-        }
-        if lower_byte_pos == byte_start {
-            orig_byte_start = Some(orig_byte_pos);
-        }
+    let mut lower_pos = 0usize;
+    let mut orig_pos = 0usize;
+    let mut orig_start: Option<usize> = None;
+    let mut orig_end: Option<usize> = None;
 
-        // Advance one original char and its corresponding lowered char(s)
-        let orig_ch = match orig_chars.next() {
-            Some(ch) => ch,
-            None => break,
-        };
-        let orig_ch_len = orig_ch.len_utf8();
+    for orig_ch in original.chars() {
+        let orig_next = orig_pos + orig_ch.len_utf8();
+        let lowered_len = orig_ch.to_lowercase().map(|ch| ch.len_utf8()).sum::<usize>();
+        let lower_next = lower_pos + lowered_len;
 
-        // Count how many lowered bytes correspond to this original char
-        let mut lower_consumed = 0usize;
-        for lch in orig_ch.to_lowercase() {
-            match lower_chars.next() {
-                Some(_) => lower_consumed += lch.len_utf8(),
-                None => break,
-            }
+        // If match starts anywhere inside this lowered-char span,
+        // map to the start of the original char.
+        if orig_start.is_none() && byte_start < lower_next {
+            orig_start = Some(orig_pos);
         }
 
-        orig_byte_pos += orig_ch_len;
-        lower_byte_pos += lower_consumed;
+        // If match end falls on/inside this lowered-char span,
+        // map to the end of the original char.
+        if orig_end.is_none() && clamped_end <= lower_next {
+            orig_end = Some(orig_next);
+            break;
+        }
+
+        lower_pos = lower_next;
+        orig_pos = orig_next;
     }
 
-    // Fallback: return whatever we can
-    let start = orig_byte_start.unwrap_or(0);
-    original[start..orig_byte_pos.min(original.len())].to_string()
+    let start = match orig_start {
+        Some(s) => s,
+        None => return String::new(),
+    };
+    let end = orig_end.unwrap_or(original.len());
+    if start > end || end > original.len() {
+        return String::new();
+    }
+    original[start..end].to_string()
 }
 
 /// Search lines of content for matches. Returns up to `max_results` matches.
@@ -240,6 +242,16 @@ mod tests {
         // This verifies byte-offset mapping handles length changes correctly.
         // Search for "i\u{0307}b" (lowercase form) in "AİB" (original casing)
         let mode = build_search_mode("i\u{0307}b", true).unwrap();
+        let results = search_lines("test.txt", "A\u{0130}B", &mode, 100);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].match_text, "\u{0130}B");
+    }
+
+    #[test]
+    fn unicode_ignore_case_match_inside_expansion() {
+        // Pattern starts inside İ's lowercase expansion (i + combining dot).
+        // Match text must still map back to the full original character span.
+        let mode = build_search_mode("\u{0307}b", true).unwrap();
         let results = search_lines("test.txt", "A\u{0130}B", &mode, 100);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].match_text, "\u{0130}B");

@@ -62,8 +62,12 @@ pub fn intersect(lists: &[PostingList]) -> PostingList {
         return PostingList::new();
     }
 
-    let mut result = lists[0].bitmap.clone();
-    for list in &lists[1..] {
+    // Intersect from smallest cardinality first to minimize intermediate bitmaps.
+    let mut ordered: Vec<&PostingList> = lists.iter().collect();
+    ordered.sort_by_key(|list| list.len());
+
+    let mut result = ordered[0].bitmap.clone();
+    for list in &ordered[1..] {
         result &= &list.bitmap;
         // Early exit if intersection is empty.
         if result.is_empty() {

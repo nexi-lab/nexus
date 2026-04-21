@@ -27,6 +27,28 @@ from nexus.storage.models import OperationLogModel
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
 
+def _percentile(values: list[float], p: float) -> float:
+    """Compute percentile with linear interpolation.
+
+    The prior index-based approach treated p95 as max for 20 samples
+    (index 19), which made this benchmark flaky under normal CI jitter.
+    """
+    if not values:
+        raise ValueError("values must not be empty")
+    if p <= 0:
+        return min(values)
+    if p >= 100:
+        return max(values)
+
+    ordered = sorted(values)
+    k = (len(ordered) - 1) * (p / 100.0)
+    f = int(k)
+    c = min(f + 1, len(ordered) - 1)
+    if f == c:
+        return ordered[f]
+    return ordered[f] + (k - f) * (ordered[c] - ordered[f])
+
+
 @pytest.fixture
 def temp_dir() -> Generator[Path, None, None]:
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -119,8 +141,8 @@ class TestDeliveryLatency:
             assert len(latencies_ms) == 20, f"Only {len(latencies_ms)}/20 delivered"
 
             p50 = statistics.median(latencies_ms)
-            p95 = sorted(latencies_ms)[int(len(latencies_ms) * 0.95)]
-            p99 = sorted(latencies_ms)[int(len(latencies_ms) * 0.99)]
+            p95 = _percentile(latencies_ms, 95)
+            p99 = _percentile(latencies_ms, 99)
             avg = statistics.mean(latencies_ms)
             mn = min(latencies_ms)
             mx = max(latencies_ms)
@@ -255,7 +277,7 @@ class TestStreamLatency:
         assert len(latencies_ms) >= 15, f"Only {len(latencies_ms)}/20 received"
 
         p50 = statistics.median(latencies_ms)
-        p95 = sorted(latencies_ms)[int(len(latencies_ms) * 0.95)]
+        p95 = _percentile(latencies_ms, 95)
         avg = statistics.mean(latencies_ms)
 
         print(f"\n{'=' * 60}")

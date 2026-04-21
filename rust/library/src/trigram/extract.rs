@@ -31,7 +31,9 @@ pub fn extract_trigrams(content: &[u8]) -> Vec<[u8; 3]> {
         seen.insert(trigram);
     }
 
-    seen.into_iter().collect()
+    let mut trigrams: Vec<[u8; 3]> = seen.into_iter().collect();
+    trigrams.sort();
+    trigrams
 }
 
 /// Extract trigrams from a literal search pattern (for query).
@@ -49,7 +51,9 @@ pub fn extract_trigrams_for_query(pattern: &str) -> Vec<[u8; 3]> {
         seen.insert(trigram);
     }
 
-    seen.into_iter().collect()
+    let mut trigrams: Vec<[u8; 3]> = seen.into_iter().collect();
+    trigrams.sort();
+    trigrams
 }
 
 /// Check if content appears to be binary (high null-byte ratio).
@@ -124,6 +128,14 @@ mod tests {
         let trigrams = extract_trigrams_for_query("hello");
         assert_eq!(trigrams.len(), 3);
         assert!(trigrams.contains(&[b'h', b'e', b'l']));
+    }
+
+    #[test]
+    fn test_extract_trigrams_for_query_sorted() {
+        let trigrams = extract_trigrams_for_query("dcba");
+        let mut sorted = trigrams.clone();
+        sorted.sort();
+        assert_eq!(trigrams, sorted);
     }
 
     #[test]

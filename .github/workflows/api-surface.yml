@@ -3,8 +3,6 @@ name: API Surface Check
 on:
   pull_request:
     branches: [main, develop]
-    paths:
-      - 'src/nexus/**/*.py'
 
 env:
   PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
@@ -26,16 +24,32 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Detect API-relevant changes
+        id: api-filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            api:
+              - 'src/nexus/**/*.py'
+
+      - name: Skip when no API-relevant changes
+        if: steps.api-filter.outputs.api != 'true'
+        run: |
+          echo "No src/nexus Python changes detected — skipping API surface check."
+
       - name: Set up Python
+        if: steps.api-filter.outputs.api == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: '3.14'
 
       - name: Install dependencies
+        if: steps.api-filter.outputs.api == 'true'
         run: |
           pip install -e ".[dev]"
 
       - name: Check if api_versioning module exists
+        if: steps.api-filter.outputs.api == 'true'
         id: check-module
         run: |
           if python -c "from nexus.sdk.api_versioning import export_api_surface" 2>/dev/null; then
@@ -46,7 +60,7 @@ jobs:
           fi
 
       - name: Export current API surface
-        if: steps.check-module.outputs.available == 'true'
+        if: steps.api-filter.outputs.api == 'true' && steps.check-module.outputs.available == 'true'
         run: |
           python -c "
           from nexus.sdk.api_versioning import export_api_surface
@@ -65,7 +79,7 @@ jobs:
           "
 
       - name: Export base API surface
-        if: steps.check-module.outputs.available == 'true'
+        if: steps.api-filter.outputs.api == 'true' && steps.check-module.outputs.available == 'true'
         run: |
           PR_SHA=$(git rev-parse HEAD)
           git checkout origin/main -- src/
@@ -86,7 +100,7 @@ jobs:
           git checkout "$PR_SHA" -- src/
 
       - name: Compare API surfaces
-        if: steps.check-module.outputs.available == 'true'
+        if: steps.api-filter.outputs.api == 'true' && steps.check-module.outputs.available == 'true'
         id: diff
         run: |
           python -c "
@@ -128,7 +142,7 @@ jobs:
           "
 
       - name: Comment on PR
-        if: failure() && github.event_name == 'pull_request' && steps.check-module.outputs.available == 'true'
+        if: failure() && github.event_name == 'pull_request' && steps.api-filter.outputs.api == 'true' && steps.check-module.outputs.available == 'true'
         uses: actions/github-script@v7
         with:
           script: |

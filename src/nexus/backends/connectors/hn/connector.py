@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
     "hn_connector",
     description="HackerNews API (read-only)",
     category="api",
-    requires=["httpx"],
+    runtime_deps=(),
     service_name="hackernews",
 )
 class PathHNBackend(

@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from nexus.backends.base.path_addressing_engine import PathAddressingEngine
 from nexus.backends.base.registry import ArgType, ConnectionArg, register_connector
+from nexus.backends.base.runtime_deps import PythonDep
 from nexus.backends.connectors.base import (
     CheckpointMixin,
     ConfirmLevel,
@@ -66,7 +67,10 @@ logger = logging.getLogger(__name__)
     "gmail_connector",
     description="Gmail with OAuth 2.0 authentication (send, reply, forward, draft, trash)",
     category="oauth",
-    requires=["google-api-python-client", "google-auth-oauthlib"],
+    runtime_deps=(
+        PythonDep("googleapiclient", extras=("gmail",)),
+        PythonDep("google_auth_oauthlib", extras=("gmail",)),
+    ),
     service_name="gmail",
 )
 class PathGmailBackend(

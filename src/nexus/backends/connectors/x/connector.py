@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from nexus.backends.base.path_addressing_engine import PathAddressingEngine
 from nexus.backends.base.registry import ArgType, ConnectionArg, register_connector
+from nexus.backends.base.runtime_deps import PythonDep
 from nexus.backends.connectors.base import (
     ConfirmLevel,
     ErrorDef,
@@ -59,7 +60,7 @@ logger = logging.getLogger(__name__)
     "x_connector",
     description="X (Twitter) API with OAuth 2.0 PKCE",
     category="api",
-    requires=["requests-oauthlib"],
+    runtime_deps=(PythonDep("requests_oauthlib", extras=("x",)),),
     service_name="x",
 )
 class PathXBackend(

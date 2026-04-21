@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from nexus.backends.base.path_addressing_engine import PathAddressingEngine
 from nexus.backends.base.registry import register_connector
+from nexus.backends.base.runtime_deps import PythonDep
 from nexus.backends.connectors.base import (
     ConfirmLevel,
     ErrorDef,
@@ -60,7 +61,7 @@ logger = logging.getLogger(__name__)
     "slack_connector",
     description="Slack workspace with OAuth 2.0 authentication",
     category="oauth",
-    requires=["slack-sdk"],
+    runtime_deps=(PythonDep("slack_sdk", extras=("slack",)),),
     service_name="slack",
 )
 class PathSlackBackend(

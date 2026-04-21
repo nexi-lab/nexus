@@ -119,6 +119,10 @@ pub struct RouteResult {
     pub mount_point: String,
     /// Path relative to the mount root (no leading slash).
     pub backend_path: String,
+    /// Destination zone id for the routed mount. Populated from the
+    /// canonicalized key's leading segment so metadata writes use the
+    /// mount's zone, not the caller's ambient zone.
+    pub zone_id: String,
     /// True when the routed mount is an external connector — Python must
     /// dispatch the operation through a Python-side backend adapter.
     pub is_external: bool,
@@ -351,6 +355,7 @@ impl MountTable {
                 return Ok(RouteResult {
                     mount_point,
                     backend_path,
+                    zone_id: zone_id.to_string(),
                     is_external,
                 });
             }

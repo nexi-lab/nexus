@@ -800,6 +800,44 @@ impl Kernel {
             .unwrap_or_default()
     }
 
+    /// Build a `FileMetadata` record for `path` under the given zone, with
+    /// every other field supplied by the caller.
+    ///
+    /// R20.16.7: DRY helper for the ~10 write paths that persist inode
+    /// records (sys_write, sys_mkdir, rename destination, pipe/stream
+    /// registration, batch write, …). `zone_id` is the destination zone —
+    /// callers pass `&route.zone_id` or an explicit zone (e.g.
+    /// `contracts::ROOT_ZONE_ID` for kernel-internal IPC inodes). The
+    /// matching `CachedEntry` derives via `(&meta).into()`.
+    #[allow(clippy::too_many_arguments)]
+    fn build_metadata(
+        path: &str,
+        zone_id: &str,
+        entry_type: u8,
+        backend_name: String,
+        physical_path: String,
+        size: u64,
+        etag: Option<String>,
+        version: u32,
+        mime_type: Option<String>,
+        created_at_ms: Option<i64>,
+        modified_at_ms: Option<i64>,
+    ) -> crate::metastore::FileMetadata {
+        crate::metastore::FileMetadata {
+            path: path.to_string(),
+            backend_name,
+            physical_path,
+            size,
+            etag,
+            version,
+            entry_type,
+            zone_id: Some(zone_id.to_string()),
+            mime_type,
+            created_at_ms,
+            modified_at_ms,
+        }
+    }
+
     /// Compute zone-relative metastore key from a route's `backend_path`.
     ///
     /// Still used by backend / dcache code paths that need the
@@ -1767,74 +1805,46 @@ impl Kernel {
     #[allow(dead_code)]
     fn write_pipe_inode(&self, path: &str, capacity: usize) {
         let mount_point = self.resolve_mount_point(path, contracts::ROOT_ZONE_ID);
+        let meta = Self::build_metadata(
+            path,
+            contracts::ROOT_ZONE_ID,
+            DT_PIPE,
+            "pipe".to_string(),
+            "shm://".to_string(),
+            capacity as u64,
+            None,
+            1,
+            None,
+            None,
+            None,
+        );
+        self.dcache.put(path, (&meta).into());
         self.with_metastore(&mount_point, |ms| {
-            let meta = crate::metastore::FileMetadata {
-                path: path.to_string(),
-                backend_name: "pipe".to_string(),
-                physical_path: "shm://".to_string(),
-                size: capacity as u64,
-                etag: None,
-                version: 1,
-                entry_type: DT_PIPE,
-                zone_id: Some(contracts::ROOT_ZONE_ID.to_string()),
-                mime_type: None,
-                created_at_ms: None,
-                modified_at_ms: None,
-            };
             let _ = ms.put(path, meta);
         });
-        self.dcache.put(
-            path,
-            CachedEntry {
-                backend_name: "pipe".to_string(),
-                physical_path: "shm://".to_string(),
-                size: capacity as u64,
-                etag: None,
-                version: 1,
-                entry_type: DT_PIPE,
-                zone_id: Some(contracts::ROOT_ZONE_ID.to_string()),
-                mime_type: None,
-                created_at_ms: None,
-                modified_at_ms: None,
-            },
-        );
     }
 
     /// Write DT_STREAM inode to metastore + dcache (shared by create_stream and SHM path).
     #[allow(dead_code)]
     fn write_stream_inode(&self, path: &str, capacity: usize) {
         let mount_point = self.resolve_mount_point(path, contracts::ROOT_ZONE_ID);
+        let meta = Self::build_metadata(
+            path,
+            contracts::ROOT_ZONE_ID,
+            DT_STREAM,
+            "stream".to_string(),
+            "shm://".to_string(),
+            capacity as u64,
+            None,
+            1,
+            None,
+            None,
+            None,
+        );
+        self.dcache.put(path, (&meta).into());
         self.with_metastore(&mount_point, |ms| {
-            let meta = crate::metastore::FileMetadata {
-                path: path.to_string(),
-                backend_name: "stream".to_string(),
-                physical_path: "shm://".to_string(),
-                size: capacity as u64,
-                etag: None,
-                version: 1,
-                entry_type: DT_STREAM,
-                zone_id: Some(contracts::ROOT_ZONE_ID.to_string()),
-                mime_type: None,
-                created_at_ms: None,
-                modified_at_ms: None,
-            };
             let _ = ms.put(path, meta);
         });
-        self.dcache.put(
-            path,
-            CachedEntry {
-                backend_name: "stream".to_string(),
-                physical_path: "shm://".to_string(),
-                size: capacity as u64,
-                etag: None,
-                version: 1,
-                entry_type: DT_STREAM,
-                zone_id: Some(contracts::ROOT_ZONE_ID.to_string()),
-                mime_type: None,
-                created_at_ms: None,
-                modified_at_ms: None,
-            },
-        );
     }
 
     /// DT_DIR: create directory inode via metastore + dcache.
@@ -1878,42 +1888,25 @@ impl Kernel {
             .map(|d| d.as_millis() as i64)
             .unwrap_or(0);
 
-        let meta = crate::metastore::FileMetadata {
-            path: path.to_string(),
-            backend_name: String::new(),
-            physical_path: contracts::BLAKE3_EMPTY.to_string(),
-            size: 0,
-            etag: Some(contracts::BLAKE3_EMPTY.to_string()),
-            version: 1,
-            entry_type: DT_DIR,
-            zone_id: Some(zone_id.to_string()),
-            mime_type: Some("inode/directory".to_string()),
-            created_at_ms: Some(now_ms),
-            modified_at_ms: Some(now_ms),
-        };
-
+        let meta = Self::build_metadata(
+            path,
+            zone_id,
+            DT_DIR,
+            String::new(),
+            contracts::BLAKE3_EMPTY.to_string(),
+            0,
+            Some(contracts::BLAKE3_EMPTY.to_string()),
+            1,
+            Some("inode/directory".to_string()),
+            Some(now_ms),
+            Some(now_ms),
+        );
+        self.dcache.put(path, (&meta).into());
         // Write to metastore (routed via mount_point) — full path; any
         // per-mount ZoneMetastore translates internally.
         self.with_metastore(&mount_point, |ms| {
             let _ = ms.put(path, meta);
         });
-
-        // DCache entry
-        self.dcache.put(
-            path,
-            CachedEntry {
-                backend_name: String::new(),
-                physical_path: contracts::BLAKE3_EMPTY.to_string(),
-                size: 0,
-                etag: Some(contracts::BLAKE3_EMPTY.to_string()),
-                version: 1,
-                entry_type: DT_DIR,
-                zone_id: Some(zone_id.to_string()),
-                mime_type: Some("inode/directory".to_string()),
-                created_at_ms: Some(now_ms),
-                modified_at_ms: Some(now_ms),
-            },
-        );
 
         Ok(SysSetAttrResult {
             path: path.to_string(),
@@ -2278,38 +2271,23 @@ impl Kernel {
 
         // Persist DT_PIPE inode (best-effort — metastore may not be wired in tests).
         let mount_point = self.resolve_mount_point(path, contracts::ROOT_ZONE_ID);
+        let meta = Self::build_metadata(
+            path,
+            contracts::ROOT_ZONE_ID,
+            DT_PIPE,
+            "pipe".to_string(),
+            "mem://".to_string(),
+            capacity as u64,
+            None,
+            1,
+            None,
+            None,
+            None,
+        );
+        self.dcache.put(path, (&meta).into());
         self.with_metastore(&mount_point, |ms| {
-            let meta = crate::metastore::FileMetadata {
-                path: path.to_string(),
-                backend_name: "pipe".to_string(),
-                physical_path: "mem://".to_string(),
-                size: capacity as u64,
-                etag: None,
-                version: 1,
-                entry_type: DT_PIPE,
-                zone_id: Some(contracts::ROOT_ZONE_ID.to_string()),
-                mime_type: None,
-                created_at_ms: None,
-                modified_at_ms: None,
-            };
             let _ = ms.put(path, meta);
         });
-
-        self.dcache.put(
-            path,
-            CachedEntry {
-                backend_name: "pipe".to_string(),
-                physical_path: "mem://".to_string(),
-                size: capacity as u64,
-                etag: None,
-                version: 1,
-                entry_type: DT_PIPE,
-                zone_id: Some(contracts::ROOT_ZONE_ID.to_string()),
-                mime_type: None,
-                created_at_ms: None,
-                modified_at_ms: None,
-            },
-        );
 
         Ok(())
     }
@@ -2379,38 +2357,23 @@ impl Kernel {
             .map_err(stream_mgr_err)?;
 
         let mount_point = self.resolve_mount_point(path, contracts::ROOT_ZONE_ID);
+        let meta = Self::build_metadata(
+            path,
+            contracts::ROOT_ZONE_ID,
+            DT_STREAM,
+            "stream".to_string(),
+            "mem://".to_string(),
+            capacity as u64,
+            None,
+            1,
+            None,
+            None,
+            None,
+        );
+        self.dcache.put(path, (&meta).into());
         self.with_metastore(&mount_point, |ms| {
-            let meta = crate::metastore::FileMetadata {
-                path: path.to_string(),
-                backend_name: "stream".to_string(),
-                physical_path: "mem://".to_string(),
-                size: capacity as u64,
-                etag: None,
-                version: 1,
-                entry_type: DT_STREAM,
-                zone_id: Some(contracts::ROOT_ZONE_ID.to_string()),
-                mime_type: None,
-                created_at_ms: None,
-                modified_at_ms: None,
-            };
             let _ = ms.put(path, meta);
         });
-
-        self.dcache.put(
-            path,
-            CachedEntry {
-                backend_name: "stream".to_string(),
-                physical_path: "mem://".to_string(),
-                size: capacity as u64,
-                etag: None,
-                version: 1,
-                entry_type: DT_STREAM,
-                zone_id: Some(contracts::ROOT_ZONE_ID.to_string()),
-                mime_type: None,
-                created_at_ms: None,
-                modified_at_ms: None,
-            },
-        );
 
         Ok(())
     }
@@ -2898,18 +2861,7 @@ impl Kernel {
             // CasLocalBackend.
             let old_entry = self.dcache.get_entry(path).or_else(|| {
                 self.with_metastore(&route.mount_point, |ms| {
-                    ms.get(path).ok().flatten().map(|m| CachedEntry {
-                        backend_name: m.backend_name.clone(),
-                        physical_path: m.physical_path.clone(),
-                        size: m.size,
-                        etag: m.etag.clone(),
-                        version: m.version,
-                        entry_type: m.entry_type,
-                        zone_id: m.zone_id.clone(),
-                        mime_type: m.mime_type.clone(),
-                        created_at_ms: m.created_at_ms,
-                        modified_at_ms: m.modified_at_ms,
-                    })
+                    ms.get(path).ok().flatten().map(|m| (&m).into())
                 })
                 .flatten()
             });
@@ -2972,40 +2924,26 @@ impl Kernel {
                 // R20.3: always pass the full global path. Per-mount
                 // ZoneMetastore translates at its boundary; the global
                 // fallback stores full paths directly.
+                let meta = Self::build_metadata(
+                    path,
+                    &route.zone_id,
+                    DT_REG,
+                    backend_display_name,
+                    wr.content_id.clone(),
+                    wr.size,
+                    Some(wr.content_id.clone()),
+                    new_version,
+                    None,
+                    created_at_ms,
+                    Some(now_ms),
+                );
+                // Update dcache with new metadata (derive before moving meta
+                // into the closure below).
+                self.dcache.put(path, (&meta).into());
                 self.with_metastore(&route.mount_point, |ms| {
-                    let meta = crate::metastore::FileMetadata {
-                        path: path.to_string(),
-                        backend_name: backend_display_name.clone(),
-                        physical_path: wr.content_id.clone(),
-                        size: wr.size,
-                        etag: Some(wr.content_id.clone()),
-                        version: new_version,
-                        entry_type: DT_REG,
-                        zone_id: Some(ctx.zone_id.clone()),
-                        mime_type: None,
-                        created_at_ms,
-                        modified_at_ms: Some(now_ms),
-                    };
                     // Best-effort metastore.put -- error logged but doesn't fail write
                     let _ = ms.put(path, meta);
                 });
-
-                // Update dcache with new metadata
-                self.dcache.put(
-                    path,
-                    CachedEntry {
-                        backend_name: backend_display_name,
-                        physical_path: wr.content_id.clone(),
-                        size: wr.size,
-                        etag: Some(wr.content_id.clone()),
-                        version: new_version,
-                        entry_type: DT_REG,
-                        zone_id: Some(ctx.zone_id.clone()),
-                        mime_type: None,
-                        created_at_ms,
-                        modified_at_ms: Some(now_ms),
-                    },
-                );
 
                 // OBSERVE-phase dispatch (§11 Phase 5): queue FileWrite to
                 // the kernel observer ThreadPool. Returns immediately —
@@ -3066,18 +3004,7 @@ impl Kernel {
                 let meta = self
                     .with_metastore(&route.mount_point, |ms| ms.get(path).ok().flatten())
                     .flatten()?;
-                let cached = CachedEntry {
-                    backend_name: meta.backend_name.clone(),
-                    physical_path: meta.physical_path.clone(),
-                    size: meta.size,
-                    etag: meta.etag.clone(),
-                    version: meta.version,
-                    entry_type: meta.entry_type,
-                    zone_id: meta.zone_id.clone(),
-                    mime_type: meta.mime_type.clone(),
-                    created_at_ms: meta.created_at_ms,
-                    modified_at_ms: meta.modified_at_ms,
-                };
+                let cached: CachedEntry = (&meta).into();
                 self.dcache.put(path, cached.clone());
                 cached
             }
@@ -3623,39 +3550,25 @@ impl Kernel {
         let backend_display_name = self.origin_backend_name(&raw_backend_name);
 
         let new_version = 1u32;
+        let meta = Self::build_metadata(
+            &dst_zone_path,
+            &dst_route.zone_id,
+            DT_REG,
+            backend_display_name,
+            content_id.clone(),
+            size,
+            Some(content_id.clone()),
+            new_version,
+            src_meta.mime_type.clone(),
+            Some(now_ms),
+            Some(now_ms),
+        );
+        // 9. Update dcache under the caller-visible dst_path (meta.path holds
+        // the zone-relative key for the metastore write).
+        self.dcache.put(dst_path, (&meta).into());
         self.with_metastore(&dst_route.mount_point, |ms| {
-            let meta = crate::metastore::FileMetadata {
-                path: dst_zone_path.clone(),
-                backend_name: backend_display_name.clone(),
-                physical_path: content_id.clone(),
-                size,
-                etag: Some(content_id.clone()),
-                version: new_version,
-                entry_type: DT_REG,
-                zone_id: Some(ctx.zone_id.clone()),
-                mime_type: src_meta.mime_type.clone(),
-                created_at_ms: Some(now_ms),
-                modified_at_ms: Some(now_ms),
-            };
             let _ = ms.put(&dst_zone_path, meta);
         });
-
-        // 9. Update dcache
-        self.dcache.put(
-            dst_path,
-            CachedEntry {
-                backend_name: backend_display_name,
-                physical_path: content_id.clone(),
-                size,
-                etag: Some(content_id.clone()),
-                version: new_version,
-                entry_type: DT_REG,
-                zone_id: Some(ctx.zone_id.clone()),
-                mime_type: src_meta.mime_type.clone(),
-                created_at_ms: Some(now_ms),
-                modified_at_ms: Some(now_ms),
-            },
-        );
 
         // 10. Release VFS locks
         release_locks(&self.lock_manager, lock1, lock2);
@@ -3790,39 +3703,24 @@ impl Kernel {
             .get_canonical(&route.mount_point)
             .map(|e| e.backend_name.clone())
             .unwrap_or_else(|| "local".to_string());
+        let meta = Self::build_metadata(
+            path,
+            &route.zone_id,
+            DT_DIR,
+            dir_backend_name,
+            String::new(),
+            0,
+            None,
+            1,
+            Some("inode/directory".to_string()),
+            None,
+            None,
+        );
+        // 7. DCache put (derive before moving meta into metastore closure)
+        self.dcache.put(path, (&meta).into());
         self.with_metastore(&route.mount_point, |ms| {
-            let meta = crate::metastore::FileMetadata {
-                path: path.to_string(),
-                backend_name: dir_backend_name.clone(),
-                physical_path: String::new(),
-                size: 0,
-                etag: None,
-                version: 1,
-                entry_type: DT_DIR,
-                zone_id: Some(ctx.zone_id.clone()),
-                mime_type: Some("inode/directory".to_string()),
-                created_at_ms: None,
-                modified_at_ms: None,
-            };
             let _ = ms.put(path, meta);
         });
-
-        // 7. DCache put
-        self.dcache.put(
-            path,
-            CachedEntry {
-                backend_name: dir_backend_name,
-                physical_path: String::new(),
-                size: 0,
-                etag: None,
-                version: 1,
-                entry_type: DT_DIR,
-                zone_id: Some(ctx.zone_id.clone()),
-                mime_type: Some("inode/directory".to_string()),
-                created_at_ms: None,
-                modified_at_ms: None,
-            },
-        );
 
         // 8. OBSERVE-phase dispatch (§11 Phase 5): queue DirCreate.
         // Only fires on the newly-created path — the early return at
@@ -3875,37 +3773,23 @@ impl Kernel {
         // Create from shallowest to deepest
         for dir in to_create.into_iter().rev() {
             let dir_ref = dir.as_str();
+            let meta = Self::build_metadata(
+                dir_ref,
+                &ctx.zone_id,
+                DT_DIR,
+                String::new(),
+                String::new(),
+                0,
+                None,
+                1,
+                Some("inode/directory".to_string()),
+                None,
+                None,
+            );
+            self.dcache.put(dir_ref, (&meta).into());
             self.with_metastore(mount_point, |ms| {
-                let meta = crate::metastore::FileMetadata {
-                    path: dir.clone(),
-                    backend_name: String::new(),
-                    physical_path: String::new(),
-                    size: 0,
-                    etag: None,
-                    version: 1,
-                    entry_type: DT_DIR,
-                    zone_id: Some(ctx.zone_id.clone()),
-                    mime_type: Some("inode/directory".to_string()),
-                    created_at_ms: None,
-                    modified_at_ms: None,
-                };
                 let _ = ms.put(dir_ref, meta);
             });
-            self.dcache.put(
-                dir_ref,
-                CachedEntry {
-                    backend_name: String::new(),
-                    physical_path: String::new(),
-                    size: 0,
-                    etag: None,
-                    version: 1,
-                    entry_type: DT_DIR,
-                    zone_id: Some(ctx.zone_id.clone()),
-                    mime_type: Some("inode/directory".to_string()),
-                    created_at_ms: None,
-                    modified_at_ms: None,
-                },
-            );
         }
         Ok(())
     }
@@ -4121,37 +4005,22 @@ impl Kernel {
                         .map(|e| e.backend_name.clone())
                         .unwrap_or_else(|| "local".to_string());
                     let batch_backend_name = self.origin_backend_name(&raw_batch_backend_name);
-                    let meta = crate::metastore::FileMetadata {
-                        path: path.to_string(),
-                        backend_name: batch_backend_name.clone(),
-                        physical_path: wr.content_id.clone(),
-                        size: wr.size,
-                        etag: Some(wr.content_id.clone()),
-                        version: new_version,
-                        entry_type: DT_REG,
-                        zone_id: Some(ctx.zone_id.clone()),
-                        mime_type: None,
-                        created_at_ms: None,
-                        modified_at_ms: None,
-                    };
-                    batch_meta.push((route.mount_point.clone(), path.to_string(), meta));
-
-                    // DCache update
-                    self.dcache.put(
+                    let meta = Self::build_metadata(
                         path,
-                        CachedEntry {
-                            backend_name: batch_backend_name,
-                            physical_path: wr.content_id.clone(),
-                            size: wr.size,
-                            etag: Some(wr.content_id.clone()),
-                            version: new_version,
-                            entry_type: DT_REG,
-                            zone_id: Some(ctx.zone_id.clone()),
-                            mime_type: None,
-                            created_at_ms: None,
-                            modified_at_ms: None,
-                        },
+                        &route.zone_id,
+                        DT_REG,
+                        batch_backend_name,
+                        wr.content_id.clone(),
+                        wr.size,
+                        Some(wr.content_id.clone()),
+                        new_version,
+                        None,
+                        None,
+                        None,
                     );
+                    // DCache update (derive before moving meta into batch_meta)
+                    self.dcache.put(path, (&meta).into());
+                    batch_meta.push((route.mount_point.clone(), path.to_string(), meta));
 
                     results.push(SysWriteResult {
                         hit: true,

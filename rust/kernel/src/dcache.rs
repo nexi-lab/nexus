@@ -36,6 +36,23 @@ pub(crate) struct CachedEntry {
     pub(crate) modified_at_ms: Option<i64>,
 }
 
+impl From<&crate::metastore::FileMetadata> for CachedEntry {
+    fn from(m: &crate::metastore::FileMetadata) -> Self {
+        Self {
+            backend_name: m.backend_name.clone(),
+            physical_path: m.physical_path.clone(),
+            size: m.size,
+            etag: m.etag.clone(),
+            version: m.version,
+            entry_type: m.entry_type,
+            zone_id: m.zone_id.clone(),
+            mime_type: m.mime_type.clone(),
+            created_at_ms: m.created_at_ms,
+            modified_at_ms: m.modified_at_ms,
+        }
+    }
+}
+
 /// Dentry cache — owned directly by Kernel.
 ///
 /// All methods take `&self` (DashMap provides interior mutability).

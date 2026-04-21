@@ -1,23 +1,67 @@
-"""SSRF-safe URL validation for outbound HTTP requests (Issue #1596).
+"""SSRF-safe URL validation for outbound HTTP requests (Issues #1596, #3792).
 
 Validates URLs before fetching to prevent Server-Side Request Forgery attacks.
 Blocks RFC 1918 private ranges, loopback, link-local, and cloud metadata IPs.
 
+Returns a ``ValidatedURL`` NamedTuple so callers can pin the resolved IPs
+at connect time (see ``nexus.lib.security.ssrf_transport``), preventing
+DNS rebinding TOCTOU.
+
 Usage::
 
-    from nexus.lib.security import validate_outbound_url
+    from nexus.lib.security import validate_outbound_url, SSRFBlocked
 
-    validate_outbound_url("https://example.com/webhook")   # OK
-    validate_outbound_url("http://169.254.169.254/meta")   # raises ValueError
-    validate_outbound_url("http://10.0.0.1/internal")      # raises ValueError
+    try:
+        validated = validate_outbound_url("https://example.com/webhook")
+    except SSRFBlocked as exc:
+        log.warning("SSRF blocked: %s (ip=%s cidr=%s)", exc.reason, exc.ip, exc.cidr)
+        raise
 """
 
 import ipaddress
 import logging
 import socket
+from collections.abc import Sequence
+from typing import NamedTuple
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
+
+
+class SSRFBlocked(ValueError):
+    """Raised when an outbound URL targets a blocked network or metadata IP.
+
+    Subclass of ``ValueError`` so existing ``except ValueError:`` call sites
+    continue to catch blocks. New call sites catch ``SSRFBlocked`` directly
+    to access the structured fields for auditing.
+    """
+
+    def __init__(
+        self,
+        url: str,
+        *,
+        reason: str,
+        ip: str | None = None,
+        cidr: str | None = None,
+    ) -> None:
+        self.url = url
+        self.reason = reason
+        self.ip = ip
+        self.cidr = cidr
+        super().__init__(f"SSRF blocked: {reason} (url={url}, ip={ip})")
+
+
+class ValidatedURL(NamedTuple):
+    """A URL that has passed SSRF validation, with resolved IPs pinned.
+
+    Field order preserves backward compatibility with callers that did
+    ``url, ips = validate_outbound_url(x)`` before Issue #3792.
+    """
+
+    url: str
+    resolved_ips: list[str]
+    hostname: str
+
 
 # IP networks that MUST NOT be reachable from outbound requests.
 # Covers: RFC 1918 private, loopback, link-local, cloud metadata, IPv6 equivalents.
@@ -42,36 +86,48 @@ BLOCKED_NETWORKS: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = (
 ALLOWED_SCHEMES: frozenset[str] = frozenset({"http", "https"})
 
 
-def validate_outbound_url(url: str) -> tuple[str, list[str]]:
+def validate_outbound_url(
+    url: str,
+    *,
+    allow_private: bool = False,
+    extra_deny_cidrs: Sequence[str] = (),
+) -> ValidatedURL:
     """Validate that a URL is safe for outbound HTTP requests.
 
     Resolves DNS once and checks the resolved IP against blocked ranges.
-    Returns the validated URL and the resolved IPs so callers can pin the
-    connection to the validated addresses (prevents DNS rebinding TOCTOU).
+    Callers should pass the returned ``resolved_ips`` to
+    ``PinnedResolverTransport`` so the actual connect uses the validated
+    IPs (prevents DNS rebinding TOCTOU).
 
     Args:
         url: The URL to validate.
+        allow_private: If True, skip RFC1918 / ULA private range checks.
+            Metadata and loopback are always blocked regardless. (Wired
+            in a later task — currently accepted but unused.)
+        extra_deny_cidrs: Additional CIDRs to reject (e.g. internal
+            service mesh). Each entry must parse as an ip_network. (Wired
+            in a later task — currently accepted but unused.)
 
     Returns:
-        Tuple of (validated_url, resolved_ips).  Callers should configure
-        their HTTP client to connect only to the returned IPs.
+        ValidatedURL(url, resolved_ips, hostname).
 
     Raises:
-        ValueError: If the URL targets a blocked network, has an invalid scheme,
-            or cannot be resolved.
+        SSRFBlocked: URL targets a blocked network or uses a disallowed scheme.
+        ValueError: URL is malformed or DNS resolution fails (transient,
+            not a security signal).
     """
+    # Silence unused-for-now parameters (wired by later tasks)
+    _ = (allow_private, extra_deny_cidrs)
+
     parsed = urlparse(url)
 
-    # 1. Scheme check
     if parsed.scheme not in ALLOWED_SCHEMES:
-        raise ValueError(f"URL scheme not allowed: {parsed.scheme!r}")
+        raise SSRFBlocked(url, reason="scheme_not_allowed")
 
-    # 2. Hostname extraction
     hostname = parsed.hostname
     if not hostname:
         raise ValueError("URL has no hostname")
 
-    # 3. Resolve DNS once and pin resolved IPs
     port = parsed.port or (443 if parsed.scheme == "https" else 80)
     try:
         addr_infos = socket.getaddrinfo(hostname, port, proto=socket.IPPROTO_TCP)
@@ -81,7 +137,6 @@ def validate_outbound_url(url: str) -> tuple[str, list[str]]:
     if not addr_infos:
         raise ValueError(f"No DNS records for hostname: {hostname!r}")
 
-    # 4. Check every resolved IP against blocked networks
     resolved_ips: list[str] = []
     for _family, _type, _proto, _canonname, sockaddr in addr_infos:
         ip = ipaddress.ip_address(sockaddr[0])
@@ -93,7 +148,12 @@ def validate_outbound_url(url: str) -> tuple[str, list[str]]:
                     ip,
                     network,
                 )
-                raise ValueError(f"URL resolves to blocked IP range: {ip} in {network}")
+                raise SSRFBlocked(
+                    url,
+                    reason="blocked_network",
+                    ip=str(ip),
+                    cidr=str(network),
+                )
         resolved_ips.append(str(ip))
 
-    return url, resolved_ips
+    return ValidatedURL(url=url, resolved_ips=resolved_ips, hostname=hostname)

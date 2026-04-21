@@ -15,7 +15,49 @@ from unittest.mock import patch
 
 import pytest
 
-from nexus.lib.security.url_validator import validate_outbound_url
+from nexus.lib.security.url_validator import (
+    SSRFBlocked,
+    validate_outbound_url,
+)
+
+
+class TestSSRFBlockedException:
+    """SSRFBlocked is a ValueError subclass with structured fields."""
+
+    def test_ssrf_blocked_is_value_error_subclass(self) -> None:
+        exc = SSRFBlocked("http://10.0.0.1/", reason="private_ip", ip="10.0.0.1", cidr="10.0.0.0/8")
+        assert isinstance(exc, ValueError)
+
+    def test_ssrf_blocked_exposes_fields(self) -> None:
+        exc = SSRFBlocked("http://10.0.0.1/", reason="private_ip", ip="10.0.0.1", cidr="10.0.0.0/8")
+        assert exc.url == "http://10.0.0.1/"
+        assert exc.reason == "private_ip"
+        assert exc.ip == "10.0.0.1"
+        assert exc.cidr == "10.0.0.0/8"
+
+    def test_ssrf_blocked_message_includes_url_and_ip(self) -> None:
+        exc = SSRFBlocked("http://10.0.0.1/", reason="private_ip", ip="10.0.0.1")
+        assert "10.0.0.1" in str(exc)
+        assert "http://10.0.0.1/" in str(exc)
+
+
+class TestValidatedURL:
+    """ValidatedURL NamedTuple exposing url, resolved_ips, and hostname."""
+
+    def test_three_tuple_unpack_with_hostname(self) -> None:
+        with patch("socket.getaddrinfo") as mock_dns:
+            mock_dns.return_value = [(2, 1, 6, "", ("93.184.216.34", 443))]
+            result = validate_outbound_url("https://example.com/")
+            url, ips, hostname = result
+            assert hostname == "example.com"
+
+    def test_attribute_access(self) -> None:
+        with patch("socket.getaddrinfo") as mock_dns:
+            mock_dns.return_value = [(2, 1, 6, "", ("93.184.216.34", 443))]
+            result = validate_outbound_url("https://example.com/")
+            assert result.url == "https://example.com/"
+            assert result.hostname == "example.com"
+            assert result.resolved_ips == ["93.184.216.34"]
 
 
 class TestBlockedIPRanges:
@@ -45,7 +87,7 @@ class TestBlockedIPRanges:
             mock_dns.return_value = [
                 (2, 1, 6, "", (ip, 80)),
             ]
-            with pytest.raises(ValueError, match="blocked IP range"):
+            with pytest.raises(SSRFBlocked):
                 validate_outbound_url(url)
 
     @pytest.mark.parametrize(
@@ -62,7 +104,7 @@ class TestBlockedIPRanges:
             mock_dns.return_value = [
                 (10, 1, 6, "", (ip, 80, 0, 0)),
             ]
-            with pytest.raises(ValueError, match="blocked IP range"):
+            with pytest.raises(SSRFBlocked):
                 validate_outbound_url(url)
 
 
@@ -82,9 +124,9 @@ class TestAllowedURLs:
             mock_dns.return_value = [
                 (2, 1, 6, "", (ip, 443)),
             ]
-            result_url, resolved_ips = validate_outbound_url(url)
-            assert result_url == url
-            assert ip in resolved_ips
+            result = validate_outbound_url(url)
+            assert result.url == url
+            assert ip in result.resolved_ips
 
 
 class TestSchemeValidation:
@@ -101,7 +143,7 @@ class TestSchemeValidation:
         ],
     )
     def test_blocked_schemes(self, url: str) -> None:
-        with pytest.raises(ValueError, match="scheme not allowed"):
+        with pytest.raises(SSRFBlocked):
             validate_outbound_url(url)
 
 

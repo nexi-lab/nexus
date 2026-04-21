@@ -246,7 +246,19 @@ impl MountTable {
     /// True if a mount exists under `(mount_point, zone_id)`.
     pub fn has(&self, mount_point: &str, zone_id: &str) -> bool {
         let canonical = canonicalize_mount_path(mount_point, zone_id);
-        self.entries.contains_key(&canonical)
+        let found = self.entries.contains_key(&canonical);
+        let entries_len = self.entries.len();
+        let keys: Vec<String> = self.entries.iter().map(|kv| kv.key().clone()).collect();
+        tracing::info!(
+            mount_point = %mount_point,
+            zone_id = %zone_id,
+            canonical = %canonical,
+            found = %found,
+            entries_len = %entries_len,
+            keys = ?keys,
+            "R20.18.5 MountTable::has"
+        );
+        found
     }
 
     /// Borrow every entry mutably. Used by ``Kernel::release_metastores``
@@ -353,6 +365,16 @@ impl MountTable {
             }
         }
 
+        let entries_len = self.entries.len();
+        let keys: Vec<String> = self.entries.iter().map(|kv| kv.key().clone()).collect();
+        tracing::warn!(
+            path = %path,
+            zone_id = %zone_id,
+            canonical = %canonical,
+            entries_len = %entries_len,
+            keys = ?keys,
+            "R20.18.5 MountTable::route NotMounted"
+        );
         Err(RouteError::NotMounted(format!(
             "No mount found for path: {}",
             path

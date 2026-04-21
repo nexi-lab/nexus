@@ -159,7 +159,31 @@ class PathRouter:
 
             info = self._dlc.get_mount_info_canonical(rust_result.mount_point)
             if info is None:
-                raise PathNotMountedError(virtual_path)
+                # R20.18.5: Rust kernel MountTable knows this mount (via
+                # federation apply-cb / reconcile) but Python DLC hasn't
+                # learned it yet. Lazily mirror in the root backend so
+                # PathRouter.route returns a valid RouteResult. Pre-
+                # R20.18.5 this mirroring happened via
+                # ZoneManager._on_mount_event -> _store_mount_info; with
+                # that chain deleted, we refresh on-demand here.
+                user_mp_fallback = extract_zone_id(rust_result.mount_point)[1]
+                root_info = self._dlc.get_mount_info("/", zone_id=zone_id)
+                if root_info is not None:
+                    try:
+                        # Tag with the same zone_id the Rust canonical
+                        # key carries so get_mount_info_canonical hits
+                        # on subsequent calls.
+                        parent_zone = extract_zone_id(rust_result.mount_point)[0]
+                        self._dlc._store_mount_info(
+                            user_mp_fallback,
+                            root_info.backend,
+                            zone_id=parent_zone,
+                        )
+                        info = self._dlc.get_mount_info_canonical(rust_result.mount_point)
+                    except Exception:
+                        info = None
+                if info is None:
+                    raise PathNotMountedError(virtual_path)
             user_mp = extract_zone_id(rust_result.mount_point)[1]
             _route_meta = meta if meta is not None else self._metastore.get(user_mp)
             if _route_meta is not None and _route_meta.is_external_storage:

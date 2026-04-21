@@ -13,6 +13,7 @@ Registered in ``fastapi_server.create_app`` when federation is active
 
 from __future__ import annotations
 
+import contextlib
 from typing import Any
 
 from nexus.contracts.rpc import rpc_expose
@@ -21,8 +22,40 @@ from nexus.contracts.rpc import rpc_expose
 class FederationRPCService:
     """Federation CRUD RPCs backed by ``nexus_kernel`` zone_* methods."""
 
-    def __init__(self, kernel: Any) -> None:
+    def __init__(self, kernel: Any, nexus_fs: Any = None) -> None:
         self._kernel = kernel
+        self._nexus_fs = nexus_fs
+
+    def _register_mount_in_python_dlc(self, mount_path: str, parent_zone: str) -> None:
+        """Mirror Rust-side federation mount into the Python DriverLifecycle-
+        Coordinator so ``PathRouter.route`` (which checks both Rust
+        ``kernel.route()`` and ``_dlc.get_mount_info_canonical()``) finds
+        the mount. Pre-R20.18.5 this happened via
+        ``ZoneManager._on_mount_event -> coordinator._store_mount_info``.
+        Kept here (tech debt) until the router consults the kernel
+        directly for federation mounts.
+        """
+        nx = self._nexus_fs
+        if nx is None:
+            return
+        coord = getattr(nx, "_driver_coordinator", None)
+        if coord is None:
+            return
+        try:
+            # Federation mounts inherit the root backend on this node;
+            # look it up via the router and pass it through so the
+            # _PyMountInfo has a non-None backend.
+            root_backend = None
+            with contextlib.suppress(Exception):
+                root_backend = nx.router.route("/", zone_id=parent_zone).backend
+            if root_backend is None:
+                return
+            coord._store_mount_info(mount_path, root_backend, zone_id=parent_zone)
+        except Exception:
+            # Silently absorb — failure here means Python-side routing
+            # misses the mount, but Rust still has it; next call that
+            # refreshes the DLC will fix.
+            pass
 
     # ── Zone lifecycle ─────────────────────────────────────────────
 
@@ -59,6 +92,8 @@ class FederationRPCService:
         R20.18.3's `resolve_federation_mount_backing`.
         """
         self._kernel.zone_mount(parent_zone, path, target_zone)
+        # Mirror into Python DLC so PathRouter.route can return non-None.
+        self._register_mount_in_python_dlc(path, parent_zone)
         return {
             "parent_zone": parent_zone,
             "path": path,

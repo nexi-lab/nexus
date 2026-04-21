@@ -423,7 +423,7 @@ def create_app(
         if _fed_active:
             from nexus.server.rpc.services.federation_rpc import FederationRPCService
 
-            _rpc_sources.append(FederationRPCService(_kernel))
+            _rpc_sources.append(FederationRPCService(_kernel, nexus_fs))
         # Lock syscalls (sys_lock, sys_unlock, lock_info, lock_list, etc.)
         # are @rpc_expose on NexusFS — auto-discovered by _discover_exposed_methods.
         # LocksRPCService deleted — no separate RPC service needed.

@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+from dataclasses import replace as _dc_replace
 from typing import Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
@@ -104,15 +105,100 @@ class SlimNexusFS:
         try:
             return self._kernel.sys_read(path, context=self._ctx)
         except NexusFileNotFoundError:
-            # Issue #3821: the slim package wires a SQLiteMetastore that the
-            # Rust kernel cannot see (its metastore hook expects a redb path).
-            # Same-session reads succeed via dcache, but a fresh process has
-            # an empty dcache → Rust raises FileNotFound even though the row
-            # exists in SQLite.  Fall back to the Python metastore + backend.
+            # Two fallback paths share this handler so the hot path stays
+            # a single Rust call.  Order: external connectors first
+            # (DT_EXTERNAL_STORAGE virtual files never hit the metastore,
+            # so the kernel always raises even though the router can serve
+            # the read), then the slim-metastore CAS fallback (#3821).
+            external = self._try_external_read(path)
+            if external is not None:
+                return external
             data = self._slim_metastore_read(path)
             if data is None:
                 raise
             return data
+
+    def _try_external_read(self, path: str) -> bytes | None:
+        """Delegate to the Python backend for ``DT_EXTERNAL_STORAGE`` mounts.
+
+        Returns ``None`` when the path does not resolve to an external
+        connector route, letting ``read()`` surface the original 404.
+
+        Connector-backed virtual files (Gmail messages, Drive objects,
+        calendar events) never have metastore entries of their own, so
+        the Rust kernel's ``sys_read`` raises before the ``route.is_external``
+        short-circuit gets a chance to fire on mount registrations that
+        didn't propagate the flag.  Resolving the path through the Python
+        router recovers the backend and calls ``read_content`` directly.
+        """
+        from nexus.contracts.exceptions import (
+            AccessDeniedError,
+            InvalidPathError,
+            PathNotMountedError,
+        )
+        from nexus.contracts.types import OperationContext
+        from nexus.core.path_utils import validate_path
+        from nexus.core.router import ExternalRouteResult
+
+        try:
+            normalized = validate_path(path)
+        except Exception:
+            return None
+
+        router = getattr(self._kernel, "router", None)
+        if router is None:
+            return None
+
+        caller_ctx = getattr(self, "_ctx", None)
+        is_admin = bool(getattr(caller_ctx, "is_admin", True))
+        zone_id = getattr(caller_ctx, "zone_id", None) or "root"
+
+        try:
+            route = router.route(normalized, is_admin=is_admin, zone_id=zone_id)
+        except (PathNotMountedError, AccessDeniedError, InvalidPathError):
+            return None
+
+        if not isinstance(route, ExternalRouteResult):
+            return None
+
+        backend = getattr(route, "backend", None)
+        backend_path = getattr(route, "backend_path", "") or ""
+        mount_point = getattr(route, "mount_point", "") or ""
+        if backend is None or getattr(backend, "read_content", None) is None:
+            return None
+
+        # Carry the caller's identity so auth/audit stays accurate, but
+        # fill in the mount/backend-path slots the connector expects.
+        if caller_ctx is not None:
+            ctx = _dc_replace(
+                caller_ctx,
+                backend_path=backend_path,
+                virtual_path=normalized,
+                mount_path=mount_point,
+            )
+        else:
+            ctx = OperationContext(
+                user_id="local",
+                groups=[],
+                zone_id=zone_id,
+                is_admin=is_admin,
+                backend_path=backend_path,
+                virtual_path=normalized,
+                mount_path=mount_point,
+            )
+
+        # Virtual .readme/ overlay check (Issue #3728) — serve generated
+        # docs without touching the live backend.
+        from nexus.backends.connectors.schema_generator import dispatch_virtual_readme_read
+
+        virtual = dispatch_virtual_readme_read(backend, mount_point, backend_path, context=ctx)
+        if virtual is not None:
+            return bytes(virtual) if isinstance(virtual, (bytes, bytearray)) else None
+
+        data = backend.read_content(backend_path, context=ctx)
+        if isinstance(data, (bytes, bytearray)):
+            return bytes(data)
+        return None
 
     def _slim_metastore_read(self, path: str) -> bytes | None:
         """Read via Python metastore + CAS backend (slim fallback, #3821).

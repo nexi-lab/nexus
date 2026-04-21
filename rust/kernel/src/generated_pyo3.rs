@@ -2876,8 +2876,17 @@ impl PyKernel {
             )
         })?;
         zm.get_or_create_zone(zone_id)
-            .map(|_| zone_id.to_string())
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+        // R20.18.5: newly-created zones need the apply-cb installed so
+        // that DT_MOUNT events on this zone propagate to the kernel
+        // MountTable + Python DLC. Without this, nested federation
+        // mounts (e.g. family zone seeded by share_subtree) never wire
+        // up on the leader.
+        if let Some(consensus) = zm.registry().get_node(zone_id) {
+            self.inner
+                .install_federation_mount_coherence(zone_id, consensus);
+        }
+        Ok(zone_id.to_string())
     }
 
     /// Remove a raft zone and delete its on-disk directory.
@@ -2971,8 +2980,14 @@ impl PyKernel {
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("federation not active"))?;
         let peers = zm.default_peers().to_vec();
         zm.join_zone(zone_id, peers)
-            .map(|_| zone_id.to_string())
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+        // R20.18.5: joined zones need the apply-cb installed so that
+        // DT_MOUNT events replicated from the leader propagate here.
+        if let Some(consensus) = zm.registry().get_node(zone_id) {
+            self.inner
+                .install_federation_mount_coherence(zone_id, consensus);
+        }
+        Ok(zone_id.to_string())
     }
 
     /// Read the `__i_links_count__` counter for a zone (POSIX

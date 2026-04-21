@@ -10,6 +10,7 @@ Covers:
 from __future__ import annotations
 
 import inspect
+import os
 import sqlite3
 import threading
 from datetime import UTC, datetime
@@ -390,6 +391,32 @@ class TestBackendFactoryErrorPaths:
         backend = create_backend(spec)
 
         assert getattr(backend, "root_path", None) == target.resolve()
+
+    def test_local_windows_drive_uri_preserves_drive_prefix(self) -> None:
+        """local:///C:/... should keep drive-root semantics (no extra leading slash)."""
+        from nexus.fs._backend_factory import _local_root_from_spec
+        from nexus.fs._uri import parse_uri
+
+        spec = parse_uri("local:///C:/Users/alice/data")
+        expected = "C:/Users/alice/data" if os.name == "nt" else "/C:/Users/alice/data"
+        assert _local_root_from_spec(spec) == expected
+
+    def test_local_windows_root_drive_uri_is_absolute(self) -> None:
+        """local:///C:/ should stay drive-rooted on Windows and absolute on POSIX."""
+        from nexus.fs._backend_factory import _local_root_from_spec
+        from nexus.fs._uri import parse_uri
+
+        spec = parse_uri("local:///C:/")
+        expected = "C:/" if os.name == "nt" else "/C:/"
+        assert _local_root_from_spec(spec) == expected
+
+    def test_local_uppercase_scheme_uri_is_still_absolute(self) -> None:
+        """LOCAL:///tmp/data should preserve absolute semantics like local:///tmp/data."""
+        from nexus.fs._backend_factory import _local_root_from_spec
+        from nexus.fs._uri import parse_uri
+
+        spec = parse_uri("LOCAL:///tmp/data")
+        assert _local_root_from_spec(spec) == "/tmp/data"
 
 
 class TestLocalSchemePassthrough:

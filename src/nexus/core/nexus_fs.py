@@ -1078,7 +1078,8 @@ class NexusFS(  # type: ignore[misc]
     # Federation remote content fetch is now handled inside Rust `sys_read`
     # (see `Kernel::try_remote_fetch` in rust/kernel/src/kernel.rs): when
     # metadata exists but the local CAS blob doesn't, Rust parses the origin
-    # from `backend_name` and pulls the blob via VFS `ReadBlob` RPC.
+    # from `backend_name` and pulls the blob via `ZoneApiService.ReadBlob`
+    # (R20.18.7 co-located on the raft port).
 
     @rpc_expose(description="Read file content")
     def sys_read(

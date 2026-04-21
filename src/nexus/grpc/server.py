@@ -116,26 +116,12 @@ async def startup_grpc(app: "FastAPI", _svc: "LifespanServices") -> list[asyncio
     import nexus.grpc.vfs.vfs_pb2_grpc as vfs_pb2_grpc
     from nexus.grpc.servicer import VFSServicer
 
-    # Get a content-addressable backend for ReadBlob (driver-to-driver
-    # content fetch). After F2 MountTable migration, mounts live on the
-    # DLC via PathRouter.list_mounts(); pick the first mount whose backend
-    # supports read_content (CAS-style).
-    _object_store = None
-    _router = getattr(nexus_fs, "router", None)
-    if _router is not None and hasattr(_router, "list_mounts"):
-        for _mount in _router.list_mounts():
-            _be = getattr(_mount, "backend", None)
-            if _be is not None and hasattr(_be, "read_content"):
-                _object_store = _be
-                break
-
     servicer = VFSServicer(
         nexus_fs=nexus_fs,
         exposed_methods=exposed_methods,
         auth_provider=auth_provider,
         api_key=api_key,
         subscription_manager=subscription_manager,
-        object_store=_object_store,
     )
 
     # Match the client-side cap (nexus.contracts.constants.MAX_GRPC_MESSAGE_BYTES,

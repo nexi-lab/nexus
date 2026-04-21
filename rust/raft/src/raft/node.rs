@@ -702,6 +702,34 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
         self.applied_index_atom.load(Ordering::Acquire)
     }
 
+    /// Block (sync, tight loop with 5 ms sleep) until local
+    /// ``applied_index >= target_index``, or ``timeout_ms`` elapses.
+    ///
+    /// Read-your-writes barrier for follower forward-to-leader paths:
+    /// the raft LEADER's ``propose`` may commit on majority and reply
+    /// to the follower before the follower's own apply pass has run,
+    /// so a same-thread read immediately after a propose on a
+    /// follower can see stale state. Callers that need "my write is
+    /// visible from this node" use this helper after `propose`,
+    /// passing `commit_index()` captured post-propose as the target.
+    ///
+    /// Returns `true` on catch-up, `false` on timeout. Sleep interval
+    /// 5 ms = ½ raft tick; typical convergence is a single iteration
+    /// once replication + apply lands.
+    pub fn wait_for_applied_at_least(&self, target_index: u64, timeout_ms: u64) -> bool {
+        use std::time::{Duration, Instant};
+        let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+        loop {
+            if self.applied_index() >= target_index {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
     /// Clone the state-machine's apply-side invalidation slot so the
     /// kernel (which owns the DCache) can install a callback that fires
     /// on every committed metadata mutation. Returns ``None`` for

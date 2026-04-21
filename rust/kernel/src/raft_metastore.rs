@@ -209,7 +209,6 @@ impl Metastore for ZoneMetastore {
         // originating mount's global path, not its own.
         metadata.path = zone_key.clone();
         let value = kernel_to_proto(&metadata);
-        let value_snapshot = value.clone();
         let cmd = Command::SetMetadata {
             key: zone_key.clone(),
             value,
@@ -227,42 +226,13 @@ impl Metastore for ZoneMetastore {
             }
             _ => {}
         }
-
-        // Read-your-writes on follower: `propose` returns as soon as the
-        // raft LEADER commits, but this node's local state-machine apply
-        // runs asynchronously via raft replication (~one tick / 10 ms).
-        // Without waiting, a same-thread `get(path)` right after put
-        // reads the local state and misses the row we just wrote —
-        // same-node writer → stale reader on the same node. Bounded
-        // poll until local state reflects our write; 500 ms cap surfaces
-        // a genuinely stalled apply pipeline instead of masking it.
-        // Mirrors the DistributedLocks.acquire apply-wait; same
-        // underlying raft property.
-        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
-        let mut iters = 0;
-        let mut final_match = false;
-        loop {
-            let poll_key = zone_key.clone();
-            let observed = self.runtime.block_on(
-                self.node
-                    .with_state_machine(move |sm: &FullStateMachine| sm.get_metadata(&poll_key)),
-            );
-            if matches!(&observed, Ok(Some(bytes)) if *bytes == value_snapshot) {
-                final_match = true;
-                break;
-            }
-            if std::time::Instant::now() >= deadline {
-                break;
-            }
-            iters += 1;
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
-        tracing::info!(
-            key = %zone_key,
-            iters = iters,
-            matched = final_match,
-            "ZoneMetastore.put apply-wait done"
-        );
+        // Read-your-writes: propose on a follower returns as soon as
+        // the LEADER commits; this node's state-machine apply lags by
+        // ~one raft tick. Wait for local applied_index to reach the
+        // observed commit so a same-thread `get(path)` sees the row
+        // we just wrote. SSOT = raft state machine.
+        let target = self.node.commit_index();
+        let _ = self.node.wait_for_applied_at_least(target, 500);
         Ok(())
     }
 

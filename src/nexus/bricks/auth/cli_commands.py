@@ -891,6 +891,54 @@ def auth_migrate_to_postgres(
 
 
 # ---------------------------------------------------------------------------
+# auth enroll-token (issue #3804 — daemon enrollment tokens)
+# ---------------------------------------------------------------------------
+
+
+@auth.command("enroll-token")
+@click.option("--tenant-id", required=True, help="Target tenant UUID.")
+@click.option("--principal-id", required=True, help="Target principal UUID.")
+@click.option(
+    "--ttl-minutes",
+    type=int,
+    default=15,
+    show_default=True,
+    help="How long the token is valid for (minutes).",
+)
+def enroll_token_cmd(tenant_id: str, principal_id: str, ttl_minutes: int) -> None:
+    """Mint a single-use daemon enrollment token.
+
+    \b
+    Example:
+        nexus auth enroll-token --tenant-id <t> --principal-id <p> --ttl-minutes 15
+    """
+    import os
+    import uuid as _uuid
+    from datetime import timedelta
+
+    from sqlalchemy import create_engine
+
+    from nexus.server.api.v1.enroll_tokens import issue_enroll_token
+
+    secret = os.environ.get("NEXUS_ENROLL_TOKEN_SECRET", "").encode()
+    if not secret:
+        raise click.ClickException("NEXUS_ENROLL_TOKEN_SECRET must be set (≥32 bytes recommended)")
+    db_url = os.environ.get("NEXUS_AUTH_DB_URL")
+    if not db_url:
+        raise click.ClickException("NEXUS_AUTH_DB_URL must be set")
+
+    engine = create_engine(db_url, future=True)
+    token = issue_enroll_token(
+        engine=engine,
+        secret=secret,
+        tenant_id=_uuid.UUID(tenant_id),
+        principal_id=_uuid.UUID(principal_id),
+        ttl=timedelta(minutes=ttl_minutes),
+    )
+    click.echo(token)
+
+
+# ---------------------------------------------------------------------------
 # auth rotate-kek (issue #3803 — envelope KEK rotation)
 # ---------------------------------------------------------------------------
 

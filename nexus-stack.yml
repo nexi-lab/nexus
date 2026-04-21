@@ -121,6 +121,14 @@ services:
       NEXUS_SKIP_PERMISSIONS: ${NEXUS_SKIP_PERMISSIONS:-false}
       NEXUS_ENFORCE_PERMISSIONS: ${NEXUS_ENFORCE_PERMISSIONS:-true}
       NEXUS_ALLOW_ADMIN_BYPASS: ${NEXUS_ALLOW_ADMIN_BYPASS:-true}
+      # Daemon enroll/refresh routes (nexus-bot, #3804) — both required to mount
+      NEXUS_JWT_SIGNING_KEY: ${NEXUS_JWT_SIGNING_KEY:-}
+      NEXUS_JWT_ISSUER: ${NEXUS_JWT_ISSUER:-http://localhost:2026}
+      NEXUS_ENROLL_TOKEN_SECRET: ${NEXUS_ENROLL_TOKEN_SECRET:-}
+      # Admin-bootstrap token (dev-only). When unset, the admin-bootstrap
+      # endpoint is NOT registered even if NEXUS_ALLOW_ADMIN_BYPASS=true.
+      # `nexus up --with-daemon` injects a fresh random token.
+      NEXUS_ADMIN_BOOTSTRAP_TOKEN: ${NEXUS_ADMIN_BOOTSTRAP_TOKEN:-}
       # Config
       NEXUS_CONFIG_FILE: ${NEXUS_CONFIG_FILE:-/app/configs/config.demo.yaml}
       # Cache
@@ -170,6 +178,8 @@ services:
       # finds ``[default]`` / any ``AWS_PROFILE`` without having to export
       # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY on every ``nexus up``.
       - ${AWS_CONFIG_DIR:-${HOME}/.aws}:/home/nexus/.aws:ro
+      # JWT signing key for daemon enroll/refresh (#3804) — only mounted if path set.
+      - ${NEXUS_JWT_SIGNING_KEY_HOST:-/tmp/jwt-signing.pem}:/run/secrets/jwt-signing.pem:ro
     user: root
     ports:
       - "${NEXUS_PORT:-2026}:2026"

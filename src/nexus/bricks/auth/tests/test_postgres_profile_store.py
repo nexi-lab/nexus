@@ -29,6 +29,8 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
+from nexus.bricks.auth.credential_backend import ResolvedCredential
+from nexus.bricks.auth.envelope_providers.in_memory import InMemoryEncryptionProvider
 from nexus.bricks.auth.postgres_profile_store import (
     PostgresAuthProfileStore,
     drop_schema,
@@ -85,10 +87,39 @@ pytestmark = [
 
 @pytest.fixture(scope="module")
 def pg_engine() -> Generator[Engine, None, None]:
-    """Shared engine with clean schema per module run."""
+    """Shared engine with clean schema per module run.
+
+    Also provisions a ``nexus_test_nonsuper`` role (NOSUPERUSER, NOBYPASSRLS)
+    for RLS-enforcement tests. Superusers silently bypass ``FORCE RLS``, so
+    tests that exercise RLS isolation on a bare ``SELECT`` (no WHERE clause)
+    use ``SET LOCAL SESSION AUTHORIZATION nexus_test_nonsuper`` to switch to
+    a role that honours RLS. Role stays around across runs (idempotent).
+    """
     engine = create_engine(PG_URL, future=True)
     drop_schema(engine)
     ensure_schema(engine)
+    with engine.begin() as conn:
+        existing = conn.execute(
+            text("SELECT 1 FROM pg_roles WHERE rolname = 'nexus_test_nonsuper'")
+        ).fetchone()
+        if existing is None:
+            conn.execute(
+                text(
+                    "CREATE ROLE nexus_test_nonsuper NOSUPERUSER NOBYPASSRLS "
+                    "NOCREATEDB NOCREATEROLE NOINHERIT"
+                )
+            )
+        # PG 15+ removed default USAGE on public for PUBLIC; grant explicitly
+        # so nexus_test_nonsuper can resolve relations in the public schema.
+        conn.execute(text("GRANT USAGE ON SCHEMA public TO nexus_test_nonsuper"))
+        conn.execute(
+            text(
+                "GRANT SELECT, INSERT, UPDATE, DELETE "
+                "ON tenants, principals, principal_aliases, auth_profiles, "
+                "   daemon_machines, daemon_enroll_tokens "
+                "TO nexus_test_nonsuper"
+            )
+        )
     yield engine
     drop_schema(engine)
     engine.dispose()
@@ -671,3 +702,215 @@ class TestSchema:
         a = ensure_principal(pg_engine, tenant_id=tid, external_sub=sub, auth_method="oidc")
         b = ensure_principal(pg_engine, tenant_id=tid, external_sub=sub, auth_method="oidc")
         assert a == b
+
+
+class TestDaemonSchema:
+    """Schema additions for nexus-bot daemon (#3804)."""
+
+    def test_auth_profiles_has_audit_columns(self, pg_engine: Engine) -> None:
+        with pg_engine.begin() as conn:
+            cols = {
+                r[0]
+                for r in conn.execute(
+                    text(
+                        "SELECT column_name FROM information_schema.columns "
+                        "WHERE table_schema = CURRENT_SCHEMA() "
+                        "  AND table_name = 'auth_profiles'"
+                    )
+                ).fetchall()
+            }
+        assert {"source_file_hash", "daemon_version", "machine_id"} <= cols
+
+    def test_daemon_machines_table_exists(self, pg_engine: Engine) -> None:
+        with pg_engine.begin() as conn:
+            tables = {
+                r[0]
+                for r in conn.execute(
+                    text(
+                        "SELECT table_name FROM information_schema.tables "
+                        "WHERE table_schema = CURRENT_SCHEMA()"
+                    )
+                ).fetchall()
+            }
+        assert "daemon_machines" in tables
+        assert "daemon_enroll_tokens" in tables
+
+    def test_daemon_machines_rls_enforced(
+        self, pg_engine: Engine, tenant_id: uuid.UUID, principal_id: uuid.UUID
+    ) -> None:
+        other_tenant = ensure_tenant(pg_engine, f"other-{uuid.uuid4()}")
+        # Insert happens under the superuser connection (admin provisioning
+        # path). The RLS verification below switches to a NOSUPERUSER /
+        # NOBYPASSRLS role because FORCE RLS is silently skipped for super-
+        # users; the nexus_test_nonsuper role mirrors a real production
+        # service account.
+        with pg_engine.begin() as conn:
+            conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(tenant_id)})
+            conn.execute(
+                text(
+                    "INSERT INTO daemon_machines "
+                    "(id, tenant_id, principal_id, pubkey, daemon_version_last_seen, "
+                    " enrolled_at, last_seen_at) "
+                    "VALUES (:id, :tid, :pid, :pk, :ver, NOW(), NOW())"
+                ),
+                {
+                    "id": str(uuid.uuid4()),
+                    "tid": str(tenant_id),
+                    "pid": str(principal_id),
+                    "pk": b"\x00" * 32,
+                    "ver": "0.9.20",
+                },
+            )
+        with pg_engine.begin() as conn:
+            conn.execute(text("SET LOCAL SESSION AUTHORIZATION nexus_test_nonsuper"))
+            conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(other_tenant)})
+            rows = conn.execute(text("SELECT COUNT(*) FROM daemon_machines")).scalar()
+        assert rows == 0, "RLS did not isolate daemon_machines across tenants"
+
+    def test_upsert_with_credential_stamps_audit_fields(
+        self, pg_engine: Engine, tenant_id: uuid.UUID, principal_id: uuid.UUID
+    ) -> None:
+        store = PostgresAuthProfileStore(
+            PG_URL,
+            tenant_id=tenant_id,
+            principal_id=principal_id,
+            engine=pg_engine,
+            encryption_provider=InMemoryEncryptionProvider(),
+        )
+        profile = make_profile("google/user@example.com", provider="google")
+        cred = ResolvedCredential(
+            kind="bearer_token",
+            access_token="ya29.fake",
+        )
+        machine_id = uuid.uuid4()
+        store.upsert_with_credential(
+            profile,
+            cred,
+            source_file_hash="deadbeef" * 8,
+            daemon_version="0.9.20",
+            machine_id=machine_id,
+        )
+        with pg_engine.begin() as conn:
+            conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(tenant_id)})
+            row = conn.execute(
+                text(
+                    "SELECT source_file_hash, daemon_version, machine_id "
+                    "FROM auth_profiles WHERE id = :pid"
+                ),
+                {"pid": profile.id},
+            ).fetchone()
+        assert row is not None
+        assert row.source_file_hash == "deadbeef" * 8
+        assert row.daemon_version == "0.9.20"
+        assert row.machine_id == machine_id
+
+    def test_upsert_with_envelope_stores_bytes_verbatim(
+        self, pg_engine: Engine, tenant_id: uuid.UUID, principal_id: uuid.UUID
+    ) -> None:
+        """The daemon push path ships pre-built envelope bytes — the store must
+        persist them verbatim without re-encrypting via an encryption_provider.
+        """
+        store = PostgresAuthProfileStore(
+            PG_URL,
+            tenant_id=tenant_id,
+            principal_id=principal_id,
+            engine=pg_engine,
+            # Explicitly NOT passing encryption_provider — bypass must work.
+        )
+        profile = make_profile("codex/user@example.com", provider="codex")
+        machine_id = uuid.uuid4()
+        ciphertext = b"\xaa" * 32
+        wrapped_dek = b"\xbb" * 48
+        nonce = b"\xcc" * 12
+        aad = b"\xdd" * 16
+        store.upsert_with_envelope(
+            profile,
+            envelope={
+                "ciphertext": ciphertext,
+                "wrapped_dek": wrapped_dek,
+                "nonce": nonce,
+                "aad": aad,
+                "kek_version": 7,
+            },
+            source_file_hash="feedface" * 8,
+            daemon_version=None,
+            machine_id=machine_id,
+        )
+        with pg_engine.begin() as conn:
+            conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(tenant_id)})
+            row = conn.execute(
+                text(
+                    "SELECT ciphertext, wrapped_dek, nonce, aad, kek_version, "
+                    "       source_file_hash, daemon_version, machine_id "
+                    "FROM auth_profiles "
+                    "WHERE tenant_id = :t AND principal_id = :p AND id = :pid"
+                ),
+                {"t": tenant_id, "p": principal_id, "pid": profile.id},
+            ).fetchone()
+        assert row is not None
+        assert bytes(row.ciphertext) == ciphertext
+        assert bytes(row.wrapped_dek) == wrapped_dek
+        assert bytes(row.nonce) == nonce
+        assert bytes(row.aad) == aad
+        assert row.kek_version == 7
+        assert row.source_file_hash == "feedface" * 8
+        assert row.daemon_version is None
+        assert row.machine_id == machine_id
+
+    def test_upsert_with_envelope_updates_existing_row(
+        self, pg_engine: Engine, tenant_id: uuid.UUID, principal_id: uuid.UUID
+    ) -> None:
+        """Second push for the same (tenant, principal, id) replaces envelope
+        columns and audit stamps (ON CONFLICT DO UPDATE)."""
+        store = PostgresAuthProfileStore(
+            PG_URL,
+            tenant_id=tenant_id,
+            principal_id=principal_id,
+            engine=pg_engine,
+        )
+        profile = make_profile("codex/user@example.com", provider="codex")
+        m1 = uuid.uuid4()
+        store.upsert_with_envelope(
+            profile,
+            envelope={
+                "ciphertext": b"\x01" * 32,
+                "wrapped_dek": b"\x02" * 48,
+                "nonce": b"\x03" * 12,
+                "aad": b"\x04" * 16,
+                "kek_version": 1,
+            },
+            source_file_hash="a" * 64,
+            daemon_version=None,
+            machine_id=m1,
+        )
+        m2 = uuid.uuid4()
+        store.upsert_with_envelope(
+            profile,
+            envelope={
+                "ciphertext": b"\x11" * 32,
+                "wrapped_dek": b"\x22" * 48,
+                "nonce": b"\x33" * 12,
+                "aad": b"\x44" * 16,
+                "kek_version": 2,
+            },
+            source_file_hash="b" * 64,
+            daemon_version="0.9.21",
+            machine_id=m2,
+        )
+        with pg_engine.begin() as conn:
+            conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(tenant_id)})
+            row = conn.execute(
+                text(
+                    "SELECT ciphertext, kek_version, source_file_hash, "
+                    "       daemon_version, machine_id "
+                    "FROM auth_profiles "
+                    "WHERE tenant_id = :t AND principal_id = :p AND id = :pid"
+                ),
+                {"t": tenant_id, "p": principal_id, "pid": profile.id},
+            ).fetchone()
+        assert row is not None
+        assert bytes(row.ciphertext) == b"\x11" * 32
+        assert row.kek_version == 2
+        assert row.source_file_hash == "b" * 64
+        assert row.daemon_version == "0.9.21"
+        assert row.machine_id == m2

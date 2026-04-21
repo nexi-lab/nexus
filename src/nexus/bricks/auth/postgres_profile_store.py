@@ -160,6 +160,9 @@ _TABLE_STATEMENTS: tuple[str, ...] = (
         nonce              BYTEA,
         aad                BYTEA,
         kek_version        INTEGER,
+        source_file_hash   TEXT,      -- #3804 audit stamp
+        daemon_version     TEXT,      -- #3804 audit stamp
+        machine_id         UUID,      -- #3804 audit stamp
         created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         PRIMARY KEY (tenant_id, principal_id, id),
@@ -175,6 +178,86 @@ _TABLE_STATEMENTS: tuple[str, ...] = (
     """,
     "CREATE INDEX IF NOT EXISTS idx_auth_profiles_provider ON auth_profiles(tenant_id, principal_id, provider)",
     "CREATE INDEX IF NOT EXISTS idx_auth_profiles_tenant_id_only ON auth_profiles(tenant_id, id)",
+    """
+    CREATE TABLE IF NOT EXISTS daemon_machines (
+        id                         UUID PRIMARY KEY,
+        tenant_id                  UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+        principal_id               UUID NOT NULL,
+        pubkey                     BYTEA NOT NULL,
+        daemon_version_last_seen   TEXT,
+        enrolled_at                TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        last_seen_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        revoked_at                 TIMESTAMPTZ,
+        hostname                   TEXT,
+        FOREIGN KEY (principal_id, tenant_id)
+            REFERENCES principals(id, tenant_id) ON DELETE CASCADE
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_daemon_machines_tenant_principal "
+    "ON daemon_machines(tenant_id, principal_id)",
+    # /v1/daemon/refresh looks up by pubkey on every request. At 100k enrolled
+    # daemons × 1 refresh / 45min = ~37 req/s, seq-scan is unacceptable. The
+    # BYTEA pubkey is deterministic and unique per enrollment, so a unique
+    # btree index is both correctness and performance (#3788, #3804).
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_daemon_machines_pubkey ON daemon_machines(pubkey)",
+    """
+    CREATE TABLE IF NOT EXISTS daemon_enroll_tokens (
+        jti              UUID PRIMARY KEY,
+        tenant_id        UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+        principal_id     UUID NOT NULL,
+        issued_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        expires_at       TIMESTAMPTZ NOT NULL,
+        used_at          TIMESTAMPTZ,
+        FOREIGN KEY (principal_id, tenant_id)
+            REFERENCES principals(id, tenant_id) ON DELETE CASCADE
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_daemon_enroll_tokens_expires "
+    "ON daemon_enroll_tokens(expires_at)",
+    # Refresh-request nonces (#3804 round 5): /v1/daemon/refresh bodies
+    # include a single-use nonce so a captured (body_raw, sig_b64) pair
+    # cannot be replayed inside the ±60s skew window. We store the
+    # (tenant_id, machine_id, nonce) tuple and reject any INSERT that
+    # collides. A cleanup job prunes rows older than 2× skew.
+    """
+    CREATE TABLE IF NOT EXISTS daemon_refresh_nonces (
+        nonce        UUID NOT NULL,
+        tenant_id    UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+        machine_id   UUID NOT NULL,
+        seen_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (tenant_id, machine_id, nonce)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_daemon_refresh_nonces_seen_at "
+    "ON daemon_refresh_nonces(seen_at)",
+    # Append-only audit log, **range-partitioned by written_at**. At 100k
+    # users × ~10 pushes/day × 365 days = ~365M rows/year; a single flat table
+    # is impractical. Monthly partitions (managed externally via pg_partman or
+    # cron) keep vacuum + index-rebuild cost bounded. A default partition
+    # catches writes outside any declared range so inserts never fail.
+    #
+    # Partition constraint: PK must include the partition key, so (id, written_at).
+    """
+    CREATE TABLE IF NOT EXISTS auth_profile_writes (
+        id                UUID NOT NULL,
+        tenant_id         UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+        principal_id      UUID NOT NULL,
+        auth_profile_id   TEXT NOT NULL,
+        machine_id        UUID NOT NULL,
+        daemon_version    TEXT,
+        source_file_hash  TEXT,
+        written_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (id, written_at)
+    ) PARTITION BY RANGE (written_at)
+    """,
+    # Default partition — catches every row until monthly partitions are
+    # provisioned. Operators should replace with per-month partitions in prod.
+    """
+    CREATE TABLE IF NOT EXISTS auth_profile_writes_default
+        PARTITION OF auth_profile_writes DEFAULT
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_auth_profile_writes_tenant_profile "
+    "ON auth_profile_writes(tenant_id, principal_id, auth_profile_id, written_at DESC)",
 )
 
 # RLS statements. Run LAST so the backfill in _upgrade_shape_in_place is not
@@ -188,6 +271,14 @@ _RLS_STATEMENTS: tuple[str, ...] = (
     "ALTER TABLE principal_aliases FORCE ROW LEVEL SECURITY",
     "ALTER TABLE auth_profiles ENABLE ROW LEVEL SECURITY",
     "ALTER TABLE auth_profiles FORCE ROW LEVEL SECURITY",
+    "ALTER TABLE daemon_machines ENABLE ROW LEVEL SECURITY",
+    "ALTER TABLE daemon_machines FORCE ROW LEVEL SECURITY",
+    "ALTER TABLE daemon_enroll_tokens ENABLE ROW LEVEL SECURITY",
+    "ALTER TABLE daemon_enroll_tokens FORCE ROW LEVEL SECURITY",
+    "ALTER TABLE daemon_refresh_nonces ENABLE ROW LEVEL SECURITY",
+    "ALTER TABLE daemon_refresh_nonces FORCE ROW LEVEL SECURITY",
+    "ALTER TABLE auth_profile_writes ENABLE ROW LEVEL SECURITY",
+    "ALTER TABLE auth_profile_writes FORCE ROW LEVEL SECURITY",
 )
 
 # Policies are separate because ``CREATE POLICY`` lacks IF NOT EXISTS in
@@ -211,6 +302,26 @@ _POLICY_STATEMENTS: tuple[str, ...] = (
     "DROP POLICY IF EXISTS tenant_isolation_auth_profiles ON auth_profiles",
     """
     CREATE POLICY tenant_isolation_auth_profiles ON auth_profiles
+        USING (tenant_id = current_setting('app.current_tenant', true)::UUID)
+    """,
+    "DROP POLICY IF EXISTS tenant_isolation_daemon_machines ON daemon_machines",
+    """
+    CREATE POLICY tenant_isolation_daemon_machines ON daemon_machines
+        USING (tenant_id = current_setting('app.current_tenant', true)::UUID)
+    """,
+    "DROP POLICY IF EXISTS tenant_isolation_daemon_enroll_tokens ON daemon_enroll_tokens",
+    """
+    CREATE POLICY tenant_isolation_daemon_enroll_tokens ON daemon_enroll_tokens
+        USING (tenant_id = current_setting('app.current_tenant', true)::UUID)
+    """,
+    "DROP POLICY IF EXISTS tenant_isolation_daemon_refresh_nonces ON daemon_refresh_nonces",
+    """
+    CREATE POLICY tenant_isolation_daemon_refresh_nonces ON daemon_refresh_nonces
+        USING (tenant_id = current_setting('app.current_tenant', true)::UUID)
+    """,
+    "DROP POLICY IF EXISTS tenant_isolation_auth_profile_writes ON auth_profile_writes",
+    """
+    CREATE POLICY tenant_isolation_auth_profile_writes ON auth_profile_writes
         USING (tenant_id = current_setting('app.current_tenant', true)::UUID)
     """,
 )
@@ -432,6 +543,9 @@ def _upgrade_shape_in_place(conn: Connection) -> None:
         ("nonce", "BYTEA"),
         ("aad", "BYTEA"),
         ("kek_version", "INTEGER"),
+        ("source_file_hash", "TEXT"),  # #3804 audit stamp
+        ("daemon_version", "TEXT"),  # #3804 audit stamp
+        ("machine_id", "UUID"),  # #3804 audit stamp (fk to daemon_machines.id)
     ):
         conn.execute(text(f"ALTER TABLE auth_profiles ADD COLUMN IF NOT EXISTS {col} {decl}"))
     # CHECK constraint. Use DROP ... IF EXISTS + ADD for idempotency.
@@ -456,7 +570,18 @@ def _upgrade_shape_in_place(conn: Connection) -> None:
 def drop_schema(engine: Engine) -> None:
     """Drop every table created by ``ensure_schema`` (test teardown helper)."""
     with engine.begin() as conn:
-        for tbl in ("auth_profiles", "principal_aliases", "principals", "tenants"):
+        # auth_profile_writes is partitioned — dropping the parent with CASCADE
+        # also drops the default partition and any child partitions.
+        for tbl in (
+            "auth_profile_writes",
+            "daemon_refresh_nonces",
+            "daemon_enroll_tokens",
+            "daemon_machines",
+            "auth_profiles",
+            "principal_aliases",
+            "principals",
+            "tenants",
+        ):
             conn.execute(text(f"DROP TABLE IF EXISTS {tbl} CASCADE"))
 
 
@@ -596,6 +721,7 @@ INSERT INTO auth_profiles (
     last_used_at, success_count, failure_count,
     cooldown_until, cooldown_reason, disabled_until, raw_error,
     ciphertext, wrapped_dek, nonce, aad, kek_version,
+    source_file_hash, daemon_version, machine_id,
     updated_at
 ) VALUES (
     :tenant_id, :principal_id, :id,
@@ -604,6 +730,7 @@ INSERT INTO auth_profiles (
     :last_used_at, :success_count, :failure_count,
     :cooldown_until, :cooldown_reason, :disabled_until, :raw_error,
     :ciphertext, :wrapped_dek, :nonce, :aad, :kek_version,
+    :source_file_hash, :daemon_version, :machine_id,
     NOW()
 )
 ON CONFLICT (tenant_id, principal_id, id) DO UPDATE SET
@@ -625,6 +752,9 @@ ON CONFLICT (tenant_id, principal_id, id) DO UPDATE SET
     nonce              = EXCLUDED.nonce,
     aad                = EXCLUDED.aad,
     kek_version        = EXCLUDED.kek_version,
+    source_file_hash   = EXCLUDED.source_file_hash,
+    daemon_version     = EXCLUDED.daemon_version,
+    machine_id         = EXCLUDED.machine_id,
     updated_at         = NOW()
 """
 
@@ -1073,7 +1203,15 @@ class PostgresAuthProfileStore:
             metadata=raw.get("metadata", {}) or {},
         )
 
-    def upsert_with_credential(self, profile: AuthProfile, credential: ResolvedCredential) -> None:
+    def upsert_with_credential(
+        self,
+        profile: AuthProfile,
+        credential: ResolvedCredential,
+        *,
+        source_file_hash: str | None = None,
+        daemon_version: str | None = None,
+        machine_id: uuid.UUID | None = None,
+    ) -> None:
         provider = self._require_provider()
         aad = self._aad_for(profile.id)
         dek = secrets.token_bytes(32)
@@ -1090,6 +1228,9 @@ class PostgresAuthProfileStore:
             nonce=nonce,
             aad=aad,
             kek_version=kek_version,
+            source_file_hash=source_file_hash,
+            daemon_version=daemon_version,
+            machine_id=machine_id,
         )
         lock_key = f"{self._tenant_id}/{profile.id}"
         with self._scoped() as conn:
@@ -1098,6 +1239,74 @@ class PostgresAuthProfileStore:
                 {"k": lock_key},
             )
             conn.execute(text(_UPSERT_WITH_CREDENTIAL_SQL), params)
+
+    def upsert_with_envelope(
+        self,
+        profile: AuthProfile,
+        *,
+        envelope: dict[str, Any],
+        source_file_hash: str | None = None,
+        daemon_version: str | None = None,
+        machine_id: uuid.UUID | None = None,
+        conn: Connection | None = None,
+    ) -> None:
+        """Upsert ``profile`` with a pre-built envelope — no server-side encrypt.
+
+        Used by the ``/v1/auth-profiles`` push route (issue #3804): the daemon
+        envelope-encrypts on the laptop and ships the 5-field envelope over
+        HTTP. The server persists those bytes verbatim, so this path must
+        bypass ``encryption_provider.encrypt()``.
+
+        Parameters
+        ----------
+        profile:
+            Routing metadata (``id``/``provider``/``backend`` etc.). Same shape
+            as ``upsert_with_credential``.
+        envelope:
+            Mapping with keys ``ciphertext`` / ``wrapped_dek`` / ``nonce`` /
+            ``aad`` (all ``bytes``) and ``kek_version`` (``int``). All five are
+            required — the ``auth_profiles_envelope_all_or_none`` CHECK
+            constraint forbids partial envelopes.
+        source_file_hash / daemon_version / machine_id:
+            Audit stamps landed on every central write.
+        conn:
+            Optional caller-managed transaction. When provided, the upsert
+            runs inside the caller's transaction (which must already have
+            ``SET LOCAL app.current_tenant`` set) — used by the push router
+            to keep profile write + audit row atomic. When ``None`` (default),
+            the method opens its own scoped transaction.
+        """
+        required = {"ciphertext", "wrapped_dek", "nonce", "aad", "kek_version"}
+        missing = required - envelope.keys()
+        if missing:
+            raise ValueError(f"upsert_with_envelope: envelope missing keys {sorted(missing)}")
+        params = _profile_params(
+            profile, tenant_id=self._tenant_id, principal_id=self._principal_id
+        )
+        params.update(
+            ciphertext=envelope["ciphertext"],
+            wrapped_dek=envelope["wrapped_dek"],
+            nonce=envelope["nonce"],
+            aad=envelope["aad"],
+            kek_version=envelope["kek_version"],
+            source_file_hash=source_file_hash,
+            daemon_version=daemon_version,
+            machine_id=machine_id,
+        )
+        lock_key = f"{self._tenant_id}/{profile.id}"
+        if conn is not None:
+            conn.execute(
+                text("SELECT pg_advisory_xact_lock(hashtextextended(:k, 0))"),
+                {"k": lock_key},
+            )
+            conn.execute(text(_UPSERT_WITH_CREDENTIAL_SQL), params)
+            return
+        with self._scoped() as scoped:
+            scoped.execute(
+                text("SELECT pg_advisory_xact_lock(hashtextextended(:k, 0))"),
+                {"k": lock_key},
+            )
+            scoped.execute(text(_UPSERT_WITH_CREDENTIAL_SQL), params)
 
     def get_with_credential(
         self, profile_id: str

@@ -510,6 +510,15 @@ def register_commands(cli: click.Group) -> None:
 @click.option(
     "--timeout", type=int, default=180, show_default=True, help="Health check timeout in seconds."
 )
+@click.option(
+    "--with-daemon/--no-with-daemon",
+    default=False,
+    help=(
+        "After the server is healthy, enroll this laptop into it via the "
+        "admin-bootstrap endpoint (dev only; generates an unguessable bootstrap "
+        "token and injects it as NEXUS_ADMIN_BOOTSTRAP_TOKEN into the server env)."
+    ),
+)
 def up(
     detach: bool,
     addons: tuple[str, ...],
@@ -518,6 +527,7 @@ def up(
     build: bool | None,
     force_pull: bool | None,
     timeout: int,
+    with_daemon: bool,
 ) -> None:
     """Start the Nexus stack.
 
@@ -785,6 +795,79 @@ def up(
             effective_image_used = local_image
             effective_build_mode = "local"
 
+    # --with-daemon: provision every env var the v1 daemon subsystem needs
+    # so the flow actually works against a fresh stack. The server only
+    # registers daemon routes if BOTH NEXUS_JWT_SIGNING_KEY (path to an
+    # ES256 PEM the server can read) AND NEXUS_ENROLL_TOKEN_SECRET (HMAC
+    # shared secret) are set; and the admin-bootstrap endpoint additionally
+    # requires NEXUS_ADMIN_BOOTSTRAP_TOKEN. Previously we only set the
+    # admin-bootstrap token, so --with-daemon would hit a 404 on the
+    # bootstrap endpoint and the advertised one-command flow broke.
+    #
+    # Secrets are persisted under ~/.nexus/stacks/<project>/ so repeated
+    # `nexus up --with-daemon` runs are idempotent (same key + secret =
+    # same JWTs survive a restart).
+    bootstrap_token: str | None = None
+    if with_daemon:
+        import contextlib
+        import secrets
+
+        _stack_secrets_dir = Path.home() / ".nexus" / "stacks" / compose_env["COMPOSE_PROJECT_NAME"]
+        _stack_secrets_dir.mkdir(parents=True, exist_ok=True)
+        # Best-effort — some filesystems (NFS, WSL overlays) silently ignore chmod.
+        with contextlib.suppress(OSError):
+            os.chmod(_stack_secrets_dir, 0o700)
+
+        # (1) Admin-bootstrap token — unchanged.
+        bootstrap_token = os.environ.get("NEXUS_ADMIN_BOOTSTRAP_TOKEN") or secrets.token_urlsafe(32)
+        compose_env["NEXUS_ADMIN_BOOTSTRAP_TOKEN"] = bootstrap_token
+
+        # (2) ES256 JWT signing key. If the operator already set a host path,
+        # trust it. Otherwise generate one in the per-project dir and let
+        # compose mount it read-only into the container at a fixed path.
+        _jwt_key_host = os.environ.get("NEXUS_JWT_SIGNING_KEY_HOST")
+        if not _jwt_key_host:
+            _jwt_key_host = str(_stack_secrets_dir / "jwt-signing.pem")
+            if not Path(_jwt_key_host).exists():
+                from cryptography.hazmat.primitives import serialization
+                from cryptography.hazmat.primitives.asymmetric import ec
+
+                _priv = ec.generate_private_key(ec.SECP256R1())
+                _pem_bytes = _priv.private_bytes(
+                    encoding=serialization.Encoding.PEM,
+                    format=serialization.PrivateFormat.PKCS8,
+                    encryption_algorithm=serialization.NoEncryption(),
+                )
+                # Write 0600 — the mount is read-only so the server can't
+                # modify it, but the bytes are sensitive on the host.
+                _fd = os.open(_jwt_key_host, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                try:
+                    os.write(_fd, _pem_bytes)
+                finally:
+                    os.close(_fd)
+        compose_env["NEXUS_JWT_SIGNING_KEY_HOST"] = _jwt_key_host
+        # Inside the container, compose mounts the host file at a fixed path.
+        # The server reads NEXUS_JWT_SIGNING_KEY (the CONTAINER path).
+        compose_env["NEXUS_JWT_SIGNING_KEY"] = "/run/secrets/jwt-signing.pem"
+
+        # (3) Enroll-token HMAC secret — persisted in the same dir so
+        # enroll tokens issued by one `nexus up` survive a restart.
+        _enroll_secret_path = _stack_secrets_dir / "enroll-token.secret"
+        _enroll_secret = os.environ.get("NEXUS_ENROLL_TOKEN_SECRET")
+        if not _enroll_secret:
+            if _enroll_secret_path.exists():
+                _enroll_secret = _enroll_secret_path.read_text().strip()
+            else:
+                _enroll_secret = secrets.token_urlsafe(32)
+                _fd = os.open(
+                    str(_enroll_secret_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600
+                )
+                try:
+                    os.write(_fd, _enroll_secret.encode())
+                finally:
+                    os.close(_fd)
+        compose_env["NEXUS_ENROLL_TOKEN_SECRET"] = _enroll_secret
+
     # When --build is requested, build with a local-only tag
     if build:
         project_hash = compose_env["COMPOSE_PROJECT_NAME"].split("-")[-1]
@@ -970,6 +1053,134 @@ def up(
     if preset == "demo":
         console.print("  nexus demo init")
     console.print("  nexus status")
+
+    if with_daemon:
+        assert bootstrap_token is not None, "with_daemon implies bootstrap_token"
+        ok = _run_daemon_bootstrap(conn_env, bootstrap_token=bootstrap_token)
+        if not ok:
+            # Stack is up but the --with-daemon promise wasn't delivered.
+            # Exit non-zero so CI / automation don't treat this as success.
+            console.print(
+                "[nexus.error]--with-daemon:[/nexus.error] daemon enrollment failed. "
+                "The stack is still running — rerun `nexus daemon bootstrap "
+                "--server <url>` after fixing the issue, or `nexus down` to stop."
+            )
+            raise SystemExit(1)
+
+
+def _run_daemon_bootstrap(conn_env: dict[str, str], *, bootstrap_token: str) -> bool:
+    """After `nexus up --with-daemon`, enroll this laptop into the stack it started.
+
+    Hits ``/v1/admin/daemon-bootstrap`` which mints a tenant + machine principal
+    + enroll token, then invokes ``nexus daemon bootstrap`` in-process to run
+    the normal join flow.
+
+    Returns
+    -------
+    bool
+        ``True`` if bootstrap + join both succeeded, ``False`` on any failure.
+        The caller is responsible for signalling non-zero exit to the shell —
+        this function never raises so an unexpected daemon error cannot abort
+        a healthy-stack startup that has already done its work.
+    """
+    import platform
+
+    import httpx
+
+    server_url = conn_env.get("NEXUS_SERVER_URL") or conn_env.get("NEXUS_URL")
+    if not server_url:
+        console.print()
+        console.print(
+            "[nexus.warning]--with-daemon: no server URL in connection env; "
+            "skipping bootstrap.[/nexus.warning]"
+        )
+        return False
+
+    console.print()
+    console.print(f"[bold]--with-daemon:[/bold] enrolling this laptop into {server_url}...")
+    try:
+        resp = httpx.post(
+            f"{server_url.rstrip('/')}/v1/admin/daemon-bootstrap",
+            headers={"X-Admin-User": "admin", "X-Admin-Token": bootstrap_token},
+            json={
+                "tenant_name": "dev-local",
+                "principal_label": platform.node() or "dev-laptop",
+                "ttl_minutes": 15,
+            },
+            timeout=30.0,
+        )
+    except Exception as e:  # noqa: BLE001
+        console.print(
+            f"[nexus.warning]--with-daemon: bootstrap request failed ({e}); "
+            f"run `nexus daemon bootstrap --server {server_url}` manually."
+            "[/nexus.warning]"
+        )
+        return False
+
+    if resp.status_code == 404:
+        console.print(
+            "[nexus.warning]--with-daemon: admin-bootstrap endpoint unavailable "
+            "(server needs NEXUS_ALLOW_ADMIN_BYPASS=true AND "
+            "NEXUS_ADMIN_BOOTSTRAP_TOKEN set — also check that "
+            "NEXUS_JWT_SIGNING_KEY and NEXUS_ENROLL_TOKEN_SECRET are set)."
+            "[/nexus.warning]"
+        )
+        return False
+    if resp.status_code != 200:
+        console.print(
+            f"[nexus.warning]--with-daemon: bootstrap returned "
+            f"{resp.status_code} {resp.text}[/nexus.warning]"
+        )
+        return False
+
+    body = resp.json()
+    from click.testing import CliRunner
+
+    from nexus.bricks.auth.daemon.cli import daemon as daemon_group
+
+    # Never let a daemon-join exception abort `nexus up`; services are already
+    # healthy at this point and the operator can retry `nexus daemon bootstrap`
+    # manually. catch_exceptions=True captures tracebacks into result.output.
+    # Failure is signalled via the return value so the caller can decide
+    # whether to emit a non-zero process exit.
+    # `daemon join` now rejects cleartext http:// by default. The one-command
+    # `nexus up --with-daemon` dev flow targets a freshly-started local stack
+    # that advertises http://localhost:..., so we pass the same narrow opt-in
+    # (localhost/127.0.0.1/::1) the CLI exposes manually. Any non-local URL
+    # would still be rejected by the validator.
+    join_args = [
+        "join",
+        "--server",
+        server_url,
+        "--enroll-token",
+        body["enroll_token"],
+        "--allow-insecure-localhost",
+    ]
+    try:
+        result = CliRunner().invoke(
+            daemon_group,
+            join_args,
+            catch_exceptions=True,
+        )
+    except Exception as e:  # noqa: BLE001
+        console.print(
+            f"[nexus.warning]--with-daemon: daemon join raised {type(e).__name__}: {e}; "
+            "stack is up — rerun `nexus daemon bootstrap --server <url>` to retry."
+            "[/nexus.warning]"
+        )
+        return False
+    if result.exit_code != 0:
+        console.print(
+            f"[nexus.warning]--with-daemon: daemon join failed (exit={result.exit_code}): "
+            f"{result.output}[/nexus.warning]"
+        )
+        return False
+    console.print(
+        f"[nexus.success]✓[/nexus.success] daemon enrolled: "
+        f"tenant_id={body['tenant_id']} principal_id={body['principal_id']}"
+    )
+    console.print("  Run `nexus daemon run` to start the push loop.")
+    return True
 
 
 @click.command()

@@ -171,3 +171,44 @@ class TestEdgeCases:
             pytest.raises(ValueError, match="No DNS records"),
         ):
             validate_outbound_url("http://empty-dns.example.com/")
+
+
+class TestCloudMetadataExplicit:
+    """Cloud metadata IPs are blocked via the explicit metadata set,
+    catching targets like Alibaba that aren't in RFC1918/link-local."""
+
+    @pytest.mark.parametrize(
+        "ip,description",
+        [
+            ("169.254.169.254", "AWS/GCP/Azure/OCI/DO IMDS"),
+            ("100.100.100.200", "Alibaba Cloud metadata"),
+            ("fd00:ec2::254", "AWS IPv6 metadata"),
+        ],
+    )
+    def test_cloud_metadata_blocked(self, ip: str, description: str) -> None:
+        url = "http://metadata-target.example.com/"
+        family = 10 if ":" in ip else 2
+        sockaddr = (ip, 80, 0, 0) if ":" in ip else (ip, 80)
+        with patch("socket.getaddrinfo") as mock_dns:
+            mock_dns.return_value = [(family, 1, 6, "", sockaddr)]
+            with pytest.raises(SSRFBlocked) as excinfo:
+                validate_outbound_url(url)
+            assert excinfo.value.reason in {"cloud_metadata", "blocked_network"}
+            assert excinfo.value.ip == ip
+
+
+class TestUserinfoRejection:
+    """URLs with userinfo are rejected to defend against parser divergence."""
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "http://user@example.com/",
+            "http://user:pass@example.com/",
+            "http://public.com@10.0.0.1/",
+        ],
+    )
+    def test_userinfo_rejected(self, url: str) -> None:
+        with pytest.raises(SSRFBlocked) as excinfo:
+            validate_outbound_url(url)
+        assert excinfo.value.reason == "userinfo_not_allowed"

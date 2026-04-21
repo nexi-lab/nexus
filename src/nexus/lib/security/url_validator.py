@@ -88,6 +88,20 @@ BLOCKED_NETWORKS: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = (
 
 ALLOWED_SCHEMES: frozenset[str] = frozenset({"http", "https"})
 
+# Explicit cloud metadata IPs. Most are already covered by link-local
+# (169.254.0.0/16), but listing them here serves as self-documentation and
+# catches Alibaba Cloud (100.100.100.200) which is outside link-local.
+CLOUD_METADATA_IPS: frozenset[ipaddress.IPv4Address | ipaddress.IPv6Address] = frozenset(
+    {
+        # AWS IMDS (also GCP, Azure, OCI, DigitalOcean)
+        ipaddress.IPv4Address("169.254.169.254"),
+        # AWS IPv6 IMDS
+        ipaddress.IPv6Address("fd00:ec2::254"),
+        # Alibaba Cloud metadata
+        ipaddress.IPv4Address("100.100.100.200"),
+    }
+)
+
 
 def validate_outbound_url(
     url: str,
@@ -127,6 +141,9 @@ def validate_outbound_url(
     if parsed.scheme not in ALLOWED_SCHEMES:
         raise SSRFBlocked(url, reason="scheme_not_allowed")
 
+    if parsed.username or parsed.password:
+        raise SSRFBlocked(url, reason="userinfo_not_allowed")
+
     hostname = parsed.hostname
     if not hostname:
         raise ValueError("URL has no hostname")
@@ -143,6 +160,9 @@ def validate_outbound_url(
     resolved_ips: list[str] = []
     for _family, _type, _proto, _canonname, sockaddr in addr_infos:
         ip = ipaddress.ip_address(sockaddr[0])
+        if ip in CLOUD_METADATA_IPS:
+            logger.warning("SSRF blocked: %r resolved to metadata IP %s", url, ip)
+            raise SSRFBlocked(url, reason="cloud_metadata", ip=str(ip))
         for network in BLOCKED_NETWORKS:
             if ip in network:
                 logger.warning(

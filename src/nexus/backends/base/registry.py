@@ -428,10 +428,10 @@ class ConnectorRegistry:
                 # manifest.
                 decorator_provided_metadata = (
                     (description and description != existing.description)
-                    or (category and category != "storage" and category != existing.category)
-                    or requires is not None
-                    or service_name is not None
-                    or runtime_deps is not None
+                    or (category != existing.category)
+                    or bool(requires)
+                    or (service_name is not None and service_name != existing.service_name)
+                    or (runtime_deps is not None and tuple(runtime_deps) != existing.runtime_deps)
                 )
                 if decorator_provided_metadata:
                     warnings.warn(

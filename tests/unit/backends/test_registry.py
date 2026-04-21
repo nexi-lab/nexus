@@ -896,3 +896,59 @@ class TestPlaceholderRegistration:
         assert info.connector_class is T
         assert info.description == "External plugin"
         assert info.runtime_deps == (PythonDep("json"),)
+
+    def test_get_raises_for_unbound_placeholder(self) -> None:
+        import pytest
+
+        from nexus.backends._manifest import ConnectorManifestEntry
+        from nexus.backends.base.registry import ConnectorRegistry
+
+        entry = ConnectorManifestEntry(
+            name="unbound",
+            module_path="nowhere.real",
+            class_name="Nope",
+            description="Unbound placeholder",
+            category="storage",
+        )
+        ConnectorRegistry.register_placeholder(entry)
+
+        with pytest.raises(KeyError, match="placeholder"):
+            ConnectorRegistry.get("unbound")
+
+    def test_register_emits_no_warning_when_builtin_passes_only_name(self) -> None:
+        import warnings
+
+        from nexus.backends._manifest import ConnectorManifestEntry
+        from nexus.backends.base.registry import (
+            ConnectorRegistry,
+            register_connector,
+        )
+        from nexus.backends.base.runtime_deps import PythonDep
+
+        entry = ConnectorManifestEntry(
+            name="no_warn_test",
+            module_path="nowhere.real",
+            class_name="DummyBackend",
+            description="Manifest description",
+            category="storage",
+            runtime_deps=(PythonDep("json"),),
+            service_name="svc",
+        )
+        ConnectorRegistry.register_placeholder(entry)
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+
+            @register_connector("no_warn_test")
+            class T(DummyBackend):
+                pass
+
+            manifest_warnings = [
+                w
+                for w in caught
+                if issubclass(w.category, UserWarning) and "manifest" in str(w.message).lower()
+            ]
+            assert not manifest_warnings, (
+                "no warning expected when decorator passes only name; "
+                f"got: {[str(w.message) for w in manifest_warnings]}"
+            )

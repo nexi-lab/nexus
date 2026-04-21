@@ -1692,6 +1692,15 @@ wheels = [
 ]
 
 [[package]]
+name = "itsdangerous"
+version = "2.2.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/9c/cb/8ac0172223afbccb63986cc25049b154ecfb5e85932587206f42317be31d/itsdangerous-2.2.0.tar.gz", hash = "sha256:e0050c0b7da1eea53ffaf149c0cfbb5c6e2e2b69c4bef22c81fa6eb73e5f6173", size = 54410 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/04/96/92447566d16df59b2a776c0fb82dbc4d9e07cd95062562af01e408583fc4/itsdangerous-2.2.0-py3-none-any.whl", hash = "sha256:c6242fc49e35958c8b15141343aa660db5fc54d4f13a1db01a3f5891b98700ef", size = 16234 },
+]
+
+[[package]]
 name = "jaraco-classes"
 version = "3.4.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2394,6 +2403,7 @@ dependencies = [
     { name = "greenlet" },
     { name = "grpcio" },
     { name = "httpx", extra = ["http2"] },
+    { name = "itsdangerous" },
     { name = "limits" },
     { name = "lz4" },
     { name = "markdown-it-py" },
@@ -2630,6 +2640,7 @@ requires-dist = [
     { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.0.0" },
     { name = "hypothesis", marker = "extra == 'test'", specifier = ">=6.0.0" },
     { name = "import-linter", marker = "extra == 'dev'", specifier = ">=2.0" },
+    { name = "itsdangerous", specifier = ">=2.2.0" },
     { name = "limits", specifier = ">=3.6.0" },
     { name = "litellm", marker = "extra == 'all'", specifier = ">=1.74.0" },
     { name = "litellm", marker = "extra == 'sandbox'", specifier = ">=1.74.0" },

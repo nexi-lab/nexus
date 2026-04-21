@@ -99,7 +99,94 @@ class SlimNexusFS:
         Raises:
             NexusFileNotFoundError: If file does not exist.
         """
-        return self._kernel.sys_read(path, context=self._ctx)
+        from nexus.contracts.exceptions import NexusFileNotFoundError
+
+        try:
+            return self._kernel.sys_read(path, context=self._ctx)
+        except NexusFileNotFoundError:
+            # Issue #3821: the slim package wires a SQLiteMetastore that the
+            # Rust kernel cannot see (its metastore hook expects a redb path).
+            # Same-session reads succeed via dcache, but a fresh process has
+            # an empty dcache → Rust raises FileNotFound even though the row
+            # exists in SQLite.  Fall back to the Python metastore + backend.
+            data = self._slim_metastore_read(path)
+            if data is None:
+                raise
+            return data
+
+    def _slim_metastore_read(self, path: str) -> bytes | None:
+        """Read via Python metastore + CAS backend (slim fallback, #3821).
+
+        Returns ``None`` when the metadata/backend can't be resolved so the
+        caller re-raises the original ``NexusFileNotFoundError``.
+
+        Scope is deliberately narrow:
+
+        * Only CAS-local backends are eligible — #3821 only affects slim
+          ``local://`` mounts where the Rust kernel cannot see the Python
+          SQLiteMetastore.  Path-addressed backends (``PathS3Backend`` etc.)
+          resolve content via ``context.backend_path``, not ``etag``; the
+          default ``_SLIM_CONTEXT`` does not carry that field, and misusing
+          ``read_content(etag, ...)`` on them would raise.  Callers of
+          path-addressed slim mounts therefore keep the pre-#3821 behaviour
+          (FileNotFound on cold-start) until a proper fix lands — no
+          regression, no silent mis-reads.
+        * The backend is resolved via ``router.route()`` so LPM,
+          readonly/admin_only, and mount-boundary checks all apply exactly
+          as they do for ``sys_read``.  External connector mounts
+          (DT_EXTERNAL_STORAGE) are skipped — they have their own read
+          semantics and bubble through ``sys_readdir``/``sys_read``.
+        """
+        from nexus.contracts.exceptions import (
+            AccessDeniedError,
+            InvalidPathError,
+            PathNotMountedError,
+        )
+        from nexus.core.path_utils import validate_path
+        from nexus.core.router import ExternalRouteResult, RouteResult
+
+        try:
+            normalized = validate_path(path)
+        except Exception:
+            return None
+        meta = self._kernel.metadata.get(normalized)
+        if meta is None or not meta.etag:
+            return None
+        try:
+            route = self._kernel.router.route(normalized, is_admin=False)
+        except (PathNotMountedError, AccessDeniedError, InvalidPathError):
+            return None
+        if not isinstance(route, RouteResult) or isinstance(route, ExternalRouteResult):
+            return None
+        backend = route.backend
+        expected_name = (meta.backend_name or "").split(":", 1)[0].split("@", 1)[0]
+        actual_name = getattr(backend, "name", None)
+        if expected_name and actual_name and expected_name != actual_name:
+            return None
+        # CAS-local gate: backend must be content-addressed *and* carry a
+        # local root path.  This matches how MountTable detects CAS-local
+        # backends for the kernel (see core/mount_table.py::add).
+        is_cas_local = getattr(backend, "has_root_path", False) and type(
+            backend
+        ).__name__.startswith("CAS")
+        if not is_cas_local:
+            return None
+        read_content = getattr(backend, "read_content", None)
+        if read_content is None:
+            return None
+        from nexus.contracts.exceptions import NexusFileNotFoundError
+
+        try:
+            data = read_content(meta.etag, context=self._ctx)
+        except NexusFileNotFoundError:
+            # Real not-found at the backend layer — caller re-raises the
+            # original FileNotFound; no signal loss.
+            return None
+        # Permission errors, disk IO failures, corruption, BackendError,
+        # etc. propagate unchanged so operators see the real cause instead
+        # of a misleading "missing file" signal masking a data-integrity
+        # incident.
+        return bytes(data) if isinstance(data, (bytes, bytearray)) else None
 
     def read_range(self, path: str, start: int, end: int) -> bytes:
         """Read a specific byte range from a file.

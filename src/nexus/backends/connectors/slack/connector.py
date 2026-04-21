@@ -46,7 +46,7 @@ from nexus.backends.connectors.slack.schemas import (
 )
 from nexus.backends.connectors.slack.transport import FOLDER_TYPES, SlackTransport
 from nexus.contracts.backend_features import OAUTH_BACKEND_FEATURES, BackendFeature
-from nexus.contracts.exceptions import BackendError
+from nexus.contracts.exceptions import AuthenticationError, BackendError
 from nexus.core.object_store import WriteResult
 
 if TYPE_CHECKING:
@@ -254,6 +254,8 @@ class PathSlackBackend(
         try:
             msg_ts = self._transport.store(context.backend_path, content)
             return WriteResult(content_id=msg_ts or "", version=msg_ts or "", size=len(content))
+        except AuthenticationError:
+            raise
         except Exception as e:
             raise BackendError(f"Failed to write message: {e}", backend="slack") from e
 
@@ -364,6 +366,8 @@ class PathSlackBackend(
 
             raise FileNotFoundError(f"Directory not found: {path}")
         except FileNotFoundError:
+            raise
+        except AuthenticationError:
             raise
         except Exception as e:
             raise BackendError(

@@ -4,6 +4,8 @@ import logging
 import time
 from typing import Any
 
+from nexus.contracts.exceptions import AuthenticationError
+
 logger = logging.getLogger(__name__)
 
 
@@ -94,6 +96,8 @@ def list_channels(
             if not cursor:
                 break
 
+        except AuthenticationError:
+            raise
         except Exception as e:
             logger.error(f"[LIST-CHANNELS] Error listing channels: {e}")
             break
@@ -208,6 +212,8 @@ def list_messages_from_channel(
             if not cursor:
                 break
 
+        except AuthenticationError:
+            raise
         except Exception as e:
             logger.error(f"[LIST-MESSAGES] Error listing messages from #{channel_name}: {e}")
             break
@@ -253,6 +259,8 @@ def list_thread_replies(
 
         return messages
 
+    except AuthenticationError:
+        raise
     except Exception as e:
         logger.error(f"[LIST-THREAD-REPLIES] Error fetching thread replies: {e}")
         return []
@@ -303,6 +311,8 @@ def get_user_info(
 
         return user_info
 
+    except AuthenticationError:
+        raise
     except Exception as e:
         logger.warning(f"[GET-USER-INFO] Error fetching user {user_id}: {e}")
         return None

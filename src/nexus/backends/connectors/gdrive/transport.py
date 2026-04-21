@@ -139,39 +139,36 @@ class DriveTransport:
                 backend="gdrive",
             ) from None
 
-        # Resolve user email
+        from nexus.backends.connectors.oauth_base import resolve_oauth_access_token
+
+        # Resolve user email — absence is an auth-required signal, not a
+        # backend error.  Callers (fs.ls, fs.read, …) need the structured
+        # ``recovery_hint`` so UIs can drive the OAuth flow (#3822).
         if self._user_email:
-            user_email = self._user_email
+            user_email: str | None = self._user_email
         elif self._context and self._context.user_id:
             user_email = self._context.user_id
         else:
-            raise BackendError(
-                "Google Drive transport requires either configured user_email "
-                "or authenticated user in OperationContext",
-                backend="gdrive",
-            )
+            user_email = None
 
-        from nexus.lib.sync_bridge import run_sync
-
+        zone_id = (
+            self._context.zone_id
+            if self._context and hasattr(self._context, "zone_id") and self._context.zone_id
+            else "root"
+        )
+        # Raises AuthenticationError with provider/user_email/recovery_hint
+        # for auth-required cases; non-auth failures (network, misconfig)
+        # bubble up as their native exception type so we don't mask them.
         try:
-            zone_id = (
-                self._context.zone_id
-                if self._context and hasattr(self._context, "zone_id") and self._context.zone_id
-                else "root"
-            )
-            access_token = run_sync(
-                self._token_manager.get_valid_token(
-                    provider=self._provider,
-                    user_email=user_email,
-                    zone_id=zone_id,
-                )
-            )
-        except AuthenticationError as _auth_exc:
-            raise AuthenticationError(
-                str(_auth_exc),
-                provider=self._provider,
+            access_token = resolve_oauth_access_token(
+                self._token_manager,
+                connector_name="gdrive_connector",
+                provider=self._provider or "google-drive",
                 user_email=user_email,
-            ) from _auth_exc
+                zone_id=zone_id,
+            )
+        except AuthenticationError:
+            raise
         except Exception as e:
             raise BackendError(
                 f"Failed to get valid OAuth token for user {user_email}: {e}",
@@ -549,6 +546,8 @@ class DriveTransport:
             )
             files = self._find_file_in_parent(service, filename, parent_id, fields="files(id)")
             return len(files) > 0
+        except AuthenticationError:
+            raise
         except (NexusFileNotFoundError, BackendError):
             return False
         except Exception:
@@ -725,7 +724,15 @@ class DriveTransport:
         return current_id
 
     def is_folder(self, path: str) -> bool:
-        """Check whether a path is a folder in Drive."""
+        """Check whether a path is a folder in Drive.
+
+        Auth-required failures from ``_get_drive_service()`` are
+        re-raised so callers can surface the ``AuthenticationError``
+        recovery signal — swallowing them as ``False`` would flip a
+        401-class auth condition into false "not a directory" semantics
+        upstream (e.g., ``NexusFS._check_is_directory``), which then
+        cascades into 404 instead of 401.
+        """
         path = path.strip("/")
         if not path:
             return True
@@ -744,6 +751,8 @@ class DriveTransport:
                     return False
                 current_id = found
             return True
+        except AuthenticationError:
+            raise
         except Exception:
             return False
 

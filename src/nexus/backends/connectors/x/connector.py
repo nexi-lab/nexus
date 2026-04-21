@@ -43,7 +43,7 @@ from nexus.backends.connectors.oauth import OAuthConnectorMixin
 from nexus.backends.connectors.x.schemas import CreateTweetSchema, DeleteTweetSchema
 from nexus.backends.connectors.x.transport import VIRTUAL_DIRS, XTransport
 from nexus.contracts.backend_features import OAUTH_BACKEND_FEATURES, BackendFeature
-from nexus.contracts.exceptions import BackendError
+from nexus.contracts.exceptions import AuthenticationError, BackendError
 from nexus.core.object_store import WriteResult
 
 if TYPE_CHECKING:
@@ -259,6 +259,8 @@ class PathXBackend(
                 version=result_id or "",
                 size=len(content),
             )
+        except AuthenticationError:
+            raise
         except Exception as e:
             raise BackendError(f"Failed to write content: {e}", backend="x") from e
 

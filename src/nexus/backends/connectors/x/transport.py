@@ -133,27 +133,47 @@ class XTransport:
 
     async def _get_api_client_async(self) -> Any:
         """Get authenticated X API client."""
+        from nexus.backends.connectors.oauth_base import (
+            build_auth_recovery_hint,
+        )
         from nexus.backends.connectors.x.api_client import XAPIClient
+        from nexus.contracts.exceptions import AuthenticationError
 
         user_email = self._user_email or (self._context.user_id if self._context else None)
-        if not user_email:
-            raise BackendError(
-                "X transport requires user_email or context.user_id",
-                backend="x",
-            )
-
         zone_id: str = (
             self._context.zone_id
             if self._context and hasattr(self._context, "zone_id")
             else ROOT_ZONE_ID
         ) or ROOT_ZONE_ID
 
+        if not user_email:
+            raise AuthenticationError(
+                f"x_connector requires authorization (provider={self._provider}). "
+                "Configure user_email on the mount or authenticate a user.",
+                provider=self._provider,
+                user_email=None,
+                recovery_hint=build_auth_recovery_hint(
+                    connector_name="x_connector",
+                    provider=self._provider,
+                ),
+            )
         try:
             access_token = await self._token_manager.get_valid_token(
                 provider=self._provider,
                 user_email=user_email,
                 zone_id=zone_id,
             )
+        except AuthenticationError as _auth_exc:
+            raise AuthenticationError(
+                str(_auth_exc),
+                provider=self._provider,
+                user_email=user_email,
+                recovery_hint=build_auth_recovery_hint(
+                    connector_name="x_connector",
+                    provider=self._provider,
+                    user_email=user_email,
+                ),
+            ) from _auth_exc
         except Exception as e:
             raise BackendError(
                 f"Failed to get OAuth token for {user_email}: {e}",

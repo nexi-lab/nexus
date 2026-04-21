@@ -1373,6 +1373,9 @@ def create_async_files_router(
                 modified_at=meta.modified_at.isoformat() if meta.modified_at else None,
             )
 
+        except AuthenticationError:
+            # Preserve structured re-auth signal (see /list and /read handlers).
+            raise
         except NexusPermissionError as e:
             raise HTTPException(status_code=403, detail=str(e)) from e
         except NexusFileNotFoundError as e:

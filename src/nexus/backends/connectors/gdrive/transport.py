@@ -796,7 +796,15 @@ class DriveTransport:
         return current_id
 
     def is_folder(self, path: str) -> bool:
-        """Check whether a path is a folder in Drive."""
+        """Check whether a path is a folder in Drive.
+
+        Auth-required failures from ``_get_drive_service()`` are
+        re-raised so callers can surface the ``AuthenticationError``
+        recovery signal — swallowing them as ``False`` would flip a
+        401-class auth condition into false "not a directory" semantics
+        upstream (e.g., ``NexusFS._check_is_directory``), which then
+        cascades into 404 instead of 401.
+        """
         path = path.strip("/")
         if not path:
             return True
@@ -815,6 +823,8 @@ class DriveTransport:
                     return False
                 current_id = found
             return True
+        except AuthenticationError:
+            raise
         except Exception:
             return False
 

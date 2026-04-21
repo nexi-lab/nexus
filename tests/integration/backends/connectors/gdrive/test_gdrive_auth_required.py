@@ -95,6 +95,31 @@ def test_get_drive_service_raises_authentication_error_when_token_missing(
     assert err.recovery_hint["provider"] == "google-drive"
 
 
+def test_is_folder_propagates_authentication_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DriveTransport.is_folder must not swallow AuthenticationError.
+
+    Earlier the blanket ``except Exception: return False`` flipped a
+    401-class auth condition into false "not a directory" semantics —
+    callers upstream (``NexusFS._check_is_directory``) then cascaded it
+    into 404 instead of 401, dropping the recovery_hint/provider fields.
+    """
+    transport = _build_transport(monkeypatch)
+
+    async def _raise(*_a: object, **_kw: object) -> None:
+        raise AuthenticationError("No credential for google-drive:user@example.com")
+
+    transport._user_email = "user@example.com"
+    transport._token_manager.get_valid_token = _raise
+
+    with pytest.raises(AuthenticationError) as exc_info:
+        transport.is_folder("/some/path")
+
+    assert exc_info.value.provider == "google-drive"
+    assert exc_info.value.recovery_hint is not None
+
+
 def test_recovery_hint_matches_auth_init_request_schema() -> None:
     """The hint must map cleanly onto the real AuthInitRequest model.
 

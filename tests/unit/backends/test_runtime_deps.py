@@ -43,3 +43,81 @@ class TestDepTypes:
             ServiceDep("kernel"),
         )
         assert len(deps) == 3
+
+
+from unittest.mock import patch  # noqa: E402
+
+from nexus.backends.base.runtime_deps import check_runtime_deps  # noqa: E402
+
+
+class TestCheckRuntimeDeps:
+    def test_empty_deps_returns_empty(self) -> None:
+        assert check_runtime_deps(()) == []
+
+    def test_satisfied_python_dep(self) -> None:
+        # 'json' is always present in stdlib.
+        assert check_runtime_deps((PythonDep("json"),)) == []
+
+    def test_missing_python_dep_without_extras(self) -> None:
+        missing = check_runtime_deps((PythonDep("definitely_not_a_real_module_xyz"),))
+        assert len(missing) == 1
+        dep, reason = missing[0]
+        assert isinstance(dep, PythonDep)
+        assert "pip install definitely_not_a_real_module_xyz" in reason
+
+    def test_missing_python_dep_with_extras(self) -> None:
+        missing = check_runtime_deps(
+            (PythonDep("definitely_not_a_real_module_xyz", extras=("gcs", "gdrive")),)
+        )
+        assert len(missing) == 1
+        _, reason = missing[0]
+        assert "pip install nexus-fs[gcs,gdrive]" in reason
+
+    def test_satisfied_binary_dep(self) -> None:
+        # 'sh' is on PATH on every POSIX system + in CI images.
+        assert check_runtime_deps((BinaryDep("sh", "n/a"),)) == []
+
+    def test_missing_binary_dep(self) -> None:
+        missing = check_runtime_deps(
+            (BinaryDep("definitely_not_a_real_binary_xyz", "brew install xyz"),)
+        )
+        assert len(missing) == 1
+        _, reason = missing[0]
+        assert "not on PATH" in reason
+        assert "brew install xyz" in reason
+
+    def test_service_dep_satisfied_when_server_available(self) -> None:
+        missing = check_runtime_deps((ServiceDep("token_manager"),), server_available=True)
+        assert missing == []
+
+    def test_service_dep_missing_when_slim(self) -> None:
+        missing = check_runtime_deps((ServiceDep("token_manager"),), server_available=False)
+        assert len(missing) == 1
+        _, reason = missing[0]
+        assert "service 'token_manager'" in reason
+        assert "full nexus install" in reason
+
+    def test_aggregates_all_missing(self) -> None:
+        deps: tuple[RuntimeDep, ...] = (
+            PythonDep("definitely_not_a_real_module_xyz", extras=("gws",)),
+            BinaryDep("definitely_not_a_real_binary_xyz", "brew install xyz"),
+            ServiceDep("kernel"),
+            PythonDep("json"),  # satisfied — should not appear in output
+        )
+        missing = check_runtime_deps(deps, server_available=False)
+        assert len(missing) == 3
+        reasons = [r for _, r in missing]
+        assert any("definitely_not_a_real_module_xyz" in r for r in reasons)
+        assert any("definitely_not_a_real_binary_xyz" in r for r in reasons)
+        assert any("service 'kernel'" in r for r in reasons)
+
+    def test_server_available_is_cached(self) -> None:
+        from nexus.backends.base.runtime_deps import _server_available
+
+        _server_available.cache_clear()
+        with patch("nexus.backends.base.runtime_deps.importlib.util.find_spec") as mock_find:
+            mock_find.return_value = object()
+            _server_available()
+            _server_available()
+            assert mock_find.call_count == 1
+        _server_available.cache_clear()

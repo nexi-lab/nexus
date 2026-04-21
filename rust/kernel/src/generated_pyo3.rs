@@ -2974,6 +2974,31 @@ impl PyKernel {
             .map(|_| zone_id.to_string())
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
     }
+
+    /// Read the `__i_links_count__` counter for a zone (POSIX
+    /// nlink semantics — bumped by zone_mount, decremented by
+    /// zone_unmount). 0 if zone not loaded or counter missing.
+    fn zone_links_count(&self, zone_id: &str) -> PyResult<i64> {
+        let zm = self
+            .inner
+            .zone_manager_arc()
+            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("federation not active"))?;
+        let Some(handle) = zm.get_zone(zone_id) else {
+            return Ok(0);
+        };
+        let bytes_opt = handle
+            .get_metadata("__i_links_count__")
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+        let Some(bytes) = bytes_opt else {
+            return Ok(0);
+        };
+        let arr: [u8; 8] = bytes.as_slice().try_into().map_err(|_| {
+            pyo3::exceptions::PyRuntimeError::new_err(
+                "invalid counter encoding for __i_links_count__",
+            )
+        })?;
+        Ok(i64::from_be_bytes(arr))
+    }
 }
 
 // ── Private: hook dispatch (wrapper-only) ───────────────────────────────

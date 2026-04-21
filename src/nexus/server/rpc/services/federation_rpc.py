@@ -107,6 +107,16 @@ class FederationRPCService:
         path: str,
     ) -> dict[str, Any]:
         target = self._kernel.zone_unmount(parent_zone, path)
+        # Mirror into Python DLC removal: without this the router's
+        # _dlc cache still returns the old _PyMountInfo and the
+        # unmounted path stays reachable via the mount-registered
+        # path. Matches the pre-R20.18.5 unmount bookkeeping.
+        nx = self._nexus_fs
+        if nx is not None:
+            coord = getattr(nx, "_driver_coordinator", None)
+            if coord is not None:
+                with contextlib.suppress(Exception):
+                    coord.unmount(path, zone_id=parent_zone)
         return {"parent_zone": parent_zone, "path": path, "target_zone": target}
 
     @rpc_expose(admin_only=True)
@@ -126,17 +136,24 @@ class FederationRPCService:
 
     # ── Introspection ──────────────────────────────────────────────
 
+    def _links_count(self, zone_id: str) -> int:
+        fn = getattr(self._kernel, "zone_links_count", None)
+        if fn is None:
+            return 0
+        try:
+            return int(fn(zone_id))
+        except Exception:
+            return 0
+
     @rpc_expose(admin_only=False)
     def federation_list_zones(self) -> dict[str, Any]:
         zone_ids: list[str] = list(self._kernel.zone_list())
-        zones = [{"zone_id": zid, "links_count": 0} for zid in zone_ids]
+        zones = [{"zone_id": zid, "links_count": self._links_count(zid)} for zid in zone_ids]
         return {"zones": zones, "node_id": zone_ids}
 
     @rpc_expose(admin_only=False)
     def federation_cluster_info(self, zone_id: str) -> dict[str, Any]:
         # PyKernel.zone_cluster_info returns a Python dict already.
         status: dict[str, Any] = dict(self._kernel.zone_cluster_info(zone_id))
-        # Callers also expect `links_count` — retained as 0 until a
-        # dedicated kernel accessor lands (post-merge cleanup).
-        status.setdefault("links_count", 0)
+        status["links_count"] = self._links_count(zone_id)
         return status

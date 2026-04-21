@@ -168,6 +168,7 @@ KERNEL_REQUIRED_METHODS: frozenset[str] = frozenset(
         "zone_cluster_info",
         "zone_create",
         "zone_join",
+        "zone_links_count",
         "zone_list",
         "zone_mount",
         "zone_remove",

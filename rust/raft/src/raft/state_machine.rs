@@ -788,17 +788,29 @@ impl FullStateMachine {
                     }
                 };
                 const DT_MOUNT: i32 = 2;
-                if proto.entry_type != DT_MOUNT || proto.target_zone_id.is_empty() {
+                if proto.entry_type == DT_MOUNT && !proto.target_zone_id.is_empty() {
+                    MountApplyEvent::Set {
+                        key: key.clone(),
+                        target_zone_id: proto.target_zone_id,
+                        backend_name: proto.backend_name,
+                    }
+                } else if let Some(k) = delete_mount_key {
+                    // R20.18.5: overwrite of prior DT_MOUNT with a
+                    // non-mount entry (e.g. federation_unmount writes
+                    // DT_DIR at the mount path). Fire Delete so
+                    // wire_federation_mount_impl removes this mount
+                    // from the local MountTable.
+                    if k == *key {
+                        MountApplyEvent::Delete { key: key.clone() }
+                    } else {
+                        return;
+                    }
+                } else {
                     return;
-                }
-                MountApplyEvent::Set {
-                    key: key.clone(),
-                    target_zone_id: proto.target_zone_id,
-                    backend_name: proto.backend_name,
                 }
             }
             Command::DeleteMetadata { key } => match delete_mount_key {
-                Some(k) if k == key => MountApplyEvent::Delete { key: key.clone() },
+                Some(k) if k == *key => MountApplyEvent::Delete { key: key.clone() },
                 _ => return,
             },
             _ => return,
@@ -1541,9 +1553,30 @@ impl StateMachine for FullStateMachine {
         // that performs the delete. Only DeleteMetadata needs the
         // pre-capture — for SetMetadata the proto is on the command
         // itself, accessible from emit_mount_apply_event.
+        //
+        // R20.18.5: federation_unmount writes a DT_DIR at the mount
+        // path to replace the DT_MOUNT entry — that's a SetMetadata,
+        // not a DeleteMetadata. We need to detect "previous entry
+        // was DT_MOUNT but the new one isn't" and fire a Delete
+        // event so wire_federation_mount_impl removes the mount from
+        // MountTable on every node.
         #[cfg(feature = "grpc")]
         let delete_mount_key: Option<String> = match command {
             Command::DeleteMetadata { key } if self.peek_is_dt_mount(key) => Some(key.clone()),
+            Command::SetMetadata { key, value } if self.peek_is_dt_mount(key) => {
+                use crate::transport::proto::nexus::core::FileMetadata as ProtoFileMetadata;
+                use prost::Message as ProstMessage;
+                const DT_MOUNT: i32 = 2;
+                let overwrite_is_mount = match ProtoFileMetadata::decode(value.as_slice()) {
+                    Ok(p) => p.entry_type == DT_MOUNT,
+                    Err(_) => false,
+                };
+                if overwrite_is_mount {
+                    None
+                } else {
+                    Some(key.clone())
+                }
+            }
             _ => None,
         };
 

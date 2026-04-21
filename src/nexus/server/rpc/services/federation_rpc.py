@@ -57,6 +57,96 @@ class FederationRPCService:
             # refreshes the DLC will fix.
             pass
 
+    # ── Zone snapshot (export / import — R20.17b) ──────────────────
+
+    @rpc_expose(admin_only=True)
+    def federation_export_zone(
+        self,
+        zone_id: str,
+        output_path: str,
+        include_content: bool = True,
+        include_permissions: bool = True,
+        include_embeddings: bool = False,
+        include_deleted: bool = False,
+        path_prefix: str | None = None,
+    ) -> dict[str, Any]:
+        """Export a raft-backed zone to a .nexus bundle on the server's
+        filesystem.
+
+        Runs server-side so the exporter reaches the real metastore +
+        backend rather than a remote proxy. CLI (``nexus zone export``)
+        and the docker E2E suite call this RPC when the caller isn't
+        the local owner of the redb file. The shared docker volume
+        makes ``output_path`` visible to the CLI container; production
+        deployments typically write to a mounted backup volume.
+        """
+        from pathlib import Path
+
+        from nexus.bricks.portability import ZoneExportOptions, ZoneExportService
+
+        nx = self._nexus_fs
+        if nx is None:
+            raise RuntimeError("federation_export_zone: no NexusFS attached")
+        service = ZoneExportService(nx)
+        options = ZoneExportOptions(
+            output_path=Path(output_path),
+            include_content=include_content,
+            include_permissions=include_permissions,
+            include_embeddings=include_embeddings,
+            include_deleted=include_deleted,
+            path_prefix=path_prefix,
+        )
+        manifest = service.export_zone(zone_id, options)
+        return {
+            "zone_id": zone_id,
+            "output_path": str(options.output_path),
+            "file_count": manifest.file_count,
+            "total_size_bytes": manifest.total_size_bytes,
+            "bundle_id": manifest.bundle_id,
+        }
+
+    @rpc_expose(admin_only=True)
+    def federation_import_zone(
+        self,
+        bundle_path: str,
+        target_zone: str | None = None,
+        conflict: str = "skip",
+        preserve_timestamps: bool = True,
+        import_permissions: bool = True,
+        path_prefix_remap: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """Import a zone bundle from the server's filesystem.
+
+        Server-side counterpart of ``federation_export_zone``. See that
+        method's docstring for the shared-volume / mounted-backup
+        deployment model.
+        """
+        from pathlib import Path
+
+        from nexus.bricks.portability import ConflictMode, ZoneImportOptions, ZoneImportService
+
+        nx = self._nexus_fs
+        if nx is None:
+            raise RuntimeError("federation_import_zone: no NexusFS attached")
+        service = ZoneImportService(nx)
+        options = ZoneImportOptions(
+            bundle_path=Path(bundle_path),
+            target_zone_id=target_zone,
+            conflict_mode=ConflictMode(conflict),
+            preserve_timestamps=preserve_timestamps,
+            import_permissions=import_permissions,
+            path_prefix_remap=path_prefix_remap or {},
+        )
+        result = service.import_zone(options)
+        return {
+            "target_zone": target_zone,
+            "files_created": result.files_created,
+            "files_updated": result.files_updated,
+            "files_skipped": result.files_skipped,
+            "files_failed": result.files_failed,
+            "permissions_imported": result.permissions_imported,
+        }
+
     # ── Zone lifecycle ─────────────────────────────────────────────
 
     @rpc_expose(admin_only=True)

@@ -141,6 +141,19 @@ describe("FetchClient", () => {
       await expect(client.get("/test")).rejects.toThrow(AuthenticationError);
     });
 
+    it("401 preserves detail message from JSON response", async () => {
+      mockFetch.mockResolvedValueOnce(
+        jsonResponse({ detail: "Token expired for this session" }, 401),
+      );
+      try {
+        await client.get("/test");
+        expect.fail("should have thrown");
+      } catch (e) {
+        expect(e).toBeInstanceOf(AuthenticationError);
+        expect((e as AuthenticationError).message).toBe("Token expired for this session");
+      }
+    });
+
     it("402 → InsufficientCreditsError", async () => {
       mockFetch.mockResolvedValueOnce(
         jsonResponse({ detail: "Not enough", error_code: "insufficient_credits" }, 402),

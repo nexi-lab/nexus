@@ -14,7 +14,7 @@
  * @see §2 Worker thread isolation — Issue #3632
  */
 
-import { describe, it, expect, beforeEach, afterEach, mock } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach, vi } from "bun:test";
 import type { ToWorkerMessage, FromWorkerMessage } from "../../src/worker/protocol.js";
 
 // ─── MockWorker ───────────────────────────────────────────────────────────────
@@ -207,6 +207,25 @@ describe("WorkerManager", () => {
     manager.terminate();
   });
 
+  it("does not restart twice for duplicate crash signals from one worker", async () => {
+    const manager = createWorkerManager(baseConfig);
+    await tickN(3);
+
+    // Same crash can emit both onerror and close in real runtimes.
+    workers[0].simulateCrash();
+    workers[0].simulateClose();
+    await tickN(5);
+
+    expect(workers).toHaveLength(2);
+
+    // A late close event from the retired worker should be ignored.
+    workers[0].simulateClose();
+    await tickN(5);
+    expect(workers).toHaveLength(2);
+
+    manager.terminate();
+  });
+
   it("replacement worker receives correct config via init", async () => {
     const manager = createWorkerManager(baseConfig);
     await tickN(3);
@@ -227,22 +246,66 @@ describe("WorkerManager", () => {
   // ─── Restart limit ───────────────────────────────────────────────────────
 
   it("stops restarting after MAX_RESTARTS crashes", async () => {
-    const manager = createWorkerManager(baseConfig);
-    await tickN(3);
+    vi.useFakeTimers();
+    try {
+      const manager = createWorkerManager(baseConfig);
+      await tickN(3);
 
-    const MAX_RESTARTS = 5;
-    for (let i = 0; i < MAX_RESTARTS; i++) {
+      const MAX_RESTARTS = 5;
+      for (let i = 0; i < MAX_RESTARTS; i++) {
+        workers[workers.length - 1].simulateCrash();
+        vi.advanceTimersByTime(5_000);
+        await tickN(5);
+      }
+
+      const countBefore = workers.length;
+      // One more crash — should NOT spawn another worker
+      workers[workers.length - 1].simulateCrash();
+      vi.advanceTimersByTime(5_000);
+      await tickN(5);
+      expect(workers.length).toBe(countBefore);
+
+      manager.terminate();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("resets restart counter after worker is healthy for 30s", async () => {
+    vi.useFakeTimers();
+    try {
+      const manager = createWorkerManager(baseConfig);
+      await tickN(3);
+
+      // Burn one restart so the counter is non-zero.
       workers[workers.length - 1].simulateCrash();
       await tickN(5);
+      expect(workers).toHaveLength(2);
+
+      // Keep the replacement worker healthy long enough to reset restartCount.
+      vi.advanceTimersByTime(30_000);
+      await tickN(3);
+
+      // After reset, we should still be allowed 5 more restart attempts.
+      const baseCount = workers.length;
+      for (let i = 0; i < 5; i++) {
+        workers[workers.length - 1].simulateCrash();
+        vi.advanceTimersByTime(5_000);
+        await tickN(5);
+      }
+      expect(workers.length).toBe(baseCount + 5);
+
+      // The next crash should hit MAX_RESTARTS and stop spawning.
+      const countBeforeFinalCrash = workers.length;
+      workers[workers.length - 1].simulateCrash();
+      vi.advanceTimersByTime(5_000);
+      await tickN(5);
+      expect(workers.length).toBe(countBeforeFinalCrash);
+
+      manager.terminate();
+    } finally {
+      vi.useRealTimers();
     }
-
-    const countBefore = workers.length;
-    // One more crash — should NOT spawn another worker
-    workers[workers.length - 1].simulateCrash();
-    await tickN(5);
-    expect(workers.length).toBe(countBefore);
-
-    manager.terminate();
   });
 
   // ─── terminate ───────────────────────────────────────────────────────────

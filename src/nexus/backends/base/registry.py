@@ -405,8 +405,8 @@ class ConnectorRegistry:
         cls,
         name: str,
         connector_class: "type[Backend]",
-        description: str = "",
-        category: str = "storage",
+        description: str | None = None,
+        category: str | None = None,
         requires: list[str] | None = None,  # noqa: ARG003 — accepted for API compat, ignored per spec §6
         service_name: str | None = None,
         runtime_deps: tuple[RuntimeDep, ...] | None = None,
@@ -416,8 +416,12 @@ class ConnectorRegistry:
         Args:
             name: Unique identifier for the connector
             connector_class: The connector class to register
-            description: Human-readable description
-            category: Category for grouping
+            description: Human-readable description. ``None`` means "not
+                provided; use default" (``""`` for external plugins, or the
+                manifest value for built-in placeholder-bound connectors).
+            category: Category for grouping. ``None`` means "not provided;
+                use default" (``"storage"`` for external plugins, or the
+                manifest value for built-in placeholder-bound connectors).
             requires: **Deprecated** — list of pip-package names. Prefer
                 ``runtime_deps`` with :class:`PythonDep` entries.
             service_name: Unified service name for service_map integration
@@ -452,8 +456,8 @@ class ConnectorRegistry:
                 # kwargs, emit a UserWarning pointing them at the
                 # manifest.
                 decorator_provided_metadata = (
-                    (description and description != existing.description)
-                    or (category != existing.category)
+                    (description is not None and description != existing.description)
+                    or (category is not None and category != existing.category)
                     or bool(requires)
                     or (service_name is not None and service_name != existing.service_name)
                     or (runtime_deps is not None and tuple(runtime_deps) != existing.runtime_deps)
@@ -537,8 +541,8 @@ class ConnectorRegistry:
         info = ConnectorInfo(
             name=name,
             connector_class=connector_class,
-            description=description,
-            category=category,
+            description=description if description is not None else "",
+            category=category if category is not None else "storage",
             user_scoped=user_scoped,
             config_mapping=config_mapping,
             service_name=service_name,
@@ -700,8 +704,8 @@ class ConnectorRegistry:
 
 def register_connector(
     name: str,
-    description: str = "",
-    category: str = "storage",
+    description: str | None = None,
+    category: str | None = None,
     requires: list[str] | None = None,
     service_name: str | None = None,
     runtime_deps: tuple[RuntimeDep, ...] | None = None,
@@ -710,8 +714,12 @@ def register_connector(
 
     Args:
         name: Unique identifier for the connector
-        description: Human-readable description
-        category: Category for grouping
+        description: Human-readable description. ``None`` (default) means
+            "not provided; use default" — the manifest value for built-in
+            connectors, or ``""`` for external plugins.
+        category: Category for grouping. ``None`` (default) means "not
+            provided; use default" — the manifest value for built-in
+            connectors, or ``"storage"`` for external plugins.
         requires: **Deprecated** — use ``runtime_deps=`` instead.
         service_name: Unified service name for service_map integration
         runtime_deps: Typed runtime deps (Issue #3830). Takes precedence

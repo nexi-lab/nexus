@@ -77,6 +77,38 @@ class FederationRPCService:
 
     # ── Mount topology ─────────────────────────────────────────────
 
+    def _to_zone_relative(self, parent_zone: str, path: str) -> str:
+        """Translate a VFS-global path to the parent zone's namespace.
+
+        For parent=root the zone key equals the global path.  For nested
+        mounts (parent=corp, path=/corp/sales) corp's namespace is
+        zone-relative (/sales); the Rust raft ``ZoneManager::mount``
+        writes the DT_MOUNT entry at the key we pass, so we must strip
+        the parent's own mount prefix first. Pre-R20.18.5 this lived in
+        ``ZoneManager._resolve_mount_parent`` (Python).
+        """
+        if parent_zone == "root" or not path.startswith("/"):
+            return path
+        # Walk the kernel's zone_list to find where parent_zone is
+        # globally mounted, then strip that prefix.
+        try:
+            zones = list(self._kernel.zone_list())
+        except Exception:
+            return path
+        # Build a "target_zone -> global_path" map by scanning the Rust
+        # mount table via get_mount_points (returns /zone/mount_point
+        # canonical keys).  We don't have direct access, but
+        # has_mount("/corp", "root") is the heuristic signal.  Easiest:
+        # if path starts with "/<parent_zone>/" heuristically, strip it.
+        del zones
+        candidate_prefix = f"/{parent_zone}"
+        if path == candidate_prefix:
+            return "/"
+        if path.startswith(candidate_prefix + "/"):
+            return path[len(candidate_prefix) :]
+        # Fallback: pass through — matches root semantics.
+        return path
+
     @rpc_expose(admin_only=True)
     def federation_mount(
         self,
@@ -87,12 +119,13 @@ class FederationRPCService:
         """Mount ``target_zone`` at ``path`` (global VFS) inside
         ``parent_zone``. Uses the legacy kwarg shape (parent_zone /
         path / target_zone) expected by the docker E2E test suite +
-        CLI callers. ``path`` may be either a zone-relative or global
-        VFS path; the kernel auto-creates zones on first mount via
-        R20.18.3's `resolve_federation_mount_backing`.
+        CLI callers.
         """
-        self._kernel.zone_mount(parent_zone, path, target_zone)
-        # Mirror into Python DLC so PathRouter.route can return non-None.
+        zone_relative = self._to_zone_relative(parent_zone, path)
+        self._kernel.zone_mount(parent_zone, zone_relative, target_zone)
+        # Mirror into Python DLC at the VFS-global path so
+        # PathRouter.route (which receives global paths from callers)
+        # can return non-None.
         self._register_mount_in_python_dlc(path, parent_zone)
         return {
             "parent_zone": parent_zone,
@@ -106,7 +139,8 @@ class FederationRPCService:
         parent_zone: str,
         path: str,
     ) -> dict[str, Any]:
-        target = self._kernel.zone_unmount(parent_zone, path)
+        zone_relative = self._to_zone_relative(parent_zone, path)
+        target = self._kernel.zone_unmount(parent_zone, zone_relative)
         # Mirror into Python DLC removal: without this the router's
         # _dlc cache still returns the old _PyMountInfo and the
         # unmounted path stays reachable via the mount-registered

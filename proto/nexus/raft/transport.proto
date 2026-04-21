@@ -117,9 +117,6 @@ message ProposeResponse {
   optional string leader_address = 3;
   optional RaftResponse result = 4;
   uint64 applied_index = 5;
-  // Internal forwarding: bincode-serialized CommandResult from leader.
-  // Preserves full result variants for follower->leader forwarding.
-  bytes raw_result = 6;
 }
 
 // QueryRequest reads from the local state machine.
@@ -152,10 +149,6 @@ message GetClusterInfoResponse {
   ClusterConfig config = 4;
   bool is_leader = 5;
   optional string leader_address = 6;
-  // True when this node returns ProposeResponse.raw_result for successful writes.
-  bool supports_raw_result = 7;
-  // Versioned contract for forwarded raw_result encoding.
-  string protocol_version = 8;
 }
 
 // JoinZoneRequest is sent by a new node to an existing zone member.

@@ -288,9 +288,6 @@ struct ForwardContext {
     /// `Arc<tokio::sync::Mutex<..>>` so `ForwardContext` stays Clone + Send.
     cached_api_client:
         std::sync::Arc<tokio::sync::Mutex<Option<(String, crate::transport::RaftApiClient)>>>,
-    /// Cached leader capability: whether endpoint supports raw_result forwarding.
-    leader_raw_result_support:
-        std::sync::Arc<tokio::sync::Mutex<Option<(String, bool, std::time::Instant)>>>,
 }
 
 pub struct ZoneConsensus<S: StateMachine + 'static> {
@@ -497,21 +494,58 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
             // duplicate slips through — fix the caller, don't rely on this.
             let mut voters = vec![config.id];
             voters.extend(config.peers.iter());
-            let persisted = &initial_state.conf_state;
-            let local_in_conf_state = persisted.voters.contains(&config.id)
-                || persisted.learners.contains(&config.id)
-                || persisted.voters_outgoing.contains(&config.id)
-                || persisted.learners_next.contains(&config.id);
-            if !persisted.voters.is_empty() && !local_in_conf_state {
-                return Err(RaftError::InvalidState(format!(
-                    "Persisted ConfState (voters={:?}, learners={:?}) does not include local node {}",
-                    persisted.voters, persisted.learners, config.id
-                )));
+            let before_dedup = voters.len();
+            voters.sort_unstable();
+            voters.dedup();
+            if voters.len() != before_dedup {
+                tracing::warn!(
+                    "RaftConfig contract violation: caller passed duplicate voter IDs \
+                     (config.id={}, config.peers={:?}). \
+                     `config.peers` MUST exclude self. De-duplicated to {:?}; \
+                     fix the caller to prevent ConfState drift.",
+                    config.id,
+                    config.peers,
+                    voters,
+                );
             }
 
             let needs_bootstrap = if initial_state.conf_state.voters.is_empty() {
                 // Fresh cluster — no ConfState in storage yet.
                 true
+            } else if config.peers.is_empty() && initial_state.conf_state.voters != vec![config.id]
+            {
+                // Persisted multi-node ConfState but caller supplied no
+                // peers. Two legitimate scenarios collapse here:
+                //
+                // (a) Single-node restart with a STALE ConfState left over
+                //     from a previous cluster (e.g. Docker container rebuilt
+                //     with persistent storage but different peer roster).
+                // (b) Dynamic-federation recovery: a node restart triggers
+                //     auto_join_zone via the Raft server's step_message
+                //     handler, which passes `get_all_peers()` — empty when
+                //     all sibling zones are ALSO still recovering.
+                //
+                // Only (a) should reset to single-node; (b) must preserve
+                // the persisted voter set so the recovered node rejoins the
+                // real cluster. We distinguish them by whether the saved
+                // voter set still contains us: if it does, this node was
+                // legitimately part of that cluster and its persisted state
+                // is authoritative. If not, the ConfState is genuinely
+                // stale (fresh node reusing an abandoned data dir).
+                if initial_state.conf_state.voters.contains(&config.id) {
+                    tracing::info!(
+                        "Restart with persisted multi-node ConfState (voters={:?}); preserving cluster membership",
+                        initial_state.conf_state.voters,
+                    );
+                    false
+                } else {
+                    tracing::warn!(
+                        "Stale ConfState detected (voters={:?}, expected={:?}) — resetting for single-node",
+                        initial_state.conf_state.voters,
+                        voters,
+                    );
+                    true
+                }
             } else {
                 false
             };
@@ -628,7 +662,6 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
             peers,
             zone_id,
             cached_api_client: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
-            leader_raw_result_support: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
         });
     }
 
@@ -987,7 +1020,6 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
                 command,
                 &ctx.zone_id,
                 &ctx.cached_api_client,
-                &ctx.leader_raw_result_support,
             )
             .await
             {
@@ -2039,83 +2071,6 @@ mod tests {
             vec![1, 2, 3],
             "Multi-node ConfState must include self and all peers"
         );
-    }
-
-    #[test]
-    fn test_restart_with_empty_runtime_peers_preserves_persisted_conf_state() {
-        let dir = TempDir::new().unwrap();
-
-        // First boot as multi-node to persist a non-singleton ConfState.
-        {
-            let storage = RaftStorage::open(dir.path()).unwrap();
-            let store = RedbStore::open(dir.path().join("sm")).unwrap();
-            let state_machine = FullStateMachine::new(&store).unwrap();
-
-            let config = RaftConfig {
-                id: 1,
-                peers: vec![2],
-                ..Default::default()
-            };
-
-            let (_handle, _driver) =
-                ZoneConsensus::new(config, storage, state_machine, None).unwrap();
-        }
-
-        // Restart with empty runtime peers should reopen and preserve
-        // persisted multi-node membership (used during cold recovery).
-        {
-            let storage = RaftStorage::open(dir.path()).unwrap();
-            let store = RedbStore::open(dir.path().join("sm")).unwrap();
-            let state_machine = FullStateMachine::new(&store).unwrap();
-            let config = RaftConfig {
-                id: 1,
-                peers: vec![],
-                ..Default::default()
-            };
-
-            let (_handle, _driver) =
-                ZoneConsensus::new(config, storage, state_machine, None).unwrap();
-        }
-
-        let storage = RaftStorage::open(dir.path()).unwrap();
-        let state = Storage::initial_state(&storage).unwrap();
-        let mut voters = state.conf_state.voters.clone();
-        voters.sort();
-        assert_eq!(voters, vec![1, 2]);
-    }
-
-    #[test]
-    fn test_restart_rejects_persisted_conf_state_without_local_node() {
-        use raft::eraftpb::ConfState;
-
-        let dir = TempDir::new().unwrap();
-
-        {
-            let storage = RaftStorage::open(dir.path()).unwrap();
-            storage
-                .set_conf_state(&ConfState {
-                    voters: vec![2],
-                    ..Default::default()
-                })
-                .unwrap();
-        }
-
-        let storage = RaftStorage::open(dir.path()).unwrap();
-        let store = RedbStore::open(dir.path().join("sm")).unwrap();
-        let state_machine = FullStateMachine::new(&store).unwrap();
-        let config = RaftConfig {
-            id: 1,
-            peers: vec![],
-            ..Default::default()
-        };
-
-        let err = match ZoneConsensus::new(config, storage, state_machine, None) {
-            Ok(_) => {
-                panic!("Expected InvalidState when local node is absent from persisted voters")
-            }
-            Err(err) => err,
-        };
-        assert!(matches!(err, RaftError::InvalidState(_)));
     }
 
     #[tokio::test]

@@ -557,8 +557,6 @@ impl RaftApiClient {
             term: resp.term,
             is_leader: resp.is_leader,
             leader_address: resp.leader_address,
-            supports_raw_result: resp.supports_raw_result,
-            protocol_version: resp.protocol_version,
         })
     }
 }
@@ -602,10 +600,6 @@ pub struct ClusterInfoResult {
     pub is_leader: bool,
     /// Leader address (if known).
     pub leader_address: Option<String>,
-    /// Whether leader supports raw_result in ProposeResponse.
-    pub supports_raw_result: bool,
-    /// Forwarded result protocol version.
-    pub protocol_version: String,
 }
 
 // =============================================================================

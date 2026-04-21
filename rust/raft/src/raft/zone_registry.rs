@@ -26,8 +26,7 @@ use crate::transport::{
     TransportLoop,
 };
 use dashmap::DashMap;
-use raft::Storage as RaftStorageTrait;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use tokio::sync::watch;
@@ -77,13 +76,12 @@ pub struct ZoneRaftRegistry {
     /// Shared TLS config — can be updated at runtime for plaintext→mTLS upgrade.
     /// All zones' client pools read from this on new connections.
     tls: Arc<RwLock<Option<TlsConfig>>>,
-    /// Per-zone creation guard: tracks zone_ids currently being set up.
-    /// Prevents two threads from concurrently opening the same RedbStore
-    /// ("Database already open") without a global mutex that would serialize
-    /// creation of *different* zones.
-    creating: DashMap<String, ()>,
-    /// Cached persisted membership from on-disk ConfState (zone_id -> node IDs).
-    persisted_members: DashMap<String, HashSet<u64>>,
+    /// Per-zone concurrent-op guard: tracks zone_ids currently undergoing
+    /// setup or removal. Prevents two threads from concurrently opening
+    /// the same RedbStore ("Database already open") and from racing a
+    /// removal against a re-create. Not a global mutex, so different
+    /// zone_ids proceed in parallel.
+    creating: DashMap<String, ZoneOp>,
 }
 
 impl ZoneRaftRegistry {
@@ -99,7 +97,6 @@ impl ZoneRaftRegistry {
             node_id,
             tls: Arc::new(RwLock::new(None)),
             creating: DashMap::new(),
-            persisted_members: DashMap::new(),
         }
     }
 
@@ -111,7 +108,6 @@ impl ZoneRaftRegistry {
             node_id,
             tls: Arc::new(RwLock::new(tls)),
             creating: DashMap::new(),
-            persisted_members: DashMap::new(),
         }
     }
 
@@ -402,23 +398,7 @@ impl ZoneRaftRegistry {
         let raft_storage = RaftStorage::open(persistence.raft_path()).map_err(|e| {
             TransportError::Connection(format!("Failed to open raft storage: {}", e))
         })?;
-        let mut persisted_members = HashSet::new();
-        if let Ok(initial_state) = RaftStorageTrait::initial_state(&raft_storage) {
-            let conf_state = initial_state.conf_state;
-            persisted_members.extend(conf_state.voters);
-            persisted_members.extend(conf_state.learners);
-            persisted_members.extend(conf_state.voters_outgoing);
-            persisted_members.extend(conf_state.learners_next);
-        }
-        if persisted_members.is_empty() {
-            persisted_members.insert(config.id);
-            persisted_members.extend(config.peers.iter().copied());
-        }
-        if !persisted_members.is_empty() {
-            self.persisted_members
-                .insert(zone_id.to_string(), persisted_members);
-        }
-        let state_machine = FullStateMachine::new(&store).map_err(|e| {
+        let mut state_machine = FullStateMachine::new(&store).map_err(|e| {
             TransportError::Connection(format!("Failed to create state machine: {}", e))
         })?;
 
@@ -576,71 +556,6 @@ impl ZoneRaftRegistry {
             .map(|e| e.peers.read().unwrap().clone())
     }
 
-    fn load_persisted_members(&self, zone_id: &str) -> Option<HashSet<u64>> {
-        let zone_raft_path = self.base_path.join(zone_id).join("raft");
-        let storage = RaftStorage::open(&zone_raft_path).ok()?;
-        let initial_state = RaftStorageTrait::initial_state(&storage).ok()?;
-        let conf_state = initial_state.conf_state;
-
-        let mut members = HashSet::new();
-        members.extend(conf_state.voters);
-        members.extend(conf_state.learners);
-        members.extend(conf_state.voters_outgoing);
-        members.extend(conf_state.learners_next);
-
-        if members.is_empty() {
-            None
-        } else {
-            Some(members)
-        }
-    }
-
-    /// Check persisted on-disk ConfState membership, using an in-memory cache.
-    pub fn is_persisted_member(&self, zone_id: &str, node_id: u64) -> bool {
-        if let Some(entry) = self.zones.get(zone_id) {
-            let peers = entry.peers.read().unwrap();
-            if !peers.is_empty() {
-                let mut members: HashSet<u64> = peers.keys().copied().collect();
-                members.insert(self.node_id);
-                let is_member = members.contains(&node_id);
-                self.persisted_members.insert(zone_id.to_string(), members);
-                return is_member;
-            }
-        }
-
-        if let Some(cached) = self.persisted_members.get(zone_id) {
-            return cached.contains(&node_id);
-        }
-
-        let members = match self.load_persisted_members(zone_id) {
-            Some(members) => members,
-            None => return false,
-        };
-        let is_member = members.contains(&node_id);
-        self.persisted_members.insert(zone_id.to_string(), members);
-        is_member
-    }
-
-    /// Refresh persisted membership from disk when possible, then evaluate membership.
-    pub fn is_persisted_member_fresh(&self, zone_id: &str, node_id: u64) -> bool {
-        if let Some(members) = self.load_persisted_members(zone_id) {
-            let is_member = members.contains(&node_id);
-            self.persisted_members.insert(zone_id.to_string(), members);
-            return is_member;
-        }
-
-        // Fall back to cached membership when refresh is temporarily unavailable.
-        if let Some(cached) = self.persisted_members.get(zone_id) {
-            tracing::warn!(
-                zone = zone_id,
-                "Using cached membership because persisted refresh was unavailable"
-            );
-            return cached.contains(&node_id);
-        }
-
-        false
-    }
-
     /// Get cluster peer addresses from any existing zone (all zones share the same peers).
     /// Used by auto-join for new zones that don't have their own peer map yet.
     pub fn get_all_peers(&self) -> Vec<NodeAddress> {
@@ -660,7 +575,6 @@ impl ZoneRaftRegistry {
     pub fn add_peer(&self, zone_id: &str, node_id: u64, address: NodeAddress) -> bool {
         if let Some(entry) = self.zones.get(zone_id) {
             entry.peers.write().unwrap().insert(node_id, address);
-            self.persisted_members.remove(zone_id);
             true
         } else {
             false
@@ -687,14 +601,21 @@ impl ZoneRaftRegistry {
     ///    succeed on Windows (which refuses to delete open-handle files).
     /// 5. `persistence.destroy()` — the `rmdir -r`.
     #[allow(clippy::result_large_err)]
-    pub fn remove_zone(&self, zone_id: &str) -> Result<(), TransportError> {
-        match self.zones.remove(zone_id) {
-            Some((_, entry)) => {
-                // Signal shutdown to transport loop
-                let _ = entry.shutdown_tx.send(true);
-                self.persisted_members.remove(zone_id);
-                tracing::info!("Zone '{}' removed", zone_id);
-                Ok(())
+    pub async fn remove_zone(&self, zone_id: &str) -> Result<(), TransportError> {
+        // Serialize against setup_zone on the same zone_id.
+        {
+            use dashmap::mapref::entry::Entry;
+            match self.creating.entry(zone_id.to_string()) {
+                Entry::Occupied(_occupied) => {
+                    drop(_occupied);
+                    return Err(TransportError::Connection(format!(
+                        "Zone '{}' concurrent op in progress; retry remove shortly",
+                        zone_id,
+                    )));
+                }
+                Entry::Vacant(v) => {
+                    v.insert(ZoneOp::Removing);
+                }
             }
         }
         struct RemovingGuard<'a> {

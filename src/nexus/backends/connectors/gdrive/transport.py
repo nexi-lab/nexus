@@ -195,45 +195,30 @@ class DriveTransport:
         return build("drive", "v3", credentials=creds)
 
     def _build_auth_url(self, *, user_email: str | None) -> str | None:
-        """Return the nexus server's stateful OAuth authorize endpoint.
+        """Auth URL construction for connector re-auth is intentionally None.
 
-        This transport **never** mints a raw Google OAuth URL.  Google code
-        exchange on Nexus is bound to a signed ``state`` + HttpOnly binding
-        cookie issued by ``/auth/oauth/google/authorize`` on the server
-        (Issue #3815 P2.5).  Returning a bare Google URL from here would
-        bypass that state binding and open a login-CSRF / code-injection
-        window.
+        Earlier iterations of this transport minted OAuth URLs directly
+        (either raw Google endpoints or the nexus-server user-login
+        authorize route).  Both are unsafe as connector credential-recovery
+        targets:
 
-        Instead, we point callers at the server's authorize endpoint (which
-        issues state + cookie and redirects to Google itself).  The server
-        URL is read from ``NEXUS_SERVER_URL``; when absent, callers get the
-        ``AuthenticationError`` without a URL and must resolve the server
-        address out-of-band.
+        * A raw Google URL bypasses the signed state + binding-cookie path
+          (P2.5 from #3815) and opens a login-CSRF / code-injection window.
+        * ``/auth/oauth/google/authorize`` is the *user-login* flow for
+          ``provider=google``; connector tokens live under
+          ``provider={google-drive,gws,gmail,google-calendar}`` and are
+          issued by the connector-scoped ``POST /v2/connectors/auth/init``
+          endpoint, not the login authorize route.  Sending the user
+          through the login URL lets them sign in successfully yet still
+          fail connector token resolution — a broken remediation loop.
+
+        Clients receive ``provider`` and ``user_email`` on
+        :class:`AuthenticationError` and can hit the connector auth init
+        endpoint themselves (it is a POST and needs an authenticated user,
+        so it can't be flattened into a single GET-able URL from here).
         """
-        import os
-        from urllib.parse import urlencode
-
-        del user_email  # reserved for future per-user hints
-
-        base = (os.getenv("NEXUS_SERVER_URL") or "").rstrip("/")
-        if not base:
-            return None
-        if not (base.startswith("http://") or base.startswith("https://")):
-            return None
-        provider = self._provider or "google-drive"
-        # All Google-family providers route through the single
-        # ``/auth/oauth/google/authorize`` endpoint today.  Non-Google
-        # providers: no URL (state-bound authorize does not exist yet).
-        if provider not in {"google-drive", "gws", "gmail", "google-calendar"}:
-            return None
-        query: dict[str, str] = {}
-        redirect_uri = os.getenv("NEXUS_OAUTH_REDIRECT_URI") or os.getenv(
-            "NEXUS_FS_OAUTH_REDIRECT_URI"
-        )
-        if redirect_uri:
-            query["redirect_uri"] = redirect_uri
-        suffix = f"?{urlencode(query)}" if query else ""
-        return f"{base}/auth/oauth/google/authorize{suffix}"
+        del user_email
+        return None
 
     # ------------------------------------------------------------------
     # Internal helpers — folder resolution

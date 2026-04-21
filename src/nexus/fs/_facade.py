@@ -115,17 +115,27 @@ class SlimNexusFS:
             return data
 
     def _slim_metastore_read(self, path: str) -> bytes | None:
-        """Read via Python metastore + backend.read_content (slim fallback).
+        """Read via Python metastore + CAS backend (slim fallback, #3821).
 
-        Returns ``None`` when the metadata or backend cannot be resolved so
-        the caller re-raises the original ``NexusFileNotFoundError``.
+        Returns ``None`` when the metadata/backend can't be resolved so the
+        caller re-raises the original ``NexusFileNotFoundError``.
 
-        The backend is resolved via the router's LPM on the *virtual path*,
-        not by scanning the mount table for any backend with a matching bare
-        name.  That keeps the fallback bound to the exact mount/path pair the
-        caller requested — multiple mounts sharing a backend name, external
-        (connector) mounts, and admin-only mounts all behave like the
-        regular ``sys_read`` route.
+        Scope is deliberately narrow:
+
+        * Only CAS-local backends are eligible — #3821 only affects slim
+          ``local://`` mounts where the Rust kernel cannot see the Python
+          SQLiteMetastore.  Path-addressed backends (``PathS3Backend`` etc.)
+          resolve content via ``context.backend_path``, not ``etag``; the
+          default ``_SLIM_CONTEXT`` does not carry that field, and misusing
+          ``read_content(etag, ...)`` on them would raise.  Callers of
+          path-addressed slim mounts therefore keep the pre-#3821 behaviour
+          (FileNotFound on cold-start) until a proper fix lands — no
+          regression, no silent mis-reads.
+        * The backend is resolved via ``router.route()`` so LPM,
+          readonly/admin_only, and mount-boundary checks all apply exactly
+          as they do for ``sys_read``.  External connector mounts
+          (DT_EXTERNAL_STORAGE) are skipped — they have their own read
+          semantics and bubble through ``sys_readdir``/``sys_read``.
         """
         from nexus.contracts.exceptions import (
             AccessDeniedError,
@@ -146,21 +156,31 @@ class SlimNexusFS:
             route = self._kernel.router.route(normalized, is_admin=False)
         except (PathNotMountedError, AccessDeniedError, InvalidPathError):
             return None
-        # Only the local CAS route is exercised by this fallback; external
-        # connector mounts (DT_EXTERNAL_STORAGE) have their own access
-        # semantics and must go through ``sys_readdir`` / ``sys_read``.
         if not isinstance(route, RouteResult) or isinstance(route, ExternalRouteResult):
             return None
         backend = route.backend
         expected_name = (meta.backend_name or "").split(":", 1)[0].split("@", 1)[0]
         actual_name = getattr(backend, "name", None)
         if expected_name and actual_name and expected_name != actual_name:
-            # Metadata says a different backend — refuse to read cross-mount.
+            return None
+        # CAS-local gate: backend must be content-addressed *and* carry a
+        # local root path.  This matches how MountTable detects CAS-local
+        # backends for the kernel (see core/mount_table.py::add).
+        is_cas_local = getattr(backend, "has_root_path", False) and type(
+            backend
+        ).__name__.startswith("CAS")
+        if not is_cas_local:
             return None
         read_content = getattr(backend, "read_content", None)
         if read_content is None:
             return None
-        data = read_content(meta.etag, context=self._ctx)
+        try:
+            data = read_content(meta.etag, context=self._ctx)
+        except Exception:
+            # Any backend-level failure (permissions, IO, bad etag) should
+            # surface as FileNotFound rather than wrong-content; the slim
+            # fallback is a best-effort rescue, never a retry loop.
+            return None
         return bytes(data) if isinstance(data, (bytes, bytearray)) else None
 
     def read_range(self, path: str, start: int, end: int) -> bytes:

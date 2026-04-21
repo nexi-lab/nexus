@@ -38,6 +38,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
+from nexus.backends.base.runtime_deps import PythonDep, RuntimeDep
 from nexus.contracts.backend_features import BackendFeature
 from nexus.lib.registry import BaseRegistry
 
@@ -208,8 +209,14 @@ class ConnectorInfo:
     category: str = "storage"
     """Category for grouping (e.g., 'storage', 'api', 'database')."""
 
-    requires: list[str] = field(default_factory=list)
-    """List of optional dependencies required by this connector."""
+    runtime_deps: tuple[RuntimeDep, ...] = ()
+    """Typed runtime dependencies (Issue #3830).
+
+    Populated at registration from either ``@register_connector(runtime_deps=...)``
+    or the class attribute ``RUNTIME_DEPS``. Checked by
+    :meth:`nexus.backends.base.factory.BackendFactory.create` before
+    instantiation.
+    """
 
     user_scoped: bool = False
     """Whether this connector requires per-user OAuth credentials."""
@@ -238,6 +245,18 @@ class ConnectorInfo:
             Dictionary of argument name to ConnectionArg, or empty dict if not defined.
         """
         return getattr(self.connector_class, "CONNECTION_ARGS", {})
+
+    @property
+    def requires(self) -> list[str]:
+        """Deprecated — derived from ``runtime_deps``.
+
+        Returns the module names of every :class:`PythonDep`.  New code
+        should read ``runtime_deps`` directly; this property exists so that
+        current callers (``cli/commands/connectors.py``,
+        ``server/api/v2/routers/connectors.py``, tests) keep working for
+        one release.  Removal is tracked as follow-up A.2 of Issue #3830.
+        """
+        return [d.module for d in self.runtime_deps if isinstance(d, PythonDep)]
 
     def get_required_args(self) -> list[str]:
         """Get names of required connection arguments.
@@ -323,7 +342,7 @@ class ConnectorRegistry:
         connector_class: "type[Backend]",
         description: str = "",
         category: str = "storage",
-        requires: list[str] | None = None,
+        requires: list[str] | None = None,  # noqa: ARG003  # Task 5 will wire to runtime_deps
         service_name: str | None = None,
     ) -> None:
         """Register a connector class.
@@ -333,7 +352,7 @@ class ConnectorRegistry:
             connector_class: The connector class to register
             description: Human-readable description
             category: Category for grouping
-            requires: List of optional dependencies
+            requires: List of optional dependencies (deprecated; Task 5 will wire to runtime_deps)
             service_name: Unified service name for service_map integration
 
         Raises:
@@ -380,7 +399,6 @@ class ConnectorRegistry:
             connector_class=connector_class,
             description=description,
             category=category,
-            requires=requires or [],
             user_scoped=user_scoped,
             config_mapping=config_mapping,
             service_name=service_name,

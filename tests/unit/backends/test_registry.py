@@ -14,6 +14,7 @@ from nexus.backends.base.registry import (
     derive_config_mapping,
     register_connector,
 )
+from nexus.backends.base.runtime_deps import BinaryDep, PythonDep, RuntimeDep
 
 
 class DummyBackend(Backend):
@@ -104,7 +105,9 @@ class TestConnectorRegistry:
         assert info.connector_class == DummyBackend
         assert info.description == "Test backend"
         assert info.category == "storage"
-        assert info.requires == ["test-dep"]
+        # requires= strings are not yet wired to runtime_deps (Task 5 will do this);
+        # until then the property derives from runtime_deps which is empty.
+        assert info.requires == []
 
     def test_register_duplicate_same_class(self):
         """Test registering same class twice is idempotent."""
@@ -244,7 +247,9 @@ class TestRegisterConnectorDecorator:
         info = ConnectorRegistry.get_info("full_test")
         assert info.description == "Full test"
         assert info.category == "api"
-        assert info.requires == ["dep1", "dep2"]
+        # requires= strings are not yet wired to runtime_deps (Task 5 will do this);
+        # until then the property derives from runtime_deps which is empty.
+        assert info.requires == []
 
 
 class TestCreateConnectorFromConfig:
@@ -601,3 +606,50 @@ class TestExhaustiveBackendMappings:
         info = ConnectorRegistry.get_info("local")
 
         assert info.config_mapping["data_dir"] == "root_path"
+
+
+class TestConnectorInfoRuntimeDeps:
+    def test_default_empty_tuple(self) -> None:
+        from nexus.backends.base.registry import ConnectorInfo
+
+        info = ConnectorInfo(name="t", connector_class=DummyBackend)
+        assert info.runtime_deps == ()
+
+    def test_runtime_deps_stored(self) -> None:
+        from nexus.backends.base.registry import ConnectorInfo
+
+        deps: tuple[RuntimeDep, ...] = (
+            PythonDep("boto3", extras=("s3",)),
+            BinaryDep("gws", "brew install gws"),
+        )
+        info = ConnectorInfo(
+            name="t",
+            connector_class=DummyBackend,
+            runtime_deps=deps,
+        )
+        assert info.runtime_deps == deps
+
+    def test_requires_property_derives_from_python_deps(self) -> None:
+        from nexus.backends.base.registry import ConnectorInfo
+
+        deps: tuple[RuntimeDep, ...] = (
+            PythonDep("boto3", extras=("s3",)),
+            PythonDep("httpx"),
+            BinaryDep("gws", "brew install gws"),  # not included in requires
+        )
+        info = ConnectorInfo(
+            name="t",
+            connector_class=DummyBackend,
+            runtime_deps=deps,
+        )
+        assert info.requires == ["boto3", "httpx"]
+
+    def test_requires_property_empty_when_no_python_deps(self) -> None:
+        from nexus.backends.base.registry import ConnectorInfo
+
+        info = ConnectorInfo(
+            name="t",
+            connector_class=DummyBackend,
+            runtime_deps=(BinaryDep("gws", "brew install gws"),),
+        )
+        assert info.requires == []

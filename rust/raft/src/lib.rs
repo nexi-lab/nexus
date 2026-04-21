@@ -71,6 +71,12 @@ pub mod zone_handle;
 #[cfg(all(feature = "grpc", has_protos))]
 pub mod zone_manager;
 
+/// BlobFetcher trait — lets the raft gRPC server serve peer-facing
+/// `ReadBlob` without depending on kernel types. The kernel crate
+/// installs the impl at bootstrap. See [`blob_fetcher`] module.
+#[cfg(all(feature = "grpc", has_protos))]
+pub mod blob_fetcher;
+
 #[cfg(all(feature = "grpc", has_protos))]
 pub use zone_handle::{Consistency, ZoneHandle};
 

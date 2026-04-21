@@ -69,6 +69,13 @@ service ZoneApiService {
   // GetSearchCapabilities returns the search modes available on a zone (Issue #3147).
   // Used by FederatedSearchDispatcher to route queries to zones that can handle them.
   rpc GetSearchCapabilities(GetSearchCapabilitiesRequest) returns (SearchCapabilities);
+
+  // ReadBlob serves a CAS blob by content hash — driver-to-driver protocol.
+  // R20.18.7: inter-node only, co-located with ZoneApiService on the raft
+  // port so it inherits the cluster's mTLS + join-token authentication.
+  // Used by follower `try_remote_fetch` / scatter-gather chunk fetch when
+  // metadata has been replicated ahead of content.
+  rpc ReadBlob(ReadBlobRequest) returns (ReadBlobResponse);
 }
 
 // === Search Capability Advertisement (Issue #3147) ===
@@ -277,4 +284,20 @@ message ReplicateEntriesResponse {
   optional string error = 2;
   // Highest sequence number successfully applied by the receiver.
   uint64 applied_up_to = 3;
+}
+
+// === ReadBlob (R20.18.7 — driver-to-driver CAS fetch) ===
+
+// ReadBlobRequest asks a peer for the blob bytes keyed by content hash.
+// Internal RPC; authentication is the transport's mTLS (client cert signed
+// by the cluster CA), so no explicit auth field is carried in the body.
+message ReadBlobRequest {
+  // Content address (e.g. SHA-256 hex).
+  string content_hash = 1;
+}
+
+// ReadBlobResponse returns either the blob bytes or a non-empty `error`.
+message ReadBlobResponse {
+  bytes content = 1;
+  string error = 2;
 }

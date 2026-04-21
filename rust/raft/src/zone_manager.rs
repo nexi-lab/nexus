@@ -176,6 +176,12 @@ pub struct ZoneManager {
     /// shares the same raft peer topology, so the peer list is cluster-
     /// wide not per-zone.
     default_peers: Vec<String>,
+    /// R20.18.7: late-bindable slot the kernel populates with a
+    /// `BlobFetcher` once its root mount backend is ready. Shared with
+    /// the gRPC server so `ZoneApiService::read_blob` serves once the
+    /// kernel installs an impl. Stays empty on slim / no-federation
+    /// runtimes (the RPC is still advertised but returns `NotFound`).
+    blob_fetcher_slot: crate::blob_fetcher::BlobFetcherSlot,
 }
 
 impl ZoneManager {
@@ -284,7 +290,9 @@ impl ZoneManager {
             })
             .map_err(|e| RaftError::Raft(format!("Failed to enumerate zones on startup: {}", e)))?;
 
-        let mut server = RaftGrpcServer::new(registry.clone(), config);
+        let blob_fetcher_slot = crate::blob_fetcher::new_blob_fetcher_slot();
+        let mut server = RaftGrpcServer::new(registry.clone(), config)
+            .with_blob_fetcher_slot(blob_fetcher_slot.clone());
         // Configure JoinCluster RPC support if join token + CA key
         // are available — leader-side TLS signing for new joiners.
         if let (Some(ref t), Some(ref ca_key_path), Some(ref token_hash)) = (
@@ -323,7 +331,15 @@ impl ZoneManager {
             node_id,
             use_tls,
             default_peers: peers,
+            blob_fetcher_slot,
         }))
+    }
+
+    /// R20.18.7: hand the shared `BlobFetcher` slot back to the kernel
+    /// so it can install a concrete fetcher once its root mount backend
+    /// is wired. Clone-cheap (just an `Arc`).
+    pub fn blob_fetcher_slot(&self) -> crate::blob_fetcher::BlobFetcherSlot {
+        self.blob_fetcher_slot.clone()
     }
 
     /// R20.18.3: cluster-wide peer list remembered from construction,

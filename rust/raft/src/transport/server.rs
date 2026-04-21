@@ -15,10 +15,12 @@ use super::proto::nexus::raft::{
     GetMetadataResult, GetSearchCapabilitiesRequest, JoinClusterRequest, JoinClusterResponse,
     JoinZoneRequest, JoinZoneResponse, ListMetadataResult, LockInfoResult, LockResult,
     NodeInfo as ProtoNodeInfo, ProposeRequest, ProposeResponse, QueryRequest, QueryResponse,
-    RaftCommand, RaftQueryResponse, RaftResponse, ReplicateEntriesRequest,
-    ReplicateEntriesResponse, SearchCapabilities, StepMessageRequest, StepMessageResponse,
+    RaftCommand, RaftQueryResponse, RaftResponse, ReadBlobRequest, ReadBlobResponse,
+    ReplicateEntriesRequest, ReplicateEntriesResponse, SearchCapabilities, StepMessageRequest,
+    StepMessageResponse,
 };
 use super::{NodeAddress, Result, TransportError};
+use crate::blob_fetcher::BlobFetcherSlot;
 use crate::raft::{
     Command, CommandResult, FullStateMachine, RaftError, WitnessStateMachine, ZoneConsensus,
     ZoneRaftRegistry,
@@ -82,6 +84,10 @@ pub struct RaftGrpcServer {
     ca_key_pem: Option<Vec<u8>>,
     /// SHA-256 hash of the join token password — for JoinCluster verification.
     join_token_hash: Option<String>,
+    /// R20.18.7: slot the kernel binds a `BlobFetcher` into after its
+    /// root mount backend is wired. `None` while the slot is empty —
+    /// `ReadBlob` returns `NotFound` until the kernel installs one.
+    blob_fetcher_slot: Option<BlobFetcherSlot>,
 }
 
 impl RaftGrpcServer {
@@ -91,6 +97,7 @@ impl RaftGrpcServer {
             registry,
             ca_key_pem: None,
             join_token_hash: None,
+            blob_fetcher_slot: None,
         }
     }
 
@@ -98,6 +105,15 @@ impl RaftGrpcServer {
     pub fn with_join_config(mut self, ca_key_pem: Vec<u8>, join_token_hash: String) -> Self {
         self.ca_key_pem = Some(ca_key_pem);
         self.join_token_hash = Some(join_token_hash);
+        self
+    }
+
+    /// R20.18.7: attach the late-bindable `BlobFetcher` slot so
+    /// `ZoneApiService::read_blob` can serve CAS reads once the kernel
+    /// installs an impl. Callers typically share the slot with the
+    /// owning `ZoneManager` so both halves reach the same `Arc`.
+    pub fn with_blob_fetcher_slot(mut self, slot: BlobFetcherSlot) -> Self {
+        self.blob_fetcher_slot = Some(slot);
         self
     }
 
@@ -125,6 +141,7 @@ impl RaftGrpcServer {
             tls: self.config.tls.clone(),
             ca_key_pem: self.ca_key_pem.clone(),
             join_token_hash: self.join_token_hash.clone(),
+            blob_fetcher_slot: self.blob_fetcher_slot.clone(),
         };
 
         let mut builder = tonic::transport::Server::builder();
@@ -172,6 +189,7 @@ impl RaftGrpcServer {
             tls: self.config.tls.clone(),
             ca_key_pem: self.ca_key_pem.clone(),
             join_token_hash: self.join_token_hash.clone(),
+            blob_fetcher_slot: self.blob_fetcher_slot.clone(),
         };
 
         let mut builder = tonic::transport::Server::builder();
@@ -542,6 +560,9 @@ struct ZoneApiServiceImpl {
     ca_key_pem: Option<Vec<u8>>,
     /// SHA-256 hash of the join token password — for JoinCluster verification.
     join_token_hash: Option<String>,
+    /// R20.18.7: optional late-bound `BlobFetcher` for `ReadBlob`.
+    /// Empty slot (or `None` here) → `read_blob` returns `NotFound`.
+    blob_fetcher_slot: Option<BlobFetcherSlot>,
 }
 
 #[tonic::async_trait]
@@ -1096,6 +1117,40 @@ impl ZoneApiService for ZoneApiServiceImpl {
             embedding_dimensions: caps.embedding_dimensions,
             has_graph: caps.has_graph,
         }))
+    }
+
+    /// Serve a CAS blob by content hash (R20.18.7).
+    ///
+    /// Delegates to the kernel-installed `BlobFetcher`. The slot is
+    /// late-bound: `ZoneManager::new` spawns the server before the
+    /// kernel's root-mount backend is wired, so early calls arrive
+    /// before the slot is populated. We treat every "no fetcher / not
+    /// found" path as a `NotFound` result carried in `error`.
+    async fn read_blob(
+        &self,
+        request: Request<ReadBlobRequest>,
+    ) -> std::result::Result<Response<ReadBlobResponse>, Status> {
+        let req = request.into_inner();
+        let fetcher = self
+            .blob_fetcher_slot
+            .as_ref()
+            .and_then(|slot| slot.read().as_ref().cloned());
+        let Some(fetcher) = fetcher else {
+            return Ok(Response::new(ReadBlobResponse {
+                content: Vec::new(),
+                error: "blob fetcher not installed".to_string(),
+            }));
+        };
+        match fetcher.read_blob(&req.content_hash).await {
+            Ok(bytes) => Ok(Response::new(ReadBlobResponse {
+                content: bytes,
+                error: String::new(),
+            })),
+            Err(e) => Ok(Response::new(ReadBlobResponse {
+                content: Vec::new(),
+                error: e,
+            })),
+        }
     }
 }
 

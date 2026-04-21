@@ -57,7 +57,7 @@ class TestValidatedURL:
             result = validate_outbound_url("https://example.com/")
             assert result.url == "https://example.com/"
             assert result.hostname == "example.com"
-            assert result.resolved_ips == ["93.184.216.34"]
+            assert result.resolved_ips == ("93.184.216.34",)
 
 
 class TestBlockedIPRanges:

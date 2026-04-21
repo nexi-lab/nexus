@@ -54,12 +54,15 @@ class SSRFBlocked(ValueError):
 class ValidatedURL(NamedTuple):
     """A URL that has passed SSRF validation, with resolved IPs pinned.
 
-    Field order preserves backward compatibility with callers that did
-    ``url, ips = validate_outbound_url(x)`` before Issue #3792.
+    Callers should use attribute access (``result.url``,
+    ``result.resolved_ips``, ``result.hostname``) or 3-tuple unpacking.
+    Existing callers that previously unpacked the old ``(url, ips)``
+    two-tuple return were updated to either discard the return (calls
+    made purely for their raising side effect) or use attribute access.
     """
 
     url: str
-    resolved_ips: list[str]
+    resolved_ips: tuple[str, ...]
     hostname: str
 
 
@@ -156,4 +159,8 @@ def validate_outbound_url(
                 )
         resolved_ips.append(str(ip))
 
-    return ValidatedURL(url=url, resolved_ips=resolved_ips, hostname=hostname)
+    return ValidatedURL(
+        url=url,
+        resolved_ips=tuple(resolved_ips),
+        hostname=hostname,
+    )

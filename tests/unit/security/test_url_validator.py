@@ -212,3 +212,52 @@ class TestUserinfoRejection:
         with pytest.raises(SSRFBlocked) as excinfo:
             validate_outbound_url(url)
         assert excinfo.value.reason == "userinfo_not_allowed"
+
+
+class TestIPLiteralHostnames:
+    """IP literal hostnames skip DNS and are checked directly."""
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "http://10.0.0.1/",
+            "http://169.254.169.254/",
+            "http://[::1]/",
+            "http://[fd00:ec2::254]/",
+        ],
+    )
+    def test_ip_literal_blocked(self, url: str) -> None:
+        # No mock: must not call DNS for IP literals
+        with pytest.raises(SSRFBlocked):
+            validate_outbound_url(url)
+
+
+class TestIPv4MappedIPv6:
+    """::ffff:a.b.c.d is normalized to a.b.c.d before category check."""
+
+    @pytest.mark.parametrize(
+        "ip",
+        [
+            "::ffff:127.0.0.1",
+            "::ffff:10.0.0.1",
+            "::ffff:169.254.169.254",
+        ],
+    )
+    def test_v4_mapped_v6_blocked(self, ip: str) -> None:
+        with patch("socket.getaddrinfo") as mock_dns:
+            mock_dns.return_value = [(10, 1, 6, "", (ip, 80, 0, 0))]
+            with pytest.raises(SSRFBlocked):
+                validate_outbound_url("http://dual-stack.example.com/")
+
+
+class TestMixedResolution:
+    """Hostnames resolving to a mix of public and private IPs are rejected."""
+
+    def test_mixed_public_private_rejected(self) -> None:
+        with patch("socket.getaddrinfo") as mock_dns:
+            mock_dns.return_value = [
+                (2, 1, 6, "", ("93.184.216.34", 80)),
+                (2, 1, 6, "", ("10.0.0.1", 80)),
+            ]
+            with pytest.raises(SSRFBlocked):
+                validate_outbound_url("http://split-horizon.example.com/")

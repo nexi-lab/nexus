@@ -103,6 +103,74 @@ CLOUD_METADATA_IPS: frozenset[ipaddress.IPv4Address | ipaddress.IPv6Address] = f
 )
 
 
+_PRIVATE_RANGES: frozenset[str] = frozenset(
+    {
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+        "fc00::/7",
+    }
+)
+
+
+def _is_private_range(
+    network: ipaddress.IPv4Network | ipaddress.IPv6Network,
+) -> bool:
+    return str(network) in _PRIVATE_RANGES
+
+
+def _check_ip(
+    ip: ipaddress.IPv4Address | ipaddress.IPv6Address,
+    url: str,
+    *,
+    allow_private: bool,
+) -> None:
+    """Raise SSRFBlocked if ip is a metadata IP or in a blocked network.
+
+    When allow_private=True, RFC1918 / ULA ranges are allowed but
+    metadata, loopback, and link-local remain blocked.
+    """
+    if ip in CLOUD_METADATA_IPS:
+        logger.warning("SSRF blocked: %r resolved to metadata IP %s", url, ip)
+        raise SSRFBlocked(url, reason="cloud_metadata", ip=str(ip))
+
+    for network in BLOCKED_NETWORKS:
+        if ip in network:
+            if allow_private and _is_private_range(network):
+                continue
+            logger.warning("SSRF blocked: URL %r resolved to %s (in %s)", url, ip, network)
+            raise SSRFBlocked(
+                url,
+                reason="blocked_network",
+                ip=str(ip),
+                cidr=str(network),
+            )
+
+
+def _check_extra_deny(
+    ip: ipaddress.IPv4Address | ipaddress.IPv6Address,
+    url: str,
+    extra_deny_cidrs: Sequence[str],
+) -> None:
+    for cidr in extra_deny_cidrs:
+        network = ipaddress.ip_network(cidr, strict=False)
+        if ip.version != network.version:
+            continue
+        if ip in network:
+            logger.warning(
+                "SSRF blocked: URL %r resolved to %s (in extra_deny %s)",
+                url,
+                ip,
+                network,
+            )
+            raise SSRFBlocked(
+                url,
+                reason="extra_deny_cidr",
+                ip=str(ip),
+                cidr=str(network),
+            )
+
+
 def validate_outbound_url(
     url: str,
     *,
@@ -133,9 +201,6 @@ def validate_outbound_url(
         ValueError: URL is malformed or DNS resolution fails (transient,
             not a security signal).
     """
-    # Silence unused-for-now parameters (wired by later tasks)
-    _ = (allow_private, extra_deny_cidrs)
-
     parsed = urlparse(url)
 
     if parsed.scheme not in ALLOWED_SCHEMES:
@@ -148,6 +213,26 @@ def validate_outbound_url(
     if not hostname:
         raise ValueError("URL has no hostname")
 
+    # IP literal hostname: skip DNS; check the literal directly.
+    # urlparse strips brackets from IPv6 literals, so ipaddress.ip_address
+    # accepts them as-is.
+    try:
+        literal_ip = ipaddress.ip_address(hostname)
+    except ValueError:
+        literal_ip = None
+
+    if literal_ip is not None:
+        # Normalize IPv4-mapped IPv6 literals.
+        if isinstance(literal_ip, ipaddress.IPv6Address) and literal_ip.ipv4_mapped is not None:
+            literal_ip = literal_ip.ipv4_mapped
+        _check_ip(literal_ip, url, allow_private=allow_private)
+        _check_extra_deny(literal_ip, url, extra_deny_cidrs)
+        return ValidatedURL(
+            url=url,
+            resolved_ips=(str(literal_ip),),
+            hostname=hostname,
+        )
+
     port = parsed.port or (443 if parsed.scheme == "https" else 80)
     try:
         addr_infos = socket.getaddrinfo(hostname, port, proto=socket.IPPROTO_TCP)
@@ -157,30 +242,21 @@ def validate_outbound_url(
     if not addr_infos:
         raise ValueError(f"No DNS records for hostname: {hostname!r}")
 
-    resolved_ips: list[str] = []
+    resolved: list[ipaddress.IPv4Address | ipaddress.IPv6Address] = []
     for _family, _type, _proto, _canonname, sockaddr in addr_infos:
         ip = ipaddress.ip_address(sockaddr[0])
-        if ip in CLOUD_METADATA_IPS:
-            logger.warning("SSRF blocked: %r resolved to metadata IP %s", url, ip)
-            raise SSRFBlocked(url, reason="cloud_metadata", ip=str(ip))
-        for network in BLOCKED_NETWORKS:
-            if ip in network:
-                logger.warning(
-                    "SSRF blocked: URL %r resolved to %s (in %s)",
-                    url,
-                    ip,
-                    network,
-                )
-                raise SSRFBlocked(
-                    url,
-                    reason="blocked_network",
-                    ip=str(ip),
-                    cidr=str(network),
-                )
-        resolved_ips.append(str(ip))
+        # Normalize IPv4-mapped IPv6 (::ffff:a.b.c.d) to IPv4 so category
+        # checks catch it regardless of the address family.
+        if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+            ip = ip.ipv4_mapped
+        resolved.append(ip)
 
-    return ValidatedURL(
-        url=url,
-        resolved_ips=tuple(resolved_ips),
-        hostname=hostname,
-    )
+    # Mixed-resolution defense: if any resolved IP is blocked, reject
+    # them all — split-horizon DNS must not permit "first public, then
+    # private" rebinding.
+    for ip in resolved:
+        _check_ip(ip, url, allow_private=allow_private)
+        _check_extra_deny(ip, url, extra_deny_cidrs)
+
+    resolved_ips = tuple(str(ip) for ip in resolved)
+    return ValidatedURL(url=url, resolved_ips=resolved_ips, hostname=hostname)

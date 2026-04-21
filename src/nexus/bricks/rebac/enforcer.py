@@ -561,19 +561,26 @@ class PermissionEnforcer:
                     is_admin=context.is_admin,
                     check_write=False,
                 )
-                # Use ObjectTypeMapper for ReBAC object type resolution
-                from nexus.bricks.rebac.object_type_mapper import ObjectTypeMapper
+                # PipeRouteResult / StreamRouteResult carry no backend — they
+                # dispatch to PipeManager / StreamManager, not to a storage
+                # backend. ObjectTypeMapper needs a backend, so skip it for
+                # IPC routes and keep the default "file" object_type with the
+                # virtual path. Using hasattr keeps this forward-compatible
+                # with future route result variants.
+                if hasattr(route, "backend") and hasattr(route, "backend_path"):
+                    # Use ObjectTypeMapper for ReBAC object type resolution
+                    from nexus.bricks.rebac.object_type_mapper import ObjectTypeMapper
 
-                mapper = ObjectTypeMapper()
-                object_type = mapper.get_object_type(route.backend, route.backend_path)
-                object_id = unscope_internal_path(
-                    mapper.get_object_id(
-                        route.backend,
-                        route.backend_path,
-                        virtual_path=path,
-                        object_type=object_type,
+                    mapper = ObjectTypeMapper()
+                    object_type = mapper.get_object_type(route.backend, route.backend_path)
+                    object_id = unscope_internal_path(
+                        mapper.get_object_id(
+                            route.backend,
+                            route.backend_path,
+                            virtual_path=path,
+                            object_type=object_type,
+                        )
                     )
-                )
             except (KeyError, ValueError, AttributeError, LookupError, RuntimeError) as e:
                 # If routing fails, fall back to default "file" type with virtual path
                 logger.warning(

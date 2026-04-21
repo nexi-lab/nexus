@@ -4,14 +4,23 @@ Provides endpoints for user registration, login, OAuth authentication, and profi
 """
 
 import logging
+import secrets
 from typing import Any
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Response, status
 from pydantic import BaseModel, EmailStr, Field
 
 from nexus.bricks.auth.oauth.user_auth import OAuthUserAuth
 from nexus.bricks.auth.providers.database_local import DatabaseLocalAuth
 from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.server.auth.oauth_state_store import get_oauth_state_service
+
+# Browser-bound OAuth state cookie.
+# Set on /authorize, required on /check and /callback. HttpOnly so JS can't
+# read it; SameSite=Lax lets it ride along on the top-level navigation back
+# from Google; Max-Age mirrors the server-side TTL.
+OAUTH_BINDING_COOKIE = "nexus_oauth_binding"
+OAUTH_BINDING_TTL_SECONDS = 600
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +31,7 @@ logger = logging.getLogger(__name__)
 _auth_provider: DatabaseLocalAuth | None = None
 _oauth_provider: OAuthUserAuth | None = None
 _nexus_fs_instance: Any | None = None
+_synthesized_auth_provider: DatabaseLocalAuth | None = None
 
 
 def set_auth_provider(provider: DatabaseLocalAuth) -> None:
@@ -30,11 +40,46 @@ def set_auth_provider(provider: DatabaseLocalAuth) -> None:
     _auth_provider = provider
 
 
+def _synthesize_from_oauth() -> DatabaseLocalAuth | None:
+    """Build a DatabaseLocalAuth from the OAuth provider's state.
+
+    In static-auth mode the server doesn't inject a DatabaseLocalAuth, but
+    the OAuth provider (when configured) already holds a SQLAlchemy
+    session_factory plus the JWT secret that signed the token being verified.
+    Reusing both keeps the synthesized provider's tokens mutually verifiable
+    with the ones OAuthUserAuth issues. Returns None if OAuth isn't set up.
+    """
+    global _synthesized_auth_provider
+    if _synthesized_auth_provider is not None:
+        return _synthesized_auth_provider
+    if _oauth_provider is None:
+        return None
+    _synthesized_auth_provider = DatabaseLocalAuth(
+        session_factory=_oauth_provider.session_factory,
+        jwt_secret=_oauth_provider.local_auth.jwt_secret,
+        token_expiry=_oauth_provider.local_auth.token_expiry,
+    )
+    return _synthesized_auth_provider
+
+
 def get_auth_provider() -> DatabaseLocalAuth:
-    """Return the injected auth provider (used as ``Depends(get_auth_provider)``).
+    """Return the *explicitly-injected* DatabaseLocalAuth, or raise 503.
+
+    Used by endpoints that mutate email/password auth state — register,
+    login, change-password, request-verification, verify-email, setup-zone.
+    In OAuth-only deployments (no DatabaseLocalAuth injected) these endpoints
+    MUST 503: we don't silently synthesize a password backend from the OAuth
+    provider, because that would enable flows (e.g. email+password login)
+    the operator didn't configure.
+
+    For JWT verification and profile read/update — where the operation only
+    needs to verify a token and read/update a user row — use
+    ``get_token_verifier`` instead; that variant does fall back to the OAuth
+    provider's session_factory + jwt_secret so OAuth-logged-in users can
+    still hit ``/auth/me``.
 
     Raises:
-        HTTPException: If auth provider has not been injected.
+        HTTPException: 503 when no DatabaseLocalAuth is injected.
     """
     if _auth_provider is None:
         raise HTTPException(
@@ -42,6 +87,33 @@ def get_auth_provider() -> DatabaseLocalAuth:
             detail="Authentication provider not configured",
         )
     return _auth_provider
+
+
+def get_token_verifier() -> DatabaseLocalAuth:
+    """Return a JWT-verifying provider — may be synthesized from OAuth.
+
+    Used by JWT verification and the profile read/update endpoints, where
+    the only operations are ``verify_token`` + a SQLAlchemy session off
+    ``session_factory``. In OAuth-only mode the injected
+    ``_auth_provider`` is None, so we synthesize a DatabaseLocalAuth from
+    the OAuth provider's already-configured session_factory + jwt_secret.
+    JWTs issued by OAuthUserAuth verify against the same secret, so this
+    keeps ``/auth/me`` and friends working for OAuth users without
+    implicitly enabling email/password auth.
+
+    Raises:
+        HTTPException: 503 when neither an injected DatabaseLocalAuth nor
+            an OAuth provider is available.
+    """
+    if _auth_provider is not None:
+        return _auth_provider
+    fallback = _synthesize_from_oauth()
+    if fallback is not None:
+        return fallback
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="Authentication provider not configured",
+    )
 
 
 def set_oauth_provider(provider: OAuthUserAuth) -> None:
@@ -68,7 +140,7 @@ def get_nexus_instance() -> Any | None:
 
 async def get_authenticated_user(
     authorization: str = Header(..., description="Bearer JWT token"),
-    auth: DatabaseLocalAuth = Depends(get_auth_provider),
+    auth: DatabaseLocalAuth = Depends(get_token_verifier),
 ) -> tuple[str, str]:
     """Extract authenticated user from JWT token.
 
@@ -599,7 +671,7 @@ async def setup_zone(
 @router.get("/me", response_model=UserResponse)
 async def get_profile(
     user_info: tuple[str, str] = Depends(get_authenticated_user),
-    auth: DatabaseLocalAuth = Depends(get_auth_provider),
+    auth: DatabaseLocalAuth = Depends(get_token_verifier),
 ) -> UserResponse:
     """Get current user profile.
 
@@ -642,7 +714,7 @@ async def get_profile(
 async def update_profile(
     request: UpdateProfileRequest,
     user_info: tuple[str, str] = Depends(get_authenticated_user),
-    auth: DatabaseLocalAuth = Depends(get_auth_provider),
+    auth: DatabaseLocalAuth = Depends(get_token_verifier),
 ) -> UserResponse:
     """Update current user profile.
 
@@ -832,15 +904,23 @@ async def verify_email(
 
 
 @router.get("/oauth/google/authorize", response_model=OAuthAuthorizeResponse)
-async def get_google_oauth_url(redirect_uri: str | None = None) -> OAuthAuthorizeResponse:
+async def get_google_oauth_url(
+    response: Response, redirect_uri: str | None = None
+) -> OAuthAuthorizeResponse:
     """Get Google OAuth authorization URL.
 
     Args:
+        response: FastAPI response — used to set the binding cookie.
         redirect_uri: Optional redirect URI to use after OAuth callback.
                      If not provided, uses default from OAuth provider config.
 
     Returns:
-        Authorization URL and state for OAuth flow
+        Authorization URL and state for OAuth flow.
+
+    Also sets an HttpOnly ``nexus_oauth_binding`` cookie tying this state
+    to the initiating browser — required on callback to block login-fixation
+    attacks where an attacker forwards a valid (code, state) pair to a
+    victim.
 
     Raises:
         500: OAuth provider not configured
@@ -853,7 +933,22 @@ async def get_google_oauth_url(redirect_uri: str | None = None) -> OAuthAuthoriz
         )
 
     try:
-        auth_url, state = oauth_provider.get_google_auth_url(redirect_uri=redirect_uri)
+        binding_nonce = secrets.token_urlsafe(32)
+        # Signed, TTL-bounded state that carries the binding nonce. Verified
+        # stateless-ly on callback so multi-worker/multi-replica deployments
+        # don't need sticky sessions.
+        signed_state = get_oauth_state_service().issue(binding_nonce)
+        auth_url, state = oauth_provider.get_google_auth_url(
+            redirect_uri=redirect_uri, state=signed_state
+        )
+        response.set_cookie(
+            key=OAUTH_BINDING_COOKIE,
+            value=binding_nonce,
+            max_age=OAUTH_BINDING_TTL_SECONDS,
+            httponly=True,
+            samesite="lax",
+            path="/",
+        )
         return OAuthAuthorizeResponse(auth_url=auth_url, state=state)
     except Exception as e:
         logger.error(f"Failed to generate Google OAuth URL: {e}")
@@ -866,6 +961,8 @@ async def get_google_oauth_url(redirect_uri: str | None = None) -> OAuthAuthoriz
 @router.post("/oauth/check")
 async def oauth_check(
     request: OAuthCheckRequest,
+    response: Response,
+    nexus_oauth_binding: str | None = Cookie(default=None),
 ) -> OAuthCheckResponseExisting | OAuthCheckResponseNew:
     """Check OAuth callback and determine if confirmation is needed.
 
@@ -874,6 +971,10 @@ async def oauth_check(
 
     Args:
         request: OAuth check request with code and state
+        response: FastAPI response — used to clear the binding cookie on success.
+        nexus_oauth_binding: HttpOnly cookie issued at /authorize; pairs with
+            ``request.state`` to prove this is the same browser that began the
+            flow.
 
     Returns:
         Either existing user response (with token) or new user response (with pending_token)
@@ -893,6 +994,23 @@ async def oauth_check(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Google OAuth is not configured. Please set up OAuth provider.",
+        )
+
+    # RFC 6749 §10.12 + OAuth 2.0 BCP: verify the state signature, its TTL,
+    # and that the bound nonce matches the HttpOnly cookie set at
+    # /authorize. Stateless, so multi-worker/multi-replica deployments work
+    # without sticky sessions. A forged callback or a (code, state) pair
+    # leaked to a different browser can't present the matching cookie →
+    # CSRF + login-fixation both blocked.
+    #
+    # The binding cookie is cleared only on the SUCCESS path below — if the
+    # token exchange / user provisioning fails transiently, the caller can
+    # retry without re-authorizing because the state (signed, TTL-bounded)
+    # and cookie are both still present.
+    if not get_oauth_state_service().verify(request.state, nexus_oauth_binding):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="OAuth state is invalid, expired, or unbound — possible CSRF attack",
         )
 
     try:
@@ -1048,6 +1166,7 @@ async def oauth_check(
                     )
                     api_key_value = None
 
+                response.delete_cookie(OAUTH_BINDING_COOKIE, path="/")
                 return OAuthCheckResponseExisting(
                     needs_confirmation=False,
                     token=token,
@@ -1079,6 +1198,7 @@ async def oauth_check(
                 if not user.email:
                     raise ValueError("OAuth user must have an email")
 
+                response.delete_cookie(OAUTH_BINDING_COOKIE, path="/")
                 return OAuthCheckResponseExisting(
                     needs_confirmation=False,
                     token=token,
@@ -1138,6 +1258,7 @@ async def oauth_check(
             proposed_zone_id = ""
             proposed_zone_name = ""
 
+        response.delete_cookie(OAUTH_BINDING_COOKIE, path="/")
         return OAuthCheckResponseNew(
             needs_confirmation=True,
             pending_token=pending_token,
@@ -1477,13 +1598,21 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
 
 
 @router.post("/oauth/callback", response_model=OAuthCallbackResponse)
-async def oauth_callback(request: OAuthCallbackRequest) -> OAuthCallbackResponse:
+async def oauth_callback(
+    request: OAuthCallbackRequest,
+    response: Response,
+    nexus_oauth_binding: str | None = Cookie(default=None),
+) -> OAuthCallbackResponse:
     """Handle OAuth callback.
 
     Exchanges authorization code for tokens and creates/links user account.
 
     Args:
         request: OAuth callback request with code and state
+        response: FastAPI response — used to clear the binding cookie on success.
+        nexus_oauth_binding: HttpOnly cookie issued at /authorize; pairs with
+            ``request.state`` to prove this is the same browser that began the
+            flow.
 
     Returns:
         JWT token and user information
@@ -1505,6 +1634,22 @@ async def oauth_callback(request: OAuthCallbackRequest) -> OAuthCallbackResponse
             detail="Google OAuth is not configured. Please set up OAuth provider.",
         )
 
+    # RFC 6749 §10.12 + OAuth 2.0 BCP: verify the state signature, its TTL,
+    # and that the bound nonce matches the HttpOnly cookie set at
+    # /authorize. Stateless, so multi-worker/multi-replica deployments work
+    # without sticky sessions. A forged callback or a (code, state) pair
+    # leaked to a different browser can't present the matching cookie →
+    # CSRF + login-fixation both blocked.
+    #
+    # The binding cookie is cleared only on the SUCCESS path below — if
+    # handle_google_callback fails transiently the caller can retry with
+    # the same state and cookie (both still present).
+    if not get_oauth_state_service().verify(request.state, nexus_oauth_binding):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="OAuth state is invalid, expired, or unbound — possible CSRF attack",
+        )
+
     try:
         user, token = await oauth_provider.handle_google_callback(
             code=request.code, state=request.state, redirect_uri=request.redirect_uri
@@ -1519,6 +1664,7 @@ async def oauth_callback(request: OAuthCallbackRequest) -> OAuthCallbackResponse
         # This is a simplification - in practice, you'd track this in the handler
         is_new_user = False  # Stub: needs proper tracking in OAuthUserAuth
 
+        response.delete_cookie(OAUTH_BINDING_COOKIE, path="/")
         return OAuthCallbackResponse(
             token=token,
             user=UserResponse(

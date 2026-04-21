@@ -63,14 +63,31 @@ class OAuthUserAuth:
                 list(providers.keys()),
             )
 
-    def get_auth_url(self, provider_name: str, redirect_uri: str | None = None) -> tuple[str, str]:
+    def get_auth_url(
+        self,
+        provider_name: str,
+        redirect_uri: str | None = None,
+        state: str | None = None,
+    ) -> tuple[str, str]:
         """Get OAuth authorization URL for any registered provider.
 
+        Args:
+            provider_name: Registered provider key (e.g. ``"google"``).
+            redirect_uri: Optional redirect URI override.
+            state: Optional caller-supplied state value. When provided, it
+                is forwarded verbatim to the OAuth provider as the
+                ``state`` query parameter and returned to the caller. This
+                lets the server layer issue signed / binding-aware state
+                (see ``OAuthStateService``) without duplicating generation
+                logic here. When ``None``, a fresh 32-byte random token is
+                generated — preserves backward compatibility.
+
         Returns:
-            Tuple of (authorization_url, state)
+            Tuple of (authorization_url, state).
         """
         provider = self._get_provider(provider_name)
-        state = secrets.token_urlsafe(32)
+        if state is None:
+            state = secrets.token_urlsafe(32)
         kwargs: dict[str, Any] = {"state": state}
         if redirect_uri is not None:
             kwargs["redirect_uri"] = redirect_uri
@@ -78,8 +95,10 @@ class OAuthUserAuth:
         return auth_url, state
 
     # Keep backward-compat convenience method
-    def get_google_auth_url(self, redirect_uri: str | None = None) -> tuple[str, str]:
-        return self.get_auth_url("google", redirect_uri=redirect_uri)
+    def get_google_auth_url(
+        self, redirect_uri: str | None = None, state: str | None = None
+    ) -> tuple[str, str]:
+        return self.get_auth_url("google", redirect_uri=redirect_uri, state=state)
 
     async def handle_callback(
         self,
@@ -225,8 +244,17 @@ class OAuthUserAuth:
         picture: str | None,
         oauth_credential: Any,
     ) -> tuple[UserModel, bool]:
-        """Get existing user or create from OAuth (with race condition protection)."""
+        """Get existing user or create from OAuth (with race condition protection).
+
+        The new-user path defers ``_provision_oauth_user`` until after the outer
+        transaction commits. ``UserProvisionerProtocol`` opens a second Session
+        on the same engine and writes to ``users`` / ``zones``; invoking it
+        inside the outer ``session.begin()`` block makes the inner INSERT wait
+        on the still-pending users row lock, which deadlocks the request.
+        """
         from nexus.bricks.auth.user_queries import get_user_by_email
+
+        new_user_to_provision: UserModel | None = None
 
         with session.begin():
             stmt = select(UserOAuthAccountModel).where(
@@ -312,18 +340,21 @@ class OAuthUserAuth:
                 )
                 session.flush()
                 session.expunge(user)
-
-                if provider_email:
-                    await self._provision_oauth_user(
-                        user_id=user_id,
-                        email=provider_email,
-                        display_name=user.display_name,
-                    )
-
-                return user, True
-
+                new_user_to_provision = user
             except IntegrityError:
                 return self._retry_oauth_race(session, stmt)
+
+        # Transaction has committed. Safe to invoke the user provisioner — it
+        # opens its own Session and will not deadlock on our released locks.
+        if new_user_to_provision is not None and new_user_to_provision.email:
+            await self._provision_oauth_user(
+                user_id=new_user_to_provision.user_id,
+                email=new_user_to_provision.email,
+                display_name=new_user_to_provision.display_name,
+            )
+
+        assert new_user_to_provision is not None
+        return new_user_to_provision, True
 
     @staticmethod
     def _retry_oauth_race(

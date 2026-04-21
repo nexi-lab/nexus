@@ -96,10 +96,27 @@ services:
       NEXUS_GCS_BUCKET: ${NEXUS_GCS_BUCKET:-}
       NEXUS_GCS_PROJECT: ${NEXUS_GCS_PROJECT:-}
       GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-/app/gcs-credentials.json}
-      # AWS (for S3 connector)
+      # AWS (for S3 connector) — any of the env vars below, the ~/.aws
+      # bind mount, or an EC2/ECS IAM role supplies credentials via boto3's
+      # default chain. AWS_PROFILE is passed through only when the operator
+      # set it explicitly; otherwise it's empty and the entrypoint unsets
+      # it, so botocore doesn't raise ProfileNotFound when no ~/.aws file
+      # is mounted (env-only + IAM-role setups).
+      #
+      # AWS_SHARED_CREDENTIALS_FILE / AWS_CONFIG_FILE are passed through so
+      # operators running with non-standard credentials layouts (e.g. AWS
+      # Vault, Leapp) can point the container at the right files. When
+      # unset, the entrypoint falls back to the mounted ~/.aws/ defaults.
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
       AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-}
+      AWS_PROFILE: ${AWS_PROFILE:-}
+      AWS_SHARED_CREDENTIALS_FILE: ${AWS_SHARED_CREDENTIALS_FILE:-}
+      AWS_CONFIG_FILE: ${AWS_CONFIG_FILE:-}
+      # Opt-in: allow fallback to env/IAM credentials when AWS_PROFILE is
+      # set but unresolvable. Default behavior is fail-closed to prevent
+      # silent account drift — see entrypoint.
+      NEXUS_AWS_PROFILE_FAIL_OPEN: ${NEXUS_AWS_PROFILE_FAIL_OPEN:-}
       # Permissions
       NEXUS_SKIP_PERMISSIONS: ${NEXUS_SKIP_PERMISSIONS:-false}
       NEXUS_ENFORCE_PERMISSIONS: ${NEXUS_ENFORCE_PERMISSIONS:-true}
@@ -122,9 +139,6 @@ services:
       NEXUS_TXTAI_GRAPH: ${NEXUS_TXTAI_GRAPH:-false}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
-      # Zoekt
-      ZOEKT_ENABLED: ${ZOEKT_ENABLED:-false}
-      ZOEKT_URL: ${ZOEKT_URL:-http://zoekt:6070}
       # Sandbox
       NEXUS_SERVER_URL: http://nexus:2026
       NEXUS_DOCKER_NETWORK: ${COMPOSE_PROJECT_NAME:-nexus}_nexus-network
@@ -152,6 +166,10 @@ services:
       # Use ${HOME} not ~ (tilde is not expanded by Docker Compose).
       - ${GWS_CONFIG_DIR:-${HOME}/.config/gws}:/home/nexus/.config/gws
       - ${GH_CONFIG_DIR:-${HOME}/.config/gh}:/home/nexus/.config/gh
+      # S3 connector: mount host ~/.aws so boto3's default credential chain
+      # finds ``[default]`` / any ``AWS_PROFILE`` without having to export
+      # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY on every ``nexus up``.
+      - ${AWS_CONFIG_DIR:-${HOME}/.aws}:/home/nexus/.aws:ro
     user: root
     ports:
       - "${NEXUS_PORT:-2026}:2026"
@@ -193,44 +211,6 @@ services:
       timeout: 5s
       retries: 5
       start_period: 5s
-    networks:
-      - nexus-network
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-  # ============================================================================
-  # Zoekt — Fast Code Search
-  # ============================================================================
-  zoekt:
-    # Build from Go source for native multi-arch support (amd64 + arm64).
-    # sourcegraph/zoekt-webserver only publishes amd64 images, which forces
-    # slow QEMU emulation on Apple Silicon. Building from source produces
-    # a native binary on any platform.
-    build:
-      context: ./dockerfiles
-      dockerfile: Dockerfile.zoekt
-    image: ${ZOEKT_IMAGE_REF:-ghcr.io/nexi-lab/nexus-zoekt:stable}
-    restart: unless-stopped
-    profiles:
-      - search
-    command: ["-index", "/index", "-listen", ":6070"]
-    environment:
-      ZOEKT_INDEX_DIR: /index
-      ZOEKT_DATA_DIR: /data
-    volumes:
-      - ${NEXUS_HOST_DATA_DIR:-./nexus-data}:/data
-      - zoekt-index:/index
-    ports:
-      - "${ZOEKT_PORT:-6070}:6070"
-    healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:6070/"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
     networks:
       - nexus-network
     logging:
@@ -382,8 +362,6 @@ volumes:
   postgres-wal-archive:
     driver: local
   dragonfly-data:
-    driver: local
-  zoekt-index:
     driver: local
   nats-data:
     driver: local

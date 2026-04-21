@@ -14,7 +14,7 @@ providers:
   # Google Drive OAuth
   - name: google-drive
     display_name: Google Drive
-    provider_class: nexus.bricks.auth.oauth.providers.google.GoogleOAuthProvider
+    provider_class: nexus.lib.oauth.providers.google.GoogleOAuthProvider
     scopes:
       - https://www.googleapis.com/auth/drive
       - https://www.googleapis.com/auth/drive.file
@@ -29,7 +29,7 @@ providers:
   # Gmail OAuth
   - name: gmail
     display_name: Gmail
-    provider_class: nexus.bricks.auth.oauth.providers.google.GoogleOAuthProvider
+    provider_class: nexus.lib.oauth.providers.google.GoogleOAuthProvider
     scopes:
       - https://www.googleapis.com/auth/gmail.readonly
       - https://www.googleapis.com/auth/gmail.send
@@ -44,7 +44,7 @@ providers:
   # Google Calendar OAuth
   - name: gcalendar
     display_name: Google Calendar
-    provider_class: nexus.bricks.auth.oauth.providers.google.GoogleOAuthProvider
+    provider_class: nexus.lib.oauth.providers.google.GoogleOAuthProvider
     scopes:
       - https://www.googleapis.com/auth/calendar
       - https://www.googleapis.com/auth/calendar.events
@@ -59,7 +59,7 @@ providers:
   # Google Cloud Storage OAuth
   - name: google-cloud-storage
     display_name: Google Cloud Storage
-    provider_class: nexus.bricks.auth.oauth.providers.google.GoogleOAuthProvider
+    provider_class: nexus.lib.oauth.providers.google.GoogleOAuthProvider
     scopes:
       - https://www.googleapis.com/auth/devstorage.read_write
       - https://www.googleapis.com/auth/cloud-platform
@@ -74,7 +74,7 @@ providers:
   # Microsoft OneDrive OAuth
   - name: microsoft-onedrive
     display_name: Microsoft OneDrive
-    provider_class: nexus.server.auth.microsoft_oauth.MicrosoftOAuthProvider
+    provider_class: nexus.lib.oauth.providers.microsoft.MicrosoftOAuthProvider
     scopes:
       - Files.ReadWrite.All
       - User.Read
@@ -88,7 +88,7 @@ providers:
   # X (Twitter) OAuth
   - name: x
     display_name: X (Twitter)
-    provider_class: nexus.server.auth.x_oauth.XOAuthProvider
+    provider_class: nexus.lib.oauth.providers.x.XOAuthProvider
     scopes:
       - tweet.read
       - tweet.write
@@ -110,7 +110,7 @@ providers:
   # Slack OAuth
   - name: slack
     display_name: Slack
-    provider_class: nexus.server.auth.slack_oauth.SlackOAuthProvider
+    provider_class: nexus.lib.oauth.providers.slack.SlackOAuthProvider
     scopes:
       - channels:read
       - channels:history

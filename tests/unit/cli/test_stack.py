@@ -42,9 +42,9 @@ def shared_config(tmp_path: Path) -> Path:
     config = {
         "preset": "shared",
         "data_dir": str(tmp_path / "nexus-data"),
-        "services": ["nexus", "postgres", "dragonfly", "zoekt"],
-        "ports": {"http": 2026, "grpc": 2028, "postgres": 5432, "dragonfly": 6379, "zoekt": 6070},
-        "compose_profiles": ["core", "cache", "search"],
+        "services": ["nexus", "postgres", "dragonfly"],
+        "ports": {"http": 2026, "grpc": 2028, "postgres": 5432, "dragonfly": 6379},
+        "compose_profiles": ["core", "cache"],
         "compose_file": str(tmp_path / "nexus-stack.yml"),
         "auth": "static",
         "tls": False,
@@ -274,7 +274,6 @@ class TestDeriveProjectEnv:
                 "grpc": 2028,
                 "postgres": 5432,
                 "dragonfly": 6379,
-                "zoekt": 6070,
             },
             "admin_user": "admin",
             "auth": "database",
@@ -369,42 +368,6 @@ class TestDeriveProjectEnv:
         assert env["OPENAI_BASE_URL"] == "https://api.openai.example/v1"
         assert env["NEXUS_TXTAI_MODEL"] == "openai/text-embedding-3-small"
         assert env["NEXUS_TXTAI_USE_API_EMBEDDINGS"] == "true"
-
-    def test_search_profile_enables_zoekt(self, tmp_path: Path) -> None:
-        """ZOEKT_ENABLED=true when search compose profile is active."""
-        config = {
-            "data_dir": str(tmp_path / "data"),
-            "ports": {},
-            "compose_profiles": ["core", "cache", "search"],
-        }
-        env = _derive_project_env(config)
-        assert env["ZOEKT_ENABLED"] == "true"
-
-    def test_no_search_profile_omits_zoekt_enabled(self, tmp_path: Path) -> None:
-        """ZOEKT_ENABLED not set when search profile is absent."""
-        config = {
-            "data_dir": str(tmp_path / "data"),
-            "ports": {},
-            "compose_profiles": ["core", "cache"],
-        }
-        env = _derive_project_env(config)
-        assert "ZOEKT_ENABLED" not in env
-
-    def test_validated_profiles_override_config(self, tmp_path: Path) -> None:
-        """Explicit profiles param wins over config compose_profiles.
-
-        When a custom compose file strips the search profile during
-        validation, ZOEKT_ENABLED must not be set even though the
-        raw config still lists search.
-        """
-        config = {
-            "data_dir": str(tmp_path / "data"),
-            "ports": {},
-            "compose_profiles": ["core", "cache", "search"],
-        }
-        # Simulate compose-file validation stripping search
-        env = _derive_project_env(config, profiles=["core", "cache"])
-        assert "ZOEKT_ENABLED" not in env
 
 
 class TestDockerBuildArgs:

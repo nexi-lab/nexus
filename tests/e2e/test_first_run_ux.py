@@ -87,7 +87,6 @@ class TestFirstRunInit:
         assert cfg["auth"] == "database"
         assert "postgres" in cfg["services"]
         assert "dragonfly" in cfg["services"]
-        assert "zoekt" in cfg["services"]
         assert cfg["ports"]["http"] == 2026
 
     def test_init_shared_with_tls(self, project_dir: Path) -> None:

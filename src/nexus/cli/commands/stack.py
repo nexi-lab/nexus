@@ -89,7 +89,6 @@ def _resolve_image_ref_from_config(config: dict[str, Any]) -> str:
 def _derive_project_env(
     config: dict[str, Any],
     resolved_ports: dict[str, int] | None = None,
-    profiles: list[str] | None = None,
 ) -> dict[str, str]:
     """Build the compose environment from nexus.yaml config.
 
@@ -99,10 +98,6 @@ def _derive_project_env(
 
     When *resolved_ports* is provided (e.g. after conflict resolution),
     those values are used instead of config["ports"].
-
-    When *profiles* is provided (e.g. after compose-file validation),
-    those are used to decide profile-gated env vars like ZOEKT_ENABLED
-    instead of the raw config["compose_profiles"].
     """
     data_dir = str(Path(config.get("data_dir", "./nexus-data")).resolve())
     project_hash = hashlib.md5(data_dir.encode()).hexdigest()[:8]
@@ -115,7 +110,6 @@ def _derive_project_env(
         "NEXUS_GRPC_PORT": str(ports.get("grpc", 2028)),
         "POSTGRES_PORT": str(ports.get("postgres", 5432)),
         "DRAGONFLY_PORT": str(ports.get("dragonfly", 6379)),
-        "ZOEKT_PORT": str(ports.get("zoekt", 6070)),
         "NEXUS_HOST_DATA_DIR": data_dir,
         "NEXUS_ADMIN_USER": str(config.get("admin_user", "admin")),
         "NEXUS_AUTH_TYPE": config.get("auth", "none"),
@@ -156,16 +150,6 @@ def _derive_project_env(
         # Standalone demo/shared stacks expose gRPC through a published Docker
         # port, so the server must not stay bound to container loopback.
         env["NEXUS_GRPC_BIND_ALL"] = "true"
-
-    # Enable zoekt integration when the search compose profile is active.
-    # The compose template defaults ZOEKT_ENABLED to false; override here
-    # so the nexus container connects to the zoekt sidecar container.
-    # Use validated profiles when available so a custom compose file that
-    # lacks the search profile doesn't leave ZOEKT_ENABLED=true with no
-    # zoekt container to talk to.
-    active_profiles = profiles if profiles is not None else config.get("compose_profiles", [])
-    if "search" in active_profiles:
-        env["ZOEKT_ENABLED"] = "true"
 
     return env
 
@@ -357,7 +341,6 @@ HEALTH_ENDPOINTS: dict[str, tuple[str, int]] = {
     "nexus": ("http://localhost:{http}/healthz/ready", 120),
     "postgres": ("", 30),  # checked via pg_isready in container
     "dragonfly": ("", 15),
-    "zoekt": ("http://localhost:{zoekt}/", 30),
 }
 
 
@@ -379,7 +362,6 @@ async def _poll_service_health(
         "nexus": "http",
         "postgres": "postgres",
         "dragonfly": "dragonfly",
-        "zoekt": "zoekt",
     }
     port_key = port_key_map.get(service)
     if not port_key or port_key not in ports:
@@ -786,9 +768,7 @@ def up(
     # They go into .state.json (written after health check).
 
     # Build environment from config (project name, ports, data dir, auth, image, TLS).
-    # Pass validated profiles so profile-gated env vars (e.g. ZOEKT_ENABLED)
-    # reflect what the compose file actually supports.
-    compose_env = _derive_project_env(config, resolved_ports=resolved_ports, profiles=profiles)
+    compose_env = _derive_project_env(config, resolved_ports=resolved_ports)
     pgvector_init_sql = _resolve_pgvector_init_sql(cf)
     if pgvector_init_sql:
         compose_env["NEXUS_PGVECTOR_INIT_SQL"] = pgvector_init_sql
@@ -969,7 +949,6 @@ def up(
     grpc_port = resolved_ports.get("grpc", 2028)
     pg_port = resolved_ports.get("postgres", 5432)
     df_port = resolved_ports.get("dragonfly", 6379)
-    zk_port = resolved_ports.get("zoekt", 6070)
 
     console.print(f"  nexus       http://localhost:{http_port}")
     console.print(f"  grpc        localhost:{grpc_port}")
@@ -977,8 +956,6 @@ def up(
         console.print(f"  postgres    localhost:{pg_port}")
     if "dragonfly" in active_services:
         console.print(f"  dragonfly   localhost:{df_port}")
-    if "zoekt" in active_services:
-        console.print(f"  zoekt       http://localhost:{zk_port}")
 
     # Surface connection info
     console.print()

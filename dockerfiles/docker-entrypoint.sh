@@ -106,19 +106,18 @@ REDACT_API_KEY_IN_LOGS="${REDACT_API_KEY_IN_LOGS:-false}"
 
 # PIDs for cleanup
 SERVER_PID=""
-ZOEKT_PID=""
 
 # -----------------------------------------------------------------------------
 # Bind-mount directory init + privilege drop
 # -----------------------------------------------------------------------------
 # When a host directory is bind-mounted over /app/data, the image's
-# pre-created subdirectories (skills/, .zoekt-index/) disappear and the
+# pre-created subdirectories (skills/) disappear and the
 # mount may be owned by a different uid.  If we're root, fix that now
 # and re-exec as the nexus user.
 fix_data_dir_and_drop_privileges() {
     if [ "$(id -u)" = "0" ]; then
         # Create required subdirectories inside the (possibly bind-mounted) data dir
-        mkdir -p /app/data/skills /app/data/.zoekt-index
+        mkdir -p /app/data/skills
 
         if ! chown -R nexus:nexus /app/data 2>/dev/null; then
             # chown fails on macOS Docker Desktop (VirtioFS/gRPC FUSE does not
@@ -150,6 +149,186 @@ fix_data_dir_and_drop_privileges() {
 }
 
 fix_data_dir_and_drop_privileges "$@"
+
+# -----------------------------------------------------------------------------
+# GOOGLE_APPLICATION_CREDENTIALS sanity
+#
+# nexus-stack.yml defaults GOOGLE_APPLICATION_CREDENTIALS to
+# /app/gcs-credentials.json so that GCS-style service-account flows can work
+# without extra wiring. When that file doesn't exist, Google's auto-auth
+# chain still probes the env var first and fails hard — which breaks the
+# gws CLI even though bind-mounted user-flow creds at ~/.config/gws/ would
+# otherwise authenticate it. Clear the dangling env var so auto-auth falls
+# back to the user-flow creds.
+# -----------------------------------------------------------------------------
+if [ -n "${GOOGLE_APPLICATION_CREDENTIALS:-}" ] && [ ! -s "${GOOGLE_APPLICATION_CREDENTIALS}" ]; then
+    echo "${YELLOW:-}GOOGLE_APPLICATION_CREDENTIALS points to missing file '${GOOGLE_APPLICATION_CREDENTIALS}'; unsetting so user-flow auth can take over.${NC:-}"
+    unset GOOGLE_APPLICATION_CREDENTIALS
+fi
+
+# -----------------------------------------------------------------------------
+# AWS_PROFILE sanity
+#
+# nexus-stack.yml passes AWS_PROFILE through from the operator's shell. When
+# unset upstream, Compose still injects it as an empty string ("") because
+# the service has an AWS_PROFILE: key. botocore treats "" like "use profile
+# ''" and then raises ProfileNotFound — which breaks env-only creds
+# (AWS_ACCESS_KEY_ID/..) and EC2/ECS IAM-role auth even though boto3's
+# default chain would otherwise resolve them cleanly.
+#
+# Also unset when:
+#   * no ~/.aws file is mounted (nothing to resolve the profile against), or
+#   * the named profile is absent from the mounted ~/.aws/credentials and
+#     ~/.aws/config files (stale shell-inherited name).
+#
+# Profile-presence check uses exact INI-header matching (NOT regex), so
+# profile names with regex metacharacters (``.``, ``+``, ``*``) resolve
+# correctly — e.g. ``prod.us`` matches only ``[prod.us]``, not anything
+# containing "prod" + any char + "us". Botocore accepts both the bare
+# ``[name]`` form (credentials file) and the ``[profile <name>]`` form
+# (config file); either is treated as a match.
+# -----------------------------------------------------------------------------
+_aws_profile_file_has_name() {
+    # Exact INI-header comparison for an AWS profile name. Accepts both
+    # spellings botocore honors: ``[name]`` (credentials file) and
+    # ``[profile <name>]`` (config file). No regex — profile names
+    # containing ``.``, ``+`` or other metacharacters compare as plain
+    # strings.
+    local _file="$1" _wanted="$2" _prof_line="" _rest=""
+    [ -s "$_file" ] || return 1
+    local _bracketed_wanted="[${_wanted}]"
+    # ``|| [ -n "$_prof_line" ]`` keeps the loop running for a final line
+    # that isn't newline-terminated (common in hand-edited AWS config
+    # files). Without it, ``[prod]`` at EOF without ``\n`` would be
+    # silently dropped, making a valid profile look missing and tripping
+    # the fail-closed startup guard.
+    while IFS= read -r _prof_line || [ -n "$_prof_line" ]; do
+        # Strip leading + trailing whitespace from the raw line.
+        _prof_line="${_prof_line#"${_prof_line%%[![:space:]]*}"}"
+        _prof_line="${_prof_line%"${_prof_line##*[![:space:]]}"}"
+        case "$_prof_line" in
+            \[*\])
+                if [ "$_prof_line" = "$_bracketed_wanted" ]; then
+                    return 0
+                fi
+                case "$_prof_line" in
+                    "[profile "*"]")
+                        _rest="${_prof_line#\[profile }"
+                        _rest="${_rest%\]}"
+                        # Collapse any whitespace around the name so
+                        # ``[profile   prod]`` still matches ``prod``.
+                        _rest="${_rest#"${_rest%%[![:space:]]*}"}"
+                        _rest="${_rest%"${_rest##*[![:space:]]}"}"
+                        [ "$_rest" = "$_wanted" ] && return 0
+                        ;;
+                esac
+                ;;
+        esac
+    done < "$_file"
+    return 1
+}
+
+_aws_profile_fail_open="${NEXUS_AWS_PROFILE_FAIL_OPEN:-false}"
+case "$_aws_profile_fail_open" in
+    true|TRUE|True|1|yes|YES|Yes|on|ON|On) _aws_profile_fail_open="true" ;;
+    *) _aws_profile_fail_open="false" ;;
+esac
+
+_aws_profile_cannot_resolve() {
+    # Behavior when AWS_PROFILE is set but can't be found. Default is
+    # fail-closed: exit non-zero with a clear error so operators learn of
+    # the typo / missing mount instead of silently sending traffic to the
+    # wrong AWS account via env/IAM fallback. Set
+    # NEXUS_AWS_PROFILE_FAIL_OPEN=true to restore the old lenient behavior.
+    local _reason="$1"
+    if [ "$_aws_profile_fail_open" = "true" ]; then
+        echo "${YELLOW:-}AWS_PROFILE=${AWS_PROFILE} ${_reason}; NEXUS_AWS_PROFILE_FAIL_OPEN=true, unsetting so env/IAM-role creds can take over.${NC:-}"
+        unset AWS_PROFILE
+        return 0
+    fi
+    echo "${RED:-}ERROR: AWS_PROFILE=${AWS_PROFILE} ${_reason}.${NC:-}" >&2
+    echo "  This is almost always a typo, a missing bind mount, or a stale" >&2
+    echo "  shell export. Nexus refuses to start rather than silently fall" >&2
+    echo "  back to env/IAM credentials — which could route operations to" >&2
+    echo "  a different AWS account." >&2
+    echo "" >&2
+    echo "  Fix: unset AWS_PROFILE in your shell, mount the correct ~/.aws," >&2
+    echo "       or point AWS_SHARED_CREDENTIALS_FILE / AWS_CONFIG_FILE at" >&2
+    echo "       the right paths." >&2
+    echo "  Override (accepts the fallback risk):" >&2
+    echo "       NEXUS_AWS_PROFILE_FAIL_OPEN=true" >&2
+    exit 1
+}
+
+# Compose's ``AWS_PROFILE: ${AWS_PROFILE:-}`` injects an empty string when
+# nothing was exported upstream. Treat that as "no preference" — unset
+# silently so it doesn't masquerade as an explicit selection.
+if [ -n "${AWS_PROFILE+x}" ] && [ -z "${AWS_PROFILE:-}" ]; then
+    unset AWS_PROFILE
+fi
+
+# Normalize AWS_SHARED_CREDENTIALS_FILE / AWS_CONFIG_FILE. Same story:
+#   * Empty string -> no preference -> unset. (Prevents downstream bugs
+#     where ``Path('').exists()`` evaluates to True on the cwd.)
+#   * Non-empty value pointing at a file not visible inside the container
+#     -> we can't honor it. The action depends on whether AWS_PROFILE is
+#     also set:
+#       - AWS_PROFILE set: fail closed by default because botocore would
+#         silently resolve the profile against the mounted ``~/.aws/``,
+#         potentially a different account. Opt-out via
+#         NEXUS_AWS_PROFILE_FAIL_OPEN=true.
+#       - AWS_PROFILE unset: creds come from env / IAM role / instance
+#         metadata, and the file var is irrelevant to auth. Warn and
+#         unset so it doesn't confuse botocore later; starting the
+#         server is the right move.
+for _aws_env in AWS_SHARED_CREDENTIALS_FILE AWS_CONFIG_FILE; do
+    _val="${!_aws_env:-}"
+    if [ -z "$_val" ]; then
+        unset "$_aws_env"
+    elif [ ! -f "$_val" ]; then
+        if [ -z "${AWS_PROFILE:-}" ] || [ "$_aws_profile_fail_open" = "true" ]; then
+            _reason="not visible inside container"
+            [ "$_aws_profile_fail_open" = "true" ] \
+                && _reason="$_reason; NEXUS_AWS_PROFILE_FAIL_OPEN=true"
+            echo "${YELLOW:-}${_aws_env}=${_val} ${_reason}; unsetting so botocore's default chain can take over.${NC:-}"
+            unset "$_aws_env"
+            unset _reason
+        else
+            echo "${RED:-}ERROR: ${_aws_env}=${_val} is set but that file is not visible inside the container, and AWS_PROFILE=${AWS_PROFILE} points at it.${NC:-}" >&2
+            echo "  nexus-stack.yml forwards this env var from your shell, but" >&2
+            echo "  host absolute paths (e.g. /Users/you/.aws/config) aren't" >&2
+            echo "  reachable inside the container's filesystem. Silently" >&2
+            echo "  falling back to the default ~/.aws/ mount risks resolving" >&2
+            echo "  AWS_PROFILE against a different AWS account than you" >&2
+            echo "  intended." >&2
+            echo "" >&2
+            echo "  Fix: unset ${_aws_env} in your shell (the bind-mounted" >&2
+            echo "       ~/.aws/ location will be used), OR point it at a" >&2
+            echo "       container-visible path, OR set" >&2
+            echo "       NEXUS_AWS_PROFILE_FAIL_OPEN=true to accept the" >&2
+            echo "       fallback." >&2
+            exit 1
+        fi
+    fi
+done
+unset _aws_env _val
+
+# With the env vars above normalized, validate AWS_PROFILE against the
+# resolved credential files (env-override first, then ~/.aws defaults).
+if [ -n "${AWS_PROFILE:-}" ]; then
+    _aws_cred_file="${AWS_SHARED_CREDENTIALS_FILE:-${HOME}/.aws/credentials}"
+    _aws_conf_file="${AWS_CONFIG_FILE:-${HOME}/.aws/config}"
+    if [ ! -s "$_aws_cred_file" ] && [ ! -s "$_aws_conf_file" ]; then
+        _aws_profile_cannot_resolve \
+            "set but neither ${_aws_cred_file} nor ${_aws_conf_file} is present"
+    elif ! _aws_profile_file_has_name "$_aws_cred_file" "$AWS_PROFILE" \
+          && ! _aws_profile_file_has_name "$_aws_conf_file" "$AWS_PROFILE"; then
+        _aws_profile_cannot_resolve \
+            "not present in ${_aws_cred_file} or ${_aws_conf_file}"
+    fi
+    unset _aws_cred_file _aws_conf_file
+fi
+unset _aws_profile_fail_open
 
 # -----------------------------------------------------------------------------
 # Functions
@@ -349,46 +528,6 @@ init_semantic_search_if_enabled() {
     echo -e "${GREEN}✓ Semantic search initialized${NC}"
 }
 
-start_zoekt_if_enabled() {
-    if [ "${ZOEKT_ENABLED:-false}" != "true" ]; then
-        echo ""
-        echo "ℹ️  Zoekt search disabled (set ZOEKT_ENABLED=true to enable)"
-        echo ""
-        return 0
-    fi
-
-    echo ""
-    echo "🔍 Starting Zoekt search sidecar..."
-
-    ZOEKT_INDEX_DIR="${ZOEKT_INDEX_DIR:-/app/data/.zoekt-index}"
-    ZOEKT_DATA_DIR="${ZOEKT_DATA_DIR:-/app/data}"
-    ZOEKT_PORT="${ZOEKT_PORT:-6070}"
-
-    ensure_dir "$ZOEKT_INDEX_DIR" || exit 1
-
-    if [ ! -f "$ZOEKT_INDEX_DIR/compound-0.zoekt" ]; then
-        echo "  Building initial Zoekt index..."
-        if ! zoekt-index -index "$ZOEKT_INDEX_DIR" "$ZOEKT_DATA_DIR" 2>&1 | head -5; then
-            echo -e "${YELLOW}⚠ Index build had warnings or partial failure; continuing${NC}"
-        fi
-        echo -e "${GREEN}✓ Initial index built${NC}"
-    fi
-
-    echo "  Starting Zoekt webserver on port $ZOEKT_PORT..."
-    zoekt-webserver -index "$ZOEKT_INDEX_DIR" -listen ":$ZOEKT_PORT" &
-    ZOEKT_PID=$!
-
-    local i
-    for i in $(seq 1 10); do
-        if curl -sf "http://localhost:$ZOEKT_PORT/" > /dev/null 2>&1; then
-            echo -e "${GREEN}✓ Zoekt search ready at http://localhost:$ZOEKT_PORT${NC}"
-            break
-        fi
-        sleep 0.5
-    done
-    echo ""
-}
-
 build_serve_cmd() {
     local auth_type="${NEXUS_AUTH_TYPE:-database}"
     if [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
@@ -515,7 +654,6 @@ main() {
         echo -e "${GREEN}✓ No NEXUS_DATABASE_URL — skipping PostgreSQL init (cluster profile)${NC}"
     fi
     init_semantic_search_if_enabled
-    start_zoekt_if_enabled
     # Note: TLS provisioning is file-based. If {data_dir}/tls/join-token
     # exists, nexusd reads it and provisions certs from the leader.
     start_nexus_server

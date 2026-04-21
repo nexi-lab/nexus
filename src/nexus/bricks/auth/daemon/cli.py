@@ -496,9 +496,17 @@ def uninstall_cmd(profile: str | None) -> None:
 
 
 def _daemon_version() -> str:
-    from nexus import __version__
+    # Use importlib.metadata instead of ``from nexus import __version__`` so
+    # the daemon CLI doesn't pull the top-level ``nexus`` package (and every
+    # factory-wired brick) into its import graph — import-linter forbids
+    # nexus.bricks.auth → other bricks, and the nexus package imports them
+    # transitively.
+    from importlib.metadata import PackageNotFoundError, version
 
-    return __version__
+    try:
+        return version("nexus-ai-fs")
+    except PackageNotFoundError:
+        return "0.0.0+unknown"
 
 
 class _DaemonEnvelope:

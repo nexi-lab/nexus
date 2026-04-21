@@ -56,6 +56,12 @@ logging.getLogger("googleapiclient.discovery_cache").setLevel(logging.ERROR)
 # Gmail system labels exposed as virtual directories (priority order).
 LABEL_FOLDERS = ["SENT", "STARRED", "IMPORTANT", "INBOX", "DRAFTS", "TRASH"]
 
+# Explicit write-sentinel basenames recognised by ``store()``.
+# Anything *else* starting with ``_`` is just a sanitized readable
+# filename (e.g. ``_unnamed``, ``_CON``) and must fall through to the
+# normal id-anchor parser.
+_WRITE_SENTINELS = frozenset({"_new", "_reply", "_forward"})
+
 
 class GmailTransport:
     """Gmail API transport implementing the Transport protocol.
@@ -191,10 +197,13 @@ class GmailTransport:
             return parts[0] if len(parts) == 2 else None, None, None
 
         base = filename.removesuffix(".yaml")
+        label = parts[0] if len(parts) == 2 else None
 
-        # Sentinel filenames for write operations (e.g. _new, _reply, _forward)
-        if base.startswith("_"):
-            label = parts[0] if len(parts) == 2 else None
+        # Explicit write-sentinel names — must match exactly, so readable
+        # filenames that happen to start with ``_`` (e.g. subject
+        # sanitized to ``_unnamed`` or reserved Windows name ``CON``
+        # prefixed to ``_CON``) still parse as id-anchored keys.
+        if base in _WRITE_SENTINELS:
             return label, None, base
 
         # Human-readable form: prefer the trailing "__threadId-msgId" anchor.
@@ -206,7 +215,6 @@ class GmailTransport:
             return None, None, None
 
         thread_id, message_id = id_anchor.split("-", 1)
-        label = parts[0] if len(parts) == 2 else None
         return label, thread_id, message_id
 
     # ------------------------------------------------------------------

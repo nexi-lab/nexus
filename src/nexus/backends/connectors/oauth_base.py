@@ -72,31 +72,61 @@ def _resolve_linked_oauth_email(
     nexus_user_id: str,
     zone_id: str,
 ) -> str | None:
-    """Look up the OAuth-linked email for a nexus user on *provider*.
+    """Look up the unambiguous OAuth-linked email for a nexus user on *provider*.
 
     OAuth credentials are stored keyed by ``(provider, user_email, zone_id)``
     with the nexus ``user_id`` recorded as a secondary column.  For
     API-key-authenticated requests the transport's ``context.user_id`` is
     the nexus user id (e.g. ``"admin"``), not the gmail address Google
     stored against the credential — so ``get_valid_token(user_email="admin")``
-    404s.  This helper bridges the gap: find any non-revoked credential
-    whose ``user_id`` matches and return its ``user_email``.  Returns
-    ``None`` if no link exists.  Kept synchronous so the transports can
-    call it without an async hop.
+    404s.  This helper bridges the gap: find the credential whose
+    ``user_id`` matches and return its ``user_email``.
+
+    Safety contract:
+    * Returns ``None`` when no match exists (auth-required).
+    * Raises ``AuthenticationError`` when the same nexus user has
+      *more than one* active credential for the provider.  Silently
+      picking the first row would be a cross-account leak vector.
+    * Does **not** catch lookup exceptions — DB/network/session errors
+      propagate so callers can surface them as backend failures instead
+      of false 401s.
+
+    Kept synchronous so the transports can call it without an async hop.
     """
     from nexus.lib.sync_bridge import run_sync
 
     list_fn = getattr(token_manager, "list_credentials", None)
     if list_fn is None:
         return None
-    try:
-        creds = run_sync(list_fn(zone_id=zone_id, user_id=nexus_user_id))
-    except Exception:
-        return None
+    # NB: intentionally do not wrap in try/except — credential-index
+    # failures (DB down, session closed, encryption error) must surface
+    # as 5xx backend errors, not be downgraded to "auth required" which
+    # would push the client into a re-auth loop that cannot succeed.
+    creds = run_sync(list_fn(zone_id=zone_id, user_id=nexus_user_id))
+    matches: list[str] = []
     for cred in creds or []:
-        if cred.get("provider") == provider and _looks_like_email(cred.get("user_email")):
-            return str(cred["user_email"])
-    return None
+        if cred.get("provider") != provider:
+            continue
+        email = cred.get("user_email")
+        if _looks_like_email(email):
+            matches.append(str(email))
+    if not matches:
+        return None
+    unique = sorted(set(matches))
+    if len(unique) > 1:
+        raise AuthenticationError(
+            f"Multiple OAuth accounts linked to nexus user {nexus_user_id!r} "
+            f"for provider {provider!r}: {unique}. Pin the mount to an "
+            "explicit user_email to disambiguate.",
+            provider=provider,
+            user_email=None,
+            recovery_hint={
+                "action": "select_account",
+                "provider": provider,
+                "candidates": unique,
+            },
+        )
+    return unique[0]
 
 
 def resolve_oauth_access_token(

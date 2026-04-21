@@ -167,16 +167,35 @@ class XTransport:
         if resolved_email is None and nexus_user_id is not None:
             list_fn = getattr(self._token_manager, "list_credentials", None)
             if list_fn is not None:
-                try:
-                    creds = await list_fn(zone_id=zone_id, user_id=nexus_user_id)
-                    for cred in creds or []:
-                        if cred.get("provider") == self._provider and _looks_like_email(
-                            cred.get("user_email")
-                        ):
-                            resolved_email = str(cred["user_email"])
-                            break
-                except Exception:
-                    pass
+                # NB: intentionally do NOT catch exceptions — credential-
+                # index failures (DB/session/encryption) must propagate
+                # as backend errors instead of being downgraded to false
+                # "auth required".  Matches oauth_base._resolve_linked_oauth_email.
+                creds = await list_fn(zone_id=zone_id, user_id=nexus_user_id)
+                matches: list[str] = []
+                for cred in creds or []:
+                    if cred.get("provider") != self._provider:
+                        continue
+                    email = cred.get("user_email")
+                    if _looks_like_email(email):
+                        matches.append(str(email))
+                unique = sorted(set(matches))
+                if len(unique) > 1:
+                    raise AuthenticationError(
+                        f"Multiple OAuth accounts linked to nexus user "
+                        f"{nexus_user_id!r} for provider {self._provider!r}: "
+                        f"{unique}. Pin the mount to an explicit user_email "
+                        "to disambiguate.",
+                        provider=self._provider,
+                        user_email=None,
+                        recovery_hint={
+                            "action": "select_account",
+                            "provider": self._provider,
+                            "candidates": unique,
+                        },
+                    )
+                if unique:
+                    resolved_email = unique[0]
 
         if not resolved_email:
             raise AuthenticationError(

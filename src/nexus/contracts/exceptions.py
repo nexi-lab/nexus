@@ -31,6 +31,7 @@ Usage:
             logger.error(f"System error: {e}", exc_info=True)
 """
 
+from collections.abc import Mapping
 from typing import Any
 
 
@@ -540,7 +541,7 @@ class AuthenticationError(NexusError):
         provider: str | None = None,
         user_email: str | None = None,
         auth_url: str | None = None,
-        recovery_hint: dict[str, str] | None = None,
+        recovery_hint: Mapping[str, str | list[str]] | None = None,
     ):
         self.provider = provider
         self.user_email = user_email

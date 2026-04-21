@@ -138,14 +138,26 @@ impl Locks for DistributedLocks {
         match result {
             CommandResult::LockResult(state) => {
                 if state.acquired {
-                    // Read-your-writes on follower: propose returns as soon
-                    // as the LEADER commits; this node's state-machine apply
-                    // catches up asynchronously (~one raft tick). Wait for
-                    // local applied_index to reach the observed commit
-                    // before returning so callers that stat the same path
-                    // on this node see the new state. SSOT = raft.
-                    let target = self.node.commit_index();
-                    let _ = self.node.wait_for_applied_at_least(target, 500);
+                    // Read-your-writes on follower: poll local state
+                    // machine until the exact lock_id we just wrote
+                    // appears. SSOT = `shared_state` (the same
+                    // `Arc<Mutex<LockState>>` the apply path mutates).
+                    // Using a raft-index barrier instead would fail on
+                    // followers — `commit_index()` immediately after
+                    // propose is stale until AppendEntries arrives.
+                    let shared = Arc::clone(&self.shared_state);
+                    let lock_id_owned = lock_id.to_string();
+                    let path_owned = path.to_string();
+                    let _ = self.node.wait_until(
+                        || {
+                            shared
+                                .lock()
+                                .get_lock(&path_owned)
+                                .map(|info| info.holders.iter().any(|h| h.lock_id == lock_id_owned))
+                                .unwrap_or(false)
+                        },
+                        500,
+                    );
                 }
                 Ok(state.acquired)
             }

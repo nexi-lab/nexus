@@ -702,25 +702,31 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
         self.applied_index_atom.load(Ordering::Acquire)
     }
 
-    /// Block (sync, tight loop with 5 ms sleep) until local
-    /// ``applied_index >= target_index``, or ``timeout_ms`` elapses.
+    /// Block (sync, tight loop with 5 ms sleep) until `predicate()`
+    /// returns `true`, or `timeout_ms` elapses. Returns `true` on
+    /// predicate match, `false` on timeout.
     ///
     /// Read-your-writes barrier for follower forward-to-leader paths:
-    /// the raft LEADER's ``propose`` may commit on majority and reply
-    /// to the follower before the follower's own apply pass has run,
-    /// so a same-thread read immediately after a propose on a
-    /// follower can see stale state. Callers that need "my write is
-    /// visible from this node" use this helper after `propose`,
-    /// passing `commit_index()` captured post-propose as the target.
+    /// the raft LEADER's `propose` commits on majority and replies to
+    /// the follower before the follower's own apply pass has run, so
+    /// a same-thread read immediately after `propose` on a follower
+    /// can see stale state. Callers that need "my specific write is
+    /// visible from this node" pass a predicate that checks the live
+    /// state-machine view for the row they wrote; the poll exits as
+    /// soon as the row shows up, regardless of which raft index it
+    /// landed at. Using an index target instead would be wrong here:
+    /// on a follower, `commit_index()` right after propose is still
+    /// stale (the leader hasn't sent AppendEntries yet), so a "wait
+    /// for applied >= commit_index" snapshot can succeed
+    /// immediately and still read stale state.
     ///
-    /// Returns `true` on catch-up, `false` on timeout. Sleep interval
-    /// 5 ms = ½ raft tick; typical convergence is a single iteration
-    /// once replication + apply lands.
-    pub fn wait_for_applied_at_least(&self, target_index: u64, timeout_ms: u64) -> bool {
+    /// Sleep interval 5 ms = ½ raft tick; typical convergence is a
+    /// single iteration once replication + apply lands.
+    pub fn wait_until<F: FnMut() -> bool>(&self, mut predicate: F, timeout_ms: u64) -> bool {
         use std::time::{Duration, Instant};
         let deadline = Instant::now() + Duration::from_millis(timeout_ms);
         loop {
-            if self.applied_index() >= target_index {
+            if predicate() {
                 return true;
             }
             if Instant::now() >= deadline {

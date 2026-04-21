@@ -209,6 +209,7 @@ impl Metastore for ZoneMetastore {
         // originating mount's global path, not its own.
         metadata.path = zone_key.clone();
         let value = kernel_to_proto(&metadata);
+        let value_snapshot = value.clone();
         let cmd = Command::SetMetadata {
             key: zone_key.clone(),
             value,
@@ -226,13 +227,24 @@ impl Metastore for ZoneMetastore {
             }
             _ => {}
         }
-        // Read-your-writes: propose on a follower returns as soon as
-        // the LEADER commits; this node's state-machine apply lags by
-        // ~one raft tick. Wait for local applied_index to reach the
-        // observed commit so a same-thread `get(path)` sees the row
-        // we just wrote. SSOT = raft state machine.
-        let target = self.node.commit_index();
-        let _ = self.node.wait_for_applied_at_least(target, 500);
+        // Read-your-writes: poll local state machine until the exact
+        // bytes we just wrote show up. Propose returns on leader commit;
+        // on a follower, local apply lags by up to one raft tick.
+        // SSOT = raft state machine.
+        let runtime = self.runtime.clone();
+        let node = self.node.clone();
+        let key = zone_key.clone();
+        let _ = self.node.wait_until(
+            || {
+                let poll_key = key.clone();
+                let observed =
+                    runtime.block_on(node.with_state_machine(move |sm: &FullStateMachine| {
+                        sm.get_metadata(&poll_key)
+                    }));
+                matches!(&observed, Ok(Some(bytes)) if *bytes == value_snapshot)
+            },
+            500,
+        );
         Ok(())
     }
 

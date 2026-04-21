@@ -80,6 +80,18 @@ class BackendFactory:
         if missing:
             raise MissingDependencyError(backend=backend_type, missing=missing)
 
+        if info.connector_class is None:
+            # Deps are satisfied (or manifest declared none) but the
+            # placeholder was never bound — the connector's module
+            # failed to import for a reason other than a missing Python
+            # dep (syntax error, circular import, etc.). Surface a
+            # clear error — check logs for the original ImportError.
+            raise RuntimeError(
+                f"Connector '{backend_type}' is declared in the "
+                f"manifest but its module failed to import. Check "
+                f"logs for the original ImportError."
+            )
+
         connector_cls = info.connector_class
         mapping = info.config_mapping
 

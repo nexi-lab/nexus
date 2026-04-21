@@ -58,7 +58,9 @@ class BackendFactory:
             Instantiated Backend
 
         Raises:
-            RuntimeError: If backend_type is not registered
+            RuntimeError: If ``backend_type`` is not registered, or if it
+                is registered as a manifest placeholder whose module failed
+                to import (deps satisfied but class never bound).
             TypeError: If required constructor args are missing
             MissingDependencyError: If any of the connector's runtime_deps are unmet
         """

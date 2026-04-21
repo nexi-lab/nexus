@@ -108,7 +108,8 @@ class TestConnectorRegistry:
         assert info.connector_class == DummyBackend
         assert info.description == "Test backend"
         assert info.category == "storage"
-        assert info.requires == ["test-dep"]
+        # Legacy requires= kwarg is ignored per Issue #3830 spec §6; callers must use runtime_deps=
+        assert info.requires == []
 
     def test_register_duplicate_same_class(self):
         """Test registering same class twice is idempotent."""
@@ -250,7 +251,8 @@ class TestRegisterConnectorDecorator:
         info = ConnectorRegistry.get_info("full_test")
         assert info.description == "Full test"
         assert info.category == "api"
-        assert info.requires == ["dep1", "dep2"]
+        # Legacy requires= kwarg is ignored per Issue #3830 spec §6; callers must use runtime_deps=
+        assert info.requires == []
 
 
 class TestCreateConnectorFromConfig:
@@ -732,6 +734,7 @@ class TestRegisterRuntimeDeps:
 
     def test_legacy_requires_kwarg_emits_deprecation(self) -> None:
         from nexus.backends.base.registry import (
+            ConnectorRegistry,
             register_connector,
         )
 
@@ -743,3 +746,31 @@ class TestRegisterRuntimeDeps:
                 pass
 
             assert any(issubclass(w.category, DeprecationWarning) for w in caught)
+
+        info = ConnectorRegistry.get_info("t_legacy")
+        assert info.runtime_deps == ()
+
+    def test_no_conflict_warning_when_deps_match(self) -> None:
+        from nexus.backends.base.registry import (
+            ConnectorRegistry,
+            register_connector,
+        )
+
+        matching_deps = (PythonDep("httpx"),)
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+
+            @register_connector("t_match", runtime_deps=matching_deps)
+            class T(DummyBackend):
+                RUNTIME_DEPS = matching_deps  # same tuple, no conflict
+
+            conflict_warnings = [
+                w
+                for w in caught
+                if issubclass(w.category, UserWarning) and "runtime_deps" in str(w.message)
+            ]
+            assert conflict_warnings == []
+
+        info = ConnectorRegistry.get_info("t_match")
+        assert info.runtime_deps == matching_deps

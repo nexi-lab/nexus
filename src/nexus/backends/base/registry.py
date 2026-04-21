@@ -33,6 +33,7 @@ Inspired by:
 
 import inspect
 import logging
+import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
@@ -351,9 +352,9 @@ class ConnectorRegistry:
         connector_class: "type[Backend]",
         description: str = "",
         category: str = "storage",
-        requires: list[str] | None = None,
+        requires: list[str] | None = None,  # noqa: ARG003 — accepted for API compat, ignored per spec §6
         service_name: str | None = None,
-        runtime_deps: "tuple[RuntimeDep, ...] | None" = None,
+        runtime_deps: tuple[RuntimeDep, ...] | None = None,
     ) -> None:
         """Register a connector class.
 
@@ -374,16 +375,6 @@ class ConnectorRegistry:
                 entries, or if the connector class does not satisfy
                 ConnectorProtocol.
         """
-        import warnings
-
-        if requires is not None:
-            warnings.warn(
-                "register_connector(requires=...) is deprecated; "
-                "use runtime_deps=(PythonDep(...), ...) instead.",
-                DeprecationWarning,
-                stacklevel=3,
-            )
-
         # Validate ConnectorProtocol conformance (Issue #1703).
         missing = [m for m in _CONNECTOR_PROTOCOL_MEMBERS if not hasattr(connector_class, m)]
         if missing:
@@ -412,10 +403,12 @@ class ConnectorRegistry:
             connector_class, "_BACKEND_FEATURES", frozenset()
         )
 
-        # Resolve runtime_deps: decorator arg wins, else class attr,
-        # else fall back to mapping legacy requires= to PythonDep entries
-        # (one-release backwards-compat so the deprecation warning above
-        # is advisory, not breaking), else ().
+        # Resolve runtime_deps: decorator arg wins, else class attr, else ().
+        # Legacy ``requires=`` is ignored (not translated) — PyPI package
+        # names are not always valid importable module names
+        # (``google-cloud-storage`` vs. ``google.cloud.storage``).
+        # Callers are expected to migrate to ``runtime_deps=`` per the
+        # DeprecationWarning emitted above. See Issue #3830 spec §6.
         class_attr_deps = getattr(connector_class, "RUNTIME_DEPS", None)
         resolved_deps: tuple[RuntimeDep, ...]
         if runtime_deps is not None:
@@ -429,20 +422,14 @@ class ConnectorRegistry:
             resolved_deps = tuple(runtime_deps)
         elif class_attr_deps is not None:
             resolved_deps = tuple(class_attr_deps)
-        elif requires:
-            # Legacy path: convert ``requires=["pkg-a", "pkg-b"]`` into
-            # ``(PythonDep("pkg-a"), PythonDep("pkg-b"))`` for one
-            # deprecation release. Extras are not derivable from the old
-            # format, so they default to empty.
-            resolved_deps = tuple(PythonDep(pkg) for pkg in requires)
         else:
             resolved_deps = ()
 
         bad = [d for d in resolved_deps if not isinstance(d, (PythonDep, BinaryDep, ServiceDep))]
         if bad:
             raise ValueError(
-                f"Connector '{name}': RUNTIME_DEPS entries must be PythonDep / "
-                f"BinaryDep / ServiceDep, got: {bad!r}"
+                f"Connector '{name}': runtime_deps / RUNTIME_DEPS entries must be "
+                f"PythonDep / BinaryDep / ServiceDep, got: {bad!r}"
             )
 
         info = ConnectorInfo(
@@ -607,7 +594,7 @@ def register_connector(
     category: str = "storage",
     requires: list[str] | None = None,
     service_name: str | None = None,
-    runtime_deps: "tuple[RuntimeDep, ...] | None" = None,
+    runtime_deps: tuple[RuntimeDep, ...] | None = None,
 ) -> "Callable[[type[Backend]], type[Backend]]":
     """Decorator to register a connector class.
 
@@ -629,6 +616,13 @@ def register_connector(
         class PathS3Backend(PathAddressingEngine):
             ...
     """
+    if requires:
+        warnings.warn(
+            "register_connector(requires=...) is deprecated; "
+            "use runtime_deps=(PythonDep(...), ...) instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
     def decorator(cls: "type[Backend]") -> "type[Backend]":
         ConnectorRegistry.register(

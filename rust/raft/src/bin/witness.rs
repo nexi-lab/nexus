@@ -66,20 +66,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .collect();
+    let max_auto_join_zones: usize = env::var("NEXUS_WITNESS_MAX_AUTO_ZONES")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(128);
 
     tracing::info!(
-        "Starting Nexus Witness Node\n  Hostname: {}\n  Node ID: {}\n  Bind: {}\n  Data: {}\n  Federation zones: {:?}",
+        "Starting Nexus Witness Node\n  Hostname: {}\n  Node ID: {}\n  Bind: {}\n  Data: {}\n  Federation zones: {:?}\n  Max auto-join zones: {}",
         hostname,
         node_id,
         bind_addr,
         data_path.display(),
         federation_zones,
+        max_auto_join_zones,
     );
 
     #[cfg(all(feature = "grpc", has_protos))]
     {
         use _nexus_raft::transport::{
-            NodeAddress, RaftWitnessServer, ServerConfig, WitnessZoneRegistry,
+            parse_join_token, NodeAddress, RaftWitnessServer, ServerConfig, WitnessZoneRegistry,
         };
 
         let tls_dir = data_path.join("tls");
@@ -120,6 +126,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Create registry + zones
         let mut registry = WitnessZoneRegistry::new(data_path.clone(), node_id, tls_config.clone());
         registry.set_peers(peers.clone());
+        registry.set_max_auto_join_zones(max_auto_join_zones);
         let registry = Arc::new(registry);
         let runtime_handle = tokio::runtime::Handle::current();
 
@@ -149,15 +156,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Token is file-only (no env var) — consistent with file-based design.
         if needs_bootstrap && !peers.is_empty() {
             let token_path = tls_dir.join("join-token");
-            let password = if token_path.exists() {
+            let join_token = if token_path.exists() {
                 let token = std::fs::read_to_string(&token_path).unwrap_or_default();
-                let token = token.trim();
-                if let Some(body) = token.strip_prefix("K10") {
-                    body.split("::server:").next().unwrap_or("").to_string()
-                } else {
-                    tracing::warn!("Join token file has invalid format (expected K10...)");
-                    String::new()
+                let token = token.trim().to_string();
+                if token.is_empty() {
+                    tracing::warn!("Join token file is empty: {}", token_path.display());
                 }
+                token
             } else {
                 tracing::warn!(
                     "No join token at {} — cannot provision TLS certs",
@@ -166,17 +171,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 String::new()
             };
 
-            if !password.is_empty() {
-                let tls_dir_bg = tls_dir.clone();
-                let peers_bg = peers.clone();
-                let my_addr = peers
-                    .iter()
-                    .find(|p| p.id == node_id)
-                    .map(|p| p.endpoint.clone())
-                    .unwrap_or_else(|| format!("http://{}", bind_addr));
-                tokio::spawn(async move {
-                    tls_bootstrap_loop(node_id, &my_addr, &peers_bg, &tls_dir_bg, &password).await;
-                });
+            if !join_token.is_empty() {
+                let parsed = match parse_join_token(&join_token) {
+                    Ok(parsed) => Some(parsed),
+                    Err(e) => {
+                        tracing::warn!("Join token file has invalid format: {}", e);
+                        None
+                    }
+                };
+                if let Some(parsed) = parsed {
+                    let password = parsed.password;
+                    let expected_ca_fingerprint = parsed.ca_fingerprint;
+                    let tls_dir_bg = tls_dir.clone();
+                    let peers_bg = peers.clone();
+                    let my_addr = peers
+                        .iter()
+                        .find(|p| p.id == node_id)
+                        .map(|p| p.endpoint.clone())
+                        .unwrap_or_else(|| format!("http://{}", bind_addr));
+                    tokio::spawn(async move {
+                        tls_bootstrap_loop(
+                            node_id,
+                            &my_addr,
+                            &peers_bg,
+                            &tls_dir_bg,
+                            &password,
+                            &expected_ca_fingerprint,
+                        )
+                        .await;
+                    });
+                }
             }
         }
 
@@ -240,6 +264,7 @@ async fn tls_bootstrap_loop(
     peers: &[_nexus_raft::transport::NodeAddress],
     tls_dir: &std::path::Path,
     password: &str,
+    expected_ca_fingerprint: &str,
 ) {
     use _nexus_raft::transport::call_join_cluster;
 
@@ -272,6 +297,29 @@ async fn tls_bootstrap_loop(
             .await
             {
                 Ok(result) => {
+                    let ca_fingerprint =
+                        match _nexus_raft::transport::ca_fingerprint_from_pem(&result.ca_pem) {
+                            Ok(fingerprint) => fingerprint,
+                            Err(e) => {
+                                tracing::warn!(
+                                "TLS bootstrap: failed to compute CA fingerprint from peer {}: {}",
+                                peer.id,
+                                e
+                            );
+                                continue;
+                            }
+                        };
+
+                    if ca_fingerprint != expected_ca_fingerprint {
+                        tracing::error!(
+                            "TLS bootstrap: CA fingerprint mismatch from peer {} (expected '{}', got '{}')",
+                            peer.id,
+                            expected_ca_fingerprint,
+                            ca_fingerprint
+                        );
+                        continue;
+                    }
+
                     // Save certs to disk
                     std::fs::create_dir_all(tls_dir).expect("create tls dir");
                     std::fs::write(tls_dir.join("ca.pem"), &result.ca_pem).expect("write CA");

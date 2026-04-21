@@ -31,9 +31,17 @@ use protobuf::Message as ProtobufV2Message;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use tokio::task::JoinHandle;
 use tonic::{Request, Response, Status};
+
+/// Versioned contract for forwarded raw-result encoding.
+const FORWARDED_RESULT_PROTOCOL_VERSION: &str = "nexus-raft-forward-v1";
+
+/// Default safety cap for witness dynamic auto-join zone creation.
+const DEFAULT_WITNESS_MAX_AUTO_JOIN_ZONES: usize = 128;
+/// Marker file created for zones admitted via dynamic witness auto-join.
+const WITNESS_AUTO_JOIN_MARKER_FILE: &str = ".witness_auto_join";
 
 /// Configuration for Raft transport server.
 #[derive(Debug, Clone)]
@@ -346,8 +354,6 @@ async fn parse_and_step_message<S: crate::raft::StateMachine + Send + Sync + 'st
     }))
 }
 
-/// Check that a sender node is a known member of a zone.
-///
 /// Extract hostnames from a node_address for cert SAN inclusion.
 ///
 /// Parses addresses like "http://nexus-1:2126" or "0.0.0.0:2126" and returns
@@ -371,10 +377,10 @@ fn extract_hostnames(node_address: &str) -> Vec<String> {
     vec![host.to_string()]
 }
 
-/// Soft check: if the peer list is unavailable (e.g. during bootstrap), the
-/// request is allowed.  This prevents rogue nodes from injecting Raft messages
-/// for zones they don't belong to (CockroachDB/etcd pattern: zone auth at app
-/// layer, node identity at TLS layer).
+/// Check that a sender node is a known member of a zone.
+///
+/// This check is fail-closed: if peer membership is unavailable or empty,
+/// remote senders are rejected.
 #[allow(clippy::result_large_err)]
 fn check_zone_membership(
     registry: &ZoneRaftRegistry,
@@ -382,14 +388,43 @@ fn check_zone_membership(
     sender_node_id: u64,
 ) -> std::result::Result<(), Status> {
     if let Some(peers) = registry.get_peers(zone_id) {
-        if !peers.is_empty() && !peers.contains_key(&sender_node_id) {
+        if !peers.is_empty() {
+            if peers.contains_key(&sender_node_id) {
+                return Ok(());
+            }
+
+            if sender_in_persisted_conf_state(registry, zone_id, sender_node_id) {
+                tracing::warn!(
+                    zone = zone_id,
+                    sender = sender_node_id,
+                    "Accepted sender from persisted ConfState despite runtime peer map mismatch"
+                );
+                return Ok(());
+            }
+
             return Err(Status::permission_denied(format!(
                 "node {} is not a member of zone '{}'",
                 sender_node_id, zone_id,
             )));
         }
     }
-    Ok(())
+
+    if sender_in_persisted_conf_state(registry, zone_id, sender_node_id) {
+        return Ok(());
+    }
+
+    Err(Status::permission_denied(format!(
+        "zone '{}' membership unavailable; rejecting sender {}",
+        zone_id, sender_node_id
+    )))
+}
+
+fn sender_in_persisted_conf_state(
+    registry: &ZoneRaftRegistry,
+    zone_id: &str,
+    sender_node_id: u64,
+) -> bool {
+    registry.is_persisted_member_fresh(zone_id, sender_node_id)
 }
 
 // =============================================================================
@@ -566,6 +601,7 @@ impl ZoneApiService for ZoneApiServiceImpl {
                         leader_address: None,
                         result: None,
                         applied_index: 0,
+                        raw_result: Vec::new(),
                     }));
                 }
             }
@@ -579,6 +615,7 @@ impl ZoneApiService for ZoneApiServiceImpl {
                         leader_address: None,
                         result: None,
                         applied_index: 0,
+                        raw_result: Vec::new(),
                     }));
                 }
             };
@@ -592,6 +629,7 @@ impl ZoneApiService for ZoneApiServiceImpl {
                         leader_address: None,
                         result: None,
                         applied_index: 0,
+                        raw_result: Vec::new(),
                     }));
                 }
             }
@@ -619,12 +657,16 @@ impl ZoneApiService for ZoneApiServiceImpl {
         match result {
             Ok(result) => {
                 let proto_result = command_result_to_proto(&result);
+                let raw_result = bincode::serialize(&result).map_err(|e| {
+                    Status::internal(format!("Failed to serialize command result: {}", e))
+                })?;
                 Ok(Response::new(ProposeResponse {
                     success: true,
                     error: None,
                     leader_address: None,
                     result: Some(proto_result),
                     applied_index: 0,
+                    raw_result,
                 }))
             }
             Err(RaftError::NotLeader { leader_hint }) => {
@@ -637,6 +679,7 @@ impl ZoneApiService for ZoneApiServiceImpl {
                     leader_address: addr,
                     result: None,
                     applied_index: 0,
+                    raw_result: Vec::new(),
                 }))
             }
             Err(e) => Ok(Response::new(ProposeResponse {
@@ -645,6 +688,7 @@ impl ZoneApiService for ZoneApiServiceImpl {
                 leader_address: None,
                 result: None,
                 applied_index: 0,
+                raw_result: Vec::new(),
             })),
         }
     }
@@ -848,6 +892,8 @@ impl ZoneApiService for ZoneApiServiceImpl {
             }),
             is_leader,
             leader_address: leader_addr,
+            supports_raw_result: true,
+            protocol_version: FORWARDED_RESULT_PROTOCOL_VERSION.to_string(),
         }))
     }
 
@@ -1089,6 +1135,7 @@ impl ZoneApiService for ZoneApiServiceImpl {
 /// A single witness zone entry.
 struct WitnessZoneEntry {
     node: ZoneConsensus<WitnessStateMachine>,
+    peers: super::SharedPeerMap,
     shutdown_tx: tokio::sync::watch::Sender<bool>,
     _transport_handle: JoinHandle<()>,
 }
@@ -1100,11 +1147,16 @@ struct WitnessZoneEntry {
 /// state machine entries or serves reads.
 pub struct WitnessZoneRegistry {
     zones: DashMap<String, WitnessZoneEntry>,
+    auto_joined_zones: DashMap<String, ()>,
     base_path: PathBuf,
     node_id: u64,
     tls: Arc<RwLock<Option<super::TlsConfig>>>,
     /// Cluster peer addresses — used by auto_join_zone() for transport routing.
     peers: Vec<NodeAddress>,
+    /// Safety cap to prevent unbounded dynamic zone creation.
+    max_auto_join_zones: usize,
+    /// Serializes auto-join admission so zone cap checks are race-free.
+    auto_join_lock: Mutex<()>,
 }
 
 impl WitnessZoneRegistry {
@@ -1112,16 +1164,57 @@ impl WitnessZoneRegistry {
     pub fn new(base_path: PathBuf, node_id: u64, tls: Option<super::TlsConfig>) -> Self {
         Self {
             zones: DashMap::new(),
+            auto_joined_zones: DashMap::new(),
             base_path,
             node_id,
             tls: Arc::new(RwLock::new(tls)),
             peers: Vec::new(),
+            max_auto_join_zones: DEFAULT_WITNESS_MAX_AUTO_JOIN_ZONES,
+            auto_join_lock: Mutex::new(()),
         }
     }
 
     /// Set the cluster peer addresses (called after parsing NEXUS_PEERS).
     pub fn set_peers(&mut self, peers: Vec<NodeAddress>) {
         self.peers = peers;
+    }
+
+    /// Set safety cap for dynamic auto-join zone creation.
+    pub fn set_max_auto_join_zones(&mut self, max_auto_join_zones: usize) {
+        self.max_auto_join_zones = max_auto_join_zones.max(1);
+    }
+
+    fn count_persisted_auto_joined_zones(&self) -> usize {
+        std::fs::read_dir(&self.base_path)
+            .ok()
+            .into_iter()
+            .flat_map(|entries| entries.flatten())
+            .filter_map(|entry| {
+                let file_type = entry.file_type().ok()?;
+                if !file_type.is_dir() {
+                    return None;
+                }
+                Some(entry.path().join(WITNESS_AUTO_JOIN_MARKER_FILE).exists())
+            })
+            .filter(|is_auto_joined| *is_auto_joined)
+            .count()
+    }
+
+    /// Whether witness transport has TLS authentication enabled.
+    pub fn is_tls_enabled(&self) -> bool {
+        self.tls.read().unwrap().is_some()
+    }
+
+    /// Check whether a Raft sender ID is a configured cluster peer.
+    pub fn is_known_peer(&self, peer_id: u64) -> bool {
+        if self.peers.iter().any(|peer| peer.id == peer_id) {
+            return true;
+        }
+
+        self.zones.iter().any(|entry| {
+            let peers = entry.peers.read().unwrap();
+            peers.contains_key(&peer_id)
+        })
     }
 
     /// Create a witness Raft group for a zone (static bootstrap).
@@ -1166,8 +1259,42 @@ impl WitnessZoneRegistry {
     ) -> Result<ZoneConsensus<WitnessStateMachine>> {
         use crate::raft::RaftConfig;
 
+        let _guard = self.auto_join_lock.lock().unwrap();
+
         if let Some(existing) = self.zones.get(zone_id) {
             return Ok(existing.node.clone());
+        }
+
+        let zone_path = self.base_path.join(zone_id);
+        let has_persisted_state = zone_path.join("raft").exists();
+        let marker_path = zone_path.join(WITNESS_AUTO_JOIN_MARKER_FILE);
+        let is_known_dynamic_zone =
+            marker_path.exists() || self.auto_joined_zones.contains_key(zone_id);
+        if !has_persisted_state
+            && !is_known_dynamic_zone
+            && self.count_persisted_auto_joined_zones() >= self.max_auto_join_zones
+        {
+            return Err(TransportError::Connection(format!(
+                "Auto-join zone limit reached (limit={})",
+                self.max_auto_join_zones
+            )));
+        }
+
+        let mut created_marker = false;
+        if !marker_path.exists() {
+            std::fs::create_dir_all(&zone_path).map_err(|e| {
+                TransportError::Connection(format!(
+                    "Failed to create witness auto-join marker directory: {}",
+                    e
+                ))
+            })?;
+            std::fs::write(&marker_path, b"auto-joined").map_err(|e| {
+                TransportError::Connection(format!(
+                    "Failed to persist witness auto-join marker: {}",
+                    e
+                ))
+            })?;
+            created_marker = true;
         }
 
         // skip_bootstrap=true: empty ConfState, leader sends snapshot
@@ -1181,7 +1308,19 @@ impl WitnessZoneRegistry {
         };
 
         let peers: Vec<NodeAddress> = self.peers.clone();
-        self.setup_witness_zone(zone_id, config, peers, runtime_handle)
+        let handle = match self.setup_witness_zone(zone_id, config, peers, runtime_handle) {
+            Ok(handle) => handle,
+            Err(err) => {
+                if created_marker {
+                    let _ = std::fs::remove_file(&marker_path);
+                }
+                return Err(err);
+            }
+        };
+        if marker_path.exists() {
+            self.auto_joined_zones.insert(zone_id.to_string(), ());
+        }
+        Ok(handle)
     }
 
     /// Internal: open storage, create ZoneConsensus + driver, spawn transport loop, register zone.
@@ -1226,7 +1365,7 @@ impl WitnessZoneRegistry {
         };
         let transport_loop = TransportLoop::new(
             driver,
-            shared_peers,
+            shared_peers.clone(),
             RaftClientPool::with_config(client_config),
         )
         .with_zone_id(zone_id.to_string());
@@ -1244,6 +1383,7 @@ impl WitnessZoneRegistry {
             zone_id.to_string(),
             WitnessZoneEntry {
                 node: handle.clone(),
+                peers: shared_peers.clone(),
                 shutdown_tx,
                 _transport_handle: transport_handle,
             },
@@ -1268,6 +1408,7 @@ impl WitnessZoneRegistry {
             let _ = entry.shutdown_tx.send(true);
         }
         self.zones.clear();
+        self.auto_joined_zones.clear();
         tracing::info!("All witness zones shut down");
     }
 }
@@ -1353,11 +1494,27 @@ impl ZoneTransportService for WitnessServiceImpl {
         request: Request<StepMessageRequest>,
     ) -> std::result::Result<Response<StepMessageResponse>, Status> {
         let req = request.into_inner();
+        let parsed = raft::eraftpb::Message::parse_from_bytes(&req.message).map_err(|e| {
+            Status::invalid_argument(format!("Failed to deserialize witness raft message: {}", e))
+        })?;
+
+        if !self.registry.is_known_peer(parsed.from) {
+            return Err(Status::permission_denied(format!(
+                "Rejecting witness message for zone '{}' from unknown peer {}",
+                req.zone_id, parsed.from
+            )));
+        }
 
         // Route by zone_id — auto-join if zone not found (dynamic federation)
         let node = match self.registry.get_node(&req.zone_id) {
             Some(n) => n,
             None => {
+                if !self.registry.is_tls_enabled() {
+                    return Err(Status::permission_denied(
+                        "Witness auto-join requires mTLS-authenticated transport",
+                    ));
+                }
+
                 // Auto-join: create witness zone with skip_bootstrap=true.
                 // Leader will send snapshot with correct ConfState.
                 let handle = tokio::runtime::Handle::current();
@@ -1401,6 +1558,52 @@ mod tests {
         assert_eq!(config.max_message_size, 64 * 1024 * 1024);
     }
 
+    #[test]
+    fn test_check_zone_membership_fails_closed_when_zone_membership_unavailable() {
+        use tempfile::TempDir;
+        use tonic::Code;
+
+        let tmp_dir = TempDir::new().unwrap();
+        let registry = ZoneRaftRegistry::new(tmp_dir.path().to_path_buf(), 1);
+
+        let err = check_zone_membership(&registry, "root", 2).unwrap_err();
+        assert_eq!(err.code(), Code::PermissionDenied);
+    }
+
+    #[test]
+    fn test_check_zone_membership_rejects_local_sender_without_peer_map() {
+        use tempfile::TempDir;
+        use tonic::Code;
+
+        let tmp_dir = TempDir::new().unwrap();
+        let registry = ZoneRaftRegistry::new(tmp_dir.path().to_path_buf(), 1);
+
+        let err = check_zone_membership(&registry, "root", 1).unwrap_err();
+        assert_eq!(err.code(), Code::PermissionDenied);
+    }
+
+    #[test]
+    fn test_check_zone_membership_uses_persisted_conf_state_fallback() {
+        use raft::eraftpb::ConfState;
+        use tempfile::TempDir;
+
+        let tmp_dir = TempDir::new().unwrap();
+        let registry = ZoneRaftRegistry::new(tmp_dir.path().to_path_buf(), 1);
+
+        let zone_raft_path = tmp_dir.path().join("root").join("raft");
+        std::fs::create_dir_all(&zone_raft_path).unwrap();
+        let storage = crate::raft::RaftStorage::open(&zone_raft_path).unwrap();
+        storage
+            .set_conf_state(&ConfState {
+                voters: vec![1, 2],
+                ..Default::default()
+            })
+            .unwrap();
+        drop(storage);
+
+        assert!(check_zone_membership(&registry, "root", 2).is_ok());
+    }
+
     #[tokio::test]
     async fn test_zone_registry_server() {
         use tempfile::TempDir;
@@ -1418,6 +1621,71 @@ mod tests {
             server.bind_address(),
             "127.0.0.1:0".parse::<SocketAddr>().unwrap()
         );
+    }
+
+    #[tokio::test]
+    async fn test_witness_auto_join_zone_cap_enforced_under_concurrency() {
+        use tempfile::TempDir;
+
+        let tmp_dir = TempDir::new().unwrap();
+        let mut registry = WitnessZoneRegistry::new(tmp_dir.path().to_path_buf(), 1, None);
+        registry.set_max_auto_join_zones(1);
+        let registry = Arc::new(registry);
+        let handle1 = tokio::runtime::Handle::current();
+        let handle2 = tokio::runtime::Handle::current();
+
+        let (r1, r2) = tokio::join!(
+            async { registry.auto_join_zone("zone-a", &handle1).is_ok() },
+            async { registry.auto_join_zone("zone-b", &handle2).is_ok() }
+        );
+
+        assert_eq!(u8::from(r1) + u8::from(r2), 1);
+    }
+
+    #[tokio::test]
+    async fn test_witness_auto_join_cap_excludes_preconfigured_zones() {
+        use tempfile::TempDir;
+
+        let tmp_dir = TempDir::new().unwrap();
+        let mut registry = WitnessZoneRegistry::new(tmp_dir.path().to_path_buf(), 1, None);
+        registry.set_max_auto_join_zones(1);
+        let handle = tokio::runtime::Handle::current();
+
+        // Preconfigured zones should not consume dynamic auto-join budget.
+        assert!(registry.create_zone("root", vec![], &handle).is_ok());
+        assert!(registry.create_zone("federation", vec![], &handle).is_ok());
+
+        assert!(registry.auto_join_zone("zone-a", &handle).is_ok());
+        assert!(registry.auto_join_zone("zone-b", &handle).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_witness_auto_join_reopens_persisted_zone_without_marker() {
+        use tempfile::TempDir;
+
+        let tmp_dir = TempDir::new().unwrap();
+        let handle = tokio::runtime::Handle::current();
+
+        {
+            let mut registry = WitnessZoneRegistry::new(tmp_dir.path().to_path_buf(), 1, None);
+            registry.set_max_auto_join_zones(1);
+            assert!(registry.auto_join_zone("zone-a", &handle).is_ok());
+            assert!(registry.auto_join_zone("legacy-zone", &handle).is_ok());
+        }
+
+        let legacy_marker = tmp_dir
+            .path()
+            .join("legacy-zone")
+            .join(WITNESS_AUTO_JOIN_MARKER_FILE);
+        std::fs::remove_file(&legacy_marker).unwrap();
+
+        let mut registry = WitnessZoneRegistry::new(tmp_dir.path().to_path_buf(), 1, None);
+        registry.set_max_auto_join_zones(1);
+
+        // Existing persisted zones must reopen even if marker migration is pending.
+        assert!(registry.auto_join_zone("legacy-zone", &handle).is_ok());
+        // Brand-new zones still respect the dynamic cap.
+        assert!(registry.auto_join_zone("zone-b", &handle).is_err());
     }
 
     // ---------------------------------------------------------------

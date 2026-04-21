@@ -55,6 +55,15 @@ pub enum RaftError {
     /// Transport error (gRPC forwarding failed).
     #[error("transport error: {0}")]
     Transport(String),
+
+    /// Command was committed but caller did not receive a decodable result.
+    #[error("command committed at index {applied_index} but result is undecodable: {details}")]
+    CommittedUnknown {
+        /// Applied log index reported by the leader.
+        applied_index: u64,
+        /// Human-readable reconciliation guidance.
+        details: String,
+    },
 }
 
 impl From<crate::storage::StorageError> for RaftError {

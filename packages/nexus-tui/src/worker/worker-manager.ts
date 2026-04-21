@@ -20,6 +20,8 @@ import type { ToWorkerMessage } from "./protocol.js";
 const MAX_RESTARTS = 5;
 /** Backoff delays indexed by restart attempt (capped at last value). */
 const RESTART_BACKOFF_MS = [0, 500, 1_000, 2_000, 5_000] as const;
+/** Healthy-window duration before restart counter resets. */
+const RESTART_RESET_WINDOW_MS = 30_000;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -46,6 +48,29 @@ export function createWorkerManager(initialConfig: NexusClientOptions): WorkerMa
   let currentWorker: Worker | null = null;
   let restartCount = 0;
   let terminated = false;
+  let restartScheduled = false;
+  let restartTimer: ReturnType<typeof setTimeout> | null = null;
+  let restartResetTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function clearRestartResetTimer(): void {
+    if (restartResetTimer !== null) {
+      clearTimeout(restartResetTimer);
+      restartResetTimer = null;
+    }
+  }
+
+  function scheduleRestartReset(readyPromise: Promise<void>): void {
+    void readyPromise.then(() => {
+      if (terminated) return;
+      clearRestartResetTimer();
+      restartResetTimer = setTimeout(() => {
+        restartCount = 0;
+        restartResetTimer = null;
+      }, RESTART_RESET_WINDOW_MS);
+    }).catch(() => {
+      // Worker failed before ready; no reset scheduling needed.
+    });
+  }
 
   // ─── Spawn helpers ──────────────────────────────────────────────────────────
 
@@ -72,13 +97,13 @@ export function createWorkerManager(initialConfig: NexusClientOptions): WorkerMa
     worker.onerror = (event) => {
       if (terminated) return;
       console.error("[nexus-tui worker] Uncaught error:", event.message ?? event);
-      handleCrash();
+      handleCrash(worker);
     };
 
     // Bun workers emit 'close' event (not 'exit') on termination
     worker.addEventListener("close", () => {
       if (terminated) return;
-      handleCrash();
+      handleCrash(worker);
     });
 
     worker.postMessage({ type: "init", config: currentConfig } satisfies ToWorkerMessage);
@@ -88,8 +113,11 @@ export function createWorkerManager(initialConfig: NexusClientOptions): WorkerMa
 
   // ─── Crash recovery ─────────────────────────────────────────────────────────
 
-  function handleCrash(): void {
+  function handleCrash(sourceWorker: Worker): void {
     if (terminated) return;
+    if (sourceWorker !== currentWorker) return;
+    if (restartScheduled) return;
+    clearRestartResetTimer();
 
     // Reject all pending requests on the crashed client
     client._rejectAll(new Error("Worker crashed — request failed"));
@@ -110,17 +138,23 @@ export function createWorkerManager(initialConfig: NexusClientOptions): WorkerMa
       (delay > 0 ? ` after ${delay}ms` : ""),
     );
 
-    // Use queueMicrotask so restarts fire within the current microtask queue
-    // drain — this makes the restart immediately observable to callers without
-    // needing a real timer tick. The `delay` is retained above for logging;
-    // a proper time-based exponential-backoff strategy can be wired in later
-    // without changing the observable restart semantics used by tests.
-    queueMicrotask(() => {
+    restartScheduled = true;
+
+    const restart = () => {
+      restartScheduled = false;
+      restartTimer = null;
       if (terminated) return;
       const { worker: newWorker, readyPromise: newReady } = spawn();
       currentWorker = newWorker;
       client._rewire(newWorker, newReady);
-    });
+      scheduleRestartReset(newReady);
+    };
+
+    if (delay <= 0) {
+      queueMicrotask(restart);
+    } else {
+      restartTimer = setTimeout(restart, delay);
+    }
   }
 
   // ─── Bootstrap ──────────────────────────────────────────────────────────────
@@ -128,11 +162,7 @@ export function createWorkerManager(initialConfig: NexusClientOptions): WorkerMa
   const { worker: initialWorker, readyPromise: initialReady } = spawn();
   currentWorker = initialWorker;
   const client = new WorkerFetchClient(initialWorker, initialReady);
-
-  // Reset the restart counter after the worker stays healthy for 30s
-  void initialReady.then(() => {
-    restartCount = 0;
-  });
+  scheduleRestartReset(initialReady);
 
   // ─── Public API ─────────────────────────────────────────────────────────────
 
@@ -146,6 +176,12 @@ export function createWorkerManager(initialConfig: NexusClientOptions): WorkerMa
 
     terminate(): void {
       terminated = true;
+      if (restartTimer !== null) {
+        clearTimeout(restartTimer);
+        restartTimer = null;
+      }
+      clearRestartResetTimer();
+      restartScheduled = false;
       currentWorker?.terminate();
       currentWorker = null;
     },

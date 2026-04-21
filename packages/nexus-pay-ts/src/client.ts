@@ -112,6 +112,11 @@ export class NexusPay {
       );
     }
 
+    for (const transfer of transfers) {
+      validateRecipient(transfer.to);
+      validateAmount(transfer.amount);
+    }
+
     const body = {
       transfers: transfers.map((t) => ({
         to: t.to,
@@ -151,6 +156,8 @@ export class NexusPay {
     params?: CommitParams,
     options?: RequestOptions,
   ): Promise<void> {
+    validateReservationId(reservationId);
+
     const body = {
       actual_amount: params?.actualAmount,
     };
@@ -163,6 +170,8 @@ export class NexusPay {
   }
 
   async release(reservationId: string, options?: RequestOptions): Promise<void> {
+    validateReservationId(reservationId);
+
     await this.client.postNoContent(
       `/api/v2/pay/reserve/${encodeURIComponent(reservationId)}/release`,
       undefined,
@@ -232,6 +241,12 @@ function validateAmountNonEmpty(amount: string): void {
 function validateRecipient(to: string): void {
   if (!to) {
     throw new NexusPayError("Recipient 'to' must not be empty", 0, "validation_error");
+  }
+}
+
+function validateReservationId(reservationId: string): void {
+  if (!reservationId) {
+    throw new NexusPayError("Reservation ID must not be empty", 0, "validation_error");
   }
 }
 

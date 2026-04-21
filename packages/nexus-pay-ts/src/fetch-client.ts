@@ -42,9 +42,12 @@ export class FetchClient extends BaseFetchClient {
    * 409 → ReservationError (overrides generic ConflictError)
    */
   protected override async buildError(response: Response): Promise<NexusApiError> {
+    // Read from a clone so super.buildError() can still parse the original body
+    // for non-pay statuses (401, 429, 5xx, etc.).
+    const responseForPayMapping = response.clone();
     let message: string;
     try {
-      const body = (await response.json()) as { detail?: string };
+      const body = (await responseForPayMapping.json()) as { detail?: string };
       message = body.detail ?? `HTTP ${response.status}`;
     } catch {
       message = `HTTP ${response.status}`;

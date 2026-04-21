@@ -380,6 +380,17 @@ class TestBackendFactoryErrorPaths:
             with pytest.raises(ImportError, match="boto3"):
                 create_backend(spec)
 
+    def test_local_uri_preserves_path_separators(self, tmp_path: Path) -> None:
+        """local:// URIs should map to the exact requested local root path."""
+        from nexus.fs._backend_factory import create_backend
+        from nexus.fs._uri import parse_uri
+
+        target = tmp_path / "nested" / "data"
+        spec = parse_uri(f"local://{target}")
+        backend = create_backend(spec)
+
+        assert getattr(backend, "root_path", None) == target.resolve()
+
 
 class TestLocalSchemePassthrough:
     """Guardrails for the ``local://`` passthrough-by-default behaviour.

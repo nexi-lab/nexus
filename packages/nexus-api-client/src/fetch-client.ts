@@ -130,7 +130,7 @@ export class FetchClient {
         signal: controller.signal,
       });
     } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") {
+      if (isAbortError(error)) {
         if (userSignal?.aborted) {
           throw new AbortError("Request aborted");
         }
@@ -263,7 +263,7 @@ export class FetchClient {
         signal: controller.signal,
       });
     } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") {
+      if (isAbortError(error)) {
         if (userSignal?.aborted) {
           throw new AbortError("Request aborted");
         }
@@ -379,8 +379,11 @@ export class FetchClient {
       return await this.get<AspectEnvelope>(
         `/api/v2/aspects/${encodeURIComponent(urn)}/${encodeURIComponent(name)}`,
       );
-    } catch {
-      return null;
+    } catch (error) {
+      if (error instanceof NotFoundError) {
+        return null;
+      }
+      throw error;
     }
   }
 
@@ -424,6 +427,18 @@ export class FetchClient {
     const qs = params.toString();
     return this.get<ReplayResponse>(`/api/v2/ops/replay${qs ? `?${qs}` : ""}`);
   }
+}
+
+function isAbortError(error: unknown): boolean {
+  if (typeof DOMException !== "undefined" && error instanceof DOMException) {
+    return error.name === "AbortError";
+  }
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "name" in error &&
+    (error as { name?: unknown }).name === "AbortError"
+  );
 }
 
 function sleep(ms: number): Promise<void> {

@@ -279,6 +279,8 @@ class NexusFileSystem(AbstractFileSystem):
         """Write data to a file."""
         path = self._strip_protocol(path)
         self._nexus.write(path, value)
+        # Mutations invalidate directory listings and metadata cache.
+        self.dircache.clear()
 
     # -- Delete ----------------------------------------------------------------
 
@@ -297,6 +299,8 @@ class NexusFileSystem(AbstractFileSystem):
             self._nexus.rmdir(path, recursive=recursive)
         else:
             self._nexus.delete(path)
+        # Mutations invalidate directory listings and metadata cache.
+        self.dircache.clear()
 
     # -- Copy ------------------------------------------------------------------
 
@@ -305,6 +309,8 @@ class NexusFileSystem(AbstractFileSystem):
         path1 = self._strip_protocol(path1)
         path2 = self._strip_protocol(path2)
         self._nexus.copy(path1, path2)
+        # Mutations invalidate directory listings and metadata cache.
+        self.dircache.clear()
 
     # -- Directories -----------------------------------------------------------
 

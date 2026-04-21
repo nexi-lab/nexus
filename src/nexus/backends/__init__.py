@@ -33,6 +33,13 @@ from nexus.core.object_store import ObjectStoreABC, WriteResult
 _OPTIONAL_BACKENDS: dict[str, tuple[str, str]] = {}
 
 
+# NOTE: the legacy `*CLIConnector` aliases (GmailCLIConnector,
+# CalendarCLIConnector, SheetsCLIConnector, DocsCLIConnector,
+# ChatCLIConnector, DriveCLIConnector, GitHubCLIConnector) from the
+# pre-Task-4 hardcoded dict were dropped — no remaining consumers
+# reference them. Reach the same classes via their real names
+# (GmailConnector, CalendarConnector, etc.) or via
+# ConnectorRegistry.get_info(<name>).connector_class.
 def _populate_optional_backends_map() -> None:
     """Populate _OPTIONAL_BACKENDS from the manifest (one-time)."""
     from nexus.backends._manifest import CONNECTOR_MANIFEST

@@ -990,3 +990,9 @@ class TestPlaceholderRegistration:
         assert info.category == "oauth"
         assert info.runtime_deps == (PythonDep("json"),)
         assert info.service_name == "svc"
+        # Class-derived fields from the existing (decorator-bound) entry preserved.
+        assert info.user_scoped is False
+        assert info.backend_features == frozenset()
+        # DummyBackend.CONNECTION_ARGS produces a non-trivial config_mapping;
+        # confirm it's preserved (not wiped to {}).
+        assert info.config_mapping  # non-empty

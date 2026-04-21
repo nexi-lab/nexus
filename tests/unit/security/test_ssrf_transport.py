@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+import httpcore
 import httpx
 import pytest
 
@@ -67,7 +68,7 @@ class TestPinnedResolverBackend:
 
         transport = PinnedResolverTransport(validated_url)
 
-        with patch.object(transport.network_backend, "connect_tcp", side_effect=fake_connect_tcp):
+        with patch.object(transport._inner_backend, "connect_tcp", side_effect=fake_connect_tcp):
             async with httpx.AsyncClient(transport=transport) as client:
                 with pytest.raises(httpx.ConnectError):
                     await client.get("https://example.com/")
@@ -86,15 +87,17 @@ class TestPinnedResolverBackend:
 
         async def fake_connect_tcp(host: str, port: int, **kw):
             attempts.append(host)
-            raise httpx.ConnectError("simulated")
+            # Raise the httpcore-layer error that _PinnedBackend retries on,
+            # so the wrapper cycles through every pinned IP before giving up.
+            raise httpcore.ConnectError("simulated")
 
-        with patch.object(transport.network_backend, "connect_tcp", side_effect=fake_connect_tcp):
+        with patch.object(transport._inner_backend, "connect_tcp", side_effect=fake_connect_tcp):
             async with httpx.AsyncClient(transport=transport) as client:
                 with pytest.raises(httpx.ConnectError):
                     await client.get("https://example.com/")
 
-        assert all(a in {"93.184.216.34", "93.184.216.35"} for a in attempts)
-        assert len(attempts) >= 1
+        assert len(attempts) == 2
+        assert set(attempts) == {"93.184.216.34", "93.184.216.35"}
 
 
 class TestMakePinnedClientFactory:

@@ -38,13 +38,11 @@ class _PinnedBackend(httpcore.AsyncNetworkBackend):
         self,
         inner: httpcore.AsyncNetworkBackend,
         pinned_ips: list[str],
-        server_hostname: str,
     ) -> None:
         if not pinned_ips:
             raise ValueError("pinned_ips must be non-empty")
         self._inner = inner
         self._pinned_ips = pinned_ips
-        self._server_hostname = server_hostname
         self._cycle = itertools.cycle(pinned_ips)
 
     async def connect_tcp(
@@ -92,10 +90,9 @@ class PinnedResolverTransport(AsyncHTTPTransport):
             are restricted to.
         server_hostname: The original hostname from ``validated`` - used
             for logging and exposed for tests.
-        network_backend: The underlying default ``httpcore`` network
-            backend that actually opens sockets. Exposed so tests can
-            patch ``connect_tcp`` to observe the pinned IP that our
-            wrapper forwards into it.
+        pinned_backend: The wrapping backend that rewrites TCP connect
+            destinations to validated IPs; installed on the internal
+            httpx pool in place of the default backend.
     """
 
     def __init__(self, validated: ValidatedURL, **kwargs: Any) -> None:
@@ -110,15 +107,15 @@ class PinnedResolverTransport(AsyncHTTPTransport):
         # forwards into the original default backend.
         pool = self._pool
         default_backend = pool._network_backend
-        # Expose the *inner* default backend so tests can patch
-        # ``connect_tcp`` and observe the pinned IP our wrapper passes in.
-        self.network_backend: httpcore.AsyncNetworkBackend = default_backend
-        self._pinned_backend = _PinnedBackend(
+        # Private test seam: the inner default backend that our wrapper
+        # forwards into. Tests patch its ``connect_tcp`` to observe the
+        # pinned IP the wrapper passes in.
+        self._inner_backend: httpcore.AsyncNetworkBackend = default_backend
+        self.pinned_backend = _PinnedBackend(
             inner=default_backend,
             pinned_ips=self.pinned_ips,
-            server_hostname=self.server_hostname,
         )
-        pool._network_backend = self._pinned_backend
+        pool._network_backend = self.pinned_backend
 
 
 PinnedClientFactory = Callable[

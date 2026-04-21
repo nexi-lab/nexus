@@ -659,6 +659,8 @@ def export_zone(
 @click.option(
     "-t",
     "--target-zone",
+    "--zone-id",
+    "target_zone",
     default=None,
     help="Remap to different zone ID (default: preserve original)",
 )

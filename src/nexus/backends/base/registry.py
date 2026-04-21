@@ -364,7 +364,32 @@ class ConnectorRegistry:
         manifest metadata). If the import fails, the placeholder remains
         — ``BackendFactory.create()`` will raise ``MissingDependencyError``
         with the manifest's install hints.
+
+        If a prior direct import already bound the class (e.g., test code
+        running ``from nexus.backends.storage.cas_local import CASLocalBackend``
+        before ``_register_optional_backends()``), preserve the class
+        binding and backfill manifest metadata on top. This keeps the
+        manifest authoritative for metadata without losing the already-bound
+        class.
         """
+        existing = cls._base.get(entry.name)
+        if existing is not None and existing.connector_class is not None:
+            # Already bound by a prior direct import. Preserve the class
+            # and its derived fields; backfill manifest metadata.
+            merged = ConnectorInfo(
+                name=entry.name,
+                connector_class=existing.connector_class,
+                description=entry.description,
+                category=entry.category,
+                user_scoped=existing.user_scoped,
+                config_mapping=existing.config_mapping,
+                service_name=entry.service_name,
+                backend_features=existing.backend_features,
+                runtime_deps=entry.runtime_deps,
+            )
+            cls._base.register(entry.name, merged, allow_overwrite=True)
+            return
+
         info = ConnectorInfo(
             name=entry.name,
             connector_class=None,

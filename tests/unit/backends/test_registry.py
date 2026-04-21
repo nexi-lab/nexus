@@ -952,3 +952,41 @@ class TestPlaceholderRegistration:
                 "no warning expected when decorator passes only name; "
                 f"got: {[str(w.message) for w in manifest_warnings]}"
             )
+
+    def test_register_placeholder_preserves_already_bound_class(self) -> None:
+        """When a connector module was imported before _register_optional_backends
+        runs, the placeholder pass must not wipe the bound class — it must
+        backfill manifest metadata on top."""
+        from nexus.backends._manifest import ConnectorManifestEntry
+        from nexus.backends.base.registry import (
+            ConnectorRegistry,
+            register_connector,
+        )
+        from nexus.backends.base.runtime_deps import PythonDep
+
+        # Simulate a direct import binding the class first (no placeholder
+        # exists yet; hits the external-plugin branch of register()).
+        @register_connector("preexisting", description="from decorator", category="storage")
+        class PreExisting(DummyBackend):
+            pass
+
+        # Now manifest-driven Phase 1 runs.
+        entry = ConnectorManifestEntry(
+            name="preexisting",
+            module_path="nowhere.real",
+            class_name="PreExisting",
+            description="from manifest",
+            category="oauth",
+            runtime_deps=(PythonDep("json"),),
+            service_name="svc",
+        )
+        ConnectorRegistry.register_placeholder(entry)
+
+        info = ConnectorRegistry.get_info("preexisting")
+        # Class binding preserved.
+        assert info.connector_class is PreExisting
+        # Manifest metadata backfilled (wins over decorator values).
+        assert info.description == "from manifest"
+        assert info.category == "oauth"
+        assert info.runtime_deps == (PythonDep("json"),)
+        assert info.service_name == "svc"

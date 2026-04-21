@@ -261,3 +261,50 @@ class TestMixedResolution:
             ]
             with pytest.raises(SSRFBlocked):
                 validate_outbound_url("http://split-horizon.example.com/")
+
+
+class TestAllowPrivateKwarg:
+    """allow_private=True lets RFC1918/ULA through, but not metadata."""
+
+    def test_private_allowed_when_flag_set(self) -> None:
+        with patch("socket.getaddrinfo") as mock_dns:
+            mock_dns.return_value = [(2, 1, 6, "", ("10.0.0.1", 80))]
+            result = validate_outbound_url("http://dev-internal/", allow_private=True)
+            assert "10.0.0.1" in result.resolved_ips
+
+    def test_loopback_still_blocked_when_flag_set(self) -> None:
+        with patch("socket.getaddrinfo") as mock_dns:
+            mock_dns.return_value = [(2, 1, 6, "", ("127.0.0.1", 80))]
+            with pytest.raises(SSRFBlocked):
+                validate_outbound_url("http://local/", allow_private=True)
+
+    def test_metadata_still_blocked_when_flag_set(self) -> None:
+        with patch("socket.getaddrinfo") as mock_dns:
+            mock_dns.return_value = [(2, 1, 6, "", ("169.254.169.254", 80))]
+            with pytest.raises(SSRFBlocked) as excinfo:
+                validate_outbound_url("http://meta/", allow_private=True)
+            # Link-local is not "private", so still blocked
+            assert excinfo.value.reason in {"cloud_metadata", "blocked_network"}
+
+
+class TestExtraDenyCidrs:
+    """extra_deny_cidrs adds operator-specific blocked ranges."""
+
+    def test_custom_cidr_blocked(self) -> None:
+        with patch("socket.getaddrinfo") as mock_dns:
+            mock_dns.return_value = [(2, 1, 6, "", ("203.0.113.50", 80))]
+            with pytest.raises(SSRFBlocked) as excinfo:
+                validate_outbound_url(
+                    "http://svcmesh.example.com/",
+                    extra_deny_cidrs=["203.0.113.0/24"],
+                )
+            assert excinfo.value.reason == "extra_deny_cidr"
+            assert excinfo.value.cidr == "203.0.113.0/24"
+
+    def test_no_match_passes(self) -> None:
+        with patch("socket.getaddrinfo") as mock_dns:
+            mock_dns.return_value = [(2, 1, 6, "", ("93.184.216.34", 443))]
+            result = validate_outbound_url(
+                "https://example.com/", extra_deny_cidrs=["203.0.113.0/24"]
+            )
+            assert result.url == "https://example.com/"

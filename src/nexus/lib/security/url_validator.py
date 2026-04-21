@@ -186,12 +186,12 @@ def validate_outbound_url(
 
     Args:
         url: The URL to validate.
-        allow_private: If True, skip RFC1918 / ULA private range checks.
-            Metadata and loopback are always blocked regardless. (Wired
-            in a later task — currently accepted but unused.)
+        allow_private: If True, permit RFC1918 (10/8, 172.16/12,
+            192.168/16) and ULA (fc00::/7) ranges. Metadata, loopback,
+            link-local, CGN, and other blocked ranges remain blocked
+            regardless.
         extra_deny_cidrs: Additional CIDRs to reject (e.g. internal
-            service mesh). Each entry must parse as an ip_network. (Wired
-            in a later task — currently accepted but unused.)
+            service mesh). Each entry must parse as an ip_network.
 
     Returns:
         ValidatedURL(url, resolved_ips, hostname).

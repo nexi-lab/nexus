@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
 from nexus.bricks.rebac.cache.path_trie import PathTrie
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
     from nexus.bricks.rebac.cache.enforcer_cache import PermissionCacheCoordinator
@@ -278,7 +279,7 @@ class BulkReBACStrategy:
             obj_type = "file"
             if ctx.router and not path.startswith("/workspace"):
                 try:
-                    route = ctx.router.route(path, zone_id=ctx.context.zone_id)
+                    route = ctx.router.route(path, zone_id=ctx.context.zone_id or ROOT_ZONE_ID)
                     # RouteResult no longer has .namespace — use mount_point as obj_type hint
                     if route.mount_point and route.mount_point != "/":
                         obj_type = route.mount_point.strip("/").split("/")[0]

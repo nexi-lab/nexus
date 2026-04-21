@@ -214,11 +214,13 @@ class TestFourStoragePillars:
         assert not missing, f"MetastoreABC missing abstract methods: {missing}"
 
     def test_metastore_implementations_exist(self):
-        """At least RaftMetadataStore implements MetastoreABC."""
-        from nexus.core.metastore import MetastoreABC
-        from nexus.storage.raft_metadata_store import RaftMetadataStore
+        """R20.18.5 renames the in-tree MetastoreABC implementer: the
+        legacy ``RaftMetadataStore`` class became a deprecation shim;
+        ``RustMetastoreProxy`` is the real implementation backing both
+        ``.embedded()`` and every kernel-wired mount."""
+        from nexus.core.metastore import MetastoreABC, RustMetastoreProxy
 
-        assert issubclass(RaftMetadataStore, MetastoreABC)
+        assert issubclass(RustMetastoreProxy, MetastoreABC)
 
     def test_no_old_name_in_codebase(self):
         """FileMetadataProtocol should not appear in src/ (clean rename)."""

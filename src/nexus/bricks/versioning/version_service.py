@@ -192,7 +192,7 @@ class VersionService:
             raise RuntimeError("Router not configured for VersionService")
 
         # Route to backend
-        zone_id = context.zone_id if context else ROOT_ZONE_ID
+        zone_id = (context.zone_id if context else None) or ROOT_ZONE_ID
 
         route = self.router.route(path, zone_id=zone_id)
 

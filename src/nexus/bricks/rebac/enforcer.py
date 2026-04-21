@@ -556,7 +556,7 @@ class PermissionEnforcer:
         if self.router:
             try:
                 # Route path to backend to get object type
-                route = self.router.route(path, zone_id=context.zone_id)
+                route = self.router.route(path, zone_id=context.zone_id or ROOT_ZONE_ID)
                 # PipeRouteResult / StreamRouteResult carry no backend — they
                 # dispatch to PipeManager / StreamManager, not to a storage
                 # backend. ObjectTypeMapper needs a backend, so skip it for

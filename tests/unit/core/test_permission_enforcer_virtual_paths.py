@@ -22,6 +22,7 @@ import pytest
 pytest.importorskip("pyroaring")
 
 from nexus.bricks.rebac.enforcer import PermissionEnforcer
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.types import OperationContext, Permission
 
 
@@ -54,8 +55,9 @@ class MockRouter:
     def __init__(self, mount_point: str = "/mnt/gcs"):
         self.mount_point = mount_point
 
-    def route(self, path: str):
+    def route(self, path: str, *, zone_id: str = ROOT_ZONE_ID):
         # Simulate mount point stripping
+        del zone_id  # production enforcer now passes zone_id; Mock ignores
         if path.startswith(self.mount_point):
             backend_path = path[len(self.mount_point) + 1 :]  # Strip /mnt/gcs/
             if not backend_path:

@@ -139,9 +139,6 @@ services:
       NEXUS_TXTAI_GRAPH: ${NEXUS_TXTAI_GRAPH:-false}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
-      # Zoekt
-      ZOEKT_ENABLED: ${ZOEKT_ENABLED:-false}
-      ZOEKT_URL: ${ZOEKT_URL:-http://zoekt:6070}
       # Sandbox
       NEXUS_SERVER_URL: http://nexus:2026
       NEXUS_DOCKER_NETWORK: ${COMPOSE_PROJECT_NAME:-nexus}_nexus-network
@@ -214,44 +211,6 @@ services:
       timeout: 5s
       retries: 5
       start_period: 5s
-    networks:
-      - nexus-network
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-  # ============================================================================
-  # Zoekt — Fast Code Search
-  # ============================================================================
-  zoekt:
-    # Build from Go source for native multi-arch support (amd64 + arm64).
-    # sourcegraph/zoekt-webserver only publishes amd64 images, which forces
-    # slow QEMU emulation on Apple Silicon. Building from source produces
-    # a native binary on any platform.
-    build:
-      context: ./dockerfiles
-      dockerfile: Dockerfile.zoekt
-    image: ${ZOEKT_IMAGE_REF:-ghcr.io/nexi-lab/nexus-zoekt:stable}
-    restart: unless-stopped
-    profiles:
-      - search
-    command: ["-index", "/index", "-listen", ":6070"]
-    environment:
-      ZOEKT_INDEX_DIR: /index
-      ZOEKT_DATA_DIR: /data
-    volumes:
-      - ${NEXUS_HOST_DATA_DIR:-./nexus-data}:/data
-      - zoekt-index:/index
-    ports:
-      - "${ZOEKT_PORT:-6070}:6070"
-    healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:6070/"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
     networks:
       - nexus-network
     logging:
@@ -403,8 +362,6 @@ volumes:
   postgres-wal-archive:
     driver: local
   dragonfly-data:
-    driver: local
-  zoekt-index:
     driver: local
   nats-data:
     driver: local

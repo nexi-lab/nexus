@@ -527,21 +527,6 @@ jobs:
           cache-from: type=registry,ref=ghcr.io/nexi-lab/nexus:buildcache-release-${{ matrix.variant }}
           cache-to: type=registry,ref=ghcr.io/nexi-lab/nexus:buildcache-release-${{ matrix.variant }},mode=max,ignore-error=true
 
-      # Zoekt sidecar — publish stable + versioned tags on release (CPU only)
-      - name: Build and push Zoekt sidecar
-        if: matrix.variant == 'cpu'
-        uses: docker/build-push-action@v6
-        with:
-          context: ./dockerfiles
-          file: dockerfiles/Dockerfile.zoekt
-          platforms: linux/amd64,linux/arm64
-          push: true
-          provenance: false
-          sbom: false
-          tags: ghcr.io/nexi-lab/nexus-zoekt:${{ steps.meta.outputs.version }},ghcr.io/nexi-lab/nexus-zoekt:stable,ghcr.io/nexi-lab/nexus-zoekt:latest
-          cache-from: type=registry,ref=ghcr.io/nexi-lab/nexus-zoekt:buildcache
-          cache-to: type=registry,ref=ghcr.io/nexi-lab/nexus-zoekt:buildcache,mode=max,ignore-error=true
-
   # GitHub Release is created ONLY after both PyPI and Docker succeed.
   # This is the user-visible "released" signal — without it, the version
   # doesn't appear on the releases page or trigger notifications.

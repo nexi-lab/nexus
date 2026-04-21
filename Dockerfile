@@ -6,27 +6,16 @@ ARG USE_CHINA_MIRROR=false
 ARG TORCH_VARIANT=cpu
 ARG NEXUS_TXTAI_USE_API_EMBEDDINGS=false
 
-# ---------- Stage 1: Build Zoekt binaries (independent, cached separately) ----------
-FROM golang:1.25 AS zoekt-builder
-ARG USE_CHINA_MIRROR
-RUN if [ "$USE_CHINA_MIRROR" = "true" ]; then \
-        go env -w GOPROXY=https://goproxy.cn,direct GOSUMDB=off; \
-    fi
-# Retry ``go install`` up to 3 times with exponential backoff: the Google
-# module proxy occasionally returns TLS handshake timeouts mid-dependency-
-# download (see develop CI run 24639873826), and those failures fail the
-# multi-arch image build for the whole day unless the job is rerun.
-RUN --mount=type=cache,target=/go/pkg/mod \
-    --mount=type=cache,target=/root/.cache/go-build \
-    for i in 1 2 3; do \
-        CGO_ENABLED=0 go install github.com/sourcegraph/zoekt/cmd/zoekt-index@latest && \
-        CGO_ENABLED=0 go install github.com/sourcegraph/zoekt/cmd/zoekt-webserver@latest && \
-        break || { echo "zoekt go install attempt $i failed; retrying..."; sleep $((i * 5)); }; \
-    done; \
-    command -v zoekt-index >/dev/null 2>&1 || (echo "zoekt-index missing after retries" >&2; exit 1); \
-    command -v zoekt-webserver >/dev/null 2>&1 || (echo "zoekt-webserver missing after retries" >&2; exit 1)
+# Zoekt was previously built here as an independent Go stage and copied
+# into the final image, but it's disabled by default (ZOEKT_ENABLED=false
+# in compose) and nothing in the runtime requires it. Building the Go
+# toolchain + cross-compiling for arm64 added ~600 MB to the multi-arch
+# image and regularly flaked on transient module-proxy TLS timeouts
+# (see develop CI run 24639873826). Dropped entirely — operators who
+# want zoekt can install the binaries separately and bind-mount them
+# into the container.
 
-# ---------- Stage 2: Build Python + Rust ----------
+# ---------- Build Python + Rust ----------
 FROM python:3.14-slim AS builder
 
 # 设置国内镜像环境变量（默认 false，国外环境不使用）
@@ -243,9 +232,6 @@ COPY --from=builder /usr/local/bin/nexus /usr/local/bin/nexus
 COPY --from=builder /usr/local/bin/nexusd /usr/local/bin/nexusd
 COPY --from=builder /usr/local/bin/alembic /usr/local/bin/alembic
 
-# ---------- Copy Zoekt binaries ----------
-COPY --from=zoekt-builder /go/bin/zoekt-index /usr/local/bin/zoekt-index
-COPY --from=zoekt-builder /go/bin/zoekt-webserver /usr/local/bin/zoekt-webserver
 
 # ---------- Build-time smoke tests (Issue #2946, #3125, #3134) ----------
 # Verify critical native imports are installed correctly.
@@ -282,7 +268,6 @@ RUN python3 -c "\
 import txtai; \
 print('✓ txtai/torch import passed')" \
     || echo '⚠ txtai import failed (expected on ARM64 Docker — runtime unaffected)'
-RUN which zoekt-index > /dev/null && which zoekt-webserver > /dev/null && echo "✓ Zoekt binaries available"
 
 # ---------- Copy application files ----------
 WORKDIR /app
@@ -321,14 +306,10 @@ ENV PYTHONUNBUFFERED=1 \
     NEXUS_PORT=2026 \
     NEXUS_PROFILE=full \
     NEXUS_DATA_DIR=/app/data \
-    ZOEKT_ENABLED=true \
-    ZOEKT_URL=http://localhost:6070 \
-    ZOEKT_INDEX_DIR=/app/data/.zoekt-index \
-    ZOEKT_DATA_DIR=/app/data \
     NEXUS_TXTAI_RERANKER=cross-encoder/ms-marco-MiniLM-L-2-v2 \
     NEXUS_TXTAI_SPARSE=false
 
-EXPOSE 2026 2126 6070
+EXPOSE 2026 2126
 
 # Healthcheck
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \

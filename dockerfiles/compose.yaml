@@ -1,10 +1,9 @@
 # Nexus Development Environment - Docker Compose
-# Complete stack: PostgreSQL + Nexus + optional infra (Dragonfly, NATS, Zoekt)
+# Complete stack: PostgreSQL + Nexus + optional infra (Dragonfly, NATS)
 #
 # Usage — toggle services with profiles:
 #   docker compose up                         # Core: nexus + postgres only
 #   docker compose --profile cache up         # + Dragonfly (embedding cache, 90% fewer API calls)
-#   docker compose --profile search up        # + Zoekt (sub-50ms code search)
 #   docker compose --profile events up        # + NATS JetStream (durable event streaming)
 #   docker compose --profile mcp up           # + MCP server
 #   docker compose --profile langgraph up     # + LangGraph agent server
@@ -31,7 +30,6 @@
 # Optional services (via profiles):
 #   - dragonfly:   Redis-compatible cache     (--profile cache|full)
 #   - nats:        JetStream event bus        (--profile events|full)
-#   - zoekt:       Code search engine         (--profile search|full)
 #   - mcp-server:  Nexus MCP server           (--profile mcp|full)
 #   - langgraph:   LangGraph agent server     (--profile langgraph|full)
 #   - frontend:    React web UI               (--profile frontend|full)
@@ -187,12 +185,6 @@ services:
       # Configuration file path — explicitly set for demo stack.
       # The release image defaults to no config file (env vars + profile).
       NEXUS_CONFIG_FILE: ${NEXUS_CONFIG_FILE:-/app/configs/config.demo.yaml}
-
-      # Zoekt code search (optional, requires --profile zoekt)
-      # Enable Zoekt for sub-50ms code search on large codebases
-      ZOEKT_ENABLED: ${ZOEKT_ENABLED:-false}
-      ZOEKT_URL: ${ZOEKT_URL:-http://zoekt:6070}
-      ZOEKT_TIMEOUT: ${ZOEKT_TIMEOUT:-10.0}
 
       # Dragonfly embedding cache (Issue #950)
       # High-performance Redis-compatible cache for embeddings
@@ -392,79 +384,6 @@ services:
         max-file: "3"
 
   # ============================================
-  # Zoekt Code Search (Optional)
-  # Fast trigram-based code search for large codebases
-  #
-  # Indexes content from:
-  #   - LOCAL backend: /data/cas/ (CAS - no L2 cache needed)
-  #   - External connectors: /data/.cache/ (L2 disk cache)
-  #
-  # Usage:
-  #   docker compose --profile zoekt up         # Start Zoekt server
-  #   docker compose --profile zoekt-index up   # Build/rebuild index
-  # ============================================
-  zoekt:
-    image: ${ZOEKT_IMAGE_REF:-ghcr.io/nexi-lab/nexus-zoekt:stable}
-    container_name: nexus-zoekt
-    restart: unless-stopped
-    profiles:
-      - search  # docker compose --profile search up
-      - zoekt   # legacy alias
-      - full    # docker compose --profile full up
-    environment:
-      # Index configuration
-      ZOEKT_INDEX_DIR: /index
-      ZOEKT_DATA_DIR: /data
-    volumes:
-      # Content directories to index:
-      # - /data/cas/    = LOCAL backend CAS (content-addressable storage)
-      # - /data/.cache/ = External connector L2 cache (GCS, S3, Gmail, etc.)
-      # Note: Zoekt webserver needs write access for internal state
-      - ../nexus-data:/data
-      # Persistent trigram index storage
-      - zoekt-index:/index
-    ports:
-      - "${ZOEKT_PORT:-6070}:6070"
-    healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:6070/"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
-    networks:
-      - nexus-network
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-  # Zoekt indexer - runs once to build/update index
-  # Uses zoekt-webserver image which includes zoekt-index binary
-  zoekt-indexer:
-    image: ${ZOEKT_IMAGE_REF:-ghcr.io/nexi-lab/nexus-zoekt:stable}
-    container_name: nexus-zoekt-indexer
-    profiles:
-      - zoekt-index  # docker compose --profile zoekt-index run zoekt-indexer
-    volumes:
-      # Content directories (need write for temp files)
-      - ../nexus-data:/data
-      - zoekt-index:/index
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        echo "Building Zoekt index..."
-        echo "  - LOCAL backend: /data/cas/"
-        echo "  - L2 cache: /data/.cache/"
-        # Index all files in /data
-        zoekt-index -index /index /data
-        echo "Index build complete!"
-        # Show stats
-        ls -la /index/
-    networks:
-      - nexus-network
-
-  # ============================================
   # NATS JetStream - Durable Event Bus (Issue #1331)
   # Replaces Dragonfly pub/sub for event delivery.
   # Provides: durable streams, replay, consumer groups, exactly-once semantics.
@@ -583,8 +502,6 @@ services:
 # ============================================
 volumes:
   test-cache:
-    driver: local
-  zoekt-index:
     driver: local
   postgres-data:
     driver: local

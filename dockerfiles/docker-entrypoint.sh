@@ -106,19 +106,18 @@ REDACT_API_KEY_IN_LOGS="${REDACT_API_KEY_IN_LOGS:-false}"
 
 # PIDs for cleanup
 SERVER_PID=""
-ZOEKT_PID=""
 
 # -----------------------------------------------------------------------------
 # Bind-mount directory init + privilege drop
 # -----------------------------------------------------------------------------
 # When a host directory is bind-mounted over /app/data, the image's
-# pre-created subdirectories (skills/, .zoekt-index/) disappear and the
+# pre-created subdirectories (skills/) disappear and the
 # mount may be owned by a different uid.  If we're root, fix that now
 # and re-exec as the nexus user.
 fix_data_dir_and_drop_privileges() {
     if [ "$(id -u)" = "0" ]; then
         # Create required subdirectories inside the (possibly bind-mounted) data dir
-        mkdir -p /app/data/skills /app/data/.zoekt-index
+        mkdir -p /app/data/skills
 
         if ! chown -R nexus:nexus /app/data 2>/dev/null; then
             # chown fails on macOS Docker Desktop (VirtioFS/gRPC FUSE does not
@@ -529,46 +528,6 @@ init_semantic_search_if_enabled() {
     echo -e "${GREEN}✓ Semantic search initialized${NC}"
 }
 
-start_zoekt_if_enabled() {
-    if [ "${ZOEKT_ENABLED:-false}" != "true" ]; then
-        echo ""
-        echo "ℹ️  Zoekt search disabled (set ZOEKT_ENABLED=true to enable)"
-        echo ""
-        return 0
-    fi
-
-    echo ""
-    echo "🔍 Starting Zoekt search sidecar..."
-
-    ZOEKT_INDEX_DIR="${ZOEKT_INDEX_DIR:-/app/data/.zoekt-index}"
-    ZOEKT_DATA_DIR="${ZOEKT_DATA_DIR:-/app/data}"
-    ZOEKT_PORT="${ZOEKT_PORT:-6070}"
-
-    ensure_dir "$ZOEKT_INDEX_DIR" || exit 1
-
-    if [ ! -f "$ZOEKT_INDEX_DIR/compound-0.zoekt" ]; then
-        echo "  Building initial Zoekt index..."
-        if ! zoekt-index -index "$ZOEKT_INDEX_DIR" "$ZOEKT_DATA_DIR" 2>&1 | head -5; then
-            echo -e "${YELLOW}⚠ Index build had warnings or partial failure; continuing${NC}"
-        fi
-        echo -e "${GREEN}✓ Initial index built${NC}"
-    fi
-
-    echo "  Starting Zoekt webserver on port $ZOEKT_PORT..."
-    zoekt-webserver -index "$ZOEKT_INDEX_DIR" -listen ":$ZOEKT_PORT" &
-    ZOEKT_PID=$!
-
-    local i
-    for i in $(seq 1 10); do
-        if curl -sf "http://localhost:$ZOEKT_PORT/" > /dev/null 2>&1; then
-            echo -e "${GREEN}✓ Zoekt search ready at http://localhost:$ZOEKT_PORT${NC}"
-            break
-        fi
-        sleep 0.5
-    done
-    echo ""
-}
-
 build_serve_cmd() {
     local auth_type="${NEXUS_AUTH_TYPE:-database}"
     if [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
@@ -695,7 +654,6 @@ main() {
         echo -e "${GREEN}✓ No NEXUS_DATABASE_URL — skipping PostgreSQL init (cluster profile)${NC}"
     fi
     init_semantic_search_if_enabled
-    start_zoekt_if_enabled
     # Note: TLS provisioning is file-based. If {data_dir}/tls/join-token
     # exists, nexusd reads it and provisions certs from the leader.
     start_nexus_server

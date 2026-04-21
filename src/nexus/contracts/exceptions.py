@@ -190,9 +190,17 @@ class MissingDependencyError(BackendError):
     Attributes:
         backend: connector name that failed to mount
         missing: list of (RuntimeDep, reason) pairs for every unmet dep
+
+    Note:
+        The ``missing`` list is typed as ``list[tuple[Any, str]]`` rather
+        than ``list[tuple[RuntimeDep, str]]`` so this module can stay
+        stdlib-only (see module docstring). Callers in
+        ``nexus.backends.base.runtime_deps`` pass ``RuntimeDep`` instances.
     """
 
     is_expected = True  # User-correctable — install the dep
+    status_code = 424
+    error_type = "Failed Dependency"
 
     def __init__(
         self,

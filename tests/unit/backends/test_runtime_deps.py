@@ -153,3 +153,9 @@ class TestMissingDependencyError:
         pairs = [(PythonDep("x"), "python 'x': install with: pip install x")]
         err = MissingDependencyError(backend="x", missing=pairs)
         assert err.missing == pairs
+
+    def test_status_code_is_failed_dependency(self) -> None:
+        err = MissingDependencyError(backend="x", missing=[])
+        assert err.status_code == 424
+        assert err.error_type == "Failed Dependency"
+        assert err.is_expected is True

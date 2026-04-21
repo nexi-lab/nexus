@@ -29,7 +29,6 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from nexus.backends.base.path_addressing_engine import PathAddressingEngine
 from nexus.backends.base.registry import ArgType, ConnectionArg, register_connector
-from nexus.backends.base.runtime_deps import PythonDep
 from nexus.backends.connectors.base import (
     ConfirmLevel,
     ErrorDef,
@@ -56,13 +55,7 @@ glob_fast = _il.import_module("nexus.bricks.search.primitives").glob_fast
 logger = logging.getLogger(__name__)
 
 
-@register_connector(
-    "x_connector",
-    description="X (Twitter) API with OAuth 2.0 PKCE",
-    category="api",
-    runtime_deps=(PythonDep("requests_oauthlib", extras=("x",)),),
-    service_name="x",
-)
+@register_connector("x_connector")
 class PathXBackend(
     PathAddressingEngine,
     OAuthConnectorMixin,

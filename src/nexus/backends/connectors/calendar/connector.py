@@ -22,7 +22,6 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from nexus.backends.base.path_addressing_engine import PathAddressingEngine
 from nexus.backends.base.registry import ArgType, ConnectionArg, register_connector
-from nexus.backends.base.runtime_deps import PythonDep
 from nexus.backends.connectors.base import (
     CheckpointMixin,
     ConfirmLevel,
@@ -53,16 +52,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-@register_connector(
-    "calendar_connector",
-    description="Google Calendar with OAuth 2.0 authentication (full CRUD)",
-    category="oauth",
-    runtime_deps=(
-        PythonDep("googleapiclient", extras=("gcalendar",)),
-        PythonDep("google_auth_oauthlib", extras=("gcalendar",)),
-    ),
-    service_name="google-calendar",
-)
+@register_connector("calendar_connector")
 class PathCalendarBackend(
     PathAddressingEngine,
     OAuthConnectorMixin,
@@ -605,11 +595,4 @@ from nexus.backends.base.registry import ConnectorRegistry  # noqa: E402
 ConnectorRegistry.register(
     name="gcalendar_connector",
     connector_class=PathCalendarBackend,
-    description="Google Calendar (deprecated alias — use calendar_connector)",
-    category="oauth",
-    runtime_deps=(
-        PythonDep("googleapiclient", extras=("gcalendar",)),
-        PythonDep("google_auth_oauthlib", extras=("gcalendar",)),
-    ),
-    service_name="google-calendar",
 )

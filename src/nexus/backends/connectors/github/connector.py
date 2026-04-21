@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Any
 
 from nexus.backends.base.registry import register_connector
-from nexus.backends.base.runtime_deps import BinaryDep, ServiceDep
 from nexus.backends.connectors.base import (
     ConfirmLevel,
     ErrorDef,
@@ -35,33 +34,9 @@ from nexus.backends.connectors.github.schemas import (
 
 logger = logging.getLogger(__name__)
 
-_GH_RUNTIME_DEPS = (
-    BinaryDep("gh", "brew install gh"),
-    ServiceDep("token_manager"),
-)
 
-
-@register_connector(
-    # Primary registry name matches the factory lookup fallback
-    # ``f"{scheme}_connector"`` so ``github://<authority>`` mounts resolve
-    # to this class.  Before #3728 the connector was registered only as
-    # ``"gws_github"``, which was unreachable from any scheme and made
-    # ``nexus-fs mount github://...`` fail.
-    "github_connector",
-    description="GitHub via gh CLI",
-    category="cli",
-    runtime_deps=_GH_RUNTIME_DEPS,
-)
-@register_connector(
-    # Deprecated alias — kept so persisted mounts stored under the old
-    # ``backend_type: "gws_github"`` key (in ``mounts.json`` or the
-    # ``mount_persist`` store) still load after upgrade.  Remove once a
-    # migration has rewritten stored entries to ``github_connector``.
-    "gws_github",
-    description="GitHub via gh CLI (deprecated alias, use github_connector)",
-    category="cli",
-    runtime_deps=_GH_RUNTIME_DEPS,
-)
+@register_connector("github_connector")
+@register_connector("gws_github")
 class GitHubConnector(PathCLIBackend):
     """GitHub CLI connector via ``gh``."""
 

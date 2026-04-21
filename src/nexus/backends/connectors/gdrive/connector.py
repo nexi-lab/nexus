@@ -30,7 +30,6 @@ from typing import TYPE_CHECKING, Any, ClassVar
 from nexus.backends.base.backend import HandlerStatusResponse
 from nexus.backends.base.path_addressing_engine import PathAddressingEngine
 from nexus.backends.base.registry import ArgType, ConnectionArg, register_connector
-from nexus.backends.base.runtime_deps import PythonDep
 from nexus.backends.connectors.base import (
     ConfirmLevel,
     ErrorDef,
@@ -59,16 +58,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-@register_connector(
-    "gdrive_connector",
-    description="Google Drive with OAuth 2.0 authentication",
-    category="oauth",
-    runtime_deps=(
-        PythonDep("googleapiclient", extras=("gdrive",)),
-        PythonDep("google_auth_oauthlib", extras=("gdrive",)),
-    ),
-    service_name="google-drive",
-)
+@register_connector("gdrive_connector")
 class PathGDriveBackend(
     PathAddressingEngine,
     OAuthConnectorMixin,

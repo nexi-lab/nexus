@@ -39,11 +39,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-@register_connector(
-    "local_connector",
-    description="Mount local folder into Nexus (reference mode, no copy)",
-    category="storage",
-)
+@register_connector("local_connector")
 class LocalConnectorBackend(Backend):
     """Local filesystem connector - reference mode without data duplication.
 

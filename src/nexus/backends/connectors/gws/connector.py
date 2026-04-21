@@ -21,7 +21,6 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from nexus.backends.base.registry import register_connector
-from nexus.backends.base.runtime_deps import BinaryDep, ServiceDep
 from nexus.backends.connectors.base import (
     ConfirmLevel,
     ErrorDef,
@@ -78,23 +77,12 @@ def _load_gws_config(filename: str) -> CLIConnectorConfig | None:
     return None
 
 
-_GWS_RUNTIME_DEPS = (
-    BinaryDep("gws", "brew install nexi-lab/tap/gws"),
-    ServiceDep("token_manager"),
-)
-
 # ============================================================================
 # Sheets
 # ============================================================================
 
 
-@register_connector(
-    "gws_sheets",
-    description="Google Sheets via gws CLI",
-    category="cli",
-    runtime_deps=_GWS_RUNTIME_DEPS,
-    service_name="gws",
-)
+@register_connector("gws_sheets")
 class SheetsConnector(PathCLIBackend):
     """Google Sheets CLI connector via ``gws sheets``."""
 
@@ -181,13 +169,7 @@ class SheetsConnector(PathCLIBackend):
 # ============================================================================
 
 
-@register_connector(
-    "gws_docs",
-    description="Google Docs via gws CLI",
-    category="cli",
-    runtime_deps=_GWS_RUNTIME_DEPS,
-    service_name="gws",
-)
+@register_connector("gws_docs")
 class DocsConnector(PathCLIBackend):
     """Google Docs CLI connector via ``gws docs``."""
 
@@ -373,13 +355,7 @@ class DocsConnector(PathCLIBackend):
 # ============================================================================
 
 
-@register_connector(
-    "gws_chat",
-    description="Google Chat via gws CLI",
-    category="cli",
-    runtime_deps=_GWS_RUNTIME_DEPS,
-    service_name="gws",
-)
+@register_connector("gws_chat")
 class ChatConnector(PathCLIBackend):
     """Google Chat CLI connector via ``gws chat``."""
 
@@ -467,13 +443,7 @@ class ChatConnector(PathCLIBackend):
 # ============================================================================
 
 
-@register_connector(
-    "gws_drive",
-    description="Google Drive via gws CLI",
-    category="cli",
-    runtime_deps=_GWS_RUNTIME_DEPS,
-    service_name="gws",
-)
+@register_connector("gws_drive")
 class DriveConnector(PathCLIBackend):
     """Google Drive CLI connector via ``gws drive``."""
 
@@ -591,13 +561,7 @@ def _gmail_category_from_labels(labels: list[str] | None) -> str:
     return "PRIMARY"
 
 
-@register_connector(
-    "gws_gmail",
-    description="Gmail via gws CLI",
-    category="cli",
-    runtime_deps=_GWS_RUNTIME_DEPS,
-    service_name="gws",
-)
+@register_connector("gws_gmail")
 class GmailConnector(PathCLIBackend):
     """Gmail CLI connector via ``gws gmail``.
 
@@ -1308,13 +1272,7 @@ class GmailConnector(PathCLIBackend):
 # ============================================================================
 
 
-@register_connector(
-    "gws_calendar",
-    description="Google Calendar via gws CLI",
-    category="cli",
-    runtime_deps=_GWS_RUNTIME_DEPS,
-    service_name="gws",
-)
+@register_connector("gws_calendar")
 class CalendarConnector(PathCLIBackend):
     """Calendar CLI connector via ``gws calendar``.
 

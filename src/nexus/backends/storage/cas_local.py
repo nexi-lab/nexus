@@ -52,11 +52,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-@register_connector(
-    "cas_local",
-    description="Local filesystem with CAS deduplication (new architecture)",
-    category="storage",
-)
+@register_connector("cas_local")
 class CASLocalBackend(CASAddressingEngine, MultipartUpload):
     """CAS addressing + local filesystem transport.
 

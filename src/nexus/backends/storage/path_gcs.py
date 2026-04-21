@@ -25,7 +25,6 @@ from typing import TYPE_CHECKING
 from nexus.backends.base.backend import FileInfo, HandlerStatusResponse
 from nexus.backends.base.path_addressing_engine import PathAddressingEngine
 from nexus.backends.base.registry import ArgType, ConnectionArg, register_connector
-from nexus.backends.base.runtime_deps import PythonDep
 from nexus.contracts.backend_features import BLOB_BACKEND_FEATURES, BackendFeature
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.object_store import WriteResult
@@ -36,13 +35,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-@register_connector(
-    "path_gcs",
-    description="Google Cloud Storage with direct path mapping",
-    category="storage",
-    runtime_deps=(PythonDep("google.cloud.storage", extras=("gcs",)),),
-    service_name="gcs",
-)
+@register_connector("path_gcs")
 class PathGCSBackend(PathAddressingEngine):
     """Google Cloud Storage connector with direct path mapping.
 

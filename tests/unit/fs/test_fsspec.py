@@ -10,7 +10,7 @@ Organized into:
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -74,7 +74,8 @@ def nexus_fsspec(mock_nexus_fs):
     """NexusFileSystem instance with mocked backend."""
     fs = NexusFileSystem(nexus_fs=mock_nexus_fs)
     yield fs
-    fs._runner.close()
+    if hasattr(fs, "_runner"):
+        fs._runner.close()
 
 
 # ===========================================================================
@@ -244,6 +245,12 @@ class TestPipeFile:
         nexus_fsspec._pipe_file("/output.txt", b"new content")
         mock_nexus_fs.write.assert_awaited_once()
 
+    def test_pipe_file_clears_dircache(self, nexus_fsspec, mock_nexus_fs):
+        mock_nexus_fs.write = MagicMock()
+        nexus_fsspec.dircache["/dir"] = [{"name": "/dir/old.txt", "size": 1, "type": "file"}]
+        nexus_fsspec._pipe_file("/dir/new.txt", b"new content")
+        assert nexus_fsspec.dircache == {}
+
 
 # ===========================================================================
 # _rm()
@@ -268,6 +275,13 @@ class TestRm:
         nexus_fsspec._rm("/dir", recursive=False)
         mock_nexus_fs.rmdir.assert_awaited_once_with("/dir", recursive=False)
 
+    def test_rm_clears_dircache(self, nexus_fsspec, mock_nexus_fs):
+        mock_nexus_fs.stat = MagicMock(return_value={"is_directory": False})
+        mock_nexus_fs.delete = MagicMock()
+        nexus_fsspec.dircache["/dir"] = [{"name": "/dir/file.txt", "size": 1, "type": "file"}]
+        nexus_fsspec._rm("/dir/file.txt")
+        assert nexus_fsspec.dircache == {}
+
 
 # ===========================================================================
 # _cp_file()
@@ -278,6 +292,12 @@ class TestCpFile:
     def test_cp_file(self, nexus_fsspec, mock_nexus_fs):
         nexus_fsspec._cp_file("/src.txt", "/dst.txt")
         mock_nexus_fs.copy.assert_awaited_once()
+
+    def test_cp_file_clears_dircache(self, nexus_fsspec, mock_nexus_fs):
+        mock_nexus_fs.copy = MagicMock()
+        nexus_fsspec.dircache["/dir"] = [{"name": "/dir/src.txt", "size": 1, "type": "file"}]
+        nexus_fsspec._cp_file("/dir/src.txt", "/dir/dst.txt")
+        assert nexus_fsspec.dircache == {}
 
 
 class TestCpFileComprehensive:
@@ -767,7 +787,8 @@ class TestFsspecIntegration:
         facade = SlimNexusFS(kernel)
         fs = NexusFileSystem(nexus_fs=facade)
         yield fs
-        fs._runner.close()
+        if hasattr(fs, "_runner"):
+            fs._runner.close()
 
     def test_write_and_cat(self, fsspec_real):
         """Write via _pipe_file, read via _cat_file — full round-trip."""

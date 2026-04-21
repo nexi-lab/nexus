@@ -443,6 +443,35 @@ describe("FetchClient", () => {
     });
   });
 
+  describe("getAspect", () => {
+    it("returns null on 404 only", async () => {
+      const fetchFn = mockFetch([{ status: 404, body: { detail: "Not found" } }]);
+      client = new FetchClient({ apiKey: "k", baseUrl: "http://localhost", fetch: fetchFn, maxRetries: 0 });
+
+      await expect(client.getAspect("urn:li:dataset:test", "schema")).resolves.toBeNull();
+    });
+
+    it("rethrows non-404 errors", async () => {
+      const fetchFn = mockFetch([{ status: 401, body: { detail: "Unauthorized" } }]);
+      client = new FetchClient({ apiKey: "k", baseUrl: "http://localhost", fetch: fetchFn, maxRetries: 0 });
+
+      await expect(client.getAspect("urn:li:dataset:test", "schema")).rejects.toThrow(AuthenticationError);
+    });
+  });
+
+  describe("abort compatibility", () => {
+    it("maps non-DOM abort errors to TimeoutError", async () => {
+      const fetchFn = vi.fn(async () => {
+        const error = new Error("aborted");
+        Object.assign(error, { name: "AbortError" });
+        throw error;
+      }) as unknown as typeof globalThis.fetch;
+      client = new FetchClient({ apiKey: "k", baseUrl: "http://localhost", fetch: fetchFn, maxRetries: 0, timeout: 100 });
+
+      await expect(client.get("/test")).rejects.toThrow(TimeoutError);
+    });
+  });
+
   describe("base URL handling", () => {
     it("strips trailing slashes", async () => {
       const fetchFn = mockFetch([{ status: 200, body: {} }]);

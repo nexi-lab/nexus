@@ -17,6 +17,21 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+def _local_root_from_spec(spec: Any) -> str:
+    """Reconstruct a local backend root path from a parsed MountSpec.
+
+    ``parse_uri()`` stores ``local:///tmp/data`` as authority="tmp", path="data".
+    This helper restores the missing separator and keeps absolute-path semantics.
+    """
+    path_segments = [spec.authority]
+    if spec.path:
+        path_segments.append(str(spec.path).lstrip("/"))
+    joined = "/".join(segment.rstrip("/") for segment in path_segments if segment)
+    if str(spec.uri).startswith("local:///") and not joined.startswith("/"):
+        joined = "/" + joined
+    return joined or "."
+
+
 def create_backend(spec: Any) -> Any:
     """Create a storage backend from a parsed MountSpec.
 
@@ -73,7 +88,7 @@ def create_backend(spec: Any) -> Any:
 
         from nexus.backends.storage.cas_local import CASLocalBackend
 
-        root = _Path(spec.authority + (spec.path or "")).expanduser().resolve()
+        root = _Path(_local_root_from_spec(spec)).expanduser().resolve()
         root.mkdir(parents=True, exist_ok=True)
         return CASLocalBackend(root_path=root)
 

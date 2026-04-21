@@ -52,6 +52,12 @@ describe("RingBuffer", () => {
     expect(buf.toArray()).toEqual(["b"]);
   });
 
+  it("rejects invalid capacities", () => {
+    expect(() => new RingBuffer<number>(0)).toThrow(RangeError);
+    expect(() => new RingBuffer<number>(-1)).toThrow(RangeError);
+    expect(() => new RingBuffer<number>(1.5)).toThrow(RangeError);
+  });
+
   it("tracks totalPushed monotonically", () => {
     const buf = new RingBuffer<number>(2);
     expect(buf.totalPushed).toBe(0);
@@ -266,6 +272,28 @@ describe("SseClient", () => {
     expect(events[0]!.data).toBe("line1\nline2");
   });
 
+  it("parses CRLF-terminated SSE events", async () => {
+    const clientRef: { current: SseClient | null } = { current: null };
+    const fetchFn = mockSseFetch(
+      ["id: 7\r\nevent: update\r\ndata: hello\r\n\r\n"],
+      clientRef,
+    );
+
+    const client = new SseClient({
+      baseUrl: "http://localhost:2026",
+      apiKey: "test-key",
+      fetch: fetchFn,
+      flushIntervalMs: 10_000,
+    });
+    clientRef.current = client;
+
+    await client.connect("/events");
+
+    const events = client.getBufferedEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toEqual({ id: "7", event: "update", data: "hello", retry: undefined });
+  });
+
   it("skips empty SSE blocks", async () => {
     const clientRef: { current: SseClient | null } = { current: null };
     const fetchFn = mockSseFetch(
@@ -390,6 +418,40 @@ describe("SseClient", () => {
 
     const connectPromise = client.connect("/events");
     // Wait enough for first failure + first reconnect attempt
+    await new Promise((r) => setTimeout(r, 700));
+    client.disconnect();
+    await connectPromise;
+
+    expect(reconnectHandler).toHaveBeenCalledWith(1);
+  });
+
+  it("fires reconnect handler when stream closes cleanly", async () => {
+    let callCount = 0;
+    const fetchFn = vi.fn(async (_url: string, init?: RequestInit) => {
+      callCount++;
+      if (init?.signal?.aborted) {
+        throw new DOMException("Aborted", "AbortError");
+      }
+      // Return an empty stream that closes immediately.
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.close();
+          },
+        }),
+        { status: 200 },
+      );
+    }) as unknown as typeof globalThis.fetch;
+
+    const reconnectHandler = vi.fn();
+    const client = new SseClient({
+      baseUrl: "http://localhost:2026",
+      apiKey: "test-key",
+      fetch: fetchFn,
+    });
+    client.onReconnect(reconnectHandler);
+
+    const connectPromise = client.connect("/events");
     await new Promise((r) => setTimeout(r, 700));
     client.disconnect();
     await connectPromise;

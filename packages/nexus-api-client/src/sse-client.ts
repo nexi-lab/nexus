@@ -19,6 +19,9 @@ export class RingBuffer<T> {
   private _totalPushed = 0;
 
   constructor(readonly capacity: number) {
+    if (!Number.isInteger(capacity) || capacity < 1) {
+      throw new RangeError("RingBuffer capacity must be a positive integer");
+    }
     this.buffer = new Array<T | undefined>(capacity);
   }
 
@@ -57,8 +60,13 @@ export class RingBuffer<T> {
   lastN(n: number): readonly T[] {
     if (n <= 0 || this.count === 0) return [];
     const take = Math.min(n, this.count);
-    const all = this.toArray();
-    return all.slice(all.length - take);
+    const result = new Array<T>(take);
+    const start = (this.head - take + this.capacity) % this.capacity;
+    for (let i = 0; i < take; i++) {
+      const index = (start + i) % this.capacity;
+      result[i] = this.buffer[index] as T;
+    }
+    return result;
   }
 
   clear(): void {
@@ -169,6 +177,13 @@ export class SseClient {
     while (this.abortController && !this.abortController.signal.aborted) {
       try {
         await this.streamEvents(path);
+        if (this.abortController?.signal.aborted) return;
+
+        // A clean stream close still means we should reconnect. Apply the
+        // same backoff policy to avoid hot-loop reconnect storms.
+        this.reconnectAttempt++;
+        this.reconnectHandler?.(this.reconnectAttempt);
+        await sleep(this.computeReconnectDelay());
       } catch (error) {
         if (this.abortController?.signal.aborted) return;
 
@@ -245,7 +260,8 @@ export class SseClient {
     remaining: string;
   } {
     const parsed: SseEvent[] = [];
-    const blocks = text.split("\n\n");
+    const normalizedText = text.replace(/\r\n/g, "\n");
+    const blocks = normalizedText.split("\n\n");
 
     // Last block may be incomplete — keep it as remaining
     const remaining = blocks.pop() ?? "";

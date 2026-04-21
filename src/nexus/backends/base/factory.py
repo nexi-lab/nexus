@@ -60,6 +60,7 @@ class BackendFactory:
         Raises:
             RuntimeError: If backend_type is not registered
             TypeError: If required constructor args are missing
+            MissingDependencyError: If any of the connector's runtime_deps are unmet
         """
         from nexus.backends.base.registry import (
             ConnectorRegistry,

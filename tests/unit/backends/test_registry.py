@@ -1,6 +1,7 @@
 """Unit tests for connector registry."""
 
 import inspect
+import warnings
 
 import pytest
 
@@ -89,16 +90,17 @@ def clear_registry():
 class TestConnectorRegistry:
     """Test ConnectorRegistry class."""
 
-    @pytest.mark.xfail(strict=True, reason="Task 5 will wire requires= into runtime_deps")
     def test_register_connector(self):
         """Test registering a connector."""
-        ConnectorRegistry.register(
-            name="test_backend",
-            connector_class=DummyBackend,
-            description="Test backend",
-            category="storage",
-            requires=["test-dep"],
-        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            ConnectorRegistry.register(
+                name="test_backend",
+                connector_class=DummyBackend,
+                description="Test backend",
+                category="storage",
+                requires=["test-dep"],
+            )
 
         assert ConnectorRegistry.is_registered("test_backend")
         info = ConnectorRegistry.get_info("test_backend")
@@ -106,7 +108,7 @@ class TestConnectorRegistry:
         assert info.connector_class == DummyBackend
         assert info.description == "Test backend"
         assert info.category == "storage"
-        assert info.requires == ["test-dep"]  # xfail today; Task 5 flips this to pass
+        assert info.requires == ["test-dep"]
 
     def test_register_duplicate_same_class(self):
         """Test registering same class twice is idempotent."""
@@ -231,23 +233,24 @@ class TestRegisterConnectorDecorator:
         instance = TestBackend()
         assert isinstance(instance, TestBackend)
 
-    @pytest.mark.xfail(strict=True, reason="Task 5 will wire requires= into runtime_deps")
     def test_decorator_with_all_options(self):
         """Test decorator with all options."""
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
 
-        @register_connector(
-            "full_test",
-            description="Full test",
-            category="api",
-            requires=["dep1", "dep2"],
-        )
-        class FullBackend(DummyBackend):
-            pass
+            @register_connector(
+                "full_test",
+                description="Full test",
+                category="api",
+                requires=["dep1", "dep2"],
+            )
+            class FullBackend(DummyBackend):
+                pass
 
         info = ConnectorRegistry.get_info("full_test")
         assert info.description == "Full test"
         assert info.category == "api"
-        assert info.requires == ["dep1", "dep2"]  # xfail today; Task 5 flips this to pass
+        assert info.requires == ["dep1", "dep2"]
 
 
 class TestCreateConnectorFromConfig:
@@ -651,3 +654,92 @@ class TestConnectorInfoRuntimeDeps:
             runtime_deps=(BinaryDep("gws", "brew install gws"),),
         )
         assert info.requires == []
+
+
+class TestRegisterRuntimeDeps:
+    def setup_method(self) -> None:
+        from nexus.backends.base.registry import ConnectorRegistry
+
+        ConnectorRegistry.clear()
+
+    def teardown_method(self) -> None:
+        from nexus.backends.base.registry import ConnectorRegistry
+
+        ConnectorRegistry.clear()
+
+    def test_decorator_kwarg_populates_runtime_deps(self) -> None:
+        from nexus.backends.base.registry import (
+            ConnectorRegistry,
+            register_connector,
+        )
+
+        @register_connector(
+            "t_deco",
+            runtime_deps=(PythonDep("boto3", extras=("s3",)),),
+        )
+        class T(DummyBackend):
+            pass
+
+        info = ConnectorRegistry.get_info("t_deco")
+        assert info.runtime_deps == (PythonDep("boto3", extras=("s3",)),)
+
+    def test_class_attr_populates_runtime_deps_when_no_decorator_arg(self) -> None:
+        from nexus.backends.base.registry import (
+            ConnectorRegistry,
+            register_connector,
+        )
+
+        @register_connector("t_attr")
+        class T(DummyBackend):
+            RUNTIME_DEPS = (BinaryDep("gws", "brew install gws"),)
+
+        info = ConnectorRegistry.get_info("t_attr")
+        assert info.runtime_deps == (BinaryDep("gws", "brew install gws"),)
+
+    def test_decorator_arg_wins_when_both_present(self) -> None:
+        from nexus.backends.base.registry import (
+            ConnectorRegistry,
+            register_connector,
+        )
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+
+            @register_connector("t_both", runtime_deps=(PythonDep("httpx"),))
+            class T(DummyBackend):
+                RUNTIME_DEPS = (BinaryDep("gws", "brew install gws"),)
+
+            assert any(
+                issubclass(w.category, UserWarning) and "runtime_deps" in str(w.message)
+                for w in caught
+            )
+
+        info = ConnectorRegistry.get_info("t_both")
+        assert info.runtime_deps == (PythonDep("httpx"),)
+
+    def test_bad_runtime_dep_type_raises(self) -> None:
+        from typing import Any
+
+        from nexus.backends.base.registry import ConnectorRegistry
+
+        bad_deps: Any = ("not-a-dep-instance",)
+        with pytest.raises(ValueError, match="RUNTIME_DEPS"):
+            ConnectorRegistry.register(
+                name="t_bad",
+                connector_class=DummyBackend,
+                runtime_deps=bad_deps,
+            )
+
+    def test_legacy_requires_kwarg_emits_deprecation(self) -> None:
+        from nexus.backends.base.registry import (
+            register_connector,
+        )
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+
+            @register_connector("t_legacy", requires=["httpx"])
+            class T(DummyBackend):
+                pass
+
+            assert any(issubclass(w.category, DeprecationWarning) for w in caught)

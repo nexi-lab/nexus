@@ -38,7 +38,12 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
-from nexus.backends.base.runtime_deps import PythonDep, RuntimeDep
+from nexus.backends.base.runtime_deps import (
+    BinaryDep,
+    PythonDep,
+    RuntimeDep,
+    ServiceDep,
+)
 from nexus.contracts.backend_features import BackendFeature
 from nexus.lib.registry import BaseRegistry
 
@@ -346,8 +351,9 @@ class ConnectorRegistry:
         connector_class: "type[Backend]",
         description: str = "",
         category: str = "storage",
-        requires: list[str] | None = None,  # noqa: ARG003  # Task 5 will wire to runtime_deps
+        requires: list[str] | None = None,
         service_name: str | None = None,
+        runtime_deps: "tuple[RuntimeDep, ...] | None" = None,
     ) -> None:
         """Register a connector class.
 
@@ -356,17 +362,29 @@ class ConnectorRegistry:
             connector_class: The connector class to register
             description: Human-readable description
             category: Category for grouping
-            requires: List of optional dependencies (deprecated; Task 5 will wire to runtime_deps)
+            requires: **Deprecated** — list of pip-package names. Prefer
+                ``runtime_deps`` with :class:`PythonDep` entries.
             service_name: Unified service name for service_map integration
+            runtime_deps: Typed runtime dependencies (Issue #3830). Takes
+                precedence over the class attribute ``RUNTIME_DEPS``.
 
         Raises:
-            ValueError: If a connector with the same name is already registered,
-                or if the connector class does not satisfy ConnectorProtocol.
+            ValueError: If a connector with the same name is already
+                registered, if ``runtime_deps`` contains non-RuntimeDep
+                entries, or if the connector class does not satisfy
+                ConnectorProtocol.
         """
+        import warnings
+
+        if requires is not None:
+            warnings.warn(
+                "register_connector(requires=...) is deprecated; "
+                "use runtime_deps=(PythonDep(...), ...) instead.",
+                DeprecationWarning,
+                stacklevel=3,
+            )
+
         # Validate ConnectorProtocol conformance (Issue #1703).
-        # Cannot use issubclass() because ConnectorProtocol has @property
-        # members which Python's runtime_checkable doesn't support for
-        # issubclass(). Instead, check for required method/property presence.
         missing = [m for m in _CONNECTOR_PROTOCOL_MEMBERS if not hasattr(connector_class, m)]
         if missing:
             raise ValueError(
@@ -378,25 +396,54 @@ class ConnectorRegistry:
         if existing is not None:
             if existing.connector_class is not connector_class:
                 raise ValueError(
-                    f"Connector '{name}' is already registered to {existing.connector_class.__name__}. "
+                    f"Connector '{name}' is already registered to "
+                    f"{existing.connector_class.__name__}. "
                     f"Cannot register {connector_class.__name__}."
                 )
-            # Same class, skip duplicate registration (can happen with re-imports)
             return
 
-        # Get user_scoped from class if it exists
         user_scoped = getattr(connector_class, "user_scoped", False)
-        # Handle property descriptor
         if isinstance(user_scoped, property):
-            # Default to False for property, will be checked at instance level
             user_scoped = False
 
         config_mapping = derive_config_mapping(connector_class)
 
-        # Extract backend features from class (Issue #2069)
         backend_features: frozenset[BackendFeature] = getattr(
             connector_class, "_BACKEND_FEATURES", frozenset()
         )
+
+        # Resolve runtime_deps: decorator arg wins, else class attr,
+        # else fall back to mapping legacy requires= to PythonDep entries
+        # (one-release backwards-compat so the deprecation warning above
+        # is advisory, not breaking), else ().
+        class_attr_deps = getattr(connector_class, "RUNTIME_DEPS", None)
+        resolved_deps: tuple[RuntimeDep, ...]
+        if runtime_deps is not None:
+            if class_attr_deps is not None and tuple(class_attr_deps) != tuple(runtime_deps):
+                warnings.warn(
+                    f"Connector '{name}': runtime_deps= decorator arg overrides "
+                    f"class attribute RUNTIME_DEPS.",
+                    UserWarning,
+                    stacklevel=3,
+                )
+            resolved_deps = tuple(runtime_deps)
+        elif class_attr_deps is not None:
+            resolved_deps = tuple(class_attr_deps)
+        elif requires:
+            # Legacy path: convert ``requires=["pkg-a", "pkg-b"]`` into
+            # ``(PythonDep("pkg-a"), PythonDep("pkg-b"))`` for one
+            # deprecation release. Extras are not derivable from the old
+            # format, so they default to empty.
+            resolved_deps = tuple(PythonDep(pkg) for pkg in requires)
+        else:
+            resolved_deps = ()
+
+        bad = [d for d in resolved_deps if not isinstance(d, (PythonDep, BinaryDep, ServiceDep))]
+        if bad:
+            raise ValueError(
+                f"Connector '{name}': RUNTIME_DEPS entries must be PythonDep / "
+                f"BinaryDep / ServiceDep, got: {bad!r}"
+            )
 
         info = ConnectorInfo(
             name=name,
@@ -407,6 +454,7 @@ class ConnectorRegistry:
             config_mapping=config_mapping,
             service_name=service_name,
             backend_features=backend_features,
+            runtime_deps=resolved_deps,
         )
         cls._base.register(name, info, allow_overwrite=True)
 
@@ -559,32 +607,27 @@ def register_connector(
     category: str = "storage",
     requires: list[str] | None = None,
     service_name: str | None = None,
+    runtime_deps: "tuple[RuntimeDep, ...] | None" = None,
 ) -> "Callable[[type[Backend]], type[Backend]]":
     """Decorator to register a connector class.
 
-    Use this decorator on connector classes to automatically register them
-    with the ConnectorRegistry at import time.
-
     Args:
-        name: Unique identifier for the connector (e.g., 'gcs_connector')
+        name: Unique identifier for the connector
         description: Human-readable description
-        category: Category for grouping (default: 'storage')
-        requires: List of optional dependencies (e.g., ['google-cloud-storage'])
+        category: Category for grouping
+        requires: **Deprecated** — use ``runtime_deps=`` instead.
         service_name: Unified service name for service_map integration
-            (e.g., 'gmail', 'google-drive'). When set, service_map.py
-            auto-derives the connector field from this registry.
+        runtime_deps: Typed runtime deps (Issue #3830). Takes precedence
+            over the class attribute ``RUNTIME_DEPS``.
 
-    Returns:
-        Decorator function
+    Example::
 
-    Example:
-        >>> @register_connector(
-        ...     "azure_blob",
-        ...     description="Azure Blob Storage connector",
-        ...     requires=["azure-storage-blob"]
-        ... )
-        ... class AzureBlobConnector(PathAddressingEngine):
-        ...     pass
+        @register_connector(
+            "path_s3",
+            runtime_deps=(PythonDep("boto3", extras=("s3",)),),
+        )
+        class PathS3Backend(PathAddressingEngine):
+            ...
     """
 
     def decorator(cls: "type[Backend]") -> "type[Backend]":
@@ -595,6 +638,7 @@ def register_connector(
             category=category,
             requires=requires,
             service_name=service_name,
+            runtime_deps=runtime_deps,
         )
         return cls
 

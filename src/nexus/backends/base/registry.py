@@ -255,6 +255,10 @@ class ConnectorInfo:
         current callers (``cli/commands/connectors.py``,
         ``server/api/v2/routers/connectors.py``, tests) keep working for
         one release.  Removal is tracked as follow-up A.2 of Issue #3830.
+
+        Non-Python dependencies (``BinaryDep``, ``ServiceDep``) are *not*
+        represented in this view — new callers should read ``runtime_deps``
+        directly to see the full dep set.
         """
         return [d.module for d in self.runtime_deps if isinstance(d, PythonDep)]
 

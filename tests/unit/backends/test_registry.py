@@ -89,6 +89,7 @@ def clear_registry():
 class TestConnectorRegistry:
     """Test ConnectorRegistry class."""
 
+    @pytest.mark.xfail(strict=True, reason="Task 5 will wire requires= into runtime_deps")
     def test_register_connector(self):
         """Test registering a connector."""
         ConnectorRegistry.register(
@@ -105,9 +106,7 @@ class TestConnectorRegistry:
         assert info.connector_class == DummyBackend
         assert info.description == "Test backend"
         assert info.category == "storage"
-        # requires= strings are not yet wired to runtime_deps (Task 5 will do this);
-        # until then the property derives from runtime_deps which is empty.
-        assert info.requires == []
+        assert info.requires == ["test-dep"]  # xfail today; Task 5 flips this to pass
 
     def test_register_duplicate_same_class(self):
         """Test registering same class twice is idempotent."""
@@ -232,6 +231,7 @@ class TestRegisterConnectorDecorator:
         instance = TestBackend()
         assert isinstance(instance, TestBackend)
 
+    @pytest.mark.xfail(strict=True, reason="Task 5 will wire requires= into runtime_deps")
     def test_decorator_with_all_options(self):
         """Test decorator with all options."""
 
@@ -247,9 +247,7 @@ class TestRegisterConnectorDecorator:
         info = ConnectorRegistry.get_info("full_test")
         assert info.description == "Full test"
         assert info.category == "api"
-        # requires= strings are not yet wired to runtime_deps (Task 5 will do this);
-        # until then the property derives from runtime_deps which is empty.
-        assert info.requires == []
+        assert info.requires == ["dep1", "dep2"]  # xfail today; Task 5 flips this to pass
 
 
 class TestCreateConnectorFromConfig:

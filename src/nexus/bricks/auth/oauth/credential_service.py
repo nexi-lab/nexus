@@ -204,7 +204,12 @@ class OAuthCredentialService:
         created_by = current_user_id or user_email
 
         provider_name = provider_instance.provider_name
-        credential.user_email = user_email
+        # OAuthCredential is a frozen dataclass — in-place assignment raises
+        # FrozenInstanceError.  Use ``dataclasses.replace`` to build a new
+        # credential with the resolved user_email attached.
+        import dataclasses as _dc
+
+        credential = _dc.replace(credential, user_email=user_email)
 
         try:
             credential_id = await token_manager.store_credential(

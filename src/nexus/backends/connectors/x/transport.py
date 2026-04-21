@@ -134,22 +134,55 @@ class XTransport:
     async def _get_api_client_async(self) -> Any:
         """Get authenticated X API client."""
         from nexus.backends.connectors.oauth_base import (
+            _looks_like_email,
             build_auth_recovery_hint,
         )
         from nexus.backends.connectors.x.api_client import XAPIClient
         from nexus.contracts.exceptions import AuthenticationError
 
-        user_email = self._user_email or (self._context.user_id if self._context else None)
+        # Mirror the connector-agnostic resolver in oauth_base: prefer an
+        # explicit email, otherwise map the nexus user_id to the linked
+        # OAuth email via list_credentials.  Kept inline here because the
+        # x transport uses an async token manager.
+        mount_email = self._user_email if _looks_like_email(self._user_email) else None
+        nexus_user_id = (
+            self._context.user_id
+            if self._context
+            and self._context.user_id
+            and not _looks_like_email(self._context.user_id)
+            else None
+        ) or (self._user_email if not _looks_like_email(self._user_email) else None)
+        ctx_email = (
+            self._context.user_id
+            if self._context and _looks_like_email(self._context.user_id)
+            else None
+        )
         zone_id: str = (
             self._context.zone_id
             if self._context and hasattr(self._context, "zone_id")
             else ROOT_ZONE_ID
         ) or ROOT_ZONE_ID
 
-        if not user_email:
+        resolved_email: str | None = mount_email or ctx_email
+        if resolved_email is None and nexus_user_id is not None:
+            list_fn = getattr(self._token_manager, "list_credentials", None)
+            if list_fn is not None:
+                try:
+                    creds = await list_fn(zone_id=zone_id, user_id=nexus_user_id)
+                    for cred in creds or []:
+                        if cred.get("provider") == self._provider and _looks_like_email(
+                            cred.get("user_email")
+                        ):
+                            resolved_email = str(cred["user_email"])
+                            break
+                except Exception:
+                    pass
+
+        if not resolved_email:
             raise AuthenticationError(
                 f"x_connector requires authorization (provider={self._provider}). "
-                "Configure user_email on the mount or authenticate a user.",
+                "Configure user_email on the mount or complete the OAuth flow "
+                "for the authenticated nexus user.",
                 provider=self._provider,
                 user_email=None,
                 recovery_hint=build_auth_recovery_hint(
@@ -160,23 +193,23 @@ class XTransport:
         try:
             access_token = await self._token_manager.get_valid_token(
                 provider=self._provider,
-                user_email=user_email,
+                user_email=resolved_email,
                 zone_id=zone_id,
             )
         except AuthenticationError as _auth_exc:
             raise AuthenticationError(
                 str(_auth_exc),
                 provider=self._provider,
-                user_email=user_email,
+                user_email=resolved_email,
                 recovery_hint=build_auth_recovery_hint(
                     connector_name="x_connector",
                     provider=self._provider,
-                    user_email=user_email,
+                    user_email=resolved_email,
                 ),
             ) from _auth_exc
         except Exception as e:
             raise BackendError(
-                f"Failed to get OAuth token for {user_email}: {e}",
+                f"Failed to get OAuth token for {resolved_email}: {e}",
                 backend="x",
             ) from e
 

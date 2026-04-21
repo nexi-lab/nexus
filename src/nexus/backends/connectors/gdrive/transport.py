@@ -141,24 +141,19 @@ class DriveTransport:
 
         from nexus.backends.connectors.oauth_base import resolve_oauth_access_token
 
-        # Resolve user email — absence is an auth-required signal, not a
-        # backend error.  Callers (fs.ls, fs.read, …) need the structured
-        # ``recovery_hint`` so UIs can drive the OAuth flow (#3822).
-        if self._user_email:
-            user_email: str | None = self._user_email
-        elif self._context and self._context.user_id:
-            user_email = self._context.user_id
-        else:
-            user_email = None
-
+        # Let the shared resolver pick mount-configured email vs context
+        # user_id (the resolver uses list_credentials to map a nexus
+        # user_id → linked OAuth email when the context id isn't itself
+        # an email, e.g. API-key auth as "admin").
+        user_email: str | None = self._user_email
+        nexus_user_id: str | None = (
+            self._context.user_id if self._context and self._context.user_id else None
+        )
         zone_id = (
             self._context.zone_id
             if self._context and hasattr(self._context, "zone_id") and self._context.zone_id
             else "root"
         )
-        # Raises AuthenticationError with provider/user_email/recovery_hint
-        # for auth-required cases; non-auth failures (network, misconfig)
-        # bubble up as their native exception type so we don't mask them.
         try:
             access_token = resolve_oauth_access_token(
                 self._token_manager,
@@ -166,6 +161,7 @@ class DriveTransport:
                 provider=self._provider or "google-drive",
                 user_email=user_email,
                 zone_id=zone_id,
+                nexus_user_id=nexus_user_id,
             )
         except AuthenticationError:
             raise

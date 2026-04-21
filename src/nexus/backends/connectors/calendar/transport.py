@@ -85,13 +85,10 @@ class CalendarTransport:
         from nexus.backends.connectors.oauth_base import resolve_oauth_access_token
         from nexus.contracts.exceptions import AuthenticationError
 
-        if self._user_email:
-            user_email: str | None = self._user_email
-        elif self._context and self._context.user_id:
-            user_email = self._context.user_id
-        else:
-            user_email = None
-
+        user_email: str | None = self._user_email
+        nexus_user_id: str | None = (
+            self._context.user_id if self._context and self._context.user_id else None
+        )
         zone_id = (
             self._context.zone_id
             if self._context and hasattr(self._context, "zone_id") and self._context.zone_id
@@ -104,6 +101,7 @@ class CalendarTransport:
                 provider=self._provider,
                 user_email=user_email,
                 zone_id=zone_id,
+                nexus_user_id=nexus_user_id,
             )
         except AuthenticationError:
             raise

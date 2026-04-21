@@ -122,17 +122,16 @@ class GmailTransport:
         from nexus.backends.connectors.oauth_base import resolve_oauth_access_token
         from nexus.contracts.exceptions import AuthenticationError
 
-        # Resolve user email — None is an auth-required signal handled by
-        # the shared helper, not a BackendError.  Earlier behaviour
-        # (raising BackendError) masked the recoverable 401 case and made
-        # silent-empty bugs possible (see #3822).
-        if self._user_email:
-            user_email: str | None = self._user_email
-        elif self._context and self._context.user_id:
-            user_email = self._context.user_id
-        else:
-            user_email = None
-
+        # Pass both the mount-configured user_email (if any) and the nexus
+        # user_id from the request context into the shared resolver.  The
+        # resolver picks the email verbatim when it looks like an email,
+        # otherwise it looks up the OAuth-linked email for the nexus user
+        # — fixing the API-key auth case where context.user_id is a
+        # subject id like "admin", not a gmail address (Issue #3822 part 2).
+        user_email: str | None = self._user_email
+        nexus_user_id: str | None = (
+            self._context.user_id if self._context and self._context.user_id else None
+        )
         zone_id = (
             self._context.zone_id
             if self._context and hasattr(self._context, "zone_id") and self._context.zone_id
@@ -145,6 +144,7 @@ class GmailTransport:
                 provider=self._provider,
                 user_email=user_email,
                 zone_id=zone_id,
+                nexus_user_id=nexus_user_id,
             )
         except AuthenticationError:
             raise

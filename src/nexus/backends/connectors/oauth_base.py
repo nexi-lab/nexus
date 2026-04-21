@@ -61,6 +61,44 @@ def build_auth_recovery_hint(
     return hint
 
 
+def _looks_like_email(value: str | None) -> bool:
+    return bool(value and "@" in value)
+
+
+def _resolve_linked_oauth_email(
+    token_manager: Any,
+    *,
+    provider: str,
+    nexus_user_id: str,
+    zone_id: str,
+) -> str | None:
+    """Look up the OAuth-linked email for a nexus user on *provider*.
+
+    OAuth credentials are stored keyed by ``(provider, user_email, zone_id)``
+    with the nexus ``user_id`` recorded as a secondary column.  For
+    API-key-authenticated requests the transport's ``context.user_id`` is
+    the nexus user id (e.g. ``"admin"``), not the gmail address Google
+    stored against the credential — so ``get_valid_token(user_email="admin")``
+    404s.  This helper bridges the gap: find any non-revoked credential
+    whose ``user_id`` matches and return its ``user_email``.  Returns
+    ``None`` if no link exists.  Kept synchronous so the transports can
+    call it without an async hop.
+    """
+    from nexus.lib.sync_bridge import run_sync
+
+    list_fn = getattr(token_manager, "list_credentials", None)
+    if list_fn is None:
+        return None
+    try:
+        creds = run_sync(list_fn(zone_id=zone_id, user_id=nexus_user_id))
+    except Exception:
+        return None
+    for cred in creds or []:
+        if cred.get("provider") == provider and _looks_like_email(cred.get("user_email")):
+            return str(cred["user_email"])
+    return None
+
+
 def resolve_oauth_access_token(
     token_manager: Any,
     *,
@@ -68,37 +106,67 @@ def resolve_oauth_access_token(
     provider: str,
     user_email: str | None,
     zone_id: str = "root",
+    nexus_user_id: str | None = None,
 ) -> str:
     """Resolve an OAuth access token or raise a structured ``AuthenticationError``.
 
     Connector-agnostic replacement for each transport's inline
     ``try: get_valid_token(...); except Exception: raise BackendError(...)``
-    pattern.  Auth-required conditions — missing ``user_email`` or a
-    bubbling ``AuthenticationError`` from the token manager — are
-    re-raised with ``provider``/``user_email``/``recovery_hint`` so the
-    server error handler maps them to HTTP 401 with actionable payload
-    (Issue #3822).  Non-auth failures (network, misconfig) are *not*
-    caught here so callers can raise them as ``BackendError`` without
-    the silent BackendError-masking-AuthenticationError problem earlier
-    connectors had.
+    pattern.  Resolution order:
+
+    1. ``user_email`` if it looks like an email — use it verbatim.
+    2. ``user_email`` that is actually a nexus user id (no ``@``) or
+       ``None`` — consult the token manager's credential index for the
+       nexus user's link to *provider* and substitute the stored OAuth
+       email.  This is the one place callers can rely on for the
+       cross-mapping, so every transport gets the same behaviour
+       without duplicating the lookup.
+    3. Still nothing — raise ``AuthenticationError`` with
+       ``recovery_hint`` so clients see 401 + actionable payload.
+
+    Auth-required conditions — missing ``user_email`` or a bubbling
+    ``AuthenticationError`` from the token manager — are re-raised with
+    ``provider``/``user_email``/``recovery_hint`` so the server error
+    handler maps them to HTTP 401 with actionable payload (Issue #3822).
+    Non-auth failures (network, misconfig) are *not* caught here so
+    callers can raise them as ``BackendError`` without the silent
+    BackendError-masking-AuthenticationError problem earlier connectors
+    had.
     """
     from nexus.lib.sync_bridge import run_sync
 
-    if user_email is None:
+    # When caller passes a nexus user id in user_email (common API-key
+    # path where context.user_id is a subject id like "admin"), swap in
+    # the linked OAuth email.  user_email=None similarly falls back to
+    # the nexus_user_id hint if one was provided by the caller.
+    resolved_email = user_email if _looks_like_email(user_email) else None
+    candidate_user_id = nexus_user_id or (None if _looks_like_email(user_email) else user_email)
+    if resolved_email is None and candidate_user_id:
+        resolved_email = _resolve_linked_oauth_email(
+            token_manager,
+            provider=provider,
+            nexus_user_id=candidate_user_id,
+            zone_id=zone_id,
+        )
+
+    if resolved_email is None:
         raise AuthenticationError(
             f"{connector_name} requires authorization (provider={provider}). "
-            "Configure user_email on the mount or authenticate a user.",
+            "Configure user_email on the mount or complete the OAuth flow "
+            "for the authenticated nexus user.",
             provider=provider,
-            user_email=None,
+            user_email=user_email,
             recovery_hint=build_auth_recovery_hint(
-                connector_name=connector_name, provider=provider
+                connector_name=connector_name,
+                provider=provider,
+                user_email=user_email if _looks_like_email(user_email) else None,
             ),
         )
     try:
         access_token: str = run_sync(
             token_manager.get_valid_token(
                 provider=provider,
-                user_email=user_email,
+                user_email=resolved_email,
                 zone_id=zone_id,
             )
         )
@@ -107,11 +175,11 @@ def resolve_oauth_access_token(
         raise AuthenticationError(
             str(_auth_exc),
             provider=provider,
-            user_email=user_email,
+            user_email=resolved_email,
             recovery_hint=build_auth_recovery_hint(
                 connector_name=connector_name,
                 provider=provider,
-                user_email=user_email,
+                user_email=resolved_email,
             ),
         ) from _auth_exc
 

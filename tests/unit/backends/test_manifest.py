@@ -65,3 +65,40 @@ class TestManifestStructure:
         }
         missing = expected - names
         assert not missing, f"missing manifest entries: {sorted(missing)}"
+        extra = names - expected
+        assert not extra, f"unexpected manifest entries (not in inventory): {sorted(extra)}"
+
+    def test_manifest_covers_every_builtin_register_call(self) -> None:
+        """Every @register_connector first-positional-arg in src/nexus/backends/
+        must appear as a CONNECTOR_MANIFEST entry name."""
+        import ast
+        from pathlib import Path
+
+        repo_root = Path(__file__).resolve().parents[3]
+        backends_root = repo_root / "src" / "nexus" / "backends"
+        manifest_names = {e.name for e in CONNECTOR_MANIFEST}
+
+        register_names: set[str] = set()
+        for py_file in backends_root.rglob("*.py"):
+            # Skip the manifest module and its own tests
+            if py_file.name == "_manifest.py":
+                continue
+            try:
+                tree = ast.parse(py_file.read_text())
+            except SyntaxError:
+                continue
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Call):
+                    func = node.func
+                    if (
+                        isinstance(func, ast.Name)
+                        and func.id == "register_connector"
+                        and node.args
+                        and isinstance(node.args[0], ast.Constant)
+                    ):
+                        register_names.add(node.args[0].value)
+
+        missing_from_manifest = register_names - manifest_names
+        assert not missing_from_manifest, (
+            f"@register_connector sites lack a manifest entry: {sorted(missing_from_manifest)}"
+        )

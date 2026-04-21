@@ -2873,11 +2873,20 @@ impl PyKernel {
     }
 
     /// Remove a raft zone and delete its on-disk directory.
+    /// Cascade-unmounts every mount pointing to this zone first,
+    /// consulting the kernel's reverse index (`cross_zone_mounts`)
+    /// so routing stays consistent — reads through a removed
+    /// zone's mount path correctly fail post-remove.
     fn zone_remove(&self, zone_id: &str) -> PyResult<()> {
         let zm = self
             .inner
             .zone_manager_arc()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("federation not active"))?;
+        for (parent_zone, mount_path, _global_path) in self.inner.list_cross_zone_mounts(zone_id) {
+            if let Err(e) = zm.unmount(&parent_zone, &mount_path) {
+                tracing::warn!("cascade unmount {parent_zone}{mount_path} failed: {e}");
+            }
+        }
         zm.remove_zone(zone_id)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
     }

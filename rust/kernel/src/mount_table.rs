@@ -165,12 +165,6 @@ impl MountTable {
     /// isn't wiped when the backend mount registers afterwards.
     pub fn add(&self, mount_point: &str, zone_id: &str, mut entry: MountEntry) {
         let canonical = canonicalize_mount_path(mount_point, zone_id);
-        tracing::info!(
-            mount_point = %mount_point,
-            zone_id = %zone_id,
-            canonical = %canonical,
-            "R20.18.5 MountTable::add"
-        );
         if entry.metastore.is_none() {
             if let Some(existing) = self.entries.get(&canonical) {
                 if let Some(ms) = existing.metastore.as_ref() {
@@ -250,19 +244,7 @@ impl MountTable {
     /// True if a mount exists under `(mount_point, zone_id)`.
     pub fn has(&self, mount_point: &str, zone_id: &str) -> bool {
         let canonical = canonicalize_mount_path(mount_point, zone_id);
-        let found = self.entries.contains_key(&canonical);
-        let entries_len = self.entries.len();
-        let keys: Vec<String> = self.entries.iter().map(|kv| kv.key().clone()).collect();
-        tracing::info!(
-            mount_point = %mount_point,
-            zone_id = %zone_id,
-            canonical = %canonical,
-            found = %found,
-            entries_len = %entries_len,
-            keys = ?keys,
-            "R20.18.5 MountTable::has"
-        );
-        found
+        self.entries.contains_key(&canonical)
     }
 
     /// Borrow every entry mutably. Used by ``Kernel::release_metastores``
@@ -279,6 +261,19 @@ impl MountTable {
         let mut keys: Vec<String> = self.entries.iter().map(|e| e.key().clone()).collect();
         keys.sort();
         keys
+    }
+
+    /// Snapshot every non-empty backend registered on the mount table.
+    ///
+    /// Used by R20.18.7 `KernelBlobFetcher` to resolve `ReadBlob` by
+    /// content hash without caring which mount the blob originally
+    /// landed on — CAS backends are content-addressed, so any local
+    /// mount with the right blob satisfies the request.
+    pub fn backends(&self) -> Vec<Arc<dyn ObjectStore>> {
+        self.entries
+            .iter()
+            .filter_map(|e| e.backend.as_ref().map(Arc::clone))
+            .collect()
     }
 
     /// All user-facing mount points (zone prefix stripped, sorted).
@@ -370,16 +365,6 @@ impl MountTable {
             }
         }
 
-        let entries_len = self.entries.len();
-        let keys: Vec<String> = self.entries.iter().map(|kv| kv.key().clone()).collect();
-        tracing::warn!(
-            path = %path,
-            zone_id = %zone_id,
-            canonical = %canonical,
-            entries_len = %entries_len,
-            keys = ?keys,
-            "R20.18.5 MountTable::route NotMounted"
-        );
         Err(RouteError::NotMounted(format!(
             "No mount found for path: {}",
             path

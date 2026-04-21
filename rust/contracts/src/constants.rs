@@ -31,6 +31,28 @@ pub const VFS_ROOT: &str = "/";
 /// ``nexus.core.hash_utils.BLAKE3_EMPTY`` constant.
 pub const BLAKE3_EMPTY: &str = "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262";
 
+/// Environment variable names — SSOT for env lookups crossing crate
+/// boundaries. Anything referenced by two or more crates goes here;
+/// crate-local env vars can stay inlined.
+///
+/// Aligned with Python: `src/nexus/cli/utils.py` mirrors the same
+/// names. Rename = Python-side mirror update in the same PR.
+pub mod env {
+    /// Peer-reachable address this node publishes (host:port).
+    ///
+    /// SSOT for "where can other nodes reach me?". Raft transport uses
+    /// it for cluster peering; R20.18.7 reuses it for the co-located
+    /// `ReadBlob` RPC on the raft port. Follows the etcd
+    /// `--initial-advertise-peer-urls` / CockroachDB `--advertise-addr`
+    /// convention: inter-node services share one advertised address.
+    pub const ADVERTISE_ADDR: &str = "NEXUS_ADVERTISE_ADDR";
+
+    /// Socket this node binds its raft gRPC server on. Defaults to
+    /// `0.0.0.0:2126`. Parsed to derive the default raft port when
+    /// `ADVERTISE_ADDR` is unset.
+    pub const BIND_ADDR: &str = "NEXUS_BIND_ADDR";
+}
+
 /// Maximum gRPC message size (bytes) for the unified VFS service.
 ///
 /// Applies to every client/server that talks to `NexusVFSService`:

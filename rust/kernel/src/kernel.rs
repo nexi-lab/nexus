@@ -4398,6 +4398,17 @@ impl Kernel {
         let _ = self.zone_runtime.set(runtime);
     }
 
+    /// R20.18.7: install the kernel-side `BlobFetcher` into the raft
+    /// server's shared slot. Called from `init_federation_from_env`
+    /// once `MountTable` has any backends registered. Idempotent —
+    /// writing twice just replaces the previous fetcher Arc.
+    fn wire_blob_fetcher(&self, slot: nexus_raft::blob_fetcher::BlobFetcherSlot) {
+        let fetcher = Arc::new(crate::blob_fetcher::KernelBlobFetcher::new(Arc::clone(
+            &self.mount_table,
+        )));
+        *slot.write() = Some(fetcher as Arc<dyn nexus_raft::blob_fetcher::BlobFetcher>);
+    }
+
     /// R20.18.2: driven by `Kernel::new()` at startup (post-R20.18.5)
     /// or from tests. Reads federation env vars, constructs
     /// `raft::ZoneManager` internally, bootstraps the root raft group,
@@ -4455,6 +4466,39 @@ impl Kernel {
                 std::env::var("COMPUTERNAME").unwrap_or_else(|_| "localhost".to_string())
             }
         });
+
+        // R20.18.7: publish self's peer-reachable address so
+        // `origin_backend_name` can encode "{backend}@{host:port}" into
+        // every FileMetadata.backend_name it writes. Follower
+        // `try_remote_fetch` parses that suffix to know where to pull
+        // the blob from; without it, every cross-node read after
+        // metadata-only replication fails with FileNotFound.
+        //
+        // SSOT: `NEXUS_ADVERTISE_ADDR` — the same env var raft uses for
+        // cluster peering. Since R20.18.7 co-locates `ReadBlob` with
+        // `ZoneApiService` on the raft port, one advertised address
+        // covers both planes (etcd / CockroachDB `--advertise-addr`
+        // pattern). Fallback: hostname + raft port parsed from
+        // `NEXUS_BIND_ADDR` (defaults to 2126) so simple smoke-test
+        // setups still publish something reachable.
+        let self_addr = std::env::var(contracts::env::ADVERTISE_ADDR)
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| {
+                let raft_port = std::env::var(contracts::env::BIND_ADDR)
+                    .ok()
+                    .as_deref()
+                    .and_then(|s| s.rsplit_once(':'))
+                    .and_then(|(_, p)| p.parse::<u16>().ok())
+                    .unwrap_or(2126);
+                format!("{}:{}", hostname, raft_port)
+            });
+        self.set_self_address(&self_addr);
+        tracing::info!(
+            self_address = %self_addr,
+            "R20.18.7 init_federation_from_env: self-address published"
+        );
 
         // Process-wide one-shot guard. Multiple `Kernel::new()` calls in
         // one process (e.g. `nexus.connect()` + a side embedded store
@@ -4522,6 +4566,26 @@ impl Kernel {
             }
         }
 
+        // R20.18.7: hand the same on-disk TLS material to the peer blob
+        // client so its `ReadBlob` calls reach the co-located handler on
+        // :2126 over the cluster's mTLS. ZoneManager re-reads these
+        // files internally; reading them twice keeps the kernel's
+        // TLS wiring independent of raft's `TlsFiles` struct and stops
+        // a future raft refactor from silently breaking the client.
+        if ca_path.exists() && node_cert_path.exists() && node_key_path.exists() {
+            let ca_pem = std::fs::read(&ca_path)
+                .map_err(|e| KernelError::Federation(format!("read ca.pem: {}", e)))?;
+            let cert_pem = std::fs::read(&node_cert_path)
+                .map_err(|e| KernelError::Federation(format!("read node.pem: {}", e)))?;
+            let key_pem = std::fs::read(&node_key_path)
+                .map_err(|e| KernelError::Federation(format!("read node-key.pem: {}", e)))?;
+            self.peer_client.install_tls_config(transport::TlsConfig {
+                cert_pem,
+                key_pem,
+                ca_pem,
+            });
+        }
+
         // TLS config for ZoneManager: present if ca.pem + node.pem +
         // node-key.pem all exist.
         let tls = if ca_path.exists() && node_cert_path.exists() && node_key_path.exists() {
@@ -4549,9 +4613,16 @@ impl Kernel {
         // second call is Err — ignore per attach_zone_registry semantics.
         let runtime_handle = zm.runtime_handle();
         let registry = zm.registry();
+        let blob_slot = zm.blob_fetcher_slot();
         let _ = self.zone_manager.set(zm.clone());
         let _ = self.zone_registry.set(registry);
         let _ = self.zone_runtime.set(runtime_handle);
+
+        // R20.18.7: install the kernel-side `BlobFetcher` into the slot
+        // the ZoneManager handed back. The gRPC server is already
+        // running — once this write lands, every peer `ReadBlob`
+        // resolves against the local MountTable's backends.
+        self.wire_blob_fetcher(blob_slot);
 
         // Joiner detection: ca.pem + node.pem + node-key.pem exist AND
         // no join-token left over (we consumed it above).

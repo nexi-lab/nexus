@@ -18,6 +18,7 @@ mod anthropic_backend;
 pub mod anthropic_streaming;
 pub mod backend;
 mod bitmap;
+mod blob_fetcher;
 mod bloom;
 mod cas_chunking;
 mod cas_engine;

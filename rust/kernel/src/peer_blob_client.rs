@@ -21,7 +21,9 @@ use std::time::Duration;
 use dashmap::DashMap;
 use tokio::sync::Semaphore;
 
-use crate::kernel::vfs_proto;
+use nexus_raft::transport::proto::nexus::raft::{
+    zone_api_service_client::ZoneApiServiceClient, ReadBlobRequest,
+};
 
 /// Default per-peer permit count — caps outstanding RPCs per peer so one
 /// slow origin cannot monopolise the client. 8 matches Python
@@ -42,8 +44,15 @@ pub(crate) struct PeerBlobClient {
     per_peer_semaphores: DashMap<String, Arc<Semaphore>>,
     global_semaphore: Arc<Semaphore>,
     timeout: Duration,
-    auth_token: String,
     per_peer_permits: usize,
+    /// R20.18.7: late-bound mTLS material. Populated by the kernel via
+    /// `install_tls_config` once `init_federation_from_env` reads the
+    /// on-disk `ca.pem` / `node.pem` / `node-key.pem` triplet. When
+    /// present, peer channels are built as `https://…` with full mTLS
+    /// (same cert material that `ZoneManager` uses for raft RPCs — one
+    /// trust anchor per cluster). When absent, plaintext HTTP/2 — the
+    /// docker federation test intentionally sets `NEXUS_RAFT_TLS=false`.
+    tls: parking_lot::RwLock<Option<transport::TlsConfig>>,
 }
 
 #[allow(dead_code)]
@@ -56,9 +65,20 @@ impl PeerBlobClient {
             per_peer_semaphores: DashMap::new(),
             global_semaphore: Arc::new(Semaphore::new(DEFAULT_GLOBAL_PERMITS)),
             timeout: DEFAULT_RPC_TIMEOUT,
-            auth_token: String::new(),
             per_peer_permits: DEFAULT_PER_PEER_PERMITS,
+            tls: parking_lot::RwLock::new(None),
         }
+    }
+
+    /// Install mTLS material so subsequent channel builds use TLS.
+    ///
+    /// Drops any cached plaintext channels — the next RPC to each peer
+    /// reconnects over TLS. Called from `Kernel::init_federation_from_env`
+    /// once the leader / joiner has resolved the cluster CA + node
+    /// cert.
+    pub(crate) fn install_tls_config(&self, tls: transport::TlsConfig) {
+        *self.tls.write() = Some(tls);
+        self.channels.clear();
     }
 
     /// Exposed runtime handle — kernel-owned code paths (e.g. the migrated
@@ -77,12 +97,17 @@ impl PeerBlobClient {
         if let Some(ch) = self.channels.get(address) {
             return Ok(ch.clone());
         }
+        let tls = self.tls.read().clone();
+        let scheme = if tls.is_some() { "https" } else { "http" };
         let endpoint = if address.starts_with("http://") || address.starts_with("https://") {
             address.to_string()
         } else {
-            format!("http://{}", address)
+            format!("{}://{}", scheme, address)
         };
-        let client_cfg = transport::ClientConfig::default();
+        let client_cfg = transport::ClientConfig {
+            tls,
+            ..Default::default()
+        };
         let channel = transport::create_channel(&endpoint, &client_cfg)
             .await
             .map_err(|e| format!("peer channel {}: {}", address, e))?;
@@ -128,17 +153,17 @@ impl PeerBlobClient {
             .map_err(|e| format!("per-peer semaphore closed: {e}"))?;
 
         let channel = self.channel_for(address).await?;
-        // Match the server + Python-client gRPC caps. tonic's default
-        // decode cap is 4 MiB, which rejects full-content ReadBlob
-        // responses for any file above ~4 MiB — the CDC chunk threshold
-        // is 16 MiB so even a single chunk can exceed 4 MiB.
-        // Single source of truth: `contracts::MAX_GRPC_MESSAGE_BYTES`.
-        let mut client = vfs_proto::nexus_vfs_service_client::NexusVfsServiceClient::new(channel)
+        // R20.18.7: ReadBlob now lives on the raft `ZoneApiService`
+        // (co-located with consensus on the advertised raft port —
+        // inherits cluster mTLS). Message caps match the server:
+        // tonic's default 4 MiB decode cap would reject any CAS
+        // chunk above that threshold (16 MiB CDC boundary).
+        // SSOT: `contracts::MAX_GRPC_MESSAGE_BYTES`.
+        let mut client = ZoneApiServiceClient::new(channel)
             .max_decoding_message_size(contracts::MAX_GRPC_MESSAGE_BYTES)
             .max_encoding_message_size(contracts::MAX_GRPC_MESSAGE_BYTES);
-        let mut request = tonic::Request::new(vfs_proto::ReadBlobRequest {
+        let mut request = tonic::Request::new(ReadBlobRequest {
             content_hash: content_hash.to_string(),
-            auth_token: self.auth_token.clone(),
         });
         request.set_timeout(self.timeout);
 
@@ -147,17 +172,8 @@ impl PeerBlobClient {
             .await
             .map_err(|e| format!("ReadBlob {}: {}", address, e))?
             .into_inner();
-        if resp.is_error {
-            let payload = String::from_utf8_lossy(&resp.error_payload);
-            return Err(format!(
-                "ReadBlob {} error: {}",
-                address,
-                if payload.is_empty() {
-                    "unknown".into()
-                } else {
-                    payload.into_owned()
-                }
-            ));
+        if !resp.error.is_empty() {
+            return Err(format!("ReadBlob {} error: {}", address, resp.error));
         }
         Ok(resp.content)
     }

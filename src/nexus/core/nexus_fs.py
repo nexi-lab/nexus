@@ -4701,6 +4701,17 @@ class NexusFS(  # type: ignore[misc]
             if caller_is_admin or caller_zone == ROOT_ZONE_ID:
                 return True
             entry_zone = getattr(entry, "zone_id", None) or ROOT_ZONE_ID
+            # Root zone is the global namespace, not any user's private zone:
+            # standalone NexusFS tags every file as zone_id=root, and
+            # federation-root-mounted files are visible from every zone by
+            # design. Filtering them out would break sys_readdir in
+            # standalone mode entirely (surface-level cost: the
+            # test_embedded_namespaces_rebac tests that write under
+            # /workspace/acme/ and fail to readdir them). Per-zone isolation
+            # continues to work because non-root entry_zone still has to
+            # match caller_zone below.
+            if entry_zone == ROOT_ZONE_ID:
+                return True
             return entry_zone == caller_zone
 
         if limit is not None:

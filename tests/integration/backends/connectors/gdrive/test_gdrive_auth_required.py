@@ -56,9 +56,14 @@ def test_get_drive_service_raises_authentication_error_when_no_user(
     # Machine-actionable recovery pointer so clients can drive re-auth
     # without out-of-band knowledge.
     assert err.recovery_hint is not None
-    assert err.recovery_hint["endpoint"] == "/v2/connectors/auth/init"
+    # Values match the real API contract: POST /api/v2/connectors/auth/init
+    # with AuthInitRequest(connector_name="gdrive_connector", provider=...).
+    # Following the hint verbatim must reach the registered connector and
+    # pass AuthInitRequest validation — tested via JSON-schema in the
+    # serialization check below.
+    assert err.recovery_hint["endpoint"] == "/api/v2/connectors/auth/init"
     assert err.recovery_hint["method"] == "POST"
-    assert err.recovery_hint["connector"] == "gdrive"
+    assert err.recovery_hint["connector_name"] == "gdrive_connector"
     assert err.recovery_hint["provider"] == "google-drive"
     assert "user_email" not in err.recovery_hint
 
@@ -84,9 +89,35 @@ def test_get_drive_service_raises_authentication_error_when_token_missing(
     assert err.user_email == "user@example.com"
     assert err.auth_url is None
     assert err.recovery_hint is not None
-    assert err.recovery_hint["endpoint"] == "/v2/connectors/auth/init"
+    assert err.recovery_hint["endpoint"] == "/api/v2/connectors/auth/init"
+    assert err.recovery_hint["connector_name"] == "gdrive_connector"
     assert err.recovery_hint["user_email"] == "user@example.com"
     assert err.recovery_hint["provider"] == "google-drive"
+
+
+def test_recovery_hint_matches_auth_init_request_schema() -> None:
+    """The hint must map cleanly onto the real AuthInitRequest model.
+
+    If the server-side request model renames a field or adds required
+    ones, this test catches the drift before clients hit 422 in
+    production.  We intentionally cross over into a server import because
+    the point of the hint is that it's a valid POST body for that route.
+    """
+    pytest.importorskip("pydantic")
+    from nexus.server.api.v2.routers.connectors import AuthInitRequest
+
+    hint = {
+        "endpoint": "/api/v2/connectors/auth/init",
+        "method": "POST",
+        "connector_name": "gdrive_connector",
+        "provider": "google-drive",
+        "user_email": "user@example.com",
+    }
+    # POST body is the hint minus transport-metadata fields.
+    body = {k: v for k, v in hint.items() if k not in {"endpoint", "method"}}
+    model = AuthInitRequest.model_validate(body)
+    assert model.connector_name == "gdrive_connector"
+    assert model.provider == "google-drive"
 
 
 def test_auth_url_is_always_none_regardless_of_env(

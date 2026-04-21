@@ -41,6 +41,7 @@ from nexus.bricks.search.primitives.grep_fast import grep_files_mmap
 from nexus.bricks.snapshot.errors import TransactionConflictError as _TransactionConflictError
 from nexus.contracts.exceptions import (
     AccessDeniedError,
+    AuthenticationError,
     ConflictError,
     InvalidPathError,
     NexusFileNotFoundError,
@@ -884,6 +885,9 @@ def create_async_files_router(
                     media_type="application/json",
                 )
 
+        except AuthenticationError:
+            # Preserve structured re-auth signal (see /list handler above).
+            raise
         except NexusPermissionError as e:
             raise HTTPException(status_code=403, detail=str(e)) from e
         except NexusFileNotFoundError as e:
@@ -1297,6 +1301,13 @@ def create_async_files_router(
             return ListResponse(items=file_items, has_more=False)
 
         except HTTPException:
+            raise
+        except AuthenticationError:
+            # Let connector auth-required signals (provider / user_email /
+            # recovery_hint) flow to ``nexus_error_handler`` which maps
+            # AuthenticationError -> 401 and preserves the structured
+            # fields clients need for re-auth.  Wrapping as 500 would
+            # drop the signal.
             raise
         except NexusPermissionError as e:
             raise HTTPException(status_code=403, detail=str(e)) from e

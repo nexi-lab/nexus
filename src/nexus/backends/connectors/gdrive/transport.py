@@ -227,18 +227,27 @@ class DriveTransport:
     def _build_recovery_hint(self, *, user_email: str | None) -> dict[str, str]:
         """Structured, machine-actionable re-auth instructions.
 
-        The exception payload carries enough for API/CLI clients to kick
-        off the connector-scoped OAuth flow without out-of-band guesswork:
-        the endpoint (``POST /v2/connectors/auth/init``), the connector
-        name (always ``gdrive`` for this transport), the provider label
-        used by the token manager, and (when known) the user_email the
-        token should be bound to.  Kept as a plain ``dict[str, str]`` so
-        it round-trips through JSON error responses unchanged.
+        Matches the real connector auth-init contract exactly so clients
+        can POST the hint verbatim:
+
+        * endpoint — ``/api/v2/connectors/auth/init`` (router prefix
+          ``/api/v2/connectors`` + path ``/auth/init``).
+        * connector_name — matches
+          :class:`AuthInitRequest.connector_name`; value is the registered
+          connector name (``gdrive_connector``), not the transport's
+          ``provider`` label.
+        * provider — passed through so the server uses the expected
+          token-manager provider (``google-drive`` / ``gws`` / …) instead
+          of inferring from ``service_name``.
+        * user_email — present only when known.
+
+        Kept as ``dict[str, str]`` so it round-trips through JSON error
+        responses unchanged.
         """
         hint: dict[str, str] = {
-            "endpoint": "/v2/connectors/auth/init",
+            "endpoint": "/api/v2/connectors/auth/init",
             "method": "POST",
-            "connector": "gdrive",
+            "connector_name": "gdrive_connector",
             "provider": self._provider or "google-drive",
         }
         if user_email:

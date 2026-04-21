@@ -121,3 +121,35 @@ class TestCheckRuntimeDeps:
             _server_available()
             assert mock_find.call_count == 1
         _server_available.cache_clear()
+
+
+from nexus.contracts.exceptions import BackendError, MissingDependencyError  # noqa: E402
+
+
+class TestMissingDependencyError:
+    def test_is_backend_error(self) -> None:
+        err = MissingDependencyError(backend="gws_gmail", missing=[])
+        assert isinstance(err, BackendError)
+
+    def test_enumerates_all_missing(self) -> None:
+        missing = [
+            (
+                PythonDep("x", extras=("gws",)),
+                "python 'x': install with: pip install nexus-fs[gws]",
+            ),
+            (
+                BinaryDep("gws", "brew install gws"),
+                "binary 'gws': not on PATH — install with: brew install gws",
+            ),
+        ]
+        err = MissingDependencyError(backend="gws_gmail", missing=missing)
+        msg = str(err)
+        assert "gws_gmail" in msg
+        assert "2 runtime dep" in msg
+        assert "python 'x'" in msg
+        assert "binary 'gws'" in msg
+
+    def test_missing_attribute_exposed(self) -> None:
+        pairs = [(PythonDep("x"), "python 'x': install with: pip install x")]
+        err = MissingDependencyError(backend="x", missing=pairs)
+        assert err.missing == pairs

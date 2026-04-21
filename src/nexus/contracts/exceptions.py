@@ -175,6 +175,38 @@ class BackendError(NexusError):
         super().__init__(message, path)
 
 
+class MissingDependencyError(BackendError):
+    """One or more runtime dependencies for a connector are missing.
+
+    Raised by ``BackendFactory.create()`` when a connector's
+    ``RUNTIME_DEPS`` cannot be satisfied in the current environment.  Each
+    entry in ``missing`` is a ``(dep, human_reason)`` pair — the reason
+    string already contains the install hint.
+
+    This is an **expected** error: the user has an actionable path
+    forward (install the hint, switch profiles, etc.), so it is logged at
+    INFO level without stack traces.
+
+    Attributes:
+        backend: connector name that failed to mount
+        missing: list of (RuntimeDep, reason) pairs for every unmet dep
+    """
+
+    is_expected = True  # User-correctable — install the dep
+
+    def __init__(
+        self,
+        backend: str,
+        missing: list[tuple[Any, str]],
+    ) -> None:
+        self.missing = missing
+        count = len(missing)
+        lines = [f"missing {count} runtime dep(s)"]
+        for _, reason in missing:
+            lines.append(f"  - {reason}")
+        super().__init__("\n".join(lines), backend=backend)
+
+
 class DatabaseError(BackendError):
     """Database operation failed. Wraps SQLAlchemy errors at storage boundary.
 

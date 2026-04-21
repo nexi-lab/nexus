@@ -274,10 +274,7 @@ class BulkReBACStrategy:
             obj_type = "file"
             if ctx.router and not path.startswith("/workspace"):
                 try:
-                    route = ctx.router.route(
-                        path,
-                        is_admin=ctx.context.is_admin,
-                    )
+                    route = ctx.router.route(path, zone_id=ctx.context.zone_id)
                     # RouteResult no longer has .namespace — use mount_point as obj_type hint
                     if route.mount_point and route.mount_point != "/":
                         obj_type = route.mount_point.strip("/").split("/")[0]

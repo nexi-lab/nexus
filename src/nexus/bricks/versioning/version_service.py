@@ -16,6 +16,7 @@ import difflib
 import logging
 from typing import TYPE_CHECKING, Any
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.lib.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)
@@ -191,13 +192,9 @@ class VersionService:
             raise RuntimeError("Router not configured for VersionService")
 
         # Route to backend
-        is_admin = context.is_admin if context else False
+        zone_id = context.zone_id if context else ROOT_ZONE_ID
 
-        route = self.router.route(
-            path,
-            is_admin=is_admin,
-            check_write=False,
-        )
+        route = self.router.route(path, zone_id=zone_id)
 
         # Read content from backend using version's content hash (run in thread)
         return await asyncio.to_thread(route.backend.read_content, version_meta.etag)

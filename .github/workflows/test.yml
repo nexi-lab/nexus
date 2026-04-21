@@ -160,7 +160,11 @@ jobs:
       - name: Verify Rust extensions
         run: |
           uv run python -c "import nexus_kernel; print('nexus_kernel OK')"
-          uv run python -c "from nexus_kernel import ZoneManager, Metastore; print('raft bindings OK')"
+          # R20.18.6 deleted the ZoneManager / ZoneHandle pyclass shells;
+          # Python drives zones via Kernel's zone_* methods now. Smoke
+          # test the surviving raft-bound pyclass (Metastore) + the
+          # kernel's own entry points.
+          uv run python -c "from nexus_kernel import Metastore, Kernel; print('raft bindings OK')"
         shell: bash
 
       - name: Run unit tests

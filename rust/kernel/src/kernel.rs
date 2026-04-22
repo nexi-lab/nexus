@@ -4657,42 +4657,64 @@ impl Kernel {
         // resolves against the local MountTable's backends.
         self.wire_blob_fetcher(blob_slot);
 
-        // Joiner detection: ca.pem + node.pem + node-key.pem exist AND
-        // no join-token left over (we consumed it above).
-        let is_joiner = ca_path.exists()
-            && node_cert_path.exists()
-            && !join_token_path.exists()
-            && std::env::var("NEXUS_JOINER_HINT")
-                .map(|v| v == "1")
-                .unwrap_or(false);
+        // Joiner detection — etcd `--initial-cluster-state=existing` equivalent.
+        // Either signal alone is sufficient:
+        //
+        // (a) TLS-enrolled node: ca.pem + node.pem present, join-token
+        //     consumed. Implies the node was enrolled by a CA and is
+        //     restarting into an existing cluster.
+        // (b) Explicit plaintext joiner: ``NEXUS_JOINER_HINT=1``. Used when
+        //     there are no certs (plaintext mode) or when the user wants
+        //     to override cert-based auto-detection. A fresh data dir plus
+        //     this hint means "leader adds me via ConfChange + snapshot",
+        //     avoiding the raft-rs `to_commit N out of range` panic on
+        //     amnesia rejoin.
+        //
+        // Either true → skip local ConfState bootstrap; leader sends the
+        // authoritative voter set via InstallSnapshot.
+        let joiner_hint = std::env::var("NEXUS_JOINER_HINT")
+            .map(|v| v == "1")
+            .unwrap_or(false);
+        let has_enrolled_certs =
+            ca_path.exists() && node_cert_path.exists() && !join_token_path.exists();
+        let is_joiner = joiner_hint || has_enrolled_certs;
 
-        // Phase-1 bootstrap: create/join root zone. Idempotent — skip
-        // if registry already knows the zone (loaded from disk).
-        const ROOT_ZONE_ID: &str = "root";
-        if zm.get_zone(ROOT_ZONE_ID).is_none() {
-            if is_joiner {
-                zm.join_zone(ROOT_ZONE_ID, peers.clone())
-                    .map_err(|e| KernelError::Federation(format!("join_zone(root): {}", e)))?;
-            } else {
-                zm.create_zone(ROOT_ZONE_ID, peers.clone())
-                    .map_err(|e| KernelError::Federation(format!("create_zone(root): {}", e)))?;
+        // Single bootstrap entry point — respects `is_joiner` uniformly
+        // across the root zone and every `NEXUS_FEDERATION_ZONES` entry.
+        // Previously the root zone honored `is_joiner` but the
+        // `NEXUS_FEDERATION_ZONES` loop hard-coded `create_zone`, so a
+        // joiner would skip bootstrap on root but still clobber other
+        // zones with a locally-computed ConfState.
+        let bootstrap_or_join = |zone_id: &str| -> Result<(), KernelError> {
+            if zm.get_zone(zone_id).is_some() {
+                return Ok(()); // Idempotent — already loaded from disk.
             }
-        }
+            if is_joiner {
+                zm.join_zone(zone_id, peers.clone()).map_err(|e| {
+                    KernelError::Federation(format!("join_zone({}): {}", zone_id, e))
+                })?;
+            } else {
+                zm.create_zone(zone_id, peers.clone()).map_err(|e| {
+                    KernelError::Federation(format!("create_zone({}): {}", zone_id, e))
+                })?;
+            }
+            Ok(())
+        };
 
-        // Phase-1 for non-root zones declared in NEXUS_FEDERATION_ZONES.
-        // Mounts are handled separately via reconcile_mounts_from_zones
-        // (for persisted DT_MOUNT) + apply-cb (for new proposals).
+        // Phase-1 bootstrap: root zone, then any zones declared in
+        // NEXUS_FEDERATION_ZONES. Mounts are handled separately via
+        // reconcile_mounts_from_zones (for persisted DT_MOUNT) + apply-cb
+        // (for new proposals).
+        const ROOT_ZONE_ID: &str = "root";
+        bootstrap_or_join(ROOT_ZONE_ID)?;
+
         if let Ok(zones_csv) = std::env::var("NEXUS_FEDERATION_ZONES") {
             for zone_id in zones_csv
                 .split(',')
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
             {
-                if zm.get_zone(zone_id).is_none() {
-                    zm.create_zone(zone_id, peers.clone()).map_err(|e| {
-                        KernelError::Federation(format!("create_zone({}): {}", zone_id, e))
-                    })?;
-                }
+                bootstrap_or_join(zone_id)?;
             }
         }
 

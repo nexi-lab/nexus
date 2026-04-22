@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.core.path_utils import validate_path
 from nexus.lib.rpc_decorator import rpc_expose
 
@@ -24,11 +23,12 @@ class WatchMixin:
 
     # Provided by NexusFS.__init__
     _file_watcher: "FileWatcher"
+    _kernel: Any
 
     def _resolve_cred(self, context: Any) -> Any: ...
 
     @rpc_expose(description="Wait for file changes on a path")
-    async def sys_watch(
+    def sys_watch(
         self,
         path: str,
         timeout: float = 30.0,
@@ -38,14 +38,17 @@ class WatchMixin:
     ) -> dict[str, Any] | None:
         """Wait for file changes (inotify(7)). Returns FileEvent dict or None on timeout.
 
-        Delegates to kernel FileWatcher which races local OBSERVE + optional
-        remote watcher (federation) via FIRST_COMPLETED.
+        Delegates to Rust kernel sys_watch (FileWatchRegistry.wait_for_event).
         """
         path = validate_path(path, allow_root=True)
-        ctx = self._resolve_cred(context)
-        zone_id: str = getattr(ctx, "zone_id", None) or ROOT_ZONE_ID
-        event = await self._file_watcher.wait(path, timeout=timeout, zone_id=zone_id)
-        if event is None:
-            return None
-        result: dict[str, Any] = event.to_dict()
-        return result
+        self._resolve_cred(context)  # validate credentials
+
+        # Rust kernel path: blocking wait via Condvar (or stub returning None)
+        if self._kernel is not None:
+            event = self._kernel.sys_watch(path, int(timeout * 1000))
+            if event is None:
+                return None
+            return {"event_type": event.event_type, "path": event.path}
+
+        # No kernel: return None (watch not available)
+        return None

@@ -713,7 +713,7 @@ class MetadataMixin:
         old_path: str,
         new_path: str,
         *,
-        force: bool = False,
+        force: bool = False,  # noqa: ARG002 — forwarded to Rust when kernel supports it
         context: OperationContext | None = None,
     ) -> dict[str, Any]:
         """
@@ -777,7 +777,7 @@ class MetadataMixin:
         # Rust sys_rename handles: sorted VFS locks + metastore put-then-delete
         # + recursive children rename + backend rename + dcache updates + OBSERVE.
         _rust_ctx = self._build_rust_ctx(context, is_admin)
-        _rename_result = self._kernel.sys_rename(old_path, new_path, _rust_ctx, force)
+        _rename_result = self._kernel.sys_rename(old_path, new_path, _rust_ctx)
 
         # POST-INTERCEPT hooks
         if _rename_result.post_hook_needed:

@@ -549,7 +549,7 @@ class TestPostFlushHooks:
 
         # Mock _process_events_in_session to be a no-op
         with patch.object(observer, "_process_events_in_session"):
-            await observer._flush_batch(test_events)
+            observer._flush_batch(test_events)
 
         assert len(captured_events) == 1
         assert captured_events[0]["path"] == "/test.csv"
@@ -598,7 +598,7 @@ class TestPostFlushHooks:
         ]
 
         with patch.object(observer, "_process_events_in_session"):
-            await observer._flush_batch(test_events)
+            observer._flush_batch(test_events)
 
         # Flush succeeded despite hook failure
         assert observer._total_flushed == 1
@@ -625,7 +625,7 @@ class TestPostFlushHooks:
         test_events = [{"op": "mkdir", "path": "/dir", "zone_id": None, "agent_id": None}]
 
         with patch.object(observer, "_process_events_in_session"):
-            await observer._flush_batch(test_events)
+            observer._flush_batch(test_events)
 
         assert observer._total_flushed == 1
 

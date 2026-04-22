@@ -41,6 +41,7 @@ struct ExceptionCache {
     invalid_path: Py<PyAny>,
     file_not_found: Py<PyAny>,
     backend_error: Py<PyAny>,
+    permission_denied: Py<PyAny>,
 }
 
 static EXCEPTION_CACHE: std::sync::OnceLock<Option<ExceptionCache>> = std::sync::OnceLock::new();
@@ -52,10 +53,12 @@ fn get_exception_cache(py: Python<'_>) -> Option<&'static ExceptionCache> {
             let invalid_path = m.getattr("InvalidPathError").ok()?.unbind();
             let file_not_found = m.getattr("NexusFileNotFoundError").ok()?.unbind();
             let backend_error = m.getattr("BackendError").ok()?.unbind();
+            let permission_denied = m.getattr("PermissionDeniedError").ok()?.unbind();
             Some(ExceptionCache {
                 invalid_path,
                 file_not_found,
                 backend_error,
+                permission_denied,
             })
         })
         .as_ref()
@@ -2275,6 +2278,60 @@ impl PyKernel {
         let hooks = self.hooks.lock();
         let (_, async_hooks) = hooks.get_post_hooks(py, op);
         Ok(async_hooks)
+    }
+
+    // ── Batch stat permission check (single FFI call for N paths) ──────
+
+    /// Batch stat permission check: dispatch stat pre-hooks for each path,
+    /// returning a bool per path (true = allowed, false = denied).
+    ///
+    /// Reduces N PyO3 boundary crossings to 1 for batch operations like
+    /// read_bulk and stat_bulk that check permissions on many paths.
+    #[pyo3(signature = (paths, ctx, permission))]
+    fn dispatch_pre_hooks_batch_stat(
+        &self,
+        py: Python<'_>,
+        paths: Vec<String>,
+        ctx: &PyOperationContext,
+        permission: &str,
+    ) -> PyResult<Vec<bool>> {
+        // Fast path: no stat hooks → all paths allowed
+        if !self.inner.has_hooks("stat") {
+            return Ok(vec![true; paths.len()]);
+        }
+
+        // Build Python context once for all paths
+        let py_ctx = rust_ctx_to_python(py, &ctx.to_rust(), "")
+            .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
+        let hc = get_hook_ctx_cache(py).ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err("hook context cache init failed")
+        })?;
+
+        // Cache PermissionDeniedError class for isinstance check
+        let perm_denied_cls = get_exception_cache(py).map(|c| c.permission_denied.bind(py));
+
+        let mut results = Vec::with_capacity(paths.len());
+        for path in &paths {
+            let shc = hc
+                .stat
+                .bind(py)
+                .call1((path.as_str(), &py_ctx, permission))?
+                .unbind();
+            match self.dispatch_pre_hooks_inner("stat", &shc) {
+                Ok(()) => results.push(true),
+                Err(e) => {
+                    // PermissionDeniedError → denied; other errors propagate
+                    if let Some(cls) = perm_denied_cls {
+                        if e.is_instance(py, cls) {
+                            results.push(false);
+                            continue;
+                        }
+                    }
+                    return Err(e);
+                }
+            }
+        }
+        Ok(results)
     }
 
     // ── sys_read ───────────────────────────────────────────────────────

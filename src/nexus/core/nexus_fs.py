@@ -644,25 +644,6 @@ class NexusFS(  # type: ignore[misc]
 
     # ── IPC primitives (inlined from IPCMixin) ─────────────────────────
 
-    def _pipe_read(self, path: str, *, count: int | None = None, offset: int = 0) -> bytes:
-        """Read from DT_PIPE — nowait hot path + Rust blocking slow path (GIL-free)."""
-        # Hot path: try nowait first (zero GIL)
-        _data = self._kernel.pipe_read_nowait(path)
-        if _data is not None:
-            if offset or count is not None:
-                _data = _data[offset : offset + count] if count is not None else _data[offset:]
-            return bytes(_data)
-
-        # Slow path: block in Rust (GIL released by PyO3), 5s timeout
-        _data = self._kernel.pipe_read_blocking(path, 5000)
-        if offset or count is not None:
-            _data = _data[offset : offset + count] if count is not None else _data[offset:]
-        return bytes(_data)
-
-    def _pipe_write(self, path: str, data: bytes) -> int:
-        """Write to DT_PIPE — non-blocking via Rust kernel (condvar wakes readers)."""
-        return self._kernel.pipe_write_nowait(path, data)
-
     def _pipe_destroy(self, path: str) -> dict[str, Any]:
         """Destroy DT_PIPE — close Rust buffer."""
 
@@ -686,13 +667,6 @@ class NexusFS(  # type: ignore[misc]
         Sync passthrough to ``Kernel.pipe_read_nowait``.
         """
         return self._kernel.pipe_read_nowait(path)
-
-    def pipe_write_nowait(self, path: str, data: bytes) -> int:
-        """Non-blocking pipe write. Returns bytes written.
-
-        Sync passthrough to ``Kernel.pipe_write_nowait``.
-        """
-        return self._kernel.pipe_write_nowait(path, data)
 
     def pipe_create(self, path: str, capacity: int = 65_536) -> None:
         """Create a DT_PIPE in the kernel registry.

@@ -195,6 +195,9 @@ Lock operations are consolidated into two syscalls (POSIX `fcntl(F_SETLK)` patte
 
 - **Mutating syscalls** (write, unlink, rename, rmdir): full pipeline — VFSRouter →
   VFSLock → KernelDispatch (3-phase) → Metastore → FileEvent
+- **DT_PIPE / DT_STREAM I/O**: Rust dcache detects entry_type early in sys_read/sys_write
+  and dispatches to PipeManager/StreamManager inline — no VFS lock, no metastore update,
+  no observer dispatch (matching Linux `write(2)` on a pipe not triggering inotify)
 - **Read**: same pipeline minus FileEvent (reads are not mutations)
 - **Read-only metadata** (stat, access, readdir, is_directory): direct Metastore
   lookup only — no routing, locking, or dispatch

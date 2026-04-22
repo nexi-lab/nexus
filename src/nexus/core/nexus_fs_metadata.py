@@ -492,21 +492,9 @@ class MetadataMixin:
                     self._ensure_parent_directories(path, ctx)
                 return
 
-        # PRE-INTERCEPT hooks via Rust kernel
+        # Rust kernel: backend.mkdir + ensure_parent_directories + DT_DIR metadata + dcache
         _rust_ctx = self._build_rust_ctx(ctx, ctx.is_admin)
         _mkdir_result = self._kernel.sys_mkdir(path, _rust_ctx, parents, exist_ok)
-
-        # Python always does metastore + backend (authoritative metadata with timestamps/backend_key)
-        route.backend.mkdir(route.backend_path, parents=parents, exist_ok=True, context=ctx)
-
-        if parents:
-            self._ensure_parent_directories(path, ctx)
-
-        self._kernel.sys_setattr(
-            path,
-            DT_DIR,
-            zone_id=ctx.zone_id or ROOT_ZONE_ID,
-        )
 
         # OBSERVE: Rust kernel fires DirCreate when hit=true (§11 Phase 5).
         # Only Python fires for the fallback path.

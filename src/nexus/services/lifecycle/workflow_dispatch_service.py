@@ -70,7 +70,7 @@ class WorkflowDispatchService:
     # ------------------------------------------------------------------
 
     def _fire_sync(self, trigger_type: str, event_context: dict[str, Any], label: str) -> None:
-        """Sync dispatch: pipe_write_nowait + fire-and-forget async work."""
+        """Sync dispatch: sys_write to DT_PIPE + fire-and-forget async work."""
         if not (self._enable_workflows and self._workflow_engine):
             return
 
@@ -79,7 +79,7 @@ class WorkflowDispatchService:
         if self._nx is not None and self._pipe_ready:
             try:
                 data = json.dumps({"type": trigger_type, "ctx": event_context}).encode()
-                self._nx.pipe_write_nowait(_WORKFLOW_PIPE_PATH, data)
+                self._nx.sys_write(_WORKFLOW_PIPE_PATH, data)
             except (PipeClosedError, PipeFullError):
                 logger.warning("Workflow pipe full/closed, dropping event: %s", label)
         else:
@@ -111,7 +111,7 @@ class WorkflowDispatchService:
     async def fire(self, trigger_type: str, event_context: dict[str, Any], label: str) -> None:
         """Async fire for direct callers (not from OBSERVE path).
 
-        Uses Rust kernel pipe_write_nowait — never touches Python backends directly.
+        Uses sys_write to DT_PIPE — routes through Rust kernel ring buffer.
         """
         if not (self._enable_workflows and self._workflow_engine):
             return
@@ -119,7 +119,7 @@ class WorkflowDispatchService:
         if self._nx is not None and self._pipe_ready:
             try:
                 data = json.dumps({"type": trigger_type, "ctx": event_context}).encode()
-                self._nx.pipe_write_nowait(_WORKFLOW_PIPE_PATH, data)
+                self._nx.sys_write(_WORKFLOW_PIPE_PATH, data)
             except Exception:
                 logger.warning("Workflow pipe full/closed, dropping event: %s", label)
         else:

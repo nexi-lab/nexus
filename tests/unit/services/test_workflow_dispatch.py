@@ -24,15 +24,15 @@ _WORKFLOW_PIPE_PATH = "/nexus/pipes/workflow-events"
 
 
 def _make_mock_nx() -> MagicMock:
-    """Create a mock NexusFS exposing the public Tier 2 pipe API.
+    """Create a mock NexusFS exposing VFS pipe API.
 
-    Production code calls ``self._nx.pipe_write_nowait`` /
-    ``self._nx.pipe_close`` (sync passthroughs to the Rust kernel) and
-    ``self._nx.sys_setattr`` / ``self._nx.sys_read`` (sync).
+    Production code calls ``self._nx.sys_write`` (DT_PIPE routes through
+    Rust dcache) / ``self._nx.pipe_close`` and ``self._nx.sys_setattr`` /
+    ``self._nx.sys_read`` (sync).
     """
     nx = MagicMock()
     # Sync passthrough methods
-    nx.pipe_write_nowait = MagicMock()
+    nx.sys_write = MagicMock(return_value={"path": _WORKFLOW_PIPE_PATH, "bytes_written": 0})
     nx.pipe_close = MagicMock()
     # Sync syscalls — NexusFS methods are sync def
     nx.sys_setattr = MagicMock(return_value={"path": _WORKFLOW_PIPE_PATH, "created": True})
@@ -63,15 +63,15 @@ def _make_service(
 class TestFire:
     @pytest.mark.asyncio
     async def test_writes_to_pipe(self) -> None:
-        """Event should be serialized and written to kernel pipe via pipe_write_nowait."""
+        """Event should be serialized and written to kernel pipe via sys_write."""
         svc, nx = _make_service()
         await svc.start()
 
         await svc.fire("file_write", {"path": "/foo.txt"}, "file_write:/foo.txt")
 
-        # Verify kernel.pipe_write_nowait was called with serialized data
-        nx.pipe_write_nowait.assert_called_once()
-        call_args = nx.pipe_write_nowait.call_args
+        # Verify sys_write was called with serialized data
+        nx.sys_write.assert_called_once()
+        call_args = nx.sys_write.call_args
         assert call_args[0][0] == _WORKFLOW_PIPE_PATH
         msg = json.loads(call_args[0][1])
         assert msg["type"] == "file_write"
@@ -85,8 +85,8 @@ class TestFire:
         svc, nx = _make_service()
         await svc.start()
 
-        # Make pipe_write_nowait raise to simulate full pipe
-        nx.pipe_write_nowait.side_effect = RuntimeError("PipeFull: buffer full")
+        # Make sys_write raise to simulate full pipe
+        nx.sys_write.side_effect = RuntimeError("PipeFull: buffer full")
 
         # Should not raise
         await svc.fire("file_write", {"path": "/big.txt"}, "file_write:/big.txt")
@@ -119,8 +119,8 @@ class TestFire:
         await svc.start()
 
         await svc.fire("file_write", {"path": "/z"}, "file_write:/z")
-        # Kernel pipe_write_nowait should NOT be called
-        nx.pipe_write_nowait.assert_not_called()
+        # sys_write should NOT be called
+        nx.sys_write.assert_not_called()
 
         await svc.stop()
 

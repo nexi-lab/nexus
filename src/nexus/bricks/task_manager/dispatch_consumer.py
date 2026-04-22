@@ -8,7 +8,7 @@ Flow::
 
     TaskWriteHook.on_post_write() [sync, kernel dispatch]
       → TaskDispatchPipeConsumer.on_task_signal(signal_type, payload)
-        → JSON → pipe_write_nowait("/nexus/pipes/task-dispatch")
+        → JSON → sys_write("/nexus/pipes/task-dispatch")
 
     Background _consume() [asyncio.Task]
       → pipe_read() → JSON → _dispatch()

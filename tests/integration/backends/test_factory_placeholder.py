@@ -189,3 +189,38 @@ class TestFactoryPlaceholder:
             assert isinstance(instance, RebindBackend)
         finally:
             sys.modules.pop(fake_module_name, None)
+
+    def test_rebind_contains_non_import_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Round-10 regression: the targeted rebind in BackendFactory.create()
+        must catch non-ImportError exceptions (SyntaxError, RuntimeError, …)
+        from the connector module's import, not just ImportError. Without
+        this, a hard bug during re-import escapes raw and breaks
+        per-connector failure containment.
+        """
+        import importlib
+
+        entry = ConnectorManifestEntry(
+            name="ph_rebind_hard_error",
+            module_path="nexus_test_broken_fake_module",
+            class_name="Nope",
+            description="rebind syntax-error fixture",
+            category="storage",
+            runtime_deps=(PythonDep("json"),),  # present, so we reach rebind
+        )
+        ConnectorRegistry.register_placeholder(entry)
+
+        real_import = importlib.import_module
+
+        def _patched_import(name: str, *args, **kwargs):
+            if name == "nexus_test_broken_fake_module":
+                raise SyntaxError("simulated connector module syntax error")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(importlib, "import_module", _patched_import)
+
+        with pytest.raises(RuntimeError) as exc_info:
+            BackendFactory.create("ph_rebind_hard_error", {})
+        msg = str(exc_info.value)
+        # Raw SyntaxError must NOT escape; RuntimeError carries the detail.
+        assert "ph_rebind_hard_error" in msg
+        assert "simulated connector module syntax error" in msg

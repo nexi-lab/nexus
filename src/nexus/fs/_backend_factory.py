@@ -215,7 +215,11 @@ def _create_connector_backend(spec: Any) -> Any:
         if expected_path:
             try:
                 importlib.import_module(expected_path)
-            except ImportError as e:
+            except Exception as e:
+                # Match BackendFactory.create(): catch Exception (not
+                # just ImportError) so a SyntaxError / RuntimeError
+                # during re-import stays contained and feeds the
+                # controlled error path below instead of escaping raw.
                 rebind_error = e
             info = ConnectorRegistry.get_info(selected_name or scheme)
 

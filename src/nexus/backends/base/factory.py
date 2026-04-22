@@ -98,12 +98,14 @@ class BackendFactory:
 
                 try:
                     importlib.import_module(expected_path)
-                except ImportError as e:
-                    # Dep still absent despite check_runtime_deps
-                    # passing is very rare (race between check and
-                    # import). Preserve the exception so we chain it
-                    # into the user-facing RuntimeError below instead
-                    # of swallowing it silently.
+                except Exception as e:
+                    # Catch Exception (not just ImportError) so a
+                    # SyntaxError / RuntimeError surfaced during the
+                    # targeted re-import does NOT escape as an
+                    # uncontrolled exception and break per-connector
+                    # failure containment. The controlled RuntimeError
+                    # below chains the captured cause — including dep
+                    # races (ImportError) and hard module bugs alike.
                     rebind_error = e
                 info = ConnectorRegistry.get_info(backend_type)
 

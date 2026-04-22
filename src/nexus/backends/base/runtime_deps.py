@@ -59,10 +59,40 @@ RuntimeDep = PythonDep | BinaryDep | ServiceDep
 def _server_available() -> bool:
     """Return True when the server runtime is importable.
 
-    Used to decide whether ``ServiceDep`` entries can be satisfied. Cached
-    for the process lifetime — module presence does not change at runtime.
+    Used as the fallback gate for ``ServiceDep`` when there's no
+    service-specific probe. Cached for the process lifetime — module
+    presence does not change at runtime.
     """
     return importlib.util.find_spec("nexus.server") is not None
+
+
+# Per-service probe mapping. Each entry maps a ``ServiceDep.name`` to the
+# dotted module path that implements the service. When ``check_runtime_deps``
+# evaluates a ``ServiceDep``, it tests the specific module rather than
+# ``nexus.server`` as a whole — so a connector that only needs
+# ``token_manager`` doesn't get falsely gated out when the server package
+# is present but the auth module isn't (or vice versa).
+#
+# Services without an entry here fall back to ``_server_available()``, the
+# coarser "full install present" check.
+_SERVICE_MODULES: dict[str, str] = {
+    "token_manager": "nexus.bricks.auth.oauth.token_manager",
+    "kernel": "nexus.core.kernel",
+    "record_store": "nexus.storage.record_store",
+    "metastore": "nexus.storage",
+}
+
+
+@functools.cache
+def _service_available(name: str) -> bool:
+    """Return True when the named service's implementing module is importable."""
+    module_path = _SERVICE_MODULES.get(name)
+    if module_path is None:
+        return _server_available()
+    try:
+        return importlib.util.find_spec(module_path) is not None
+    except (ImportError, ModuleNotFoundError, ValueError):
+        return False
 
 
 def check_runtime_deps(
@@ -77,16 +107,16 @@ def check_runtime_deps(
 
     Args:
         deps: Tuple of runtime-dep declarations.
-        server_available: Override for ``_server_available()``; tests use
-            this to exercise slim vs. full paths without touching the real
-            module state.
+        server_available: Override for ``_server_available()`` / per-service
+            probes; tests use this to exercise slim vs. full paths without
+            touching the real module state. When set, it forces the answer
+            for **every** ``ServiceDep`` (including services with a specific
+            probe).
 
     Returns:
         List of ``(dep, reason_string)`` tuples — empty list when all deps
         are satisfied.
     """
-    if server_available is None:
-        server_available = _server_available()
     missing: list[tuple[RuntimeDep, str]] = []
     for dep in deps:
         match dep:
@@ -110,7 +140,10 @@ def check_runtime_deps(
                 if shutil.which(name) is None:
                     missing.append((dep, f"binary '{name}': not on PATH — install with: {hint}"))
             case ServiceDep(name=name):
-                if not server_available:
+                available = (
+                    server_available if server_available is not None else _service_available(name)
+                )
+                if not available:
                     missing.append(
                         (
                             dep,

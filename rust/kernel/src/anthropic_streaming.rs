@@ -8,14 +8,20 @@
 //!
 //! Wire shape (Anthropic Messages API):
 //!   - POST `{base_url}/v1/messages` with `x-api-key`, `anthropic-version`.
-//!   - Request body: top-level `system` string, `tools[].input_schema`,
-//!     assistant tool_use blocks, user `tool_result` blocks — converted from
-//!     OpenAI-style `messages` arrays by `convert_messages`/`convert_tools`.
+//!   - Request body: top-level `system` array (cache_control for prompt
+//!     caching), `tools[].input_schema`, assistant tool_use blocks, user
+//!     `tool_result` blocks — converted from OpenAI-style `messages` arrays
+//!     by `convert_messages`/`convert_tools`.
 //!   - SSE frames arrive as `event: X\ndata: Y\n\n` pairs. A small state
 //!     machine pairs each `event:` line with its next `data:` JSON. Event
 //!     types: `message_start`, `content_block_start`, `content_block_delta`,
 //!     `content_block_stop`, `message_delta`, `message_stop`. Text deltas
-//!     land via `text_delta`; tool JSON accumulates via `input_json_delta`.
+//!     land via `text_delta`; tool JSON accumulates via `input_json_delta`;
+//!     thinking deltas stream as JSON control frames on DT_STREAM.
+//!
+//! Prompt caching: system prompt sent as `[{type:"text", text:...,
+//! cache_control:{type:"ephemeral"}}]` array — Anthropic caches the
+//! static prefix, saving ~90% input tokens on multi-turn conversations.
 //!
 //! Stop reason mapping: `end_turn`/`stop_sequence` → `stop`, `tool_use` →
 //! `tool_calls`, `max_tokens` → `length`.
@@ -97,7 +103,17 @@ impl AnthropicBackend {
             .or_else(|| extract_inline_system(&messages));
         if let Some(s) = system {
             if !s.is_empty() {
-                body.insert("system".to_string(), Value::String(s));
+                // Prompt caching: send system as array with cache_control.
+                // Anthropic caches the static prefix — saves ~90% input
+                // tokens on subsequent turns in a multi-turn conversation.
+                body.insert(
+                    "system".to_string(),
+                    json!([{
+                        "type": "text",
+                        "text": s,
+                        "cache_control": {"type": "ephemeral"},
+                    }]),
+                );
             }
         }
 
@@ -126,10 +142,17 @@ impl AnthropicBackend {
         let mut collected_model = model.clone();
         let mut input_tokens: Option<u64> = None;
         let mut output_tokens: Option<u64> = None;
+        let mut cache_creation_tokens: u64 = 0;
+        let mut cache_read_tokens: u64 = 0;
         // Anthropic streams tool blocks by block-index; each block runs through
         // `content_block_start` → many `content_block_delta` → `content_block_stop`.
         let mut current_tool: Option<Value> = None;
         let mut tool_calls: Vec<Value> = Vec::new();
+        // Extended thinking: tracks whether the current content block is a
+        // thinking block. Thinking deltas are written to DT_STREAM as JSON
+        // control frames `{"type":"thinking","thinking":"..."}` so the
+        // Python observer can stream them to the UI in real time.
+        let mut in_thinking_block = false;
 
         let sse_outcome: Result<(), String> = self.runtime.block_on(async {
             let resp = http
@@ -187,36 +210,50 @@ impl AnthropicBackend {
                                 if let Some(m) = msg.get("model").and_then(|m| m.as_str()) {
                                     collected_model = m.to_string();
                                 }
-                                if let Some(u) = msg
-                                    .get("usage")
-                                    .and_then(|u| u.get("input_tokens"))
-                                    .and_then(|i| i.as_u64())
-                                {
-                                    input_tokens = Some(u);
+                                if let Some(u) = msg.get("usage") {
+                                    if let Some(i) = u.get("input_tokens").and_then(|i| i.as_u64())
+                                    {
+                                        input_tokens = Some(i);
+                                    }
+                                    // Prompt caching tokens — track for cost accounting.
+                                    cache_creation_tokens = u
+                                        .get("cache_creation_input_tokens")
+                                        .and_then(|v| v.as_u64())
+                                        .unwrap_or(0);
+                                    cache_read_tokens = u
+                                        .get("cache_read_input_tokens")
+                                        .and_then(|v| v.as_u64())
+                                        .unwrap_or(0);
                                 }
                             }
                         }
                         "content_block_start" => {
                             if let Some(block) = parsed.get("content_block") {
-                                if block.get("type").and_then(|t| t.as_str()) == Some("tool_use") {
-                                    let id = block
-                                        .get("id")
-                                        .and_then(|i| i.as_str())
-                                        .unwrap_or("")
-                                        .to_string();
-                                    let name = block
-                                        .get("name")
-                                        .and_then(|n| n.as_str())
-                                        .unwrap_or("")
-                                        .to_string();
-                                    current_tool = Some(json!({
-                                        "id": id,
-                                        "type": "function",
-                                        "function": {
-                                            "name": name,
-                                            "arguments": "",
-                                        },
-                                    }));
+                                match block.get("type").and_then(|t| t.as_str()) {
+                                    Some("tool_use") => {
+                                        let id = block
+                                            .get("id")
+                                            .and_then(|i| i.as_str())
+                                            .unwrap_or("")
+                                            .to_string();
+                                        let name = block
+                                            .get("name")
+                                            .and_then(|n| n.as_str())
+                                            .unwrap_or("")
+                                            .to_string();
+                                        current_tool = Some(json!({
+                                            "id": id,
+                                            "type": "function",
+                                            "function": {
+                                                "name": name,
+                                                "arguments": "",
+                                            },
+                                        }));
+                                    }
+                                    Some("thinking") => {
+                                        in_thinking_block = true;
+                                    }
+                                    _ => {}
                                 }
                             }
                         }
@@ -232,6 +269,23 @@ impl AnthropicBackend {
                                             {
                                                 return Err(format!("stream write: {e:?}"));
                                             }
+                                        }
+                                    }
+                                } else if dt == Some("thinking_delta") {
+                                    if let Some(thinking) =
+                                        delta.get("thinking").and_then(|t| t.as_str())
+                                    {
+                                        if !thinking.is_empty() {
+                                            // Stream thinking as JSON control frame
+                                            // so Python observer can display it.
+                                            let frame = json!({
+                                                "type": "thinking",
+                                                "thinking": thinking,
+                                            });
+                                            let _ = stream_manager_clone.write_nowait(
+                                                &stream_path_owned,
+                                                &serde_json::to_vec(&frame).unwrap_or_default(),
+                                            );
                                         }
                                     }
                                 } else if dt == Some("input_json_delta") {
@@ -260,6 +314,7 @@ impl AnthropicBackend {
                             if let Some(tool) = current_tool.take() {
                                 tool_calls.push(tool);
                             }
+                            in_thinking_block = false;
                         }
                         "message_delta" => {
                             if let Some(delta) = parsed.get("delta") {
@@ -305,6 +360,8 @@ impl AnthropicBackend {
         let usage = json!({
             "input_tokens": prompt_tokens,
             "output_tokens": completion_tokens,
+            "cache_creation_input_tokens": cache_creation_tokens,
+            "cache_read_input_tokens": cache_read_tokens,
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
             "total_tokens": prompt_tokens + completion_tokens,
@@ -815,6 +872,72 @@ mod tests {
         assert_eq!(converted[0]["role"], "user");
         assert_eq!(converted[0]["content"], "Continue.");
         assert_eq!(converted[1]["role"], "assistant");
+    }
+
+    fn sse_with_thinking() -> String {
+        let mut out = String::new();
+        out.push_str(&sse_frame(
+            "message_start",
+            r#"{"type":"message_start","message":{"model":"claude-opus-4-20250514","usage":{"input_tokens":10,"cache_creation_input_tokens":5,"cache_read_input_tokens":3}}}"#,
+        ));
+        // Thinking block
+        out.push_str(&sse_frame(
+            "content_block_start",
+            r#"{"index":0,"content_block":{"type":"thinking","thinking":""}}"#,
+        ));
+        out.push_str(&sse_frame(
+            "content_block_delta",
+            r#"{"index":0,"delta":{"type":"thinking_delta","thinking":"Let me"}}"#,
+        ));
+        out.push_str(&sse_frame(
+            "content_block_delta",
+            r#"{"index":0,"delta":{"type":"thinking_delta","thinking":" analyze"}}"#,
+        ));
+        out.push_str(&sse_frame("content_block_stop", r#"{"index":0}"#));
+        // Text block
+        out.push_str(&sse_frame(
+            "content_block_start",
+            r#"{"index":1,"content_block":{"type":"text","text":""}}"#,
+        ));
+        out.push_str(&sse_frame(
+            "content_block_delta",
+            r#"{"index":1,"delta":{"type":"text_delta","text":"Answer"}}"#,
+        ));
+        out.push_str(&sse_frame("content_block_stop", r#"{"index":1}"#));
+        out.push_str(&sse_frame(
+            "message_delta",
+            r#"{"delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}"#,
+        ));
+        out.push_str(&sse_frame("message_stop", r#"{}"#));
+        out
+    }
+
+    #[test]
+    fn test_anthropic_streaming_thinking_blocks() {
+        let tmp = TempDir::new().unwrap();
+        let (_h, url) = serve_once(sse_with_thinking());
+        let backend = build_backend(&tmp, &url);
+        let sm = Arc::new(StreamManager::new());
+        let stream_path = "/llm/stream/thinking";
+        sm.create(stream_path, 1024 * 64).unwrap();
+
+        let req = build_request();
+        backend.run_streaming(&req, stream_path, &sm).unwrap();
+
+        let payload = sm.collect_all_payloads(stream_path).unwrap();
+        let s = String::from_utf8(payload).unwrap();
+
+        // Should contain thinking JSON frames before the text
+        assert!(s.contains(r#""type":"thinking""#), "missing thinking frames: {s}");
+        assert!(s.contains("Answer"), "missing text content: {s}");
+
+        // Parse the done frame (last JSON object)
+        let done_idx = s.rfind(r#"{"type":"done""#).expect("missing done frame");
+        let done: Value = serde_json::from_str(&s[done_idx..]).unwrap();
+        assert_eq!(done["type"], "done");
+        assert_eq!(done["usage"]["cache_creation_input_tokens"], 5);
+        assert_eq!(done["usage"]["cache_read_input_tokens"], 3);
+        assert_eq!(done["usage"]["input_tokens"], 10);
     }
 
     #[test]

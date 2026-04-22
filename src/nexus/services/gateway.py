@@ -633,20 +633,6 @@ class NexusFSGateway:
         assert context is not None, "context required for has_descendant_access"
         return self._fs._descendant_checker.has_access(path, permission, context)
 
-    def get_backend_directory_entries(self, path: str) -> set[str]:
-        """Get directory entries directly from backend storage.
-
-        Bypasses metadata store to get raw backend listing.
-        Used for merge-listing in search operations.
-
-        Args:
-            path: Virtual directory path
-
-        Returns:
-            Set of entry names in the directory
-        """
-        return self._fs._get_backend_directory_entries(path)
-
     def record_read_if_tracking(
         self,
         context: "OperationContext | None",

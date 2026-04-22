@@ -68,7 +68,6 @@ def mock_fs():
     fs.read = MagicMock(return_value={"content": b"data", "path": "/test/file.txt"})
     fs.read_bulk = MagicMock(return_value={"/a": b"data"})
     fs._get_context_identity = MagicMock(return_value=("zone1", "agent1", False))
-    fs._get_backend_directory_entries = MagicMock(return_value={"file.txt"})
     fs.backend = MagicMock()
     return fs
 
@@ -382,11 +381,6 @@ class TestSearchOperations:
 
         result = gateway.has_descendant_access("/test", Permission.READ, context)
         assert result is True
-
-    def test_get_backend_directory_entries(self, gateway, mock_fs):
-        """get_backend_directory_entries delegates to NexusFS."""
-        result = gateway.get_backend_directory_entries("/test")
-        assert result == {"file.txt"}
 
 
 # =============================================================================

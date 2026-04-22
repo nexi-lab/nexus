@@ -422,56 +422,6 @@ class MetadataMixin:
         # Return the etag (content_hash) from metadata
         return file_meta.etag
 
-    def _get_backend_directory_entries(
-        self, path: str, context: OperationContext | None = None
-    ) -> set[str]:
-        """Get directory entries from backend for empty directory detection."""
-        directories = set()
-
-        try:
-            # For root path, try routing "/" to find the root mount's backend
-            if not path or path == "/":
-                try:
-                    self._get_context_identity(context)
-                    root_route = self.router.route("/", zone_id=self._zone_id)
-                    entries = root_route.backend.list_dir(root_route.backend_path)
-                    for entry in entries:
-                        if entry.endswith("/"):  # Directory marker
-                            dir_name = entry.rstrip("/")
-                            dir_path = "/" + dir_name
-                            directories.add(dir_path)
-                except (NotImplementedError, Exception):
-                    # No root mount, backend doesn't support list_dir, or other error
-                    pass
-            else:
-                # Non-root path - use router with context
-                self._get_context_identity(context)
-                route = self.router.route(
-                    path.rstrip("/"),
-                    zone_id=self._zone_id,
-                )
-                backend_path = route.backend_path
-
-                try:
-                    entries = route.backend.list_dir(backend_path)
-                    for entry in entries:
-                        if entry.endswith("/"):  # Directory marker
-                            dir_name = entry.rstrip("/")
-                            dir_path = path + dir_name if path != "/" else "/" + dir_name
-                            directories.add(dir_path)
-                except NotImplementedError:
-                    # Backend doesn't support list_dir - skip
-                    pass
-                except (OSError, PermissionError, TypeError):
-                    # I/O, permission, or type errors - skip silently (best-effort directory listing)
-                    pass
-
-        except (ValueError, AttributeError, KeyError):
-            # Ignore routing errors - directory detection is best-effort
-            pass
-
-        return directories
-
     # ── Tier 2 directory ──────────────────────────────────────────────
 
     @rpc_expose(description="Create directory")

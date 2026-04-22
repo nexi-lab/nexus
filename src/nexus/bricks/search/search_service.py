@@ -410,10 +410,8 @@ class SearchService:
             return self._gw.has_descendant_access(path, permission, context)
         return False
 
-    def _get_backend_directory_entries(self, path: str) -> set[str]:
-        """Get directory entries from backend storage."""
-        if self._gw:
-            return self._gw.get_backend_directory_entries(path)
+    def _get_backend_directory_entries(self, path: str) -> set[str]:  # noqa: ARG002
+        """Backend directory entries — removed, metastore is authoritative."""
         return set()
 
     def _record_read_if_tracking(

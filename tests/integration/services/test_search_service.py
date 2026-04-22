@@ -73,7 +73,6 @@ def mock_gateway():
     gw.read_bulk.return_value = {}
     gw.get_routing_params.return_value = (None, None, False)
     gw.has_descendant_access.return_value = True
-    gw.get_backend_directory_entries.return_value = set()
     gw.record_read_if_tracking.return_value = None
     gw.session_factory = MagicMock()
     gw.backend = MagicMock()

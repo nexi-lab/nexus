@@ -179,17 +179,6 @@ class NexusFilesystem(Protocol):
         self, lock_id: str, path: str, *, context: "OperationContext | None" = None
     ) -> bool: ...
 
-    def locked(
-        self,
-        path: str,
-        mode: str = "exclusive",
-        timeout: float = 30.0,
-        ttl: float = 30.0,
-        max_holders: int = 1,
-        *,
-        context: "OperationContext | None" = None,
-    ) -> Any: ...
-
     def read(
         self,
         path: str,

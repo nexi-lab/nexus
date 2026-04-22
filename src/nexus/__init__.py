@@ -528,10 +528,12 @@ async def connect(
     enable_tiger_cache = enable_tiger_cache_env in ("true", "1", "yes")
 
     # RecordStore (Four Pillars) — created from NEXUS_RECORD_STORE_PATH or
-    # NEXUS_DATABASE_URL.  Passing None gives a bare kernel (storage-only)
-    # where all service-layer features (audit log, versioning, ReBAC, Memory
-    # API, etc.) are skipped.  The factory handles record_store=None gracefully.
-    _database_url = os.environ.get("NEXUS_DATABASE_URL")
+    # NEXUS_DATABASE_URL (both flow into ``cfg`` via env overrides, or via
+    # explicit config keys from callers like nexusd --database-url).
+    # Passing None gives a bare kernel (storage-only) where all service-layer
+    # features (audit log, versioning, ReBAC, Memory API, etc.) are skipped.
+    # The factory handles record_store=None gracefully.
+    _database_url = cfg.database_url
     if record_store_path:
         from nexus.storage.record_store import SQLAlchemyRecordStore
 

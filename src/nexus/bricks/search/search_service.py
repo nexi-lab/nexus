@@ -376,7 +376,7 @@ class SearchService:
         """Read file content via gateway."""
         if self._gw is None:
             raise NotImplementedError("gateway not provided to SearchService")
-        result = self._gw.read_file(path, context=context, return_metadata=return_metadata)
+        result = await self._gw.read_file(path, context=context, return_metadata=return_metadata)
         if isinstance(result, str):
             return result.encode("utf-8")
         return result

@@ -99,7 +99,7 @@ __all__ = [
 
 # Re-export from core modules with cleaner names
 from pathlib import Path
-from typing import Any, Union
+from typing import Any, Union, cast
 
 from nexus.backends.base.backend import Backend
 from nexus.backends.storage.cas_gcs import CASGCSBackend
@@ -219,4 +219,4 @@ async def connect(
     # Delegate to the main connect function from nexus package
     from nexus import connect as nexus_connect
 
-    return await nexus_connect(config)
+    return cast(Filesystem, nexus_connect(config))

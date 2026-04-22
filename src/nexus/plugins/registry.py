@@ -70,7 +70,8 @@ class PluginRegistry(BaseRegistry[NexusPlugin]):
             if hasattr(entry_points, "select"):
                 nexus_plugins = entry_points.select(group="nexus.plugins")
             else:
-                result = entry_points.get("nexus.plugins")
+                _get = getattr(entry_points, "get", None)
+                result = _get("nexus.plugins") if _get else []
                 nexus_plugins = cast(Any, result if result else [])
 
             for entry_point in nexus_plugins:

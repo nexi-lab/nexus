@@ -206,14 +206,15 @@ async def create_mcp_server(
         if remote_url:
             import nexus as _nexus
 
-            nx = await _nexus.connect(
-                config={"profile": "remote", "url": remote_url, "api_key": api_key}
+            nx = cast(
+                NexusFilesystem,
+                _nexus.connect(config={"profile": "remote", "url": remote_url, "api_key": api_key}),
             )
         else:
             import importlib as _il
 
             connect = _il.import_module("nexus").connect
-            nx = await connect()
+            nx = connect()
 
     # Auto-detect manifest resolver from NexusFS if not explicitly provided.
     # Uses importlib to avoid a static cross-brick import chain that
@@ -254,7 +255,6 @@ async def create_mcp_server(
             Per-request API keys are only supported when remote_url is configured.
             For local connections, the default connection is always used.
         """
-        import asyncio
 
         # Get API key from context variable (set by Starlette middleware or
         # APIKeyExtractionMiddleware). Context.get_state() is async in fastmcp
@@ -275,21 +275,15 @@ async def create_mcp_server(
             return _connection_cache[request_api_key]
 
         # Create new remote connection with API key from context.
-        # nexus.connect() is async, so run it via a background thread
-        # to avoid blocking the current event loop.
-        import concurrent.futures
-
+        # nexus.connect() is sync — call directly.
         import nexus as _nexus
 
-        def _connect_sync() -> NexusFilesystem:
-            return asyncio.run(
-                _nexus.connect(
-                    config={"profile": "remote", "url": _remote_url, "api_key": request_api_key}
-                )
-            )
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            new_nx = pool.submit(_connect_sync).result()
+        new_nx: NexusFilesystem = cast(
+            NexusFilesystem,
+            _nexus.connect(
+                config={"profile": "remote", "url": _remote_url, "api_key": request_api_key}
+            ),
+        )
 
         _connection_cache[request_api_key] = new_nx
         return new_nx
@@ -2034,7 +2028,7 @@ async def _async_main() -> None:
     # Create and run server
     nx = None
     if not remote_url:
-        nx = await connect()
+        nx = connect()
 
     mcp = await create_mcp_server(nx=nx, remote_url=remote_url, api_key=api_key)
 

@@ -217,6 +217,11 @@ class SearchDaemon:
         # Indexing pipeline for parallel refresh (Issue #1094)
         self._indexing_pipeline: IndexingPipeline | None = None
 
+        # Per-directory scope state (mutated by scope_ops.py under _refresh_lock)
+        self._indexed_directories: dict[str, set[str]] = {}
+        self._scope_generation: int = 0
+        self._zone_indexing_modes: dict[str, str] = {}
+
         # State
         self._initialized = False
         self._shutting_down = False

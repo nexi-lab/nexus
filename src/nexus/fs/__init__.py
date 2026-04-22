@@ -169,26 +169,21 @@ async def mount(
     # PathRouter, NexusFS, or the mount-entry writes fail.
     try:
         from nexus.contracts.constants import ROOT_ZONE_ID
+        from nexus.contracts.metadata import DT_MOUNT
         from nexus.contracts.types import OperationContext
         from nexus.core.config import PermissionConfig
-        from nexus.core.mount_table import MountTable
         from nexus.core.nexus_fs import NexusFS
-        from nexus.core.router import PathRouter
-
-        mount_table = MountTable(metastore)
-        router = PathRouter(mount_table)
 
         kernel = NexusFS(
             metadata_store=metastore,
             permissions=PermissionConfig(enforce=False),
-            router=router,
             init_cred=OperationContext(
                 user_id="local", groups=[], zone_id=ROOT_ZONE_ID, is_admin=True
             ),
         )
 
         for mp, backend, _ in backends:
-            kernel._driver_coordinator.mount(mp, backend)
+            kernel.sys_setattr(mp, entry_type=DT_MOUNT, backend=backend)
 
         # Persist mount entries so playground/fsspec/cp can auto-discover them.
         # Merges with existing entries so repeated `mount` calls accumulate.

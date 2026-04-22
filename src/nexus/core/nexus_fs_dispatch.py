@@ -276,6 +276,23 @@ class DispatchMixin:
     # self._kernel.dispatch_post_hooks(op, ctx).
     # Sync post-hooks: serial in Rust (fire-and-forget).
 
+    # ── Event dispatch (DLC backward compat) ────────────────────────────
+
+    def dispatch_event(self, event_type: str, path: str) -> None:
+        """Dispatch a FileEvent through the OBSERVE pipeline.
+
+        Creates a ``FileEvent`` from the event_type string and path, then
+        delegates to ``notify()``.  Called by DriverLifecycleCoordinator
+        for mount/unmount events.
+        """
+        from nexus.core.file_events import FileEventType
+
+        try:
+            fe_type: FileEventType | str = FileEventType(event_type)
+        except ValueError:
+            fe_type = event_type
+        self.notify(FileEvent(type=fe_type, path=path))
+
     # ── OBSERVE dispatch (Issue #1812, #1748, #3391) ──────────────────────
 
     def notify(self, event: FileEvent) -> None:

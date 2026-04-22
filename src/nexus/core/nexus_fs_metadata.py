@@ -789,20 +789,9 @@ class MetadataMixin:
         _rust_ctx = self._build_rust_ctx(context, is_admin)
         _rename_result = self._kernel.sys_rename(old_path, new_path, _rust_ctx)
 
-        # Rust may report hit=true even when the authoritative Python metastore
-        # (e.g. dual-write / raft-backed configurations) still requires the
-        # Python rename path to update its own rows. Only short-circuit when
-        # the metastore already reflects old→new; otherwise run the Python
-        # fallback. (Develop hardening — more conservative than the pre-R20
-        # "always short-circuit" path so dual-write / federation mount setups
-        # get the authoritative metastore updated.)
-        _old_still_visible = old_route.metastore.exists(
-            old_path
-        ) or self.metadata.is_implicit_directory(old_path)
-        _new_now_visible = new_route.metastore.exists(
-            new_path
-        ) or self.metadata.is_implicit_directory(new_path)
-        if _rename_result.hit and not _old_still_visible and _new_now_visible:
+        # Rust hit=true: metastore.rename_path() handled the entry AND all
+        # children atomically (redb: single txn). Trust Rust SSOT.
+        if _rename_result.hit:
             if _rename_result.post_hook_needed:
                 from nexus.contracts.vfs_hooks import RenameHookContext
 
@@ -818,9 +807,9 @@ class MetadataMixin:
                 self._kernel.dispatch_post_hooks("rename", _rename_ctx)
             return {}
 
-        # Python fallback for DT_MOUNT/DT_EXTERNAL_STORAGE or dual-write
-        # configurations. VFS lock handled by Rust kernel; fallback is for
-        # edge cases only.
+        # Python fallback for DT_MOUNT/DT_EXTERNAL_STORAGE (Rust returns
+        # hit=false for these). No child-walking needed — mounts are single
+        # entries; Rust's rename_path() handles children atomically.
         is_implicit_dir = not old_route.metastore.exists(
             old_path
         ) and self.metadata.is_implicit_directory(old_path)
@@ -856,15 +845,6 @@ class MetadataMixin:
         elif not is_directory:
             raise NexusFileNotFoundError(old_path)
 
-        # Rename children (directories)
-        if is_directory:
-            _prefix = old_path.rstrip("/") + "/"
-            for child in old_route.metastore.list(_prefix, recursive=True):
-                _child_new = new_path + child.path[len(old_path) :]
-                _child_new_meta = _replace(child, path=_child_new)
-                new_route.metastore.put(_child_new_meta)
-                old_route.metastore.delete(child.path)
-
         # PAS backend propagation
         if hasattr(old_route.backend, "rename"):
             try:
@@ -880,9 +860,6 @@ class MetadataMixin:
                     new_route.backend_path,
                     _be,
                 )
-
-        # OBSERVE: Rust kernel fires FileRename when hit=true (§11 Phase 5).
-        # Only Python fires for the fallback path.
 
         # POST-INTERCEPT hooks
         if _rename_result.post_hook_needed:

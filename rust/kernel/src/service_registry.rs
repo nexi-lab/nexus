@@ -111,7 +111,9 @@ impl ServiceRegistry {
                             if is_coro.is_truthy()? {
                                 let run_sync =
                                     py.import("nexus.lib.sync_bridge")?.getattr("run_sync")?;
-                                run_sync.call1((&coro, 30.0))?;
+                                let kwargs = pyo3::types::PyDict::new(py);
+                                kwargs.set_item("timeout", 30.0)?;
+                                run_sync.call((&coro,), Some(&kwargs))?;
                             }
                         }
                     }
@@ -266,6 +268,8 @@ impl ServiceRegistry {
             .getattr("BackgroundService")?;
         let run_sync = py.import("nexus.lib.sync_bridge")?.getattr("run_sync")?;
         let inspect = py.import("inspect")?;
+        let timeout_kwargs = pyo3::types::PyDict::new(py);
+        timeout_kwargs.set_item("timeout", timeout_secs)?;
 
         let mut started = Vec::new();
         for name in self.names() {
@@ -276,7 +280,7 @@ impl ServiceRegistry {
                         Ok(coro) => {
                             if let Ok(is_coro) = inspect.call_method1("iscoroutine", (&coro,)) {
                                 if is_coro.is_truthy()? {
-                                    if let Err(e) = run_sync.call1((&coro, timeout_secs)) {
+                                    if let Err(e) = run_sync.call((&coro,), Some(&timeout_kwargs)) {
                                         tracing::error!(
                                             "[COORDINATOR] failed to start {name:?}: {e}"
                                         );
@@ -303,6 +307,8 @@ impl ServiceRegistry {
             .getattr("BackgroundService")?;
         let run_sync = py.import("nexus.lib.sync_bridge")?.getattr("run_sync")?;
         let inspect = py.import("inspect")?;
+        let timeout_kwargs = pyo3::types::PyDict::new(py);
+        timeout_kwargs.set_item("timeout", timeout_secs)?;
 
         let mut stopped = Vec::new();
         for name in self.names_reversed() {
@@ -313,7 +319,7 @@ impl ServiceRegistry {
                         Ok(coro) => {
                             if let Ok(is_coro) = inspect.call_method1("iscoroutine", (&coro,)) {
                                 if is_coro.is_truthy()? {
-                                    if let Err(e) = run_sync.call1((&coro, timeout_secs)) {
+                                    if let Err(e) = run_sync.call((&coro,), Some(&timeout_kwargs)) {
                                         tracing::error!(
                                             "[COORDINATOR] failed to stop {name:?}: {e}"
                                         );

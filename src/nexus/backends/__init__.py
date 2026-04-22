@@ -130,12 +130,17 @@ def _register_optional_backends() -> None:
 
         # Phase 2: attempt module imports; successful imports run
         # @register_connector which binds the class into the placeholder.
-        # Per-module exception handling is broad: ImportError/ModuleNotFoundError
-        # are the common "dep missing" case, but SyntaxError, RuntimeError, or
-        # other failures during module body execution must not poison the
-        # entire registration — the placeholder stays, other connectors keep
-        # registering, and future mounts surface the canonical
-        # MissingDependencyError / "module failed to import" diagnostics.
+        #
+        # Only swallow ImportError / ModuleNotFoundError — those are the
+        # expected "dep absent" case on slim installs: the placeholder
+        # stays and BackendFactory.create() surfaces the canonical
+        # MissingDependencyError. Any other exception (SyntaxError in
+        # the connector module, ValueError from a duplicate-name
+        # registration, a RuntimeError from a misconfigured decorator,
+        # etc.) is a hard bug; letting it escape keeps
+        # ``_optional_backends_registered`` False so the next call
+        # retries, and prevents the registry from silently entering a
+        # half-populated or hijacked state.
         seen_modules: set[str] = set()
         for entry in CONNECTOR_MANIFEST:
             if entry.module_path in seen_modules:
@@ -150,18 +155,11 @@ def _register_optional_backends() -> None:
                     entry.module_path,
                     e,
                 )
-            except Exception:
-                _logger.warning(
-                    "Connector module %s raised during import (placeholder stays; "
-                    "mount will raise RuntimeError).",
-                    entry.module_path,
-                    exc_info=True,
-                )
 
         # Mark registered AFTER phases 1 & 2 complete. If a non-ImportError
-        # escapes before this point (very rare — only if the manifest
-        # iteration itself fails), we leave the flag unset so subsequent
-        # calls can retry rather than operate on a half-populated registry.
+        # escaped before this point the registration is incomplete — we
+        # leave the flag unset so the caller can retry after fixing the
+        # underlying bug rather than operating on a half-populated registry.
         _optional_backends_registered = True
 
         # Phase 3: external plugins via entry points (Issue #3148, Decision #4)

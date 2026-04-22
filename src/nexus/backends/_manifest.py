@@ -75,7 +75,9 @@ CONNECTOR_MANIFEST: tuple[ConnectorManifestEntry, ...] = (
         class_name="PathGCSBackend",
         description="Google Cloud Storage with direct path mapping",
         category="storage",
-        runtime_deps=(PythonDep("google.cloud.storage", extras=("gcs",)),),
+        runtime_deps=(
+            PythonDep("google.cloud.storage", extras=("gcs",), package="google-cloud-storage"),
+        ),
         service_name="gcs",
     ),
     ConnectorManifestEntry(
@@ -84,7 +86,9 @@ CONNECTOR_MANIFEST: tuple[ConnectorManifestEntry, ...] = (
         class_name="CASGCSBackend",
         description="Google Cloud Storage with CAS deduplication",
         category="storage",
-        runtime_deps=(PythonDep("google.cloud.storage", extras=("gcs",)),),
+        runtime_deps=(
+            PythonDep("google.cloud.storage", extras=("gcs",), package="google-cloud-storage"),
+        ),
     ),
     ConnectorManifestEntry(
         name="path_s3",
@@ -131,8 +135,8 @@ CONNECTOR_MANIFEST: tuple[ConnectorManifestEntry, ...] = (
         description="Google Drive with OAuth 2.0 authentication",
         category="oauth",
         runtime_deps=(
-            PythonDep("googleapiclient", extras=("gdrive",)),
-            PythonDep("google_auth_oauthlib", extras=("gdrive",)),
+            PythonDep("googleapiclient", extras=("gdrive",), package="google-api-python-client"),
+            PythonDep("google_auth_oauthlib", extras=("gdrive",), package="google-auth-oauthlib"),
             ServiceDep("token_manager"),
         ),
         service_name="google-drive",
@@ -144,8 +148,8 @@ CONNECTOR_MANIFEST: tuple[ConnectorManifestEntry, ...] = (
         description="Gmail with OAuth 2.0 authentication (send, reply, forward, draft, trash)",
         category="oauth",
         runtime_deps=(
-            PythonDep("googleapiclient", extras=("gmail",)),
-            PythonDep("google_auth_oauthlib", extras=("gmail",)),
+            PythonDep("googleapiclient", extras=("gmail",), package="google-api-python-client"),
+            PythonDep("google_auth_oauthlib", extras=("gmail",), package="google-auth-oauthlib"),
             ServiceDep("token_manager"),
         ),
         service_name="gmail",
@@ -157,8 +161,10 @@ CONNECTOR_MANIFEST: tuple[ConnectorManifestEntry, ...] = (
         description="Google Calendar with OAuth 2.0 authentication (full CRUD)",
         category="oauth",
         runtime_deps=(
-            PythonDep("googleapiclient", extras=("gcalendar",)),
-            PythonDep("google_auth_oauthlib", extras=("gcalendar",)),
+            PythonDep("googleapiclient", extras=("gcalendar",), package="google-api-python-client"),
+            PythonDep(
+                "google_auth_oauthlib", extras=("gcalendar",), package="google-auth-oauthlib"
+            ),
             ServiceDep("token_manager"),
         ),
         service_name="google-calendar",
@@ -170,8 +176,10 @@ CONNECTOR_MANIFEST: tuple[ConnectorManifestEntry, ...] = (
         description="Google Calendar (deprecated alias — use calendar_connector)",
         category="oauth",
         runtime_deps=(
-            PythonDep("googleapiclient", extras=("gcalendar",)),
-            PythonDep("google_auth_oauthlib", extras=("gcalendar",)),
+            PythonDep("googleapiclient", extras=("gcalendar",), package="google-api-python-client"),
+            PythonDep(
+                "google_auth_oauthlib", extras=("gcalendar",), package="google-auth-oauthlib"
+            ),
             ServiceDep("token_manager"),
         ),
         service_name="google-calendar",
@@ -183,7 +191,7 @@ CONNECTOR_MANIFEST: tuple[ConnectorManifestEntry, ...] = (
         description="X (Twitter) API with OAuth 2.0 PKCE",
         category="api",
         runtime_deps=(
-            PythonDep("requests_oauthlib", extras=("x",)),
+            PythonDep("requests_oauthlib", extras=("x",), package="requests-oauthlib"),
             ServiceDep("token_manager"),
         ),
         service_name="x",
@@ -195,7 +203,7 @@ CONNECTOR_MANIFEST: tuple[ConnectorManifestEntry, ...] = (
         description="Slack workspace with OAuth 2.0 authentication",
         category="oauth",
         runtime_deps=(
-            PythonDep("slack_sdk", extras=("slack",)),
+            PythonDep("slack_sdk", extras=("slack",), package="slack-sdk"),
             ServiceDep("token_manager"),
         ),
         service_name="slack",

@@ -97,6 +97,30 @@ class TestCheckRuntimeDeps:
         assert "nexus-fs" not in reason
         assert "pip install definitely_not_a_real_module_xyz" in reason
 
+    def test_dotted_module_uses_package_field_for_hint(self) -> None:
+        """When extras-hint is disabled (full install / ambiguous) a dotted
+        module name must fall back to the PythonDep.package field — not the
+        raw module name — otherwise the hint reads
+        ``pip install google.cloud.storage`` which is not a valid pip target.
+        """
+        with patch(
+            "nexus.backends.base.runtime_deps._nexus_fs_extras_available",
+            return_value=False,
+        ):
+            missing = check_runtime_deps(
+                (
+                    PythonDep(
+                        "definitely_not_real.dotted.module",
+                        extras=("gcs",),
+                        package="some-pypi-name",
+                    ),
+                )
+            )
+        assert len(missing) == 1
+        _, reason = missing[0]
+        assert "pip install some-pypi-name" in reason
+        assert "pip install definitely_not_real.dotted.module" not in reason
+
     def test_satisfied_binary_dep(self) -> None:
         # 'sh' is on PATH on every POSIX system + in CI images.
         assert check_runtime_deps((BinaryDep("sh", "n/a"),)) == []

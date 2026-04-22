@@ -355,9 +355,31 @@ class ConnectorRegistry:
         binding and backfill manifest metadata on top. This keeps the
         manifest authoritative for metadata without losing the already-bound
         class.
+
+        The pre-bound class is preserved ONLY when its ``__module__`` and
+        ``__name__`` match the manifest's declared ``module_path`` /
+        ``class_name``. A mismatch means some other code registered a
+        foreign class under a built-in connector name — keeping it would
+        let an unrelated class execute behind a trusted name (e.g. the
+        ``path_s3`` entry pointing at a non-S3 implementation). Raise a
+        hard error so name hijacking is fail-loud, not fail-silent.
         """
         existing = cls._base.get(entry.name)
         if existing is not None and existing.connector_class is not None:
+            bound = existing.connector_class
+            if (
+                getattr(bound, "__module__", None) != entry.module_path
+                or getattr(bound, "__name__", None) != entry.class_name
+            ):
+                raise ValueError(
+                    f"Connector name {entry.name!r} is already bound to "
+                    f"{getattr(bound, '__module__', '?')}."
+                    f"{getattr(bound, '__name__', '?')}, which does not match "
+                    f"the manifest declaration "
+                    f"{entry.module_path}.{entry.class_name}. Refusing to "
+                    f"preserve the pre-bound class; unregister it or fix "
+                    f"the manifest before re-running registration."
+                )
             # Already bound by a prior direct import. Preserve the class
             # and its derived fields; backfill manifest metadata.
             merged = ConnectorInfo(

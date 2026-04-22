@@ -28,10 +28,26 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True, slots=True)
 class PythonDep:
-    """A Python importable module that must be available."""
+    """A Python importable module that must be available.
+
+    ``module`` is the dotted import name (what ``find_spec`` probes and
+    what the connector code ``import``s). ``package`` is the pip install
+    target to recommend when the module is missing; it differs from
+    ``module`` whenever the distribution name on PyPI is not the same as
+    the import name (``google-cloud-storage`` → ``google.cloud.storage``,
+    ``google-api-python-client`` → ``googleapiclient``, etc.). When
+    ``package`` is ``None`` the hint falls back to ``module`` — which is
+    only safe for deps whose PyPI name equals the import name.
+    """
 
     module: str
     extras: tuple[str, ...] = ()
+    package: str | None = None
+
+    @property
+    def install_target(self) -> str:
+        """Return the name to use in ``pip install`` fallback hints."""
+        return self.package or self.module
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,7 +174,7 @@ def check_runtime_deps(
                     if extras and _nexus_fs_extras_available():
                         hint = f"pip install nexus-fs[{','.join(extras)}]"
                     else:
-                        hint = f"pip install {mod}"
+                        hint = f"pip install {dep.install_target}"
                     missing.append((dep, f"python '{mod}': install with: {hint}"))
             case BinaryDep(name=name, install_hint=hint):
                 if shutil.which(name) is None:

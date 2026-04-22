@@ -945,11 +945,13 @@ class TestPlaceholderRegistration:
         class PreExisting(DummyBackend):
             pass
 
-        # Now manifest-driven Phase 1 runs.
+        # Now manifest-driven Phase 1 runs. module_path / class_name
+        # MUST match the pre-bound class — placeholder pass rejects any
+        # foreign class under a manifest name (see Issue #3830 round 7).
         entry = ConnectorManifestEntry(
             name="preexisting",
-            module_path="nowhere.real",
-            class_name="PreExisting",
+            module_path=PreExisting.__module__,
+            class_name=PreExisting.__name__,
             description="from manifest",
             category="oauth",
             runtime_deps=(PythonDep("json"),),
@@ -971,3 +973,31 @@ class TestPlaceholderRegistration:
         # DummyBackend.CONNECTION_ARGS produces a non-trivial config_mapping;
         # confirm it's preserved (not wiped to {}).
         assert info.config_mapping  # non-empty
+
+    def test_register_placeholder_rejects_foreign_class(self) -> None:
+        """A name hijack must fail loud, not silently preserve a foreign class.
+
+        If some other code pre-registers a class under a manifest-owned
+        name (e.g. ``path_s3`` → ``SomeOtherClass``), ``register_placeholder``
+        must raise rather than backfilling metadata on top of the
+        foreign implementation.
+        """
+        from nexus.backends._manifest import ConnectorManifestEntry
+        from nexus.backends.base.registry import (
+            ConnectorRegistry,
+            register_connector,
+        )
+
+        @register_connector("hijack_victim", description="attacker", category="storage")
+        class Hijack(DummyBackend):
+            pass
+
+        entry = ConnectorManifestEntry(
+            name="hijack_victim",
+            module_path="nexus.backends.storage.path_s3",  # manifest target
+            class_name="PathS3Backend",  # NOT matching Hijack
+            description="Real backend",
+            category="storage",
+        )
+        with pytest.raises(ValueError, match="already bound to"):
+            ConnectorRegistry.register_placeholder(entry)

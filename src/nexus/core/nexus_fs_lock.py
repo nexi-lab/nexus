@@ -11,7 +11,9 @@ Delegates to kernel AdvisoryLockManager (local or Raft-backed).
 
 from __future__ import annotations
 
+import contextlib
 import logging
+from collections.abc import Generator
 from typing import TYPE_CHECKING, Any, Literal
 
 from nexus.lib.rpc_decorator import rpc_expose
@@ -33,6 +35,26 @@ class LockMixin:
         return path  # overridden by NexusFS
 
     # ── Tier 1: Locking (POSIX flock equivalent) ─────────────────
+
+    @contextlib.contextmanager
+    def locked(
+        self,
+        path: str,
+        mode: str = "exclusive",
+        timeout: float = 30.0,
+        ttl: float = 30.0,
+        max_holders: int = 1,
+        *,
+        context: "OperationContext | None" = None,
+    ) -> Generator[dict[str, Any], None, None]:
+        """Context manager for advisory lock — acquire on enter, release on exit."""
+        result = self.sys_lock(
+            path, mode=mode, timeout=timeout, ttl=ttl, max_holders=max_holders, context=context
+        )
+        try:
+            yield result
+        finally:
+            self.sys_unlock(path, context=context)
 
     @rpc_expose(description="Acquire or extend advisory lock on a path")
     def sys_lock(

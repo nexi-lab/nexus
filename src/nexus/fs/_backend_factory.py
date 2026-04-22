@@ -127,16 +127,26 @@ def _create_connector_backend(spec: Any) -> Any:
 
     _register_optional_backends()
 
-    # Best-effort additional discovery for schemes that aren't in the
-    # manifest (external plugins packaged as nexus.backends.connectors.<x>).
-    # Manifest connectors were already attempted in _register_optional_backends
-    # Phase 2; re-importing is cheap (sys.modules cache) but can raise a
-    # transitive ImportError that would mask the manifest's
-    # MissingDependencyError. Swallow those so the registry lookup below
-    # produces the canonical diagnostic.
-    import contextlib
+    # If any manifest entry references this scheme, Phase 2 of
+    # _register_optional_backends already attempted the import — the
+    # placeholder (or bound class) is authoritative. Skip
+    # _discover_connector_module entirely so a transitive ImportError
+    # from re-importing the module doesn't mask the canonical
+    # MissingDependencyError / placeholder RuntimeError.
+    #
+    # For schemes NOT in the manifest (external plugins packaged as
+    # nexus.backends.connectors.<x>.connector), preserve the original
+    # behavior: _discover_connector_module propagates real import
+    # errors so operators see the actual root cause rather than a
+    # generic "connector not found".
+    from nexus.backends._manifest import CONNECTOR_MANIFEST
 
-    with contextlib.suppress(ImportError, ModuleNotFoundError):
+    manifest_schemes = {
+        entry.module_path.rsplit(".connector", 1)[0].split(".")[-1]
+        for entry in CONNECTOR_MANIFEST
+        if entry.module_path.endswith(".connector")
+    }
+    if scheme not in manifest_schemes:
         _discover_connector_module(scheme)
 
     from nexus.backends.base.registry import ConnectorRegistry

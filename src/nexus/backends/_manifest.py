@@ -57,15 +57,15 @@ class ConnectorManifestEntry:
     """Unified service name for ``service_map.py`` integration."""
 
 
-_GWS_RUNTIME_DEPS: tuple[RuntimeDep, ...] = (
-    BinaryDep("gws", "brew install nexi-lab/tap/gws"),
-    ServiceDep("token_manager"),
-)
+# gws/gh CLI connectors do NOT require token_manager at mount time:
+# PathCLIBackend's _get_user_token falls back gracefully when the
+# manager is absent (see src/nexus/backends/connectors/cli/base.py —
+# debug-log and continue), and for AUTH_SOURCE connectors the CLI
+# itself is the auth source. Declaring ServiceDep here would lock them
+# out of slim installs despite the binary being present.
+_GWS_RUNTIME_DEPS: tuple[RuntimeDep, ...] = (BinaryDep("gws", "brew install nexi-lab/tap/gws"),)
 
-_GH_RUNTIME_DEPS: tuple[RuntimeDep, ...] = (
-    BinaryDep("gh", "brew install gh"),
-    ServiceDep("token_manager"),
-)
+_GH_RUNTIME_DEPS: tuple[RuntimeDep, ...] = (BinaryDep("gh", "brew install gh"),)
 
 CONNECTOR_MANIFEST: tuple[ConnectorManifestEntry, ...] = (
     # --- Storage ---

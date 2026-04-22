@@ -33,7 +33,7 @@ def _utcnow_naive() -> datetime:
 class VersionRecorder:
     """Records file version history to RecordStore (FilePathModel + VersionHistoryModel).
 
-    Usage (from kernel write path):
+    Usage (from kernel _write_internal):
         with self.SessionLocal() as session:
             recorder = VersionRecorder(session)
             recorder.record_write(metadata, is_new=True, created_by="user:abc")

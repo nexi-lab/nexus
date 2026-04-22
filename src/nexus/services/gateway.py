@@ -100,7 +100,7 @@ class NexusFSGateway:
         """
         return self._fs.sys_write(path, buf, context=context)
 
-    async def write(
+    def write(
         self,
         path: str,
         buf: bytes | str,
@@ -159,7 +159,7 @@ class NexusFSGateway:
         # Convert to list of strings
         return [str(item) for item in items]
 
-    async def access(
+    def access(
         self,
         path: str,
         *,
@@ -549,7 +549,7 @@ class NexusFSGateway:
     # Search Operations (Issue #1287: replaces 8 Callable[..., Any] params)
     # =========================================================================
 
-    async def read_file(
+    def read_file(
         self,
         path: str,
         *,

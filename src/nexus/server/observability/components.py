@@ -101,7 +101,7 @@ class WriteBufferComponent:
     The write observer is started in server lifespan (not by this component).
     This component manages its graceful shutdown during server teardown.
 
-    Issue #809: PipedRecordStoreWriteObserver replaces WriteBuffer.
+    Issue #809: RecordStoreWriteObserver (OBSERVE-phase) replaces WriteBuffer.
     Shutdown is now handled by _shutdown_pipe_consumers in services.py.
     This component is kept for observability registry health reporting.
     """

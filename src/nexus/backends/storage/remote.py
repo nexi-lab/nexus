@@ -44,8 +44,8 @@ class RemoteBackend(ObjectStoreABC):
         transport: Shared ``RPCTransport`` instance (gRPC channel).
     """
 
-    # RemoteBackend dispatch is handled via DT_MOUNT entry_type + backend
-    # is_external trait, not via capabilities. The server knows the actual
+    # RemoteBackend dispatch is handled via DT_EXTERNAL_STORAGE entry_type
+    # in metastore, not via capabilities. The server knows the actual
     # backend type and handles reads correctly.
     capabilities: frozenset[str] = frozenset()
 
@@ -172,12 +172,23 @@ class RemoteBackend(ObjectStoreABC):
         result = self._call_rpc("sys_readdir", {"path": abs_path})
         if isinstance(result, list):
             return [str(item) for item in result]
-        if isinstance(result, dict) and "items" in result:
-            items: list[Any] = result["items"]
-            return [
-                str(item.get("path", item.get("name", ""))) if isinstance(item, dict) else str(item)
-                for item in items
-            ]
+        if isinstance(result, dict):
+            # The RPC handler returns a ``{"files": [...]}`` envelope
+            # (``handle_list`` in ``server/rpc/handlers/filesystem.py``),
+            # but earlier RemoteBackend code only checked for ``"items"``.
+            # Accept both so list operations round-trip correctly.
+            items: list[Any] | None = None
+            if "files" in result:
+                items = result["files"]
+            elif "items" in result:
+                items = result["items"]
+            if items is not None:
+                return [
+                    str(item.get("path", item.get("name", "")))
+                    if isinstance(item, dict)
+                    else str(item)
+                    for item in items
+                ]
         return []
 
     # === Lifecycle ===

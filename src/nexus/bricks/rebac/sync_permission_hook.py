@@ -4,7 +4,7 @@ This is the sync fallback for when ``DeferredPermissionBuffer`` is not
 available (``enable_deferred=False``).  Wraps the same
 ``hierarchy_manager.ensure_parent_tuples()`` and
 ``rebac_manager.rebac_write()`` calls that previously lived inline in
-``NexusFS.write()``, ``mkdir()``, ``write_batch()``, and
+``NexusFS._write_internal()``, ``mkdir()``, ``write_batch()``, and
 ``sys_rename()``.
 
 Exactly one of ``DeferredPermissionHook`` or ``SyncPermissionWriteHook``

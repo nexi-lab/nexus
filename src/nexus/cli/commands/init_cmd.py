@@ -557,7 +557,7 @@ def init(
         async def _init_local_workspace() -> None:
             import nexus
 
-            nx = nexus.connect(config={"data_dir": str(d_dir)})
+            nx = await nexus.connect(config={"data_dir": str(d_dir)})
             nx.mkdir("/workspace", exist_ok=True)
             nx.mkdir("/shared", exist_ok=True)
             nx.close()

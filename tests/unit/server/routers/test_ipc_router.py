@@ -79,13 +79,11 @@ def test_post_send_enqueues_message() -> None:
     assert data["sender"] == "agent:alice"
     assert data["recipient"] == "agent:bob"
 
-    inbox_entries = asyncio.run(storage.list_dir(inbox_path("agent:bob"), "root"))
+    inbox_entries = storage.list_dir(inbox_path("agent:bob"), "root")
     assert any("msg_router_send" in entry for entry in inbox_entries)
 
     msg_filename = next(entry for entry in inbox_entries if "msg_router_send" in entry)
-    payload = asyncio.run(
-        storage.sys_read(f"{inbox_path('agent:bob')}/{msg_filename}", "root")
-    ).decode("utf-8")
+    payload = storage.sys_read(f"{inbox_path('agent:bob')}/{msg_filename}", "root").decode("utf-8")
     envelope = json.loads(payload)
     assert envelope["from"] == "agent:alice"
     assert envelope["to"] == "agent:bob"
@@ -122,7 +120,7 @@ def test_post_send_generates_message_id_when_omitted() -> None:
     assert isinstance(data["message_id"], str)
     assert data["message_id"]
 
-    inbox_entries = asyncio.run(storage.list_dir(inbox_path("agent:bob"), "root"))
+    inbox_entries = storage.list_dir(inbox_path("agent:bob"), "root")
     assert any(data["message_id"] in entry for entry in inbox_entries)
 
 
@@ -194,12 +192,12 @@ def test_rest_endpoints_use_authenticated_zone_instead_of_app_state() -> None:
     )
     assert send_response.status_code == 200
 
-    tenant_entries = asyncio.run(storage.list_dir(inbox_path("agent:bob"), "tenant-a"))
+    tenant_entries = storage.list_dir(inbox_path("agent:bob"), "tenant-a")
     assert any("msg_router_zone" in entry for entry in tenant_entries)
 
     root_entries_error: FileNotFoundError | None = None
     try:
-        asyncio.run(storage.list_dir(inbox_path("agent:bob"), "root"))
+        storage.list_dir(inbox_path("agent:bob"), "root")
     except FileNotFoundError as exc:
         root_entries_error = exc
     assert root_entries_error is not None

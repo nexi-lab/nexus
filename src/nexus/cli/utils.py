@@ -7,7 +7,7 @@ import sys
 from collections.abc import AsyncGenerator, Generator
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 import click
 
@@ -15,9 +15,7 @@ import nexus
 from nexus.cli.exit_codes import ExitCode
 from nexus.cli.theme import console, print_error
 from nexus.contracts.exceptions import NexusError, NexusFileNotFoundError, ValidationError
-
-if TYPE_CHECKING:
-    from nexus.core.nexus_fs import NexusFS
+from nexus.core.nexus_fs import NexusFS
 
 _LOCAL_WORKSPACE_ENV_KEYS = (
     "NEXUS_URL",
@@ -200,7 +198,7 @@ class _LocalWorkspaceFilesystemProxy:
 async def connect_local_workspace(data_dir: str) -> NexusFS:
     """Connect to a self-contained local workspace without ambient env bleed."""
     with _isolated_local_workspace_env(data_dir):
-        filesystem = nexus.connect(
+        filesystem = await nexus.connect(
             config={
                 "profile": "slim",
                 "backend": "local",
@@ -282,7 +280,7 @@ async def get_filesystem(
                     "NEXUS_DATA_DIR",
                     str(Path(nexus.NEXUS_STATE_DIR) / "data"),
                 )
-                return nexus.connect(config={"profile": "slim", "data_dir": data_dir})
+                return await nexus.connect(config={"profile": "slim", "data_dir": data_dir})
 
             console.print("[nexus.error]Error:[/nexus.error] NEXUS_URL or --remote-url is required")
             console.print(
@@ -291,7 +289,7 @@ async def get_filesystem(
             )
             sys.exit(ExitCode.CONFIG_ERROR)
 
-        return nexus.connect(
+        return await nexus.connect(
             config={"profile": "remote", "url": resolved.url, "api_key": resolved.api_key}
         )
     except Exception as e:
@@ -326,7 +324,7 @@ async def get_default_filesystem() -> NexusFS:
             )
             sys.exit(ExitCode.CONFIG_ERROR)
 
-        return nexus.connect(
+        return await nexus.connect(
             config={
                 "profile": "remote",
                 "url": resolved.url,

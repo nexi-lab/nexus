@@ -24,6 +24,7 @@ from nexus.contracts.backend_features import OAUTH_BACKEND_FEATURES
 from nexus.contracts.exceptions import AuthenticationError
 
 if TYPE_CHECKING:
+    from nexus.bricks.auth.credential_pool import CredentialPool
     from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
@@ -346,6 +347,7 @@ class OAuthConnectorBase(
         record_store: "RecordStoreABC | None" = None,
         metadata_store: Any = None,
         encryption_key: str | None = None,
+        pool: "CredentialPool | None" = None,
     ) -> None:
         """Initialize OAuth connector base.
 
@@ -355,6 +357,10 @@ class OAuthConnectorBase(
             provider: OAuth provider name from config.
             record_store: Optional RecordStoreABC instance for content caching.
             metadata_store: MetastoreABC instance for file_paths table (optional).
+            pool: Optional CredentialPool for multi-account failover (Issue #3723).
+                When set, the connector selects an account from the pool per-request
+                and rotates on rate-limit / quota errors. When None (default),
+                falls back to single-account behaviour (no change for existing users).
         """
         super().__init__()
         self._init_oauth(
@@ -368,6 +374,9 @@ class OAuthConnectorBase(
 
         # Initialize CheckpointMixin state (MRO doesn't call CheckpointMixin.__init__)
         self._checkpoints: dict[str, Any] = {}
+
+        # Credential pool — None means single-account behaviour (default)
+        self._pool: CredentialPool | None = pool
 
         # Register OAuth provider using factory (loads from config)
         self._register_oauth_provider()

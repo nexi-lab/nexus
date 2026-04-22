@@ -99,7 +99,7 @@ __all__ = [
 
 # Re-export from core modules with cleaner names
 from pathlib import Path
-from typing import Any, Union, cast
+from typing import Any, Union
 
 from nexus.backends.base.backend import Backend
 from nexus.backends.storage.cas_gcs import CASGCSBackend
@@ -120,12 +120,12 @@ from nexus.contracts.exceptions import (
 from nexus.contracts.exceptions import (
     NexusPermissionError as PermissionError,
 )
-from nexus.contracts.filesystem.filesystem_abc import NexusFilesystem as Filesystem
 
 # ReBAC types canonical in contracts — always available (#3230)
 from nexus.contracts.rebac_types import WILDCARD_SUBJECT, CheckResult, Entity, GraphLimitExceeded
 from nexus.contracts.types import OperationContext
 from nexus.core.nexus_fs import NexusFS
+from nexus.core.nexus_fs import NexusFS as Filesystem
 
 # =============================================================================
 # LAZY IMPORTS for optional bricks (#3230)
@@ -219,4 +219,4 @@ async def connect(
     # Delegate to the main connect function from nexus package
     from nexus import connect as nexus_connect
 
-    return cast(Filesystem, nexus_connect(config))
+    return await nexus_connect(config)

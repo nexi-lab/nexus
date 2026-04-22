@@ -386,6 +386,11 @@ def split_zone_from_internal_path(path: str) -> tuple[str | None, str]:
 
     Mirrors ``unscope_internal_path`` but also extracts the zone
     identifier so callers can disambiguate cross-zone collisions.
+    This exists for Codex review #3 (finding #3): unscoping
+    ``/zone/acme/src/x.py`` and ``/zone/beta/src/x.py`` both produce
+    ``/src/x.py`` — the zone_id is the only way a caller with
+    multi-zone visibility can tell them apart and round-trip a result
+    back through ``files=[...]``.
 
     Returns:
         ``(zone_id, unscoped_path)``. ``zone_id`` is ``None`` when the

@@ -83,7 +83,7 @@ class TieredVolumeEntry:
 
 # ─── Volume TOC Parser ──────────────────────────────────────────────────────
 
-# Volume file format (from rust/nexus_kernel/src/volume_engine.rs):
+# Volume file format (from rust/kernel/src/volume_engine.rs):
 #   Footer (last 24 bytes): [magic:4 "NVOL"] [version:4] [entry_count:4] [toc_offset:8] [checksum:4]
 #   TOC entry (45 bytes each): [hash:32] [offset:8] [size:4] [flags:1]
 _FOOTER_SIZE = 24

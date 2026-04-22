@@ -70,6 +70,7 @@ def build_dispatch_table() -> dict[str, DispatchEntry]:
         handle_delta_write,
     )
     from nexus.server.rpc.handlers.filesystem import (
+        handle_ainitialize_semantic_search,
         handle_copy,
         handle_delete,
         handle_exists,
@@ -144,6 +145,9 @@ def build_dispatch_table() -> dict[str, DispatchEntry]:
         # Semantic search
         "semantic_search": DispatchEntry(handle_semantic_search, is_async=True),
         "semantic_search_index": DispatchEntry(handle_semantic_search_index, is_async=True),
+        "ainitialize_semantic_search": DispatchEntry(
+            handle_ainitialize_semantic_search, is_async=True
+        ),
         # Memory API — moved to MemoryService @rpc_expose (Issue #12)
         # Admin API
         "admin_write_permission": DispatchEntry(handle_admin_write_permission),

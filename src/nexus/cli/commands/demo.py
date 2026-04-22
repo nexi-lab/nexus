@@ -232,7 +232,7 @@ async def _get_nexus_client(config: dict[str, Any]) -> Any:
         url = conn.get("NEXUS_URL", f"http://localhost:{http_port}")
 
         try:
-            nx = nexus.connect(
+            nx = await nexus.connect(
                 config={
                     "profile": "remote",
                     "url": url,
@@ -271,7 +271,7 @@ async def _get_nexus_client(config: dict[str, Any]) -> Any:
 
     # No server running — fall back to local data dir
     data_dir = config.get("data_dir", "./nexus-data")
-    return nexus.connect(config={"data_dir": data_dir})
+    return await nexus.connect(config={"data_dir": data_dir})
 
 
 # ---------------------------------------------------------------------------
@@ -1595,7 +1595,7 @@ async def _async_demo_init(reset: bool, skip_semantic: bool) -> None:
 
     # Flush the async write observer so version records are committed to the
     # database before any subsequent query (e.g. `nexus versions history`).
-    # Without this, the PipedRecordStoreWriteObserver may not have flushed yet.
+    # Without this, the RecordStoreWriteObserver may not have flushed yet.
     try:
         if hasattr(nx, "flush_write_observer"):
             nx.flush_write_observer()

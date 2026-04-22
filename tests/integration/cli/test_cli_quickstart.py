@@ -21,7 +21,7 @@ def test_local_cli_quickstart_persists_across_invocations(
     def _raise_missing_full_build(*args, **kwargs):
         raise RuntimeError(
             "ZoneManager requires PyO3 build with --features full. "
-            "Build with: maturin develop -m rust/nexus_raft/Cargo.toml --features full"
+            "Build with: maturin develop -m rust/raft/Cargo.toml --features full"
         )
 
     monkeypatch.setattr(zone_manager, "ZoneManager", _raise_missing_full_build)

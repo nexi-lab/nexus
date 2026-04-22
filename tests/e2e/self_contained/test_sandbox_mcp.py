@@ -133,7 +133,7 @@ async def test_sandbox_mcp_semantic_search_includes_degraded_flag(
     assert tool is not None, "nexus_semantic_search tool not registered"
 
     # Exercise the MCP handler the same way the wire protocol would.
-    raw = await tool.fn(query="sandbox", limit=5)
+    raw = await tool.fn(query="sandbox", limit=5, search_mode="semantic")
     # The handler serialises via format_response → JSON string for "json" mode.
     resp = json.loads(raw) if isinstance(raw, str) else raw
 

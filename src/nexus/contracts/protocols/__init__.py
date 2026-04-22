@@ -19,7 +19,6 @@ References:
     - Issue #1383: Define 6 kernel protocol interfaces
 """
 
-from nexus.contracts.filesystem.filesystem_abc import NexusFilesystem
 from nexus.contracts.protocols.auth import APIKeyCreatorProtocol
 from nexus.contracts.protocols.chunked_upload import ChunkedUploadProtocol
 from nexus.contracts.protocols.entity_registry import EntityRegistryProtocol
@@ -60,7 +59,6 @@ __all__ = [
     "MountPersistProtocol",
     "MountProtocol",
     "NamespaceManagerProtocol",
-    "NexusFilesystem",
     "OAuthProtocol",
     "OperationLogProtocol",
     "ParseProtocol",

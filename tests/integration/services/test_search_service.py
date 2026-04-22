@@ -38,9 +38,16 @@ def mock_metadata_store():
 
 @pytest.fixture
 def mock_permission_enforcer():
-    """Create a mock PermissionEnforcer (permissive by default)."""
+    """Create a mock PermissionEnforcer (permissive by default).
+
+    ``filter_list`` defaults to a pass-through — any path supplied is
+    treated as readable unless the test overrides it. This matches the
+    mock_metadata_store pattern and keeps the ``files=[...]`` validator
+    tests oblivious to which enforcer strategy runs.
+    """
     enforcer = MagicMock()
     enforcer.check_permission.return_value = True
+    enforcer.filter_list = MagicMock(side_effect=lambda paths, context: list(paths))
     return enforcer
 
 

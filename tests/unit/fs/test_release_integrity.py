@@ -15,7 +15,7 @@ import sqlite3
 import threading
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -310,8 +310,8 @@ class TestFsspecErrorPaths:
 
     @pytest.fixture
     def mock_nexus_fs(self):
-        fs = AsyncMock()
-        fs.stat = AsyncMock(return_value={"path": "/test", "size": 11, "is_directory": False})
+        fs = MagicMock()
+        fs.stat = MagicMock(return_value={"path": "/test", "size": 11, "is_directory": False})
         return fs
 
     def test_unsupported_mode_raises(self, mock_nexus_fs):
@@ -329,29 +329,39 @@ class TestFsspecErrorPaths:
     def test_write_buffer_exceeds_limit(self, mock_nexus_fs):
         pytest.importorskip("fsspec")
         from nexus.fs._fsspec import NexusWriteFile
+        from nexus.fs._sync import PortalRunner
 
-        wf = NexusWriteFile(
-            fs=MagicMock(),
-            path="/big.bin",
-            nexus_fs=mock_nexus_fs,
-        )
-        chunk = b"x" * (1024 * 1024)  # 1 MB
-        with pytest.raises(ValueError, match="Write buffer exceeded"):
-            for _ in range(1025):
-                wf.write(chunk)
+        runner = PortalRunner()
+        try:
+            wf = NexusWriteFile(
+                fs=MagicMock(),
+                path="/big.bin",
+                nexus_fs=mock_nexus_fs,
+            )
+            chunk = b"x" * (1024 * 1024)  # 1 MB
+            with pytest.raises(ValueError, match="Write buffer exceeded"):
+                for _ in range(1025):
+                    wf.write(chunk)
+        finally:
+            runner.close()
 
     def test_write_on_closed_file_raises(self, mock_nexus_fs):
         pytest.importorskip("fsspec")
         from nexus.fs._fsspec import NexusWriteFile
+        from nexus.fs._sync import PortalRunner
 
-        wf = NexusWriteFile(
-            fs=MagicMock(),
-            path="/closed.txt",
-            nexus_fs=mock_nexus_fs,
-        )
-        wf.close()
-        with pytest.raises(ValueError, match="closed file"):
-            wf.write(b"data")
+        runner = PortalRunner()
+        try:
+            wf = NexusWriteFile(
+                fs=MagicMock(),
+                path="/closed.txt",
+                nexus_fs=mock_nexus_fs,
+            )
+            wf.close()
+            with pytest.raises(ValueError, match="closed file"):
+                wf.write(b"data")
+        finally:
+            runner.close()
 
 
 class TestBackendFactoryErrorPaths:
@@ -514,13 +524,13 @@ class TestPathsPermissions:
 class TestSlimNexusFSLifecycle:
     """Tests for the context manager and close() on SlimNexusFS."""
 
-    def test_close_is_idempotent(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_close_is_idempotent(self, tmp_path):
         """Calling close() twice should not raise."""
         from nexus.backends.storage.cas_local import CASLocalBackend
         from nexus.contracts.types import OperationContext
         from nexus.core.config import PermissionConfig
         from nexus.core.nexus_fs import NexusFS
-        from nexus.core.router import PathRouter
         from nexus.fs import _make_mount_entry
 
         db_path = str(tmp_path / "metadata.db")
@@ -529,15 +539,9 @@ class TestSlimNexusFSLifecycle:
         data_dir.mkdir()
         backend = CASLocalBackend(root_path=data_dir)
 
-        from nexus.core.mount_table import MountTable
-
-        mount_table = MountTable(metastore)
-        router = PathRouter(mount_table)
-
         kernel = NexusFS(
             metadata_store=metastore,
             permissions=PermissionConfig(enforce=False),
-            router=router,
         )
         kernel._init_cred = OperationContext(
             user_id="test",
@@ -546,21 +550,23 @@ class TestSlimNexusFSLifecycle:
             is_admin=True,
         )
 
-        # Add mount AFTER NexusFS init so it registers in the Rust Kernel.
-        mount_table.add("/local", backend)
+        # Mount via kernel sys_setattr(DT_MOUNT) (F4 Rust-ification).
+        from nexus.contracts.metadata import DT_MOUNT
+
+        kernel.sys_setattr("/local", entry_type=DT_MOUNT, backend=backend)
         metastore.put(_make_mount_entry("/local", backend.name))
 
         fs = SlimNexusFS(kernel)
         fs.close()
         fs.close()  # should not raise
 
-    def test_context_manager(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_context_manager(self, tmp_path):
         """with SlimNexusFS should call close() on exit."""
         from nexus.backends.storage.cas_local import CASLocalBackend
         from nexus.contracts.types import OperationContext
         from nexus.core.config import PermissionConfig
         from nexus.core.nexus_fs import NexusFS
-        from nexus.core.router import PathRouter
         from nexus.fs import _make_mount_entry
 
         db_path = str(tmp_path / "metadata.db")
@@ -569,15 +575,9 @@ class TestSlimNexusFSLifecycle:
         data_dir.mkdir()
         backend = CASLocalBackend(root_path=data_dir)
 
-        from nexus.core.mount_table import MountTable
-
-        mount_table = MountTable(metastore)
-        router = PathRouter(mount_table)
-
         kernel = NexusFS(
             metadata_store=metastore,
             permissions=PermissionConfig(enforce=False),
-            router=router,
         )
         kernel._init_cred = OperationContext(
             user_id="test",
@@ -586,8 +586,10 @@ class TestSlimNexusFSLifecycle:
             is_admin=True,
         )
 
-        # Add mount AFTER NexusFS init so it registers in the Rust Kernel.
-        mount_table.add("/local", backend)
+        # Mount via kernel sys_setattr(DT_MOUNT) (F4 Rust-ification).
+        from nexus.contracts.metadata import DT_MOUNT
+
+        kernel.sys_setattr("/local", entry_type=DT_MOUNT, backend=backend)
         metastore.put(_make_mount_entry("/local", backend.name))
 
         with SlimNexusFS(kernel) as fs:

@@ -24,9 +24,9 @@ def _start_background_services(system: dict[str, Any]) -> None:
         dpb.start()
         logger.debug("[BOOT:BG] DeferredPermissionBuffer started")
 
-    # Write Observer — PipedRecordStoreWriteObserver.start() is async,
-    # called from server lifespan after PipeManager injection (Issue #809).
-    # RecordStoreWriteObserver (SQLite fallback) has no start().
+    # Write Observer — RecordStoreWriteObserver (OBSERVE-phase) has no
+    # start(). It is registered via hook_spec at factory enlist time.
+    # The sync RecordStoreWriteObserver (SQLite fallback) also has no start().
 
     # Event Delivery Worker (system tier)
     # Issue #3193: start() is now async — auto-started by

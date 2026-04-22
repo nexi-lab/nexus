@@ -10,7 +10,7 @@ To modify FileMetadata:
 
 Contains:
   - FileMetadata: Core file metadata dataclass
-  - DT_REG, DT_DIR, DT_MOUNT, DT_PIPE, DT_STREAM: Directory entry type constants
+  - DT_REG, DT_DIR, DT_MOUNT, DT_PIPE, DT_STREAM, DT_EXTERNAL_STORAGE: Directory entry type constants
 """
 
 from __future__ import annotations
@@ -31,6 +31,7 @@ DT_DIR = 1
 DT_MOUNT = 2
 DT_PIPE = 3
 DT_STREAM = 4
+DT_EXTERNAL_STORAGE = 5
 
 
 @dataclass(slots=True)
@@ -74,6 +75,10 @@ class FileMetadata:
     @property
     def is_stream(self) -> bool:
         return self.entry_type == 4
+
+    @property
+    def is_external_storage(self) -> bool:
+        return self.entry_type == 5
 
     @property
     def backend_address(self) -> BackendAddress:

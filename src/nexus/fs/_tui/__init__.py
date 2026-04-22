@@ -46,7 +46,7 @@ class ContextualNexusFS:
             is_admin=True,
         )
 
-    def read(self, path: str) -> bytes:
+    async def read(self, path: str) -> bytes:
         return cast(bytes, self._kernel.sys_read(path, context=self._ctx))
 
     def read_range(self, path: str, start: int, end: int) -> bytes:
@@ -94,16 +94,16 @@ class ContextualNexusFS:
             pass
         return await self._stat_backend_path(path)
 
-    def mkdir(self, path: str, parents: bool = True) -> None:
+    async def mkdir(self, path: str, parents: bool = True) -> None:
         self._kernel.mkdir(path, parents=parents, exist_ok=True, context=self._ctx)
 
-    def rmdir(self, path: str, recursive: bool = False) -> None:
+    async def rmdir(self, path: str, recursive: bool = False) -> None:
         self._kernel.rmdir(path, recursive=recursive, context=self._ctx)
 
-    def delete(self, path: str) -> None:
+    async def delete(self, path: str) -> None:
         self._kernel.sys_unlink(path, context=self._ctx)
 
-    def rename(self, old_path: str, new_path: str) -> None:
+    async def rename(self, old_path: str, new_path: str) -> None:
         self._kernel.sys_rename(old_path, new_path, context=self._ctx)
 
     def exists(self, path: str) -> bool:
@@ -121,7 +121,7 @@ class ContextualNexusFS:
         filtered = [mount for mount in mounts if mount != "/"]
         return filtered or mounts
 
-    def close(self) -> None:
+    async def close(self) -> None:
         return None
 
     async def _list_backend_directory(
@@ -806,7 +806,7 @@ class PlaygroundApp(App[None]):
         failed: list[str] = []
 
         async def _search_mount(mount: str) -> list[dict]:
-            entries = await self._fs.ls(mount, detail=True, recursive=True)
+            entries = self._fs.ls(mount, detail=True, recursive=True)
             return [e for e in entries if query.lower() in e.get("path", "").lower()]
 
         tasks = {mp: _search_mount(mp) for mp in self._mount_points}
@@ -1239,15 +1239,20 @@ class PlaygroundApp(App[None]):
             return "x://timeline"
         if connector_name == "hn_connector":
             return "hn://top"
-        if connector_name == "gws_github":
-            return None
+        # ``github_connector`` is the canonical GitHub registry name
+        # (#3728).  ``gws_github`` is a deprecated alias kept for
+        # backward compatibility of persisted mounts — both must
+        # advertise the same ``github://`` URI example so the TUI and
+        # playground don't show the broken ``gws://github`` path.
+        if connector_name in {"github_connector", "gws_github"}:
+            return "github://me"
         if connector_name.startswith("gws_"):
             return f"gws://{connector_name.removeprefix('gws_')}"
         return None
 
     def _connector_auth_service(self, connector_name: str, service_name: str | None) -> str | None:
         """Map connector targets to the auth flow users should follow."""
-        if connector_name == "gws_github":
+        if connector_name in {"github_connector", "gws_github"}:
             return "github"
         if connector_name.startswith("gws_"):
             return "gws"
@@ -1262,7 +1267,15 @@ class PlaygroundApp(App[None]):
             return explicit
 
         if not uri.startswith(
-            ("gws://", "gdrive://", "gmail://", "calendar://", "slack://", "x://")
+            (
+                "gws://",
+                "gdrive://",
+                "gmail://",
+                "calendar://",
+                "slack://",
+                "x://",
+                "github://",
+            )
         ):
             return "local"
 
@@ -1270,6 +1283,8 @@ class PlaygroundApp(App[None]):
             providers = {"google"}
         elif uri.startswith("slack://"):
             providers = {"slack"}
+        elif uri.startswith("github://"):
+            providers = {"github"}
         else:
             providers = {"x", "twitter"}
 
@@ -1294,7 +1309,7 @@ class PlaygroundApp(App[None]):
         try:
             from types import SimpleNamespace
 
-            from nexus.fs import _infer_connector_user_email
+            from nexus.fs._backend_factory import _infer_connector_user_email
         except Exception:
             return "local"
 
@@ -1312,6 +1327,8 @@ class PlaygroundApp(App[None]):
             service_name = "slack"
         elif scheme == "x":
             service_name = "x"
+        elif scheme == "github":
+            service_name = "github"
 
         inferred = _infer_connector_user_email(
             scheme=scheme,

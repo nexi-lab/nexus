@@ -118,8 +118,15 @@ class MountService:
         fail the mount operation (Decision #12).
 
         Runs:
-        - Readme doc generation for ReadmeDocMixin backends
+        - Mount path propagation for ReadmeDocMixin backends (so error
+          messages can reference the correct ``.readme/README.md`` path)
         - Search indexing via search_service (Issue #3148 Gap 1)
+
+        NOTE (Issue #3728): README materialization was removed.  The
+        virtual ``.readme/`` overlay in ``nexus_fs`` + ``schema_generator``
+        serves docs on-demand from class metadata, so there's nothing to
+        write here.  The BackendFeature.README_DOC flag is still honored
+        downstream for error-message mount_path propagation.
         """
         try:
             # Get backend from router to check capabilities
@@ -128,11 +135,14 @@ class MountService:
             if backend is None:
                 return
 
-            # Readme doc generation (via mount_hooks if available)
-            from nexus.contracts.backend_features import BackendFeature
+            # Propagate mount_path to the backend for error messages.  The
+            # virtual overlay itself takes mount_path from OperationContext,
+            # but error formatting in ValidatedMixin/TraitBasedMixin still
+            # reads the instance attribute as a fallback.
+            from nexus.backends.connectors.base import ReadmeDocMixin
 
-            if hasattr(backend, "has_feature") and backend.has_feature(BackendFeature.README_DOC):
-                await self._generate_readmes(mount_point, backend)
+            if isinstance(backend, ReadmeDocMixin) and backend.SKILL_NAME:
+                backend.set_mount_path(mount_point)
 
             # Search indexing — index the mount point so content is discoverable.
             # Uses search_service DI (Issue #3148 Phase 1).
@@ -159,23 +169,6 @@ class MountService:
             logger.warning(
                 "Post-mount hooks failed for %s (mount still active)", mount_point, exc_info=True
             )
-
-    async def _generate_readmes(self, mount_point: str, backend: Any) -> None:
-        """Set mount path on a connector backend so virtual .readme/ overlay works.
-
-        NOTE (Issue #3728): ``write_readme`` was removed. The virtual
-        ``.readme/`` overlay now serves docs on-demand from class metadata
-        via ``nexus.backends.connectors.schema_generator.dispatch_virtual_readme_*``,
-        so materializing files into the backend is no longer needed.
-        """
-        from nexus.backends.connectors.base import ReadmeDocMixin
-
-        if not isinstance(backend, ReadmeDocMixin):
-            return
-        if not backend.SKILL_NAME:
-            return
-
-        backend.set_mount_path(mount_point)
 
     async def _index_mount_content(self, mount_point: str, *, zone_id: str | None = None) -> None:
         """Index mounted connector content for semantic search.
@@ -325,7 +318,7 @@ class MountService:
         so the TUI file explorer can navigate to the mount point.
 
         The mount point itself gets the specified ``entry_type``
-        (DT_MOUNT); parent dirs get DT_DIR.
+        (DT_MOUNT or DT_EXTERNAL_STORAGE); parent dirs get DT_DIR.
 
         Args:
             mount_point: Virtual path
@@ -568,10 +561,13 @@ class MountService:
         # Create backend instance
         backend = self._create_backend(backend_type, config)
 
-        # All mounts use DT_MOUNT; external nature determined by backend trait.
-        from nexus.contracts.metadata import DT_MOUNT
+        # Determine mount entry_type from ConnectorRegistry category.
+        # Non-storage backends (oauth/api/cli) get DT_EXTERNAL_STORAGE.
+        from nexus.backends.base.registry import ConnectorRegistry
+        from nexus.contracts.metadata import DT_EXTERNAL_STORAGE, DT_MOUNT
 
-        _entry_type = DT_MOUNT
+        _info = ConnectorRegistry.get_info(backend_type)
+        _entry_type = DT_EXTERNAL_STORAGE if (_info and _info.category != "storage") else DT_MOUNT
 
         # Mount via sys_setattr (Rust DLC handles routing + metastore + dcache,
         # Python DLC stores _PyMountInfo + dispatches event), then setup --
@@ -582,7 +578,7 @@ class MountService:
             mount_point,
             entry_type=DT_MOUNT,
             backend=backend,
-            is_external=False,  # DT_EXTERNAL_STORAGE eliminated — all mounts are DT_MOUNT
+            is_external=(_entry_type == DT_EXTERNAL_STORAGE),
         )
         try:
             self._setup_mount_point(

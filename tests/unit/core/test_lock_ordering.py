@@ -10,13 +10,7 @@ Validates:
 See: docs/architecture/LOCK-ORDERING.md
 """
 
-import asyncio
-import threading
-import time
-
 import pytest
-
-from nexus.core.lock_fast import PythonVFSLockManager
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -174,7 +168,7 @@ class TestObserverContextRejection:
             mod.exit_observer_context()
 
     def test_observer_can_acquire_l4(self, monkeypatch):
-        """Observer context allows threading locks (L4) — FileWatcher pattern."""
+        """Observer context allows threading locks (L4) — observer pattern."""
         mod = _enable_lock_debug(monkeypatch)
 
         mod.enter_observer_context()
@@ -236,117 +230,7 @@ class TestNestedObserverContext:
         mod.assert_can_acquire(mod.L1_VFS)
 
 
-# ---------------------------------------------------------------------------
-# Test 5: Cross-zone concurrent lock acquisition (deadlock-free)
-# ---------------------------------------------------------------------------
-
-
-class TestCrossZoneConcurrentLocking:
-    """Verify that concurrent lock acquisition across zones completes
-    without deadlock within a timeout."""
-
-    def test_concurrent_vfs_locks_no_deadlock(self):
-        """Multiple threads acquiring VFS locks on different paths must not deadlock.
-
-        Simulates cross-zone concurrent access: each thread acquires locks
-        on two paths in sorted order (the rename pattern).
-        """
-        mgr = PythonVFSLockManager()
-        paths = [f"/zone-{i}/file.txt" for i in range(4)]
-        errors: list[str] = []
-        barrier = threading.Barrier(4, timeout=5)
-
-        def worker(idx: int) -> None:
-            try:
-                barrier.wait()
-                # Each worker acquires two locks in sorted order.
-                p1, p2 = sorted([paths[idx], paths[(idx + 1) % len(paths)]])
-                h1 = mgr.acquire(p1, "write", timeout_ms=2000)
-                if h1 == 0:
-                    errors.append(f"Worker {idx}: timeout acquiring {p1}")
-                    return
-                h2 = mgr.acquire(p2, "write", timeout_ms=2000) if p1 != p2 else 0
-                if h2 == 0 and p1 != p2:
-                    mgr.release(h1)
-                    errors.append(f"Worker {idx}: timeout acquiring {p2}")
-                    return
-                # Hold briefly, then release.
-                time.sleep(0.01)
-                if h2:
-                    mgr.release(h2)
-                mgr.release(h1)
-            except Exception as e:
-                errors.append(f"Worker {idx}: {e}")
-
-        threads = [threading.Thread(target=worker, args=(i,)) for i in range(4)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join(timeout=10)
-
-        alive = [t for t in threads if t.is_alive()]
-        assert not alive, f"Deadlock detected: {len(alive)} threads still running"
-        assert not errors, f"Lock errors: {errors}"
-
-    def test_concurrent_rw_locks_no_starvation(self):
-        """Readers and writers on the same path must all complete (no starvation).
-
-        5 readers + 2 writers contending on the same path.
-        """
-        mgr = PythonVFSLockManager()
-        results: list[tuple[str, int]] = []
-        lock = threading.Lock()
-        barrier = threading.Barrier(7, timeout=5)
-
-        def reader(idx: int) -> None:
-            barrier.wait()
-            h = mgr.acquire("/shared", "read", timeout_ms=5000)
-            if h:
-                time.sleep(0.005)
-                mgr.release(h)
-                with lock:
-                    results.append(("read", idx))
-
-        def writer(idx: int) -> None:
-            barrier.wait()
-            h = mgr.acquire("/shared", "write", timeout_ms=5000)
-            if h:
-                time.sleep(0.005)
-                mgr.release(h)
-                with lock:
-                    results.append(("write", idx))
-
-        threads = [threading.Thread(target=reader, args=(i,)) for i in range(5)]
-        threads += [threading.Thread(target=writer, args=(i,)) for i in range(2)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join(timeout=15)
-
-        alive = [t for t in threads if t.is_alive()]
-        assert not alive, f"Starvation: {len(alive)} threads still running"
-        assert len(results) == 7, f"Expected 7 completions, got {len(results)}"
-
-    @pytest.mark.asyncio
-    async def test_concurrent_advisory_locks_no_deadlock(self):
-        """Concurrent advisory lock acquisition across zones completes
-        without deadlock."""
-        from nexus.lib.distributed_lock import LocalLockManager
-        from nexus.lib.semaphore import create_vfs_semaphore
-
-        sem = create_vfs_semaphore()
-        managers = [LocalLockManager(sem) for i in range(3)]
-
-        results: list[str] = []
-
-        async def worker(mgr: LocalLockManager, path: str, label: str) -> None:
-            lock_id = await mgr.acquire(path, mode="exclusive", timeout=5.0, ttl=5.0)
-            if lock_id:
-                await asyncio.sleep(0.01)
-                await mgr.release(lock_id, path)
-                results.append(label)
-
-        tasks = [worker(managers[i], f"/file-{i}.txt", f"zone-{i}") for i in range(3)]
-        await asyncio.wait_for(asyncio.gather(*tasks), timeout=10)
-
-        assert len(results) == 3, f"Expected 3 completions, got {results}"
+# Cross-zone concurrent locking tests moved to Rust (lock_manager.rs):
+# - test_concurrent_reads, test_concurrent_write_exclusion
+# - test_no_toctou_parent_child_write
+# - advisory_hierarchy_* tests

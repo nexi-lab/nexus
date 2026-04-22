@@ -194,8 +194,10 @@ send_notifications: true
         max_events_per_calendar: int = 250,
         metadata_store: Any = None,
         encryption_key: str | None = None,
+        pool: Any = None,  # CredentialPool | None — see Issue #3723 for migration guide
     ):
         # 1. Initialize OAuth
+        self._pool = pool  # stored for future migrate_to_pool() call (Issue #3723)
         self._init_oauth(
             token_manager_db,
             user_email=user_email,

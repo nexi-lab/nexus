@@ -26,7 +26,10 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+<<<<<<< HEAD
     from nexus.config import SSRFConfig
+=======
+>>>>>>> ad030090f (fix: nuclear restore 168 files + rustfmt)
     from nexus.core.nexus_fs import NexusFS
 
 from nexus.bricks.mcp.klavis_client import KlavisClient, KlavisError

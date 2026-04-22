@@ -38,6 +38,7 @@ GENERATED_NAMES: dict[str, set[str]] = {
         "DT_MOUNT",
         "DT_PIPE",
         "DT_STREAM",
+        "DT_EXTERNAL_STORAGE",
     },
     "metastore": {
         "MetastoreABC",
@@ -339,7 +340,7 @@ To modify FileMetadata:
 
 Contains:
   - FileMetadata: Core file metadata dataclass
-  - DT_REG, DT_DIR, DT_MOUNT, DT_PIPE, DT_STREAM: Directory entry type constants
+  - DT_REG, DT_DIR, DT_MOUNT, DT_PIPE, DT_STREAM, DT_EXTERNAL_STORAGE: Directory entry type constants
 """
 
 from __future__ import annotations

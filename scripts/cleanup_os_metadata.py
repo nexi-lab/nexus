@@ -23,7 +23,7 @@ from pathlib import Path
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from nexus import NexusFilesystem, connect
+from nexus import NexusFS, connect
 from nexus.fuse.filters import is_os_metadata_file
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 
 async def scan_and_remove(
-    nexus_fs: NexusFilesystem,
+    nexus_fs: NexusFS,
     path: str = "/",
     dry_run: bool = True,
     deleted_count: list[int] | None = None,

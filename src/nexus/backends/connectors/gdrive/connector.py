@@ -26,11 +26,15 @@ from __future__ import annotations
 
 import logging
 <<<<<<< HEAD
+<<<<<<< HEAD
 import time
 from typing import TYPE_CHECKING, Any, ClassVar
 =======
 from typing import TYPE_CHECKING, ClassVar
 >>>>>>> c25f7f03d (feat: reapply 36 lost commits — async→sync, dead code cleanup, Rust dispatch simplification)
+=======
+from typing import TYPE_CHECKING, Any, ClassVar
+>>>>>>> 5d325f31e (fix: nuclear restore 168 files + rustfmt)
 
 from nexus.backends.base.backend import HandlerStatusResponse
 from nexus.backends.base.path_addressing_engine import PathAddressingEngine
@@ -94,6 +98,10 @@ class PathGDriveBackend(
 
     # ReadmeDocMixin config
     SKILL_NAME = "gdrive"
+    # Drive stores arbitrary user files at arbitrary paths, so a real
+    # ``.readme/`` directory in the user's Drive must shadow the
+    # auto-generated virtual tree (Issue #3728 finding #9).
+    VIRTUAL_README_DEFERS_TO_BACKEND: bool = True
 
     # ValidatedMixin config
     SCHEMAS = {
@@ -182,8 +190,10 @@ class PathGDriveBackend(
         shared_drive_id: str | None = None,
         provider: str = "google-drive",
         encryption_key: str | None = None,
+        pool: Any = None,  # CredentialPool | None — see Issue #3723 for migration guide
     ):
         # 1. Initialize OAuth (sets self.token_manager, self.provider, etc.)
+        self._pool = pool  # stored for future migrate_to_pool() call (Issue #3723)
         self._init_oauth(
             token_manager_db,
             user_email=user_email,

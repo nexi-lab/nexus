@@ -1,12 +1,16 @@
 """CAS + Local transport backend — full-featured local storage.
 
 Composes CASAddressingEngine (addressing) + VolumeLocalTransport (I/O) +
-MultipartUpload (resumable uploads) using Feature DI for Bloom filter,
-content cache, VFSSemaphore, and CDCEngine (chunking).
+MultipartUpload (resumable uploads) using Feature DI for content cache,
+VFSSemaphore, and CDCEngine (chunking).
 
     CASLocalBackend = CASAddressingEngine(VolumeLocalTransport)
                     + MultipartUpload     (resumable uploads, ABC)
-                    + Feature DI          (Bloom, cache, VFSSemaphore, CDC)
+                    + Feature DI          (cache, VFSSemaphore, CDC)
+
+Bloom filter was dropped in R10f — Rust stat() is fast enough that the Bloom
+seeding cost on startup doesn't pay back. Tracked under #3799 if benchmarks
+later justify reintroducing it.
 
 VolumeLocalTransport packs CAS blobs into append-only volume files with a
 redb index, reducing inode overhead and enabling batched fsync. Falls back
@@ -47,33 +51,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Default Bloom filter settings (tuned for typical CAS workloads)
-DEFAULT_CAS_BLOOM_CAPACITY = 100_000
-DEFAULT_CAS_BLOOM_FP_RATE = 0.01
-
-
-def _init_bloom_from_transport(
-    transport: VolumeLocalTransport | LocalTransport,
-    capacity: int,
-    fp_rate: float,
-) -> Any:
-    """Initialize Bloom filter, populated from transport.
-
-    Uses transport.list_content_hashes() to seed the Bloom filter — works for
-    both volume-packed storage and file-per-blob storage (Issue #3403).
-    """
-    # RUST_FALLBACK: BloomFilter
-    from nexus_kernel import BloomFilter
-
-    bloom = BloomFilter(capacity, fp_rate)
-    if hasattr(transport, "list_content_hashes"):
-        hashes_ts = transport.list_content_hashes()
-        if hashes_ts:
-            keys = [h for h, _ts in hashes_ts]
-            bloom.add_bulk(keys)
-            logger.info("CAS Bloom filter populated with %d entries", len(keys))
-    return bloom
-
 
 @register_connector("cas_local")
 class CASLocalBackend(CASAddressingEngine, MultipartUpload):
@@ -107,8 +84,6 @@ class CASLocalBackend(CASAddressingEngine, MultipartUpload):
         self,
         root_path: str | Path,
         batch_read_workers: int = 8,
-        bloom_capacity: int = DEFAULT_CAS_BLOOM_CAPACITY,
-        bloom_fp_rate: float = DEFAULT_CAS_BLOOM_FP_RATE,
         on_write_callback: Any | None = None,
         *,
         use_volume_packing: bool = False,
@@ -135,9 +110,6 @@ class CASLocalBackend(CASAddressingEngine, MultipartUpload):
             transport = VolumeLocalTransport(root_path=self.root_path, fsync=True)
         else:
             transport = LocalTransport(root_path=self.root_path, fsync=True)
-
-        # Bloom filter removed in R10f — Rust stat() is fast enough (5-17us)
-        # that the seeding cost doesn't pay back. Tracked under #3799.
 
         # Feature DI: LRU metadata cache for hot-path _read_meta()
         import cachetools
@@ -219,24 +191,11 @@ class CASLocalBackend(CASAddressingEngine, MultipartUpload):
         )
         return service
 
-    def hook_spec(self) -> Any:
-        """Declare VFS hooks — mount + unmount for tiering lifecycle."""
-        from nexus.contracts.protocols.service_hooks import HookSpec
-
-        return HookSpec(
-            mount_hooks=(self,),
-            unmount_hooks=(self,),
-        )
-
-    def on_mount(self, ctx: Any) -> None:
-        """VFSMountHook: start background services when the backend is mounted.
-
-        Called by KernelDispatch at mount time (async event loop is running).
-        Uses asyncio.ensure_future() to schedule background tasks.
-        """
+    def _on_mount(self, mount_point: str) -> None:
+        """Start background services when the backend is mounted."""
         import asyncio
 
-        super().on_mount(ctx)
+        logger.info("CAS engine mounted at %s (backend=%s)", mount_point, self._backend_name)
         if self._compactor is not None:
             asyncio.ensure_future(self._compactor.start())
             logger.info("Volume compactor scheduled to start on mount")
@@ -244,11 +203,8 @@ class CASLocalBackend(CASAddressingEngine, MultipartUpload):
             asyncio.ensure_future(self._tiering_service.start())
             logger.info("Cold tiering service scheduled to start on mount")
 
-    def on_unmount(self, ctx: Any) -> None:
-        """VFSUnmountHook: stop background services when the backend is unmounted.
-
-        Schedules graceful shutdown of background tasks.
-        """
+    def _on_unmount(self) -> None:
+        """Stop background services when the backend is unmounted."""
         import asyncio
 
         if self._compactor is not None:

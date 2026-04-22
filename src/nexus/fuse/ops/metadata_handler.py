@@ -318,11 +318,13 @@ class MetadataHandler:
         prefetch_max_file_size = ctx.cache_config.get("prefetch_max_file_size", 256_000)
 
         if prefetch_enabled and ctx.context is None and len(files) <= prefetch_max_files:
-            small_files = [
-                f.get("path") if isinstance(f, dict) else f
+            small_files: list[str] = [
+                p
                 for f in files
                 if not (isinstance(f, dict) and f.get("is_directory", False))
                 and (not isinstance(f, dict) or f.get("size", 0) < prefetch_max_file_size)
+                for p in [f.get("path") if isinstance(f, dict) else f]
+                if isinstance(p, str)
             ]
             logger.info(
                 f"[FUSE-PERF] readdir prefetch check: {len(small_files)} small files, "
@@ -334,7 +336,7 @@ class MetadataHandler:
                     prefetch_start = time.time()
                     bulk_content = ctx.nexus_fs.read_bulk(small_files[:500])
                     for fpath, content in bulk_content.items():
-                        if content is not None:
+                        if isinstance(content, bytes):
                             ctx.cache.cache_content(fpath, content)
                     prefetch_elapsed = time.time() - prefetch_start
                     logger.info(

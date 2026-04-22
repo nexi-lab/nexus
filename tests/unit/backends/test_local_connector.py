@@ -5,7 +5,7 @@ Tests cover:
 - Read/write operations with L1 caching
 - Directory operations
 - Readonly mode
-- FileWatcher integration (get_physical_path, get_watch_root)
+- Watch integration (get_physical_path, get_watch_root)
 """
 
 from pathlib import Path

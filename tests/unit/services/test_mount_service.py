@@ -6,7 +6,7 @@ pytest-asyncio dependency.
 """
 
 import asyncio
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -41,7 +41,7 @@ def mock_mount_manager():
 
 @pytest.fixture
 def mock_nexus_fs():
-    """Create a mock NexusFilesystem."""
+    """Create a mock NexusFS."""
     fs = MagicMock()
     fs.mkdir = MagicMock()
     fs.sys_write = MagicMock()
@@ -259,18 +259,23 @@ class TestAddMountAuthResolution:
         service._setup_mount_point = MagicMock()
         service._driver_coordinator = mock_driver_coordinator
 
-        result = service.add_mount_sync(
-            "/mnt/s3",
-            "path_s3",
-            {"bucket": "demo"},
-        )
+        with patch("nexus.backends.base.registry.ConnectorRegistry") as mock_cr:
+            mock_cr.get_info.return_value = MagicMock(
+                auth_fields=["access_key_id", "secret_access_key"]
+            )
 
-        assert result == "/mnt/s3"
-        auth_service.resolve_backend_config.assert_called_once()
-        service._create_backend.assert_called_once_with(
-            "path_s3",
-            {"bucket": "demo", "access_key_id": "AKIA", "secret_access_key": "x"},
-        )
+            result = service.add_mount_sync(
+                "/mnt/s3",
+                "path_s3",
+                {"bucket": "demo"},
+            )
+
+            assert result == "/mnt/s3"
+            auth_service.resolve_backend_config.assert_called_once()
+            service._create_backend.assert_called_once_with(
+                "path_s3",
+                {"bucket": "demo", "access_key_id": "AKIA", "secret_access_key": "x"},
+            )
 
     def test_add_mount_raises_when_auth_missing(
         self, mock_router, mock_mount_manager, mock_nexus_fs, mock_driver_coordinator

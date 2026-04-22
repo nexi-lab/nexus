@@ -40,6 +40,7 @@ _REQUIRED_FOR_READY: frozenset[StartupPhase] = frozenset(
         StartupPhase.FEATURES,
         StartupPhase.PERMISSIONS,
         StartupPhase.SERVICES,
+        StartupPhase.GRPC,
     }
 )
 

@@ -12,10 +12,10 @@ from pathlib import Path
 import pytest
 
 from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.contracts.metadata import DT_MOUNT  # noqa: E402
 from nexus.contracts.types import OperationContext
 from nexus.core.config import PermissionConfig
 from nexus.core.nexus_fs import NexusFS
-from nexus.core.router import PathRouter
 from nexus.fs import _make_mount_entry
 from nexus.fs._constants import STREAMING_COPY_CHUNK_SIZE
 from nexus.fs._facade import SlimNexusFS
@@ -34,15 +34,9 @@ def slim_fs(tmp_path: Path):
     data_dir.mkdir()
     backend = CASLocalBackend(root_path=data_dir)
 
-    from nexus.core.mount_table import MountTable
-
-    mount_table = MountTable(metastore)
-    router = PathRouter(mount_table)
-
     kernel = NexusFS(
         metadata_store=metastore,
         permissions=PermissionConfig(enforce=False),
-        router=router,
     )
     kernel._init_cred = OperationContext(
         user_id="test",
@@ -51,9 +45,8 @@ def slim_fs(tmp_path: Path):
         is_admin=True,
     )
 
-    # Add mount AFTER NexusFS init so it registers in the Rust Kernel
-    # that NexusFS wired to mount_table._kernel.
-    mount_table.add("/local", backend)
+    # Mount via the driver coordinator (F2 MountTable migration).
+    kernel.sys_setattr("/local", entry_type=DT_MOUNT, backend=backend)
     metastore.put(_make_mount_entry("/local", backend.name))
 
     return SlimNexusFS(kernel)
@@ -83,7 +76,9 @@ class TestStreamingCopy:
         """File larger than one chunk triggers multi-chunk streaming."""
         # 1.5x chunk size to force 2 chunks
         size = STREAMING_COPY_CHUNK_SIZE + STREAMING_COPY_CHUNK_SIZE // 2
-        content = bytes(i % 256 for i in range(size))
+        # Use fast byte multiplication instead of slow generator (~100x faster)
+        pattern = bytes(range(256))
+        content = (pattern * (size // 256 + 1))[:size]
         slim_fs.write("/local/large.bin", content)
         slim_fs.copy("/local/large.bin", "/local/large_copy.bin")
         result = slim_fs.read("/local/large_copy.bin")

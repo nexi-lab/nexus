@@ -21,10 +21,10 @@ from pathlib import Path
 import pytest
 
 from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.contracts.metadata import DT_MOUNT  # noqa: E402
 from nexus.contracts.types import OperationContext
 from nexus.core.config import PermissionConfig
 from nexus.core.nexus_fs import NexusFS
-from nexus.core.router import PathRouter
 from nexus.fs import _make_mount_entry
 from nexus.fs._facade import SlimNexusFS
 from nexus.fs._sqlite_meta import SQLiteMetastore
@@ -44,17 +44,10 @@ def slim_fs(tmp_path: Path):
     data_dir.mkdir()
     backend = CASLocalBackend(root_path=data_dir)
 
-    # Router (empty — mounts added via coordinator)
-    from nexus.core.mount_table import MountTable
-
-    mount_table = MountTable(metastore)
-    router = PathRouter(mount_table)
-
-    # Kernel
+    # Kernel (constructs its own DriverLifecycleCoordinator + PathRouter)
     kernel = NexusFS(
         metadata_store=metastore,
         permissions=PermissionConfig(enforce=False),
-        router=router,
     )
     kernel._init_cred = OperationContext(
         user_id="test",
@@ -64,7 +57,7 @@ def slim_fs(tmp_path: Path):
     )
 
     # Mount via coordinator (registers in backend pool + routing table + hooks)
-    kernel._driver_coordinator.mount("/local", backend)
+    kernel.sys_setattr("/local", entry_type=DT_MOUNT, backend=backend)
 
     # Create DT_MOUNT entry so stat("/local") works
     metastore.put(_make_mount_entry("/local", backend.name))
@@ -92,30 +85,22 @@ def dual_fs(tmp_path: Path):
     # CASLocalBackend.name hardcodes "local"; when two instances share
     # the same pool key, resolve_backend() returns whichever was last
     # registered. Creating thin subclasses gives distinct pool keys.
-    # Class names MUST start with "CAS" so _detect_backend_params in
-    # mount_table.py recognises them as CAS backends (avoids gRPC bridge).
-    class CASLocalA(CASLocalBackend):
+    class _BackendA(CASLocalBackend):
         @property
         def name(self) -> str:
             return "local_a"
 
-    class CASLocalB(CASLocalBackend):
+    class _BackendB(CASLocalBackend):
         @property
         def name(self) -> str:
             return "local_b"
 
-    backend_a.__class__ = CASLocalA
-    backend_b.__class__ = CASLocalB
-
-    from nexus.core.mount_table import MountTable
-
-    mount_table = MountTable(metastore)
-    router = PathRouter(mount_table)
+    backend_a.__class__ = _BackendA
+    backend_b.__class__ = _BackendB
 
     kernel = NexusFS(
         metadata_store=metastore,
         permissions=PermissionConfig(enforce=False),
-        router=router,
     )
     kernel._init_cred = OperationContext(
         user_id="test",
@@ -125,8 +110,8 @@ def dual_fs(tmp_path: Path):
     )
 
     # Mount via coordinator (registers in backend pool + routing table + hooks)
-    kernel._driver_coordinator.mount("/a", backend_a)
-    kernel._driver_coordinator.mount("/b", backend_b)
+    kernel.sys_setattr("/a", entry_type=DT_MOUNT, backend=backend_a)
+    kernel.sys_setattr("/b", entry_type=DT_MOUNT, backend=backend_b)
 
     # Create DT_MOUNT entries
     for mp, be in [("/a", backend_a), ("/b", backend_b)]:
@@ -432,16 +417,11 @@ class TestMultiBackend:
 
 
 class TestSQLiteMetastore:
-    def test_wal_mode_enabled(self, tmp_path: Path):
-        """Verify WAL mode is enabled on the SQLite database."""
-        db_path = str(tmp_path / "test.db")
-        SQLiteMetastore(db_path)  # creates DB with WAL mode
-        import sqlite3
-
-        conn = sqlite3.connect(db_path)
-        result = conn.execute("PRAGMA journal_mode").fetchone()
-        assert result[0] == "wal"
-        conn.close()
+    # F3 C4: the stdlib-SQLite backend was replaced with a kernel-backed
+    # RustMetastoreProxy factory under the same import name. The previous
+    # ``test_wal_mode_enabled`` check (``PRAGMA journal_mode == 'wal'``)
+    # was specific to the sqlite3 implementation and is removed with the
+    # backing store.
 
     def test_put_and_get(self, tmp_path: Path):
         """Basic put/get on the SQLite metastore."""

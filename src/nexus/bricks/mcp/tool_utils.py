@@ -95,7 +95,7 @@ def handle_tool_errors(operation: str) -> Any:
 
         @mcp.tool(annotations={...})
         @handle_tool_errors("reading file")
-        def nexus_read_file(path: str, ctx: Context | None = None) -> str:
+        async def nexus_read_file(path: str, ctx: Context | None = None) -> str:
             nx = _get_nexus_instance(ctx)
             content = nx.sys_read(path)
             return content.decode("utf-8")

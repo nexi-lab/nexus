@@ -2,7 +2,7 @@
 
 This module holds the pure filter logic that decides whether a given
 ``(zone_id, virtual_path)`` pair should be fed into the embedding pipeline.
-It has no I/O, no state, no DB access -- just a frozen snapshot of
+It has no I/O, no state, no DB access — just a frozen snapshot of
 ``IndexScope`` plus the ``is_path_indexed`` helper.
 
 Callers are responsible for:
@@ -16,7 +16,7 @@ Callers are responsible for:
        the helper (use ``strip_zone_prefix`` from ``mutation_events``).
 
 The helper raises ``ValueError`` on contract violations rather than
-returning False silently -- the callers catch exceptions at the loop
+returning False silently — the callers catch exceptions at the loop
 boundary so bugs surface loudly in logs.
 
 The 10 matching rules are documented in tests/unit/bricks/search/
@@ -44,7 +44,7 @@ __all__ = [
 
 
 # =============================================================================
-# Exceptions -- raised by daemon CRUD methods, translated to HTTP at the router.
+# Exceptions — raised by daemon CRUD methods, translated to HTTP at the router.
 # =============================================================================
 
 
@@ -96,7 +96,7 @@ class IndexScope:
     Attributes:
         zone_modes: Mapping from ``zone_id`` to mode string
             (``'all'`` or ``'scoped'``). A zone absent from this mapping
-            defaults to ``'all'`` -- this is the backward-compat fallback
+            defaults to ``'all'`` — this is the backward-compat fallback
             for the window between daemon startup and the first zones
             query.
         zone_directories: Mapping from ``zone_id`` to a frozen set of
@@ -127,7 +127,7 @@ def canonical_directory_path(path: str) -> str:
     if path.startswith("/zone/"):
         raise ValueError(f"directory path must be canonical (no /zone/ prefix), got {path!r}")
 
-    # Collapse '//' -> '/'. Cheap and handles common input variants.
+    # Collapse '//' → '/'. Cheap and handles common input variants.
     while "//" in path:
         path = path.replace("//", "/")
 
@@ -165,9 +165,9 @@ def is_path_indexed(
     Raises:
         ValueError: On contract violations (empty zone, empty path,
             relative path, zone-prefixed path). These are programmer
-            errors -- callers should fix the call site, not catch.
+            errors — callers should fix the call site, not catch.
     """
-    # Contract checks -- raise loudly on violations.
+    # Contract checks — raise loudly on violations.
     if not zone_id:
         raise ValueError("zone_id must be non-empty")
     if not virtual_path:
@@ -180,28 +180,28 @@ def is_path_indexed(
             f"got {virtual_path!r}"
         )
 
-    # Rule 1 -- Unknown zone defaults to 'all' (backward compat fallback).
+    # Rule 1 — Unknown zone defaults to 'all' (backward compat fallback).
     mode = scope.zone_modes.get(zone_id, INDEX_MODE_ALL)
 
-    # Rule 2 -- 'all' mode skips the directory check entirely.
+    # Rule 2 — 'all' mode skips the directory check entirely.
     if mode == INDEX_MODE_ALL:
         return True
 
     # mode == 'scoped' from here on.
     dirs = scope.zone_directories.get(zone_id)
 
-    # Rule 3 -- scoped with no registered dirs = index nothing.
+    # Rule 3 — scoped with no registered dirs = index nothing.
     if not dirs:
         return False
 
-    # Rules 4-8 -- O(depth) ancestor lookup instead of O(n) linear scan.
+    # Rules 4–8 — O(depth) ancestor lookup instead of O(n) linear scan.
     #
     # Strategy: split virtual_path into its ancestor directories and test
     # each for membership in the frozenset (O(1) per test).  A realistic
     # path has at most ~10 components, so total cost is O(depth) regardless
     # of how many directories are registered.
     #
-    # Exact match first (Rule 4) -- path IS a registered directory.
+    # Exact match first (Rule 4) — path IS a registered directory.
     if virtual_path in dirs:
         return True
     # Walk ancestor prefixes from shallowest to deepest (Rules 5/6/7/8).

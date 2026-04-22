@@ -1029,10 +1029,19 @@ class TestTupleToUserset:
         # alice owns the folder
         mgr.rebac_write(subject=alice, relation="direct_owner", object=folder)
         # file has parent = folder
+        # Use the Zanzibar convention ``(child, parent, folder)``
+        # reading as "child's parent is folder". The inverse tuple
+        # direction ``(folder, parent, child)`` is NOT supported:
+        # commit f4b72e5c3 (ReBAC #3733) disabled Pattern-2 reverse
+        # lookup for the ``parent`` tupleset because in production it
+        # returned children instead of parents and granted privilege
+        # escalation. Production code (hierarchy_manager.py) always
+        # writes parent tuples in this Zanzibar direction, and this
+        # test must match.
         mgr.rebac_write(
-            subject=folder,
+            subject=child,
             relation="parent",
-            object=child,
+            object=folder,
         )
 
         # alice should inherit ownership on child via tupleToUserset

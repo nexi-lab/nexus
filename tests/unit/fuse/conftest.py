@@ -15,10 +15,9 @@ class _MockMountMode(Enum):
 
 @pytest.fixture()
 def mock_nexus_fs() -> MagicMock:
-    """Mock NexusFilesystem with standard methods."""
+    """Mock NexusFS with standard methods."""
     fs = MagicMock()
-    # NexusFS syscalls are sync (§12 zero-async kernel). FUSE handlers
-    # call them without await, so MagicMock (not AsyncMock) is correct.
+    # NexusFS syscalls are sync def — use MagicMock
     fs.access = MagicMock(return_value=True)
     fs.is_directory = MagicMock(return_value=False)
     fs.sys_read = MagicMock(return_value=b"hello world")

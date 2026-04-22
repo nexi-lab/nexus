@@ -47,7 +47,7 @@ class PortabilityFSProtocol(Protocol):
     need from NexusFS.
 
     Bricks access content/metadata through these properties, not through
-    the full NexusFilesystem syscall API.
+    the full NexusFS syscall API.
     """
 
     @property

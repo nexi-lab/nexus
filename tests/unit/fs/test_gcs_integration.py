@@ -26,10 +26,10 @@ gcs_storage = pytest.importorskip(
 )
 
 from nexus.contracts.constants import ROOT_ZONE_ID  # noqa: E402
+from nexus.contracts.metadata import DT_MOUNT  # noqa: E402
 from nexus.contracts.types import OperationContext  # noqa: E402
 from nexus.core.config import PermissionConfig  # noqa: E402
 from nexus.core.nexus_fs import NexusFS  # noqa: E402
-from nexus.core.router import PathRouter  # noqa: E402
 from nexus.fs import _make_mount_entry  # noqa: E402
 from nexus.fs._facade import SlimNexusFS  # noqa: E402
 from nexus.fs._sqlite_meta import SQLiteMetastore  # noqa: E402
@@ -127,18 +127,12 @@ def _build_gcs_fs(tmp_path: Path) -> tuple[SlimNexusFS, str]:
     db_path = str(tmp_path / "metadata.db")
     metastore = SQLiteMetastore(db_path)
 
-    # Router (empty — mounts added via coordinator)
-    from nexus.core.mount_table import MountTable
-
     mount_point = "/gcs/test-project/test-gcs-bucket"
-    mount_table = MountTable(metastore)
-    router = PathRouter(mount_table)
 
-    # Kernel
+    # Kernel (constructs DLC + router internally)
     kernel = NexusFS(
         metadata_store=metastore,
         permissions=PermissionConfig(enforce=False),
-        router=router,
     )
     kernel._init_cred = OperationContext(
         user_id="test",
@@ -148,7 +142,7 @@ def _build_gcs_fs(tmp_path: Path) -> tuple[SlimNexusFS, str]:
     )
 
     # Mount via coordinator (registers in backend pool + routing table + hooks)
-    kernel._driver_coordinator.mount(mount_point, backend)
+    kernel.sys_setattr(mount_point, entry_type=DT_MOUNT, backend=backend)
 
     # Create DT_MOUNT entry
     metastore.put(_make_mount_entry(mount_point, backend.name))
@@ -164,14 +158,16 @@ def gcs_fs(tmp_path: Path):
 
 @pytest.mark.integration
 class TestGCSBackendLifecycle:
-    def test_write_and_read(self, gcs_fs):
+    @pytest.mark.asyncio
+    async def test_write_and_read(self, gcs_fs):
         fs, mp = gcs_fs
         content = b"Hello from GCS!"
         fs.write(f"{mp}/test.txt", content)
         result = fs.read(f"{mp}/test.txt")
         assert result == content
 
-    def test_stat(self, gcs_fs):
+    @pytest.mark.asyncio
+    async def test_stat(self, gcs_fs):
         fs, mp = gcs_fs
         fs.write(f"{mp}/meta.txt", b"metadata test")
         stat = fs.stat(f"{mp}/meta.txt")
@@ -179,7 +175,8 @@ class TestGCSBackendLifecycle:
         assert stat["size"] == 13
         assert stat["is_directory"] is False
 
-    def test_ls(self, gcs_fs):
+    @pytest.mark.asyncio
+    async def test_ls(self, gcs_fs):
         fs, mp = gcs_fs
         fs.write(f"{mp}/a.txt", b"aaa")
         fs.write(f"{mp}/b.txt", b"bbb")
@@ -188,20 +185,23 @@ class TestGCSBackendLifecycle:
         assert f"{mp}/a.txt" in paths
         assert f"{mp}/b.txt" in paths
 
-    def test_exists(self, gcs_fs):
+    @pytest.mark.asyncio
+    async def test_exists(self, gcs_fs):
         fs, mp = gcs_fs
         assert not fs.exists(f"{mp}/nofile.txt")
         fs.write(f"{mp}/nofile.txt", b"now I exist")
         assert fs.exists(f"{mp}/nofile.txt")
 
-    def test_delete(self, gcs_fs):
+    @pytest.mark.asyncio
+    async def test_delete(self, gcs_fs):
         fs, mp = gcs_fs
         fs.write(f"{mp}/delete-me.txt", b"bye")
         fs.delete(f"{mp}/delete-me.txt")
         stat = fs.stat(f"{mp}/delete-me.txt")
         assert stat is None
 
-    def test_copy(self, gcs_fs):
+    @pytest.mark.asyncio
+    async def test_copy(self, gcs_fs):
         fs, mp = gcs_fs
         fs.write(f"{mp}/src.txt", b"copy me")
         fs.copy(f"{mp}/src.txt", f"{mp}/dst.txt")
@@ -209,33 +209,38 @@ class TestGCSBackendLifecycle:
         dst = fs.read(f"{mp}/dst.txt")
         assert src == dst == b"copy me"
 
-    def test_mkdir(self, gcs_fs):
+    @pytest.mark.asyncio
+    async def test_mkdir(self, gcs_fs):
         fs, mp = gcs_fs
         fs.mkdir(f"{mp}/subdir")
         stat = fs.stat(f"{mp}/subdir")
         assert stat is not None
         assert stat["is_directory"] is True
 
-    def test_list_mounts(self, gcs_fs):
+    @pytest.mark.asyncio
+    async def test_list_mounts(self, gcs_fs):
         fs, mp = gcs_fs
         mounts = fs.list_mounts()
         assert mp in mounts
 
-    def test_overwrite(self, gcs_fs):
+    @pytest.mark.asyncio
+    async def test_overwrite(self, gcs_fs):
         fs, mp = gcs_fs
         fs.write(f"{mp}/ow.txt", b"version 1")
         fs.write(f"{mp}/ow.txt", b"version 2")
         result = fs.read(f"{mp}/ow.txt")
         assert result == b"version 2"
 
-    def test_binary_content(self, gcs_fs):
+    @pytest.mark.asyncio
+    async def test_binary_content(self, gcs_fs):
         fs, mp = gcs_fs
         content = bytes(range(256))
         fs.write(f"{mp}/binary.bin", content)
         result = fs.read(f"{mp}/binary.bin")
         assert result == content
 
-    def test_empty_file(self, gcs_fs):
+    @pytest.mark.asyncio
+    async def test_empty_file(self, gcs_fs):
         fs, mp = gcs_fs
         fs.write(f"{mp}/empty.txt", b"")
         result = fs.read(f"{mp}/empty.txt")

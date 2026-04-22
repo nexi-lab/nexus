@@ -19,11 +19,15 @@ Example:
     registry = SkillRegistry(filesystem=scoped_fs)
 """
 
+from __future__ import annotations
+
 import builtins
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from nexus.core.nexus_fs import NexusFS
 
 from nexus.bricks.filesystem._scoped_base import ScopedPathMixin
-from nexus.contracts.filesystem.filesystem_abc import NexusFilesystem
 from nexus.contracts.types import OperationContext
 
 
@@ -34,18 +38,18 @@ class ScopedFilesystem(ScopedPathMixin):
     Code using hardcoded paths like "/workspace/.nexus/skills/" will
     actually access "/zones/team_X/users/user_Y/workspace/.nexus/skills/".
 
-    The wrapper implements the NexusFilesystem protocol and delegates
+    The wrapper implements the NexusFS protocol and delegates
     all operations to the underlying filesystem after path translation.
 
     Service-level methods (workspace, sandbox, mount, memory, agent)
     are forwarded directly via ``__getattr__`` — no path scoping.
 
     Attributes:
-        _fs: The underlying NexusFilesystem instance
+        _fs: The underlying NexusFS instance
         _root: The root path prefix to prepend to all paths
     """
 
-    def __init__(self, fs: NexusFilesystem, root: str) -> None:
+    def __init__(self, fs: NexusFS, root: str) -> None:
         """Initialize ScopedFilesystem.
 
         Args:
@@ -57,7 +61,7 @@ class ScopedFilesystem(ScopedPathMixin):
         self._fs = fs
 
     @property
-    def wrapped_fs(self) -> NexusFilesystem:
+    def wrapped_fs(self) -> NexusFS:
         """The underlying wrapped filesystem."""
         return self._fs
 

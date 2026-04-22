@@ -206,15 +206,15 @@ class TestAcpServiceCallAgent:
             "enabled": True,
         }
 
-        async def _mock_sys_read(path: str) -> bytes:
+        def _mock_sys_read(path: str) -> bytes:
             if path.endswith("/agent.json"):
                 return json.dumps(agent_config).encode("utf-8")
             raise FileNotFoundError(path)
 
         mock_nx = MagicMock()
-        mock_nx.sys_read = AsyncMock(side_effect=_mock_sys_read)
-        mock_nx.sys_write = AsyncMock()
-        mock_nx.sys_readdir = AsyncMock(return_value=[])
+        mock_nx.sys_read = MagicMock(side_effect=_mock_sys_read)
+        mock_nx.sys_write = MagicMock()
+        mock_nx.sys_readdir = MagicMock(return_value=[])
         svc.bind_fs(mock_nx)
 
         with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec:
@@ -240,7 +240,7 @@ class TestAcpServiceCallAgent:
         svc = AcpService(agent_registry=pt)
 
         mock_nx = MagicMock()
-        mock_nx.sys_read = AsyncMock(side_effect=FileNotFoundError)
+        mock_nx.sys_read = MagicMock(side_effect=FileNotFoundError)
         svc.bind_fs(mock_nx)
 
         with pytest.raises(ValueError, match="Unknown agent_id"):
@@ -319,7 +319,7 @@ class TestAcpServiceReadAgentConfig:
         ).encode()
 
         mock_nx = MagicMock()
-        mock_nx.sys_read = AsyncMock(return_value=agent_json)
+        mock_nx.sys_read = MagicMock(return_value=agent_json)
         svc.bind_fs(mock_nx)
 
         config = await svc._read_agent_config("claude", "root")
@@ -335,7 +335,7 @@ class TestAcpServiceReadAgentConfig:
         svc = AcpService(agent_registry=pt)
 
         mock_nx = MagicMock()
-        mock_nx.sys_read = AsyncMock(side_effect=FileNotFoundError)
+        mock_nx.sys_read = MagicMock(side_effect=FileNotFoundError)
         svc.bind_fs(mock_nx)
 
         config = await svc._read_agent_config("nonexistent", "root")

@@ -25,7 +25,7 @@ async def _get_engine_with_storage() -> Any:
     data_dir = os.getenv("NEXUS_DATA_DIR", os.path.join(os.path.expanduser("~"), ".nexus", "data"))
 
     # Connect to Nexus — factory creates workflow_engine via _create_workflow_engine()
-    nx = nexus.connect(config={"data_dir": str(data_dir)})
+    nx = await nexus.connect(config={"data_dir": str(data_dir)})
 
     engine = getattr(nx, "workflow_engine", None)
     if engine is None:

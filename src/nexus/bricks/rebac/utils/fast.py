@@ -90,7 +90,7 @@ def check_permissions_bulk_rust(
     """
     if not RUST_AVAILABLE:
         raise RuntimeError(
-            "Rust acceleration not available. Install with: cd rust/nexus_kernel && maturin develop"
+            "Rust acceleration not available. Install with: cd rust/kernel && maturin develop"
         )
 
     try:
@@ -323,14 +323,14 @@ def check_permission_single_rust(
     """
     if not RUST_AVAILABLE:
         raise RuntimeError(
-            "Rust acceleration not available. Install with: cd rust/nexus_kernel && maturin develop"
+            "Rust acceleration not available. Install with: cd rust/kernel && maturin develop"
         )
 
     # compute_permission_single is only in the external module
     if _external_module is None:
         raise RuntimeError(
             "Rust single permission check not available. "
-            "Install nexus_kernel: cd rust/nexus_kernel && maturin develop"
+            "Install nexus_kernel: cd rust/kernel && maturin develop"
         )
 
     try:
@@ -461,14 +461,14 @@ def expand_subjects_rust(
     """
     if not RUST_AVAILABLE:
         raise RuntimeError(
-            "Rust acceleration not available. Install with: cd rust/nexus_kernel && maturin develop"
+            "Rust acceleration not available. Install with: cd rust/kernel && maturin develop"
         )
 
     # Use external module which has expand_subjects
     if _external_module is None:
         raise RuntimeError(
             "Rust expand_subjects not available. "
-            "Install nexus_kernel: cd rust/nexus_kernel && maturin develop"
+            "Install nexus_kernel: cd rust/kernel && maturin develop"
         )
 
     try:
@@ -579,14 +579,14 @@ def list_objects_for_subject_rust(
     """
     if not RUST_AVAILABLE:
         raise RuntimeError(
-            "Rust acceleration not available. Install with: cd rust/nexus_kernel && maturin develop"
+            "Rust acceleration not available. Install with: cd rust/kernel && maturin develop"
         )
 
     # Use external module which has list_objects_for_subject
     if _external_module is None:
         raise RuntimeError(
             "Rust list_objects_for_subject not available. "
-            "Install nexus_kernel: cd rust/nexus_kernel && maturin develop"
+            "Install nexus_kernel: cd rust/kernel && maturin develop"
         )
 
     try:

@@ -33,14 +33,12 @@ def test_rust_package_versions_match_main_package() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     root_payload = tomllib.loads((repo_root / "pyproject.toml").read_text(encoding="utf-8"))
     rust_payload = tomllib.loads(
-        (repo_root / "rust" / "nexus_kernel" / "pyproject.toml").read_text(encoding="utf-8")
+        (repo_root / "rust" / "kernel" / "pyproject.toml").read_text(encoding="utf-8")
     )
 
     cargo_version = None
     for line in (
-        (repo_root / "rust" / "nexus_kernel" / "Cargo.toml")
-        .read_text(encoding="utf-8")
-        .splitlines()
+        (repo_root / "rust" / "kernel" / "Cargo.toml").read_text(encoding="utf-8").splitlines()
     ):
         if line.startswith("version = "):
             cargo_version = line.split('"')[1]
@@ -59,7 +57,7 @@ def test_release_workflow_builds_and_publishes_nexus_kernel() -> None:
     assert "build-rust-sdist:" in workflow
     assert "publish-rust:" in workflow
     assert (
-        "maturin build --release --compatibility off --manifest-path rust/nexus_kernel/Cargo.toml"
+        "maturin build --release --compatibility off --manifest-path rust/kernel/Cargo.toml"
         in workflow
     )
-    assert "maturin sdist --manifest-path rust/nexus_kernel/Cargo.toml --out dist" in workflow
+    assert "maturin sdist --manifest-path rust/kernel/Cargo.toml --out dist" in workflow

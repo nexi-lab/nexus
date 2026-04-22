@@ -8,7 +8,7 @@ Starts a real Nexus server with permissions enabled and validates:
 5. Performance: 20-op batch vs 20 individual requests
 6. Stat metadata correctness
 
-Requires: Rust Raft extension (maturin develop -m rust/nexus_raft/Cargo.toml)
+Requires: Rust Raft extension (maturin develop -m rust/raft/Cargo.toml)
 """
 
 import time

@@ -131,7 +131,7 @@ class TestFileOperationsIntegration:
         """Test writing and then reading a file."""
         # Write file using MCP tool
         write_tool = await get_tool(mcp_server, "nexus_write_file")
-        write_result = write_tool.fn(
+        write_result = await write_tool.fn(
             path="/integration_test.txt", content="Integration test content"
         )
 
@@ -139,7 +139,7 @@ class TestFileOperationsIntegration:
 
         # Read file using MCP tool
         read_tool = await get_tool(mcp_server, "nexus_read_file")
-        read_result = read_tool.fn(path="/integration_test.txt")
+        read_result = await read_tool.fn(path="/integration_test.txt")
 
         assert read_result == "Integration test content"
 
@@ -152,13 +152,13 @@ class TestFileOperationsIntegration:
         """Test complete file lifecycle: create, list, delete."""
         # Create multiple files
         write_tool = await get_tool(mcp_server, "nexus_write_file")
-        write_tool.fn(path="/workflow/file1.txt", content="File 1")
-        write_tool.fn(path="/workflow/file2.txt", content="File 2")
-        write_tool.fn(path="/workflow/file3.txt", content="File 3")
+        await write_tool.fn(path="/workflow/file1.txt", content="File 1")
+        await write_tool.fn(path="/workflow/file2.txt", content="File 2")
+        await write_tool.fn(path="/workflow/file3.txt", content="File 3")
 
         # List files
         list_tool = await get_tool(mcp_server, "nexus_list_files")
-        list_result = list_tool.fn(path="/workflow")
+        list_result = await list_tool.fn(path="/workflow")
         files = extract_items(list_result)
 
         assert len(files) >= 3
@@ -167,7 +167,7 @@ class TestFileOperationsIntegration:
 
         # Delete one file
         delete_tool = await get_tool(mcp_server, "nexus_delete_file")
-        delete_result = delete_tool.fn(path="/workflow/file2.txt")
+        delete_result = await delete_tool.fn(path="/workflow/file2.txt")
 
         assert "Successfully deleted" in delete_result
 
@@ -184,19 +184,19 @@ class TestFileOperationsIntegration:
         write_tool = await get_tool(mcp_server, "nexus_write_file")
 
         # Create directory
-        mkdir_result = mkdir_tool.fn(path="/testdir")
+        mkdir_result = await mkdir_tool.fn(path="/testdir")
         assert "Successfully created" in mkdir_result
         assert nexus_fs.is_directory("/testdir")
 
         # Write file in directory
-        write_tool.fn(path="/testdir/file.txt", content="test")
+        await write_tool.fn(path="/testdir/file.txt", content="test")
 
         # Try to remove non-empty directory without recursive (should fail)
-        rmdir_result = rmdir_tool.fn(path="/testdir", recursive=False)
+        rmdir_result = await rmdir_tool.fn(path="/testdir", recursive=False)
         assert "Error" in rmdir_result or nexus_fs.access("/testdir")
 
         # Remove with recursive
-        rmdir_result_recursive = rmdir_tool.fn(path="/testdir", recursive=True)
+        rmdir_result_recursive = await rmdir_tool.fn(path="/testdir", recursive=True)
         assert "Successfully removed" in rmdir_result_recursive
         assert not nexus_fs.access("/testdir")
 
@@ -206,7 +206,7 @@ class TestFileOperationsIntegration:
         info_tool = await get_tool(mcp_server, "nexus_file_info")
 
         # Get info for existing file
-        result = info_tool.fn(path="/test.txt")
+        result = await info_tool.fn(path="/test.txt")
         info = json.loads(result)
 
         assert info["exists"] is True
@@ -214,7 +214,7 @@ class TestFileOperationsIntegration:
         assert info["path"] == "/test.txt"
 
         # Get info for directory
-        result_dir = info_tool.fn(path="/data")
+        result_dir = await info_tool.fn(path="/data")
         info_dir = json.loads(result_dir)
 
         assert info_dir["is_directory"] is True
@@ -305,9 +305,9 @@ class TestMultiToolWorkflows:
         glob_tool = await get_tool(mcp_server, "nexus_glob")
 
         # Step 1: Create multiple Python files
-        write_tool.fn(path="/project/main.py", content="def main():\n    pass")
-        write_tool.fn(path="/project/utils.py", content="def helper():\n    pass")
-        write_tool.fn(path="/project/test.py", content="def test_main():\n    pass")
+        await write_tool.fn(path="/project/main.py", content="def main():\n    pass")
+        await write_tool.fn(path="/project/utils.py", content="def helper():\n    pass")
+        await write_tool.fn(path="/project/test.py", content="def test_main():\n    pass")
 
         # Step 2: Search for Python files
         glob_result = glob_tool.fn(pattern="**/*.py", path="/project")
@@ -315,14 +315,14 @@ class TestMultiToolWorkflows:
         assert len(py_files) == 3
 
         # Step 3: Read and modify one file
-        content = read_tool.fn(path="/project/main.py")
+        content = await read_tool.fn(path="/project/main.py")
         assert "def main()" in content
 
         modified_content = content + "\n# Modified by integration test"
-        write_tool.fn(path="/project/main.py", content=modified_content)
+        await write_tool.fn(path="/project/main.py", content=modified_content)
 
         # Step 4: Verify modification
-        new_content = read_tool.fn(path="/project/main.py")
+        new_content = await read_tool.fn(path="/project/main.py")
         assert "Modified by integration test" in new_content
 
     @pytest.mark.asyncio
@@ -334,19 +334,19 @@ class TestMultiToolWorkflows:
 
         # Create 20 files
         for i in range(20):
-            write_tool.fn(path=f"/bulk/file{i}.txt", content=f"Content {i}")
+            await write_tool.fn(path=f"/bulk/file{i}.txt", content=f"Content {i}")
 
         # List all files
-        list_result = list_tool.fn(path="/bulk", recursive=False)
+        list_result = await list_tool.fn(path="/bulk", recursive=False)
         files = extract_items(list_result)
         assert len(files) >= 20
 
         # Delete every other file
         for i in range(0, 20, 2):
-            delete_tool.fn(path=f"/bulk/file{i}.txt")
+            await delete_tool.fn(path=f"/bulk/file{i}.txt")
 
         # Verify remaining files
-        list_result_after = list_tool.fn(path="/bulk")
+        list_result_after = await list_tool.fn(path="/bulk")
         files_after = extract_items(list_result_after)
         assert len(files_after) == 10  # Half deleted
 
@@ -358,7 +358,7 @@ class TestErrorHandlingIntegration:
     async def test_read_nonexistent_file(self, mcp_server):
         """Test reading a file that doesn't exist."""
         read_tool = await get_tool(mcp_server, "nexus_read_file")
-        result = read_tool.fn(path="/nonexistent/file.txt")
+        result = await read_tool.fn(path="/nonexistent/file.txt")
 
         assert "Error" in result
         assert "not found" in result.lower()
@@ -367,7 +367,7 @@ class TestErrorHandlingIntegration:
     async def test_delete_nonexistent_file(self, mcp_server):
         """Test deleting a file that doesn't exist."""
         delete_tool = await get_tool(mcp_server, "nexus_delete_file")
-        result = delete_tool.fn(path="/nonexistent/file.txt")
+        result = await delete_tool.fn(path="/nonexistent/file.txt")
 
         assert "Error" in result
         assert "not found" in result.lower() or "deleted" in result.lower()
@@ -476,7 +476,7 @@ class TestSemanticSearchIntegration:
             pytest.skip("Semantic search tool not registered")
 
         search_tool = await get_tool(mcp_server, "nexus_semantic_search")
-        result = search_tool.fn(query="test files", limit=5)
+        result = await search_tool.fn(query="test files", limit=5)
 
         # Should return JSON results or indicate not available
         assert "not available" in result or result.startswith("[") or result.startswith("{")
@@ -597,8 +597,8 @@ class TestServerConfiguration:
         write_tool1 = await get_tool(server1, "nexus_write_file")
         read_tool2 = await get_tool(server2, "nexus_read_file")
 
-        write_tool1.fn(path="/shared_file.txt", content="Shared content")
-        result = read_tool2.fn(path="/shared_file.txt")
+        await write_tool1.fn(path="/shared_file.txt", content="Shared content")
+        result = await read_tool2.fn(path="/shared_file.txt")
 
         assert result == "Shared content"
 
@@ -613,35 +613,37 @@ class TestComprehensiveMCPToolsWorkflow:
 
         # Step 1: Test nexus_mkdir - Create test directory
         mkdir_tool = await get_tool(mcp_server, "nexus_mkdir")
-        mkdir_result = mkdir_tool.fn(path="/mcp_integration_test")
+        mkdir_result = await mkdir_tool.fn(path="/mcp_integration_test")
         assert "Successfully created" in mkdir_result
 
         # Step 2: Test nexus_write_file - Write test files
         write_tool = await get_tool(mcp_server, "nexus_write_file")
 
-        write_result1 = write_tool.fn(
+        write_result1 = await write_tool.fn(
             path="/mcp_integration_test/test1.txt", content="Hello from MCP Test!"
         )
         assert "Successfully wrote" in write_result1
 
-        write_result2 = write_tool.fn(
+        write_result2 = await write_tool.fn(
             path="/mcp_integration_test/test2.py", content="print('Python file test')"
         )
         assert "Successfully wrote" in write_result2
 
-        write_result3 = write_tool.fn(
+        write_result3 = await write_tool.fn(
             path="/mcp_integration_test/data.json", content='{"test": "data"}'
         )
         assert "Successfully wrote" in write_result3
 
         # Step 3: Test nexus_read_file
         read_tool = await get_tool(mcp_server, "nexus_read_file")
-        read_result = read_tool.fn(path="/mcp_integration_test/test1.txt")
+        read_result = await read_tool.fn(path="/mcp_integration_test/test1.txt")
         assert "Hello from MCP Test" in read_result
 
         # Step 4: Test nexus_list_files
         list_tool = await get_tool(mcp_server, "nexus_list_files")
-        list_result = list_tool.fn(path="/mcp_integration_test", recursive=False, details=True)
+        list_result = await list_tool.fn(
+            path="/mcp_integration_test", recursive=False, details=True
+        )
         files = extract_items(list_result)
         file_names = [f if isinstance(f, str) else f.get("path", "") for f in files]
         assert any("test1.txt" in str(name) for name in file_names)
@@ -649,7 +651,7 @@ class TestComprehensiveMCPToolsWorkflow:
 
         # Step 5: Test nexus_file_info
         info_tool = await get_tool(mcp_server, "nexus_file_info")
-        info_result = info_tool.fn(path="/mcp_integration_test/test1.txt")
+        info_result = await info_tool.fn(path="/mcp_integration_test/test1.txt")
         info = json.loads(info_result)
         assert info["exists"] is True
 
@@ -670,9 +672,16 @@ class TestComprehensiveMCPToolsWorkflow:
         # Step 8: Test nexus_semantic_search (optional)
         if await tool_exists(mcp_server, "nexus_semantic_search"):
             search_tool = await get_tool(mcp_server, "nexus_semantic_search")
-            search_result = search_tool.fn(query="test files", limit=5)
-            # Should return result or indicate not available
-            assert "not available" in search_result or search_result.startswith("[")
+            search_result = await search_tool.fn(query="test files", limit=5)
+            # Should return result (paginated dict or list) or indicate not available.
+            # Issue #3778: the handler now returns a paginated envelope dict when
+            # SearchService is reachable — even when no items match — so the
+            # response legitimately starts with "{" instead of "[".
+            assert (
+                "not available" in search_result
+                or search_result.startswith("[")
+                or search_result.startswith("{")
+            )
 
         # Step 9: Test nexus_store_memory (optional)
         if await tool_exists(mcp_server, "nexus_store_memory"):
@@ -712,12 +721,12 @@ class TestComprehensiveMCPToolsWorkflow:
 
         # Step 13: Test nexus_delete_file
         delete_tool = await get_tool(mcp_server, "nexus_delete_file")
-        delete_result = delete_tool.fn(path="/mcp_integration_test/data.json")
+        delete_result = await delete_tool.fn(path="/mcp_integration_test/data.json")
         assert "Successfully deleted" in delete_result
 
         # Step 14: Test nexus_rmdir
         rmdir_tool = await get_tool(mcp_server, "nexus_rmdir")
-        rmdir_result = rmdir_tool.fn(path="/mcp_integration_test", recursive=True)
+        rmdir_result = await rmdir_tool.fn(path="/mcp_integration_test", recursive=True)
         assert "Successfully removed" in rmdir_result
 
         # Verify directory was removed
@@ -736,12 +745,12 @@ class TestPerformanceCharacteristics:
         # Create a moderately large file (1MB)
         large_content = "x" * (1024 * 1024)  # 1MB
 
-        write_result = write_tool.fn(path="/large_file.txt", content=large_content)
+        write_result = await write_tool.fn(path="/large_file.txt", content=large_content)
         assert "Successfully wrote" in write_result
         assert "1048576" in write_result  # Size in bytes
 
         # Read it back
-        read_result = read_tool.fn(path="/large_file.txt")
+        read_result = await read_tool.fn(path="/large_file.txt")
         assert len(read_result) == len(large_content)
 
     @pytest.mark.asyncio
@@ -752,7 +761,7 @@ class TestPerformanceCharacteristics:
 
         # Create 100 small files
         for i in range(100):
-            write_tool.fn(path=f"/many/file{i:03d}.txt", content=f"Small {i}")
+            await write_tool.fn(path=f"/many/file{i:03d}.txt", content=f"Small {i}")
 
         # Search for them all
         result = glob_tool.fn(pattern="**/*.txt", path="/many")
@@ -769,9 +778,9 @@ class TestPerformanceCharacteristics:
         # Create deeply nested file
         deep_path = "/" + "/".join([f"level{i}" for i in range(20)]) + "/file.txt"
 
-        write_result = write_tool.fn(path=deep_path, content="Deep file")
+        write_result = await write_tool.fn(path=deep_path, content="Deep file")
         assert "Successfully wrote" in write_result
 
         # Read it back
-        read_result = read_tool.fn(path=deep_path)
+        read_result = await read_tool.fn(path=deep_path)
         assert read_result == "Deep file"

@@ -306,9 +306,12 @@ class TestFilePreview:
 
 class TestPlaygroundApp:
     @pytest.mark.asyncio
-    async def test_empty_state_no_uris(self):
+    async def test_empty_state_no_uris(self, tmp_path):
         """App shows empty state message when no URIs and no state dir."""
-        with patch.dict("os.environ", {"NEXUS_FS_STATE_DIR": "/nonexistent/path"}, clear=False):
+        # Use a writable tmp subdir that doesn't exist yet so state_dir() creates
+        # it fresh — avoids the read-only /nonexistent root on some systems.
+        empty_state_dir = str(tmp_path / "empty_state")
+        with patch.dict("os.environ", {"NEXUS_FS_STATE_DIR": empty_state_dir}, clear=False):
             app = PlaygroundApp(uris=())
 
             async with app.run_test(size=(120, 40)) as pilot:
@@ -643,7 +646,7 @@ class TestPlaygroundApp:
                 return []
 
         fs = ContextualNexusFS(_Kernel())
-        rows = await fs.ls("/gws/docs", detail=True, recursive=False)
+        rows = fs.ls("/gws/docs", detail=True, recursive=False)
         assert isinstance(rows, list)
         assert rows[0]["path"] == "/gws/docs/Doc Alpha"
         assert rows[0]["is_directory"] is False
@@ -684,7 +687,7 @@ class TestPlaygroundApp:
                 return []
 
         fs = ContextualNexusFS(_Kernel())
-        rows = await fs.ls("/gws/docs", detail=True, recursive=False)
+        rows = fs.ls("/gws/docs", detail=True, recursive=False)
         assert rows[0]["path"] == "/gws/docs/Doc Alpha [docA]"
         assert rows[0]["size"] == 123
         assert rows[0]["modified_at"] == "2026-03-26T00:40:00Z"
@@ -730,7 +733,7 @@ class TestPlaygroundApp:
                 ]
 
         fs = ContextualNexusFS(_Kernel())
-        rows = await fs.ls("/gws/docs", detail=True, recursive=False)
+        rows = fs.ls("/gws/docs", detail=True, recursive=False)
         assert rows == [
             {
                 "path": "/gws/docs/Fresh Doc [docA]",
@@ -782,7 +785,7 @@ class TestPlaygroundApp:
                 return None
 
         fs = ContextualNexusFS(_Kernel())
-        stat = await fs.stat("/gws/docs/Doc Alpha [docA]")
+        stat = fs.stat("/gws/docs/Doc Alpha [docA]")
         assert stat == {
             "path": "/gws/docs/Doc Alpha [docA]",
             "size": 123,
@@ -848,7 +851,10 @@ class TestPlaygroundApp:
         """Playground should reuse the shared slim-fs inference path."""
         app = PlaygroundApp(uris=())
 
-        with patch("nexus.fs._infer_connector_user_email", return_value="alice@example.com"):
+        with patch(
+            "nexus.fs._backend_factory._infer_connector_user_email",
+            return_value="alice@example.com",
+        ):
             assert await app._resolve_mount_user_id("gws://drive") == "alice@example.com"
 
     @pytest.mark.asyncio
@@ -866,7 +872,8 @@ class TestPlaygroundApp:
             ),
         ):
             fs = await app._build_filesystem(("gws://drive",))
-            mock_mount.assert_awaited_once_with("gws://drive")
+            # at=None when no mount_overrides are supplied (overrides.get(uri) → None)
+            mock_mount.assert_awaited_once_with("gws://drive", at=None)
             assert fs.list_mounts() == ["/gws/drive"]
 
     @pytest.mark.asyncio

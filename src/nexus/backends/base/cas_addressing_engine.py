@@ -69,7 +69,6 @@ def _validate_hash(content_hash: str) -> None:
 
 if TYPE_CHECKING:
     from nexus.backends.engines.cdc import ChunkingStrategy
-    from nexus.contracts.protocols.service_hooks import HookSpec
     from nexus.contracts.types import OperationContext
 
 logger = logging.getLogger(__name__)
@@ -430,27 +429,6 @@ class CASAddressingEngine(Backend):
         # Single blob: read, verify integrity, then slice
         content = self.read_content(content_id, context=context)
         return content[start:end]
-
-    def hook_spec(self) -> "HookSpec":
-        """Declare VFS hooks for CAS lifecycle.
-
-        - MOUNT: on_mount — mount-time logging
-
-        Called by DriverLifecycleCoordinator at mount time to register
-        hooks with KernelDispatch (Issue #1811).
-
-        Note: CASRefCountObserver removed — ref_count eliminated in favor of
-        reachability-based GC (Issue #1772).
-        """
-        from nexus.contracts.protocols.service_hooks import HookSpec
-
-        return HookSpec(
-            mount_hooks=(self,),
-        )
-
-    def on_mount(self, ctx: Any) -> None:
-        """VFSMountHook: receive mount notification from KernelDispatch."""
-        logger.info("CAS engine mounted at %s (backend=%s)", ctx.mount_point, self._backend_name)
 
     def stream_content(
         self,

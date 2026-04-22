@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import itertools
 import logging
+import time
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
@@ -28,16 +29,17 @@ import httpcore
 import httpx
 from httpx import AsyncHTTPTransport
 
+from nexus.lib.events import emit_audit_event
 from nexus.lib.security.url_validator import ValidatedURL
 
 logger = logging.getLogger(__name__)
 
-# Hard cap on how many resolved IPs the pinned backend will attempt. A
-# hostname that returns many addresses (attacker-influenced for agent-
-# controlled MCP URLs) should not translate into N * connect_timeout of
-# client-visible latency. The validator still accepts the full DNS
-# answer set for policy checks; we just bound connect-attempt cost.
-_MAX_PINNED_CONNECT_ATTEMPTS = 3
+# Wall-clock budget for the full retry sweep across pinned IPs. The
+# validator's DNS answer is consumed in full (no silent truncation), so
+# dual-stack and multi-A records are still attempted; we just stop the
+# sweep once the budget is exhausted to bound client-visible latency
+# when many addresses are unroutable.
+_DEFAULT_TOTAL_CONNECT_BUDGET_SECS = 15.0
 
 
 def _proxy_for_url(url: str) -> str | None:
@@ -70,10 +72,13 @@ class _PinnedBackend(httpcore.AsyncNetworkBackend):
         self,
         inner: httpcore.AsyncNetworkBackend,
         pinned_ips: list[str],
+        total_budget_secs: float = _DEFAULT_TOTAL_CONNECT_BUDGET_SECS,
     ) -> None:
         if not pinned_ips:
             raise ValueError("pinned_ips must be non-empty")
-        # Deduplicate while preserving order and bound the attempt budget.
+        # Deduplicate while preserving order. No truncation: the full
+        # validated DNS answer is attempted in order, bounded by an
+        # overall wall-clock budget instead of a fixed count.
         seen: set[str] = set()
         deduped: list[str] = []
         for ip in pinned_ips:
@@ -81,8 +86,9 @@ class _PinnedBackend(httpcore.AsyncNetworkBackend):
                 seen.add(ip)
                 deduped.append(ip)
         self._inner = inner
-        self._pinned_ips = deduped[:_MAX_PINNED_CONNECT_ATTEMPTS]
+        self._pinned_ips = deduped
         self._cycle = itertools.cycle(self._pinned_ips)
+        self._total_budget_secs = total_budget_secs
 
     async def connect_tcp(
         self,
@@ -97,20 +103,28 @@ class _PinnedBackend(httpcore.AsyncNetworkBackend):
         # tracks separately, so cert verification still works against
         # the original hostname.
         last_exc: BaseException | None = None
+        deadline = time.monotonic() + self._total_budget_secs
         for _ in range(len(self._pinned_ips)):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            attempt_timeout = remaining if timeout is None else min(timeout, remaining)
             pinned = next(self._cycle)
             try:
                 return await self._inner.connect_tcp(
                     host=pinned,
                     port=port,
-                    timeout=timeout,
+                    timeout=attempt_timeout,
                     local_address=local_address,
                     socket_options=socket_options,
                 )
             except (httpcore.ConnectError, httpcore.TimeoutException, OSError) as exc:
                 last_exc = exc
                 continue
-        assert last_exc is not None
+        if last_exc is None:
+            raise httpcore.ConnectError(
+                f"pinned connect budget exhausted before attempting any IP (budget={self._total_budget_secs}s)"
+            )
         raise httpcore.ConnectError(str(last_exc)) from last_exc
 
     async def connect_unix_socket(self, *args: Any, **kwargs: Any) -> Any:
@@ -184,11 +198,20 @@ def make_pinned_client_factory(validated: ValidatedURL) -> PinnedClientFactory:
         # is responsible for enforcing its own egress policy (including
         # DNS rebinding protection, if any). URL validation + policy
         # decisions already happened upfront; we surface this at WARNING
-        # so operators see when pinning is not being enforced.
+        # *and* as a structured audit event so operators/detectors can
+        # observe when pinning is not being enforced.
         logger.warning(
             "SSRF pinning skipped for %s: HTTP(S)_PROXY in effect; "
             "DNS rebinding protection at TCP connect is delegated to the proxy.",
             validated.hostname,
+        )
+        emit_audit_event(
+            "security.ssrf_pinning_skipped",
+            {
+                "reason": "proxy_env_active",
+                "hostname": validated.hostname,
+                "url": validated.url,
+            },
         )
 
     def factory(

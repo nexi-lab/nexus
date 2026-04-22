@@ -189,11 +189,9 @@ class SkeletonPipeConsumer:
             while self._write_buffer:
                 data = self._write_buffer.popleft()
                 try:
-                    # pipe_write_nowait bypasses sys_write's metastore check — the
-                    # skeleton pipe is registered in the Rust kernel by pipe_create()
-                    # but does not have a Python metastore entry, so sys_write raises
-                    # NexusFileNotFoundError.
-                    nx.pipe_write_nowait(_SKELETON_PIPE_PATH, data)
+                    # sys_write routes to Rust dcache for DT_PIPE — no Python
+                    # metastore entry needed (Rust handles inline).
+                    nx.sys_write(_SKELETON_PIPE_PATH, data)
                 except Exception:
                     logger.warning("[SKELETON] pipe write failed, dropping event")
             await asyncio.sleep(0.01)  # 10ms poll
@@ -203,10 +201,11 @@ class SkeletonPipeConsumer:
     # ------------------------------------------------------------------
 
     async def _consume(self) -> None:
-        # Use pipe_read_nowait (polling) instead of sys_read — the skeleton pipe is
-        # registered in the Rust kernel by pipe_create() but has no Python metastore
-        # entry, so sys_read would raise NexusFileNotFoundError on every call.
-        # pipe_read_nowait returns None on empty and raises NexusFileNotFoundError
+        # Use pipe_read_nowait (polling) instead of sys_read — sys_read blocks
+        # for up to 5s when the pipe is empty, which would block the asyncio
+        # event loop. pipe_read_nowait returns None immediately on empty,
+        # allowing cooperative polling with asyncio.sleep.
+        # pipe_read_nowait raises NexusFileNotFoundError
         # when the pipe is destroyed (stop() signal).
         from nexus.contracts.exceptions import NexusFileNotFoundError
 

@@ -1,8 +1,8 @@
-"""Audit interceptor: serialize VFS mutations → DT_PIPE via NexusFS Tier 2 API.
+"""Audit interceptor: serialize VFS mutations → DT_PIPE via sys_write.
 
 Sync VFS interceptor hook that serializes each mutation event to JSON
-and writes it into the audit DT_PIPE via ``nx.pipe_write_nowait()``
-(Tier 2 sync passthrough to the Rust kernel ring buffer, ~0.5μs).
+and writes it into the audit DT_PIPE via ``nx.sys_write()``
+(Rust kernel routes DT_PIPE writes through dcache ring buffer, ~0.5μs).
 The pipe is consumed by ``RecordStoreWriteObserver`` which flushes
 events to RecordStore in batches.
 
@@ -276,10 +276,9 @@ class AuditWriteInterceptor:
     def _emit(self, event: dict[str, Any], operation: str, op_path: str) -> None:
         """Serialize event to JSON and write directly to the Rust pipe buffer (~0.5μs).
 
-        Writes via ``NexusFS.pipe_write_nowait()`` — Tier 2 sync passthrough
-        to the Rust kernel ring buffer. Synchronous and non-blocking, so
-        this hook does not re-trigger post-write hooks (which would cause
-        a recursive sys_write loop and 5s timeout per write).
+        Uses ``sys_write`` which routes to the Rust kernel ring buffer for
+        DT_PIPE entries. Rust skips observer dispatch for DT_PIPE, so this
+        hook does not re-trigger post-write hooks (no recursion).
 
         If the pipe buffer is closed/missing (startup race or kernel
         teardown), the event is dropped with a warning.
@@ -287,9 +286,9 @@ class AuditWriteInterceptor:
         try:
             data = json.dumps(event).encode()
 
-            # Fast path: kernel ring buffer write (~0.5μs, no GIL re-entry).
+            # Fast path: kernel ring buffer write via VFS (~0.5μs, no GIL re-entry).
             try:
-                self._nx.pipe_write_nowait(self._pipe_path, data)
+                self._nx.sys_write(self._pipe_path, data)
                 return
             except Exception:
                 # Pipe not ready (startup race) or closed — fall through to drop.

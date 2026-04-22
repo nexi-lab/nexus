@@ -37,6 +37,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _apply_slice(data: bytes, offset: int = 0, count: int | None = None) -> bytes:
+    """Apply POSIX pread-style offset/count slicing."""
+    if offset or count is not None:
+        return data[offset : offset + count] if count is not None else data[offset:]
+    return data
+
+
 class ContentMixin:
     """Content I/O: sys_read, sys_write, and Tier 2 convenience methods."""
 
@@ -74,9 +81,9 @@ class ContentMixin:
     ) -> bytes:
         """Read file content as bytes (POSIX pread(2)).
 
-        Thin async wrapper around Rust Kernel.sys_read (pure Rust, zero GIL).
-        DT_PIPE/DT_STREAM, resolve, and hooks are [TRANSITIONAL] — migrates
-        to Rust dispatch middleware in PR 7.
+        Rust Kernel.sys_read handles DT_REG (CAS read), DT_PIPE (ring buffer
+        pop), DT_STREAM (cursor read), and external connector dispatch.
+        Python handles resolve (intercept), POST-hooks, and offset/count slicing.
         """
         # DT_PIPE/DT_STREAM: Rust IPC registry handles all backends
         # (memory, SHM, remote) via PipeManager/StreamManager.
@@ -85,12 +92,7 @@ class ContentMixin:
         context = self._parse_context(context)
         _handled, _resolve_hint = self.resolve_read(path, context=context)
         if _handled:
-            content = _resolve_hint or b""
-            if offset or count is not None:
-                content = (
-                    content[offset : offset + count] if count is not None else content[offset:]
-                )
-            return content
+            return _apply_slice(_resolve_hint or b"", offset, count)
 
         _is_admin = (
             getattr(context, "is_admin", False)
@@ -150,9 +152,7 @@ class ContentMixin:
                         data = _virtual_data
                     else:
                         data = _route_backend.read_content(_route_backend_path, context=_ctx)
-                    if offset or count is not None:
-                        data = data[offset : offset + count] if count is not None else data[offset:]
-                    return data
+                    return _apply_slice(data, offset, count)
                 except Exception:
                     if isinstance(_route, ExternalRouteResult):
                         raise
@@ -160,20 +160,13 @@ class ContentMixin:
         # DT_PIPE: result.data is the popped frame when available; None = empty.
         if result.entry_type == 3:  # DT_PIPE
             if result.data is not None:
-                data = result.data
-                if offset or count is not None:
-                    data = data[offset : offset + count] if count is not None else data[offset:]
-                return data
+                return _apply_slice(result.data, offset, count)
             # Empty pipe — try nowait (hot path), then block in Rust (GIL-free)
             _data = self._kernel.pipe_read_nowait(path)
             if _data is not None:
-                if offset or count is not None:
-                    _data = _data[offset : offset + count] if count is not None else _data[offset:]
-                return bytes(_data)
+                return _apply_slice(bytes(_data), offset, count)
             _data = self._kernel.pipe_read_blocking(path, 5000)
-            if offset or count is not None:
-                _data = _data[offset : offset + count] if count is not None else _data[offset:]
-            return bytes(_data)
+            return _apply_slice(bytes(_data), offset, count)
 
         # DT_STREAM: blocking reads with offset tracking
         if result.entry_type == 4:  # DT_STREAM
@@ -185,10 +178,7 @@ class ContentMixin:
             return bytes(_data)
 
         # DT_REG: Rust guarantees data is set on success.
-        data = result.data or b""
-
-        if offset or count is not None:
-            data = data[offset : offset + count] if count is not None else data[offset:]
+        data = _apply_slice(result.data or b"", offset, count)
 
         # POST-INTERCEPT: hooks dispatched via Rust dispatch_post_hooks
         if result.post_hook_needed:
@@ -777,9 +767,9 @@ class ContentMixin:
     ) -> dict[str, Any]:
         """Write content to a file (POSIX write(2)).
 
-        Thin async wrapper around Rust Kernel.sys_write (CAS I/O is pure Rust,
-        zero GIL). Metastore.put stays in Python [TRANSITIONAL] — migrates to
-        Rust metastore in PR 7.
+        Rust Kernel.sys_write handles DT_PIPE/DT_STREAM (ring buffer push),
+        DT_REG (CAS write + metastore.put + dcache update + observer dispatch).
+        Python handles resolve (intercept), POST-hook dispatch, and event emission.
         """
         # Normalize input
         if isinstance(buf, str):
@@ -787,7 +777,6 @@ class ContentMixin:
         if count is not None:
             buf = buf[:count]
 
-        # [TRANSITIONAL] PRE-DISPATCH: resolve — migrates to Rust dispatch middleware in PR 7
         context = self._parse_context(context)
 
         # Virtual .readme/ paths are read-only (Issue #3728).
@@ -800,21 +789,10 @@ class ContentMixin:
                 base.update(_result)
             return base
 
-        # IPC write: Rust kernel handles DT_PIPE/DT_STREAM inline.
-        # Rust condvar wakes blocked readers automatically after write.
+        # Snapshot old metadata BEFORE Rust write (for POST-hook event payload).
         _meta = self.metadata.get(path)
-        if _meta is not None and _meta.is_pipe:
-            n = self._kernel.pipe_write_nowait(path, buf)
-            return {"path": path, "bytes_written": n}
-        if _meta is not None and _meta.is_stream:
-            _off = self._kernel.stream_write_nowait(path, buf)
-            return {"path": path, "bytes_written": len(buf), "offset": _off}
-        if _meta is None:
-            raise NexusFileNotFoundError(
-                path, "sys_write requires existing file — use write() for create-on-write"
-            )
 
-        # ── KERNEL (pure Rust CAS write, zero GIL) ──
+        # ── KERNEL (pure Rust — DT_PIPE/DT_STREAM via dcache, DT_REG via CAS, zero GIL) ──
         _is_admin = (
             getattr(context, "is_admin", False)
             if context is not None and not isinstance(context, dict)
@@ -822,6 +800,10 @@ class ContentMixin:
         )
         _rust_ctx = self._build_rust_ctx(context, _is_admin)
         result = self._kernel.sys_write(path, _rust_ctx, buf, offset)
+
+        # DT_PIPE / DT_STREAM: Rust handled inline (no content_id, no post-hooks)
+        if result.hit and not result.content_id:
+            return {"path": path, "bytes_written": len(buf)}
 
         if result.hit:
             # Rust wrote to backend (CAS or PAS) + built metadata + updated dcache

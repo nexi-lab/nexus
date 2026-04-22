@@ -256,7 +256,6 @@ def test_all_public_methods_are_exposed_or_excluded():
         "pipe_close",  # Tier 2 → kernel.close_pipe (local-only)
         "pipe_destroy",  # Tier 2 → kernel.destroy_pipe (local-only)
         "pipe_read_nowait",  # Tier 2 → kernel.pipe_read_nowait (local-only)
-        "pipe_write_nowait",  # Tier 2 → kernel.pipe_write_nowait (local-only)
         "has_pipe",  # Tier 2 → kernel.has_pipe (local-only)
         "stream_create",  # Tier 2 → kernel.create_stream (local-only)
         "stream_close",  # Tier 2 → kernel.close_stream (local-only)

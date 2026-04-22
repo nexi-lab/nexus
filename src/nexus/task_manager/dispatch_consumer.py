@@ -8,7 +8,7 @@ Flow::
 
     TaskWriteHook.on_post_write() [sync, kernel dispatch]
       → TaskDispatchPipeConsumer.on_task_signal(signal_type, payload)
-        → JSON → pipe_write_nowait("/nexus/pipes/task-dispatch")
+        → JSON → sys_write("/nexus/pipes/task-dispatch")
 
     Background _consume() [asyncio.Task]
       → pipe_read() → JSON → _dispatch()
@@ -118,13 +118,13 @@ class TaskDispatchPipeConsumer:
     # ------------------------------------------------------------------
 
     def on_task_signal(self, signal_type: str, payload: dict[str, Any]) -> None:
-        """Serialize signal and write to pipe (non-blocking)."""
+        """Serialize signal and write to pipe via sys_write (non-blocking for DT_PIPE)."""
         if self._nx is None or not self._pipe_ready:
             return
 
         try:
             data = json.dumps({"type": signal_type, "payload": payload}).encode()
-            self._nx.pipe_write_nowait(_TASK_DISPATCH_PIPE_PATH, data)
+            self._nx.sys_write(_TASK_DISPATCH_PIPE_PATH, data)
         except Exception:
             logger.warning("[TASK-DISPATCH] pipe full/closed, dropping signal: %s", signal_type)
 

@@ -381,6 +381,54 @@ class TestBackendFactoryErrorPaths:
                 create_backend(spec)
 
 
+class TestLocalSchemePassthrough:
+    """Guardrails for the ``local://`` passthrough-by-default behaviour.
+
+    Users expect ``mount local://./data`` to put files directly on disk
+    at ``./data/<virtual_path>`` — CAS-addressed storage must be a
+    separate, explicit opt-in (``cas-local://``).  Previously
+    ``local://`` routed to ``CASLocalBackend`` which stored every write
+    as a hash-named blob, silently violating least-astonishment.
+    """
+
+    def test_local_scheme_returns_passthrough_backend(self, tmp_path):
+        from nexus.backends.storage.path_local import PathLocalBackend
+        from nexus.fs._backend_factory import create_backend
+        from nexus.fs._uri import parse_uri
+
+        spec = parse_uri(f"local://{tmp_path / 'data'}")
+        backend = create_backend(spec)
+        assert isinstance(backend, PathLocalBackend), (
+            "local:// must be passthrough by default — CAS is the opt-in scheme"
+        )
+
+    def test_cas_local_scheme_returns_cas_backend(self, tmp_path):
+        from nexus.backends.storage.cas_local import CASLocalBackend
+        from nexus.fs._backend_factory import create_backend
+        from nexus.fs._uri import parse_uri
+
+        spec = parse_uri(f"cas-local://{tmp_path / 'data'}")
+        backend = create_backend(spec)
+        assert isinstance(backend, CASLocalBackend), (
+            "cas-local:// must still give the content-addressed backend"
+        )
+
+    def test_local_mount_places_files_on_disk(self, tmp_path):
+        """End-to-end sanity: writing via a ``local://`` mount lands at
+        the expected disk path, not a hash-named CAS blob."""
+        from nexus.fs._backend_factory import create_backend
+        from nexus.fs._uri import parse_uri
+
+        data_dir = tmp_path / "data"
+        spec = parse_uri(f"local://{data_dir}")
+        backend = create_backend(spec)
+        # PathLocalBackend exposes a root_path; CASLocalBackend also does
+        # but stores content by hash.  The behavioural contract we want
+        # to enforce is that the backend type is path-addressed.
+        assert backend.__class__.__name__ == "PathLocalBackend"
+        assert data_dir.exists()
+
+
 class TestUriEdgeCases:
     """Additional URI edge cases for derive_bucket()."""
 

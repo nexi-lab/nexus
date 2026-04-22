@@ -59,6 +59,35 @@ class TestExpectedErrors:
         resp = nexus_error_handler(MagicMock(), AuthenticationError("Token expired"))
         assert resp.status_code == 401
 
+    def test_authentication_error_serializes_recovery_hint(self) -> None:
+        """recovery_hint must round-trip through the JSON response.
+
+        Without this, the structured re-auth pointer that the gdrive
+        transport attaches to AuthenticationError is silently dropped at
+        the API boundary and clients cannot drive recovery.
+        """
+        import json
+
+        hint = {
+            "endpoint": "/api/v2/connectors/auth/init",
+            "method": "POST",
+            "connector_name": "gdrive_connector",
+            "provider": "google-drive",
+            "user_email": "user@example.com",
+        }
+        exc = AuthenticationError(
+            "Token expired",
+            provider="google-drive",
+            user_email="user@example.com",
+            recovery_hint=hint,
+        )
+        resp = nexus_error_handler(MagicMock(), exc)
+        assert resp.status_code == 401
+        body = json.loads(resp.body)
+        assert body["provider"] == "google-drive"
+        assert body["user_email"] == "user@example.com"
+        assert body["recovery_hint"] == hint
+
     def test_invalid_path_returns_400(self) -> None:
         resp = nexus_error_handler(MagicMock(), InvalidPathError("../../etc/passwd"))
         assert resp.status_code == 400

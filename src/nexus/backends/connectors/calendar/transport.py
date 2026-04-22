@@ -26,7 +26,8 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
-from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
+from nexus.backends.connectors.cli.display_path import sanitize_filename
+from nexus.contracts.exceptions import AuthenticationError, BackendError, NexusFileNotFoundError
 
 if TYPE_CHECKING:
     from googleapiclient.discovery import Resource
@@ -37,6 +38,110 @@ logger = logging.getLogger(__name__)
 
 # Suppress noisy discovery-cache warnings.
 logging.getLogger("googleapiclient.discovery_cache").setLevel(logging.ERROR)
+
+
+def _resolve_first_valid_zone(*candidates: str | None) -> Any | None:
+    """Return the first parseable ZoneInfo from the candidate sequence.
+
+    Returning ``None`` when every candidate is missing or invalid lets
+    callers decide how to degrade (date-only, UTC, etc.) instead of
+    silently locking onto the first entry regardless of validity.  This
+    is what lets the event→calendar-default fallback chain work: if
+    ``start.timeZone`` is present but garbage, the next resort is the
+    calendar-level ``events_result.timeZone``.
+    """
+    from zoneinfo import ZoneInfo
+
+    for candidate in candidates:
+        if not candidate:
+            continue
+        try:
+            return ZoneInfo(candidate)
+        except Exception:
+            continue
+    return None
+
+
+def _log_sort_fallback(date_raw: str, *candidates: str | None) -> None:
+    """Log a warning when the UTC-sort-prefix path degrades to coarser
+    keys.  Without this, silent fallback hides provider drift (new
+    invalid ``timeZone`` values, unexpected ``dateTime`` shapes) and
+    lets newest-first ordering instability slip through undetected."""
+    hint_pair = [c for c in candidates if c]
+    logger.warning(
+        "calendar: falling back to coarse sort prefix for date=%r timezone_hints=%r",
+        date_raw,
+        hint_pair,
+    )
+
+
+def _utc_sort_prefix(
+    date_raw: str,
+    *,
+    timezone_hint: str | None = None,
+    fallback_timezone: str | None = None,
+) -> str:
+    """Render a UTC-normalized, lex-sortable date prefix for event keys.
+
+    For dateTime inputs returns ``YYYY-MM-DDTHH:MM:SSZ``.  For all-day
+    (``date``) inputs, anchors to midnight in the first valid of
+    ``timezone_hint`` (the event's ``start.timeZone``) then
+    ``fallback_timezone`` (the calendar-level default).  A Tokyo
+    all-day event otherwise sorts before a Tokyo 23:00 timed event on
+    the same local day, inverting real chronological order.  Falls
+    back to raw ``YYYY-MM-DD`` when every candidate zone is missing or
+    unparseable, and empty string for unparseable input.
+    """
+    if not date_raw:
+        return ""
+    # All-day case: ``start.date`` gives exactly ``YYYY-MM-DD``.  Anchor
+    # to 00:00 in the event's own timezone (or the calendar default) so
+    # timed / all-day events on the same local day order consistently
+    # in UTC.  A bad ``start.timeZone`` must not silently mask a valid
+    # calendar-level default — resolve through the chain.
+    if len(date_raw) == 10 and date_raw[4] == "-" and date_raw[7] == "-":
+        tz = _resolve_first_valid_zone(timezone_hint, fallback_timezone)
+        if tz is not None:
+            try:
+                midnight_local = datetime.fromisoformat(date_raw).replace(tzinfo=tz)
+                return midnight_local.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+            except Exception:
+                pass
+        # All-day events without a usable zone fall back to date-only.
+        # That's a coarser sort key than UTC-anchored events carry, so
+        # log so ops can catch drift in provider defaults or malformed
+        # zone strings instead of silently losing precision.
+        _log_sort_fallback(date_raw, timezone_hint, fallback_timezone)
+        return date_raw
+    candidate = date_raw.strip()
+    if candidate.endswith("Z"):
+        candidate = candidate[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(candidate.replace(" ", "T", 1))
+    except ValueError:
+        # Unparseable dateTime degrades to date-only / empty — log so
+        # provider payload drift is visible rather than silently eroding
+        # sort stability.
+        _log_sort_fallback(date_raw, timezone_hint, fallback_timezone)
+        if len(date_raw) >= 10 and date_raw[4] == "-" and date_raw[7] == "-":
+            return date_raw[:10]
+        return ""
+    if dt.tzinfo is None:
+        # Calendar payloads can carry a naive ``dateTime`` alongside a
+        # separate ``timeZone`` field (common for recurring events).  We
+        # must apply the hint first — reading "09:00" in LA as UTC would
+        # misdate it by 7–8 hours.  Fall through event→calendar→UTC so
+        # one bad event zone doesn't bypass a good calendar default.
+        tz = _resolve_first_valid_zone(timezone_hint, fallback_timezone)
+        if tz is None:
+            # UTC fallback for naive input is a real ordering risk — a
+            # non-UTC event can shift by hours.  Log so ops can catch
+            # drift before it silently corrupts newest-first results.
+            _log_sort_fallback(date_raw, timezone_hint, fallback_timezone)
+            dt = dt.replace(tzinfo=UTC)
+        else:
+            dt = dt.replace(tzinfo=tz)
+    return dt.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 class CalendarTransport:
@@ -82,32 +187,29 @@ class CalendarTransport:
                 backend="gcalendar",
             ) from None
 
-        if self._user_email:
-            user_email = self._user_email
-        elif self._context and self._context.user_id:
-            user_email = self._context.user_id
-        else:
-            raise BackendError(
-                "Calendar transport requires either configured user_email "
-                "or authenticated user in OperationContext",
-                backend="gcalendar",
-            )
+        from nexus.backends.connectors.oauth_base import resolve_oauth_access_token
+        from nexus.contracts.exceptions import AuthenticationError
 
-        from nexus.lib.sync_bridge import run_sync
-
+        user_email: str | None = self._user_email
+        nexus_user_id: str | None = (
+            self._context.user_id if self._context and self._context.user_id else None
+        )
+        zone_id = (
+            self._context.zone_id
+            if self._context and hasattr(self._context, "zone_id") and self._context.zone_id
+            else "root"
+        )
         try:
-            zone_id = (
-                self._context.zone_id
-                if self._context and hasattr(self._context, "zone_id") and self._context.zone_id
-                else "root"
+            access_token = resolve_oauth_access_token(
+                self._token_manager,
+                connector_name="gcalendar_connector",
+                provider=self._provider,
+                user_email=user_email,
+                zone_id=zone_id,
+                nexus_user_id=nexus_user_id,
             )
-            access_token = run_sync(
-                self._token_manager.get_valid_token(
-                    provider=self._provider,
-                    user_email=user_email,
-                    zone_id=zone_id,
-                )
-            )
+        except AuthenticationError:
+            raise
         except Exception as e:
             raise BackendError(
                 f"Failed to get valid OAuth token for user {user_email}: {e}",
@@ -123,12 +225,20 @@ class CalendarTransport:
     def _parse_key(key: str) -> tuple[str, str]:
         """Parse ``"calendar_id/event_id.yaml"`` → ``(calendar_id, event_id)``.
 
+        Accepted filename forms:
+        - ``"eventId.yaml"``                       (legacy)
+        - ``"{date}_{summary}__eventId.yaml"``     (readable — same convention
+          as gmail: trailing ``__<id>`` anchor is authoritative)
+
         Returns ``("", "")`` for root or directory-only keys.
         """
         key = key.strip("/")
         parts = key.split("/")
         if len(parts) == 2 and parts[1].endswith(".yaml"):
-            return parts[0], parts[1].removesuffix(".yaml")
+            base = parts[1].removesuffix(".yaml")
+            if "__" in base:
+                base = base.rsplit("__", 1)[-1]
+            return parts[0], base
         if len(parts) == 1:
             return parts[0], ""
         return "", ""
@@ -294,6 +404,8 @@ class CalendarTransport:
             service = self._get_calendar_service()
             service.events().get(calendarId=calendar_id, eventId=event_id).execute()
             return True
+        except AuthenticationError:
+            raise
         except Exception:
             return False
 
@@ -352,9 +464,39 @@ class CalendarTransport:
             ) from e
 
         keys = []
+        # Calendar-level default timezone — falls back when an event's
+        # own ``start.timeZone`` is missing (especially common for all-
+        # day events, where Calendar often omits the field and expects
+        # the calendar's own zone to apply).  Without this fallback,
+        # all-day events in non-UTC calendars would still render as
+        # raw ``YYYY-MM-DD`` and mis-sort against timed events.
+        default_tz = events_result.get("timeZone")
         for event in events_result.get("items", []):
             eid = event.get("id")
-            if eid:
+            if not eid:
+                continue
+            start = event.get("start", {}) or {}
+            # For all-day events, render the start as midnight in the
+            # event's own timezone (or calendar default) so its UTC
+            # instant compares correctly against timed events on the
+            # same day.  Without this, an all-day event in Asia/Tokyo
+            # starting "2026-04-21" would compare as 2026-04-21T00:00Z
+            # against a 23:00 Tokyo-time event that resolves to
+            # 2026-04-20T14:00Z — inverting their real order.
+            date_prefix = _utc_sort_prefix(
+                start.get("dateTime") or start.get("date") or "",
+                timezone_hint=start.get("timeZone"),
+                fallback_timezone=default_tz,
+            )
+            summary = (event.get("summary") or "").strip()
+            parts: list[str] = []
+            if date_prefix:
+                parts.append(date_prefix)
+            if summary:
+                parts.append(sanitize_filename(summary, max_len=60))
+            if parts:
+                keys.append(f"{prefix}/{'_'.join(parts)}__{eid}.yaml")
+            else:
                 keys.append(f"{prefix}/{eid}.yaml")
         return sorted(keys), []
 

@@ -36,11 +36,12 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
+from nexus.backends.connectors.cli.display_path import sanitize_filename
 from nexus.backends.connectors.gmail.utils import (
     fetch_emails_batch,
     list_emails_by_folder,
 )
-from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
+from nexus.contracts.exceptions import AuthenticationError, BackendError, NexusFileNotFoundError
 
 if TYPE_CHECKING:
     from googleapiclient.discovery import Resource
@@ -54,6 +55,44 @@ logging.getLogger("googleapiclient.discovery_cache").setLevel(logging.ERROR)
 
 # Gmail system labels exposed as virtual directories (priority order).
 LABEL_FOLDERS = ["SENT", "STARRED", "IMPORTANT", "INBOX", "DRAFTS", "TRASH"]
+
+# Gmail inbox category subfolders — parity with the gws CLI connector
+# (Issue #3256, Decision 16A).  INBOX is presented as a directory of
+# ``PRIMARY / SOCIAL / UPDATES / PROMOTIONS / FORUMS`` subfolders,
+# mirroring the category tabs the Gmail UI shows.  The map goes from
+# Gmail's ``CATEGORY_*`` system labels to the user-visible folder name.
+_GMAIL_CATEGORIES: dict[str, str] = {
+    "CATEGORY_PERSONAL": "PRIMARY",
+    "CATEGORY_SOCIAL": "SOCIAL",
+    "CATEGORY_UPDATES": "UPDATES",
+    "CATEGORY_PROMOTIONS": "PROMOTIONS",
+    "CATEGORY_FORUMS": "FORUMS",
+}
+_GMAIL_CATEGORY_FOLDERS: tuple[str, ...] = tuple(sorted(_GMAIL_CATEGORIES.values()))
+
+
+def _gmail_category_from_labels(labels: list[str] | None) -> str:
+    """Derive the Gmail category subfolder from a message's label IDs.
+
+    Returns the first CATEGORY_* match, defaulting to ``PRIMARY`` when
+    none is set — Gmail normally assigns a category to every INBOX
+    message, and imported/legacy messages that skipped tab-classification
+    naturally fall into the Primary tab, which is what users expect.
+    """
+    if not labels:
+        return "PRIMARY"
+    for label in labels:
+        cat = _GMAIL_CATEGORIES.get(label)
+        if cat:
+            return cat
+    return "PRIMARY"
+
+
+# Explicit write-sentinel basenames recognised by ``store()``.
+# Anything *else* starting with ``_`` is just a sanitized readable
+# filename (e.g. ``_unnamed``, ``_CON``) and must fall through to the
+# normal id-anchor parser.
+_WRITE_SENTINELS = frozenset({"_new", "_reply", "_forward"})
 
 
 class GmailTransport:
@@ -119,34 +158,35 @@ class GmailTransport:
                 backend="gmail",
             ) from None
 
-        # Resolve user email
-        if self._user_email:
-            user_email = self._user_email
-        elif self._context and self._context.user_id:
-            user_email = self._context.user_id
-        else:
-            raise BackendError(
-                "Gmail transport requires either configured user_email "
-                "or authenticated user in OperationContext",
-                backend="gmail",
-            )
+        from nexus.backends.connectors.oauth_base import resolve_oauth_access_token
+        from nexus.contracts.exceptions import AuthenticationError
 
-        # Get valid access token (auto-refreshes if expired)
-        from nexus.lib.sync_bridge import run_sync
-
+        # Pass both the mount-configured user_email (if any) and the nexus
+        # user_id from the request context into the shared resolver.  The
+        # resolver picks the email verbatim when it looks like an email,
+        # otherwise it looks up the OAuth-linked email for the nexus user
+        # — fixing the API-key auth case where context.user_id is a
+        # subject id like "admin", not a gmail address (Issue #3822 part 2).
+        user_email: str | None = self._user_email
+        nexus_user_id: str | None = (
+            self._context.user_id if self._context and self._context.user_id else None
+        )
+        zone_id = (
+            self._context.zone_id
+            if self._context and hasattr(self._context, "zone_id") and self._context.zone_id
+            else "root"
+        )
         try:
-            zone_id = (
-                self._context.zone_id
-                if self._context and hasattr(self._context, "zone_id") and self._context.zone_id
-                else "root"
+            access_token = resolve_oauth_access_token(
+                self._token_manager,
+                connector_name="gmail_connector",
+                provider=self._provider,
+                user_email=user_email,
+                zone_id=zone_id,
+                nexus_user_id=nexus_user_id,
             )
-            access_token = run_sync(
-                self._token_manager.get_valid_token(
-                    provider=self._provider,
-                    user_email=user_email,
-                    zone_id=zone_id,
-                )
-            )
+        except AuthenticationError:
+            raise
         except Exception as e:
             raise BackendError(
                 f"Failed to get valid OAuth token for user {user_email}: {e}",
@@ -164,40 +204,270 @@ class GmailTransport:
     def _parse_key(key: str) -> tuple[str | None, str | None, str | None]:
         """Parse a transport key into ``(label, thread_id | None, message_id | sentinel)``.
 
-        Expected formats:
-        - ``"LABEL/threadId-msgId.yaml"``  → ``(LABEL, threadId, msgId)``
-        - ``"LABEL/_new.yaml"``            → ``(LABEL, None, "_new")``  (write sentinel)
-        - ``"LABEL/_reply.yaml"``          → ``(LABEL, None, "_reply")``
-        - ``"LABEL/_forward.yaml"``        → ``(LABEL, None, "_forward")``
+        Accepted formats (legacy, human-readable, categorized inbox, and
+        write sentinels):
+        - ``"LABEL/threadId-msgId.yaml"``                           (legacy)
+        - ``"LABEL/{date}_{subject}__threadId-msgId.yaml"``         (readable)
+        - ``"INBOX/<CATEGORY>/{date}_{subject}__tid-mid.yaml"``      (category)
+        - ``"INBOX/<CATEGORY>/threadId-msgId.yaml"``                 (category legacy)
+        - ``"LABEL/_new.yaml"`` etc.                                 (write sentinel)
+
+        The readable form embeds ``__threadId-msgId`` as a trailing anchor so
+        ``fetch/exists/remove`` stay id-driven.  Anything between label and the
+        trailing anchor is display-only.  ``<CATEGORY>`` is one of PRIMARY /
+        SOCIAL / UPDATES / PROMOTIONS / FORUMS and only applies under INBOX —
+        other labels remain flat.
 
         Returns ``(None, None, None)`` for unparseable keys.
         """
         key = key.strip("/")
         parts = key.split("/")
 
-        if len(parts) == 2 and parts[0] in LABEL_FOLDERS:
+        if len(parts) == 3 and parts[0] == "INBOX" and parts[1] in _GMAIL_CATEGORY_FOLDERS:
+            filename = parts[2]
+            label: str | None = f"{parts[0]}/{parts[1]}"
+        elif len(parts) == 2 and parts[0] in LABEL_FOLDERS:
             filename = parts[1]
+            label = parts[0]
         elif len(parts) == 1:
             filename = parts[0]
+            label = None
         else:
             return None, None, None
 
         if not filename.endswith(".yaml"):
-            return parts[0] if len(parts) == 2 else None, None, None
+            return label, None, None
 
         base = filename.removesuffix(".yaml")
 
-        # Sentinel filenames for write operations (e.g. _new, _reply, _forward)
-        if base.startswith("_"):
-            label = parts[0] if len(parts) == 2 else None
+        # Explicit write-sentinel names — must match exactly, so readable
+        # filenames that happen to start with ``_`` (e.g. subject
+        # sanitized to ``_unnamed`` or reserved Windows name ``CON``
+        # prefixed to ``_CON``) still parse as id-anchored keys.
+        if base in _WRITE_SENTINELS:
             return label, None, base
 
-        if "-" not in base:
+        # Human-readable form: prefer the trailing "__threadId-msgId" anchor.
+        id_anchor = base
+        if "__" in base:
+            id_anchor = base.rsplit("__", 1)[-1]
+
+        if "-" not in id_anchor:
             return None, None, None
 
-        thread_id, message_id = base.split("-", 1)
-        label = parts[0] if len(parts) == 2 else None
+        thread_id, message_id = id_anchor.split("-", 1)
         return label, thread_id, message_id
+
+    # ------------------------------------------------------------------
+    # Human-readable key formatting (Issue #3256 — SDK-transport port)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _date_prefix_for_key(date_str: str) -> str:
+        """Extract UTC-normalized ``YYYY-MM-DDTHH:MM:SSZ`` sort prefix.
+
+        Reverse-lex filename sort only equals reverse-chronological if
+        every prefix is in the same time zone — otherwise a 23:00 +08:00
+        message and a 01:00 +00:00 message on the same UTC instant sort
+        as different days.  So we parse the timestamp timezone-aware
+        and render the UTC wall-clock + trailing ``Z`` marker.
+
+        Date-only inputs stay as ``YYYY-MM-DD`` (all-day case, e.g.
+        Calendar all-day events) since there's no time component to
+        normalize.  An empty return means "no usable prefix" — caller
+        falls back to the id-only key.
+        """
+        if not date_str:
+            return ""
+        from datetime import UTC, datetime
+
+        # Date-only: no time-of-day, nothing to normalize.
+        if len(date_str) == 10 and date_str[4] == "-" and date_str[7] == "-":
+            return date_str
+
+        dt: datetime | None = None
+        # ISO-8601 (T- or space-separated).  ``fromisoformat`` accepts
+        # both on Python 3.11+; handle trailing 'Z' since it didn't
+        # learn that until 3.11 and we don't rely on version-specific
+        # behavior.
+        candidate = date_str.strip()
+        if candidate.endswith("Z"):
+            candidate = candidate[:-1] + "+00:00"
+        try:
+            dt = datetime.fromisoformat(candidate.replace(" ", "T", 1))
+        except ValueError:
+            dt = None
+        if dt is None:
+            try:
+                from email.utils import parsedate_to_datetime
+
+                dt = parsedate_to_datetime(date_str)
+            except Exception:
+                dt = None
+        if dt is None:
+            # Last-ditch: keep the date portion if it parses, else empty.
+            if len(date_str) >= 10 and date_str[4] == "-" and date_str[7] == "-":
+                return date_str[:10]
+            return ""
+
+        # Naive datetimes are assumed UTC — matching email/calendar APIs
+        # which always emit tz-aware timestamps; a naive result here is
+        # an upstream quirk, not an offset we should silently guess at.
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        dt_utc = dt.astimezone(UTC)
+        return dt_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    @staticmethod
+    def _date_prefix_from_internal_date(value: str | int) -> str:
+        """Render Gmail ``internalDate`` (epoch-ms) as UTC sort prefix.
+
+        Returns ``YYYY-MM-DDTHH:MM:SS.mmmZ`` (millisecond precision)
+        or empty string when the input is missing / unparseable.
+        ``internalDate`` is the Gmail server's receive-time (UTC,
+        epoch-ms), so it's the authoritative source for chronological
+        ordering.  We keep the full ms precision in the prefix because
+        under burst traffic two messages can share a whole second —
+        dropping ms would let the subject-based tie-break invert order
+        within that second, silently breaking "newest-first".
+        """
+        if not value:
+            # Empty / unset is the normal "no internalDate available"
+            # case and doesn't deserve a warning — the Date-header
+            # fallback is the expected path.
+            return ""
+        try:
+            ms = int(value)
+        except (TypeError, ValueError):
+            # Non-integer is a provider-drift signal: the API contract
+            # says epoch-ms, anything else indicates a payload change.
+            logger.warning(
+                "gmail: non-integer internalDate=%r — falling back to Date header", value
+            )
+            return ""
+        if ms < 0:
+            logger.warning("gmail: negative internalDate=%r — falling back to Date header", value)
+            return ""
+        from datetime import UTC, datetime
+
+        # ``fromtimestamp`` raises OverflowError / OSError on platform-
+        # specific out-of-range values (year > 9999 on most platforms,
+        # or any value past the platform's ``time_t`` limit on 32-bit
+        # systems).  An oversized or garbage ``internalDate`` on one
+        # message must not nuke the whole folder listing — degrade
+        # cleanly to empty and let the caller fall back to the Date
+        # header / id-only key path.
+        try:
+            dt = datetime.fromtimestamp(ms / 1000.0, tz=UTC)
+        except (OverflowError, OSError, ValueError):
+            # Emit a warning so ops can spot provider drift or malformed
+            # payloads — silent degradation lets sort-order instability
+            # slip through undetected, which is the whole risk we're
+            # guarding against.
+            logger.warning(
+                "gmail: out-of-range internalDate=%r — falling back to Date header", value
+            )
+            return ""
+        # Zero-padded milliseconds keep lex-sort order stable within
+        # the same second.  ``%f`` produces 6 digits (microseconds) but
+        # ``internalDate`` is only ms-precise; keep 3 for a compact key.
+        return dt.strftime("%Y-%m-%dT%H:%M:%S.") + f"{dt.microsecond // 1000:03d}Z"
+
+    @classmethod
+    def _format_readable_key(
+        cls,
+        label: str,
+        thread_id: str,
+        msg_id: str,
+        meta: dict[str, Any] | None,
+    ) -> str:
+        """Build ``LABEL/{date}_{subject}__{tid}-{mid}.yaml`` when meta is
+        available, else fall back to the legacy hex-only key."""
+        anchor = f"{thread_id}-{msg_id}"
+        if not meta:
+            return f"{label}/{anchor}.yaml"
+        parts: list[str] = []
+        # Prefer the server's ``internalDate`` (epoch-ms) over the
+        # sender-controlled ``Date`` header so sort prefixes reflect
+        # Gmail's own receive-order and cannot be spoofed by a sender
+        # backdating or forward-dating their outbound clock.
+        date_prefix = cls._date_prefix_from_internal_date(
+            meta.get("internal_date_ms", "") or ""
+        ) or cls._date_prefix_for_key(meta.get("date", "") or "")
+        if date_prefix:
+            parts.append(date_prefix)
+        subject = (meta.get("subject") or "").strip()
+        if subject:
+            parts.append(sanitize_filename(subject, max_len=80))
+        if not parts:
+            return f"{label}/{anchor}.yaml"
+        return f"{label}/{'_'.join(parts)}__{anchor}.yaml"
+
+    def _batch_fetch_headers(self, service: Any, msg_ids: list[str]) -> dict[str, dict[str, Any]]:
+        """Batch-fetch Subject/Date/From/labelIds for *msg_ids* via ``format=metadata``.
+
+        Returns ``{msg_id: {"subject": str, "date": str, "from": str,
+        "labels": list[str]}}``.  ``labels`` carries the full label-ID list
+        so callers can derive INBOX category subfolders without a second
+        round-trip.  Retries missing ids (including rate-limit 429 losses)
+        up to three times with exponential backoff; anything still missing
+        after the final attempt falls back to the legacy hex-only key in
+        the caller.
+        """
+        if not msg_ids:
+            return {}
+        out: dict[str, dict[str, Any]] = {}
+
+        def _cb(request_id: str, response: Any, exception: Exception | None) -> None:
+            if exception or not response:
+                return
+            headers = {
+                h.get("name", ""): h.get("value", "")
+                for h in response.get("payload", {}).get("headers", [])
+            }
+            # ``internalDate`` is the Gmail server-side receive timestamp
+            # in epoch-milliseconds.  Prefer it over the sender-supplied
+            # ``Date`` header for sort-prefix generation — the latter can
+            # be malformed, spoofed, or simply skewed by a misconfigured
+            # outbound clock, which would invert "newest-first" ordering.
+            out[request_id] = {
+                "subject": headers.get("Subject", ""),
+                "date": headers.get("Date", ""),
+                "internal_date_ms": response.get("internalDate", ""),
+                "from": headers.get("From", ""),
+                "labels": list(response.get("labelIds", []) or []),
+            }
+
+        batch_size = 50
+        remaining = list(msg_ids)
+        for attempt in range(3):
+            if not remaining:
+                break
+            if attempt > 0:
+                import time as _t
+
+                _t.sleep(0.5 * (2**attempt))
+            for i in range(0, len(remaining), batch_size):
+                chunk = remaining[i : i + batch_size]
+                batch = service.new_batch_http_request()
+                for mid in chunk:
+                    req = (
+                        service.users()
+                        .messages()
+                        .get(
+                            userId="me",
+                            id=mid,
+                            format="metadata",
+                            metadataHeaders=["Subject", "Date", "From"],
+                        )
+                    )
+                    batch.add(req, callback=_cb, request_id=mid)
+                try:
+                    batch.execute()
+                except Exception as e:
+                    logger.debug("Gmail metadata batch attempt %d failed: %s", attempt + 1, e)
+            remaining = [m for m in msg_ids if m not in out]
+        return out
 
     # -- Email parsing / formatting (extracted from old connector) --
 
@@ -307,7 +577,7 @@ class GmailTransport:
 
         LiteralDumper.add_representer(str, literal_presenter)
 
-        yaml_output = yaml.dump(
+        yaml_output: str = yaml.dump(
             yaml_data,
             Dumper=LiteralDumper,
             default_flow_style=False,
@@ -762,14 +1032,21 @@ class GmailTransport:
         """Check whether a message key exists in Gmail."""
         _label, _thread_id, message_id = self._parse_key(key)
         if not message_id:
-            # Could be a label directory check
+            # Could be a label directory check — LABEL_FOLDERS, the root,
+            # or a virtual ``INBOX/<CATEGORY>`` subdirectory.
             stripped = key.strip("/")
-            return stripped in LABEL_FOLDERS or stripped == ""
+            if stripped in LABEL_FOLDERS or stripped == "":
+                return True
+            if stripped.startswith("INBOX/"):
+                return stripped[len("INBOX/") :] in _GMAIL_CATEGORY_FOLDERS
+            return False
 
         try:
             service = self._get_gmail_service()
             service.users().messages().get(userId="me", id=message_id, format="minimal").execute()
             return True
+        except AuthenticationError:
+            raise
         except Exception:
             return False
 
@@ -794,14 +1071,128 @@ class GmailTransport:
     def list_keys(self, prefix: str, delimiter: str = "/") -> tuple[list[str], list[str]]:
         """List email keys under *prefix*.
 
-        - ``list_keys("")`` → ``([], ["SENT/", "STARRED/", "IMPORTANT/", "INBOX/"])``
-        - ``list_keys("INBOX/")`` → ``(["INBOX/thread-msg.yaml", ...], [])``
+        - ``list_keys("")`` → ``([], ["SENT/", "STARRED/", ...])``
+        - ``list_keys("INBOX/")`` → ``([], ["INBOX/PRIMARY/", "INBOX/SOCIAL/", ...])``
+        - ``list_keys("INBOX/PRIMARY/")`` → ``(["INBOX/PRIMARY/<key>.yaml", ...], [])``
+        - ``list_keys("SENT/")`` → ``(["SENT/<key>.yaml", ...], [])``
         """
         prefix = prefix.strip("/")
 
         # Root → return label folders as common prefixes
         if not prefix:
             return [], [f"{label}/" for label in LABEL_FOLDERS]
+
+        # INBOX → category subfolders (matches the gws connector layout).
+        if prefix == "INBOX":
+            return [], [f"INBOX/{cat}/" for cat in _GMAIL_CATEGORY_FOLDERS]
+
+        # INBOX/<CATEGORY> → messages filtered to that category tab.
+        # Uses Gmail's ``q=category:<tab> in:inbox`` search (the same
+        # query the Gmail UI uses) so filtering happens server-side —
+        # avoids the subtle bugs of fetching an unfiltered INBOX page
+        # and classifying client-side:
+        #   * N-per-page applied to the category, not to the global
+        #     INBOX slice (large inboxes would otherwise appear
+        #     empty on minority tabs);
+        #   * messages whose metadata batch failed are no longer
+        #     silently routed to PRIMARY;
+        #   * PRIMARY correctly includes imported/legacy messages
+        #     that never received a ``CATEGORY_*`` label (Gmail's
+        #     own ``category:primary`` operator handles that fallback).
+        if prefix.startswith("INBOX/"):
+            category = prefix[len("INBOX/") :]
+            if category not in _GMAIL_CATEGORY_FOLDERS:
+                return [], []
+            service = self._get_gmail_service()
+            try:
+                pairs: list[tuple[str, str]] = []
+                seen_ids: set[str] = set()
+                page_token: str | None = None
+                # Termination conditions for the pagination loop:
+                #   * ``len(pairs) >= _max_message_per_label`` — cap hit,
+                #   * no ``nextPageToken`` — real end of list,
+                #   * page token cycle (token we've already followed) —
+                #     defensive guard against Gmail returning the same
+                #     token twice, which would otherwise spin forever,
+                #   * ``max_pages`` cap — hard ceiling that raises so
+                #     the behaviour is observable, not silent truncation.
+                # We intentionally do NOT break on "duplicate-only pages":
+                # mailbox churn can legitimately produce 1-2 transient
+                # duplicate pages before new IDs resume, and truncating
+                # there would silently under-deliver with no has_more
+                # signal to the caller.
+                max_pages = 50
+                pages = 0
+                seen_page_tokens: set[str] = set()
+                while len(pairs) < self._max_message_per_label:
+                    pages += 1
+                    if pages > max_pages:
+                        raise BackendError(
+                            f"Gmail INBOX/{category} pagination exceeded "
+                            f"{max_pages} pages without filling the "
+                            f"{self._max_message_per_label}-message cap",
+                            backend="gmail",
+                            path=prefix,
+                        )
+                    params: dict[str, Any] = {
+                        "userId": "me",
+                        "q": f"category:{category.lower()} in:inbox",
+                        # Request the full page cap so a repeated ID
+                        # (mailbox churn during pagination) doesn't leave
+                        # us short of the configured limit.
+                        "maxResults": 500,
+                    }
+                    if page_token:
+                        params["pageToken"] = page_token
+                    result = service.users().messages().list(**params).execute()
+                    for msg in result.get("messages", []):
+                        mid = msg["id"]
+                        # Dedup across pages — Gmail may repeat a message
+                        # across adjacent pages when new mail arrives
+                        # mid-pagination.
+                        if mid in seen_ids:
+                            continue
+                        seen_ids.add(mid)
+                        pairs.append((msg.get("threadId", mid), mid))
+                        if len(pairs) >= self._max_message_per_label:
+                            break
+                    next_token: str | None = result.get("nextPageToken")
+                    if not next_token:
+                        # Real end of list.
+                        break
+                    if next_token in seen_page_tokens:
+                        # Token cycle before we hit the message cap —
+                        # surface as an observable failure instead of
+                        # silently truncating.  Callers can retry or
+                        # widen the cap.
+                        raise BackendError(
+                            f"Gmail INBOX/{category} pagination received a "
+                            "repeated page token before filling the "
+                            f"{self._max_message_per_label}-message cap",
+                            backend="gmail",
+                            path=prefix,
+                        )
+                    seen_page_tokens.add(next_token)
+                    page_token = next_token
+                # Batch-fetch Subject/Date for readable filenames only —
+                # category classification is already done server-side, so
+                # a missed metadata row only costs a human-readable name,
+                # not correct folder routing.  Missing rows fall through
+                # to the legacy hex-only key via ``_format_readable_key``.
+                meta = self._batch_fetch_headers(service, [m for _, m in pairs])
+                keys = [
+                    self._format_readable_key(f"INBOX/{category}", t, m, meta.get(m))
+                    for t, m in pairs
+                ]
+                return sorted(keys), []
+            except AuthenticationError:
+                raise
+            except Exception as e:
+                raise BackendError(
+                    f"Failed to list Gmail INBOX/{category}: {e}",
+                    backend="gmail",
+                    path=prefix,
+                ) from e
 
         # DRAFTS folder → use drafts.list API
         if prefix == "DRAFTS":
@@ -813,17 +1204,24 @@ class GmailTransport:
                     .list(userId="me", maxResults=self._max_message_per_label)
                     .execute()
                 )
-                keys = []
+                pairs = []
                 for draft in result.get("drafts", []):
                     draft_id = draft.get("id", "")
                     msg = draft.get("message", {})
                     thread_id = msg.get("threadId", draft_id)
                     msg_id = msg.get("id", draft_id)
-                    keys.append(f"DRAFTS/{thread_id}-{msg_id}.yaml")
+                    pairs.append((thread_id, msg_id))
+                meta = self._batch_fetch_headers(service, [m for _, m in pairs])
+                keys = [self._format_readable_key("DRAFTS", t, m, meta.get(m)) for t, m in pairs]
                 return sorted(keys), []
+            except AuthenticationError:
+                raise
             except Exception as e:
-                logger.debug("Failed to list drafts: %s", e)
-                return [], []
+                raise BackendError(
+                    f"Failed to list Gmail drafts: {e}",
+                    backend="gmail",
+                    path=prefix,
+                ) from e
 
         # TRASH folder → use messages.list with TRASH label
         if prefix == "TRASH":
@@ -835,15 +1233,21 @@ class GmailTransport:
                     .list(userId="me", labelIds=["TRASH"], maxResults=self._max_message_per_label)
                     .execute()
                 )
-                keys = []
-                for msg in result.get("messages", []):
-                    thread_id = msg.get("threadId", msg["id"])
-                    msg_id = msg["id"]
-                    keys.append(f"TRASH/{thread_id}-{msg_id}.yaml")
+                pairs = [
+                    (msg.get("threadId", msg["id"]), msg["id"])
+                    for msg in result.get("messages", [])
+                ]
+                meta = self._batch_fetch_headers(service, [m for _, m in pairs])
+                keys = [self._format_readable_key("TRASH", t, m, meta.get(m)) for t, m in pairs]
                 return sorted(keys), []
+            except AuthenticationError:
+                raise
             except Exception as e:
-                logger.debug("Failed to list trash: %s", e)
-                return [], []
+                raise BackendError(
+                    f"Failed to list Gmail trash: {e}",
+                    backend="gmail",
+                    path=prefix,
+                ) from e
 
         # Other label folders → list messages via categorized listing
         if prefix in LABEL_FOLDERS:
@@ -854,12 +1258,13 @@ class GmailTransport:
                 folder_filter=[prefix],
                 silent=True,
             )
-            keys = []
-            for email in emails:
-                if email.get("folder") == prefix:
-                    thread_id = email.get("threadId")
-                    msg_id = email["id"]
-                    keys.append(f"{prefix}/{thread_id}-{msg_id}.yaml")
+            pairs = [
+                (email.get("threadId") or email["id"], email["id"])
+                for email in emails
+                if email.get("folder") == prefix
+            ]
+            meta = self._batch_fetch_headers(service, [m for _, m in pairs])
+            keys = [self._format_readable_key(prefix, t, m, meta.get(m)) for t, m in pairs]
             return sorted(keys), []
 
         return [], []

@@ -4,7 +4,61 @@ import logging
 import time
 from typing import Any
 
+from nexus.contracts.exceptions import AuthenticationError, BackendError
+
 logger = logging.getLogger(__name__)
+
+# Slack API error codes that indicate the OAuth token is no longer valid.
+# The SDK raises SlackApiError with response.data["error"] set to one of these.
+_SLACK_AUTH_ERROR_CODES = frozenset(
+    {
+        "invalid_auth",
+        "not_authed",
+        "token_expired",
+        "token_revoked",
+        "account_inactive",
+        "no_permission",
+        "missing_scope",
+    }
+)
+
+# Channel-access errors that are not system faults — callers surface them as
+# empty listings + metadata (bot_not_member / no_messages), not as hard errors.
+_SLACK_SOFT_ERROR_CODES = frozenset(
+    {
+        "not_in_channel",
+        "channel_not_found",
+        "is_archived",
+    }
+)
+
+
+def _slack_error_code(exc: BaseException) -> str:
+    """Extract ``response.data["error"]`` from a :class:`SlackApiError` if present."""
+    response = getattr(exc, "response", None)
+    if response is None:
+        return ""
+    data = getattr(response, "data", None)
+    if isinstance(data, dict):
+        return str(data.get("error", "")).lower()
+    return ""
+
+
+def _raise_if_auth_error(exc: BaseException) -> None:
+    """Re-raise *exc* as :class:`AuthenticationError` if it is a Slack auth failure.
+
+    Inspects ``SlackApiError.response["error"]`` and stringified message for
+    known auth codes.  Non-auth errors are returned to the caller unchanged.
+    """
+    code = _slack_error_code(exc)
+    msg_lower = str(exc).lower()
+    if code in _SLACK_AUTH_ERROR_CODES or any(
+        token in msg_lower for token in _SLACK_AUTH_ERROR_CODES
+    ):
+        raise AuthenticationError(
+            f"Slack auth failed: {code or exc}",
+            provider="slack",
+        ) from exc
 
 
 def list_channels(
@@ -94,9 +148,14 @@ def list_channels(
             if not cursor:
                 break
 
+        except AuthenticationError:
+            raise
         except Exception as e:
-            logger.error(f"[LIST-CHANNELS] Error listing channels: {e}")
-            break
+            _raise_if_auth_error(e)
+            raise BackendError(
+                f"Failed to list Slack channels: {e}",
+                backend="slack",
+            ) from e
 
     if not silent:
         print(f"   Found {len(channels)} channels")
@@ -208,9 +267,23 @@ def list_messages_from_channel(
             if not cursor:
                 break
 
+        except AuthenticationError:
+            raise
         except Exception as e:
-            logger.error(f"[LIST-MESSAGES] Error listing messages from #{channel_name}: {e}")
-            break
+            _raise_if_auth_error(e)
+            if _slack_error_code(e) in _SLACK_SOFT_ERROR_CODES:
+                # Bot not in channel / archived / missing — fetch() surfaces
+                # this as empty + metadata, not as a hard failure.
+                logger.info(
+                    "[LIST-MESSAGES] #%s returned soft error (%s); degrading to []",
+                    channel_name,
+                    _slack_error_code(e),
+                )
+                break
+            raise BackendError(
+                f"Failed to list Slack messages from #{channel_name}: {e}",
+                backend="slack",
+            ) from e
 
     if not silent:
         print(f"   Found {len(messages)} messages in #{channel_name}")
@@ -253,7 +326,10 @@ def list_thread_replies(
 
         return messages
 
+    except AuthenticationError:
+        raise
     except Exception as e:
+        _raise_if_auth_error(e)
         logger.error(f"[LIST-THREAD-REPLIES] Error fetching thread replies: {e}")
         return []
 
@@ -303,7 +379,10 @@ def get_user_info(
 
         return user_info
 
+    except AuthenticationError:
+        raise
     except Exception as e:
+        _raise_if_auth_error(e)
         logger.warning(f"[GET-USER-INFO] Error fetching user {user_id}: {e}")
         return None
 

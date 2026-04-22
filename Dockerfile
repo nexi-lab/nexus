@@ -26,6 +26,11 @@ ARG TARGETARCH
 ENV USE_CHINA_MIRROR=${USE_CHINA_MIRROR}
 
 # ---------- 系统依赖 ----------
+# protobuf-compiler is required by raft-proto v0.7.0's protobuf-build
+# step.  The vendored protoc we wire up in our own kernel/raft build.rs
+# only feeds tonic_build → prost-build; protobuf-build is a separate
+# chain that shells out to ``protoc`` on PATH, so dropping this package
+# broke every Docker build after commit 3d93e0155.
 RUN set -eux; \
     apt-get update && apt-get install -y --no-install-recommends \
         gcc \
@@ -33,6 +38,7 @@ RUN set -eux; \
         curl \
         build-essential \
         ca-certificates \
+        protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
 
 # ---------- Rust Toolchain ----------

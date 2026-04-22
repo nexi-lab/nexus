@@ -48,7 +48,7 @@ from nexus.backends.connectors.gws.schemas import (
 )
 from nexus.backends.connectors.oauth import OAuthConnectorMixin
 from nexus.contracts.backend_features import OAUTH_BACKEND_FEATURES, BackendFeature
-from nexus.contracts.exceptions import BackendError
+from nexus.contracts.exceptions import AuthenticationError, BackendError
 from nexus.core.hash_fast import hash_content
 from nexus.core.object_store import WriteResult
 
@@ -504,6 +504,12 @@ class PathGDriveBackend(
             return sorted(entries)
 
         except FileNotFoundError:
+            raise
+        except AuthenticationError:
+            # Issue #3822: propagate auth-required signal unchanged so
+            # callers can read ``.provider`` / ``.user_email`` / ``.auth_url``
+            # and drive the OAuth flow.  Wrapping into BackendError here is
+            # what made ``fs.ls`` silently return [].
             raise
         except Exception as e:
             if "not found" in str(e).lower():

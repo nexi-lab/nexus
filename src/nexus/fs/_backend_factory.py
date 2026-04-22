@@ -68,14 +68,38 @@ def create_backend(spec: Any) -> Any:
 
         return CASGCSBackend(bucket_name=derive_bucket(spec), project_id=spec.authority)
 
-    elif spec.scheme == "local":
+    elif spec.scheme in ("local", "cas-local"):
+        # Passthrough by default — when a user mounts ``local://./data``
+        # they expect files to land at ``./data/<virtual_path>`` and be
+        # directly visible on disk.  Content-addressed storage is an
+        # implementation detail of the nexus server's CAS profile, not a
+        # user-facing default for a filesystem mount.  ``cas-local://``
+        # is the explicit opt-in for dedup / hash-named blob storage.
+        #
+        # URI reconstruction: ``parse_uri`` splits ``local:///abs/path``
+        # into ``authority="abs"`` + ``path="path"`` because urllib's
+        # netloc empty-case handler takes the first path segment as a
+        # stand-in authority.  Concatenating those back drops the
+        # leading ``/``, giving a cwd-relative path (e.g.
+        # ``$(pwd)/abspath``) instead of the intended absolute one.
+        # Rebuild from the original URI — everything after the scheme
+        # prefix is the filesystem path as the user typed it.
         from pathlib import Path as _Path
 
-        from nexus.backends.storage.cas_local import CASLocalBackend
-
-        root = _Path(spec.authority + (spec.path or "")).expanduser().resolve()
+        prefix = f"{spec.scheme}://"
+        raw_path = spec.uri[len(prefix) :] if spec.uri.startswith(prefix) else ""
+        if not raw_path:
+            # Fallback for callers that constructed a MountSpec directly.
+            raw_path = spec.authority + (spec.path or "")
+        root = _Path(raw_path).expanduser().resolve()
         root.mkdir(parents=True, exist_ok=True)
-        return CASLocalBackend(root_path=root)
+        if spec.scheme == "cas-local":
+            from nexus.backends.storage.cas_local import CASLocalBackend
+
+            return CASLocalBackend(root_path=root)
+        from nexus.backends.storage.path_local import PathLocalBackend
+
+        return PathLocalBackend(root_path=root)
 
     else:
         # Fall through to the connector registry for any other scheme.

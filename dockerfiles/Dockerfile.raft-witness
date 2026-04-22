@@ -14,6 +14,14 @@
 
 FROM rust:1-slim-bookworm AS builder
 
+# protobuf-compiler: raft-proto v0.7.0 uses protobuf-build which shells
+# out to system ``protoc`` on PATH (separate from the vendored protoc
+# our own build.rs wires up for tonic).  Removing this package broke
+# every Docker build after commit 3d93e0155.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        protobuf-compiler \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /build
 
 # Copy workspace root manifests — nexus_raft uses `workspace = true` deps

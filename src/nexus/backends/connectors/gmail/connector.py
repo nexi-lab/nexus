@@ -52,7 +52,7 @@ from nexus.backends.connectors.gmail.transport import LABEL_FOLDERS, GmailTransp
 from nexus.backends.connectors.oauth import OAuthConnectorMixin
 from nexus.contracts.backend_features import OAUTH_BACKEND_FEATURES, BackendFeature
 from nexus.contracts.constants import IMMUTABLE_VERSION
-from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
+from nexus.contracts.exceptions import AuthenticationError, BackendError, NexusFileNotFoundError
 from nexus.core.object_store import WriteResult
 
 if TYPE_CHECKING:
@@ -388,7 +388,7 @@ class PathGmailBackend(
         except Exception as e:
             if checkpoint:
                 self.clear_checkpoint(checkpoint.checkpoint_id)
-            if isinstance(e, (BackendError, NexusFileNotFoundError)):
+            if isinstance(e, (AuthenticationError, BackendError, NexusFileNotFoundError)):
                 raise
             raise BackendError(
                 f"Failed to execute {operation}: {e}",
@@ -464,7 +464,7 @@ class PathGmailBackend(
             self._transport.remove(blob_path)
             logger.info("Trashed Gmail message via connector: %s", message_id)
         except Exception as e:
-            if isinstance(e, (BackendError, NexusFileNotFoundError)):
+            if isinstance(e, (AuthenticationError, BackendError, NexusFileNotFoundError)):
                 raise
             raise BackendError(
                 f"Failed to trash message: {e}",
@@ -536,27 +536,44 @@ class PathGmailBackend(
     # =================================================================
 
     def is_directory(self, path: str, context: "OperationContext | None" = None) -> bool:
+        from nexus.backends.connectors.gmail.transport import _GMAIL_CATEGORY_FOLDERS
+
         path = path.strip("/")
         if not path:
             return True
-        return path in self.LABEL_FOLDERS
+        if path in self.LABEL_FOLDERS:
+            return True
+        # INBOX/<category> virtual sub-directories — must stay in sync
+        # with list_dir()'s acceptance set so stat/traversal behaviour
+        # doesn't diverge from listability.
+        parts = path.split("/")
+        return len(parts) == 2 and parts[0] == "INBOX" and parts[1] in _GMAIL_CATEGORY_FOLDERS
 
     def list_dir(self, path: str, context: "OperationContext | None" = None) -> list[str]:
         """List directory contents via GmailTransport.list_keys()."""
         try:
+            from nexus.backends.connectors.gmail.transport import _GMAIL_CATEGORY_FOLDERS
+
             path = path.strip("/")
 
             # Root directory — list label folders (no API call needed)
             if not path:
                 return [f"{label}/" for label in self.LABEL_FOLDERS]
 
-            if path not in self.LABEL_FOLDERS:
+            path_parts = path.split("/")
+            is_label = path in self.LABEL_FOLDERS
+            is_inbox_category = (
+                len(path_parts) == 2
+                and path_parts[0] == "INBOX"
+                and path_parts[1] in _GMAIL_CATEGORY_FOLDERS
+            )
+            if not (is_label or is_inbox_category):
                 raise FileNotFoundError(f"Directory not found: {path}")
 
             if self._pool is None:
                 # Single-account path
                 self._bind_transport(context)
-                keys, _prefixes = self._transport.list_keys(prefix=path, delimiter="/")
+                keys, prefixes = self._transport.list_keys(prefix=path, delimiter="/")
             else:
                 # Pool-based: rotate credentials on rate-limit.
                 # user_email_override routes the transport to the selected profile's
@@ -571,7 +588,7 @@ class PathGmailBackend(
                     )
                     return transport.list_keys(prefix=path, delimiter="/")
 
-                keys, _prefixes = self._pool.execute_sync(
+                keys, prefixes = self._pool.execute_sync(
                     _list,
                     classify_google_error,
                     bypass_exceptions=(NexusFileNotFoundError,),
@@ -579,14 +596,28 @@ class PathGmailBackend(
 
             # Strip label prefix from keys: "LABEL/thread-msg.yaml" → "thread-msg.yaml"
             label_prefix = f"{path}/"
-            files = []
+            leaves: list[str] = []
+            dirs: list[str] = []
             for key in keys:
                 name = key[len(label_prefix) :] if key.startswith(label_prefix) else key
                 if name:
-                    files.append(name)
-            return sorted(files)
+                    leaves.append(name)
+            # Forward virtual category prefixes (INBOX/PRIMARY/, INBOX/UPDATES/, ...)
+            for pref in prefixes:
+                name = pref[len(label_prefix) :] if pref.startswith(label_prefix) else pref
+                if name:
+                    dirs.append(name)
+            # Message filenames are `{YYYY-MM-DD}_{subject}__{ids}.yaml`, so
+            # reverse-lex = reverse-chronological = newest first — matches
+            # every real email client.  Directory entries (category
+            # sub-labels) stay alphabetical.
+            return sorted(dirs) + sorted(leaves, reverse=True)
 
         except FileNotFoundError:
+            raise
+        except AuthenticationError:
+            # Propagate auth-required signal unchanged so callers can drive the
+            # OAuth flow (Issue #3822). Wrapping here silently returns [].
             raise
         except Exception as e:
             raise BackendError(

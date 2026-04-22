@@ -12,12 +12,17 @@
 FROM python:3.14-slim AS builder
 
 # ---------- System dependencies ----------
+# protobuf-compiler: raft-proto v0.7.0 uses protobuf-build which shells
+# out to system ``protoc`` on PATH (separate from the vendored protoc
+# our own build.rs wires up for tonic).  Removing this package broke
+# every Docker build after commit 3d93e0155.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         gcc \
         git \
         curl \
         build-essential \
         ca-certificates \
+        protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
 
 # ---------- Rust toolchain (for _nexus_raft) ----------

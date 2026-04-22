@@ -41,6 +41,7 @@ __all__ = [
     "RouteResult",
     "PipeRouteResult",
     "StreamRouteResult",
+    "ExternalRouteResult",
     "canonicalize_path",
     "extract_zone_id",
     "strip_zone_prefix",
@@ -85,6 +86,16 @@ class StreamRouteResult:
     metastore: "MetastoreABC"
 
 
+@dataclass(frozen=True, slots=True)
+class ExternalRouteResult:
+    """Route result for DT_EXTERNAL_STORAGE — backend manages own namespace."""
+
+    backend: "ObjectStoreABC"
+    metastore: "MetastoreABC"
+    backend_path: str
+    mount_point: str
+
+
 class PathRouter:
     """Read-only query engine over the kernel mount table.
 
@@ -126,7 +137,7 @@ class PathRouter:
         virtual_path: str,
         *,
         zone_id: str = ROOT_ZONE_ID,
-    ) -> RouteResult | PipeRouteResult | StreamRouteResult:
+    ) -> RouteResult | PipeRouteResult | StreamRouteResult | ExternalRouteResult:
         """Route virtual path to backend (pure LPM; no mount-level access checks)."""
         virtual_path = self.validate_path(virtual_path)
 
@@ -174,6 +185,14 @@ class PathRouter:
                 if info is None:
                     raise PathNotMountedError(virtual_path)
             user_mp = extract_zone_id(rust_result.mount_point)[1]
+            _route_meta = meta if meta is not None else self._metastore.get(user_mp)
+            if _route_meta is not None and _route_meta.is_external_storage:
+                return ExternalRouteResult(
+                    backend=info.backend,
+                    metastore=self._metastore,
+                    backend_path=rust_result.backend_path,
+                    mount_point=user_mp,
+                )
             return RouteResult(
                 backend=info.backend,
                 metastore=self._metastore,
@@ -191,6 +210,14 @@ class PathRouter:
 
         backend_path = self._strip_mount_prefix(canonical, canonical_key)
 
+        _route_meta = meta if meta is not None else self._metastore.get(user_mp)
+        if _route_meta is not None and _route_meta.is_external_storage:
+            return ExternalRouteResult(
+                backend=info.backend,
+                metastore=self._metastore,
+                backend_path=backend_path,
+                mount_point=user_mp,
+            )
         return RouteResult(
             backend=info.backend,
             metastore=self._metastore,

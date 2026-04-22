@@ -304,9 +304,11 @@ Key design decisions:
 | CDC reassembly | **Done** — chunked_manifest detection + reassembly in Rust CAS engine |
 | `stubs/nexus_kernel/__init__.pyi` | **Auto-generated** — `codegen_kernel_abi.py` reads Rust source |
 | Module rename | **Done** — `nexus_fast` → `nexus_kernel` (PR 8) |
-| Remaining: `_backend_read` | Python fallback for non-Rust backends — eliminated when all backends are Rust/gRPC |
-| Remaining: `sys_write` metadata | Python builds metadata after Rust CAS write — move to Rust |
-| Remaining: PIPE/STREAM/hooks | Python wrapper handles — move to Rust for full passthrough |
+| `_backend_read` elimination | **Done** — all sys_read paths go through Rust kernel; Python `_backend_read` deleted (#1817 PR #3848) |
+| `sys_write` metadata in Rust | **Done** — Rust kernel builds metadata after CAS write; Python `_write_internal`/`_build_write_metadata` deleted (#1817 PR #3848) |
+| PIPE/STREAM in Rust | **Done** — sys_read/sys_write dispatch to PipeManager/StreamManager in Rust; `pipe_read_nowait`/`pipe_destroy` bypasses deleted (#1817 PR #3852) |
+| Advisory lock in Rust | **Done** — `LockManager` in Rust (lock_manager.rs): LocalLocks + DistributedLocks; Python `sys_lock`/`sys_unlock` = thin wrappers |
+| Connector via gRPC | **Done** — external/remote backends route through Rust gRPC adapter, not Python ObjectStoreABC (#1960 PR #3843) |
 
 ### 7.4 Concrete code shape
 
@@ -375,7 +377,7 @@ Migration phases (incremental, each a PR):
 | §7 PR 7g (Overlay deleted) | Done | Overlay feature deleted (-1354 lines), CAS dedup replaces it |
 | §7 PR 8 (Codegen) | Done | `codegen_kernel_abi.py` generates stubs, protocols, exports from Rust source |
 | §7 PR 8 (Module rename) | Done | `nexus_fast` → `nexus_kernel` (Python module name, 90+ files) |
-| **§7 remaining** | **Next** | Eliminate `_backend_read` (all backends Rust/gRPC), move sys_write metadata to Rust, move PIPE/STREAM/hooks to Rust |
+| **§7 remaining** | **Done** | `_backend_read` deleted, sys_write metadata moved to Rust, PIPE/STREAM dispatched in Rust, advisory locks in Rust, connectors via gRPC — all completed in #1817/#1960 |
 
 The key insight: **Phase H is the last phase that adds logic.** The §7
 collapse is a **refactoring** that changes the boundary, not the logic.
@@ -389,3 +391,4 @@ collapse is a **refactoring** that changes the boundary, not the logic.
 | §1–§7 | 2026-03 | Initial syscall design, POSIX alignment, convenience layer, key decisions, collapse plan |
 | §8 | 2026-04-10 | Added version history table |
 | §11 | 2026-04-10 | KERNEL-ARCHITECTURE.md §2.4.1: formal 4 dispatch contracts (RESOLVE, INTERCEPT PRE, INTERCEPT POST, OBSERVE) with ordering, error semantics, and zero-overhead invariant. Phase 18 docs. |
+| §7.3, §7.6 | 2026-04-23 | §7 collapse roadmap fully completed: `_backend_read` deleted, sys_write metadata in Rust, PIPE/STREAM dispatched in Rust, advisory locks in Rust, connectors via gRPC. All "Remaining" items → Done (#1817, #1960). |

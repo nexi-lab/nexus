@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Any
 try:
     from cachebox import TTLCache as RustTTLCache
 except ImportError:
-    RustTTLCache = None  # type: ignore[assignment,misc]
+    RustTTLCache = None
 
 try:
     from fastbloom_rs import BloomFilter
@@ -87,7 +87,7 @@ class LeopardCache:
         # cachebox.TTLCache is API-compatible with dict for get/set/pop/clear.
         self._member_to_groups: dict[tuple[str, str, str], set[tuple[str, str]]]
         if self._use_rust_cache:
-            self._member_to_groups = RustTTLCache(maxsize=max_size, ttl=ttl_seconds)  # type: ignore[assignment]
+            self._member_to_groups = RustTTLCache(maxsize=max_size, ttl=ttl_seconds)
         else:
             self._member_to_groups = {}
 

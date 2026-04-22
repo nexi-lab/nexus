@@ -38,7 +38,7 @@ from typing import Any
 try:
     from cachebox import TTLCache
 except ImportError:
-    from cachetools import TTLCache  # type: ignore[assignment]
+    from cachetools import TTLCache
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 

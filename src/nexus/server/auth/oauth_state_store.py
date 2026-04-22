@@ -69,7 +69,7 @@ class OAuthStateService:
             "n": secrets.token_urlsafe(16),  # opacity; unique per issue call
             "b": binding_nonce,
         }
-        return self._signer.dumps(payload)
+        return str(self._signer.dumps(payload))
 
     def verify(self, state: str | None, binding_nonce: str | None) -> bool:
         """Verify state signature + TTL + binding matches the cookie nonce.

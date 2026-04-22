@@ -1839,7 +1839,7 @@ class MetadataMixin:
             )
             try:
                 _kernel_entries = _kernel.readdir(path, self._zone_id, _is_admin)
-            except Exception as exc:
+            except (OSError, ValueError) as exc:
                 logger.debug("kernel.readdir failed for %s: %s", path, exc)
                 _kernel_entries = None
             if _kernel_entries:

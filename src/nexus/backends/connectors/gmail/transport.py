@@ -154,7 +154,7 @@ class GmailTransport:
         except ImportError:
             raise BackendError(
                 "google-api-python-client not installed. "
-                "Install with: pip install google-api-python-client",
+                "Install with: pip install 'nexus-ai-fs[gws]'",
                 backend="gmail",
             ) from None
 

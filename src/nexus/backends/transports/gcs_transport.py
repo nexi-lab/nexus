@@ -18,12 +18,30 @@ from __future__ import annotations
 import io
 import logging
 from collections.abc import Iterator
-
-from google.api_core import retry
-from google.cloud import storage
-from google.cloud.exceptions import NotFound
+from typing import Any
 
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
+
+_gcs_retry: Any | None
+_gcs_storage: Any | None
+_GcsNotFoundError: type[Exception]
+
+try:
+    from google.api_core import retry as _gcs_retry_mod
+    from google.cloud import storage as _gcs_storage_mod
+    from google.cloud.exceptions import NotFound as _GcsNotFoundError_mod
+except ImportError:  # pragma: no cover - exercised in slim/cloud-extra installs
+    _gcs_retry = None
+    _gcs_storage = None
+    _GcsNotFoundError = Exception
+else:
+    _gcs_retry = _gcs_retry_mod
+    _gcs_storage = _gcs_storage_mod
+    _GcsNotFoundError = _GcsNotFoundError_mod
+
+retry = _gcs_retry
+storage = _gcs_storage
+GcsNotFoundError = _GcsNotFoundError
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +63,15 @@ class GCSTransport:
         operation_timeout: float = 60.0,
         upload_timeout: float = 300.0,
     ) -> None:
+        if storage is None or retry is None:
+            raise BackendError(
+                "google-cloud-storage is required for GCS transport. "
+                "Install with: pip install 'nexus-ai-fs[gcs]'",
+                backend="gcs",
+                path=bucket_name,
+            )
+        self._retry = retry
+
         try:
             if access_token:
                 from google.oauth2 import credentials as oauth2_credentials
@@ -93,7 +120,7 @@ class GCSTransport:
                 data,
                 content_type=content_type or None,
                 timeout=self._operation_timeout,
-                retry=retry.Retry(deadline=120),
+                retry=self._retry.Retry(deadline=120),
             )
 
             # Return generation number if versioning, else None
@@ -119,7 +146,7 @@ class GCSTransport:
 
             content = blob.download_as_bytes(
                 timeout=self._operation_timeout,
-                retry=retry.Retry(deadline=120),
+                retry=self._retry.Retry(deadline=120),
             )
 
             blob.reload()
@@ -127,7 +154,7 @@ class GCSTransport:
 
             return bytes(content), generation_str
 
-        except NotFound as e:
+        except GcsNotFoundError as e:
             raise NexusFileNotFoundError(key) from e
         except NexusFileNotFoundError:
             raise
@@ -147,10 +174,10 @@ class GCSTransport:
 
             blob.delete(
                 timeout=self._operation_timeout,
-                retry=retry.Retry(deadline=120),
+                retry=self._retry.Retry(deadline=120),
             )
 
-        except NotFound as e:
+        except GcsNotFoundError as e:
             raise NexusFileNotFoundError(key) from e
         except NexusFileNotFoundError:
             raise
@@ -185,7 +212,7 @@ class GCSTransport:
                 )
             return int(size)
 
-        except NotFound as e:
+        except GcsNotFoundError as e:
             raise NexusFileNotFoundError(key) from e
         except NexusFileNotFoundError:
             raise
@@ -233,7 +260,7 @@ class GCSTransport:
                 if token is None:
                     break
 
-        except NotFound as e:
+        except GcsNotFoundError as e:
             raise NexusFileNotFoundError(src_key) from e
         except NexusFileNotFoundError:
             raise
@@ -251,7 +278,7 @@ class GCSTransport:
                 "",
                 content_type="application/x-directory",
                 timeout=self._operation_timeout,
-                retry=retry.Retry(deadline=120),
+                retry=self._retry.Retry(deadline=120),
             )
         except Exception as e:
             raise BackendError(
@@ -279,7 +306,7 @@ class GCSTransport:
             blob.download_to_file(
                 buffer,
                 timeout=self._operation_timeout,
-                retry=retry.Retry(deadline=120),
+                retry=self._retry.Retry(deadline=120),
             )
             buffer.seek(0)
 
@@ -289,7 +316,7 @@ class GCSTransport:
                     break
                 yield chunk
 
-        except NotFound as e:
+        except GcsNotFoundError as e:
             raise NexusFileNotFoundError(key) from e
         except NexusFileNotFoundError:
             raise
@@ -318,7 +345,7 @@ class GCSTransport:
                 "wb",
                 content_type=content_type or "application/octet-stream",
                 timeout=self._upload_timeout,
-                retry=retry.Retry(deadline=300),
+                retry=self._retry.Retry(deadline=300),
             ) as writer:
                 for chunk in chunks:
                     writer.write(chunk)
@@ -355,11 +382,11 @@ class GCSTransport:
                 start=offset,
                 end=offset + size - 1,
                 timeout=self._operation_timeout,
-                retry=retry.Retry(deadline=120),
+                retry=self._retry.Retry(deadline=120),
             )
             return bytes(data)
 
-        except NotFound as e:
+        except GcsNotFoundError as e:
             raise NexusFileNotFoundError(key) from e
         except Exception as e:
             raise BackendError(
@@ -424,7 +451,7 @@ class GCSTransport:
         blob = self.bucket.blob(key)
         try:
             blob.reload()
-        except NotFound as e:
+        except GcsNotFoundError as e:
             raise NexusFileNotFoundError(key) from e
 
         return {

@@ -411,13 +411,17 @@ class ToolRegistry:
     """
 
     def __init__(self) -> None:
-        self._tools: dict[str, Tool] = {}
+        self._tools: dict[str, Any] = {}
 
-    def register(self, tool: Tool) -> None:
-        """Register a tool by name."""
+    def register(self, tool: Any) -> None:
+        """Register a tool by name.
+
+        Accepts any object with ``name``, ``call``, ``is_read_only``,
+        ``is_concurrent_safe``, ``description``, and ``input_schema``.
+        """
         self._tools[tool.name] = tool
 
-    def get(self, name: str) -> Tool | None:
+    def get(self, name: str) -> Any | None:
         """Look up a tool by name."""
         return self._tools.get(name)
 
@@ -457,7 +461,7 @@ class ToolRegistry:
             return json.dumps({"error": f"Invalid arguments for tool {name}"})
 
         try:
-            result = await tool.call(**kwargs)
+            result: str = await tool.call(**kwargs)
         except Exception as exc:
             logger.error("Tool %s failed: %s", name, exc)
             return json.dumps({"error": str(exc)})

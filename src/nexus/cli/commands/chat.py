@@ -376,9 +376,10 @@ async def _run_acp_mode(
 
     # Async wrappers for sync NexusFS syscalls (same as REPL mode)
     async def _async_sys_read(path: str) -> bytes:
-        return nx.sys_read(path)
+        result: bytes = nx.sys_read(path)
+        return result
 
-    async def _async_sys_write(path: str, buf: bytes) -> dict:
+    async def _async_sys_write(path: str, buf: bytes) -> Any:
         return nx.sys_write(path, buf)
 
     # Stream read adapter

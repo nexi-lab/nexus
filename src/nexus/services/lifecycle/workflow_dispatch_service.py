@@ -202,6 +202,11 @@ class WorkflowDispatchService:
             except NexusFileNotFoundError:
                 logger.debug("Workflow pipe closed, consumer exiting")
                 break
+
+            if not data:
+                await asyncio.sleep(0.01)
+                continue
+
             try:
                 msg = json.loads(data)
                 await engine.fire_event(msg["type"], msg["ctx"])

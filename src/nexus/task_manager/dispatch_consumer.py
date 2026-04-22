@@ -190,6 +190,10 @@ class TaskDispatchPipeConsumer:
                 logger.debug("[TASK-DISPATCH] pipe closed, consumer exiting")
                 break
 
+            if not data:
+                await asyncio.sleep(0.01)
+                continue
+
             try:
                 msg = json.loads(data)
                 await self._dispatch(msg)

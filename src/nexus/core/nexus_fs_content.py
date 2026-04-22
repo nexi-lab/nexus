@@ -157,16 +157,12 @@ class ContentMixin:
                     if isinstance(_route, ExternalRouteResult):
                         raise
 
-        # DT_PIPE: result.data is the popped frame when available; None = empty.
+        # DT_PIPE: Rust pops one frame from ring buffer (non-blocking).
+        # Empty pipe returns b"" (POSIX non-blocking read(2) semantics).
         if result.entry_type == 3:  # DT_PIPE
             if result.data is not None:
                 return _apply_slice(result.data, offset, count)
-            # Empty pipe — try nowait (hot path), then block in Rust (GIL-free)
-            _data = self._kernel.pipe_read_nowait(path)
-            if _data is not None:
-                return _apply_slice(bytes(_data), offset, count)
-            _data = self._kernel.pipe_read_blocking(path, 5000)
-            return _apply_slice(bytes(_data), offset, count)
+            return b""
 
         # DT_STREAM: blocking reads with offset tracking
         if result.entry_type == 4:  # DT_STREAM

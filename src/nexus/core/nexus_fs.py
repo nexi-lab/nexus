@@ -661,13 +661,6 @@ class NexusFS(  # type: ignore[misc]
     # and sync teardown contexts (AcpService) where async wrapping would
     # add event-loop ping-pong without buying anything.
 
-    def pipe_read_nowait(self, path: str) -> bytes | None:
-        """Non-blocking pipe read. Returns ``None`` if pipe is empty.
-
-        Sync passthrough to ``Kernel.pipe_read_nowait``.
-        """
-        return self._kernel.pipe_read_nowait(path)
-
     def pipe_create(self, path: str, capacity: int = 65_536) -> None:
         """Create a DT_PIPE in the kernel registry.
 
@@ -684,15 +677,6 @@ class NexusFS(  # type: ignore[misc]
         if self._kernel is None:
             return False
         return self._kernel.has_pipe(path)
-
-    def pipe_destroy(self, path: str) -> None:
-        """Destroy a DT_PIPE — close Rust kernel buffer + custom backend cleanup.
-
-        Sync alternative to ``await sys_unlink(path)`` for sync teardown
-        contexts that don't need full metastore/dcache cleanup. Internally
-        delegates to the existing ``_pipe_destroy()`` helper.
-        """
-        self._pipe_destroy(path)
 
     # ------------------------------------------------------------------
     # Tier 2 public sync stream methods (kernel passthroughs)

@@ -201,12 +201,8 @@ class SkeletonPipeConsumer:
     # ------------------------------------------------------------------
 
     async def _consume(self) -> None:
-        # Use pipe_read_nowait (polling) instead of sys_read — sys_read blocks
-        # for up to 5s when the pipe is empty, which would block the asyncio
-        # event loop. pipe_read_nowait returns None immediately on empty,
-        # allowing cooperative polling with asyncio.sleep.
-        # pipe_read_nowait raises NexusFileNotFoundError
-        # when the pipe is destroyed (stop() signal).
+        # sys_read returns b"" for empty DT_PIPE (POSIX non-blocking semantics).
+        # NexusFileNotFoundError signals pipe destroyed (stop() signal).
         from nexus.contracts.exceptions import NexusFileNotFoundError
 
         assert self._nx is not None
@@ -220,13 +216,13 @@ class SkeletonPipeConsumer:
             if not pending:
                 while True:
                     try:
-                        data = nx.pipe_read_nowait(_SKELETON_PIPE_PATH)
+                        data = nx.sys_read(_SKELETON_PIPE_PATH)
                     except NexusFileNotFoundError:
                         logger.debug("[SKELETON] pipe closed, consumer exiting")
                         return
                     except Exception:
                         return
-                    if data is not None:
+                    if data:
                         pending.append(json.loads(data))
                         break
                     await asyncio.sleep(_POLL)
@@ -238,12 +234,12 @@ class SkeletonPipeConsumer:
                 if remaining <= 0:
                     break
                 try:
-                    data = nx.pipe_read_nowait(_SKELETON_PIPE_PATH)
+                    data = nx.sys_read(_SKELETON_PIPE_PATH)
                 except NexusFileNotFoundError:
                     break
                 except Exception:
                     break
-                if data is not None:
+                if data:
                     pending.append(json.loads(data))
                 else:
                     await asyncio.sleep(min(remaining, _POLL))

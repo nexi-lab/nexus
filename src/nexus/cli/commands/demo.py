@@ -232,7 +232,7 @@ async def _get_nexus_client(config: dict[str, Any]) -> Any:
         url = conn.get("NEXUS_URL", f"http://localhost:{http_port}")
 
         try:
-            nx = await nexus.connect(
+            nx = nexus.connect(
                 config={
                     "profile": "remote",
                     "url": url,
@@ -271,7 +271,7 @@ async def _get_nexus_client(config: dict[str, Any]) -> Any:
 
     # No server running — fall back to local data dir
     data_dir = config.get("data_dir", "./nexus-data")
-    return await nexus.connect(config={"data_dir": data_dir})
+    return nexus.connect(config={"data_dir": data_dir})
 
 
 # ---------------------------------------------------------------------------

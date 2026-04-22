@@ -1,12 +1,11 @@
-"""nexus chat — Agent REPL, one-shot, and ACP mode.
+"""nexus chat — Agent REPL and one-shot mode (nexus-agent-plan §11.2).
 
-Three interaction modes:
+Two interaction modes:
     nexus chat                  Interactive REPL (multi-turn)
     nexus chat -p "fix bug"    One-shot (single prompt, exit)
-    nexus chat --acp            ACP mode: JSON-RPC over stdio (sudowork)
 
 Two NexusFS modes:
-    (default)                  Embedded in-process (slim profile, no nexusd)
+    (default)                  Embedded in-process (CLUSTER profile, no nexusd)
     --with <addr>              Remote via REMOTE profile → existing nexusd
 
 See: docs/architecture/nexus-agent-plan.md §11.2
@@ -23,30 +22,6 @@ from typing import Any
 import click
 
 
-def _isolate_stdout_for_acp() -> Any:
-    """Isolate stdout for ACP JSON-RPC: dup real stdout, redirect fd 1 -> stderr.
-
-    After this call:
-    - sys.stdout writes to stderr (catches Rust tracing, Python logging, print())
-    - The returned stream writes to the original stdout fd (for ACP JSON-RPC only)
-    - os.dup2 redirects fd 1 at the OS level so Rust tracing also goes to stderr
-    """
-    import io
-
-    # Dup the real stdout fd before redirecting
-    real_stdout_fd = os.dup(1)
-    # Redirect fd 1 -> stderr at the OS level (catches Rust tracing)
-    os.dup2(2, 1)
-    # Redirect Python sys.stdout -> stderr (catches print/click.echo)
-    sys.stdout = sys.stderr
-    # Create a Python file object wrapping the real stdout fd
-    return io.TextIOWrapper(
-        io.FileIO(real_stdout_fd, mode="w", closefd=True),
-        encoding="utf-8",
-        line_buffering=True,
-    )
-
-
 @click.command("chat")
 @click.option("-p", "--prompt", default=None, help="One-shot mode: run single prompt and exit.")
 @click.option("--model", default=None, help="LLM model name.")
@@ -57,21 +32,14 @@ def _isolate_stdout_for_acp() -> Any:
 @click.option("--resume", default=None, help="Resume specific session by ID.")
 @click.option(
     "--deployment-profile",
-    type=click.Choice(["slim", "cluster", "embedded", "lite", "sandbox", "full", "cloud"]),
     default=None,
-    help="Deployment profile for embedded mode (default: slim).",
+    help="Deployment profile for embedded mode (default: cluster).",
 )
 @click.option(
     "--tools",
     multiple=True,
     type=click.Path(exists=True, file_okay=False, resolve_path=True),
     help="Mount external tool directories (repeatable).",
-)
-@click.option(
-    "--acp",
-    is_flag=True,
-    default=False,
-    help="ACP mode: JSON-RPC over stdio (for sudowork integration).",
 )
 def chat(
     prompt: str | None,
@@ -81,7 +49,6 @@ def chat(
     resume: str | None,
     deployment_profile: str | None,
     tools: tuple[str, ...],
-    acp: bool,
 ) -> None:
     """Start an agent chat session.
 
@@ -95,10 +62,6 @@ def chat(
     One-shot mode:
         nexus chat -p "fix the login bug"
         nexus chat -p "add unit tests" --model claude-opus-4
-
-    \b
-    ACP mode (sudowork integration):
-        nexus chat --acp
     """
     asyncio.run(
         _run_chat(
@@ -109,67 +72,8 @@ def chat(
             resume=resume,
             deployment_profile=deployment_profile,
             tools=tools,
-            acp=acp,
         )
     )
-
-
-# ------------------------------------------------------------------
-# Workspace mount + Tool registry wiring
-# ------------------------------------------------------------------
-
-
-async def _mount_workspace(nx: Any, cwd: str) -> None:
-    """Mount host OS cwd at /workspace via LocalConnector."""
-    from nexus.backends.storage.local_connector import LocalConnectorBackend
-    from nexus.contracts.metadata import DT_MOUNT
-
-    nx.sys_setattr("/workspace", entry_type=DT_MOUNT, backend=LocalConnectorBackend(cwd))
-
-
-def _build_tool_registry(nx: Any, cwd: str) -> Any:
-    """Build ToolRegistry with all 6 built-in tools (Tier A).
-
-    All tools call async NexusFS syscalls.
-    """
-    from nexus.services.agent_runtime.tool_registry import ToolRegistry
-    from nexus.services.agent_runtime.tools import (
-        BashTool,
-        EditFileTool,
-        GlobTool,
-        GrepTool,
-        ReadFileTool,
-        WriteFileTool,
-    )
-
-    async def _edit_fn(path: str, edit_pairs: list[tuple[str, str]]) -> dict:
-        """Edit = read + patch + write (async)."""
-        content = (await nx.sys_read(path)).decode("utf-8", errors="replace")
-        for old, new in edit_pairs:
-            if old not in content:
-                return {"error": f"old_string not found in {path}"}
-            content = content.replace(old, new, 1)
-        await nx.write(path, content.encode("utf-8"))
-        return {"status": "ok", "path": path}
-
-    # SearchService for glob/grep
-    from nexus.bricks.search.search_service import SearchService
-
-    search = SearchService(metadata_store=nx.metadata)
-
-    registry = ToolRegistry()
-    registry.register(ReadFileTool(nx.sys_read))
-    registry.register(WriteFileTool(nx.write))
-    registry.register(EditFileTool(_edit_fn))
-    registry.register(BashTool(cwd=cwd))
-    registry.register(GlobTool(search))
-    registry.register(GrepTool(search))
-    return registry
-
-
-# ------------------------------------------------------------------
-# Main entrypoint
-# ------------------------------------------------------------------
 
 
 async def _run_chat(
@@ -181,34 +85,21 @@ async def _run_chat(
     resume: str | None,
     deployment_profile: str | None,
     tools: tuple[str, ...] = (),
-    acp: bool = False,
 ) -> None:
     """Bootstrap NexusFS + ManagedAgentLoop, then run REPL or one-shot."""
     from pathlib import Path
 
     import nexus
 
-    # ── ACP mode: isolate stdout for JSON-RPC ──
-    acp_output = None
-    if acp:
-        acp_output = _isolate_stdout_for_acp()
+    # ── Resolve model from env/config ──
+    model = model or os.environ.get("NEXUS_LLM_MODEL", "gpt-4o")
+    base_url = os.environ.get("NEXUS_LLM_BASE_URL")
+    api_key = os.environ.get("NEXUS_LLM_API_KEY", "")
 
-    # ── Resolve LLM config from env ──
-    # Priority: SUDOROUTER (Anthropic-native) > ANTHROPIC_API_KEY > NEXUS_LLM (OpenAI-compat)
-    model = model or os.environ.get("NEXUS_LLM_MODEL")
-    sr_base = os.environ.get("SUDOROUTER_BASE_URL")
-    sr_key = os.environ.get("SUDOROUTER_API_KEY")
-    anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
-    oai_base = os.environ.get("NEXUS_LLM_BASE_URL")
-    oai_key = os.environ.get("NEXUS_LLM_API_KEY", "")
-
-    if not any([sr_base, anthropic_key, oai_base]):
+    if not base_url:
         click.echo(
-            "Error: LLM backend required.\n"
-            "Set one of:\n"
-            "  SUDOROUTER_BASE_URL + SUDOROUTER_API_KEY  (Anthropic via SudoRouter)\n"
-            "  ANTHROPIC_API_KEY                          (Anthropic direct)\n"
-            "  NEXUS_LLM_BASE_URL + NEXUS_LLM_API_KEY    (OpenAI-compatible)\n",
+            "Error: LLM backend URL required.\n"
+            "Set NEXUS_LLM_BASE_URL environment variable or configure in ~/.nexus/config.yaml.",
             err=True,
         )
         sys.exit(1)
@@ -216,10 +107,10 @@ async def _run_chat(
     # ── Bootstrap NexusFS ──
     if with_addr:
         # Remote mode: connect to existing nexusd
-        nx = await nexus.connect(config={"profile": "remote", "url": f"http://{with_addr}"})
+        nx = nexus.connect(config={"profile": "remote", "url": f"http://{with_addr}"})
     else:
         # Embedded mode: in-process NexusFS (invocation-style, exclusive)
-        profile = deployment_profile or os.environ.get("NEXUS_PROFILE", "slim")
+        profile = deployment_profile or os.environ.get("NEXUS_PROFILE", "cluster")
         state_dir = Path(getattr(nexus, "NEXUS_STATE_DIR", Path.home() / ".nexus"))
         data_dir = os.environ.get("NEXUS_DATA_DIR", str(state_dir / "data"))
         # ACP mode: each session gets its own data dir to avoid redb lock
@@ -228,44 +119,20 @@ async def _run_chat(
             import tempfile
 
             data_dir = tempfile.mkdtemp(prefix="nexus-acp-")
-        nx = await nexus.connect(config={"profile": profile, "data_dir": data_dir})
+        nx = nexus.connect(config={"profile": profile, "data_dir": data_dir})
 
     try:
-        # ── Mount LLM backend (auto-detect driver from env) ──
-        # Pure Rust — the kernel owns HTTP, SSE decoding, CAS persistence
-        # and DT_STREAM pump. We just tell sys_setattr which backend to use.
+        # ── Mount LLM backend ──
+        from nexus.backends.compute.openai_compatible import CASOpenAIBackend
+
+        llm_backend = CASOpenAIBackend(base_url=base_url, api_key=api_key, default_model=model)
+
+        # Inject NexusFS for DT_STREAM orchestration (Rust kernel)
+        llm_backend.set_stream_manager(nx)
+
         from nexus.contracts.metadata import DT_MOUNT
 
-        base_url: str
-        api_key: str
-        if sr_base or (anthropic_key and not oai_base):
-            # Anthropic-native driver (SudoRouter or direct Anthropic API)
-            api_key = sr_key or anthropic_key or ""
-            base_url = sr_base or "https://api.anthropic.com"
-            model = model or "claude-sonnet-4-6"
-            nx.sys_setattr(
-                "/llm",
-                entry_type=DT_MOUNT,
-                backend_type="anthropic",
-                backend_name="anthropic_native",
-                anthropic_base_url=base_url,
-                anthropic_api_key=api_key,
-                anthropic_model=model,
-            )
-        else:
-            # OpenAI-compatible driver
-            model = model or "gpt-4o"
-            base_url = oai_base or ""
-            api_key = oai_key
-            nx.sys_setattr(
-                "/llm",
-                entry_type=DT_MOUNT,
-                backend_type="openai",
-                backend_name="openai_compatible",
-                openai_base_url=base_url,
-                openai_api_key=api_key,
-                openai_model=model,
-            )
+        nx.sys_setattr("/llm", entry_type=DT_MOUNT, backend=llm_backend)
 
         # ── Mount external tool directories (Tier B, §1.5) ──
         if tools:
@@ -278,19 +145,11 @@ async def _run_chat(
                 nx.sys_setattr(mount_point, entry_type=DT_MOUNT, backend=tool_backend)
                 click.echo(f"  tools: {tool_path} → {mount_point}")
 
-        # ── ACP mode: JSON-RPC over stdio for sudowork ──
-        if acp:
-            await _run_acp_mode(nx=nx, model=model, output=acp_output)
-            return
-
-        # ── Create agent loop (REPL / one-shot) ──
+        # ── Create agent loop ──
         from nexus.services.agent_runtime.compaction import DefaultCompactionStrategy
         from nexus.services.agent_runtime.managed_loop import ManagedAgentLoop
 
-        # Mount cwd via LocalConnector (REPL mode)
         cwd = os.getcwd()
-        await _mount_workspace(nx, cwd)
-
         agent_path = "/root/agents/default"
 
         # Async wrappers for sync NexusFS syscalls — agent_runtime type
@@ -306,41 +165,29 @@ async def _run_chat(
             return nx.write(path, buf)
 
         # StreamManager stream_read for DT_STREAM token delivery
-        _nx_stream_read = getattr(nx, "_stream_read", None)
+        _stream_read = getattr(nx, "_stream_read", None)
 
-        def _stream_read_adapter(path: str, offset: int) -> tuple[bytes, int]:
-            if _nx_stream_read is None:
-                raise NotImplementedError("Streaming not available in REMOTE mode")
-            data = _nx_stream_read(path, offset=offset)
-            return data, offset + len(data)
-
-        # Bridge to Rust kernel: llm_start_streaming runs the full SSE →
-        # DT_STREAM → CAS-persist pipeline in a worker thread so asyncio
-        # can keep pumping the token reader without blocking.
-        async def _llm_start_streaming(request_bytes: bytes, stream_path: str) -> None:
-            await asyncio.to_thread(
-                nx._kernel.llm_start_streaming, "/llm", "root", request_bytes, stream_path
-            )
+        def _fallback_stream_read(path: str, offset: int) -> tuple[bytes, int]:
+            raise NotImplementedError("Streaming not available in REMOTE mode")
 
         loop = ManagedAgentLoop(
-            sys_read=_async_sys_read,
-            sys_write=_async_sys_write,
-            stream_read=_stream_read_adapter,
-            llm_start_streaming=_llm_start_streaming,
+            sys_read=nx.sys_read,
+            sys_write=nx.sys_write,
+            stream_read=_stream_read or _fallback_stream_read,
+            llm_backend=llm_backend,
             agent_path=agent_path,
             llm_path="/llm",
             conv_path=f"{agent_path}/conversation",
             proc_path="/root/proc/chat-0",
             model=model,
-            tool_registry=_build_tool_registry(nx, cwd),
             compactor=DefaultCompactionStrategy(
-                sys_write=_async_sys_write,
+                sys_write=nx.sys_write,
                 agent_path=agent_path,
             ),
             cwd=cwd,
         )
 
-        await loop.initialize()
+        loop.initialize()
 
         # ── Session resume (--continue / --resume) ──
         _ = continue_session  # TODO: wire SessionManager.latest()
@@ -358,11 +205,6 @@ async def _run_chat(
         _close = getattr(nx, "close", None)
         if _close is not None:
             _close()
-
-
-# ------------------------------------------------------------------
-# ACP mode — JSON-RPC over stdio for sudowork integration
-# ------------------------------------------------------------------
 
 
 async def _run_acp_mode(

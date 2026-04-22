@@ -158,14 +158,12 @@ async def create_mcp_server(
         if remote_url:
             import nexus as _nexus
 
-            nx = await _nexus.connect(
-                config={"profile": "remote", "url": remote_url, "api_key": api_key}
-            )
+            nx = _nexus.connect(config={"profile": "remote", "url": remote_url, "api_key": api_key})
         else:
             import importlib as _il
 
             connect = _il.import_module("nexus").connect
-            nx = await connect()
+            nx = connect()
 
     # Auto-detect manifest resolver from NexusFS if not explicitly provided.
     # Uses importlib to avoid a static cross-brick import chain that
@@ -2168,7 +2166,7 @@ async def _async_main() -> None:
     # Create and run server
     nx = None
     if not remote_url:
-        nx = await connect()
+        nx = connect()
 
     mcp = await create_mcp_server(nx=nx, remote_url=remote_url, api_key=api_key)
 

@@ -257,6 +257,11 @@ class SearchDaemon:
         self._txtai_bootstrapped = False
         self.last_search_timing: dict[str, float] = {}
 
+        # Skeleton index (Issue #3725) — in-memory BM25-lite for /locate endpoint.
+        self._skeleton_docs: dict[str, dict[str, Any]] = {}
+        self._skeleton_bootstrap_task: asyncio.Task[None] | None = None
+        self._skeleton_bootstrapped: bool = False
+
         # Latency tracking (circular buffer)
         self._latencies: list[float] = []
         self._max_latency_samples = 1000
@@ -1243,56 +1248,58 @@ class SearchDaemon:
         return count
 
     async def _bootstrap_txtai_backend(self) -> None:
-        """Populate txtai from canonical SQL chunks so restarts keep semantic search."""
+        """Populate txtai from canonical SQL chunks so restarts keep semantic search.
+
+        Issue #3704: uses keyset-paginated ``session.execute()`` so the
+        read cursor is closed **before** each call to ``_backend.upsert()``.
+        On PostgreSQL this prevents the long-lived read snapshot that the
+        old ``session.stream()`` approach caused, which blocked autovacuum
+        on ``document_chunks`` / ``file_paths`` during large restarts.
+
+        Each page selects at most ``_PAGE_FILES`` complete files via a
+        subquery, guaranteeing no file is split across pages.  Within each
+        page a running-accumulator assembles chunks; a per-doc cap
+        (``_MAX_CHUNKS_PER_DOC``) prevents one pathological file from
+        spiking transient memory.
+        """
         if self._backend is None or self._async_session is None:
             self._txtai_bootstrapped = self._backend is None
             return
 
         from sqlalchemy import text as sa_text
 
+        # Distinct files fetched per DB round-trip.  Each page is a
+        # bounded ``fetchall()``; the cursor closes before any upsert.
+        _PAGE_FILES = 200
+
+        # Per-document chunk truncation cap.  Files with more chunks than
+        # this are indexed with only their first _MAX_CHUNKS_PER_DOC chunks.
+        # Prevents a single giant JSONL/log file from spiking transient
+        # allocation during the join + "\n".join() step.
+        _MAX_CHUNKS_PER_DOC = 500
+
+        # Maximum assembled docs buffered per zone before flushing to txtai.
+        _UPSERT_BATCH = 200
+
         try:
-            async with self._async_session() as session:
-                result = await session.execute(
-                    sa_text(
-                        """
-                        SELECT
-                            fp.zone_id,
-                            fp.virtual_path,
-                            c.chunk_index,
-                            c.chunk_text
-                        FROM document_chunks c
-                        JOIN file_paths fp ON c.path_id = fp.path_id
-                        WHERE fp.deleted_at IS NULL
-                        ORDER BY fp.zone_id, fp.virtual_path, c.chunk_index
-                        """
-                    )
-                )
-                rows = result.fetchall()
-
-            if not rows:
-                self._txtai_bootstrapped = True
-                return
-
-            docs_by_zone: dict[str, list[dict[str, Any]]] = {}
-            grouped_content: dict[tuple[str, str], list[str]] = {}
-            for row in rows:
-                zone = row.zone_id or "root"
-                path = row.virtual_path
-                grouped_content.setdefault((zone, path), []).append(row.chunk_text or "")
-
-            for (zone, path), parts in grouped_content.items():
-                content = "\n".join(part for part in parts if part)
-                if not path or not content.strip():
-                    continue
-                doc_id = f"{zone}:{path}" if zone != "root" else path
-                docs_by_zone.setdefault(zone, []).append(
-                    {
-                        "id": doc_id,
-                        "text": content,
-                        "path": path,
-                        "zone_id": zone,
-                    }
-                )
+            # No scope filter — index all files.
+            page_stmt = sa_text(
+                """
+                SELECT fp.zone_id, fp.virtual_path, c.chunk_index, c.chunk_text
+                FROM document_chunks c
+                JOIN file_paths fp ON c.path_id = fp.path_id
+                WHERE fp.deleted_at IS NULL
+                  AND fp.path_id IN (
+                      SELECT path_id FROM file_paths
+                      WHERE deleted_at IS NULL
+                        AND (zone_id > :kz OR (zone_id = :kz AND virtual_path > :kp))
+                      ORDER BY zone_id, virtual_path
+                      LIMIT :n_files
+                  )
+                ORDER BY fp.zone_id, fp.virtual_path, c.chunk_index
+                """
+            )
+            base_params: dict[str, Any] = {}
 
             total = 0
             kz: str = ""  # keyset zone  — '' sorts before all real zone_ids

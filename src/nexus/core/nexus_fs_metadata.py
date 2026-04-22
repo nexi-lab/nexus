@@ -750,14 +750,10 @@ class MetadataMixin:
         # Normalize context dict to OperationContext dataclass (CLI passes dicts)
         context = self._parse_context(context)
 
-        # Route both paths
+        # Route source path (Rust handles full rename including destination)
         zone_id, agent_id, is_admin = self._get_context_identity(context)
         old_route = self.router.route(
             old_path,
-            zone_id=self._zone_id,
-        )
-        new_route = self.router.route(
-            new_path,
             zone_id=self._zone_id,
         )
 

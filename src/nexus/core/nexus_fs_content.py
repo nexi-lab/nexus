@@ -878,6 +878,7 @@ class ContentMixin:
             Dict with metadata (etag, version, modified_at, size).
         """
         del consistency  # threaded via context.metadata_consistency; kernel owns it now.
+        del offset  # Rust sys_write handles offset natively.
 
         if isinstance(buf, str):
             buf = buf.encode("utf-8")

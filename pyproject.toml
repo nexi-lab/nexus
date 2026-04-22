@@ -1,7 +1,7 @@
 # Nexus AI Filesystem
 [project]
 name = "nexus-ai-fs"
-version = "0.10.0"
+version = "0.9.34"
 description = "Nexus = filesystem/context plane."
 readme = "README.md"
 requires-python = ">=3.14"
@@ -677,7 +677,7 @@ module = [
 disable_error_code = ["import-untyped"]
 
 [[tool.mypy.overrides]]
-module = ["nexus.bricks.mcp.server", "nexus.bricks.mcp.mount", "nexus.bricks.mcp.auth_cache"]
+module = ["nexus.bricks.mcp.server", "nexus.bricks.mcp.mount"]
 # cachetools/yaml stubs may or may not be installed; suppress both directions
 disable_error_code = ["import-untyped", "no-any-return", "redundant-cast"]
 
@@ -800,6 +800,7 @@ warn_unused_ignores = false
 # --- Backend / driver return-type mismatches ---
 [[tool.mypy.overrides]]
 module = [
+    "nexus.cache.backend_wrapper",
     "nexus.ipc.driver",
 ]
 disable_error_code = ["return-value", "override"]
@@ -887,6 +888,7 @@ ignore = [
 "src/nexus/backends/*.py" = ["ARG002"]  # Keep unused context params for API compatibility
 "src/nexus/cache/postgres.py" = ["ARG002"]  # No-op stub implements PermissionCacheProtocol interface
 "src/nexus/bricks/rebac/manager.py" = ["ARG002"]  # No-op cache stubs keep interface for callers
+"src/nexus/bricks/ipc/driver.py" = ["ARG002"]  # Backend ABC override — params required by interface
 "src/nexus/ipc/driver.py" = ["ARG002"]  # Backend ABC override — context params required by interface
 "src/nexus/core/nexus_fs.py" = ["ARG002"]  # Constructor accepts cache params for public API
 "src/nexus/raft/__init__.py" = ["E402"]  # Conditional imports require try/except after TYPE_CHECKING
@@ -926,6 +928,7 @@ modules = [
     "nexus.bricks.discovery",
     "nexus.bricks.governance",
     "nexus.bricks.identity",
+    "nexus.bricks.ipc",
     "nexus.bricks.mcp",
     "nexus.bricks.mount",
     "nexus.bricks.parsers",
@@ -1017,35 +1020,6 @@ ignore_imports = [
     # (removed: nexus.services.sync.sync_service -> glob_fast; now uses importlib)
 ]
 unmatched_ignore_imports_alerting = "warn"
-
-# Contract 3: dead Python federation modules — never reintroduce.
-# These were superseded by the Rust cluster binary (rust/profiles/cluster/) +
-# the federation_* RPCs in nexus.server.rpc.services.federation_rpc,
-# which delegate to the kernel's PyO3 ZoneManager. Re-importing the
-# old modules would silently revert the federation rewrite.
-[[tool.importlinter.contracts]]
-id = "no-deleted-federation"
-name = "Deleted federation modules must not be reintroduced"
-type = "forbidden"
-source_modules = ["nexus"]
-forbidden_modules = [
-    "nexus.raft.federation",
-    "nexus.raft.zone_manager",
-]
-
-# Contract 4: SlimNexusFS facade — deleted in para-pc-7. Callers should
-# hold a NexusFS kernel directly and use nexus.fs._helpers (LOCAL_CONTEXT,
-# list_mounts, unmount, close, grep, glob) for the few operations that
-# kept Python-side orchestration. Re-introducing the wrapper would re-add
-# a dead layer and confuse future contributors.
-[[tool.importlinter.contracts]]
-id = "no-deleted-fs-facade"
-name = "Deleted nexus.fs._facade must not be reintroduced"
-type = "forbidden"
-source_modules = ["nexus"]
-forbidden_modules = [
-    "nexus.fs._facade",
-]
 
 [dependency-groups]
 dev = [

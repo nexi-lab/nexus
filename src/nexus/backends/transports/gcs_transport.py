@@ -33,11 +33,7 @@ try:
 except ImportError:  # pragma: no cover - exercised in slim/cloud-extra installs
     _gcs_retry = None
     _gcs_storage = None
-
-    class _MissingGcsNotFoundError(Exception):
-        """Sentinel exception used when google-cloud is not installed."""
-
-    _GcsNotFoundError = _MissingGcsNotFoundError
+    _GcsNotFoundError = Exception
 else:
     _gcs_retry = _gcs_retry_mod
     _gcs_storage = _gcs_storage_mod
@@ -115,13 +111,6 @@ class GCSTransport:
         self.bucket.reload()
         return self.bucket.versioning_enabled or False
 
-    def _retry_kwargs(self, deadline: int) -> dict[str, Any]:
-        """Build retry kwargs when retry support is available."""
-        retry_mod = getattr(self, "_retry", None) or retry
-        if retry_mod is None:
-            return {}
-        return {"retry": retry_mod.Retry(deadline=deadline)}
-
     # === Transport Protocol Methods ===
 
     def store(self, key: str, data: bytes, content_type: str = "") -> str | None:
@@ -131,7 +120,7 @@ class GCSTransport:
                 data,
                 content_type=content_type or None,
                 timeout=self._operation_timeout,
-                **self._retry_kwargs(deadline=120),
+                retry=self._retry.Retry(deadline=120),
             )
 
             # Return generation number if versioning, else None
@@ -157,7 +146,7 @@ class GCSTransport:
 
             content = blob.download_as_bytes(
                 timeout=self._operation_timeout,
-                **self._retry_kwargs(deadline=120),
+                retry=self._retry.Retry(deadline=120),
             )
 
             blob.reload()
@@ -185,7 +174,7 @@ class GCSTransport:
 
             blob.delete(
                 timeout=self._operation_timeout,
-                **self._retry_kwargs(deadline=120),
+                retry=self._retry.Retry(deadline=120),
             )
 
         except GcsNotFoundError as e:
@@ -317,7 +306,7 @@ class GCSTransport:
             blob.download_to_file(
                 buffer,
                 timeout=self._operation_timeout,
-                **self._retry_kwargs(deadline=120),
+                retry=self._retry.Retry(deadline=120),
             )
             buffer.seek(0)
 
@@ -356,7 +345,7 @@ class GCSTransport:
                 "wb",
                 content_type=content_type or "application/octet-stream",
                 timeout=self._upload_timeout,
-                **self._retry_kwargs(deadline=300),
+                retry=self._retry.Retry(deadline=300),
             ) as writer:
                 for chunk in chunks:
                     writer.write(chunk)
@@ -393,7 +382,7 @@ class GCSTransport:
                 start=offset,
                 end=offset + size - 1,
                 timeout=self._operation_timeout,
-                **self._retry_kwargs(deadline=120),
+                retry=self._retry.Retry(deadline=120),
             )
             return bytes(data)
 

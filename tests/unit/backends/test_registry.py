@@ -793,8 +793,8 @@ class TestPlaceholderRegistration:
 
         entry = ConnectorManifestEntry(
             name="bind_test",
-            module_path="nowhere.real",
-            class_name="DummyBackend",
+            module_path=__name__,
+            class_name="T",
             description="Bind test",
             category="storage",
             runtime_deps=(PythonDep("json"),),
@@ -825,8 +825,8 @@ class TestPlaceholderRegistration:
 
         entry = ConnectorManifestEntry(
             name="warn_test",
-            module_path="nowhere.real",
-            class_name="DummyBackend",
+            module_path=__name__,
+            class_name="T",
             description="Manifest description",
             category="storage",
         )
@@ -902,8 +902,8 @@ class TestPlaceholderRegistration:
 
         entry = ConnectorManifestEntry(
             name="no_warn_test",
-            module_path="nowhere.real",
-            class_name="DummyBackend",
+            module_path=__name__,
+            class_name="T",
             description="Manifest description",
             category="storage",
             runtime_deps=(PythonDep("json"),),
@@ -1001,3 +1001,34 @@ class TestPlaceholderRegistration:
         )
         with pytest.raises(ValueError, match="already bound to"):
             ConnectorRegistry.register_placeholder(entry)
+
+    def test_register_rejects_foreign_class_binding_to_placeholder(self) -> None:
+        """Binding a foreign class into an existing manifest placeholder must fail.
+
+        The placeholder carries expected ``module_path`` / ``class_name``;
+        any decorator call that tries to bind a class whose ``__module__``
+        / ``__name__`` does not match must be rejected. Without this,
+        entry-point plugins or accidental collisions could replace a
+        built-in connector implementation while keeping the manifest's
+        metadata and runtime_deps.
+        """
+        from nexus.backends._manifest import ConnectorManifestEntry
+        from nexus.backends.base.registry import (
+            ConnectorRegistry,
+            register_connector,
+        )
+
+        entry = ConnectorManifestEntry(
+            name="provenance_gate",
+            module_path="nexus.backends.storage.path_s3",
+            class_name="PathS3Backend",
+            description="Manifest entry",
+            category="storage",
+        )
+        ConnectorRegistry.register_placeholder(entry)
+
+        with pytest.raises(ValueError, match="reserved by the manifest"):
+
+            @register_connector("provenance_gate")
+            class Impostor(DummyBackend):
+                pass

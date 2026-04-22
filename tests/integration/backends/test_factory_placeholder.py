@@ -74,3 +74,92 @@ class TestFactoryPlaceholder:
         msg = str(exc_info.value)
         assert "ph_deps_ok_import_bad" in msg
         assert "failed to import" in msg
+        # Failure message must tell users how to recover (restart hint).
+        assert "restart" in msg.lower()
+
+    def test_unbound_placeholder_rebinds_on_targeted_import(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """After deps are installed, the factory must retry the manifest
+        import so the user does not need to restart the process.
+
+        Simulate the flow with a fake module whose ``importlib.import_module``
+        side-effect registers the real class. The first ``create()`` call
+        should trigger the rebind and succeed.
+        """
+        import importlib
+        import sys
+        import types
+
+        from nexus.backends.base.registry import (
+            ConnectorInfo,
+            register_connector,
+        )
+
+        fake_module_name = "nexus_test_rebind_fake_module"
+
+        class RebindBackend:
+            """Minimal ConnectorProtocol-compliant stub (not subclassing
+            Backend to avoid abstract-method requirements)."""
+
+            CONNECTION_ARGS: dict = {}
+            name = "rebind_stub"
+            write_content = read_content = delete_content = content_exists = None
+            get_content_size = mkdir = rmdir = is_directory = None
+            user_scoped = False
+            is_connected = True
+            has_root_path = False
+            has_token_manager = False
+            backend_features: frozenset = frozenset()
+
+            def __init__(self, **_: object) -> None:
+                pass
+
+            def check_connection(self) -> None:
+                return None
+
+            def has_feature(self, _: object) -> bool:
+                return False
+
+        RebindBackend.__module__ = fake_module_name
+        RebindBackend.__name__ = "RebindBackend"
+
+        fake_module = types.ModuleType(fake_module_name)
+
+        def _install_fake() -> None:
+            if fake_module_name in sys.modules:
+                return
+            # Run the decorator on import, mirroring the real pattern.
+            register_connector("ph_rebind_fixture")(RebindBackend)
+            sys.modules[fake_module_name] = fake_module
+
+        original_import_module = importlib.import_module
+
+        def _patched_import(name: str, *args, **kwargs):
+            if name == fake_module_name:
+                _install_fake()
+                return sys.modules[name]
+            return original_import_module(name, *args, **kwargs)
+
+        monkeypatch.setattr(importlib, "import_module", _patched_import)
+
+        # Pre-register an unbound placeholder that points at our fake
+        # module; normally _register_optional_backends handles this, but
+        # here we simulate the "import failed first time, dep is now
+        # installed" state directly.
+        placeholder = ConnectorInfo(
+            name="ph_rebind_fixture",
+            connector_class=None,
+            description="rebind test",
+            category="storage",
+            runtime_deps=(PythonDep("json"),),
+            expected_module_path=fake_module_name,
+            expected_class_name="RebindBackend",
+        )
+        ConnectorRegistry._base.register("ph_rebind_fixture", placeholder, allow_overwrite=True)
+
+        try:
+            instance = BackendFactory.create("ph_rebind_fixture", {})
+            assert isinstance(instance, RebindBackend)
+        finally:
+            sys.modules.pop(fake_module_name, None)

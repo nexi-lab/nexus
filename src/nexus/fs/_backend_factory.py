@@ -203,11 +203,29 @@ def _create_connector_backend(spec: Any) -> Any:
         raise MissingDependencyError(backend=selected_name or scheme, missing=missing)
 
     if info.connector_class is None:
-        raise RuntimeError(
-            f"Connector '{selected_name or scheme}' is declared in the "
-            f"manifest but its module failed to import. Check logs for "
-            f"the original ImportError."
-        )
+        # Attempt a targeted rebind: the placeholder survives when the
+        # first registration pass couldn't import the module, but the
+        # user may have installed the missing dep since then. Retry
+        # the manifest import so the decorator rebinds the class.
+        expected_path = info.expected_module_path
+        if expected_path:
+            import contextlib
+
+            # Fall through to the restart hint when the dep is truly
+            # absent; check_runtime_deps above already ruled out the
+            # common case.
+            with contextlib.suppress(ImportError):
+                importlib.import_module(expected_path)
+            info = ConnectorRegistry.get_info(selected_name or scheme)
+
+        if info.connector_class is None:
+            raise RuntimeError(
+                f"Connector '{selected_name or scheme}' is declared in the "
+                f"manifest but its module failed to import. Check logs for "
+                f"the original ImportError; if the dependency was just "
+                f"installed, restarting the process will clear any cached "
+                f"import state."
+            )
 
     return _instantiate_connector_backend(info.connector_class, info=info, scheme=scheme)
 

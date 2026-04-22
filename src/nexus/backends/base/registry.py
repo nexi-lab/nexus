@@ -248,6 +248,19 @@ class ConnectorInfo:
     backend_features: frozenset[BackendFeature] = field(default_factory=frozenset)
     """Capabilities declared by this connector (Issue #2069)."""
 
+    expected_module_path: str | None = None
+    """Manifest-declared ``module_path`` (set for built-in placeholders).
+
+    When present, ``register()`` enforces that any class bound to this
+    name has ``__module__ == expected_module_path``. This blocks silent
+    name takeover by an entry-point plugin or an accidental collision
+    that would otherwise bind a foreign class behind a trusted
+    built-in name.
+    """
+
+    expected_class_name: str | None = None
+    """Manifest-declared ``class_name`` (set alongside ``expected_module_path``)."""
+
     @property
     def connection_args(self) -> dict[str, ConnectionArg]:
         """Get CONNECTION_ARGS from the connector class if defined.
@@ -392,6 +405,8 @@ class ConnectorRegistry:
                 service_name=entry.service_name,
                 backend_features=existing.backend_features,
                 runtime_deps=entry.runtime_deps,
+                expected_module_path=entry.module_path,
+                expected_class_name=entry.class_name,
             )
             cls._base.register(entry.name, merged, allow_overwrite=True)
             return
@@ -403,6 +418,8 @@ class ConnectorRegistry:
             category=entry.category,
             runtime_deps=entry.runtime_deps,
             service_name=entry.service_name,
+            expected_module_path=entry.module_path,
+            expected_class_name=entry.class_name,
         )
         cls._base.register(entry.name, info, allow_overwrite=True)
 
@@ -461,6 +478,28 @@ class ConnectorRegistry:
                 # built-in connectors. If the caller passed any such
                 # kwargs, emit a UserWarning pointing them at the
                 # manifest.
+
+                # Provenance check: reject any class whose __module__ /
+                # __name__ does not match the manifest declaration.
+                # Without this, an entry-point plugin or accidental
+                # name collision could bind a foreign class behind a
+                # trusted built-in name (e.g. "path_gcs" pointing at
+                # a non-GCS implementation).
+                if existing.expected_module_path is not None:
+                    bound_module = getattr(connector_class, "__module__", None)
+                    bound_name = getattr(connector_class, "__name__", None)
+                    if (
+                        bound_module != existing.expected_module_path
+                        or bound_name != existing.expected_class_name
+                    ):
+                        raise ValueError(
+                            f"Connector name {name!r} is reserved by the "
+                            f"manifest for "
+                            f"{existing.expected_module_path}."
+                            f"{existing.expected_class_name}; refusing to "
+                            f"bind {bound_module}.{bound_name}. Register "
+                            f"external plugins under a different name."
+                        )
                 decorator_provided_metadata = (
                     (description is not None and description != existing.description)
                     or (category is not None and category != existing.category)
@@ -492,6 +531,8 @@ class ConnectorRegistry:
                     service_name=existing.service_name,
                     backend_features=getattr(connector_class, "_BACKEND_FEATURES", frozenset()),
                     runtime_deps=existing.runtime_deps,
+                    expected_module_path=existing.expected_module_path,
+                    expected_class_name=existing.expected_class_name,
                 )
                 cls._base.register(name, bound, allow_overwrite=True)
                 return

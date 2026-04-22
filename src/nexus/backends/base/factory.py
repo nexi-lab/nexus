@@ -83,16 +83,34 @@ class BackendFactory:
             raise MissingDependencyError(backend=backend_type, missing=missing)
 
         if info.connector_class is None:
-            # Deps are satisfied (or manifest declared none) but the
-            # placeholder was never bound — the connector's module
-            # failed to import for a reason other than a missing Python
-            # dep (syntax error, circular import, etc.). Surface a
-            # clear error — check logs for the original ImportError.
-            raise RuntimeError(
-                f"Connector '{backend_type}' is declared in the "
-                f"manifest but its module failed to import. Check "
-                f"logs for the original ImportError."
-            )
+            # Placeholder still unbound even though deps are now
+            # satisfied. ``_register_optional_backends()`` is one-shot
+            # per process — if the user just installed the missing
+            # package, the placeholder will stay unbound until
+            # restart. Attempt a targeted re-import of the manifest
+            # module so the decorator runs and binds the class; then
+            # re-read info. This lets "install dep → retry mount"
+            # succeed in the same process.
+            expected_path = info.expected_module_path
+            if expected_path:
+                import contextlib
+                import importlib
+
+                # Dep still absent despite check_runtime_deps passing
+                # is very rare (race between check and import);
+                # swallow it and fall through to the restart hint below.
+                with contextlib.suppress(ImportError):
+                    importlib.import_module(expected_path)
+                info = ConnectorRegistry.get_info(backend_type)
+
+            if info.connector_class is None:
+                raise RuntimeError(
+                    f"Connector '{backend_type}' is declared in the "
+                    f"manifest but its module failed to import. Check "
+                    f"logs for the original ImportError; if the "
+                    f"dependency was just installed, restarting the "
+                    f"process will clear any cached import state."
+                )
 
         connector_cls = info.connector_class
         mapping = info.config_mapping

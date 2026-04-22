@@ -596,7 +596,7 @@ class MountService:
             mount_point,
             entry_type=DT_MOUNT,
             backend=backend,
-            is_external=(_entry_type == DT_EXTERNAL_STORAGE),
+            is_external=False,  # DT_EXTERNAL_STORAGE eliminated — all mounts are DT_MOUNT
         )
         try:
             self._setup_mount_point(

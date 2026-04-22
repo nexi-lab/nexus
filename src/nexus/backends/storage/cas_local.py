@@ -136,8 +136,8 @@ class CASLocalBackend(CASAddressingEngine, MultipartUpload):
         else:
             transport = LocalTransport(root_path=self.root_path, fsync=True)
 
-        # Seed Bloom filter from transport (works for both volume and file storage)
-        bloom = _init_bloom_from_transport(transport, bloom_capacity, bloom_fp_rate)
+        # Bloom filter removed in R10f — Rust stat() is fast enough (5-17us)
+        # that the seeding cost doesn't pay back. Tracked under #3799.
 
         # Feature DI: LRU metadata cache for hot-path _read_meta()
         import cachetools

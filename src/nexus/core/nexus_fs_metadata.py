@@ -109,8 +109,7 @@ class MetadataMixin:
     ) -> bool:
         """Internal: check if path is a directory (explicit or implicit).
 
-        §11 Phase 6: converted from async def → def. Body was already
-        fully synchronous (no awaits). Used by sys_stat.
+        Synchronous check used by sys_stat.
 
         Args:
             _meta: Pre-fetched FileMetadata from caller (avoids duplicate
@@ -146,13 +145,8 @@ class MetadataMixin:
             if meta is not None and (meta.is_dir or meta.is_mount or meta.is_external_storage):
                 return True
 
-            # Route with access control (read permission needed to check)
-            route = self.router.route(
-                path,
-                zone_id=self._zone_id,
-            )
-            if route.backend.is_directory(route.backend_path):
-                return True
+            # Metadata check + implicit dir detection covers all cases.
+            # Rust sys_stat handles backend-level directory detection.
             return is_implicit_dir
         except (InvalidPathError, NexusFileNotFoundError):
             return False
@@ -633,9 +627,7 @@ class MetadataMixin:
 
         # ── Directory branch: rmdir logic ────────────────────────────
         if meta.is_dir or meta.is_mount or meta.is_external_storage:
-            return self._unlink_directory(
-                path, meta=meta, route=route, recursive=recursive, context=context
-            )
+            return self._unlink_directory(path, meta=meta, recursive=recursive, context=context)
 
         # ── File branch: regular unlink ──────────────────────────────
 
@@ -666,7 +658,6 @@ class MetadataMixin:
         path: str,
         *,
         meta: "FileMetadata",
-        route: Any,
         recursive: bool,
         context: OperationContext | None,
     ) -> dict[str, Any]:
@@ -681,7 +672,6 @@ class MetadataMixin:
         if meta.is_mount:
             removed = self._driver_coordinator.unmount(path)
             if removed:
-                route.metastore.delete(path)
                 logger.info("sys_unlink: unmounted %s", path)
             return {}
 
@@ -1065,8 +1055,9 @@ class MetadataMixin:
 
         # Get size from backend if not in metadata
         size = meta.size
-        if size is None and meta.etag:
-            # Try to get size from backend
+        if size is None and meta.etag and meta.is_external_storage:
+            # Only external connectors need a backend call — CAS backends
+            # always have size set in metastore by sys_write.
             self._get_context_identity(context)
             route = self.router.route(
                 path,

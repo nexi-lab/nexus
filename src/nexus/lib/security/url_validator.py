@@ -23,9 +23,25 @@ import logging
 import socket
 from collections.abc import Sequence
 from typing import NamedTuple
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit
 
 logger = logging.getLogger(__name__)
+
+
+def _redact_url_for_log(url: str) -> str:
+    """Return ``scheme://host[:port]/path`` with query/fragment/userinfo
+    stripped. Attacker-supplied URLs often carry tokens in the query
+    string; SSRF warning logs should not mirror them verbatim.
+    """
+    try:
+        parsed = urlsplit(url)
+    except ValueError:
+        return "<unparseable-url>"
+    if not parsed.scheme or not parsed.netloc:
+        return "<non-http-url>"
+    host = parsed.hostname or ""
+    port = f":{parsed.port}" if parsed.port else ""
+    return f"{parsed.scheme}://{host}{port}{parsed.path}"
 
 
 class SSRFBlocked(ValueError):
@@ -48,7 +64,11 @@ class SSRFBlocked(ValueError):
         self.reason = reason
         self.ip = ip
         self.cidr = cidr
-        super().__init__(f"SSRF blocked: {reason} (url={url}, ip={ip})")
+        # Message uses redacted URL so str(exc) in log formatters does not
+        # surface attacker-supplied query/fragment/userinfo material.
+        # Full ``.url`` is still available on the exception for structured
+        # audit sinks that know the payload is sensitive.
+        super().__init__(f"SSRF blocked: {reason} (url={_redact_url_for_log(url)}, ip={ip})")
 
 
 class ValidatedURL(NamedTuple):
@@ -131,14 +151,19 @@ def _check_ip(
     metadata, loopback, and link-local remain blocked.
     """
     if ip in CLOUD_METADATA_IPS:
-        logger.warning("SSRF blocked: %r resolved to metadata IP %s", url, ip)
+        logger.warning("SSRF blocked: %s resolved to metadata IP %s", _redact_url_for_log(url), ip)
         raise SSRFBlocked(url, reason="cloud_metadata", ip=str(ip))
 
     for network in BLOCKED_NETWORKS:
         if ip in network:
             if allow_private and _is_private_range(network):
                 continue
-            logger.warning("SSRF blocked: URL %r resolved to %s (in %s)", url, ip, network)
+            logger.warning(
+                "SSRF blocked: URL %s resolved to %s (in %s)",
+                _redact_url_for_log(url),
+                ip,
+                network,
+            )
             raise SSRFBlocked(
                 url,
                 reason="blocked_network",
@@ -158,8 +183,8 @@ def _check_extra_deny(
             continue
         if ip in network:
             logger.warning(
-                "SSRF blocked: URL %r resolved to %s (in extra_deny %s)",
-                url,
+                "SSRF blocked: URL %s resolved to %s (in extra_deny %s)",
+                _redact_url_for_log(url),
                 ip,
                 network,
             )

@@ -104,11 +104,17 @@ class _PinnedBackend(httpcore.AsyncNetworkBackend):
         # the original hostname.
         last_exc: BaseException | None = None
         total = len(self._pinned_ips)
-        deadline = time.monotonic() + self._total_budget_secs
-        # Distribute the wall-clock budget across remaining attempts so a
-        # single slow/blackholed IP cannot consume the full budget and
-        # leave later validated IPs untried. Each attempt still honors
-        # the caller-supplied connect timeout if it is tighter.
+        # Overall retry budget = min(configured wall-clock, caller connect
+        # timeout). Without the caller bound, a connect_timeout of 1s
+        # could still balloon to N*1s across N IPs; with it, total
+        # elapsed retry time stays within the caller's connect timeout.
+        overall_budget = self._total_budget_secs
+        if timeout is not None:
+            overall_budget = min(overall_budget, timeout)
+        deadline = time.monotonic() + overall_budget
+        # Distribute remaining wall-clock budget across remaining attempts
+        # so a single slow/blackholed IP cannot consume the full budget
+        # and leave later validated IPs untried.
         for attempt_idx in range(total):
             remaining_ips = total - attempt_idx
             remaining_budget = deadline - time.monotonic()

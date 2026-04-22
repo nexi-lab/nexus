@@ -1657,6 +1657,9 @@ impl PyKernel {
         let stream_manager = Arc::clone(&self.inner.stream_manager);
         let stream_path_owned = stream_path.to_string();
         py.detach(move || {
+            // Create the DT_STREAM buffer before run_streaming writes to it.
+            // 64 KiB matches the default capacity used in unit tests.
+            let _ = stream_manager.create(&stream_path_owned, 64 * 1024);
             llm.run_streaming(&request_bytes, &stream_path_owned, &stream_manager)
                 .map_err(|e| {
                     pyo3::exceptions::PyRuntimeError::new_err(format!("llm_start_streaming: {}", e))

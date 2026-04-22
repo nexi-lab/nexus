@@ -102,34 +102,29 @@ class SlackTransport:
                 backend="slack",
             ) from None
 
-        # Resolve user email
-        if self._user_email:
-            user_email = self._user_email
-        elif self._context and self._context.user_id:
-            user_email = self._context.user_id
-        else:
-            raise BackendError(
-                "Slack transport requires either configured user_email "
-                "or authenticated user in OperationContext",
-                backend="slack",
-            )
+        from nexus.backends.connectors.oauth_base import resolve_oauth_access_token
+        from nexus.contracts.exceptions import AuthenticationError
 
-        # Get valid access token from TokenManager
-        from nexus.lib.sync_bridge import run_sync
-
+        user_email: str | None = self._user_email
+        nexus_user_id: str | None = (
+            self._context.user_id if self._context and self._context.user_id else None
+        )
+        zone_id = (
+            self._context.zone_id
+            if self._context and hasattr(self._context, "zone_id") and self._context.zone_id
+            else "root"
+        )
         try:
-            zone_id = (
-                self._context.zone_id
-                if self._context and hasattr(self._context, "zone_id") and self._context.zone_id
-                else "root"
+            access_token = resolve_oauth_access_token(
+                self._token_manager,
+                connector_name="slack_connector",
+                provider=self._provider,
+                user_email=user_email,
+                zone_id=zone_id,
+                nexus_user_id=nexus_user_id,
             )
-            access_token = run_sync(
-                self._token_manager.get_valid_token(
-                    provider=self._provider,
-                    user_email=user_email,
-                    zone_id=zone_id,
-                )
-            )
+        except AuthenticationError:
+            raise
         except Exception as e:
             raise BackendError(
                 f"Failed to get valid OAuth token for user {user_email}: {e}",
@@ -186,7 +181,7 @@ class SlackTransport:
     @staticmethod
     def _format_messages_as_yaml(messages: list[dict[str, Any]]) -> bytes:
         """Format messages as YAML bytes."""
-        yaml_output = yaml.dump(
+        yaml_output: str = yaml.dump(
             messages,
             default_flow_style=False,
             allow_unicode=True,

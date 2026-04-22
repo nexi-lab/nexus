@@ -22,6 +22,8 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import (
+    AccessDeniedError,
+    AuthenticationError,
     BackendError,
     InvalidPathError,
     NexusFileNotFoundError,
@@ -1816,6 +1818,25 @@ class MetadataMixin:
                             f"{path.rstrip('/')}/{e}" if not e.startswith("/") else e
                             for e in external_entries
                         ]
+            except AuthenticationError:
+                # Issue #3822: auth-required must surface so UIs can drive the
+                # OAuth flow.  Silently falling through to the metastore path
+                # returns [] (empty drive) and masks the missing token.
+                raise
+            except AccessDeniedError:
+                # 403 must surface too — the metastore fallback would
+                # hide a permission rejection behind an "empty" listing
+                # and confuse both users and UIs that drive remediation
+                # (share this doc with me / re-grant scope).
+                raise
+            except (BackendError, NexusFileNotFoundError, FileNotFoundError):
+                # Real backend failures (throttling, outage, corruption)
+                # and explicit "this directory does not exist" signals
+                # must NOT be collapsed into "[] (empty directory)" by
+                # falling through to the metastore path.  Connector
+                # mounts have no per-file metadata, so the metastore
+                # fallback returns empty and hides the incident.
+                raise
             except Exception as exc:
                 logger.debug("sys_readdir connector route failed for %s: %s", path, exc)
 

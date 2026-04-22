@@ -19,6 +19,7 @@ import time
 from collections.abc import Callable, Iterator
 from dataclasses import replace as _dc_replace
 from datetime import UTC, datetime
+from types import SimpleNamespace as _SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
@@ -106,8 +107,44 @@ class ContentMixin:
         # For external connector mounts, Rust flags is_external=True so Python
         # dispatches the read through the connector backend.
         # DT_PIPE / DT_STREAM: entry_type signals IPC dispatch below.
-        _rust_ctx = self._build_rust_ctx(context, _is_admin)
-        result = self._kernel.sys_read(path, _rust_ctx)
+        #
+        # External-mount read must never depend on a per-file metastore
+        # entry.  Two realities break that assumption:
+        #   • Slim ``nexus-fs`` ships without ``nexus_kernel`` (``self._kernel
+        #     is None``) — the Rust call site is skipped entirely and the
+        #     Rust context never built.
+        #   • With Rust present, ``kernel.sys_read`` raises
+        #     ``NexusFileNotFoundError`` when the dcache misses and the
+        #     mount has no per-file metastore entry.  The ``is_external``
+        #     short-circuit only fires when the Rust router carries the
+        #     flag; an older kernel wheel that drops it trips this case.
+        # In both cases, if the Python router resolves to an external
+        # mount we delegate directly to the backend — virtual connector
+        # reads are content-only and don't need a metastore entry.
+        if self._kernel is None:
+            result = None
+        else:
+            _rust_ctx = self._build_rust_ctx(context, _is_admin)
+            try:
+                result = self._kernel.sys_read(path, _rust_ctx)
+            except NexusFileNotFoundError:
+                result = None
+        if result is None:
+            from nexus.core.router import ExternalRouteResult as _ExtRoute
+
+            _fallback = self.router.route(path, zone_id=self._zone_id)
+            if not isinstance(_fallback, _ExtRoute) or getattr(_fallback, "backend", None) is None:
+                # Non-external (or unresolved) — honour the original 404.
+                raise NexusFileNotFoundError(path)
+            # Synthesize a kernel result that trips the is_external branch.
+            result = _SimpleNamespace(
+                is_external=True,
+                entry_type=0,
+                hit=False,
+                data=None,
+                post_hook_needed=False,
+                content_hash=None,
+            )
 
         # External mount — Rust detected is_external, delegate to Python connector
         if getattr(result, "is_external", False):

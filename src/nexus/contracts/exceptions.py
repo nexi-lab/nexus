@@ -31,6 +31,7 @@ Usage:
             logger.error(f"System error: {e}", exc_info=True)
 """
 
+from collections.abc import Mapping
 from typing import Any
 
 
@@ -540,10 +541,19 @@ class AuthenticationError(NexusError):
         provider: str | None = None,
         user_email: str | None = None,
         auth_url: str | None = None,
+        recovery_hint: Mapping[str, str | list[str]] | None = None,
     ):
         self.provider = provider
         self.user_email = user_email
         self.auth_url = auth_url
+        # ``recovery_hint`` lets raisers ship a machine-actionable re-auth
+        # target — e.g., ``{"endpoint": "/v2/connectors/auth/init",
+        # "method": "POST", "connector": "gdrive", "provider":
+        # "google-drive"}`` — so clients can drive the next step without
+        # guessing.  ``auth_url`` remains for callers that want a ready
+        # clickable URL; a raiser is free to set one or the other (or
+        # both).
+        self.recovery_hint = recovery_hint
         super().__init__(message, path)
 
 

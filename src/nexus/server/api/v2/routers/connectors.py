@@ -319,12 +319,24 @@ async def init_connector_auth(
     try:
         configs_dir = getattr(nx, "configs_dir", None)
         oauth_path = None
-        for search_path in [
+        # Search order: explicit env var → nx.configs_dir → source-tree
+        # six-hop path → standard docker install path.  The six-hop
+        # fallback only works when the package runs from the source tree;
+        # when installed under site-packages (docker image) it resolves
+        # to a directory that does not exist, so we also check the image
+        # mount at /app/configs.
+        search_paths: list[str | None] = [
+            os.environ.get("NEXUS_OAUTH_CONFIG"),
+            os.environ.get("NEXUS_CONFIGS_DIR")
+            and os.path.join(os.environ["NEXUS_CONFIGS_DIR"], "oauth.yaml"),
             configs_dir and os.path.join(configs_dir, "oauth.yaml"),
             os.path.abspath(
                 os.path.join(os.path.dirname(__file__), "../../../../../../configs/oauth.yaml")
             ),
-        ]:
+            "/app/configs/oauth.yaml",
+            "/etc/nexus/oauth.yaml",
+        ]
+        for search_path in search_paths:
             if search_path and os.path.exists(search_path):
                 oauth_path = search_path
                 break
@@ -350,8 +362,19 @@ async def init_connector_auth(
             lookup = provider_aliases.get(
                 provider, provider_aliases.get(req.connector_name, provider)
             )
-            providers = all_config.get("providers", {})
-            oauth_config = providers.get(lookup, providers.get(provider, {}))
+            providers_raw = all_config.get("providers", [])
+            # oauth.yaml declares `providers:` as a list of {name: ..., ...}
+            # dicts (see configs/oauth.yaml).  Earlier code treated it as a
+            # dict keyed by provider name — which silently failed into a 400
+            # because `list.get(...)` raises AttributeError and the outer
+            # except swallows it.  Accept either shape.
+            if isinstance(providers_raw, list):
+                providers_by_name = {p.get("name"): p for p in providers_raw if isinstance(p, dict)}
+            elif isinstance(providers_raw, dict):
+                providers_by_name = providers_raw
+            else:
+                providers_by_name = {}
+            oauth_config = providers_by_name.get(lookup, providers_by_name.get(provider, {}))
     except Exception:
         logger.debug("Failed to load oauth.yaml", exc_info=True)
 

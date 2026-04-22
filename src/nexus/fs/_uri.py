@@ -5,10 +5,11 @@ Parses URIs of the form ``<scheme>://<authority>/<path>`` into a
 
 Supported schemes
 -----------------
-- ``s3://``     — Amazon S3
-- ``gcs://``    — Google Cloud Storage
-- ``local://``  — Local filesystem
-- ``gdrive://`` — Google Drive
+- ``s3://``        — Amazon S3
+- ``gcs://``       — Google Cloud Storage
+- ``local://``     — Local filesystem, passthrough (files visible on disk)
+- ``cas-local://`` — Local filesystem, content-addressed (dedup, opt-in)
+- ``gdrive://``    — Google Drive
 
 Examples
 --------
@@ -32,7 +33,7 @@ from nexus.contracts.exceptions import InvalidPathError
 # ---------------------------------------------------------------------------
 
 # Built-in storage schemes with dedicated backend implementations.
-BUILTIN_SCHEMES: frozenset[str] = frozenset({"s3", "gcs", "local", "gdrive"})
+BUILTIN_SCHEMES: frozenset[str] = frozenset({"s3", "gcs", "local", "cas-local", "gdrive"})
 
 # All recognized schemes including connector-based ones.
 # This set is extended at runtime when connectors register themselves.
@@ -192,12 +193,15 @@ def derive_mount_point(spec: MountSpec, at: str | None = None) -> str:
         # gcs://project/bucket → mount at /gcs/bucket
         # gcs://bucket          → mount at /gcs/bucket
         mount = f"/gcs/{derive_bucket(spec)}"
-    elif spec.scheme == "local":
+    elif spec.scheme in ("local", "cas-local"):
         # Sanitise: replace slashes and dots so the mount name is a single
-        # clean segment.  e.g. /tmp/nexus → tmp-nexus, ./data → data
+        # clean segment.  e.g. /tmp/nexus → tmp-nexus, ./data → data.
+        # cas-local and local share the same mount-point shape; they only
+        # differ in how bytes are stored under the root.
         raw = spec.path if spec.path else spec.authority
         sanitised = raw.strip(".").strip("/").replace("/", "-")
-        mount = f"/local/{sanitised}"
+        prefix = "cas-local" if spec.scheme == "cas-local" else "local"
+        mount = f"/{prefix}/{sanitised}"
     elif spec.scheme == "gdrive":
         mount = f"/gdrive/{spec.authority}"
     else:

@@ -44,8 +44,9 @@ def nexus_error_handler(_request: Request, exc: Exception) -> JSONResponse:
         content["expected_etag"] = expected_etag
         content["current_etag"] = getattr(exc, "current_etag", None)
 
-    # Add authentication-specific data (provider, account, re-auth URL)
-    for field in ("provider", "user_email", "auth_url"):
+    # Add authentication-specific data (provider, account, re-auth URL,
+    # and machine-actionable recovery pointer for connector re-auth).
+    for field in ("provider", "user_email", "auth_url", "recovery_hint"):
         val = getattr(exc, field, None)
         if val is not None:
             content[field] = val

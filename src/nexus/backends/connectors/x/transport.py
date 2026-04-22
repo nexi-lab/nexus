@@ -131,32 +131,137 @@ class XTransport:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    async def _get_api_client_async(self) -> Any:
-        """Get authenticated X API client."""
-        from nexus.backends.connectors.x.api_client import XAPIClient
+    async def _resolve_principal_async(self) -> tuple[str, str]:
+        """Resolve ``(oauth_email, zone_id)`` for the current context.
 
-        user_email = self._user_email or (self._context.user_id if self._context else None)
-        if not user_email:
-            raise BackendError(
-                "X transport requires user_email or context.user_id",
-                backend="x",
-            )
+        Mirrors the connector-agnostic resolver in ``oauth_base`` but kept
+        inline because the X token manager is async.  Returns the OAuth
+        email + zone that downstream calls (token fetch, cache keying,
+        per-user id lookup) MUST agree on, so cached payloads cannot bleed
+        across zones or across accounts that share a nexus subject ID
+        (e.g. ``"admin"``).
 
+        Raises :class:`AuthenticationError` when no unambiguous identity
+        can be resolved.
+        """
+        from nexus.backends.connectors.oauth_base import (
+            _looks_like_email,
+            build_auth_recovery_hint,
+        )
+        from nexus.contracts.exceptions import AuthenticationError
+
+        mount_email = self._user_email if _looks_like_email(self._user_email) else None
+        nexus_user_id = (
+            self._context.user_id
+            if self._context
+            and self._context.user_id
+            and not _looks_like_email(self._context.user_id)
+            else None
+        ) or (self._user_email if not _looks_like_email(self._user_email) else None)
+        ctx_email = (
+            self._context.user_id
+            if self._context and _looks_like_email(self._context.user_id)
+            else None
+        )
         zone_id: str = (
             self._context.zone_id
             if self._context and hasattr(self._context, "zone_id")
             else ROOT_ZONE_ID
         ) or ROOT_ZONE_ID
 
+        resolved_email: str | None = mount_email or ctx_email
+        if resolved_email is None and nexus_user_id is not None:
+            list_fn = getattr(self._token_manager, "list_credentials", None)
+            if list_fn is not None:
+                # NB: intentionally do NOT catch exceptions — credential-
+                # index failures (DB/session/encryption) must propagate
+                # as backend errors instead of being downgraded to false
+                # "auth required".  Matches oauth_base._resolve_linked_oauth_email.
+                creds = await list_fn(zone_id=zone_id, user_id=nexus_user_id)
+                matches: list[str] = []
+                for cred in creds or []:
+                    if cred.get("provider") != self._provider:
+                        continue
+                    email = cred.get("user_email")
+                    if _looks_like_email(email):
+                        matches.append(str(email))
+                unique = sorted(set(matches))
+                if len(unique) > 1:
+                    raise AuthenticationError(
+                        f"Multiple OAuth accounts linked to nexus user "
+                        f"{nexus_user_id!r} for provider {self._provider!r}: "
+                        f"{unique}. Pin the mount to an explicit user_email "
+                        "to disambiguate.",
+                        provider=self._provider,
+                        user_email=None,
+                        recovery_hint={
+                            "endpoint": "/api/v2/connectors/auth/init",
+                            "method": "POST",
+                            "connector_name": "x_connector",
+                            "action": "select_account",
+                            "provider": self._provider,
+                            "candidates": unique,
+                        },
+                    )
+                if unique:
+                    resolved_email = unique[0]
+
+        if not resolved_email:
+            raise AuthenticationError(
+                f"x_connector requires authorization (provider={self._provider}). "
+                "Configure user_email on the mount or complete the OAuth flow "
+                "for the authenticated nexus user.",
+                provider=self._provider,
+                user_email=None,
+                recovery_hint=build_auth_recovery_hint(
+                    connector_name="x_connector",
+                    provider=self._provider,
+                ),
+            )
+        return resolved_email, zone_id
+
+    def _resolve_principal(self) -> tuple[str, str]:
+        """Sync wrapper around :meth:`_resolve_principal_async`."""
+        from nexus.lib.sync_bridge import run_sync
+
+        return run_sync(self._resolve_principal_async())
+
+    @staticmethod
+    def _cache_principal(resolved_email: str, zone_id: str) -> str:
+        """Return the cache principal string — zone + resolved OAuth email.
+
+        Pipe is safe: zone_id is a restricted identifier and an email cannot
+        contain one, so the tuple is unambiguous once rejoined.
+        """
+        return f"{zone_id}|{resolved_email}"
+
+    async def _get_api_client_async(self) -> Any:
+        """Get authenticated X API client."""
+        from nexus.backends.connectors.oauth_base import build_auth_recovery_hint
+        from nexus.backends.connectors.x.api_client import XAPIClient
+        from nexus.contracts.exceptions import AuthenticationError
+
+        resolved_email, zone_id = await self._resolve_principal_async()
         try:
             access_token = await self._token_manager.get_valid_token(
                 provider=self._provider,
-                user_email=user_email,
+                user_email=resolved_email,
                 zone_id=zone_id,
             )
+        except AuthenticationError as _auth_exc:
+            raise AuthenticationError(
+                str(_auth_exc),
+                provider=self._provider,
+                user_email=resolved_email,
+                recovery_hint=build_auth_recovery_hint(
+                    connector_name="x_connector",
+                    provider=self._provider,
+                    user_email=resolved_email,
+                ),
+            ) from _auth_exc
         except Exception as e:
             raise BackendError(
-                f"Failed to get OAuth token for {user_email}: {e}",
+                f"Failed to get OAuth token for {resolved_email}: {e}",
                 backend="x",
             ) from e
 
@@ -169,19 +274,23 @@ class XTransport:
         return run_sync(self._get_api_client_async())
 
     async def _get_user_id(self) -> str:
-        """Get X user ID for authenticated user."""
-        user_email = self._user_email or (self._context.user_id if self._context else None)
-        if not user_email:
-            raise BackendError("Cannot determine user email", backend="x")
+        """Get X user ID for authenticated user.
 
-        if user_email in self._user_id_cache:
-            return self._user_id_cache[user_email]
+        Key the user-id cache on the resolved ``(zone_id, oauth_email)``
+        principal (not the raw nexus subject ID) so two zones sharing a
+        subject cannot pin each other's X user id.
+        """
+        resolved_email, zone_id = await self._resolve_principal_async()
+        cache_key = self._cache_principal(resolved_email, zone_id)
+
+        if cache_key in self._user_id_cache:
+            return self._user_id_cache[cache_key]
 
         client = await self._get_api_client_async()
         try:
             user_data = await client.get_me()
             user_id: str = user_data["data"]["id"]
-            self._user_id_cache[user_email] = user_id
+            self._user_id_cache[cache_key] = user_id
             return user_id
         finally:
             await client.close()
@@ -437,12 +546,13 @@ class XTransport:
                     poll_duration_minutes=tweet_data.get("poll_duration_minutes"),
                 )
 
-                # Invalidate caches
-                post_user_email = self._user_email or (
-                    self._context.user_id if self._context else None
+                # Invalidate caches under the same principal we keyed
+                # reads under — any other form would leave stale entries.
+                resolved_email, zone_id = await self._resolve_principal_async()
+                self._invalidate_caches(
+                    self._cache_principal(resolved_email, zone_id),
+                    ["timeline", "user_tweets"],
                 )
-                if post_user_email:
-                    self._invalidate_caches(post_user_email, ["timeline", "user_tweets"])
 
                 tweet_id: str = response["data"]["id"]
                 return tweet_id
@@ -457,14 +567,18 @@ class XTransport:
         """Fetch X content as JSON bytes by transport key."""
         endpoint_type, params = self._resolve_path(key)
 
-        user_email_for_cache = (
-            self._user_email or (self._context.user_id if self._context else None) or "anonymous"
-        )
+        # Resolve the OAuth principal BEFORE touching the cache — keying on
+        # the raw ``context.user_id`` (e.g. ``"admin"``) would let two zones
+        # or two accounts sharing a nexus subject serve each other's cached
+        # responses.  ``_cache_principal`` composes zone + email so each
+        # tenant's cache is physically distinct.
+        resolved_email, zone_id = self._resolve_principal()
+        principal = self._cache_principal(resolved_email, zone_id)
 
         # Check cache
-        cache_key = self._generate_cache_key(endpoint_type, params, user_email_for_cache)
+        cache_key = self._generate_cache_key(endpoint_type, params, principal)
         ttl = self._cache_ttl.get(endpoint_type, 300)
-        cached = self._get_cached(cache_key, user_email_for_cache, ttl)
+        cached = self._get_cached(cache_key, principal, ttl)
         if cached:
             return cached, None
 
@@ -476,7 +590,7 @@ class XTransport:
                 data = await self._fetch_from_api(client, endpoint_type, params, user_id)
                 transformed = self._transform_response(endpoint_type, data)
                 content = json.dumps(transformed, indent=2).encode("utf-8")
-                self._set_cached(cache_key, user_email_for_cache, content)
+                self._set_cached(cache_key, principal, content)
                 return content
             finally:
                 await client.close()
@@ -513,11 +627,11 @@ class XTransport:
                 client = await self._get_api_client_async()
                 try:
                     await client.delete_tweet(tweet_id)
-                    del_user_email = self._user_email or (
-                        self._context.user_id if self._context else None
+                    resolved_email, zone_id = await self._resolve_principal_async()
+                    self._invalidate_caches(
+                        self._cache_principal(resolved_email, zone_id),
+                        ["timeline", "user_tweets"],
                     )
-                    if del_user_email:
-                        self._invalidate_caches(del_user_email, ["timeline", "user_tweets"])
                 finally:
                     await client.close()
 

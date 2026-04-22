@@ -42,7 +42,7 @@ from nexus.backends.connectors.calendar.transport import CalendarTransport
 from nexus.backends.connectors.oauth import OAuthConnectorMixin
 from nexus.contracts.backend_features import OAUTH_BACKEND_FEATURES, BackendFeature
 from nexus.contracts.constants import IMMUTABLE_VERSION
-from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
+from nexus.contracts.exceptions import AuthenticationError, BackendError, NexusFileNotFoundError
 from nexus.core.object_store import WriteResult
 
 if TYPE_CHECKING:
@@ -386,7 +386,7 @@ send_notifications: true
         except Exception as e:
             if checkpoint:
                 self.clear_checkpoint(checkpoint.checkpoint_id)
-            if isinstance(e, (BackendError, NexusFileNotFoundError)):
+            if isinstance(e, (AuthenticationError, BackendError, NexusFileNotFoundError)):
                 raise
             raise BackendError(f"Failed to create event: {e}", backend="gcalendar") from e
 
@@ -435,7 +435,7 @@ send_notifications: true
         except Exception as e:
             if checkpoint:
                 self.clear_checkpoint(checkpoint.checkpoint_id)
-            if isinstance(e, (BackendError, NexusFileNotFoundError)):
+            if isinstance(e, (AuthenticationError, BackendError, NexusFileNotFoundError)):
                 raise
             raise BackendError(f"Failed to update event: {e}", backend="gcalendar") from e
 
@@ -487,7 +487,7 @@ send_notifications: true
         except Exception as e:
             if checkpoint:
                 self.clear_checkpoint(checkpoint.checkpoint_id)
-            if isinstance(e, (BackendError, NexusFileNotFoundError)):
+            if isinstance(e, (AuthenticationError, BackendError, NexusFileNotFoundError)):
                 raise
             raise BackendError(f"Failed to delete event: {e}", backend="gcalendar") from e
 
@@ -551,9 +551,14 @@ send_notifications: true
                 name = key[len(cal_prefix) :] if key.startswith(cal_prefix) else key
                 if name:
                     files.append(name)
-            return sorted(files)
+            # Event filenames are `{YYYY-MM-DD}_{summary}__{eventId}.yaml`,
+            # so reverse-lex = reverse-chronological = newest first — matches
+            # what users see in every calendar UI.
+            return sorted(files, reverse=True)
 
         except (FileNotFoundError, NotADirectoryError):
+            raise
+        except AuthenticationError:
             raise
         except Exception as e:
             if isinstance(e, BackendError):

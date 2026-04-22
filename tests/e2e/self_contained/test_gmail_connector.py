@@ -997,6 +997,29 @@ class TestParseKey:
         assert thread_id is None
         assert msg_id is None
 
+    def test_parse_inbox_category_legacy(self):
+        """``INBOX/<CATEGORY>/thr-msg.yaml`` → nested label + id anchor."""
+        label, thread_id, msg_id = GmailTransport._parse_key("INBOX/SOCIAL/thr_abc-msg_def.yaml")
+        assert label == "INBOX/SOCIAL"
+        assert thread_id == "thr_abc"
+        assert msg_id == "msg_def"
+
+    def test_parse_inbox_category_readable(self):
+        """Readable form under a category preserves the ``__`` id anchor."""
+        label, thread_id, msg_id = GmailTransport._parse_key(
+            "INBOX/PRIMARY/2026-04-21_Hello-World__thr1-msg1.yaml"
+        )
+        assert label == "INBOX/PRIMARY"
+        assert thread_id == "thr1"
+        assert msg_id == "msg1"
+
+    def test_parse_inbox_unknown_category_rejected(self):
+        """Only PRIMARY/SOCIAL/UPDATES/PROMOTIONS/FORUMS are virtual
+        subfolders — any other second segment must fall through to
+        ``None`` rather than be silently accepted as a label."""
+        label, thread_id, msg_id = GmailTransport._parse_key("INBOX/BOGUS/thr-msg.yaml")
+        assert (label, thread_id, msg_id) == (None, None, None)
+
 
 # ============================================================================
 # YAML PARSING TESTS

@@ -47,7 +47,6 @@ class TestRemoteBackendProperties:
         assert backend._transport is mock_transport
 
 
-
 # ---------------------------------------------------------------------------
 # RPC Dispatch Tests
 # ---------------------------------------------------------------------------

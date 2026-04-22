@@ -257,22 +257,6 @@ class ConnectorInfo:
         """
         return getattr(self.connector_class, "CONNECTION_ARGS", {})
 
-    @property
-    def requires(self) -> list[str]:
-        """Deprecated — derived from ``runtime_deps``.
-
-        Returns the module names of every :class:`PythonDep`.  New code
-        should read ``runtime_deps`` directly; this property exists so that
-        current callers (``cli/commands/connectors.py``,
-        ``server/api/v2/routers/connectors.py``, tests) keep working for
-        one release.  Removal is tracked as follow-up A.2 of Issue #3830.
-
-        Non-Python dependencies (``BinaryDep``, ``ServiceDep``) are *not*
-        represented in this view — new callers should read ``runtime_deps``
-        directly to see the full dep set.
-        """
-        return [d.module for d in self.runtime_deps if isinstance(d, PythonDep)]
-
     def get_required_args(self) -> list[str]:
         """Get names of required connection arguments.
 

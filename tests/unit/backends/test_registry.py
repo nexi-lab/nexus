@@ -109,7 +109,7 @@ class TestConnectorRegistry:
         assert info.description == "Test backend"
         assert info.category == "storage"
         # Legacy requires= kwarg is ignored per Issue #3830 spec §6; callers must use runtime_deps=
-        assert info.requires == []
+        assert info.runtime_deps == ()
 
     def test_register_duplicate_same_class(self):
         """Test registering same class twice is idempotent."""
@@ -252,7 +252,7 @@ class TestRegisterConnectorDecorator:
         assert info.description == "Full test"
         assert info.category == "api"
         # Legacy requires= kwarg is ignored per Issue #3830 spec §6; callers must use runtime_deps=
-        assert info.requires == []
+        assert info.runtime_deps == ()
 
 
 class TestCreateConnectorFromConfig:
@@ -631,31 +631,6 @@ class TestConnectorInfoRuntimeDeps:
             runtime_deps=deps,
         )
         assert info.runtime_deps == deps
-
-    def test_requires_property_derives_from_python_deps(self) -> None:
-        from nexus.backends.base.registry import ConnectorInfo
-
-        deps: tuple[RuntimeDep, ...] = (
-            PythonDep("boto3", extras=("s3",)),
-            PythonDep("httpx"),
-            BinaryDep("gws", "brew install gws"),  # not included in requires
-        )
-        info = ConnectorInfo(
-            name="t",
-            connector_class=DummyBackend,
-            runtime_deps=deps,
-        )
-        assert info.requires == ["boto3", "httpx"]
-
-    def test_requires_property_empty_when_no_python_deps(self) -> None:
-        from nexus.backends.base.registry import ConnectorInfo
-
-        info = ConnectorInfo(
-            name="t",
-            connector_class=DummyBackend,
-            runtime_deps=(BinaryDep("gws", "brew install gws"),),
-        )
-        assert info.requires == []
 
 
 class TestRegisterRuntimeDeps:

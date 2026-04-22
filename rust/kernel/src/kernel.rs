@@ -161,8 +161,6 @@ pub struct SysReadResult {
     pub content_hash: Option<String>,
     /// DT_REG(1), DT_PIPE(3), DT_STREAM(4).
     pub entry_type: u8,
-    /// True when the routed mount is an external connector — Python must handle.
-    pub is_external: bool,
 }
 
 /// Result of sys_write(): concrete type instead of Option<str>.
@@ -590,6 +588,12 @@ pub struct Kernel {
     // on every `CASEngine` via `MountTable` on mount registration.
     #[allow(dead_code)]
     pub(crate) chunk_fetcher: Arc<crate::cas_remote::GrpcChunkFetcher>,
+    /// Pending remote metastore — set by ``sys_setattr(backend_type="remote")``
+    /// and consumed immediately after mount registration to install the
+    /// ``RemoteMetastore`` on the mount entry. This avoids threading the
+    /// metastore through ``sys_setattr``'s return value.
+    pub(crate) pending_remote_metastore:
+        parking_lot::Mutex<Option<Arc<dyn crate::metastore::Metastore>>>,
 
     // ── Federation mount wiring (R20.16.3) ─────────────────────────
     //
@@ -680,6 +684,7 @@ impl Kernel {
             self_address: parking_lot::RwLock::new(None),
             peer_client,
             chunk_fetcher,
+            pending_remote_metastore: parking_lot::Mutex::new(None),
             zone_registry: std::sync::OnceLock::new(),
             zone_runtime: std::sync::OnceLock::new(),
             zone_manager: std::sync::OnceLock::new(),
@@ -2545,16 +2550,8 @@ impl Kernel {
             Err(_) => return Err(not_found()),
         };
 
-        // 2b. External mount — signal Python to handle via connector backend
-        if route.is_external {
-            return Ok(SysReadResult {
-                data: None,
-                post_hook_needed: false,
-                content_hash: None,
-                entry_type: 0,
-                is_external: true,
-            });
-        }
+        // External mounts now fall through to the normal backend read path
+        // — Rust-registered ObjectStore handles all connectors natively.
 
         // 3. DCache lookup — on miss, fallback to metastore (cold path)
         let entry = match self.dcache.get_entry(path) {
@@ -2595,7 +2592,6 @@ impl Kernel {
                             post_hook_needed: false,
                             content_hash: None,
                             entry_type: DT_PIPE,
-                            is_external: false,
                         });
                     }
                     Err(crate::pipe::PipeError::Empty) => {
@@ -2605,7 +2601,6 @@ impl Kernel {
                             post_hook_needed: false,
                             content_hash: None,
                             entry_type: DT_PIPE,
-                            is_external: false,
                         });
                     }
                     Err(crate::pipe::PipeError::ClosedEmpty) => {
@@ -2620,7 +2615,6 @@ impl Kernel {
                 post_hook_needed: false,
                 content_hash: None,
                 entry_type: DT_PIPE,
-                is_external: false,
             });
         }
 
@@ -2631,7 +2625,6 @@ impl Kernel {
                 post_hook_needed: false,
                 content_hash: None,
                 entry_type: DT_STREAM,
-                is_external: false,
             });
         }
 
@@ -2675,7 +2668,6 @@ impl Kernel {
                 post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
                 content_hash: entry.etag.clone(),
                 entry_type: DT_REG,
-                is_external: false,
             }),
             // Local backend miss + metadata exists → federation path:
             // try the origin encoded in backend_name. Otherwise it's a
@@ -2757,7 +2749,6 @@ impl Kernel {
             post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
             content_hash: entry.etag.clone(),
             entry_type: DT_REG,
-            is_external: false,
         })
     }
 
@@ -4123,7 +4114,6 @@ impl Kernel {
                     post_hook_needed: false,
                     content_hash: None,
                     entry_type: 0,
-                    is_external: false,
                 })
             })
             .collect();

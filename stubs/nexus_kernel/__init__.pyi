@@ -438,6 +438,12 @@ class Kernel:
         modified_at_ms: int | None,
         read_fd: int | None,
         write_fd: int | None,
+        server_address: str | None,
+        remote_auth_token: str | None,
+        remote_ca_pem: bytes | None,
+        remote_cert_pem: bytes | None,
+        remote_key_pem: bytes | None,
+        remote_timeout: float,
     ) -> Any: ...
     def route(self, path: str, zone_id: str) -> Any: ...
     def has_mount(self, mount_point: str, zone_id: str) -> bool: ...

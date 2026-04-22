@@ -66,7 +66,10 @@ mod pipe_manager;
 mod prefix;
 mod raft_metastore;
 mod rebac;
+mod remote_backend;
+mod remote_metastore;
 mod replication;
+mod rpc_transport;
 #[cfg(feature = "connectors")]
 mod s3_backend;
 mod search;

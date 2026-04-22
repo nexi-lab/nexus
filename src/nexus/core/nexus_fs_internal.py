@@ -42,7 +42,6 @@ class _WriteContentResult(NamedTuple):
     zone_id: str | None
     agent_id: str | None
     is_remote: bool  # Remote backend — skip local metadata.put
-    is_external: bool  # ExternalRouteResult path
 
 
 class InternalMixin:

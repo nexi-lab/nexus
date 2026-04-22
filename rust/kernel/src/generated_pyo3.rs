@@ -938,7 +938,6 @@ pub struct PySysReadResult {
     pub post_hook_needed: bool,
     pub content_hash: Option<String>,
     pub entry_type: u8,
-    pub is_external: bool,
 }
 
 // ── PySysWriteResult ────────────────────────────────────────────
@@ -1669,7 +1668,7 @@ impl PyKernel {
 
     // ── sys_setattr — unified mount/attr syscall ─────────────────────
 
-    #[pyo3(signature = (path, entry_type, backend_name="", local_root=None, fsync=false, py_backend=None, backend_type="cas", follow_symlinks=true, openai_base_url=None, openai_api_key=None, openai_model=None, openai_blob_root=None, anthropic_base_url=None, anthropic_api_key=None, anthropic_model=None, anthropic_blob_root=None, s3_bucket=None, s3_prefix=None, aws_region=None, aws_access_key=None, aws_secret_key=None, s3_endpoint=None, gcs_bucket=None, gcs_prefix=None, access_token=None, root_folder_id=None, bot_token=None, default_channel=None, metastore_path=None, io_profile="balanced", zone_id="root", is_external=false, capacity=65536, mime_type=None, modified_at_ms=None, read_fd=None, write_fd=None))]
+    #[pyo3(signature = (path, entry_type, backend_name="", local_root=None, fsync=false, py_backend=None, backend_type="cas", follow_symlinks=true, openai_base_url=None, openai_api_key=None, openai_model=None, openai_blob_root=None, anthropic_base_url=None, anthropic_api_key=None, anthropic_model=None, anthropic_blob_root=None, s3_bucket=None, s3_prefix=None, aws_region=None, aws_access_key=None, aws_secret_key=None, s3_endpoint=None, gcs_bucket=None, gcs_prefix=None, access_token=None, root_folder_id=None, bot_token=None, default_channel=None, metastore_path=None, io_profile="balanced", zone_id="root", is_external=false, capacity=65536, mime_type=None, modified_at_ms=None, read_fd=None, write_fd=None, server_address=None, remote_auth_token=None, remote_ca_pem=None, remote_cert_pem=None, remote_key_pem=None, remote_timeout=30.0))]
     #[allow(clippy::too_many_arguments)]
     fn sys_setattr<'py>(
         &self,
@@ -1711,6 +1710,12 @@ impl PyKernel {
         modified_at_ms: Option<i64>,
         read_fd: Option<i32>,
         write_fd: Option<i32>,
+        server_address: Option<&str>,
+        remote_auth_token: Option<&str>,
+        remote_ca_pem: Option<&[u8]>,
+        remote_cert_pem: Option<&[u8]>,
+        remote_key_pem: Option<&[u8]>,
+        remote_timeout: f64,
     ) -> PyResult<Py<PyAny>> {
         // Backend resolution (moved from old add_mount)
         let backend: Option<Arc<dyn ObjectStore>> = if backend_type == "openai" {
@@ -1862,6 +1867,38 @@ impl PyKernel {
                     "connectors feature not enabled",
                 ));
             }
+        } else if backend_type == "remote" {
+            // Remote backend — always available (core capability, not connector feature)
+            let addr = server_address.ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(
+                    "backend_type='remote' requires server_address",
+                )
+            })?;
+            let token = remote_auth_token.unwrap_or("");
+            let tls = remote_ca_pem.map(|ca| crate::rpc_transport::TlsConfig {
+                ca_pem: ca.to_vec(),
+                cert_pem: remote_cert_pem.map(|b| b.to_vec()),
+                key_pem: remote_key_pem.map(|b| b.to_vec()),
+            });
+            let timeout = std::time::Duration::from_secs_f64(if remote_timeout > 0.0 {
+                remote_timeout
+            } else {
+                30.0
+            });
+            let rt = Arc::clone(self.inner.peer_client.runtime());
+            let transport = std::sync::Arc::new(
+                crate::rpc_transport::RpcTransport::new(rt, addr, token, tls.as_ref(), timeout)
+                    .map_err(pyo3::exceptions::PyRuntimeError::new_err)?,
+            );
+            let remote_ms = std::sync::Arc::new(crate::remote_metastore::RemoteMetastore::new(
+                Arc::clone(&transport),
+            )) as Arc<dyn crate::metastore::Metastore>;
+            self.inner
+                .pending_remote_metastore
+                .lock()
+                .replace(remote_ms);
+            let b = crate::remote_backend::RemoteBackend::new(transport);
+            Some(Arc::new(b) as Arc<dyn ObjectStore>)
         } else if let Some(root) = local_root {
             if backend_type == "local_connector" {
                 let b = LocalConnectorBackend::new(Path::new(root), follow_symlinks, fsync)
@@ -1924,6 +1961,14 @@ impl PyKernel {
                 modified_at_ms,
             )
             .map_err::<PyErr, _>(Into::into)?;
+
+        // Install remote metastore on the mount entry (if pending from remote backend setup)
+        if let Some(remote_ms) = self.inner.pending_remote_metastore.lock().take() {
+            let canonical_key = format!("/{zone_id}{path}");
+            self.inner
+                .mount_table
+                .install_metastore(&canonical_key, remote_ms);
+        }
 
         let dict = PyDict::new(py);
         dict.set_item("path", result.path)?;
@@ -2369,7 +2414,6 @@ impl PyKernel {
             post_hook_needed: result.post_hook_needed,
             content_hash: result.content_hash,
             entry_type: result.entry_type,
-            is_external: result.is_external,
         })
     }
 
@@ -2707,7 +2751,6 @@ impl PyKernel {
                 post_hook_needed: r.post_hook_needed,
                 content_hash: r.content_hash,
                 entry_type: r.entry_type,
-                is_external: r.is_external,
             })
             .collect())
     }

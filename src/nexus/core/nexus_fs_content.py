@@ -19,7 +19,6 @@ import time
 from collections.abc import Callable, Iterator
 from dataclasses import replace as _dc_replace
 from datetime import UTC, datetime
-from types import SimpleNamespace as _SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
@@ -104,98 +103,13 @@ class ContentMixin:
         # ── KERNEL (Rust — pre-hooks + route + backend read) ──
         # DT_REG: Rust returns data on success or raises NexusFileNotFoundError
         # (federation remote fetch handled internally via try_remote_fetch).
-        # For external connector mounts, Rust flags is_external=True so Python
-        # dispatches the read through the connector backend.
+        # External connector mounts are now handled by Rust-registered native
+        # backends — no Python re-routing needed.
         # DT_PIPE / DT_STREAM: entry_type signals IPC dispatch below.
-        #
-        # External-mount read must never depend on a per-file metastore
-        # entry.  Two realities break that assumption:
-        #   • Slim ``nexus-fs`` ships without ``nexus_kernel`` (``self._kernel
-        #     is None``) — the Rust call site is skipped entirely and the
-        #     Rust context never built.
-        #   • With Rust present, ``kernel.sys_read`` raises
-        #     ``NexusFileNotFoundError`` when the dcache misses and the
-        #     mount has no per-file metastore entry.  The ``is_external``
-        #     short-circuit only fires when the Rust router carries the
-        #     flag; an older kernel wheel that drops it trips this case.
-        # In both cases, if the Python router resolves to an external
-        # mount we delegate directly to the backend — virtual connector
-        # reads are content-only and don't need a metastore entry.
-        if self._kernel is None:
-            result = None
-        else:
-            _rust_ctx = self._build_rust_ctx(context, _is_admin)
-            try:
-                result = self._kernel.sys_read(path, _rust_ctx)
-            except NexusFileNotFoundError:
-                result = None
-        if result is None:
-            from nexus.core.router import ExternalRouteResult as _ExtRoute
+        _rust_ctx = self._build_rust_ctx(context, _is_admin)
+        result = self._kernel.sys_read(path, _rust_ctx)
 
-            _fallback = self.router.route(path, zone_id=self._zone_id)
-            if not isinstance(_fallback, _ExtRoute) or getattr(_fallback, "backend", None) is None:
-                # Non-external (or unresolved) — honour the original 404.
-                raise NexusFileNotFoundError(path)
-            # Synthesize a kernel result that trips the is_external branch.
-            result = _SimpleNamespace(
-                is_external=True,
-                entry_type=0,
-                hit=False,
-                data=None,
-                post_hook_needed=False,
-                content_hash=None,
-            )
-
-        # External mount — Rust detected is_external, delegate to Python connector
-        if getattr(result, "is_external", False):
-            from nexus.core.router import ExternalRouteResult
-
-            _route = self.router.route(path, zone_id=self._zone_id)
-            _route_backend = getattr(_route, "backend", None)
-            _route_backend_path = getattr(_route, "backend_path", "") or ""
-            _route_mount_point = getattr(_route, "mount_point", "") or ""
-            if isinstance(_route, ExternalRouteResult) and _route_backend is not None:
-                _ctx = (
-                    _dc_replace(
-                        context,
-                        backend_path=_route_backend_path,
-                        virtual_path=path,
-                        mount_path=_route_mount_point,
-                    )
-                    if context
-                    else OperationContext(
-                        user_id="anonymous",
-                        groups=[],
-                        backend_path=_route_backend_path,
-                        virtual_path=path,
-                        mount_path=_route_mount_point,
-                    )
-                )
-                try:
-                    # Virtual .readme/ overlay check (Issue #3728).  If the path
-                    # is under a skill backend's .readme/ directory, serve from
-                    # the generated tree instead of calling the real backend.
-                    from nexus.backends.connectors.schema_generator import (
-                        dispatch_virtual_readme_read,
-                    )
-
-                    _virtual_data = dispatch_virtual_readme_read(
-                        _route_backend,
-                        _route_mount_point,
-                        _route_backend_path,
-                        context=_ctx,
-                    )
-                    if _virtual_data is not None:
-                        data = _virtual_data
-                    else:
-                        data = _route_backend.read_content(_route_backend_path, context=_ctx)
-                    return _apply_slice(data, offset, count)
-                except Exception:
-                    if isinstance(_route, ExternalRouteResult):
-                        raise
-
-        # DT_PIPE: Rust pops one frame from ring buffer (non-blocking).
-        # Empty pipe returns b"" (POSIX non-blocking read(2) semantics).
+        # DT_PIPE: result.data is the popped frame when available; None = empty.
         if result.entry_type == 3:  # DT_PIPE
             if result.data is not None:
                 return _apply_slice(result.data, offset, count)
@@ -287,22 +201,6 @@ class ContentMixin:
                 try:
                     vpath = self._validate_path(path)
                     result = self._kernel.sys_read(vpath, _rust_ctx)
-                    # External mount — delegate to sys_read which handles
-                    # connector dispatch via Python router.
-                    if getattr(result, "is_external", False):
-                        content = self.sys_read(path, context=context)
-                        if return_metadata:
-                            meta = self.metadata.get(vpath)
-                            results[path] = {
-                                "content": content,
-                                "etag": meta.etag if meta else None,
-                                "version": meta.version if meta else 0,
-                                "modified_at": meta.modified_at if meta else None,
-                                "size": len(content),
-                            }
-                        else:
-                            results[path] = content
-                        continue
                     content = result.data or b""
                     if return_metadata:
                         meta = self.metadata.get(vpath)
@@ -387,12 +285,7 @@ class ContentMixin:
                 bulk_content: bytes | None = None
                 try:
                     result = self._kernel.sys_read(path, _rust_ctx)
-                    if getattr(result, "is_external", False):
-                        # External mount — delegate to sys_read which
-                        # handles connector dispatch via Python router.
-                        bulk_content = self.sys_read(path, context=context)
-                    else:
-                        bulk_content = result.data or b""
+                    bulk_content = result.data or b""
                 except NexusFileNotFoundError:
                     # Rust fast path missed.  Virtual ``.readme/`` paths
                     # (Issue #3728) are not in the metastore, so we
@@ -863,7 +756,6 @@ class ContentMixin:
                     zone_id=zone_id,
                     agent_id=agent_id,
                     is_remote=False,
-                    is_external=False,
                 ),
                 buf,
             )
@@ -1020,7 +912,6 @@ class ContentMixin:
                 zone_id=zone_id,
                 agent_id=agent_id,
                 is_remote=False,
-                is_external=False,
             ),
             buf,
         )

@@ -43,6 +43,11 @@ class MetadataMixin:
     """Metadata operations: sys_stat, sys_setattr, sys_unlink, sys_rename, sys_copy, sys_readdir."""
 
     _kernel: Any  # Rust Kernel
+    _zone_id: str
+    metadata: Any
+    router: Any
+    _driver_coordinator: Any
+    _service_registry: Any
 
     # ── Internal helpers ──────────────────────────────────────────────
 

@@ -41,6 +41,10 @@ class ContentMixin:
     """Content I/O: sys_read, sys_write, and Tier 2 convenience methods."""
 
     _kernel: Any  # Rust Kernel
+    _zone_id: str
+    metadata: Any
+    router: Any
+    _driver_coordinator: Any
 
     # =================================================================
     # Core VFS File Operations (Issue #899)

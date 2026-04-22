@@ -49,6 +49,9 @@ class InternalMixin:
     """Shared helpers for NexusFS mixins: context, validation, .readme overlay, events."""
 
     _kernel: Any  # Rust Kernel — single stub, other attrs via MRO
+    _zone_id: str
+    _init_cred: Any
+    router: Any
 
     # ── Context helpers ──────────────────────────────────────────────
 

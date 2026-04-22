@@ -85,7 +85,6 @@ class TestColdStartNexusFSConstruction:
 
         nx = await make_test_nexus(tmp_path)
 
-        reg = nx._service_registry  # ServiceRegistry now has lifecycle methods
         mock_svc = MagicMock()
-        await enlist_wired_services(reg, {"rebac_service": mock_svc})
-        assert nx.service("rebac")._service_instance is mock_svc
+        await enlist_wired_services(nx, {"rebac_service": mock_svc})
+        assert nx.service("rebac") is mock_svc

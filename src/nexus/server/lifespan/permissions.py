@@ -126,8 +126,8 @@ async def _startup_cache_brick(app: "FastAPI", svc: "LifespanServices") -> None:
                 record_store=record_store,
             )
 
-        coord = svc.service_coordinator
-        if coord is None:
+        # If NexusFS is bootstrapped, kernel handles start; otherwise start manually
+        if not getattr(svc, "_bootstrapped", False):
             await cache_brick.start()
         app.state.cache_brick = cache_brick
         logger.info("CacheBrick initialized with %s backend", cache_brick.backend_name)
@@ -173,7 +173,7 @@ async def _startup_durable_invalidation(app: "FastAPI", svc: "LifespanServices")
             rebac = getattr(svc.nexus_fs, "_rebac_manager", None)
         if rebac is None and svc.nexus_fs is not None:
             # Inside ReBACService wrapper (registered as "rebac" in cluster profile).
-            # ServiceRef.__getattr__ transparently delegates to the underlying instance.
+            # service_lookup returns raw instance — attribute access is direct.
             _svc_fn = getattr(svc.nexus_fs, "service", None)
             if _svc_fn:
                 for svc_name in ("rebac", "rebac_service", "rebac_manager"):

@@ -40,8 +40,8 @@ async def nx_with_db(tmp_path):
     # Mock API key creator
     mock_key_creator = MagicMock()
     mock_key_creator.create_key.return_value = ("key-123", "nxk-test-api-key")
-    # Enlist mock api_key_creator into ServiceRegistry (BrickServices deleted)
-    nx._service_registry.enlist("api_key_creator", mock_key_creator)
+    # Enlist mock api_key_creator into kernel ServiceRegistry (BrickServices deleted)
+    nx.sys_setattr("/__sys__/services/api_key_creator", service=mock_key_creator)
 
     # Mock ReBAC so we don't need real ReBAC setup
     mock_rebac_manager = MagicMock()
@@ -50,9 +50,9 @@ async def nx_with_db(tmp_path):
     # Issue #1801: _system_services deleted — pass mocks directly to service constructor
     from nexus.services.lifecycle.user_provisioning import UserProvisioningService
 
-    nx._service_registry.register_service(
-        "user_provisioning",
-        UserProvisioningService(
+    nx.sys_setattr(
+        "/__sys__/services/user_provisioning",
+        service=UserProvisioningService(
             vfs=nx,
             session_factory=session_factory,
             entity_registry=mock_registry,
@@ -187,7 +187,7 @@ class TestProvisionUserHappyPath:
         assert result["api_key"] is not None
         assert result["key_id"] is not None
         # With agents disabled, only the user's API key is created
-        nx_with_db.service("api_key_creator")._service_instance.create_key.assert_called_once()
+        nx_with_db.service("api_key_creator").create_key.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_skip_api_key_creation(self, nx_with_db):
@@ -200,7 +200,7 @@ class TestProvisionUserHappyPath:
             import_skills=False,
         )
         assert result["api_key"] is None
-        nx_with_db.service("api_key_creator")._service_instance.create_key.assert_not_called()
+        nx_with_db.service("api_key_creator").create_key.assert_not_called()
 
 
 class TestProvisionUserIdempotency:
@@ -291,9 +291,9 @@ class TestProvisionUserPartialFailure:
         mock_registry.get_entity.return_value = None
         # Issue #1801: _system_services deleted — pass mocks directly to service constructor
         # Issue #2133: explicitly create service with session_factory=None
-        nx._service_registry.register_service(
-            "user_provisioning",
-            UserProvisioningService(
+        nx.sys_setattr(
+            "/__sys__/services/user_provisioning",
+            service=UserProvisioningService(
                 vfs=nx,
                 session_factory=None,
                 entity_registry=mock_registry,
@@ -319,7 +319,7 @@ class TestProvisionUserPartialFailure:
         """If directory creation fails, provisioning should continue."""
         # Issue #2033: _create_user_directories is now on UserProvisioningService
         ref = nx_with_db.service("user_provisioning")
-        target = ref._service_instance if ref is not None else nx_with_db
+        target = ref if ref is not None else nx_with_db
         with patch.object(target, "_create_user_directories", side_effect=OSError("disk full")):
             result = await nx_with_db.service("user_provisioning").provision_user(
                 user_id="alice",

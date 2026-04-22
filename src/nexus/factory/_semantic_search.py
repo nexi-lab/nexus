@@ -28,9 +28,9 @@ logger = logging.getLogger(__name__)
 def _resolve_parse_fn(nx: Any) -> Any:
     """Extract the bare parse_fn callable from the nx service registry.
 
-    ``nx.service("parse_fn")`` returns a ``ServiceRef`` wrapper; the actual
-    callable lives on ``._service_instance``. Returns None when the service
-    isn't registered (e.g. parsers brick disabled).
+    ``nx.service("parse_fn")`` returns the raw callable (Rust kernel
+    service_lookup). Returns None when the service isn't registered
+    (e.g. parsers brick disabled).
     """
     if not hasattr(nx, "service"):
         return None
@@ -152,7 +152,7 @@ async def create_semantic_search_components(
         # parse_fn is registered at boot (see factory/_lifecycle.py ~L92).
         # Passing it here lets read_text decode parseable binaries (.pdf,
         # .docx, .xlsx, …) so search indexes real text, not utf-8 garbage.
-        # nx.service() returns a ServiceRef — unwrap to the bare callable.
+        # nx.service() returns raw instance from Rust kernel.
         _parse_fn = _resolve_parse_fn(nx)
         _file_reader = _NexusFSFileReader(nx, parse_fn=_parse_fn)
         indexing_service = IndexingService(

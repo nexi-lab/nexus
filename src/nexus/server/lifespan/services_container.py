@@ -49,7 +49,7 @@ class LifespanServices:
     thread_pool_size: int = 40
 
     # --- Coordinator (post-bootstrap service registration) ---------------
-    service_coordinator: Any = None  # ServiceRegistry (lifecycle orchestration)
+    service_coordinator: Any = None  # NexusFS (delegates to Rust kernel)
 
     # --- Process table (kernel process lifecycle) -------------------------
     agent_registry: Any = None

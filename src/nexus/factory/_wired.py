@@ -619,10 +619,8 @@ def _initialize_wired_ipc(nx: Any, services: dict[str, Any]) -> None:
         _registered = _svc_fn("ipc_zone_id") if _svc_fn is not None else None
         if _registered is None:
             return
-        # Use the actual registered value — unwrap ServiceRef proxy if present.
-        # Do not fall back to nx._zone_id, which can diverge from the brick's
-        # registered zone in multi-zone/federated setups.
-        _resolved = getattr(_registered, "_service_instance", _registered)
+        # Use the actual registered value — service_lookup returns raw instance.
+        _resolved = _registered
         if not isinstance(_resolved, str) or not _resolved:
             logger.error(
                 "[BOOT:WIRED] IPC init: registered ipc_zone_id has invalid type/"

@@ -15,7 +15,6 @@ import pytest
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.types import OperationContext
 from nexus.core.nexus_fs import NexusFS
-from nexus.core.service_registry import ServiceRegistry
 
 # =============================================================================
 # Fixtures
@@ -26,17 +25,23 @@ from nexus.core.service_registry import ServiceRegistry
 def mock_fs():
     """Create a NexusFS with mock internals, bypassing __init__.
 
-    Uses MagicMock for kernel components and ServiceRegistry for services.
+    Uses MagicMock for kernel components and mock _kernel for services.
     """
     fs = object.__new__(NexusFS)
     fs.version_service = MagicMock()
     fs.skill_service = MagicMock()
     fs.skill_package_service = MagicMock()
     fs.metadata = MagicMock()
-    registry = ServiceRegistry()
-    registry.register_service("rebac", MagicMock())
-    registry.register_service("search", MagicMock())
-    fs._service_registry = registry
+    mock_rebac = MagicMock()
+    mock_search = MagicMock()
+    fs._kernel = MagicMock()
+    fs._kernel.service_lookup = MagicMock(
+        side_effect=lambda name: {
+            "rebac": mock_rebac,
+            "search": mock_search,
+        }.get(name)
+    )
+    fs._hook_specs = {}
     return fs
 
 

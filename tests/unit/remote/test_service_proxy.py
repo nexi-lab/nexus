@@ -129,14 +129,13 @@ class TestBootRemoteServices:
     def test_registers_all_canonical_services(self):
         """_boot_remote_services registers all canonical services via coordinator (#1708)."""
         import asyncio
-        from unittest.mock import AsyncMock, MagicMock, patch
+        from unittest.mock import MagicMock, patch
 
         from nexus.factory._remote import _boot_remote_services
         from nexus.factory.service_routing import _CANONICAL_NAMES
         from nexus.remote.service_proxy import RemoteServiceProxy
 
         nfs = MagicMock()
-        nfs._service_registry = AsyncMock()
         # sys_setattr is sync (Phase 7) — use MagicMock, not AsyncMock
         nfs.sys_setattr = MagicMock()
 
@@ -166,13 +165,12 @@ class TestBootRemoteServices:
     def test_all_slots_are_same_proxy_instance(self):
         """All slots share one proxy instance (universal pass-through)."""
         import asyncio
-        from unittest.mock import AsyncMock, MagicMock, patch
+        from unittest.mock import MagicMock, patch
 
         from nexus.factory._remote import _boot_remote_services
         from nexus.factory.service_routing import _CANONICAL_NAMES
 
         nfs = MagicMock()
-        nfs._service_registry = AsyncMock()
         nfs.sys_setattr = MagicMock()
 
         _, call_rpc = _make_recorder()

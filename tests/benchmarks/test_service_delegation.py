@@ -17,7 +17,6 @@ import pytest
 
 from nexus.contracts.types import OperationContext
 from nexus.core.nexus_fs import NexusFS
-from nexus.core.service_registry import ServiceRegistry
 from nexus.services.gateway import NexusFSGateway
 
 # =============================================================================
@@ -41,7 +40,6 @@ def mock_nexus_fs():
     pre-defined values to isolate delegation overhead.
     """
     fs = object.__new__(NexusFS)
-    fs._service_registry = ServiceRegistry()
     fs.metadata = MagicMock()
     fs.metadata.list = MagicMock(return_value=[])
     fs.version_service = MagicMock()
@@ -53,10 +51,8 @@ def mock_nexus_fs():
     mock_rebac_svc.rebac_create = AsyncMock(return_value={"tuple_id": "t1"})
     mock_rebac_svc.rebac_list_tuples = AsyncMock(return_value=[])
     mock_rebac_svc.rebac_expand = AsyncMock(return_value=[])
-    fs._service_registry.register_service("rebac", mock_rebac_svc)
     mock_mcp_svc = MagicMock()
     mock_mcp_svc.mcp_list_mounts = AsyncMock(return_value=[])
-    fs._service_registry.register_service("mcp", mock_mcp_svc)
     fs.skill_service = MagicMock()
     fs.skill_service.share = MagicMock(return_value="tuple-abc")
     fs.skill_service.discover = MagicMock(return_value=[])
@@ -65,19 +61,27 @@ def mock_nexus_fs():
     )
     mock_oauth_svc = MagicMock()
     mock_oauth_svc.oauth_list_providers = AsyncMock(return_value=[])
-    fs._service_registry.register_service("oauth", mock_oauth_svc)
     mock_search_svc = MagicMock()
     mock_search_svc.list = MagicMock(return_value=[])
     mock_search_svc.glob = MagicMock(return_value=[])
     mock_search_svc.grep = MagicMock(return_value=[])
     mock_search_svc.semantic_search = AsyncMock(return_value=[])
-    fs._service_registry.register_service("search", mock_search_svc)
     mock_share_link_svc = MagicMock()
     mock_share_link_svc.create_share_link = AsyncMock(return_value=MagicMock())
-    fs._service_registry.register_service("share_link", mock_share_link_svc)
     mock_mount_svc = MagicMock()
     mock_mount_svc.list_mounts = AsyncMock(return_value=[])
-    fs._service_registry.register_service("mount", mock_mount_svc)
+    fs._kernel = MagicMock()
+    fs._kernel.service_lookup = MagicMock(
+        side_effect=lambda name: {
+            "rebac": mock_rebac_svc,
+            "mcp": mock_mcp_svc,
+            "oauth": mock_oauth_svc,
+            "search": mock_search_svc,
+            "share_link": mock_share_link_svc,
+            "mount": mock_mount_svc,
+        }.get(name)
+    )
+    fs._hook_specs = {}
     return fs
 
 

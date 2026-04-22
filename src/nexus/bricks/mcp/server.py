@@ -212,7 +212,6 @@ async def create_mcp_server(
             Per-request API keys are only supported when remote_url is configured.
             For local connections, the default connection is always used.
         """
-        import asyncio
 
         # Get API key from context variable (set by Starlette middleware or
         # APIKeyExtractionMiddleware). Context.get_state() is async in fastmcp
@@ -240,10 +239,8 @@ async def create_mcp_server(
         import nexus as _nexus
 
         def _connect_sync() -> NexusFS:
-            return asyncio.run(
-                _nexus.connect(
-                    config={"profile": "remote", "url": _remote_url, "api_key": request_api_key}
-                )
+            return _nexus.connect(
+                config={"profile": "remote", "url": _remote_url, "api_key": request_api_key}
             )
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:

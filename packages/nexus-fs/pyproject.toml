@@ -114,7 +114,9 @@ exclude = [
     "**/server/**",
     "**/factory/**",
     "**/raft/**",
-    "**/cli/**",
+    # Top-level nexus/cli only — keep nexus/backends/connectors/cli
+    # so dynamic CLI YAML connector loading still works on slim.
+    "**/nexus/cli/**",
     "**/fuse/**",
     "**/remote/**",
     "**/services/**",

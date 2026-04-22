@@ -33,6 +33,18 @@ EXCLUDED_MODULES = frozenset(
         "nexus.services",
         "nexus.grpc",
         "nexus.security",
+        "nexus.cache",
+        "nexus.daemon",
+        "nexus.migrations",
+        "nexus.network",
+        "nexus.plugins",
+        "nexus.proxy",
+        "nexus.sdk",
+        "nexus.task_manager",
+        "nexus.tasks",
+        "nexus.tools",
+        "nexus.validation",
+        "nexus.config",  # the subpackage; nexus/config.py is kept
     }
 )
 
@@ -93,12 +105,24 @@ class TestPackagingBoundary:
         with open(pyproject, "rb") as f:
             config = tomllib.load(f)
         excludes = config["tool"]["hatch"]["build"]["targets"]["wheel"]["exclude"]
-        # Convert glob patterns like "nexus/factory/**" to dotted module roots
-        pyproject_excluded = set()
+
+        # Patterns are either directory globs like `**/bricks/**` /
+        # `**/nexus/cli/**` or file globs like `**/sync.py`. Normalize
+        # directory globs to dotted module roots; ignore file patterns.
+        pyproject_excluded: set[str] = set()
         for pattern in excludes:
-            # "nexus/factory/**" → "nexus.factory"
-            root = pattern.replace("/**", "").replace("/", ".")
-            pyproject_excluded.add(root)
+            # Skip file-level excludes (e.g. "**/utils/timing.py")
+            if pattern.endswith(".py"):
+                continue
+            # Strip the glob anchors: "**/bricks/**" → "bricks"
+            core = pattern.removeprefix("**/").removesuffix("/**")
+            # "nexus/cli" / "nexus/config" → "nexus.cli" / "nexus.config"
+            if core.startswith("nexus/"):
+                pyproject_excluded.add(core.replace("/", "."))
+            else:
+                # Bare top-level name like "bricks" → "nexus.bricks"
+                pyproject_excluded.add(f"nexus.{core}")
+
         assert pyproject_excluded == EXCLUDED_MODULES, (
             f"EXCLUDED_MODULES in test is out of sync with pyproject.toml.\n"
             f"  Test has: {sorted(EXCLUDED_MODULES - pyproject_excluded)}\n"

@@ -134,7 +134,11 @@ def _create_connector_backend(spec: Any) -> Any:
     connector_name = f"{scheme}_{authority}" if authority else scheme
     fallback_name = f"{scheme}_connector"
 
-    connector_cls = None
+    # Resolve via get_info() so we can see BOTH bound classes and
+    # manifest placeholders. get() hides placeholders behind a KeyError,
+    # which would collapse "missing Python dep" into "connector not
+    # found" — the exact ambiguity Issue #3830 set out to eliminate.
+    info = None
     selected_name: str | None = None
     for candidate in [
         connector_name,
@@ -144,13 +148,13 @@ def _create_connector_backend(spec: Any) -> Any:
         if candidate is None:
             continue
         try:
-            connector_cls = ConnectorRegistry.get(candidate)
+            info = ConnectorRegistry.get_info(candidate)
             selected_name = candidate
             break
         except KeyError:
             continue
 
-    if connector_cls is None:
+    if info is None:
         from nexus.contracts.exceptions import NexusURIError
 
         available = ConnectorRegistry.list_available()
@@ -161,8 +165,23 @@ def _create_connector_backend(spec: Any) -> Any:
             f"Registered connectors: {', '.join(available) if available else 'none'}",
         )
 
-    info = ConnectorRegistry.get_info(selected_name) if selected_name is not None else None
-    return _instantiate_connector_backend(connector_cls, info=info, scheme=scheme)
+    # Placeholder-first dep check: mirror BackendFactory.create() so the
+    # URI path produces the same diagnostics as programmatic mounts.
+    from nexus.backends.base.runtime_deps import check_runtime_deps
+    from nexus.contracts.exceptions import MissingDependencyError
+
+    missing = check_runtime_deps(info.runtime_deps)
+    if missing:
+        raise MissingDependencyError(backend=selected_name or scheme, missing=missing)
+
+    if info.connector_class is None:
+        raise RuntimeError(
+            f"Connector '{selected_name or scheme}' is declared in the "
+            f"manifest but its module failed to import. Check logs for "
+            f"the original ImportError."
+        )
+
+    return _instantiate_connector_backend(info.connector_class, info=info, scheme=scheme)
 
 
 def _default_token_manager_db() -> str:

@@ -27,23 +27,37 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Install protoc
-      # Needed by the raft-proto v0.7.0 crate's protobuf-build step, which
-      # shells out to ``protoc`` directly and cannot reuse the vendored
-      # binary our own build.rs wires up for tonic.  Linux runners have a
-      # system protoc preinstalled; macOS does not, so every build broke
-      # with "No suitable protoc (>= 3.1.0) found in PATH" until this
-      # step landed.  The action is idempotent on hosts where protoc is
-      # already on PATH.
-      uses: arduino/setup-protoc@v3
-      with:
-        # raft-proto v0.7.0 uses protobuf-build v0.14.1 whose version
-        # check rejects the 2-digit-major protoc naming (21.x / 27.x)
-        # with "No suitable protoc (>= 3.1.0) found in PATH" — even
-        # though 27.x is newer than 3.1.0.  Pin to the last 3.x-style
-        # version (3.20.3 → libprotoc 3.20.3) so the parse succeeds.
-        version: "3.20.3"
-        repo-token: ${{ inputs.github-token }}
+    - name: Install protoc 3.20.3 (cross-platform)
+      # raft-proto v0.7.0's protobuf-build v0.14.1 parses ``protoc --version``
+      # as a 3-part semver.  Post-21 protoc releases report 2-part versions
+      # ("libprotoc 27.5"), which the parser rejects as "No suitable protoc
+      # (>= 3.1.0) found in PATH" even though 27.x is newer than 3.1.
+      # Download the last 3.x-style release (3.20.3) directly from GitHub
+      # and prepend it to PATH.  arduino/setup-protoc@v3 can't find 3.x
+      # releases (fails with "unable to get latest version"), so we do it
+      # manually.  Idempotent: if protoc 3.x is already on PATH we skip.
+      run: |
+        set -euo pipefail
+        if protoc --version 2>/dev/null | grep -qE 'libprotoc 3\.[0-9]+\.[0-9]+'; then
+          echo "protoc 3.x already on PATH:"
+          protoc --version
+          exit 0
+        fi
+        case "${{ runner.os }}-${{ runner.arch }}" in
+          Linux-X64)   ASSET="protoc-3.20.3-linux-x86_64.zip" ;;
+          Linux-ARM64) ASSET="protoc-3.20.3-linux-aarch_64.zip" ;;
+          macOS-X64)   ASSET="protoc-3.20.3-osx-x86_64.zip" ;;
+          macOS-ARM64) ASSET="protoc-3.20.3-osx-aarch_64.zip" ;;
+          *) echo "Unsupported: ${{ runner.os }}-${{ runner.arch }}" && exit 1 ;;
+        esac
+        curl -fsSL -o /tmp/protoc.zip \
+          "https://github.com/protocolbuffers/protobuf/releases/download/v3.20.3/${ASSET}"
+        mkdir -p "${RUNNER_TOOL_CACHE}/protoc/3.20.3"
+        unzip -q /tmp/protoc.zip -d "${RUNNER_TOOL_CACHE}/protoc/3.20.3"
+        chmod +x "${RUNNER_TOOL_CACHE}/protoc/3.20.3/bin/protoc"
+        echo "${RUNNER_TOOL_CACHE}/protoc/3.20.3/bin" >> "${GITHUB_PATH}"
+        "${RUNNER_TOOL_CACHE}/protoc/3.20.3/bin/protoc" --version
+      shell: bash
 
     - name: Install Rust toolchain
       uses: actions-rust-lang/setup-rust-toolchain@v1

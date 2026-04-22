@@ -396,9 +396,7 @@ async def _run_acp_mode(
             nx._kernel.llm_start_streaming, "/llm", "root", request_bytes, stream_path
         )
 
-    async def _loop_factory(
-        session_id: str, cwd: str, observer: AgentObserver
-    ) -> ManagedAgentLoop:
+    async def _loop_factory(session_id: str, cwd: str, observer: AgentObserver) -> ManagedAgentLoop:
         agent_path = "/root/agents/default"
         _cwd = cwd or os.getcwd()
         # Mount cwd via LocalConnector (ACP mode — cwd from session/new)

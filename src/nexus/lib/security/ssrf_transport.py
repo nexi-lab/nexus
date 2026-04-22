@@ -103,12 +103,19 @@ class _PinnedBackend(httpcore.AsyncNetworkBackend):
         # tracks separately, so cert verification still works against
         # the original hostname.
         last_exc: BaseException | None = None
+        total = len(self._pinned_ips)
         deadline = time.monotonic() + self._total_budget_secs
-        for _ in range(len(self._pinned_ips)):
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
+        # Distribute the wall-clock budget across remaining attempts so a
+        # single slow/blackholed IP cannot consume the full budget and
+        # leave later validated IPs untried. Each attempt still honors
+        # the caller-supplied connect timeout if it is tighter.
+        for attempt_idx in range(total):
+            remaining_ips = total - attempt_idx
+            remaining_budget = deadline - time.monotonic()
+            if remaining_budget <= 0:
                 break
-            attempt_timeout = remaining if timeout is None else min(timeout, remaining)
+            fair_share = remaining_budget / remaining_ips
+            attempt_timeout = fair_share if timeout is None else min(timeout, fair_share)
             pinned = next(self._cycle)
             try:
                 return await self._inner.connect_tcp(

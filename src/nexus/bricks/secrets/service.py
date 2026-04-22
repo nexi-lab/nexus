@@ -453,6 +453,7 @@ class SecretsService:
         subject_id: str | None = None,
         subject_type: str | None = None,
         audit_context: AccessAuditContext | None = None,
+        audit_event_type: str = "key_accessed",
     ) -> dict[str, Any] | None:
         """Get a secret value (decrypted) with version info.
 
@@ -466,6 +467,10 @@ class SecretsService:
             subject_type: The subject type
             audit_context: Optional caller context (access_context, client_id,
                 agent_session) merged into the audit log ``details`` JSON.
+            audit_event_type: Audit event type recorded for this read.
+                Defaults to ``key_accessed``; domain wrappers that repurpose
+                a read (e.g. TOTP generation) pass their own event type so
+                audit queries can count purposes separately.
 
         Returns:
             Dict with 'value' and 'version' keys, or None if not found
@@ -520,7 +525,7 @@ class SecretsService:
             if audit_context is not None:
                 details.update(audit_context.to_audit_details())
             self._audit_logger.log_event(
-                event_type="key_accessed",
+                event_type=audit_event_type,
                 actor_id=actor_id,
                 credential_id=secret_id,
                 zone_id=zone_id,

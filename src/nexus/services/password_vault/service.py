@@ -10,11 +10,17 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Any, cast
+
+import pyotp
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.secrets_access import AccessAuditContext
 from nexus.services.password_vault.schema import VaultEntry
+
+TOTP_PERIOD_SECONDS = 30
+TOTP_AUDIT_EVENT_TYPE = "totp_generated"
 
 # ``secrets_service`` is typed as ``Any`` below rather than the concrete
 # ``nexus.bricks.secrets.service.SecretsService`` because the import-linter
@@ -32,6 +38,10 @@ class VaultEntryNotFoundError(LookupError):
     """Raised when a vault entry does not exist (or is soft-deleted)."""
 
 
+class TotpNotConfiguredError(ValueError):
+    """Raised when a vault entry exists but has no ``totp_secret`` to seed TOTP."""
+
+
 class PasswordVaultService:
     """Domain-typed wrapper over SecretsService for vault entries.
 
@@ -45,6 +55,10 @@ class PasswordVaultService:
 
     def __init__(self, secrets_service: Any) -> None:
         self._secrets = secrets_service
+        # TOTP oracle cache keyed by ``(subject_id, title, window_index)``.
+        # Within one 30s window we return the same code per (subject, entry);
+        # callers that hammer the endpoint see one computation, not many.
+        self._totp_cache: dict[tuple[str, str, int], str] = {}
 
     # ------------------------------------------------------------------
     # Writes
@@ -210,3 +224,82 @@ class PasswordVaultService:
                 subject_type=subject_type,
             )
         )
+
+    # ------------------------------------------------------------------
+    # TOTP (RFC 6238)
+    # ------------------------------------------------------------------
+
+    def generate_totp(
+        self,
+        title: str,
+        *,
+        now: float | None = None,
+        actor_id: str = "system",
+        zone_id: str = ROOT_ZONE_ID,
+        subject_id: str | None = None,
+        subject_type: str | None = None,
+        audit_context: AccessAuditContext | None = None,
+    ) -> dict[str, Any] | None:
+        """Compute a current TOTP code from the entry's stored ``totp_secret``.
+
+        The secret never leaves this process — only the 6-digit code and
+        window metadata are returned. A single audit event typed
+        ``totp_generated`` is recorded (distinct from ``key_accessed`` so
+        audit queries can count TOTP requests separately).
+
+        Args:
+            title: Vault entry title.
+            now: Override current time (seconds since epoch). Tests only.
+            actor_id, zone_id, subject_id, subject_type: auth context.
+            audit_context: Caller tag merged into audit details.
+
+        Returns:
+            ``{"code", "expires_in_seconds", "period_seconds"}`` on success,
+            or ``None`` if the entry does not exist / is not visible to the
+            subject. (Callers map ``None`` to HTTP 404.)
+
+        Raises:
+            TotpNotConfiguredError: Entry exists but has no ``totp_secret``.
+                Callers map this to HTTP 422 (spec v3: distinguish
+                "not found / unauthorized" from "no TOTP on this entry").
+        """
+        result = self._secrets.get_secret(
+            namespace=self.NAMESPACE,
+            key=title,
+            actor_id=actor_id,
+            zone_id=zone_id,
+            subject_id=subject_id,
+            subject_type=subject_type,
+            audit_context=audit_context,
+            audit_event_type=TOTP_AUDIT_EVENT_TYPE,
+        )
+        if result is None:
+            return None
+
+        entry = VaultEntry.model_validate(json.loads(result["value"]))
+        if not entry.totp_secret:
+            raise TotpNotConfiguredError(title)
+
+        now_seconds = int(now if now is not None else time.time())
+        window_index = now_seconds // TOTP_PERIOD_SECONDS
+        cache_key = (subject_id or "anonymous", title, window_index)
+
+        code = self._totp_cache.get(cache_key)
+        if code is None:
+            code = pyotp.TOTP(entry.totp_secret).at(now_seconds)
+            self._totp_cache[cache_key] = code
+            # Drop entries from past windows so the dict doesn't grow
+            # unbounded under long-running servers.
+            self._prune_totp_cache(current_window=window_index)
+
+        return {
+            "code": code,
+            "expires_in_seconds": TOTP_PERIOD_SECONDS - (now_seconds % TOTP_PERIOD_SECONDS),
+            "period_seconds": TOTP_PERIOD_SECONDS,
+        }
+
+    def _prune_totp_cache(self, *, current_window: int) -> None:
+        """Drop cache entries from windows older than ``current_window``."""
+        stale = [k for k in self._totp_cache if k[2] < current_window]
+        for k in stale:
+            self._totp_cache.pop(k, None)

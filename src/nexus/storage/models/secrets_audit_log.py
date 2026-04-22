@@ -28,6 +28,7 @@ class SecretsAuditEventType(StrEnum):
     FAMILY_INVALIDATED = "family_invalidated"
     KEY_ACCESSED = "key_accessed"
     KEY_ROTATED = "key_rotated"
+    TOTP_GENERATED = "totp_generated"
 
 
 class SecretsAuditLogModel(Base):

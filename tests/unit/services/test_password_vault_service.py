@@ -20,7 +20,9 @@ import pytest
 from nexus.contracts.secrets_access import AccessAuditContext
 from nexus.services.password_vault.schema import VaultEntry
 from nexus.services.password_vault.service import (
+    TOTP_PERIOD_SECONDS,
     PasswordVaultService,
+    TotpNotConfiguredError,
     VaultEntryNotFoundError,
 )
 
@@ -321,3 +323,158 @@ class TestAccessAuditContext:
             "client_id": "sudowork-ui",
             "agent_session": "abc-123",
         }
+
+
+# ---------------------------------------------------------------------------
+# generate_totp (Ask 2)
+# ---------------------------------------------------------------------------
+
+
+# RFC 6238 test vector: at t = 59 (window 1), secret "JBSWY3DPEHPK3PXP" has
+# a stable 6-digit TOTP. We pick a time that makes the cache math easy.
+_TOTP_SECRET = "JBSWY3DPEHPK3PXP"
+
+
+class TestGenerateTotp:
+    def test_returns_code_and_window_metadata(
+        self, vault: PasswordVaultService, secrets: MagicMock
+    ) -> None:
+        entry = _sample_entry(totp_secret=_TOTP_SECRET)
+        secrets.get_secret.return_value = {
+            "value": json.dumps(entry.model_dump()),
+            "version": 1,
+        }
+
+        # t = 90s → window 3, 0s into window → expires_in = 30
+        result = vault.generate_totp("github", now=90.0)
+
+        assert result is not None
+        assert set(result.keys()) == {"code", "expires_in_seconds", "period_seconds"}
+        assert result["period_seconds"] == 30
+        assert result["expires_in_seconds"] == 30
+        assert isinstance(result["code"], str) and len(result["code"]) == 6
+
+    def test_forwards_totp_audit_event_type(
+        self, vault: PasswordVaultService, secrets: MagicMock
+    ) -> None:
+        entry = _sample_entry(totp_secret=_TOTP_SECRET)
+        secrets.get_secret.return_value = {
+            "value": json.dumps(entry.model_dump()),
+            "version": 1,
+        }
+
+        vault.generate_totp("github", now=0.0)
+
+        # TOTP must NOT share audit channel with entry reads.
+        assert secrets.get_secret.call_args.kwargs["audit_event_type"] == "totp_generated"
+
+    def test_forwards_audit_context(self, vault: PasswordVaultService, secrets: MagicMock) -> None:
+        entry = _sample_entry(totp_secret=_TOTP_SECRET)
+        secrets.get_secret.return_value = {
+            "value": json.dumps(entry.model_dump()),
+            "version": 1,
+        }
+        ctx = AccessAuditContext(access_context="auto_login", client_id="sudowork")
+
+        vault.generate_totp("github", now=0.0, audit_context=ctx)
+
+        assert secrets.get_secret.call_args.kwargs["audit_context"] is ctx
+
+    def test_missing_entry_returns_none(
+        self, vault: PasswordVaultService, secrets: MagicMock
+    ) -> None:
+        secrets.get_secret.return_value = None
+
+        assert vault.generate_totp("nonexistent") is None
+
+    def test_entry_without_totp_secret_raises(
+        self, vault: PasswordVaultService, secrets: MagicMock
+    ) -> None:
+        entry = _sample_entry(totp_secret=None)
+        secrets.get_secret.return_value = {
+            "value": json.dumps(entry.model_dump()),
+            "version": 1,
+        }
+
+        with pytest.raises(TotpNotConfiguredError):
+            vault.generate_totp("github")
+
+    def test_empty_totp_secret_raises(
+        self, vault: PasswordVaultService, secrets: MagicMock
+    ) -> None:
+        entry = _sample_entry(totp_secret="")
+        secrets.get_secret.return_value = {
+            "value": json.dumps(entry.model_dump()),
+            "version": 1,
+        }
+
+        with pytest.raises(TotpNotConfiguredError):
+            vault.generate_totp("github")
+
+    def test_cache_returns_same_code_within_window(
+        self, vault: PasswordVaultService, secrets: MagicMock
+    ) -> None:
+        entry = _sample_entry(totp_secret=_TOTP_SECRET)
+        secrets.get_secret.return_value = {
+            "value": json.dumps(entry.model_dump()),
+            "version": 1,
+        }
+
+        # Two calls in the same 30s window — same subject, same title
+        r1 = vault.generate_totp("github", now=90.0, subject_id="alice")
+        r2 = vault.generate_totp("github", now=115.0, subject_id="alice")  # still window 3
+
+        assert r1 is not None and r2 is not None
+        assert r1["code"] == r2["code"]
+        # expires_in_seconds should tick down across the window
+        assert r1["expires_in_seconds"] == TOTP_PERIOD_SECONDS
+        assert r2["expires_in_seconds"] == 5
+
+    def test_cache_recomputes_across_windows(
+        self, vault: PasswordVaultService, secrets: MagicMock
+    ) -> None:
+        entry = _sample_entry(totp_secret=_TOTP_SECRET)
+        secrets.get_secret.return_value = {
+            "value": json.dumps(entry.model_dump()),
+            "version": 1,
+        }
+
+        r1 = vault.generate_totp("github", now=0.0, subject_id="alice")  # window 0
+        r2 = vault.generate_totp("github", now=30.0, subject_id="alice")  # window 1
+
+        assert r1 is not None and r2 is not None
+        # Different windows → almost always different codes. (Collision
+        # across adjacent windows is ~1 in 1e6; fine for deterministic vector.)
+        assert r1["code"] != r2["code"]
+
+    def test_cache_is_per_subject(self, vault: PasswordVaultService, secrets: MagicMock) -> None:
+        entry = _sample_entry(totp_secret=_TOTP_SECRET)
+        secrets.get_secret.return_value = {
+            "value": json.dumps(entry.model_dump()),
+            "version": 1,
+        }
+
+        vault.generate_totp("github", now=0.0, subject_id="alice")
+        vault.generate_totp("github", now=0.0, subject_id="bob")
+
+        # Both subjects share the same TOTP value (same secret + window), but
+        # cache entries are keyed separately so get_secret is called once per
+        # (subject, window) combination.
+        assert secrets.get_secret.call_count == 2
+
+    def test_prune_drops_stale_windows(
+        self, vault: PasswordVaultService, secrets: MagicMock
+    ) -> None:
+        entry = _sample_entry(totp_secret=_TOTP_SECRET)
+        secrets.get_secret.return_value = {
+            "value": json.dumps(entry.model_dump()),
+            "version": 1,
+        }
+
+        vault.generate_totp("github", now=0.0, subject_id="alice")  # window 0
+        assert len(vault._totp_cache) == 1
+
+        vault.generate_totp("github", now=90.0, subject_id="alice")  # window 3
+        # Stale window-0 entry should be pruned when window-3 is inserted.
+        assert len(vault._totp_cache) == 1
+        assert all(k[2] == 3 for k in vault._totp_cache)

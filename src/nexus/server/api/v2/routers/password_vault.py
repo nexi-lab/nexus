@@ -31,6 +31,7 @@ import logging
 from typing import Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, ConfigDict
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.secrets_access import (
@@ -43,8 +44,25 @@ from nexus.server.dependencies import require_auth
 from nexus.services.password_vault.schema import VaultEntry
 from nexus.services.password_vault.service import (
     PasswordVaultService,
+    TotpNotConfiguredError,
     VaultEntryNotFoundError,
 )
+
+
+class TotpRequest(BaseModel):
+    """Request body for ``POST /{title}/totp``.
+
+    All fields optional — carries the same caller-tag tuple as Ask 1 GET
+    endpoints so a TOTP generation shows up in the audit log with the
+    same client_id / agent_session as the parent auto-login session.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    access_context: str | None = None
+    client_id: str | None = None
+    agent_session: str | None = None
+
 
 logger = logging.getLogger(__name__)
 
@@ -197,6 +215,57 @@ def restore_entry(
     except Exception as e:
         logger.error("Failed to restore vault entry: %s", e)
         raise HTTPException(status_code=500, detail=f"Failed to restore vault entry: {e}") from e
+
+
+@router.post("/{title:path}/totp")
+def generate_totp_code(
+    title: str,
+    body: TotpRequest | None = None,
+    auth_result: dict[str, Any] = Depends(require_auth),
+    service: PasswordVaultService = Depends(get_password_vault_service),
+) -> dict[str, Any]:
+    """Compute a TOTP code server-side from the entry's stored ``totp_secret``.
+
+    The secret never leaves nexus; only the 6-digit code + window metadata
+    are returned. Emits a distinct ``totp_generated`` audit event.
+
+    Response: ``{"code", "expires_in_seconds", "period_seconds"}``.
+
+    Status codes:
+        200 — Code generated.
+        400 — Unknown ``access_context`` value in body.
+        404 — Entry does not exist, or subject has no access to it.
+        422 — Entry exists but has no ``totp_secret`` configured.
+    """
+    _validate_title(title)
+    actor_id = auth_result.get("subject_id") or "anonymous"
+    zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
+    subject_id = auth_result.get("subject_id") or "anonymous"
+    subject_type = auth_result.get("subject_type") or "user"
+
+    body = body or TotpRequest()
+    audit_context = _build_audit_context(body.access_context, body.client_id, body.agent_session)
+
+    try:
+        result = service.generate_totp(
+            title,
+            actor_id=actor_id,
+            zone_id=zone_id,
+            subject_id=subject_id,
+            subject_type=subject_type,
+            audit_context=audit_context,
+        )
+    except TotpNotConfiguredError as e:
+        raise HTTPException(status_code=422, detail="totp_not_configured") from e
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to generate TOTP: %s", e)
+        raise HTTPException(status_code=500, detail=f"Failed to generate TOTP: {e}") from e
+
+    if result is None:
+        raise HTTPException(status_code=404, detail="Vault entry not found")
+    return result
 
 
 # --------------------------------------------------------------------------

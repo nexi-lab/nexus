@@ -166,9 +166,9 @@ async def startup_grpc(app: "FastAPI", _svc: "LifespanServices") -> list[asyncio
     _mark_grpc_done(app)  # gRPC listener is up
 
     # Enlist gRPC server (Q1 — infrastructure, manual start/stop)
-    coord = getattr(_svc, "service_coordinator", None)
-    if coord is not None:
-        coord.enlist("grpc_server", server)
+    nx = getattr(_svc, "nexus_fs", _svc)
+    if hasattr(nx, "sys_setattr"):
+        nx.sys_setattr("/__sys__/services/grpc_server", service=server)
 
     return []
 

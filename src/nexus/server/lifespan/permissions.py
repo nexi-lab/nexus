@@ -71,9 +71,12 @@ async def _startup_async_rebac(app: "FastAPI", svc: "LifespanServices") -> None:
 
         # Enlist with coordinator (Q1 — wrapper is the consumer-facing service)
         if app.state.async_rebac_manager is not None:
-            coord = svc.service_coordinator
-            if coord is not None:
-                coord.enlist("async_rebac_manager", app.state.async_rebac_manager)
+            nx = svc
+            if hasattr(nx, "sys_setattr"):
+                nx.sys_setattr(
+                    "/__sys__/services/async_rebac_manager",
+                    service=app.state.async_rebac_manager,
+                )
 
     except Exception as e:
         logger.warning("Failed to initialize async ReBAC manager: %s", e, exc_info=True)
@@ -395,10 +398,13 @@ async def _startup_tiger_cache(app: "FastAPI", svc: "LifespanServices") -> list[
                     )
                     app.state.directory_grant_expander = expander
 
-                    # Q3 BackgroundService — coordinator auto-calls start()
-                    coord = svc.service_coordinator
-                    if coord is not None:
-                        coord.enlist("directory_grant_expander", expander)
+                    # Q3 BackgroundService — kernel auto-calls start()
+                    nx = svc.nexus_fs if hasattr(svc, "nexus_fs") else svc
+                    if hasattr(nx, "sys_setattr"):
+                        nx.sys_setattr(
+                            "/__sys__/services/directory_grant_expander",
+                            service=expander,
+                        )
                     else:
                         await expander.start()
                     logger.info("DirectoryGrantExpander worker started for large folder grants")

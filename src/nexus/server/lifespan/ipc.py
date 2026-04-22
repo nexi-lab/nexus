@@ -104,9 +104,12 @@ async def startup_ipc(app: "FastAPI", svc: "LifespanServices") -> list[asyncio.T
             cache_store=cache_store,
         )
         app.state.ipc_sweeper = sweeper
-        coord = svc.service_coordinator
-        if coord is not None:
-            coord.enlist("ipc_sweeper", sweeper)
+        nx = svc.nexus_fs if hasattr(svc, "nexus_fs") else svc
+        if hasattr(nx, "sys_setattr"):
+            nx.sys_setattr(
+                "/__sys__/services/ipc_sweeper",
+                service=sweeper,
+            )
         else:
             await sweeper.start()  # creates internal asyncio.Task
         logger.info(

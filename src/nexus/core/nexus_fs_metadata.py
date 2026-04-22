@@ -845,6 +845,17 @@ class MetadataMixin:
         elif not is_directory:
             raise NexusFileNotFoundError(old_path)
 
+        # Rename children for implicit directories (no explicit entry in
+        # metastore, but children exist). Rust's rename_path() only handles
+        # entries it finds via metastore.get() — implicit dirs have no entry.
+        if is_directory:
+            _prefix = old_path.rstrip("/") + "/"
+            for child in old_route.metastore.list(_prefix, recursive=True):
+                _child_new = new_path + child.path[len(old_path) :]
+                _child_new_meta = _replace(child, path=_child_new)
+                new_route.metastore.put(_child_new_meta)
+                old_route.metastore.delete(child.path)
+
         # PAS backend propagation
         if hasattr(old_route.backend, "rename"):
             try:

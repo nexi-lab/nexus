@@ -262,12 +262,9 @@ class NexusFS(  # type: ignore[misc]
                         if hasattr(metadata_store, _attr):
                             setattr(_proxy, _attr, getattr(metadata_store, _attr))
                     self.metadata = _proxy
-                    # bind_kernel + default_metastore update deferred to after
-                    # DriverLifecycleCoordinator creation (self._mount_table
-                    # is not yet available at this point in __init__).
-                    _vfs_rust = getattr(self._vfs_lock_manager, "_rust", None)
-                    if _vfs_rust is not None:
-                        self._kernel.set_vfs_lock(_vfs_rust)
+                    # All kernel wiring that depends on other NexusFS attributes
+                    # (_mount_table, _vfs_lock_manager) is deferred to after
+                    # __init__ completes — see "Deferred kernel wiring" block below.
             except Exception as exc:
                 import logging as _logging
 
@@ -292,13 +289,15 @@ class NexusFS(  # type: ignore[misc]
             self._kernel,
         )
 
-        # Deferred from kernel init: wire mount table to kernel + proxy metastore.
-        # Must happen after DLC + PathRouter creation (they own the mount table).
+        # Deferred kernel wiring: bind mount table + VFS lock after all attributes exist.
         if self._kernel is not None:
             _mt = getattr(self._driver_coordinator, "_mount_table", None)
             if _mt is not None:
                 _mt._default_metastore = self.metadata
                 _mt.bind_kernel(self._kernel)
+            _vfs_rust = getattr(getattr(self, "_vfs_lock_manager", None), "_rust", None)
+            if _vfs_rust is not None:
+                self._kernel.set_vfs_lock(_vfs_rust)
 
         logger.info(
             "IPC primitives initialized: DriverCoordinator (self_address=%s)",

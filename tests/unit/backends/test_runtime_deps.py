@@ -111,6 +111,20 @@ class TestCheckRuntimeDeps:
         assert any("definitely_not_a_real_binary_xyz" in r for r in reasons)
         assert any("service 'kernel'" in r for r in reasons)
 
+    def test_missing_dotted_python_dep_parent_missing(self) -> None:
+        """Regression: importlib.util.find_spec("x.y.z") raises
+        ModuleNotFoundError when 'x' is absent; check_runtime_deps must
+        treat that as "not installed" rather than letting the exception
+        escape. Without the guard the user sees an opaque ModuleNotFoundError
+        instead of the intended MissingDependencyError."""
+        missing = check_runtime_deps(
+            (PythonDep("definitely_not_a_real_parent.child.grandchild", extras=("gcs",)),)
+        )
+        assert len(missing) == 1
+        _, reason = missing[0]
+        assert "definitely_not_a_real_parent.child.grandchild" in reason
+        assert "pip install nexus-fs[gcs]" in reason
+
     def test_server_available_is_cached(self) -> None:
         from nexus.backends.base.runtime_deps import _server_available
 

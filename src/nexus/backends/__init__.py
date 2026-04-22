@@ -33,19 +33,40 @@ from nexus.core.object_store import ObjectStoreABC, WriteResult
 _OPTIONAL_BACKENDS: dict[str, tuple[str, str]] = {}
 
 
-# NOTE: the legacy `*CLIConnector` aliases (GmailCLIConnector,
-# CalendarCLIConnector, SheetsCLIConnector, DocsCLIConnector,
-# ChatCLIConnector, DriveCLIConnector, GitHubCLIConnector) from the
-# pre-Task-4 hardcoded dict were dropped — no remaining consumers
-# reference them. Reach the same classes via their real names
-# (GmailConnector, CalendarConnector, etc.) or via
-# ConnectorRegistry.get_info(<name>).connector_class.
+# Legacy aliases from the pre-manifest hardcoded dict. Kept as a
+# one-release deprecation shim so downstream code that imported these
+# names from ``nexus.backends`` keeps working. The ``__getattr__``
+# lookup still resolves them to the real class; each hit also emits a
+# DeprecationWarning pointing callers at the current name.
+_LEGACY_BACKEND_ALIASES: dict[str, str] = {
+    "GmailCLIConnector": "GmailConnector",
+    "CalendarCLIConnector": "CalendarConnector",
+    "SheetsCLIConnector": "SheetsConnector",
+    "DocsCLIConnector": "DocsConnector",
+    "ChatCLIConnector": "ChatConnector",
+    "DriveCLIConnector": "DriveConnector",
+    "GitHubCLIConnector": "GitHubConnector",
+}
+
+
 def _populate_optional_backends_map() -> None:
-    """Populate _OPTIONAL_BACKENDS from the manifest (one-time)."""
+    """Populate _OPTIONAL_BACKENDS from the manifest (one-time).
+
+    Also adds the legacy ``*CLIConnector`` aliases pointing at the real
+    class, so ``from nexus.backends import GmailCLIConnector`` keeps
+    working (with DeprecationWarning) for one release.
+    """
     from nexus.backends._manifest import CONNECTOR_MANIFEST
 
+    manifest_classes: dict[str, tuple[str, str]] = {}
     for entry in CONNECTOR_MANIFEST:
         _OPTIONAL_BACKENDS[entry.class_name] = (entry.module_path, entry.class_name)
+        manifest_classes[entry.class_name] = (entry.module_path, entry.class_name)
+
+    # Map each legacy alias at its real class's module path.
+    for alias, real_name in _LEGACY_BACKEND_ALIASES.items():
+        if real_name in manifest_classes:
+            _OPTIONAL_BACKENDS[alias] = manifest_classes[real_name]
 
 
 _populate_optional_backends_map()
@@ -58,6 +79,15 @@ _logger = logging.getLogger(__name__)
 def __getattr__(name: str) -> object:
     """Lazy-load optional backends on first attribute access."""
     if name in _OPTIONAL_BACKENDS:
+        if name in _LEGACY_BACKEND_ALIASES:
+            import warnings
+
+            real_name = _LEGACY_BACKEND_ALIASES[name]
+            warnings.warn(
+                f"nexus.backends.{name} is deprecated; import {real_name} instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         module_path, class_name = _OPTIONAL_BACKENDS[name]
         try:
             module = importlib.import_module(module_path)

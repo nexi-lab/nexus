@@ -116,6 +116,17 @@ def _create_connector_backend(spec: Any) -> Any:
     scheme = spec.scheme
     authority = spec.authority
 
+    # Ensure manifest placeholders are registered FIRST so that any
+    # `@register_connector("name")` call inside _discover_connector_module
+    # hits the placeholder-binding path and preserves manifest-sourced
+    # metadata (description, category, runtime_deps, service_name).
+    # Without this, a direct URI-scheme import takes the external-plugin
+    # branch of register() with empty defaults and the entry has no
+    # runtime_deps — mount skips the MissingDependencyError check.
+    from nexus.backends import _register_optional_backends
+
+    _register_optional_backends()
+
     _discover_connector_module(scheme)
 
     from nexus.backends.base.registry import ConnectorRegistry

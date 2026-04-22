@@ -91,7 +91,16 @@ def check_runtime_deps(
     for dep in deps:
         match dep:
             case PythonDep(module=mod, extras=extras):
-                if importlib.util.find_spec(mod) is None:
+                # find_spec() raises ModuleNotFoundError for dotted names
+                # when the parent package is absent (e.g. "google.cloud.storage"
+                # when "google" is missing). Treat any import-resolution
+                # failure as "not installed" so the user still gets a clean
+                # MissingDependencyError with install hint.
+                try:
+                    spec = importlib.util.find_spec(mod)
+                except (ImportError, ModuleNotFoundError, ValueError):
+                    spec = None
+                if spec is None:
                     if extras:
                         hint = f"pip install nexus-fs[{','.join(extras)}]"
                     else:

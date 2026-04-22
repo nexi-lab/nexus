@@ -47,14 +47,6 @@ impl ObjectStore for GmailBackend {
         &self.backend_name
     }
 
-    fn is_external(&self) -> bool {
-        true
-    }
-
-    fn is_remote(&self) -> bool {
-        true
-    }
-
     fn write_content(
         &self,
         content: &[u8],

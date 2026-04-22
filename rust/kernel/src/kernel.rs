@@ -15,7 +15,7 @@
 
 use crate::dcache::{CachedEntry, DCache, DT_DIR, DT_MOUNT, DT_PIPE, DT_REG, DT_STREAM};
 use crate::dispatch::{FileEvent, FileEventType, MutationObserver, Trie};
-use crate::file_watch::FileWatcher;
+use crate::file_watch::FileWatchRegistry;
 use crate::lock_manager::{LockManager, LockMode};
 use crate::metastore::LocalMetastore;
 use crate::mount_table::{
@@ -536,7 +536,7 @@ pub struct Kernel {
     // violated dispatch-contract orthogonality.
     //
     // 4 worker threads is enough for the typical workload (a handful of
-    // long-lived observers: FileWatcher, EventBus, etc.). Each worker
+    // long-lived observers: FileWatchRegistry, EventBus, etc.). Each worker
     // when calling Python observers — many parallel Python observers
     // will serialize on the GIL, but Rust-native observers run truly
     // parallel.
@@ -549,8 +549,8 @@ pub struct Kernel {
     // observer_pool removed — inline dispatch, no background threads.
     // Zone revision counter — AtomicU64 per zone + Condvar for waiters (§10 A2)
     zone_revisions: DashMap<String, Arc<ZoneRevisionEntry>>,
-    // FileWatcher — inotify equivalent. Arc-shared with observer registry.
-    file_watches: Arc<FileWatcher>,
+    // FileWatchRegistry — inotify equivalent. Arc-shared with observer registry.
+    file_watches: Arc<FileWatchRegistry>,
     // Agent registry — DashMap backing store (§10 B1).
     // Held in an Arc so components like `AgentStatusResolver` can share
     // ownership without relying on raw pointers / field address stability.
@@ -675,7 +675,7 @@ impl Kernel {
             write_batch_hook_count: AtomicU64::new(0),
             observers: Mutex::new(KernelObserverRegistry::new()),
             zone_revisions: DashMap::new(),
-            file_watches: Arc::new(FileWatcher::new()),
+            file_watches: Arc::new(FileWatchRegistry::new()),
             agent_registry: Arc::new(crate::agent_registry::AgentRegistry::new()),
             service_registry: Arc::new(crate::service_registry::ServiceRegistry::new()),
             pipe_manager: crate::pipe_manager::PipeManager::new(),
@@ -703,7 +703,7 @@ impl Kernel {
             tracing::warn!("federation bootstrap from env failed: {:?}", e);
         }
         // Observers registered on-demand (not at Kernel::new()).
-        // FileWatcher + StreamEventObservers are registered by orchestrator
+        // FileWatchRegistry + StreamEventObservers are registered by orchestrator
         // at boot time to avoid issues in lightweight test contexts.
         k
     }
@@ -2101,7 +2101,7 @@ impl Kernel {
     /// OBSERVE-phase dispatch — call all matching observers inline.
     ///
     /// Fire-and-forget by contract. Observers are pure Rust (~0.5μs each:
-    /// FileWatcher Condvar notify + StreamEventObserver stream_write_nowait).
+    /// FileWatchRegistry Condvar notify + StreamEventObserver stream_write_nowait).
     /// Inline dispatch avoids ThreadPool + fork() incompatibility in xdist CI.
     ///
     /// Snapshot-then-drop-lock pattern: collect Arc clones under the registry
@@ -3744,7 +3744,7 @@ impl Kernel {
         // state actually changed. Parent directories created via
         // ensure_parent_directories don't get individual events; the
         // top-level mkdir event is enough for observers like
-        // FileWatcher to invalidate their dcache for the subtree.
+        // FileWatchRegistry to invalidate their dcache for the subtree.
         self.dispatch_mutation(FileEventType::DirCreate, path, ctx, |_ev| {});
 
         Ok(SysMkdirResult {

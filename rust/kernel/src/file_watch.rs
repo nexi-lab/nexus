@@ -75,6 +75,17 @@ impl FileWatchRegistry {
     pub(crate) fn len(&self) -> usize {
         self.watches.read().len()
     }
+
+    /// Block until a file event matching the pattern arrives, or timeout.
+    /// Stub — returns None (blocking watch not yet implemented).
+    #[allow(dead_code)]
+    pub(crate) fn wait_for_event(
+        &self,
+        _pattern: &str,
+        _timeout_ms: u64,
+    ) -> Option<crate::dispatch::FileEvent> {
+        None
+    }
 }
 
 /// RemoteWatchProtocol — kernel-agnostic interface for distributed watch.

@@ -975,18 +975,8 @@ class ContentMixin:
         content_hash = result.content_id or ""
         size = result.size if result.hit else len(buf)
         new_version = result.version
-        # The Rust kernel owns the CAS blob write (F2 C4) and does not touch
-        # the Python-side bloom filter on the backend. Surface the new hash to
-        # the Python bloom so backend.content_exists() fast-path doesn't miss
-        # blobs the kernel just persisted (Issue #3706/#3765 regression).
-        if content_hash:
-            try:
-                _route = self.router.route(path, zone_id=self._zone_id)
-                _bloom = getattr(getattr(_route, "backend", None), "_bloom", None)
-                if _bloom is not None:
-                    _bloom.add(content_hash)
-            except Exception as _exc:  # pragma: no cover - bloom is best-effort
-                logger.debug("bloom.add after sys_write failed for %s: %s", path, _exc)
+        # Bloom filter is now maintained by Rust CASEngine (Phase 7B PR 5).
+        # No Python-side bloom reach-through needed.
         post_metadata = FileMetadata(
             path=path,
             backend_name=_meta.backend_name if _meta else "",

@@ -215,6 +215,7 @@ def test_all_public_methods_are_exposed_or_excluded():
         "intercept_pre_stat",  # Internal - PRE-INTERCEPT dispatch
         "intercept_pre_access",  # Internal - PRE-INTERCEPT dispatch
         # POST-INTERCEPT dispatch deleted — now via Rust dispatch_post_hooks
+        "dispatch_event",  # Internal - FileEvent dispatch (DLC backward compat, DispatchMixin)
         "notify",  # Internal - OBSERVE dispatch
         "notify_mount",  # Internal - mount notification
         "notify_unmount",  # Internal - unmount notification

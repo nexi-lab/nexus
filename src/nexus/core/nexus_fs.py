@@ -197,6 +197,13 @@ class NexusFS(  # type: ignore[misc]
 
         # Advisory locks handled by Rust kernel LockManager (sys_lock / sys_unlock).
 
+        # FileWatcher: kernel inotify primitive — local OBSERVE waiters + optional
+        # remote watcher (federation). Created here, enlisted by orchestrator at
+        # boot time via enlist("file_watcher", nx._file_watcher).
+        from nexus.core.file_watcher import FileWatcher
+
+        self._file_watcher: FileWatcher = FileWatcher()
+
         self._init_dispatch()
 
         import os as _os_ipc

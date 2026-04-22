@@ -50,11 +50,23 @@ gdrive = [
     "google-api-python-client>=2.0",
     "google-auth-oauthlib>=1.0",
 ]
+gmail = [
+    "google-api-python-client>=2.0",
+    "google-auth-oauthlib>=1.0",
+]
+gcalendar = [
+    "google-api-python-client>=2.0",
+    "google-auth-oauthlib>=1.0",
+]
+slack = ["slack-sdk>=3.0"]
+anthropic = ["anthropic>=0.30"]
+openai = ["openai>=1.0"]
+x = ["requests-oauthlib>=1.3"]
 edit = ["rapidfuzz>=3.0"]
 fsspec = ["fsspec>=2024.0"]
 tui = ["textual>=1.0"]
 all = [
-    "nexus-fs[s3,gcs,gdrive,fsspec,tui,edit]",
+    "nexus-fs[s3,gcs,gdrive,gmail,gcalendar,slack,anthropic,openai,x,fsspec,tui,edit]",
 ]
 dev = [
     "nexus-fs[all]",

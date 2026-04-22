@@ -161,9 +161,12 @@ class MountService:
             )
 
     async def _generate_readmes(self, mount_point: str, backend: Any) -> None:
-        """Generate .readme/ directory for a connector backend (async).
+        """Set mount path on a connector backend so virtual .readme/ overlay works.
 
-        Called from post-mount hooks and sync completion.
+        NOTE (Issue #3728): ``write_readme`` was removed. The virtual
+        ``.readme/`` overlay now serves docs on-demand from class metadata
+        via ``nexus.backends.connectors.schema_generator.dispatch_virtual_readme_*``,
+        so materializing files into the backend is no longer needed.
         """
         from nexus.backends.connectors.base import ReadmeDocMixin
 
@@ -173,23 +176,6 @@ class MountService:
             return
 
         backend.set_mount_path(mount_point)
-
-        # Determine filesystem to write to
-        fs = None
-        if self._gw is not None and hasattr(self._gw, "nexus_fs"):
-            fs = self._gw.nexus_fs
-        elif self.nexus_fs is not None:
-            fs = self.nexus_fs
-
-        if fs is not None:
-            try:
-                result = await backend.write_readme(mount_point, fs)
-                if result.get("readme_md"):
-                    logger.info(
-                        "Generated readme docs for %s at %s", mount_point, result["readme_md"]
-                    )
-            except Exception:
-                logger.warning("Failed to generate readme docs for %s", mount_point, exc_info=True)
 
     async def _index_mount_content(self, mount_point: str, *, zone_id: str | None = None) -> None:
         """Index mounted connector content for semantic search.

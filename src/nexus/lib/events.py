@@ -19,7 +19,20 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 _Sink = Callable[[str, dict[str, Any]], None]
-_sinks: list[_Sink] = []
+
+
+def _default_logger_sink(name: str, payload: dict[str, Any]) -> None:
+    """Default sink so security events always reach at least one observable
+    surface even when no operator-configured sink is registered.
+
+    Emits at WARNING for names under ``security.`` (blocks/policy decisions
+    are operationally important) and INFO otherwise.
+    """
+    level = logging.WARNING if name.startswith("security.") else logging.INFO
+    logger.log(level, "audit_event name=%s payload=%s", name, payload)
+
+
+_sinks: list[_Sink] = [_default_logger_sink]
 
 
 @dataclass

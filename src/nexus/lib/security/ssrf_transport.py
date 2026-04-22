@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import itertools
 import logging
+import os
 from collections.abc import Callable
 from typing import Any
 
@@ -29,6 +30,30 @@ from httpx import AsyncHTTPTransport
 from nexus.lib.security.url_validator import ValidatedURL
 
 logger = logging.getLogger(__name__)
+
+
+def _proxy_for_url(url: str) -> str | None:
+    """Return the HTTP(S) proxy env var value applicable to ``url``, else None.
+
+    Follows standard envvar conventions: ``HTTPS_PROXY``/``https_proxy`` for
+    https URLs, ``HTTP_PROXY``/``http_proxy`` for http URLs. An exact host
+    match in ``NO_PROXY`` / ``no_proxy`` (comma-separated) disables it.
+    """
+    scheme = url.split(":", 1)[0].lower()
+    proxy_var = "HTTPS_PROXY" if scheme == "https" else "HTTP_PROXY"
+    proxy = os.environ.get(proxy_var) or os.environ.get(proxy_var.lower())
+    if not proxy:
+        return None
+    no_proxy = os.environ.get("NO_PROXY") or os.environ.get("no_proxy") or ""
+    if no_proxy:
+        try:
+            host = url.split("://", 1)[1].split("/", 1)[0].split(":", 1)[0].lower()
+        except IndexError:
+            host = ""
+        for entry in (e.strip().lower() for e in no_proxy.split(",")):
+            if entry and (entry == "*" or host == entry or host.endswith("." + entry.lstrip("."))):
+                return None
+    return proxy
 
 
 class _PinnedBackend(httpcore.AsyncNetworkBackend):
@@ -68,7 +93,7 @@ class _PinnedBackend(httpcore.AsyncNetworkBackend):
                     local_address=local_address,
                     socket_options=socket_options,
                 )
-            except (httpcore.ConnectError, OSError) as exc:
+            except (httpcore.ConnectError, httpcore.TimeoutException, OSError) as exc:
                 last_exc = exc
                 continue
         assert last_exc is not None
@@ -131,18 +156,40 @@ def make_pinned_client_factory(validated: ValidatedURL) -> PinnedClientFactory:
     ``httpx_client_factory(headers, timeout, auth) -> httpx.AsyncClient``
     parameter. We return a factory that builds an AsyncClient wired to
     ``PinnedResolverTransport`` with redirects disabled.
+
+    When the deployment routes egress through an HTTP(S) proxy (standard
+    ``HTTPS_PROXY`` / ``HTTP_PROXY`` envvars), the pinned transport is
+    skipped: the TCP connect goes to the proxy (not the origin), so DNS
+    rebinding against the origin hostname is not reachable here. The URL
+    is still validated upfront, and redirects are still disabled.
     """
+    proxy = _proxy_for_url(validated.url)
 
     def factory(
         headers: dict[str, str] | None = None,
         timeout: httpx.Timeout | None = None,
         auth: httpx.Auth | None = None,
     ) -> httpx.AsyncClient:
+        client_timeout = timeout if timeout is not None else httpx.Timeout(30.0)
+        if proxy is not None:
+            logger.debug(
+                "SSRF pinned transport skipped for %s — proxy %s in effect; "
+                "URL was validated, proxy handles egress",
+                validated.hostname,
+                proxy,
+            )
+            return httpx.AsyncClient(
+                headers=headers,
+                timeout=client_timeout,
+                auth=auth,
+                follow_redirects=False,
+                proxy=proxy,
+            )
         transport = PinnedResolverTransport(validated)
         return httpx.AsyncClient(
             transport=transport,
             headers=headers,
-            timeout=timeout if timeout is not None else httpx.Timeout(30.0),
+            timeout=client_timeout,
             auth=auth,
             follow_redirects=False,
         )

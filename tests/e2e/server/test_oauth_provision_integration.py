@@ -57,8 +57,8 @@ def admin_context():
 
 @pytest.fixture
 def oauth_crypto():
-    """Create OAuthCrypto instance for testing."""
-    return OAuthCrypto()
+    """Create OAuthCrypto instance for testing with an ephemeral key."""
+    return OAuthCrypto(encryption_key=OAuthCrypto.generate_key())
 
 
 class TestOAuthProvisionIntegration:

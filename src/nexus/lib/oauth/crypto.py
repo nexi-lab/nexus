@@ -6,7 +6,10 @@ Key resolution order (first match wins):
     1. Explicit ``encryption_key`` parameter
     2. Database-backed ``settings_store``
     3. ``NEXUS_OAUTH_ENCRYPTION_KEY`` environment variable
-    4. Random ephemeral key (development only — warns loudly)
+    4. Random ephemeral key — **only** when ``NEXUS_ALLOW_EPHEMERAL_OAUTH_KEY=1``;
+       otherwise raises. This prevents silent data loss on the next restart
+       (the ephemeral key never persists, so previously-encrypted secrets
+       become undecryptable).
 """
 
 import asyncio
@@ -23,6 +26,19 @@ logger = logging.getLogger(__name__)
 
 OAUTH_ENCRYPTION_KEY_NAME = "oauth_encryption_key"
 OAUTH_ENCRYPTION_KEY_ENV = "NEXUS_OAUTH_ENCRYPTION_KEY"
+ALLOW_EPHEMERAL_KEY_ENV = "NEXUS_ALLOW_EPHEMERAL_OAUTH_KEY"
+
+
+class EphemeralOAuthKeyRefused(RuntimeError):
+    """Raised when no persistent OAuth encryption key is available and the
+    caller has not opted into ephemeral keys via ``NEXUS_ALLOW_EPHEMERAL_OAUTH_KEY=1``.
+
+    Historically this path silently generated a throwaway key, which meant
+    any secret written in the previous process run was permanently
+    undecryptable after restart.  The correct response is to raise so the
+    operator can wire a ``settings_store`` or set ``NEXUS_OAUTH_ENCRYPTION_KEY``
+    before any data is written.
+    """
 
 
 class OAuthCrypto:
@@ -65,11 +81,28 @@ class OAuthCrypto:
             self._init_fernet(env_key)
             return
 
-        # 4. Random ephemeral key (development fallback)
+        # 4. Random ephemeral key — refuse by default; opt-in via env.
+        #
+        # Silent fallback here was the root cause of the post-R20.18.5
+        # data-loss: any previously-encrypted secret became undecryptable
+        # on next boot because the key was never persisted. The only
+        # sanctioned use of ephemeral keys is dev/test scenarios where
+        # the caller has explicitly accepted that tradeoff.
+        if os.environ.get(ALLOW_EPHEMERAL_KEY_ENV) != "1":
+            raise EphemeralOAuthKeyRefused(
+                "No persistent OAuth encryption key available and "
+                f"{ALLOW_EPHEMERAL_KEY_ENV}=1 was not set. Wire a "
+                "settings_store (e.g. SQLAlchemySystemSettingsStore on the "
+                f"record_store) or set {OAUTH_ENCRYPTION_KEY_ENV} to a 32-byte "
+                "urlsafe-base64 Fernet key before starting. Generating an "
+                "ephemeral key silently would orphan any secret written in "
+                "previous process runs."
+            )
         logger.warning(
-            "Generating random OAuth encryption key. This key will NOT persist "
-            "across restarts! Set %s or pass encryption_key for production use.",
-            OAUTH_ENCRYPTION_KEY_ENV,
+            "Generating ephemeral OAuth encryption key (%s=1). "
+            "This key will NOT persist across restarts — any secret stored "
+            "in this process will be UNREADABLE after the next boot.",
+            ALLOW_EPHEMERAL_KEY_ENV,
         )
         key_bytes: bytes = Fernet.generate_key()
         self._init_fernet(key_bytes.decode("utf-8"))

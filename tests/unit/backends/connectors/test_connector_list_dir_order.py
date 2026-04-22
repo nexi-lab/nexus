@@ -237,7 +237,7 @@ def test_sys_readdir_propagates_connector_backend_error(tmp_path: Path) -> None:
     by the metastore fallback."""
     from nexus.contracts.constants import ROOT_ZONE_ID
     from nexus.contracts.exceptions import BackendError
-    from nexus.contracts.metadata import DT_EXTERNAL_STORAGE
+    from nexus.contracts.metadata import DT_EXTERNAL_STORAGE, DT_MOUNT
     from nexus.contracts.types import OperationContext
     from nexus.core.config import PermissionConfig
     from nexus.core.nexus_fs import NexusFS
@@ -259,11 +259,9 @@ def test_sys_readdir_propagates_connector_backend_error(tmp_path: Path) -> None:
     kernel = NexusFS(
         metadata_store=metastore,
         permissions=PermissionConfig(enforce=False),
+        init_cred=OperationContext(user_id="u", groups=[], zone_id=ROOT_ZONE_ID, is_admin=True),
     )
-    kernel._init_cred = OperationContext(
-        user_id="u", groups=[], zone_id=ROOT_ZONE_ID, is_admin=True
-    )
-    kernel._driver_coordinator._store_mount_info("/ext", backend, is_external=True)
+    kernel.sys_setattr("/ext", entry_type=DT_MOUNT, backend=backend)
     metastore.put(_make_mount_entry("/ext", backend.name, entry_type=DT_EXTERNAL_STORAGE))
 
     with pytest.raises(BackendError, match="connector 503"):

@@ -21,6 +21,7 @@ import pytest
 from nexus.backends.storage.path_local import PathLocalBackend
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import NexusFileNotFoundError
+from nexus.contracts.metadata import DT_MOUNT
 from nexus.contracts.types import OperationContext
 from nexus.core.config import PermissionConfig
 from nexus.core.nexus_fs import NexusFS
@@ -35,11 +36,11 @@ def _build_slim(db_path: Path, data_dir: Path, mount_point: str = "/files") -> S
     kernel = NexusFS(
         metadata_store=metastore,
         permissions=PermissionConfig(enforce=False),
+        init_cred=OperationContext(
+            user_id="slim-passthrough", groups=[], zone_id=ROOT_ZONE_ID, is_admin=True
+        ),
     )
-    kernel._init_cred = OperationContext(
-        user_id="slim-passthrough", groups=[], zone_id=ROOT_ZONE_ID, is_admin=True
-    )
-    kernel._driver_coordinator._store_mount_info(mount_point, backend)
+    kernel.sys_setattr(mount_point, entry_type=DT_MOUNT, backend=backend)
     metastore.put(_make_mount_entry(mount_point, backend.name))
     return SlimNexusFS(kernel)
 
@@ -121,8 +122,7 @@ def test_passthrough_read_propagates_backend_errors(
         raise BackendError("simulated disk corruption", backend="path_local")
 
     try:
-        mount_entry = next(iter(slim._kernel.router._mount_table._entries.values()))
-        backend = mount_entry.backend
+        backend = slim._kernel._driver_coordinator.get_mount_info("/files").backend
         monkeypatch.setattr(backend, "read_content", _raise_backend_error)
 
         with pytest.raises(BackendError, match="simulated disk corruption"):
@@ -149,8 +149,7 @@ def test_passthrough_ls_propagates_backend_errors(
         raise BackendError("simulated listing failure", backend="path_local")
 
     try:
-        mount_entry = next(iter(slim._kernel.router._mount_table._entries.values()))
-        backend = mount_entry.backend
+        backend = slim._kernel._driver_coordinator.get_mount_info("/files").backend
         monkeypatch.setattr(backend, "list_dir", _raise_backend_error)
 
         with pytest.raises(BackendError, match="simulated listing failure"):

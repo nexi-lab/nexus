@@ -268,3 +268,159 @@ def test_title_length_cap_rejects_at_1025_chars(client: TestClient) -> None:
     )
     assert resp.status_code == 400
     assert "too long" in resp.json()["detail"].lower()
+
+
+# ---------------------------------------------------------------------------
+# access_context query params (audit observability, Ask 1 of spec v3)
+# ---------------------------------------------------------------------------
+
+
+def test_get_entry_accepts_access_context_query_params(client: TestClient) -> None:
+    client.put("/api/v2/password_vault/github", json=_sample_body())
+
+    for ctx in ("admin_cli", "auto_login", "auto_rotate", "reveal_approved", "agent_direct"):
+        resp = client.get(
+            f"/api/v2/password_vault/github"
+            f"?access_context={ctx}&client_id=sudowork&agent_session=s-1"
+        )
+        assert resp.status_code == 200, f"{ctx}: {resp.status_code} {resp.text}"
+        assert resp.json()["title"] == "github"
+
+
+def test_get_entry_without_access_context_still_works(client: TestClient) -> None:
+    """Backwards compat: omitting access_context must behave exactly as before."""
+    client.put("/api/v2/password_vault/github", json=_sample_body())
+
+    resp = client.get("/api/v2/password_vault/github")
+
+    assert resp.status_code == 200
+    assert resp.json()["title"] == "github"
+
+
+def test_get_entry_rejects_unknown_access_context(client: TestClient) -> None:
+    client.put("/api/v2/password_vault/github", json=_sample_body())
+
+    resp = client.get("/api/v2/password_vault/github?access_context=bogus_value")
+
+    assert resp.status_code == 400
+    assert "bogus_value" in resp.json()["detail"]
+
+
+def test_list_entries_accepts_access_context_query_params(client: TestClient) -> None:
+    client.put("/api/v2/password_vault/github", json=_sample_body())
+
+    resp = client.get("/api/v2/password_vault?access_context=auto_login&client_id=sudowork")
+
+    assert resp.status_code == 200
+    assert resp.json()["count"] == 1
+
+
+def test_list_entries_rejects_unknown_access_context(client: TestClient) -> None:
+    resp = client.get("/api/v2/password_vault?access_context=not_a_real_value")
+
+    assert resp.status_code == 400
+
+
+def test_get_entry_with_version_query_and_access_context(client: TestClient) -> None:
+    """Query params compose: ?version=N coexists with access_context."""
+    client.put("/api/v2/password_vault/github", json=_sample_body(password="v1"))
+    client.put("/api/v2/password_vault/github", json=_sample_body(password="v2"))
+
+    resp = client.get("/api/v2/password_vault/github?version=1&access_context=admin_cli")
+
+    assert resp.status_code == 200
+    assert resp.json()["password"] == "v1"
+
+
+# ---------------------------------------------------------------------------
+# POST /{title}/totp — server-side TOTP (Ask 2 of spec v3)
+# ---------------------------------------------------------------------------
+
+
+def test_generate_totp_returns_code_and_window_metadata(client: TestClient) -> None:
+    client.put("/api/v2/password_vault/github", json=_sample_body())  # has totp_secret
+
+    resp = client.post("/api/v2/password_vault/github/totp", json={})
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert set(body.keys()) == {"code", "expires_in_seconds", "period_seconds"}
+    assert body["period_seconds"] == 30
+    assert isinstance(body["code"], str) and len(body["code"]) == 6
+    assert 0 < body["expires_in_seconds"] <= 30
+
+
+def test_generate_totp_accepts_access_context_in_body(client: TestClient) -> None:
+    client.put("/api/v2/password_vault/github", json=_sample_body())
+
+    resp = client.post(
+        "/api/v2/password_vault/github/totp",
+        json={"access_context": "auto_login", "client_id": "sudowork", "agent_session": "s-1"},
+    )
+
+    assert resp.status_code == 200
+
+
+def test_generate_totp_rejects_unknown_access_context(client: TestClient) -> None:
+    client.put("/api/v2/password_vault/github", json=_sample_body())
+
+    resp = client.post(
+        "/api/v2/password_vault/github/totp",
+        json={"access_context": "not_a_real_value"},
+    )
+
+    assert resp.status_code == 400
+
+
+def test_generate_totp_accepts_empty_body(client: TestClient) -> None:
+    """No body at all should still work — defaults to admin_cli context."""
+    client.put("/api/v2/password_vault/github", json=_sample_body())
+
+    resp = client.post("/api/v2/password_vault/github/totp")
+
+    assert resp.status_code == 200
+
+
+def test_generate_totp_missing_entry_returns_404(client: TestClient) -> None:
+    resp = client.post("/api/v2/password_vault/does-not-exist/totp", json={})
+
+    assert resp.status_code == 404
+
+
+def test_generate_totp_entry_without_totp_secret_returns_422(client: TestClient) -> None:
+    client.put(
+        "/api/v2/password_vault/no-totp",
+        json={"title": "no-totp", "password": "x"},  # no totp_secret
+    )
+
+    resp = client.post("/api/v2/password_vault/no-totp/totp", json={})
+
+    assert resp.status_code == 422
+    assert "totp_not_configured" in resp.json()["detail"]
+
+
+def test_generate_totp_same_window_returns_same_code(client: TestClient) -> None:
+    """Oracle rate-limit: two calls in the same 30s window → same code."""
+    client.put("/api/v2/password_vault/github", json=_sample_body())
+
+    r1 = client.post("/api/v2/password_vault/github/totp", json={})
+    r2 = client.post("/api/v2/password_vault/github/totp", json={})
+
+    assert r1.status_code == 200 and r2.status_code == 200
+    # Real-clock race: if these calls straddle a 30s boundary, codes can
+    # legitimately differ. Accept either equal codes OR clearly-different
+    # expires_in_seconds (indicating window rollover).
+    if r1.json()["code"] != r2.json()["code"]:
+        assert r1.json()["expires_in_seconds"] != r2.json()["expires_in_seconds"]
+    else:
+        # Same window: expires_in should be monotonic (later call = lower-or-equal)
+        assert r2.json()["expires_in_seconds"] <= r1.json()["expires_in_seconds"]
+
+
+def test_generate_totp_requires_auth(client: TestClient) -> None:
+    app = client.app
+    unauth = TestClient(app)
+
+    resp = unauth.post("/api/v2/password_vault/github/totp", json={})
+
+    assert resp.status_code == 401

@@ -66,10 +66,21 @@ class InternalMixin:
         return parse_context(context)
 
     def _build_rust_ctx(self, context: "OperationContext | None", is_admin: bool) -> object:
-        """Build Rust OperationContext from Python context with all fields."""
+        """Build Rust OperationContext from Python context with all fields.
+
+        Caches the built Rust ctx on the Python OperationContext instance so
+        repeat calls within the same syscall chain skip 11 string field copies
+        across the PyO3 boundary.  Cache key is ``is_admin`` — identity fields
+        are immutable within a request.
+        """
+        if context is not None:
+            cached = context.__dict__.get("_rust_ctx_cache")
+            if cached is not None and cached[0] == is_admin:
+                return cached[1]
+
         from nexus_kernel import OperationContext as _RustCtx
 
-        return _RustCtx(
+        rust_ctx = _RustCtx(
             user_id=context.user_id if context else "anonymous",
             zone_id=self._zone_id,  # routing zone (always set)
             is_admin=is_admin,
@@ -82,6 +93,11 @@ class InternalMixin:
             request_id=getattr(context, "request_id", "") if context else "",
             context_zone_id=context.zone_id if context else None,  # caller's zone
         )
+
+        if context is not None:
+            context.__dict__["_rust_ctx_cache"] = (is_admin, rust_ctx)
+
+        return rust_ctx
 
     def _get_context_identity(
         self, context: OperationContext | dict | None = None
@@ -132,27 +148,15 @@ class InternalMixin:
     ) -> set[str]:
         """Return the set of *paths* that pass stat permission hooks.
 
-        Uses hook_count fast path: no hooks → all paths allowed.
-        Paths that fail ``PermissionDeniedError`` are silently dropped.
+        Uses a single FFI call to Rust ``dispatch_pre_hooks_batch_stat``
+        which loops N paths internally — avoiding N PyO3 boundary crossings.
+        Fast path: no hooks → all paths allowed (checked in Rust).
         """
         ctx = self._resolve_cred(context)
-
-        if self._kernel.hook_count("stat") == 0:
-            return set(paths)
-
-        from nexus.contracts.exceptions import PermissionDeniedError
-        from nexus.contracts.vfs_hooks import StatHookContext as _SHC
-
-        allowed: list[str] = []
-        for p in paths:
-            try:
-                self._kernel.dispatch_pre_hooks(
-                    "stat", _SHC(path=p, context=ctx, permission=permission)
-                )
-                allowed.append(p)
-            except PermissionDeniedError:
-                pass
-        return set(allowed)
+        is_admin = getattr(ctx, "is_admin", False)
+        rust_ctx = self._build_rust_ctx(ctx, is_admin)
+        results = self._kernel.dispatch_pre_hooks_batch_stat(paths, rust_ctx, permission)
+        return {p for p, allowed in zip(paths, results, strict=True) if allowed}
 
     # ── Virtual .readme/ overlay (Issue #3728) ───────────────────────
 
@@ -172,6 +176,8 @@ class InternalMixin:
         fails.  The caller treats ``None`` as "really not found" and
         continues with the normal sys_stat miss path.
         """
+        if "/.readme" not in path:
+            return None
         try:
             _, _, is_admin = self._get_context_identity(ctx)
             route = self.router.route(path, zone_id=self._zone_id)
@@ -260,6 +266,8 @@ class InternalMixin:
         ``mkdir``, ``rmdir``, ``sys_unlink``, ``sys_rename``,
         ``write_batch``, ``delete_batch``, ``rename_batch``.
         """
+        if "/.readme" not in path:
+            return
         try:
             _, _, is_admin = self._get_context_identity(context)
             route = self.router.route(path, zone_id=self._zone_id)
@@ -304,6 +312,8 @@ class InternalMixin:
         ``read_bulk`` (which is sync and cannot ``await sys_read``) to
         serve virtual skill docs when the Rust fast path misses.
         """
+        if "/.readme" not in path:
+            return None
         try:
             _, _, is_admin = self._get_context_identity(context)
             route = self.router.route(path, zone_id=self._zone_id)

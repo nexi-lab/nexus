@@ -441,8 +441,10 @@ summary: Updated Project Discussion
         """Test listing events in a calendar."""
         events = calendar_backend.list_dir("primary", context=operation_context)
 
-        assert "event1.yaml" in events
-        assert "event2.yaml" in events
+        # Human-readable key format: "{summary-slug}__{eventId}.yaml".
+        # Events are ordered newest-first by default (reverse-chronological).
+        assert any(e.endswith("__event1.yaml") for e in events)
+        assert any(e.endswith("__event2.yaml") for e in events)
 
 
 # ============================================================================

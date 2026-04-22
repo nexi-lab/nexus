@@ -100,13 +100,21 @@ def test_slim_read_propagates_non_notfound_backend_errors(
     reader = _build_slim(db_path, data_dir)
     # Force the backend's ``read_content`` to raise a non-not-found error
     # — this mirrors a corrupt blob or unreadable data file on disk.
-    mount_entry = next(iter(reader._kernel.router._mount_table._entries.values()))
-    backend = mount_entry.backend
+    backend = reader._kernel._driver_coordinator.get_mount_info("/files").backend
 
     def _raise_backend_error(*_a: object, **_kw: object) -> bytes:
         raise BackendError("simulated disk corruption", backend="local")
 
     monkeypatch.setattr(backend, "read_content", _raise_backend_error)
+    # Force slim-mode on the reader so the read path exercises the facade's
+    # Python metastore fallback (which calls Python backend.read_content)
+    # instead of the Rust kernel's native CAS read (which bypasses the
+    # Python backend and wouldn't see the monkeypatch).  In slim packages
+    # _kernel is None from construction; in CI nexus_kernel is built so we
+    # null it here after mount setup.  router._kernel is also nulled so
+    # route() uses the Python DLC fallback.
+    reader._kernel._kernel = None
+    reader._kernel.router._kernel = None
 
     try:
         with pytest.raises(BackendError, match="simulated disk corruption"):

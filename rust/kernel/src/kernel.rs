@@ -4157,10 +4157,14 @@ impl Kernel {
         Ok(results)
     }
 
-    /// List immediate children of a directory path from dcache.
+    /// List immediate children of a directory path from dcache + metastore.
     ///
-    /// Returns Vec of (child_name, entry_type) tuples.
-    pub fn readdir(&self, parent_path: &str, zone_id: &str) -> Vec<(String, u8)> {
+    /// When `is_admin` is false and `zone_id` is not ROOT_ZONE_ID, entries
+    /// are filtered to only include those belonging to the caller's zone or
+    /// the root zone (global namespace).
+    ///
+    /// Returns Vec of (child_path, entry_type) tuples.
+    pub fn readdir(&self, parent_path: &str, zone_id: &str, is_admin: bool) -> Vec<(String, u8)> {
         if validate_path_fast(parent_path).is_err() {
             return Vec::new();
         }
@@ -4183,26 +4187,20 @@ impl Kernel {
             format!("{}/", normalized)
         };
 
-        // Merge dcache children (basenames; we re-prefix with the
-        // global parent path below) with per-mount metastore list
-        // (R20.3: full global paths end-to-end) so federation zones
-        // see entries that haven't been warmed into the dcache
-        // (F2 C5).
-        //
-        // ``dcache.list_children(prefix)`` strips the common prefix
-        // and returns the remaining *basename* for each immediate
-        // child (e.g. for prefix ``/mnt/`` it returns ``gcs_demo``).
-        // To satisfy the ``sys_readdir`` contract which returns
-        // global paths, splice the parent back on here.
-        let mut seen: std::collections::BTreeMap<String, u8> = std::collections::BTreeMap::new();
+        let needs_zone_filter = !is_admin && zone_id != contracts::ROOT_ZONE_ID;
+
+        // Merge dcache children with per-mount metastore list.
+        // Track (entry_type, zone_id) so we can zone-filter at the end.
+        let mut seen: std::collections::BTreeMap<String, (u8, Option<String>)> =
+            std::collections::BTreeMap::new();
         let parent_for_join = if parent_path == contracts::VFS_ROOT {
             ""
         } else {
             parent_path.trim_end_matches('/')
         };
-        for (child, etype) in self.dcache.list_children(&global_prefix) {
+        for (child, etype, entry_zone) in self.dcache.list_children(&global_prefix) {
             let global = format!("{}/{}", parent_for_join, child);
-            seen.insert(global, etype);
+            seen.insert(global, (etype, entry_zone));
         }
 
         if let Some(ms_children) =
@@ -4217,11 +4215,24 @@ impl Kernel {
                 if !meta.path.starts_with(&global_prefix) {
                     continue;
                 }
-                seen.entry(meta.path).or_insert(meta.entry_type);
+                seen.entry(meta.path)
+                    .or_insert((meta.entry_type, meta.zone_id));
             }
         }
 
-        seen.into_iter().collect()
+        if needs_zone_filter {
+            seen.into_iter()
+                .filter(|(_, (_, entry_zone))| {
+                    let ez = entry_zone.as_deref().unwrap_or(contracts::ROOT_ZONE_ID);
+                    ez == contracts::ROOT_ZONE_ID || ez == zone_id
+                })
+                .map(|(path, (etype, _))| (path, etype))
+                .collect()
+        } else {
+            seen.into_iter()
+                .map(|(path, (etype, _))| (path, etype))
+                .collect()
+        }
     }
 
     // ── R10c: direct CAS surface ─────────────────────────────────────────

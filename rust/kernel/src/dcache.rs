@@ -123,7 +123,7 @@ impl DCache {
     /// List immediate children under a prefix path.
     /// Returns Vec of (child_name, entry_type).
     /// Only returns direct children (no nested paths).
-    pub(crate) fn list_children(&self, prefix: &str) -> Vec<(String, u8)> {
+    pub(crate) fn list_children(&self, prefix: &str) -> Vec<(String, u8, Option<String>)> {
         self.cache
             .iter()
             .filter_map(|entry| {
@@ -136,7 +136,11 @@ impl DCache {
                 if rest.contains('/') {
                     return None;
                 }
-                Some((rest.to_string(), entry.value().entry_type))
+                Some((
+                    rest.to_string(),
+                    entry.value().entry_type,
+                    entry.value().zone_id.clone(),
+                ))
             })
             .collect()
     }

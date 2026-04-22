@@ -323,37 +323,14 @@ class ContentMixin:
         if not validated_paths:
             return results
 
-        # Batch permission check via KernelDispatch INTERCEPT hook.
-        # No hook = no check = all paths allowed.
+        # Batch permission check via shared helper (hook_count fast path).
         perm_start = time.time()
-        allowed_set: set[str]
         try:
-            ctx = self._resolve_cred(context)
-
-            # Fast path: no stat hooks registered → all paths allowed
-            if self._kernel.hook_count("stat") == 0:
-                allowed_set = set(validated_paths)
-            else:
-                from nexus.contracts.exceptions import PermissionDeniedError
-                from nexus.contracts.types import OperationContext
-                from nexus.contracts.vfs_hooks import StatHookContext as _SHC
-
-                assert isinstance(ctx, OperationContext), "Context must be OperationContext"
-                allowed: list[str] = []
-                for p in validated_paths:
-                    try:
-                        self._kernel.dispatch_pre_hooks(
-                            "stat", _SHC(path=p, context=ctx, permission="READ")
-                        )
-                        allowed.append(p)
-                    except PermissionDeniedError:
-                        pass
-                allowed_set = set(allowed)
+            allowed_set = self._batch_permission_check(validated_paths, context)
         except Exception as e:
             logger.error("[READ-BULK] Permission check failed: %s", e)
             if not skip_errors:
                 raise
-            # If skip_errors, assume no files are allowed
             allowed_set = set()
 
         perm_elapsed = time.time() - perm_start
@@ -998,18 +975,8 @@ class ContentMixin:
         content_hash = result.content_id or ""
         size = result.size if result.hit else len(buf)
         new_version = result.version
-        # The Rust kernel owns the CAS blob write (F2 C4) and does not touch
-        # the Python-side bloom filter on the backend. Surface the new hash to
-        # the Python bloom so backend.content_exists() fast-path doesn't miss
-        # blobs the kernel just persisted (Issue #3706/#3765 regression).
-        if content_hash:
-            try:
-                _route = self.router.route(path, zone_id=self._zone_id)
-                _bloom = getattr(getattr(_route, "backend", None), "_bloom", None)
-                if _bloom is not None:
-                    _bloom.add(content_hash)
-            except Exception as _exc:  # pragma: no cover - bloom is best-effort
-                logger.debug("bloom.add after sys_write failed for %s: %s", path, _exc)
+        # Bloom filter is now maintained by Rust CASEngine (Phase 7B PR 5).
+        # No Python-side bloom reach-through needed.
         post_metadata = FileMetadata(
             path=path,
             backend_name=_meta.backend_name if _meta else "",
@@ -1690,25 +1657,15 @@ class ContentMixin:
         zone_id, agent_id, is_admin = self._get_context_identity(context)
         _rust_ctx = self._build_rust_ctx(context, is_admin)
 
-        # PRE-INTERCEPT: per-path stat/read permission hooks (same pattern as read_bulk).
-        from nexus.contracts.exceptions import PermissionDeniedError
-        from nexus.contracts.vfs_hooks import StatHookContext as _SHC
+        # PRE-INTERCEPT: batch permission check via shared helper.
+        allowed_set = self._batch_permission_check(validated_paths, context)
+        denied_paths = set(validated_paths) - allowed_set
+        if denied_paths and not partial:
+            from nexus.contracts.exceptions import NexusPermissionError
 
-        _ctx = self._resolve_cred(context)
-        allowed_paths: list[str] = []
-        denied_paths: set[str] = set()
-        for path in validated_paths:
-            try:
-                self._kernel.dispatch_pre_hooks(
-                    "stat", _SHC(path=path, context=_ctx, permission="READ")
-                )
-                allowed_paths.append(path)
-            except PermissionDeniedError as exc:
-                if not partial:
-                    from nexus.contracts.exceptions import NexusPermissionError
-
-                    raise NexusPermissionError(f"Permission denied: {path}") from exc
-                denied_paths.add(path)
+            _first = next(iter(denied_paths))
+            raise NexusPermissionError(f"Permission denied: {_first}")
+        allowed_paths: list[str] = [p for p in validated_paths if p in allowed_set]
 
         # Batch metadata fetch — one query for all allowed paths.
         batch_meta = self.metadata.get_batch(allowed_paths) if allowed_paths else {}

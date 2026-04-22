@@ -384,7 +384,7 @@ impl SharedMemoryPipeBackend {
         let tmp = tempfile::NamedTempFile::new()?;
         let (file, path) = tmp
             .keep()
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{e}")))?;
+            .map_err(|e| std::io::Error::other(format!("{e}")))?;
         let shm_path = path.to_string_lossy().to_string();
 
         file.set_len(total_size as u64)?;

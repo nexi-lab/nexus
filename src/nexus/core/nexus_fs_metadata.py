@@ -15,7 +15,6 @@ Mixin rules (Phase 6 established):
 from __future__ import annotations
 
 import builtins
-import contextlib
 import logging
 import time
 from dataclasses import replace as _dc_replace
@@ -673,72 +672,45 @@ class MetadataMixin:
         recursive: bool,
         context: OperationContext | None,
     ) -> dict[str, Any]:
-        """Internal: directory delete logic (extracted from former sys_rmdir).
+        """Internal: directory delete logic.
 
-        Handles DT_MOUNT unmount, ENOTEMPTY check, recursive child delete,
-        backend rmdir, sparse index cleanup, and rmdir hook dispatch.
+        DT_MOUNT/DT_EXTERNAL_STORAGE unmount stays in Python (DLC-owned).
+        DT_DIR delegates to Rust sys_rmdir which handles recursive child
+        delete, backend rmdir, dcache evict, and observer dispatch.
         """
-        import errno
-
         ctx = self._resolve_cred(context)
-
-        from nexus.contracts.vfs_hooks import RmdirHookContext
-
-        self._kernel.dispatch_pre_hooks("rmdir", RmdirHookContext(path=path, context=ctx))
 
         # DT_MOUNT / DT_EXTERNAL_STORAGE: unmount via DriverLifecycleCoordinator + delete metadata
         if meta.is_mount or meta.is_external_storage:
+            from nexus.contracts.vfs_hooks import RmdirHookContext
+
+            self._kernel.dispatch_pre_hooks("rmdir", RmdirHookContext(path=path, context=ctx))
             removed = self._driver_coordinator.unmount(path)
             if removed:
                 route.metastore.delete(path)
                 logger.info("sys_unlink: unmounted %s", path)
             return {}
 
-        # Python always does full rmdir (Rust kernel has the capability for FUSE/gRPC bypass)
-        dir_path = path if path.endswith("/") else path + "/"
-        # Use recursive listing when deleting recursively so all descendants are
-        # cleaned from the metastore in one batch (not just immediate children).
-        files_in_dir = (
-            route.metastore.list(dir_path, recursive=True)
-            if recursive
-            else route.metastore.list(dir_path)
-        )
+        # DT_DIR: delegate to Rust sys_rmdir (recursive delete, backend rmdir,
+        # dcache evict, observer dispatch — all handled in Rust).
+        _, _, is_admin = self._get_context_identity(context)
+        _rust_ctx = self._build_rust_ctx(context, is_admin)
+        _rmdir_result = self._kernel.sys_rmdir(path, _rust_ctx, recursive)
 
-        if files_in_dir:
-            if not recursive:
-                raise OSError(errno.ENOTEMPTY, f"Directory not empty: {path}")
-            # Recursive: batch delete all children
-            file_paths = [file_meta.path for file_meta in files_in_dir]
-            route.metastore.delete_batch(file_paths)
+        # POST-INTERCEPT hooks (Rust fires OBSERVE; Python owns hook contexts)
+        if _rmdir_result.post_hook_needed:
+            from nexus.contracts.vfs_hooks import RmdirHookContext
 
-        # Remove directory in backend (suppress errors — CAS may not have physical dir,
-        # or it may already be gone if metastore and backend are out of sync)
-        with contextlib.suppress(NexusFileNotFoundError, BackendError):
-            route.backend.rmdir(route.backend_path, recursive=recursive)
-
-        # Delete directory's own metadata entry
-        try:
-            route.metastore.delete(path)
-        except Exception as e:
-            logger.debug("Failed to delete directory metadata for %s: %s", path, e)
-
-        # Clean up sparse directory index entries
-        if hasattr(route.metastore, "delete_directory_entries_recursive"):
-            try:
-                route.metastore.delete_directory_entries_recursive(path)
-            except Exception as e:
-                logger.debug("Failed to clean up directory index for %s: %s", path, e)
-
-        self._kernel.dispatch_post_hooks(
-            "rmdir",
-            RmdirHookContext(
-                path=path,
-                context=ctx,
-                zone_id=ctx.zone_id,
-                agent_id=ctx.agent_id,
-                recursive=recursive,
-            ),
-        )
+            self._kernel.dispatch_post_hooks(
+                "rmdir",
+                RmdirHookContext(
+                    path=path,
+                    context=ctx,
+                    zone_id=ctx.zone_id,
+                    agent_id=ctx.agent_id,
+                    recursive=recursive,
+                ),
+            )
 
         return {}
 
@@ -817,20 +789,9 @@ class MetadataMixin:
         _rust_ctx = self._build_rust_ctx(context, is_admin)
         _rename_result = self._kernel.sys_rename(old_path, new_path, _rust_ctx)
 
-        # Rust may report hit=true even when the authoritative Python metastore
-        # (e.g. dual-write / raft-backed configurations) still requires the
-        # Python rename path to update its own rows. Only short-circuit when
-        # the metastore already reflects old→new; otherwise run the Python
-        # fallback. (Develop hardening — more conservative than the pre-R20
-        # "always short-circuit" path so dual-write / federation mount setups
-        # get the authoritative metastore updated.)
-        _old_still_visible = old_route.metastore.exists(
-            old_path
-        ) or self.metadata.is_implicit_directory(old_path)
-        _new_now_visible = new_route.metastore.exists(
-            new_path
-        ) or self.metadata.is_implicit_directory(new_path)
-        if _rename_result.hit and not _old_still_visible and _new_now_visible:
+        # Rust hit=true: metastore.rename_path() handled the entry AND all
+        # children atomically (redb: single txn). Trust Rust SSOT.
+        if _rename_result.hit:
             if _rename_result.post_hook_needed:
                 from nexus.contracts.vfs_hooks import RenameHookContext
 
@@ -846,9 +807,9 @@ class MetadataMixin:
                 self._kernel.dispatch_post_hooks("rename", _rename_ctx)
             return {}
 
-        # Python fallback for DT_MOUNT/DT_EXTERNAL_STORAGE or dual-write
-        # configurations. VFS lock handled by Rust kernel; fallback is for
-        # edge cases only.
+        # Python fallback for DT_MOUNT/DT_EXTERNAL_STORAGE (Rust returns
+        # hit=false for these). No child-walking needed — mounts are single
+        # entries; Rust's rename_path() handles children atomically.
         is_implicit_dir = not old_route.metastore.exists(
             old_path
         ) and self.metadata.is_implicit_directory(old_path)
@@ -884,7 +845,9 @@ class MetadataMixin:
         elif not is_directory:
             raise NexusFileNotFoundError(old_path)
 
-        # Rename children (directories)
+        # Rename children for implicit directories (no explicit entry in
+        # metastore, but children exist). Rust's rename_path() only handles
+        # entries it finds via metastore.get() — implicit dirs have no entry.
         if is_directory:
             _prefix = old_path.rstrip("/") + "/"
             for child in old_route.metastore.list(_prefix, recursive=True):
@@ -908,9 +871,6 @@ class MetadataMixin:
                     new_route.backend_path,
                     _be,
                 )
-
-        # OBSERVE: Rust kernel fires FileRename when hit=true (§11 Phase 5).
-        # Only Python fires for the fallback path.
 
         # POST-INTERCEPT hooks
         if _rename_result.post_hook_needed:
@@ -1282,26 +1242,10 @@ class MetadataMixin:
         if not validated_paths:
             return results
 
-        # Batch permission check via KernelDispatch INTERCEPT hook.
+        # Batch permission check via shared helper (hook_count fast path).
         perm_start = time.time()
-        allowed_set: set[str]
         try:
-            from nexus.contracts.exceptions import PermissionDeniedError
-            from nexus.contracts.types import OperationContext
-            from nexus.contracts.vfs_hooks import StatHookContext as _SHC
-
-            ctx = self._resolve_cred(context)
-            assert isinstance(ctx, OperationContext), "Context must be OperationContext"
-            allowed: list[str] = []
-            for p in validated_paths:
-                try:
-                    self._kernel.dispatch_pre_hooks(
-                        "stat", _SHC(path=p, context=ctx, permission="READ")
-                    )
-                    allowed.append(p)
-                except PermissionDeniedError:
-                    pass
-            allowed_set = set(allowed)
+            allowed_set = self._batch_permission_check(validated_paths, context)
         except Exception as e:
             logger.error("[STAT-BULK] Permission check failed: %s", e)
             if not skip_errors:
@@ -1602,9 +1546,7 @@ class MetadataMixin:
                 is_dir = is_implicit_dir or (meta and meta.mime_type == "inode/directory")
 
                 if is_dir:
-                    self._rmdir_internal(
-                        path, recursive=recursive, context=context, is_implicit=is_implicit_dir
-                    )
+                    self.sys_unlink(path, recursive=recursive, context=context)
                 else:
                     self.sys_unlink(path, context=context)
 
@@ -1619,66 +1561,10 @@ class MetadataMixin:
         path: str,
         recursive: bool = False,
         context: OperationContext | None = None,
-        is_implicit: bool | None = None,
+        is_implicit: bool | None = None,  # noqa: ARG002
     ) -> None:
-        """Internal rmdir implementation without RPC decoration.
-
-        Args:
-            path: Directory path to remove
-            recursive: If True, delete non-empty directories
-            context: Operation context for permission checks
-            is_implicit: If True, directory is implicit (no metadata, exists due to child files).
-                        If None, will be auto-detected.
-        """
-        import errno
-
-        path = self._validate_path(path)
-        zone_id, agent_id, is_admin = self._get_context_identity(context)
-
-        route = self.router.route(
-            path,
-            zone_id=self._zone_id,
-        )
-
-        # PRE-INTERCEPT: pre-write hooks (Issue #899)
-        from nexus.contracts.vfs_hooks import WriteHookContext as _WHC
-
-        self._kernel.dispatch_pre_hooks("write", _WHC(path=path, content=b"", context=context))
-
-        # Check if path exists (explicit or implicit)
-        meta = route.metastore.get(path)
-        if is_implicit is None:
-            is_implicit = meta is None and self.metadata.is_implicit_directory(path)
-
-        if meta is None and not is_implicit:
-            raise NexusFileNotFoundError(path)
-
-        # Check if it's a directory (skip for implicit dirs - they're always directories)
-        if meta is not None and meta.mime_type != "inode/directory":
-            raise OSError(errno.ENOTDIR, "Not a directory", path)
-
-        # Get files in directory
-        dir_path = path if path.endswith("/") else path + "/"
-        files_in_dir = route.metastore.list(dir_path)
-
-        if files_in_dir and not recursive:
-            raise OSError(errno.ENOTEMPTY, "Directory not empty", path)
-
-        if recursive and files_in_dir:
-            # Issue #1320/#1772: Content cleanup deferred to CAS reachability
-            # GC. Kernel only deletes metadata.
-
-            # Batch delete from metadata store
-            file_paths = [file_meta.path for file_meta in files_in_dir]
-            route.metastore.delete_batch(file_paths)
-
-        # Remove directory in backend
-        with contextlib.suppress(NexusFileNotFoundError):
-            route.backend.rmdir(route.backend_path, recursive=recursive)
-
-        # Delete the directory metadata (only if explicit directory)
-        if not is_implicit:
-            route.metastore.delete(path)
+        """Internal rmdir — delegates to sys_unlink which routes through Rust sys_rmdir."""
+        self.sys_unlink(path, recursive=recursive, context=context)
 
     @rpc_expose(description="Rename/move multiple files")
     def rename_batch(
@@ -1964,7 +1850,7 @@ class MetadataMixin:
             )
             try:
                 _kernel_entries = _kernel.readdir(path, self._zone_id, _is_admin)
-            except Exception as exc:
+            except (OSError, ValueError) as exc:
                 logger.debug("kernel.readdir failed for %s: %s", path, exc)
                 _kernel_entries = None
             if _kernel_entries:

@@ -122,6 +122,38 @@ class InternalMixin:
             return _dc_replace(context, ttl_seconds=ttl)
         return OperationContext(user_id="anonymous", groups=[], ttl_seconds=ttl)
 
+    # ── Batch permission check ─────────────────────────────────────
+
+    def _batch_permission_check(
+        self,
+        paths: list[str],
+        context: "OperationContext | None",
+        permission: str = "READ",
+    ) -> set[str]:
+        """Return the set of *paths* that pass stat permission hooks.
+
+        Uses hook_count fast path: no hooks → all paths allowed.
+        Paths that fail ``PermissionDeniedError`` are silently dropped.
+        """
+        ctx = self._resolve_cred(context)
+
+        if self._kernel.hook_count("stat") == 0:
+            return set(paths)
+
+        from nexus.contracts.exceptions import PermissionDeniedError
+        from nexus.contracts.vfs_hooks import StatHookContext as _SHC
+
+        allowed: list[str] = []
+        for p in paths:
+            try:
+                self._kernel.dispatch_pre_hooks(
+                    "stat", _SHC(path=p, context=ctx, permission=permission)
+                )
+                allowed.append(p)
+            except PermissionDeniedError:
+                pass
+        return set(allowed)
+
     # ── Virtual .readme/ overlay (Issue #3728) ───────────────────────
 
     def _try_virtual_readme_stat(

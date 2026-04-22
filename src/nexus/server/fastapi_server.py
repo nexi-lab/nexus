@@ -934,11 +934,18 @@ def _register_routes(app: FastAPI) -> None:
                 # settings and was the root cause of the silent OAuth-key
                 # data-loss on upgrade (the redb filename changed between
                 # versions with no migration path).
+                from nexus.storage.auth_stores.legacy_oauth_key_migration import (
+                    migrate_legacy_oauth_key,
+                )
                 from nexus.storage.auth_stores.sqlalchemy_system_settings_store import (
                     SQLAlchemySystemSettingsStore,
                 )
 
                 _settings_store = SQLAlchemySystemSettingsStore(_sa_rs.session_factory)
+                # One-shot upgrade path: copy OAuth key from a legacy
+                # ~/.nexus/metastore[.redb] file into SQL if present. Idempotent;
+                # no-ops once SQL already has the key.
+                migrate_legacy_oauth_key(_settings_store)
                 _oauth_crypto = OAuthCrypto(settings_store=_settings_store)
                 _audit_logger = SecretsAuditLogger(record_store=_sa_rs)
                 _secrets_service_instance = SecretsService(

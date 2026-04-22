@@ -17,6 +17,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from nexus.contracts.secrets_access import AccessAuditContext
 from nexus.services.password_vault.schema import VaultEntry
 from nexus.services.password_vault.service import (
     PasswordVaultService,
@@ -242,3 +243,81 @@ class TestLifecycle:
         assert kwargs["namespace"] == "passwords"
         assert kwargs["key"] == "github"
         assert kwargs["subject_id"] == "alice"
+
+
+# ---------------------------------------------------------------------------
+# AccessAuditContext propagation
+# ---------------------------------------------------------------------------
+
+
+class TestAuditContextPropagation:
+    def test_get_entry_forwards_audit_context(
+        self, vault: PasswordVaultService, secrets: MagicMock
+    ) -> None:
+        secrets.get_secret.return_value = {
+            "value": json.dumps({"title": "github"}),
+            "version": 1,
+        }
+        ctx = AccessAuditContext(
+            access_context="auto_login", client_id="sudowork", agent_session="s-42"
+        )
+
+        vault.get_entry("github", audit_context=ctx)
+
+        assert secrets.get_secret.call_args.kwargs["audit_context"] is ctx
+
+    def test_get_entry_without_audit_context_passes_none(
+        self, vault: PasswordVaultService, secrets: MagicMock
+    ) -> None:
+        secrets.get_secret.return_value = {
+            "value": json.dumps({"title": "x"}),
+            "version": 1,
+        }
+
+        vault.get_entry("x")
+
+        assert secrets.get_secret.call_args.kwargs["audit_context"] is None
+
+    def test_list_entries_forwards_audit_context_to_batch_get(
+        self, vault: PasswordVaultService, secrets: MagicMock
+    ) -> None:
+        secrets.list_secrets.return_value = [{"key": "github", "namespace": "passwords"}]
+        secrets.batch_get.return_value = {
+            "passwords:github": json.dumps({"title": "github"}),
+        }
+        ctx = AccessAuditContext(access_context="reveal_approved")
+
+        vault.list_entries(audit_context=ctx)
+
+        assert secrets.batch_get.call_args.kwargs["audit_context"] is ctx
+
+
+# ---------------------------------------------------------------------------
+# AccessAuditContext value object
+# ---------------------------------------------------------------------------
+
+
+class TestAccessAuditContext:
+    def test_default_access_context_is_admin_cli(self) -> None:
+        ctx = AccessAuditContext()
+
+        assert ctx.access_context == "admin_cli"
+        assert ctx.to_audit_details() == {"access_context": "admin_cli"}
+
+    def test_to_audit_details_omits_none_fields(self) -> None:
+        ctx = AccessAuditContext(access_context="auto_login")
+
+        assert ctx.to_audit_details() == {"access_context": "auto_login"}
+
+    def test_to_audit_details_includes_all_when_set(self) -> None:
+        ctx = AccessAuditContext(
+            access_context="reveal_approved",
+            client_id="sudowork-ui",
+            agent_session="abc-123",
+        )
+
+        assert ctx.to_audit_details() == {
+            "access_context": "reveal_approved",
+            "client_id": "sudowork-ui",
+            "agent_session": "abc-123",
+        }

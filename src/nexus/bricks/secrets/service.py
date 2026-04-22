@@ -19,6 +19,7 @@ from sqlalchemy import select
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.protocols.token_encryptor import TokenEncryptor
+from nexus.contracts.secrets_access import AccessAuditContext
 from nexus.storage.models.secret_store import SecretStoreModel, SecretStoreVersionModel
 from nexus.storage.secrets_audit_logger import SecretsAuditLogger
 
@@ -451,6 +452,7 @@ class SecretsService:
         zone_id: str = ROOT_ZONE_ID,
         subject_id: str | None = None,
         subject_type: str | None = None,
+        audit_context: AccessAuditContext | None = None,
     ) -> dict[str, Any] | None:
         """Get a secret value (decrypted) with version info.
 
@@ -462,6 +464,8 @@ class SecretsService:
             zone_id: The zone ID
             subject_id: The subject ID who owns this secret
             subject_type: The subject type
+            audit_context: Optional caller context (access_context, client_id,
+                agent_session) merged into the audit log ``details`` JSON.
 
         Returns:
             Dict with 'value' and 'version' keys, or None if not found
@@ -508,12 +512,19 @@ class SecretsService:
 
         # Audit log
         try:
+            details: dict[str, Any] = {
+                "namespace": namespace,
+                "key": key,
+                "version": actual_version,
+            }
+            if audit_context is not None:
+                details.update(audit_context.to_audit_details())
             self._audit_logger.log_event(
                 event_type="key_accessed",
                 actor_id=actor_id,
                 credential_id=secret_id,
                 zone_id=zone_id,
-                details={"namespace": namespace, "key": key, "version": actual_version},
+                details=details,
             )
         except Exception as e:
             logger.warning("Failed to write audit log: %s", e)
@@ -726,6 +737,7 @@ class SecretsService:
         zone_id: str = ROOT_ZONE_ID,
         subject_id: str | None = None,
         subject_type: str | None = None,
+        audit_context: AccessAuditContext | None = None,
     ) -> dict[str, str]:
         """Batch read secrets.
 
@@ -735,6 +747,8 @@ class SecretsService:
             zone_id: The zone ID
             subject_id: The subject ID who owns these secrets
             subject_type: The subject type
+            audit_context: Forwarded to each ``get_secret`` call so every
+                per-entry audit event carries the same caller tag.
 
         Returns:
             Dict mapping "namespace:key" to decrypted value
@@ -753,6 +767,7 @@ class SecretsService:
                     zone_id=zone_id,
                     subject_id=subject_id,
                     subject_type=subject_type,
+                    audit_context=audit_context,
                 )
                 if result is not None:
                     results[f"{namespace}:{key}"] = result["value"]

@@ -13,6 +13,7 @@ import logging
 from typing import Any, cast
 
 from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.contracts.secrets_access import AccessAuditContext
 from nexus.services.password_vault.schema import VaultEntry
 
 # ``secrets_service`` is typed as ``Any`` below rather than the concrete
@@ -89,6 +90,7 @@ class PasswordVaultService:
         zone_id: str = ROOT_ZONE_ID,
         subject_id: str | None = None,
         subject_type: str | None = None,
+        audit_context: AccessAuditContext | None = None,
     ) -> VaultEntry:
         """Fetch and decrypt a vault entry (latest version unless specified)."""
         result = self._secrets.get_secret(
@@ -99,6 +101,7 @@ class PasswordVaultService:
             zone_id=zone_id,
             subject_id=subject_id,
             subject_type=subject_type,
+            audit_context=audit_context,
         )
         if result is None:
             raise VaultEntryNotFoundError(title)
@@ -111,6 +114,7 @@ class PasswordVaultService:
         zone_id: str = ROOT_ZONE_ID,
         subject_id: str | None = None,
         subject_type: str | None = None,
+        audit_context: AccessAuditContext | None = None,
     ) -> list[VaultEntry]:
         """Return every (live) vault entry with its latest-version payload."""
         metadata = self._secrets.list_secrets(
@@ -129,6 +133,7 @@ class PasswordVaultService:
             zone_id=zone_id,
             subject_id=subject_id,
             subject_type=subject_type,
+            audit_context=audit_context,
         )
 
         entries: list[VaultEntry] = []

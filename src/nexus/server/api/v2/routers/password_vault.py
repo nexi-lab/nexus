@@ -28,11 +28,17 @@ SQLAlchemy I/O in the underlying SecretsService.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, cast
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.contracts.secrets_access import (
+    ACCESS_CONTEXT_VALUES,
+    DEFAULT_ACCESS_CONTEXT,
+    AccessAuditContext,
+    AccessContext,
+)
 from nexus.server.dependencies import require_auth
 from nexus.services.password_vault.schema import VaultEntry
 from nexus.services.password_vault.service import (
@@ -56,6 +62,38 @@ def _validate_title(title: str) -> None:
         )
 
 
+def _build_audit_context(
+    access_context: str | None,
+    client_id: str | None,
+    agent_session: str | None,
+) -> AccessAuditContext:
+    """Validate query params and build an ``AccessAuditContext``.
+
+    Unknown ``access_context`` values → 400, keeping the typed-enum
+    invariant clients (and future enforcement) can rely on. Missing
+    value defaults to ``admin_cli``.
+    """
+    value: AccessContext
+    if access_context is None:
+        value = DEFAULT_ACCESS_CONTEXT
+    elif access_context in ACCESS_CONTEXT_VALUES:
+        # Runtime-validated against the Literal's canonical values.
+        value = cast(AccessContext, access_context)
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unknown access_context {access_context!r}. "
+                f"Allowed: {sorted(ACCESS_CONTEXT_VALUES)}"
+            ),
+        )
+    return AccessAuditContext(
+        access_context=value,
+        client_id=client_id,
+        agent_session=agent_session,
+    )
+
+
 # --------------------------------------------------------------------------
 # Dependency — injected by fastapi_server.py
 # --------------------------------------------------------------------------
@@ -73,6 +111,9 @@ def get_password_vault_service() -> PasswordVaultService:
 
 @router.get("")
 def list_entries(
+    access_context: str | None = Query(default=None),
+    client_id: str | None = Query(default=None),
+    agent_session: str | None = Query(default=None),
     auth_result: dict[str, Any] = Depends(require_auth),
     service: PasswordVaultService = Depends(get_password_vault_service),
 ) -> dict[str, Any]:
@@ -81,6 +122,7 @@ def list_entries(
     zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
     subject_id = auth_result.get("subject_id") or "anonymous"
     subject_type = auth_result.get("subject_type") or "user"
+    audit_context = _build_audit_context(access_context, client_id, agent_session)
 
     try:
         entries = service.list_entries(
@@ -88,6 +130,7 @@ def list_entries(
             zone_id=zone_id,
             subject_id=subject_id,
             subject_type=subject_type,
+            audit_context=audit_context,
         )
         return {"entries": [e.model_dump() for e in entries], "count": len(entries)}
     except Exception as e:
@@ -201,6 +244,9 @@ def put_entry(
 def get_entry(
     title: str,
     version: int | None = None,
+    access_context: str | None = Query(default=None),
+    client_id: str | None = Query(default=None),
+    agent_session: str | None = Query(default=None),
     auth_result: dict[str, Any] = Depends(require_auth),
     service: PasswordVaultService = Depends(get_password_vault_service),
 ) -> VaultEntry:
@@ -210,6 +256,7 @@ def get_entry(
     zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
     subject_id = auth_result.get("subject_id") or "anonymous"
     subject_type = auth_result.get("subject_type") or "user"
+    audit_context = _build_audit_context(access_context, client_id, agent_session)
 
     try:
         from nexus.bricks.secrets.service import SecretDisabledError
@@ -221,6 +268,7 @@ def get_entry(
             zone_id=zone_id,
             subject_id=subject_id,
             subject_type=subject_type,
+            audit_context=audit_context,
         )
     except VaultEntryNotFoundError as e:
         raise HTTPException(status_code=404, detail="Vault entry not found") from e

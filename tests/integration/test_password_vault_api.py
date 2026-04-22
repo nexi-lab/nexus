@@ -268,3 +268,65 @@ def test_title_length_cap_rejects_at_1025_chars(client: TestClient) -> None:
     )
     assert resp.status_code == 400
     assert "too long" in resp.json()["detail"].lower()
+
+
+# ---------------------------------------------------------------------------
+# access_context query params (audit observability, Ask 1 of spec v3)
+# ---------------------------------------------------------------------------
+
+
+def test_get_entry_accepts_access_context_query_params(client: TestClient) -> None:
+    client.put("/api/v2/password_vault/github", json=_sample_body())
+
+    for ctx in ("admin_cli", "auto_login", "auto_rotate", "reveal_approved", "agent_direct"):
+        resp = client.get(
+            f"/api/v2/password_vault/github"
+            f"?access_context={ctx}&client_id=sudowork&agent_session=s-1"
+        )
+        assert resp.status_code == 200, f"{ctx}: {resp.status_code} {resp.text}"
+        assert resp.json()["title"] == "github"
+
+
+def test_get_entry_without_access_context_still_works(client: TestClient) -> None:
+    """Backwards compat: omitting access_context must behave exactly as before."""
+    client.put("/api/v2/password_vault/github", json=_sample_body())
+
+    resp = client.get("/api/v2/password_vault/github")
+
+    assert resp.status_code == 200
+    assert resp.json()["title"] == "github"
+
+
+def test_get_entry_rejects_unknown_access_context(client: TestClient) -> None:
+    client.put("/api/v2/password_vault/github", json=_sample_body())
+
+    resp = client.get("/api/v2/password_vault/github?access_context=bogus_value")
+
+    assert resp.status_code == 400
+    assert "bogus_value" in resp.json()["detail"]
+
+
+def test_list_entries_accepts_access_context_query_params(client: TestClient) -> None:
+    client.put("/api/v2/password_vault/github", json=_sample_body())
+
+    resp = client.get("/api/v2/password_vault?access_context=auto_login&client_id=sudowork")
+
+    assert resp.status_code == 200
+    assert resp.json()["count"] == 1
+
+
+def test_list_entries_rejects_unknown_access_context(client: TestClient) -> None:
+    resp = client.get("/api/v2/password_vault?access_context=not_a_real_value")
+
+    assert resp.status_code == 400
+
+
+def test_get_entry_with_version_query_and_access_context(client: TestClient) -> None:
+    """Query params compose: ?version=N coexists with access_context."""
+    client.put("/api/v2/password_vault/github", json=_sample_body(password="v1"))
+    client.put("/api/v2/password_vault/github", json=_sample_body(password="v2"))
+
+    resp = client.get("/api/v2/password_vault/github?version=1&access_context=admin_cli")
+
+    assert resp.status_code == 200
+    assert resp.json()["password"] == "v1"

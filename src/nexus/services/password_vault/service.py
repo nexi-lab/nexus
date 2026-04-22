@@ -10,13 +10,19 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.services.password_vault.schema import VaultEntry
 
-if TYPE_CHECKING:
-    from nexus.bricks.secrets.service import SecretsService
+# ``secrets_service`` is typed as ``Any`` below rather than the concrete
+# ``nexus.bricks.secrets.service.SecretsService`` because the import-linter
+# four-tier architecture contract forbids ``services`` → ``bricks`` imports
+# (including TYPE_CHECKING-only). The wrapper is pure delegation; duck
+# typing is sufficient. Expected shape: ``.put_secret``, ``.get_secret``,
+# ``.list_secrets``, ``.delete_secret``, ``.restore_secret``,
+# ``.list_versions``, ``.batch_get`` — all kwargs as used by the ``/api/v2/secrets``
+# router.
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +42,7 @@ class PasswordVaultService:
 
     NAMESPACE = "passwords"
 
-    def __init__(self, secrets_service: SecretsService) -> None:
+    def __init__(self, secrets_service: Any) -> None:
         self._secrets = secrets_service
 
     # ------------------------------------------------------------------

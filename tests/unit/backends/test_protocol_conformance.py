@@ -256,6 +256,14 @@ class TestOAuthCapableProtocol:
                 self.user_email = "test@example.com"
                 self.provider = "google"
 
+            @property
+            def user_scoped(self) -> bool:
+                return True
+
+            @property
+            def has_token_manager(self) -> bool:
+                return True
+
         backend = FakeOAuthBackend()
         assert isinstance(backend, OAuthCapableProtocol)
 

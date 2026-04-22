@@ -18,7 +18,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         curl \
         build-essential \
         ca-certificates \
-        protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
 
 # ---------- Rust toolchain (for _nexus_raft) ----------

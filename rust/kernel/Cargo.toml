@@ -63,6 +63,10 @@ py-hook-adapters = []
 
 [build-dependencies]
 tonic-build = "0.13"
+# Vendored protoc binary so kernel build works on any host without a
+# system-wide protobuf-compiler install. Tier-1 platforms (linux/macos/windows
+# × x86_64/aarch64) all covered by the pre-compiled binary the crate ships.
+protoc-bin-vendored = "3"
 
 [dev-dependencies]
 criterion = "0.5"

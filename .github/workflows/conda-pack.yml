@@ -91,41 +91,6 @@ jobs:
             rust/kernel
             rust/raft
 
-      - name: Install protoc (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $protocDir = Join-Path $env:RUNNER_TEMP "protoc-3.20.3-win64"
-          $zipPath = Join-Path $env:RUNNER_TEMP "protoc-3.20.3-win64.zip"
-          Invoke-WebRequest "https://github.com/protocolbuffers/protobuf/releases/download/v3.20.3/protoc-3.20.3-win64.zip" -OutFile $zipPath
-          Expand-Archive -Path $zipPath -DestinationPath $protocDir -Force
-          $protocExe = Join-Path $protocDir "bin/protoc.exe"
-          $protocBin = Split-Path $protocExe
-          echo "NEXUS_PROTOC=$protocExe" >> $env:GITHUB_ENV
-          echo $protocBin >> $env:GITHUB_PATH
-          $env:PATH = "$protocBin;$env:PATH"
-          & $protocExe --version
-
-      - name: Install protoc (macOS)
-        if: runner.os == 'macOS'
-        shell: bash -el {0}
-        run: |
-          brew install protobuf
-          REAL_PROTOC="$(brew --prefix protobuf)/bin/protoc"
-          mkdir -p "${RUNNER_TEMP}/bin"
-          printf '%s\n' \
-            '#!/usr/bin/env bash' \
-            'if [ "${1:-}" = "--version" ]; then' \
-            '  echo "libprotoc 3.20.3"' \
-            '  exit 0' \
-            'fi' \
-            "exec \"${REAL_PROTOC}\" \"\$@\"" \
-            > "${RUNNER_TEMP}/bin/protoc"
-          chmod +x "${RUNNER_TEMP}/bin/protoc"
-          echo "NEXUS_PROTOC=${RUNNER_TEMP}/bin/protoc" >> "${GITHUB_ENV}"
-          echo "${RUNNER_TEMP}/bin" >> "${GITHUB_PATH}"
-          protoc --version
-
       # ── maturin builds ───────────────────────────────────────────────────
       # Install maturin inside the nexus env so it automatically uses the
       # correct Python interpreter when building the extension modules.
@@ -146,8 +111,6 @@ jobs:
 
       - name: Build raft wheel  (rust/raft --features full)
         shell: bash -el {0}
-        env:
-          PROTOC: ${{ env.NEXUS_PROTOC }}
         run: |
           mkdir -p build/dist
           conda run -n nexus maturin build --release \

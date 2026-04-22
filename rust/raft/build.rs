@@ -12,6 +12,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Only compile protos when grpc feature is enabled
     #[cfg(feature = "grpc")]
     {
+        // Point tonic_build (→ prost-build) at the vendored protoc binary so
+        // the crate builds without a system-wide protobuf-compiler. Respect
+        // an externally-set PROTOC if the caller already chose one.
+        if std::env::var_os("PROTOC").is_none() {
+            std::env::set_var("PROTOC", protoc_bin_vendored::protoc_bin_path()?);
+        }
+
         // Proto files are in project root's proto/ directory (SSOT)
         let proto_root = "../../proto";
         let core_proto = format!("{}/nexus/core/metadata.proto", proto_root);

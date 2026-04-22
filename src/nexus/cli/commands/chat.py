@@ -248,9 +248,9 @@ async def _run_chat(
                 entry_type=DT_MOUNT,
                 backend_type="anthropic",
                 backend_name="anthropic_native",
-                openai_base_url=base_url,
-                openai_api_key=api_key,
-                openai_model=model,
+                anthropic_base_url=base_url,
+                anthropic_api_key=api_key,
+                anthropic_model=model,
             )
         else:
             # OpenAI-compatible driver

@@ -377,9 +377,9 @@ async def _boot_post_kernel_services(
     # AgentRegistry is constructed by the first consumer that needs it.
     # No-agent profiles (REMOTE) skip this entire block.
     _agent_reg: Any = None
-    _acp_ref = nx._service_registry.service("agent_registry")
+    _acp_ref = nx.service("agent_registry")
     if _acp_ref is not None:
-        _agent_reg = _acp_ref._service_instance
+        _agent_reg = _acp_ref
     if _agent_reg is None:
         try:
             from nexus.core.agent_registry import AgentRegistry
@@ -619,10 +619,8 @@ def _initialize_wired_ipc(nx: Any, services: dict[str, Any]) -> None:
         _registered = _svc_fn("ipc_zone_id") if _svc_fn is not None else None
         if _registered is None:
             return
-        # Use the actual registered value — unwrap ServiceRef proxy if present.
-        # Do not fall back to nx._zone_id, which can diverge from the brick's
-        # registered zone in multi-zone/federated setups.
-        _resolved = getattr(_registered, "_service_instance", _registered)
+        # Use the actual registered value — service_lookup returns raw instance.
+        _resolved = _registered
         if not isinstance(_resolved, str) or not _resolved:
             logger.error(
                 "[BOOT:WIRED] IPC init: registered ipc_zone_id has invalid type/"
@@ -701,16 +699,16 @@ def _initialize_wired_ipc(nx: Any, services: dict[str, Any]) -> None:
         # resolve it via nx.service("ipc_provisioner"). Without this the
         # provisioner only lives in the local services dict and the FastAPI
         # lifespan hook never wires it onto app.state.ipc_nexus_fs.
-        _registry = nx._service_registry
-        if _registry.service("ipc_provisioner") is not None:
-            # Already registered (e.g. re-entry on hot-reload) — swap atomically.
-            _registry.replace_service("ipc_provisioner", _provisioner)
-        else:
-            _registry.register_service("ipc_provisioner", _provisioner)
+        # Use enlist(allow_overwrite=True) so re-entry on hot-reload replaces atomically.
+        nx.sys_setattr(
+            "/__sys__/services/ipc_provisioner",
+            service=_provisioner,
+            allow_overwrite=True,
+        )
 
         # Wire provisioner into AgentRegistry so register → provision is automatic
-        _agent_reg_svc = nx._service_registry.service("agent_registry")
-        _agent_reg = _agent_reg_svc._service_instance if _agent_reg_svc is not None else None
+        _agent_reg_svc = nx.service("agent_registry")
+        _agent_reg = _agent_reg_svc if _agent_reg_svc is not None else None
         if _agent_reg is not None and hasattr(_agent_reg, "set_provisioner"):
             _agent_reg.set_provisioner(_provisioner)
 

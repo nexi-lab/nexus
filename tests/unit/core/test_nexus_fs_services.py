@@ -76,25 +76,21 @@ class TestNexusFSServiceComposition:
         fs = await _make_fs(tmp_path)
 
         # VersionService dependencies (injected by _make_fs, mimicking factory)
-        assert fs.service("version_service")._service_instance.metadata == fs.metadata
-        assert fs.service("version_service")._service_instance.cas == fs.router.route("/").backend
+        assert fs.service("version_service").metadata == fs.metadata
+        assert fs.service("version_service").cas == fs.router.route("/").backend
 
         # ReBACService should have rebac_manager
-        assert fs.service("rebac")._rebac_manager == fs.service("rebac_manager")._service_instance
+        assert fs.service("rebac")._rebac_manager == fs.service("rebac_manager")
 
         # MountService should have router and mount_manager
         assert fs.service("mount").router == fs.router
-        assert fs.service("mount").mount_manager == fs.service("mount_manager")._service_instance
+        assert fs.service("mount").mount_manager == fs.service("mount_manager")
 
         # Services that take filesystem should have it
         assert fs.service("mcp")._filesystem == fs
         # SearchService should have metadata and permission_enforcer
         assert fs.service("search").metadata == fs.metadata
-        _perm_ref = fs.service("permission_enforcer")
-        _perm_inst = (
-            _perm_ref._service_instance if hasattr(_perm_ref, "_service_instance") else _perm_ref
-        )
-        assert fs.service("search")._permission_enforcer == _perm_inst
+        assert fs.service("search")._permission_enforcer == fs.service("permission_enforcer")
 
         # ShareLinkService should have gateway
         assert fs.service("share_link")._gw is not None

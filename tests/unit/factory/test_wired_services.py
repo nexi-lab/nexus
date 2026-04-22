@@ -21,30 +21,34 @@ class TestEnlistWiredServices:
 
     @pytest.fixture()
     def registry(self, nx: Any) -> Any:
-        """Return the ServiceRegistry (now has lifecycle methods, Issue #1814).
+        """Return NexusFS itself as the service coordinator.
 
+        NexusFS.sys_setattr("/__sys__/services/X") dispatches to kernel,
+        so NexusFS is the coordinator for enlist_wired_services.
         Clears any wired-service keys that the factory boot path already
         registered, so tests can call enlist_wired_services() without
         hitting 'already registered' errors.
         """
         from nexus.factory.service_routing import _CANONICAL_NAMES
 
-        reg = nx._service_registry
         for canonical in _CANONICAL_NAMES.values():
-            reg.unregister(canonical)
-        return reg
+            try:
+                nx._kernel.service_unregister(canonical)
+            except (KeyError, Exception):
+                pass
+        return nx
 
     def test_enlist_from_dict(self, nx: Any, registry: Any) -> None:
         mock_svc = MagicMock()
         # Factory boot may have pre-registered these; clear them for a clean test.
         for key in ("rebac", "mount"):
             try:
-                registry.unregister(key)
-            except KeyError:
+                nx._kernel.service_unregister(key)
+            except (KeyError, Exception):
                 pass
         asyncio.run(
             enlist_wired_services(registry, {"rebac_service": mock_svc, "mount_service": mock_svc})
         )
-        assert nx.service("rebac")._service_instance is mock_svc
-        assert nx.service("mount")._service_instance is mock_svc
+        assert nx.service("rebac") is mock_svc
+        assert nx.service("mount") is mock_svc
         assert nx.service("mcp") is None

@@ -3,6 +3,7 @@
 
 import builtins
 import contextlib
+import inspect
 import logging
 from collections.abc import Callable
 from typing import Any
@@ -28,6 +29,71 @@ from nexus.lib.rpc_decorator import rpc_expose
 from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
+
+
+def _declares_hook_spec(instance: Any) -> bool:
+    """Return True only when ``hook_spec`` is a real attribute on the object."""
+    try:
+        attr = inspect.getattr_static(instance, "hook_spec")
+    except AttributeError:
+        return False
+    return callable(attr)
+
+
+def _register_hooks_for_spec(dispatch: Any, spec: Any) -> None:
+    """Register all hooks from a HookSpec onto the dispatch (NexusFS)."""
+    if spec is None or spec.is_empty:
+        return
+    for h in spec.resolvers:
+        dispatch.register_resolver(h)
+    for h in spec.read_hooks:
+        dispatch.register_intercept_read(h)
+    for h in spec.write_hooks:
+        dispatch.register_intercept_write(h)
+    for h in spec.write_batch_hooks:
+        dispatch.register_intercept_write_batch(h)
+    for h in spec.delete_hooks:
+        dispatch.register_intercept_delete(h)
+    for h in spec.rename_hooks:
+        dispatch.register_intercept_rename(h)
+    for h in spec.copy_hooks:
+        dispatch.register_intercept_copy(h)
+    for h in spec.mkdir_hooks:
+        dispatch.register_intercept_mkdir(h)
+    for h in spec.rmdir_hooks:
+        dispatch.register_intercept_rmdir(h)
+    for h in spec.stat_hooks:
+        dispatch.register_intercept_stat(h)
+    for h in spec.access_hooks:
+        dispatch.register_intercept_access(h)
+
+
+def _unregister_hooks_for_spec(dispatch: Any, spec: Any) -> None:
+    """Unregister all hooks from a HookSpec."""
+    if spec is None or spec.is_empty:
+        return
+    for h in spec.resolvers:
+        dispatch.unregister_resolver(h)
+    for h in spec.read_hooks:
+        dispatch.unregister_intercept_read(h)
+    for h in spec.write_hooks:
+        dispatch.unregister_intercept_write(h)
+    for h in spec.write_batch_hooks:
+        dispatch.unregister_intercept_write_batch(h)
+    for h in spec.delete_hooks:
+        dispatch.unregister_intercept_delete(h)
+    for h in spec.rename_hooks:
+        dispatch.unregister_intercept_rename(h)
+    for h in spec.copy_hooks:
+        dispatch.unregister_intercept_copy(h)
+    for h in spec.mkdir_hooks:
+        dispatch.unregister_intercept_mkdir(h)
+    for h in spec.rmdir_hooks:
+        dispatch.unregister_intercept_rmdir(h)
+    for h in spec.stat_hooks:
+        dispatch.unregister_intercept_stat(h)
+    for h in spec.access_hooks:
+        dispatch.unregister_intercept_access(h)
 
 
 class NexusFS(  # type: ignore[misc]
@@ -194,15 +260,13 @@ class NexusFS(  # type: ignore[misc]
             _ipc_self_addr or "none/single-node",
         )
 
-        from nexus.core.service_registry import ServiceRegistry
-
-        self._service_registry: ServiceRegistry = ServiceRegistry(dispatch=self)
-
         # ── Kernel-knows (sentinel None, injected by factory) ───────────
         # See KERNEL-ARCHITECTURE.md §1 DI patterns table.
         # None = graceful degrade (like Linux LSM: no module loaded = no check).
 
         self._event_bus: Any = None
+        # Hook specs for enlisted services (duck-typed hook_spec() capture)
+        self._hook_specs: dict[str, Any] = {}
         # Lifecycle state — set by link() / initialize() / bootstrap()
         self._linked: bool = False
         self._initialized: bool = False
@@ -253,9 +317,8 @@ class NexusFS(  # type: ignore[misc]
     def bootstrap(self) -> None:
         """Phase 3: Start background services.  Server/Worker only.
 
-        Auto-starts all BackgroundService instances (ZoneLifecycleService,
-        EventDeliveryWorker, DeferredPermissionBuffer, etc.) via
-        ServiceRegistry.start_background_services().
+        Auto-starts all BackgroundService instances via Rust kernel
+        service_start_all().
 
         Idempotent — guarded by ``_bootstrapped`` flag.
         """
@@ -264,10 +327,9 @@ class NexusFS(  # type: ignore[misc]
         if not self._initialized:
             self.initialize()
         # Auto-lifecycle: start BackgroundService instances (Issue #1580)
-        coord = self.service_coordinator
-        if coord is not None:
-            coord.start_background_services()
-            coord.mark_bootstrapped()  # future enlist() calls auto-start
+        if self._kernel is not None:
+            self._kernel.service_start_all(30000)
+            self._kernel.service_mark_bootstrapped()
         self._bootstrapped = True
 
     def _register_runtime_closeable(self, resource: Any) -> None:
@@ -285,25 +347,53 @@ class NexusFS(  # type: ignore[misc]
         """Look up a registered service by canonical name.
 
         Returns the service instance, or ``None`` if not registered.
+        Delegates to Rust kernel ServiceRegistry.
         """
-        return self._service_registry.service(name)
+        if self._kernel is None:
+            return None
+        return self._kernel.service_lookup(name)
 
     @property
     def service_registry(self) -> Any:
-        """Read-only access to the kernel ServiceRegistry.  Factory / diagnostics."""
-        return self._service_registry
+        """Read-only access for factory / diagnostics. Returns self (NexusFS)."""
+        return self
 
-    # Services accessed via self.service("name") → ServiceRegistry (Issue #1452).
+    # Services accessed via self.service("name") → Rust kernel (Issue #1452).
     # Registered by factory via enlist_wired_services() at link().
 
     @property
     def service_coordinator(self) -> Any:
-        """ServiceRegistry with integrated lifecycle (formerly ServiceLifecycleCoordinator)."""
-        return self._service_registry
+        """Lifecycle coordinator. Returns self — NexusFS delegates to Rust kernel."""
+        return self
 
     def swap_service(self, name: str, new_instance: Any, **kwargs: Any) -> None:
-        """Hot-swap a service — all quadrants supported (#1452)."""
-        self._service_registry.swap_service(name, new_instance, **kwargs)
+        """Hot-swap a service — drain + replace + rehook (#1452)."""
+        exports = kwargs.get("exports", ())
+        hook_spec = kwargs.get("hook_spec")
+        timeout = kwargs.get("drain_timeout", 10.0)
+        timeout_ms = int(timeout * 1000)
+
+        # Unregister old hooks
+        old_spec = self._hook_specs.get(name)
+        if old_spec is None:
+            old_instance = self._kernel.service_lookup(name)
+            if old_instance is not None and _declares_hook_spec(old_instance):
+                old_spec = old_instance.hook_spec()
+        if old_spec is not None:
+            _unregister_hooks_for_spec(self, old_spec)
+
+        # Rust side: drain + replace
+        self._kernel.service_swap(name, new_instance, list(exports), timeout_ms)
+
+        # Register new hooks
+        new_spec = hook_spec
+        if new_spec is None and _declares_hook_spec(new_instance):
+            new_spec = new_instance.hook_spec()
+        if new_spec is not None and not new_spec.is_empty:
+            self._hook_specs[name] = new_spec
+        elif name in self._hook_specs:
+            del self._hook_specs[name]
+        _register_hooks_for_spec(self, self._hook_specs.get(name))
 
     @property
     def namespace_manager(self) -> Any | None:
@@ -630,16 +720,20 @@ class NexusFS(  # type: ignore[misc]
     def aclose(self) -> None:
         """Shutdown: stop BackgroundService + unregister hooks, then close.
 
-        Calls coordinator lifecycle methods first, then
+        Calls kernel lifecycle methods first, then
         delegates to close() for sync resource cleanup.
         """
         # Issue #3391: drain deferred OBSERVE background tasks before tearing down.
         self.shutdown()
 
-        coord = self.service_coordinator
-        if coord is not None:
-            coord.stop_background_services()
-            coord._unregister_all_hooks()
+        if self._kernel is not None:
+            self._kernel.service_stop_all(10000)
+            # Unregister all hooks
+            for name in list(self._hook_specs):
+                spec = self._hook_specs.get(name)
+                if spec is not None:
+                    _unregister_hooks_for_spec(self, spec)
+            self._hook_specs.clear()
         self.close()
 
     # ── IPC primitives (inlined from IPCMixin) ─────────────────────────
@@ -780,7 +874,8 @@ class NexusFS(  # type: ignore[misc]
 
         # Auto-close all enlisted services that have a close() method
         # (rebac_manager, audit_store, etc.). Reverse registration order.
-        self._service_registry.close_all_services()
+        if self._kernel is not None:
+            self._kernel.service_close_all()
 
         # Close metadata store
         self.metadata.close()

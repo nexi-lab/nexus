@@ -45,10 +45,10 @@ class MetadataMixin:
 
     _kernel: Any  # Rust Kernel
     _zone_id: str
+    _hook_specs: dict  # Hook specs stored on NexusFS
     metadata: Any
     router: Any
     _driver_coordinator: Any
-    _service_registry: Any
 
     # ── Internal helpers ──────────────────────────────────────────────
 
@@ -289,9 +289,15 @@ class MetadataMixin:
                 )
             exports = attrs.get("exports", ())
             allow_overwrite = attrs.get("allow_overwrite", False)
-            self._service_registry.enlist(
-                name, service, exports=exports, allow_overwrite=allow_overwrite
-            )
+            self._kernel.service_enlist(name, service, list(exports), allow_overwrite)
+            # Auto-capture hooks via duck-typed hook_spec()
+            from nexus.core.nexus_fs import _declares_hook_spec, _register_hooks_for_spec
+
+            if _declares_hook_spec(service):
+                spec = service.hook_spec()
+                if spec is not None and not spec.is_empty:
+                    self._hook_specs[name] = spec
+                    _register_hooks_for_spec(self, spec)
             return {"path": path, "registered": True, "service": name}
 
         entry_type = attrs.get("entry_type", 0)
@@ -562,7 +568,13 @@ class MetadataMixin:
         # ── /__sys__/ kernel management dispatch ──────────────────────
         if path.startswith("/__sys__/services/"):
             name = path.rsplit("/", 1)[-1]
-            self._service_registry.unregister_service_full(name)
+            # Unregister hooks first
+            from nexus.core.nexus_fs import _unregister_hooks_for_spec
+
+            spec = self._hook_specs.pop(name, None)
+            if spec is not None:
+                _unregister_hooks_for_spec(self, spec)
+            self._kernel.service_unregister(name)
             return {"path": path, "unregistered": True, "service": name}
 
         # DT_PIPE fast-path: check Rust IPC registry

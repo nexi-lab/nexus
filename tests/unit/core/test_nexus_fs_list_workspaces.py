@@ -46,12 +46,14 @@ def nexus_fs():
 
     # Create NexusFS and inject the service for __getattr__ forwarding
     from nexus.core.nexus_fs import NexusFS
-    from nexus.core.service_registry import ServiceRegistry
 
     with patch.object(NexusFS, "__init__", lambda self: None):
         fs = NexusFS.__new__(NexusFS)
-        fs._service_registry = ServiceRegistry()
-        fs._service_registry.register_service("workspace_rpc", svc)
+        fs._kernel = MagicMock()
+        fs._kernel.service_lookup = MagicMock(
+            side_effect=lambda name: svc if name == "workspace_rpc" else None
+        )
+        fs._hook_specs = {}
         # Also expose mock registry for test setup
         fs._workspace_registry = mock_registry
         return fs

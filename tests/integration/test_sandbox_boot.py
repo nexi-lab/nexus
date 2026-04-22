@@ -166,13 +166,10 @@ async def test_sandbox_http_surface_is_restricted(
 def _resolve_search_service(nx: object) -> object | None:
     """Return the underlying SearchService instance from ``nx.service("search")``.
 
-    ``nx.service(name)`` returns a ``ServiceRef`` proxy; the actual
-    instance lives on ``._service_instance``.
+    ``nx.service(name)`` returns the raw service instance directly
+    (Rust kernel ABI — no ServiceRef proxy).
     """
-    ref = nx.service("search") if hasattr(nx, "service") else None
-    if ref is None:
-        return None
-    return getattr(ref, "_service_instance", ref)
+    return nx.service("search") if hasattr(nx, "service") else None
 
 
 @pytest.mark.asyncio

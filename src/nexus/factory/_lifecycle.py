@@ -240,11 +240,7 @@ async def _initialize_services(
         for _ipc_name in ("ipc_zone_id", "ipc_provisioner"):
             _ipc_val = _ipc_svc_fn(_ipc_name)
             if _ipc_val is not None:
-                # Unwrap ServiceRef proxy to the raw instance — downstream
-                # consumers (AgentProvisioner, PyO3 Rust bindings) need the
-                # underlying type (str for zone_id, object for provisioner),
-                # not the transparent proxy.
-                _ipc_val = getattr(_ipc_val, "_service_instance", _ipc_val)
+                # service_lookup() returns raw instances — no unwrapping needed.
                 _ipc_services[_ipc_name] = _ipc_val
     _initialize_wired_ipc(nx, _ipc_services)
     # _initialize_wired_ipc may have created ipc_provisioner — enlist newly

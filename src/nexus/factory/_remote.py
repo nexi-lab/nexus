@@ -103,11 +103,11 @@ async def _boot_remote_services(nfs: "NexusFS", call_rpc: Callable[..., Any]) ->
     # Issue #1708: ServiceRegistry now has integrated lifecycle.
     # REMOTE profile: no BLM needed.
 
-    # Enlist all canonical services via service_registry (Issue #1708)
+    # Enlist all canonical services via kernel (Issue #1708)
     from nexus.factory.service_routing import _CANONICAL_NAMES, enlist_wired_services
 
     wired_dict: dict[str, Any] = dict.fromkeys(_CANONICAL_NAMES.keys(), proxy)
-    await enlist_wired_services(nfs._service_registry, wired_dict)
+    await enlist_wired_services(nfs, wired_dict)
 
     # version_service — enlist into ServiceRegistry
     nfs.sys_setattr("/__sys__/services/version_service", service=proxy)

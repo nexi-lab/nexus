@@ -71,9 +71,12 @@ async def _startup_async_rebac(app: "FastAPI", svc: "LifespanServices") -> None:
 
         # Enlist with coordinator (Q1 — wrapper is the consumer-facing service)
         if app.state.async_rebac_manager is not None:
-            coord = svc.service_coordinator
-            if coord is not None:
-                coord.enlist("async_rebac_manager", app.state.async_rebac_manager)
+            nx = svc
+            if hasattr(nx, "sys_setattr"):
+                nx.sys_setattr(
+                    "/__sys__/services/async_rebac_manager",
+                    service=app.state.async_rebac_manager,
+                )
 
     except Exception as e:
         logger.warning("Failed to initialize async ReBAC manager: %s", e, exc_info=True)
@@ -123,8 +126,8 @@ async def _startup_cache_brick(app: "FastAPI", svc: "LifespanServices") -> None:
                 record_store=record_store,
             )
 
-        coord = svc.service_coordinator
-        if coord is None:
+        # If NexusFS is bootstrapped, kernel handles start; otherwise start manually
+        if not getattr(svc, "_bootstrapped", False):
             await cache_brick.start()
         app.state.cache_brick = cache_brick
         logger.info("CacheBrick initialized with %s backend", cache_brick.backend_name)
@@ -170,7 +173,7 @@ async def _startup_durable_invalidation(app: "FastAPI", svc: "LifespanServices")
             rebac = getattr(svc.nexus_fs, "_rebac_manager", None)
         if rebac is None and svc.nexus_fs is not None:
             # Inside ReBACService wrapper (registered as "rebac" in cluster profile).
-            # ServiceRef.__getattr__ transparently delegates to the underlying instance.
+            # service_lookup returns raw instance — attribute access is direct.
             _svc_fn = getattr(svc.nexus_fs, "service", None)
             if _svc_fn:
                 for svc_name in ("rebac", "rebac_service", "rebac_manager"):
@@ -395,10 +398,13 @@ async def _startup_tiger_cache(app: "FastAPI", svc: "LifespanServices") -> list[
                     )
                     app.state.directory_grant_expander = expander
 
-                    # Q3 BackgroundService — coordinator auto-calls start()
-                    coord = svc.service_coordinator
-                    if coord is not None:
-                        coord.enlist("directory_grant_expander", expander)
+                    # Q3 BackgroundService — kernel auto-calls start()
+                    nx = svc.nexus_fs if hasattr(svc, "nexus_fs") else svc
+                    if hasattr(nx, "sys_setattr"):
+                        nx.sys_setattr(
+                            "/__sys__/services/directory_grant_expander",
+                            service=expander,
+                        )
                     else:
                         await expander.start()
                     logger.info("DirectoryGrantExpander worker started for large folder grants")

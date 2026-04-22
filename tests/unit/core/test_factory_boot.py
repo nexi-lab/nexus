@@ -481,4 +481,4 @@ class TestBrickServicesFieldCompleteness:
 
         _ref = nx.service("workflow_engine")
         assert _ref is not None
-        assert _ref._service_instance is sentinel_engine
+        assert _ref is sentinel_engine

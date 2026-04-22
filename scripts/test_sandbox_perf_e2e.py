@@ -81,8 +81,7 @@ async def _svc_grep(
     for the base class; the service-level entry point is what SANDBOX
     callers use.
     """
-    svc = search_svc._service_instance
-    return await svc.grep(pattern, path=path, max_results=max_results)
+    return await search_svc.grep(pattern, path=path, max_results=max_results)
 
 
 def _resolve_vec_backend(search_svc):
@@ -97,8 +96,7 @@ def _resolve_vec_backend(search_svc):
     ``enable_vector_search=True`` or the optional deps (sqlite-vec,
     litellm) are missing.
     """
-    svc = search_svc._service_instance
-    return getattr(svc, "_sqlite_vec_backend", None)
+    return getattr(search_svc, "_sqlite_vec_backend", None)
 
 
 async def _vec_upsert_file(vec_backend, nx, path: str) -> int:
@@ -176,8 +174,7 @@ async def _public_semantic_hits(
     retrieval-quality gate must fail when the vector path silently
     degrades.
     """
-    svc = search_svc._service_instance
-    return await svc.semantic_search(query, path=path, limit=limit, search_mode="semantic")
+    return await search_svc.semantic_search(query, path=path, limit=limit, search_mode="semantic")
 
 
 def _hits_degraded(hits: list[dict]) -> bool:

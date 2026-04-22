@@ -49,11 +49,6 @@ class VFSOperations(Protocol):
 
     def sys_unlink(self, path: str, **kw: Any) -> None: ...
 
-    # Tier 2 sync convenience methods (kernel passthroughs).  These exist
-    # so callers don't need to reach into ``self._kernel`` for non-blocking
-    # pipe ops or sync teardown contexts.
-    def pipe_destroy(self, path: str) -> None: ...
-
 
 class Permission(IntFlag):
     """Permission flags for file operations.

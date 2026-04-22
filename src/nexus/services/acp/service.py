@@ -389,7 +389,7 @@ class AcpService:
         if self._nexus_fs is not None:
             for fd_path in (active.fd0_path, active.fd1_path, active.fd2_path):
                 with contextlib.suppress(Exception):
-                    self._nexus_fs.pipe_destroy(fd_path)
+                    self._nexus_fs.sys_unlink(fd_path)
 
     def kill_agent(self, pid: str) -> AgentDescriptor:
         """Kill a running agent connection and mark TERMINATED in AgentRegistry."""

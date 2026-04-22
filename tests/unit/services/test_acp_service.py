@@ -114,15 +114,14 @@ class TestAcpServiceKillAgent:
     """Test kill_agent teardown."""
 
     def test_kill_agent_destroys_pipes(self):
-        """kill_agent should destroy all 3 fd pipes via NexusFS.pipe_destroy()."""
+        """kill_agent should destroy all 3 fd pipes via NexusFS.sys_unlink()."""
         pt = MockAgentRegistry()
         svc = AcpService(agent_registry=pt)
 
-        # NexusFS is the primary owner of the pipe destroy path post IPC
-        # Rust-ification — teardown calls nx.pipe_destroy(path).
+        # Teardown calls nx.sys_unlink(path) for each fd pipe.
         destroyed: list[str] = []
         mock_nx = MagicMock()
-        mock_nx.pipe_destroy = MagicMock(side_effect=lambda path: destroyed.append(path))
+        mock_nx.sys_unlink = MagicMock(side_effect=lambda path, **kw: destroyed.append(path))
         svc.bind_fs(mock_nx)
 
         # Set up an active agent
@@ -149,7 +148,7 @@ class TestAcpServiceKillAgent:
         # Verify subprocess killed
         mock_proc.kill.assert_called_once()
 
-        # Verify DT_PIPEs destroyed via nx.pipe_destroy (all 3 fds)
+        # Verify DT_PIPEs destroyed via nx.sys_unlink (all 3 fds)
         assert "/root/proc/pid-1/fd/0" in destroyed
         assert "/root/proc/pid-1/fd/1" in destroyed
         assert "/root/proc/pid-1/fd/2" in destroyed
@@ -162,10 +161,10 @@ class TestAcpServiceCloseAll:
         pt = MockAgentRegistry()
         svc = AcpService(agent_registry=pt)
 
-        # Teardown goes through nx.pipe_destroy post IPC Rust-ification.
+        # Teardown goes through nx.sys_unlink post IPC Rust-ification.
         destroyed: list[str] = []
         mock_nx = MagicMock()
-        mock_nx.pipe_destroy = MagicMock(side_effect=lambda path: destroyed.append(path))
+        mock_nx.sys_unlink = MagicMock(side_effect=lambda path, **kw: destroyed.append(path))
         svc.bind_fs(mock_nx)
 
         for i in range(3):

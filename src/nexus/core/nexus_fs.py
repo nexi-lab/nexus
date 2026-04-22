@@ -262,10 +262,9 @@ class NexusFS(  # type: ignore[misc]
                         if hasattr(metadata_store, _attr):
                             setattr(_proxy, _attr, getattr(metadata_store, _attr))
                     self.metadata = _proxy
-                    # Also update mount table's default metastore so route.metastore
-                    # returns the same RustMetastoreProxy (11 call sites use route.metastore).
-                    self._mount_table._default_metastore = self.metadata
-                    self._mount_table.bind_kernel(self._kernel)
+                    # bind_kernel + default_metastore update deferred to after
+                    # DriverLifecycleCoordinator creation (self._mount_table
+                    # is not yet available at this point in __init__).
                     _vfs_rust = getattr(self._vfs_lock_manager, "_rust", None)
                     if _vfs_rust is not None:
                         self._kernel.set_vfs_lock(_vfs_rust)
@@ -292,6 +291,14 @@ class NexusFS(  # type: ignore[misc]
             metadata_store,
             self._kernel,
         )
+
+        # Deferred from kernel init: wire mount table to kernel + proxy metastore.
+        # Must happen after DLC + PathRouter creation (they own the mount table).
+        if self._kernel is not None:
+            _mt = getattr(self._driver_coordinator, "_mount_table", None)
+            if _mt is not None:
+                _mt._default_metastore = self.metadata
+                _mt.bind_kernel(self._kernel)
 
         logger.info(
             "IPC primitives initialized: DriverCoordinator (self_address=%s)",

@@ -299,7 +299,11 @@ async def _run_chat(
             return nx.sys_read(path)
 
         async def _async_sys_write(path: str, buf: bytes) -> dict:
-            return nx.sys_write(path, buf)
+            # Use write() (Tier 2) instead of sys_write() (Tier 1) because
+            # agent persistence paths (conversation, proc/result, transcripts)
+            # may not exist on first write. write() supports create-on-write;
+            # sys_write() requires the file to already exist.
+            return nx.write(path, buf)
 
         # StreamManager stream_read for DT_STREAM token delivery
         _nx_stream_read = getattr(nx, "_stream_read", None)
@@ -380,7 +384,8 @@ async def _run_acp_mode(
         return result
 
     async def _async_sys_write(path: str, buf: bytes) -> Any:
-        return nx.sys_write(path, buf)
+        # Use write() (Tier 2) for create-on-write support — same fix as REPL mode.
+        return nx.write(path, buf)
 
     # Stream read adapter
     _nx_stream_read = getattr(nx, "_stream_read", None)

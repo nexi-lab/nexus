@@ -22,7 +22,16 @@ See `services/agent_runtime/managed_loop.py`.
 
 ### 1.2 LLM API Call — DONE
 
-Multi-provider strategy: OpenAI-compatible SDK via nova-gateway (translates all LLMs to OpenAI format) + planned `CASAnthropicBackend` for native Claude support. `CASOpenAIBackend.generate_streaming()` yields (token, metadata) through DT_STREAM.
+Two Rust streaming backends in kernel (`rust/kernel/src/`):
+
+- **`openai_streaming.rs`** — OpenAI-compatible SSE (`/chat/completions`, `Authorization: Bearer`). Handles any OpenAI-compat provider.
+- **`anthropic_streaming.rs`** — Native Anthropic Messages API (`/v1/messages`, `x-api-key` + `anthropic-version`). SSE state machine: `message_start` → `content_block_delta` → `message_stop`. Also used for SudoRouter proxy.
+
+Both are called via `llm_start_streaming(request_bytes, stream_path)` which runs the Rust SSE decode → DT_STREAM pump on a worker thread. Python `ManagedAgentLoop` reads tokens from DT_STREAM via `stream_read(path, offset)`.
+
+CAS persistence: each backend owns a `CASEngine` with `MessageBoundaryStrategy`, so two conversations sharing the first N messages dedup those chunks in the spool. Persistence happens in Rust after streaming completes (request + response + session envelope).
+
+**Prompt caching** (PR #3845): Anthropic backend sends `cache_control: {"type": "ephemeral"}` on system prompt content blocks. Extended thinking: Anthropic backend parses `thinking` content blocks and emits them as JSON frames on DT_STREAM.
 
 ### 1.3 Retry & Error Handling — DONE
 
@@ -30,7 +39,12 @@ Exponential backoff for 429/5xx/network errors, immediate fail on auth errors, t
 
 ### 1.4 Tool Call Parsing — DONE
 
-Incremental accumulation of OpenAI-compatible streaming tool calls: per-index argument concatenation across chunks, emitted as complete tool_calls in the "done" control message.
+Rust SSE parser accumulates tool call fragments per content block:
+
+- **OpenAI**: Per-index `function.arguments` concatenation across `delta` chunks.
+- **Anthropic**: `tool_use` content blocks with `input_json_delta` accumulation across `content_block_delta` events.
+
+Complete `tool_calls` array emitted in the `done` control frame written to DT_STREAM. Python `ManagedAgentLoop._call_llm_via_kernel()` reads the `done` JSON message to extract tool_calls + metadata.
 
 ### 1.5 Tool Registry & Execution — DONE
 
@@ -47,14 +61,16 @@ Incremental accumulation of OpenAI-compatible streaming tool calls: per-index ar
 
 **Not redundant** — different granularity and timing:
 
-| | CASOpenAIBackend.persist_session() | ManagedAgentLoop._persist_conversation() |
+| | Rust backend CAS persist | ManagedAgentLoop._persist_conversation() |
 |---|---|---|
-| Granularity | Single LLM call (request + response) | Entire conversation (all turns incl. tool results) |
+| Granularity | Single LLM call (request + response + session envelope) | Entire conversation (all turns incl. tool results) |
 | Purpose | LLM KV cache optimization, audit trail | Session resume (--continue) |
-| Timing | After streaming done (in `_run_stream()`) | After tool execution, before next LLM call |
+| Timing | After streaming done (in Rust backend) | After tool execution, before next LLM call |
 
-Both retained. CAS dedup ensures no wasted space. `persist_session()` now
-lives in `CASOpenAIBackend` directly (LLMStreamingService eliminated in PR #3657).
+Both retained. CAS dedup ensures no wasted space. Rust backends
+(`OpenAIBackend` / `AnthropicBackend`) handle CAS persist via `CASEngine`
+with `MessageBoundaryStrategy`. `ManagedAgentLoop` handles conversation persist
+via `sys_write` to VFS.
 
 ### 1.7 Session Resume — DONE
 
@@ -92,7 +108,9 @@ class SessionManager:
 - `should_defer: bool` — lazy schema loading (see §2.5). CC: `Tool.ts:438`
 
 Core Tier A tools (read/write/edit/bash/grep/glob): ✅ DONE.
-Protocol extension: ✅ DONE (`tool_registry.py` — `max_result_size_chars`, `is_destructive`, `should_defer` with defaults).
+Protocol extension: ✅ PARTIAL — `max_result_size_chars`, `is_destructive`, `should_defer` with defaults are on Protocol.
+`validate_input` and `check_permissions` are **DEFERRED** — not on Protocol. Permission checking is handled externally
+by `RuleBasedPermissionService` (§3.1) injected into `ExclusiveLockPolicy`, not as Tool Protocol methods.
 
 **Layer: Framework (Rust permission svc + Python Protocol) | P0**
 
@@ -336,6 +354,65 @@ See `services/agent_runtime/system_prompt.py`.
 
 ---
 
+## 4A. ACP Integration [P0] — DONE (PR #3839)
+
+### 4A.1 Overview
+
+ACP (Agent Communication Protocol) enables Nexus to participate as both **server** (agent called by sudowork) and **client** (Nexus calling external agents like Claude Code, Gemini CLI, Codex).
+
+**CLI entry**: `nexus chat --acp` — JSON-RPC 2.0 over stdio. Sudowork spawns `nexus chat --acp` as a subprocess and communicates via stdin/stdout.
+
+### 4A.2 Server-side: Nexus as ACP Agent
+
+| Component | File | Role |
+|-----------|------|------|
+| `AcpProtocolHandler` | `services/agent_runtime/acp_handler.py` | JSON-RPC dispatch: `initialize` → `session/new` → `session/prompt` |
+| `AcpTransport` | `services/agent_runtime/acp_transport.py` | Stdin/stdout framing, message read/write, notification emit |
+| `AgentObserver` | `services/agent_runtime/observer.py` | Push-mode callback: accumulates text/thinking/tool_call/usage, emits `session/update` notifications |
+
+**Protocol lifecycle**: sudowork spawns `nexus chat --acp` → sends `initialize` → Nexus responds with capabilities → sudowork sends `session/new` → Nexus creates `ManagedAgentLoop` → sudowork sends `session/prompt` → Nexus runs loop, streams updates → repeat for multi-turn.
+
+### 4A.3 Client-side: Nexus Calling External Agents
+
+| Component | File | Role |
+|-----------|------|------|
+| `AcpConnection` | `services/acp/connection.py` | JSON-RPC 2.0 protocol adapter over PipeBackend (pure protocol, no subprocess) |
+| `AcpService` | `services/acp/service.py` | Subprocess lifecycle: spawn → `AcpConnection` → initialize → session/new → prompt → disconnect → kill |
+
+`AcpService` owns the subprocess. Stdin/stdout wrapped in `StdioPipeBackend` (kernel `PipeBackend`). Agent pipes registered as `DT_PIPE` at `/{zone}/proc/{pid}/fd/{0,1,2}`.
+
+### 4A.4 Stdout Isolation & Data Dir Isolation
+
+- **Stdout isolation**: ACP mode redirects all non-JSON-RPC output (click.echo, print) to stderr. Only JSON-RPC messages go to stdout.
+- **Data dir isolation**: Each `nexus chat --acp` invocation uses `NEXUS_DATA_DIR` (default `~/.nexus/data`) for CAS spool. No shared state between invocations.
+
+### 4A.5 Observer Push-Mode & Extended Thinking
+
+`AgentObserver` supports push-mode via `on_update` callback (injected by `AcpProtocolHandler`):
+
+- `agent_message_chunk` → `transport.emit_agent_message_chunk()` (real-time text streaming)
+- `thinking` → `transport.emit_session_update(thinking)` (extended thinking tokens for UI folding)
+- `tool_call` / `tool_call_complete` / `tool_call_failed` → tool call lifecycle notifications
+- `usage_update` → token usage for context window display
+
+**Extended thinking flow**: Rust `anthropic_streaming.rs` parses `thinking` content blocks → emits `thinking` JSON frames on DT_STREAM → `ManagedAgentLoop` reads and emits via observer → `AcpProtocolHandler` pushes to sudowork as `session/update` notification.
+
+### 4A.6 Multi-Backend LLM Detection
+
+`chat.py` auto-detects LLM backend from environment variables:
+
+| Priority | Env Vars | Backend | Default Model |
+|----------|----------|---------|---------------|
+| 1 (highest) | `SUDOROUTER_BASE_URL` + `SUDOROUTER_API_KEY` | `anthropic_streaming.rs` | `claude-sonnet-4-6` |
+| 2 | `ANTHROPIC_API_KEY` (no `NEXUS_LLM_BASE_URL`) | `anthropic_streaming.rs` | `claude-sonnet-4-6` |
+| 3 (fallback) | `NEXUS_LLM_BASE_URL` + `NEXUS_LLM_API_KEY` | `openai_streaming.rs` | `gpt-4o` |
+
+Backend selection: `sys_setattr("/llm", backend_type="anthropic"|"openai", ...)`. Pure Rust — kernel owns HTTP, SSE, CAS, DT_STREAM.
+
+**Layer: Framework + Infra | P0 | ✅ DONE**
+
+---
+
 ## 5. Agent Lifecycle [P0/P1]
 
 ### 5.1 Subagent Spawn [Production]
@@ -445,8 +522,8 @@ interacts with the human. Copilot can spawn **Workers** via ACP for specialist
 tasks (CC, cursor, custom tools). Workers are subprocess agents with restricted
 tool sets.
 
-**Streaming**: Default is streaming (打字机效果) via `CASOpenAIBackend.start_streaming()`
-→ DT_STREAM → REPL reads tokens in real-time. Matches CC default behavior.
+**Streaming**: Default is streaming (打字机效果) via `llm_start_streaming(request_bytes, stream_path)`
+→ Rust SSE decode → DT_STREAM → REPL reads tokens in real-time. Matches CC default behavior.
 
 #### CLI Entry Point
 
@@ -458,11 +535,13 @@ nexus chat [OPTIONS] [-p PROMPT]
 Options:
   -p, --prompt TEXT       One-shot mode: run single prompt and exit
   --model TEXT            Model name (default from config or env)
-  --continue              Resume most recent session
-  --resume ID             Resume specific session by ID
+  --continue              Resume most recent session (accepted, not yet wired)
+  --resume ID             Resume specific session by ID (accepted, not yet wired)
   --tools PATH...         Mount external tool directories (Tier B, §1.5)
-  --profile TEXT          Connect to named nexusd profile (default: in-process)
-  --deployment-profile    Deployment profile for in-process mode (default: cluster)
+  --deployment-profile    Deployment profile for in-process mode
+                          Choices: slim (default), cluster, embedded, lite, sandbox, full, cloud
+  --acp                   ACP mode: JSON-RPC over stdio for sudowork (§4A)
+  --with TEXT             Connect to existing nexusd (gRPC address)
 ```
 
 Config precedence (matching CC): `CLI args > env vars > config file`
@@ -470,33 +549,38 @@ Config precedence (matching CC): `CLI args > env vars > config file`
 | Setting | CLI Flag | Env Var | Config File |
 |---------|----------|---------|-------------|
 | Model | `--model` | `NEXUS_LLM_MODEL` | `settings.agent.model` |
-| LLM URL | — | `NEXUS_LLM_BASE_URL` | `settings.agent.llm-base-url` |
-| API Key | — | `NEXUS_LLM_API_KEY` | `settings.agent.llm-api-key` |
+| LLM backend | — | `SUDOROUTER_*` > `ANTHROPIC_API_KEY` > `NEXUS_LLM_*` | — |
 | Deployment profile | `--deployment-profile` | `NEXUS_PROFILE` | `settings.agent.deployment-profile` |
 | Tools | `--tools` | — | `{cwd}/.nexus/agent.md` |
 
 #### Bootstrap Sequence
 
 ```
-nexus chat [--profile X] [-p "prompt"]
+nexus chat [--with addr] [--acp] [-p "prompt"]
   │
-  ├─ --profile given?
+  ├─ --with given?
   │   YES → nexus.connect(profile="remote", url=..., api_key=...)
   │         Returns NexusFS with RPCTransport to existing nexusd
   │   NO  → Boot embedded NexusFS (invocation-based, exclusive to this process):
-  │         1. Resolve deployment profile: --deployment-profile > NEXUS_PROFILE env > "cluster"
+  │         1. Resolve deployment profile: --deployment-profile > NEXUS_PROFILE env > "slim"
   │         2. create_nexus_fs(profile=resolved, backend=CASLocalBackend(~/.nexus/data))
-  │         3. Mount LLM backend: sys_setattr("/llm", DT_MOUNT, CASOpenAIBackend(...))
-  │         4. Inject StreamManager into backend
+  │         3. Auto-detect LLM backend from env vars (§4A.6):
+  │            SUDOROUTER_* → anthropic backend
+  │            ANTHROPIC_API_KEY → anthropic backend
+  │            NEXUS_LLM_* → openai backend
+  │         4. sys_setattr("/llm", DT_MOUNT, backend_type=...) — pure Rust
   │         NexusFS lifecycle = process lifetime. No nexusd required.
+  │
+  ├─ --acp?
+  │   YES → ACP mode (§4A): run AcpProtocolHandler over stdin/stdout, return
   │
   ├─ Create ManagedAgentLoop(
   │     sys_read=nx.sys_read, sys_write=nx.sys_write,
-  │     stream_read=nx._stream_manager.stream_read,
-  │     llm_backend=backend, agent_path="/root/agents/default",
-  │     cwd=os.getcwd(), model=model,
+  │     stream_read=nx._stream_read,
+  │     llm_start_streaming=nx.llm_start_streaming,
+  │     agent_path="/root/agents/default",
   │     tool_registry=ToolRegistry(default_tools()),
-  │     compactor=DefaultCompactionStrategy(sys_write=nx.sys_write, agent_path=...)
+  │     compactor=DefaultCompactionStrategy(...)
   │   )
   │
   ├─ await loop.initialize()  # Assemble system prompt from VFS (§4.2)
@@ -541,7 +625,7 @@ Streaming display: a background task reads from DT_STREAM and prints tokens
 as they arrive (`sys.stdout.write(token); sys.stdout.flush()`). The REPL
 doesn't block on full response — tokens appear in real-time.
 
-Ctrl+C during LLM call: cancels `CASOpenAIBackend.cancel_stream()`, returns
+Ctrl+C during LLM call: cancels the current LLM stream, returns
 to prompt. Does NOT exit REPL.
 
 #### Slash Commands (V1)
@@ -551,12 +635,10 @@ to prompt. Does NOT exit REPL.
 | `/help` | Yes | Show available commands |
 | `/compact` | Yes | Manual context compression (§4.1 Layer 3) |
 | `/clear` | Yes | Clear conversation, start fresh |
-| `/model MODEL` | Yes | Switch model |
-| `/quit` | Yes | Exit REPL |
+| `/quit` | Yes | Exit REPL (aliases: `/exit`, `/q`) |
 | `/cost` | Yes | Show accumulated token usage |
-| `/sessions` | Yes | List available sessions |
 | `/status` | Yes | Show agent status (model, tokens, session) |
-| Others | No | Placeholder "Not implemented yet" |
+| Others | No | "Unknown command" message |
 
 #### Files to Create/Modify
 
@@ -597,12 +679,18 @@ Precedence: `CLI args > env vars > config file` (matching CC).
 ### 13.3 Environment Variables [Production] — Layer: Agent | P0
 | Variable | Purpose |
 |----------|---------|
-| `NEXUS_LLM_BASE_URL` | LLM API base URL |
-| `NEXUS_LLM_API_KEY` | LLM API key |
-| `NEXUS_LLM_MODEL` | Default model name |
-| `NEXUS_PROFILE` | Default connection profile |
+| `SUDOROUTER_BASE_URL` | SudoRouter LLM endpoint (Anthropic via proxy) |
+| `SUDOROUTER_API_KEY` | SudoRouter API key |
+| `ANTHROPIC_API_KEY` | Direct Anthropic API key |
+| `NEXUS_LLM_BASE_URL` | OpenAI-compatible LLM base URL |
+| `NEXUS_LLM_API_KEY` | OpenAI-compatible API key |
+| `NEXUS_LLM_MODEL` | Default model name (overridden by --model) |
+| `NEXUS_PROFILE` | Default deployment profile (default: "slim") |
+| `NEXUS_DATA_DIR` | Local data directory (default: `~/.nexus/data`) |
 | `NEXUS_URL` | Remote nexusd URL (REMOTE profile) |
 | `NEXUS_API_KEY` | Remote nexusd API key |
+
+**LLM backend priority**: `SUDOROUTER_*` > `ANTHROPIC_API_KEY` > `NEXUS_LLM_*` (see §4A.6).
 
 ---
 
@@ -638,25 +726,31 @@ Precedence: `CLI args > env vars > config file` (matching CC).
 
 ## Current Scope
 
-### Done (merged or in PR #3660):
+### Done (merged):
 
-1. ~~**Tool call parsing** (§1.4)~~ — DONE (PR #3660)
+1. ~~**Tool call parsing** (§1.4)~~ — DONE (PR #3660, updated to Rust SSE parser in PR #3765)
 2. ~~**Built-in tools (Tier A)** (§1.5)~~ — DONE (PR #3660, ToolRegistry + 6 tools)
-3. ~~**CASAnthropicBackend** (§1.2)~~ — DONE (PR #3660)
+3. ~~**Rust LLM backends** (§1.2)~~ — DONE (PR #3765: `openai_streaming.rs` + `anthropic_streaming.rs`)
 4. ~~**Retry wrapper** (§1.3)~~ — DONE (PR #3660)
-5. ~~**Session Manager** (§1.7)~~ — DONE (PR #3660)
-
-### To implement next (designed, ready for implementation):
-
+5. ~~**Session Manager** (§1.7)~~ — DONE (PR #3660, code exists but `--continue`/`--resume` not wired in CLI)
 6. ~~**Context Compression** (§4.1)~~ — DONE (CompactionStrategy + DefaultCompactionStrategy, 15 tests)
 7. ~~**System Prompt Assembly** (§4.2)~~ — DONE (assemble_system_prompt + vfs_paths, 9 tests)
 8. ~~**REPL + CLI** (§11.2 + §13.2)~~ — DONE (`nexus chat`, interactive REPL + one-shot, embedded/remote modes, V1 slash commands)
 9. ~~**External tool discovery (Tier B)** (§1.5)~~ — DONE (`--tools PATH` → DT_MOUNT to `/root/tools/{name}`)
-10. **Tool Protocol extension** (§2.1) — add max_result_size_chars, validate_input, check_permissions, is_destructive
-11. **Parallel execution** (§2.3) — CC-equivalent StreamingToolExecutor with pluggable ConcurrencyPolicy
-12. **Tool result handling** (§2.4) — two-tier truncation + spill-to-VFS with pluggable ABCs
-13. **Rust permission service** (§3.1) — CC-like rule-based matcher, inject kernel INTERCEPT
-14. **Bash security** (§3.3) — 23-category command validator (Rust)
+10. ~~**Tool Protocol extension** (§2.1)~~ — DONE (partial: `max_result_size_chars`, `is_destructive`, `should_defer`. `validate_input`/`check_permissions` deferred)
+11. ~~**Parallel execution** (§2.3)~~ — DONE (ExclusiveLockPolicy, wired into ManagedAgentLoop)
+12. ~~**Tool result handling** (§2.4)~~ — DONE (HeadTruncation + VFSToolResultStorage + DefaultMessageBudget)
+13. ~~**Permission service** (§3.1)~~ — DONE (V1 Python: RuleBasedPermissionService, wired into ExclusiveLockPolicy)
+14. ~~**Bash security** (§3.3)~~ — DONE (V1 Python: BashCommandValidator with 23 security categories)
+15. ~~**ACP Integration** (§4A)~~ — DONE (PR #3839: AcpProtocolHandler + AcpTransport + observer + tool wiring)
+16. ~~**Prompt caching + Extended thinking** (§1.2)~~ — DONE (PR #3845: Anthropic cache_control ephemeral + thinking content blocks)
+17. ~~**OAuth protocol separation** (#1824)~~ — DONE (PR #3841)
+
+### To implement next:
+
+18. **Session resume wiring** (§1.7) — `--continue`/`--resume` flags accepted by CLI but not wired to SessionManager
+19. **Rust permission service** (§3.1) — accelerate V1 Python `RuleBasedPermissionService` to Rust (same interface)
+20. **Rust bash security** (§3.3) — accelerate V1 Python `BashCommandValidator` to Rust (same interface)
 
 ### Deferred Items (not in current scope):
 - Multi-agent teams (§5.2, P1)
@@ -671,20 +765,13 @@ Precedence: `CLI args > env vars > config file` (matching CC).
 
 ## Known Issues & Future Work
 
-### Conversation persistence gap (if _persist_conversation is removed from loop)
-If we rely solely on CASOpenAIBackend.persist_session() and remove
-ManagedAgentLoop._persist_conversation():
+### Session resume not wired in CLI
+`--continue` and `--resume` flags are accepted by `nexus chat` CLI but not yet
+wired to `SessionManager`. The `SessionManager` code exists (§1.7) with
+`latest()`, `load()`, `fork()`, `create()` methods, but the REPL bootstrap
+does not call them. Wiring needed in `chat.py` bootstrap sequence.
 
-1. **Crash recovery gap**: If agent crashes after tool execution but before next LLM call,
-   the most recent tool results are lost (not yet in any persist_session request).
-2. **Final-turn gap**: If the last turn of a session includes tool calls, the tool results
-   are never included in a persist_session (no next LLM call to carry them).
-3. **Session fork**: Requires reconstructing full messages[] from all persist_session records
-   (request/response pairs), which is possible but more complex than reading a single
-   conversation snapshot.
-
-**Mitigation options (deferred)**:
-- Add a lightweight "conversation checkpoint" on session close (single write)
-- Add a "flush pending tool results" step before fork
-- Accept the gap (tool results can be re-executed from the tool_call definitions in
-  the assistant messages, which ARE persisted)
+### Rust acceleration for permission/security (V2)
+`RuleBasedPermissionService` (§3.1) and `BashCommandValidator` (§3.3) are
+currently Python V1 implementations. Same interface, swap to Rust for
+latency-critical tool dispatch paths.

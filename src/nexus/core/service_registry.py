@@ -30,9 +30,7 @@ import functools
 import inspect
 import logging
 import threading
-from collections.abc import Mapping
-from dataclasses import dataclass, field
-from types import MappingProxyType
+from dataclasses import dataclass
 from typing import Any
 
 from nexus.contracts.protocols.service_hooks import HookSpec
@@ -160,11 +158,7 @@ class ServiceInfo:
 
     name: str
     instance: Any
-    dependencies: tuple[str, ...] = ()
     exports: tuple[str, ...] = ()
-    profile_gate: str | None = None
-    is_remote: bool = False
-    metadata: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
 
 
 class ServiceRegistry(BaseRegistry["ServiceInfo"]):
@@ -193,26 +187,13 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
         name: str,
         instance: Any,
         *,
-        dependencies: tuple[str, ...] | list[str] = (),
         exports: tuple[str, ...] | list[str] = (),
-        profile_gate: str | None = None,
-        is_remote: bool = False,
-        metadata: dict[str, Any] | None = None,
         allow_overwrite: bool = False,
     ) -> None:
         """Register a service instance under *name* (``insmod``).
 
-        Validates that all declared *dependencies* are already registered
-        and that all *exports* exist as attributes on the instance.
+        Validates that all *exports* exist as attributes on the instance.
         """
-        deps = tuple(dependencies)
-        # Dependency validation — fail-fast on missing prerequisites.
-        missing = [d for d in deps if d not in self]
-        if missing:
-            raise ValueError(
-                f"services: cannot register {name!r} — missing dependencies: {missing}"
-            )
-
         # EXPORT_SYMBOL validation — every declared export must exist.
         exp = tuple(exports)
         bad_exports = [e for e in exp if not hasattr(instance, e)]
@@ -224,61 +205,15 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
         info = ServiceInfo(
             name=name,
             instance=instance,
-            dependencies=deps,
             exports=exp,
-            profile_gate=profile_gate,
-            is_remote=is_remote,
-            metadata=MappingProxyType(metadata or {}),
         )
         self.register(name, info, allow_overwrite=allow_overwrite)
 
-    def replace_service(
-        self,
-        name: str,
-        new_instance: Any,
-        *,
-        exports: tuple[str, ...] | list[str] = (),
-    ) -> ServiceInfo:
-        """Atomically swap the instance for *name*. ``service(name)`` never returns None.
-
-        Preserves the old ServiceInfo's dependencies/profile_gate/is_remote.
-        Returns the **old** ServiceInfo.
-
-        Raises:
-            KeyError: If *name* is not registered.
-            ValueError: If new exports are invalid.
-        """
-        old_info = self.get(name)
-        if old_info is None:
-            raise KeyError(f"services: {name!r} not registered — cannot replace")
-
-        exp = tuple(exports)
-        bad_exports = [e for e in exp if not hasattr(new_instance, e)]
-        if bad_exports:
-            raise ValueError(
-                f"services: {name!r} replacement declares invalid exports: {bad_exports}"
-            )
-
-        new_info = ServiceInfo(
-            name=name,
-            instance=new_instance,
-            dependencies=old_info.dependencies,
-            exports=exp or old_info.exports,
-            profile_gate=old_info.profile_gate,
-            is_remote=old_info.is_remote,
-            metadata=old_info.metadata,
-        )
-        self.register(name, new_info, allow_overwrite=True)
-        return old_info
-
     def unregister_service(self, name: str) -> ServiceInfo | None:
-        """Remove a service (``rmmod``). Dependency guard: refuses if dependents exist.
+        """Remove a service (``rmmod``).
 
         Returns the removed ServiceInfo, or None if not found.
         """
-        dependents = [i.name for i in self.list_all() if name in i.dependencies]
-        if dependents:
-            raise ValueError(f"services: cannot unregister {name!r} — depended on by: {dependents}")
         return self.unregister(name)
 
     # -- convenience accessors ---------------------------------------------
@@ -314,11 +249,7 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
                 {
                     "name": info.name,
                     "type": type(info.instance).__name__,
-                    "dependencies": list(info.dependencies),
                     "exports": list(info.exports),
-                    "profile_gate": info.profile_gate,
-                    "is_remote": info.is_remote,
-                    "metadata": dict(info.metadata),
                 }
             )
         return result
@@ -337,29 +268,6 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
         """
         self._bootstrapped = True
 
-    # -- insmod — register service in Registry (internal) ------------------
-
-    def _register_service(
-        self,
-        name: str,
-        instance: Any,
-        *,
-        exports: tuple[str, ...] = (),
-        allow_overwrite: bool = False,
-    ) -> None:
-        """Register a service in ServiceRegistry."""
-        self.register_service(
-            name,
-            instance,
-            exports=exports,
-            allow_overwrite=allow_overwrite,
-        )
-        logger.info(
-            "[COORDINATOR] insmod %r (exports=%d)",
-            name,
-            len(exports),
-        )
-
     # -- enlist — the ONE entry point for all services --------------------
 
     def enlist(
@@ -368,7 +276,6 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
         instance: Any,
         *,
         exports: tuple[str, ...] = (),
-        depends_on: tuple[str, ...] = (),
         allow_overwrite: bool = False,
     ) -> None:
         """Enlist a service into the lifecycle system.
@@ -382,13 +289,18 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
 
         Post-bootstrap, BackgroundService instances are auto-started immediately.
         Pre-bootstrap, start() is deferred to start_background_services().
-
-        Args:
-            depends_on: Accepted for call-site compatibility; currently unused
-                (BLM dependency ordering removed).
         """
-        del depends_on  # accepted but unused (BLM removed)
-        self._register_service(name, instance, exports=exports, allow_overwrite=allow_overwrite)
+        self.register_service(
+            name,
+            instance,
+            exports=exports,
+            allow_overwrite=allow_overwrite,
+        )
+        logger.info(
+            "[COORDINATOR] insmod %r (exports=%d)",
+            name,
+            len(exports),
+        )
 
         # Auto-start background work (only post-bootstrap)
         if isinstance(instance, BackgroundService) and self._bootstrapped:
@@ -409,25 +321,11 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
         if not isinstance(instance, BackgroundService) and not _declares_hook_spec(instance):
             logger.info("[COORDINATOR] enlist %r — registered (on-demand)", name)
 
-    # -- mount — register VFS hooks ----------------------------------------
-
-    def _mount_service(self, name: str) -> None:
-        """Mount a service: register VFS hooks."""
-        self._register_hooks(name)
-        logger.info("[COORDINATOR] mount %r — hooks registered", name)
-
-    # -- umount — unregister VFS hooks ------------------------------------
-
-    def _unmount_service(self, name: str) -> None:
-        """Unmount: unregister VFS hooks."""
-        self._unregister_hooks(name)
-        logger.info("[COORDINATOR] umount %r", name)
-
     # -- rmmod — unregister from Registry ----------------------------------
 
     def unregister_service_full(self, name: str) -> None:
         """Fully remove a service: unmount hooks, then unregister."""
-        self._unmount_service(name)
+        self._unregister_hooks(name)
         self.unregister_service(name)
         self._hook_specs.pop(name, None)
         logger.info("[COORDINATOR] rmmod %r", name)
@@ -468,7 +366,18 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
             self._unregister_hooks_for_spec(old_hook_spec)
 
         # Step 3: Atomic replace — nx.service(name) now returns new instance
-        self.replace_service(name, new_instance, exports=exports)
+        exp = tuple(exports)
+        bad_exports = [e for e in exp if not hasattr(new_instance, e)]
+        if bad_exports:
+            raise ValueError(
+                f"services: {name!r} replacement declares invalid exports: {bad_exports}"
+            )
+        new_info = ServiceInfo(
+            name=name,
+            instance=new_instance,
+            exports=exp or old_info.exports,
+        )
+        self.register(name, new_info, allow_overwrite=True)
         logger.info("[COORDINATOR] swap %r — atomic replace done", name)
 
         # Step 4: Register new hooks — explicit param > duck-type > clear

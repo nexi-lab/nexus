@@ -39,16 +39,7 @@ class TestServiceInfo:
     def test_defaults(self) -> None:
         svc = object()
         info = ServiceInfo(name="search", instance=svc)
-        assert info.dependencies == ()
         assert info.exports == ()
-        assert info.profile_gate is None
-        assert info.is_remote is False
-        assert dict(info.metadata) == {}
-
-    def test_metadata_immutable(self) -> None:
-        info = ServiceInfo(name="x", instance=object())
-        with pytest.raises(TypeError):
-            dict.__setitem__(info.metadata, "k", "v")
 
 
 # ---------------------------------------------------------------------------
@@ -76,13 +67,12 @@ class TestRegisterAndLookup:
         assert registry.service_or_raise("search") is mock_svc
 
     def test_service_info_returns_envelope(self, registry: ServiceRegistry, mock_svc: Any) -> None:
-        registry.register_service("search", mock_svc, profile_gate="discovery")
+        registry.register_service("search", mock_svc)
         info = registry.service_info("search")
         assert info is not None
         assert isinstance(info, ServiceInfo)
         assert info.name == "search"
         assert info.instance is mock_svc
-        assert info.profile_gate == "discovery"
 
     def test_service_info_missing(self, registry: ServiceRegistry) -> None:
         assert registry.service_info("nope") is None
@@ -110,42 +100,19 @@ class TestDuplicateRegistration:
 
 
 # ---------------------------------------------------------------------------
-# Dependency validation
-# ---------------------------------------------------------------------------
-
-
-class TestDependencyValidation:
-    def test_missing_dep_raises(self, registry: ServiceRegistry) -> None:
-        with pytest.raises(ValueError, match="missing dependencies.*gateway"):
-            registry.register_service("mount", MagicMock(), dependencies=("gateway",))
-
-    def test_satisfied_deps_ok(self, registry: ServiceRegistry) -> None:
-        registry.register_service("gateway", MagicMock())
-        registry.register_service("mount", MagicMock(), dependencies=("gateway",))
-        ref = registry.service("mount")
-        assert ref is not None
-
-    def test_multiple_missing_deps(self, registry: ServiceRegistry) -> None:
-        with pytest.raises(ValueError, match="missing dependencies"):
-            registry.register_service("mount", MagicMock(), dependencies=("gateway", "rebac"))
-
-
-# ---------------------------------------------------------------------------
 # snapshot
 # ---------------------------------------------------------------------------
 
 
 class TestSnapshot:
     def test_snapshot_format(self, registry: ServiceRegistry) -> None:
-        registry.register_service("search", MagicMock(), profile_gate="discovery")
+        registry.register_service("search", MagicMock())
         registry.register_service("gateway", MagicMock())
         snap = registry.snapshot()
         assert len(snap) == 2
         names = {s["name"] for s in snap}
         assert names == {"gateway", "search"}
         search_entry = next(s for s in snap if s["name"] == "search")
-        assert search_entry["profile_gate"] == "discovery"
-        assert search_entry["is_remote"] is False
         assert isinstance(search_entry["type"], str)
 
 
@@ -237,9 +204,7 @@ class TestReplaceService:
         svc2 = MagicMock(spec=["glob", "grep"])
         registry.register_service("search", svc1, exports=("glob",))
 
-        old_info = registry.replace_service("search", svc2, exports=("glob", "grep"))
-        assert old_info.instance is svc1
-        assert old_info.exports == ("glob",)
+        registry.swap_service("search", svc2, exports=("glob", "grep"))
 
         # New instance is now served
         ref = registry.service("search")
@@ -250,36 +215,35 @@ class TestReplaceService:
         assert info is not None
         assert info.exports == ("glob", "grep")
 
-    def test_replace_preserves_dependencies(self, registry: ServiceRegistry) -> None:
+    def test_replace_preserves_exports(self, registry: ServiceRegistry) -> None:
         registry.register_service("gateway", MagicMock())
         svc1 = MagicMock()
-        registry.register_service("mount", svc1, dependencies=("gateway",))
+        registry.register_service("mount", svc1, exports=("mount_path",))
 
         svc2 = MagicMock()
-        old = registry.replace_service("mount", svc2)
-        assert old.instance is svc1
+        registry.swap_service("mount", svc2)
 
         info = registry.service_info("mount")
         assert info is not None
-        assert info.dependencies == ("gateway",)
+        assert info.exports == ("mount_path",)
         assert info.instance is svc2
 
     def test_replace_missing_raises(self, registry: ServiceRegistry) -> None:
         with pytest.raises(KeyError, match="not registered"):
-            registry.replace_service("nonexistent", MagicMock())
+            registry.swap_service("nonexistent", MagicMock())
 
     def test_replace_invalid_exports_raises(self, registry: ServiceRegistry) -> None:
         svc1 = MagicMock(spec=["glob"])
         registry.register_service("search", svc1)
         svc2 = MagicMock(spec=[])  # no 'glob' attribute
         with pytest.raises(ValueError, match="invalid exports"):
-            registry.replace_service("search", svc2, exports=("glob",))
+            registry.swap_service("search", svc2, exports=("glob",))
 
     def test_replace_inherits_old_exports_when_empty(self, registry: ServiceRegistry) -> None:
         svc1 = MagicMock(spec=["glob"])
         registry.register_service("search", svc1, exports=("glob",))
         svc2 = MagicMock(spec=["glob", "grep"])
-        registry.replace_service("search", svc2)
+        registry.swap_service("search", svc2)
         info = registry.service_info("search")
         assert info is not None
         assert info.exports == ("glob",)  # inherited from old
@@ -301,12 +265,6 @@ class TestUnregisterService:
 
     def test_unregister_missing(self, registry: ServiceRegistry) -> None:
         assert registry.unregister_service("nonexistent") is None
-
-    def test_unregister_blocked_by_dependent(self, registry: ServiceRegistry) -> None:
-        registry.register_service("gateway", MagicMock())
-        registry.register_service("mount", MagicMock(), dependencies=("gateway",))
-        with pytest.raises(ValueError, match="depended on by.*mount"):
-            registry.unregister_service("gateway")
 
 
 # ---------------------------------------------------------------------------

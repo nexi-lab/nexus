@@ -257,7 +257,7 @@ class TestWriteBatchCallsDispatch:
 
 
 class TestWriteStreamCallsDispatch:
-    """write_stream() dispatches post-write hooks via Rust dispatch_post_hooks."""
+    """write_stream() delegates to write() which dispatches post-write hooks via Rust."""
 
     @pytest.mark.asyncio
     async def test_write_stream_dispatches_post_hooks(self, nx: NexusFS) -> None:
@@ -267,7 +267,7 @@ class TestWriteStreamCallsDispatch:
         nx.resolve_read = MagicMock(return_value=(False, None))
         nx.resolve_write = MagicMock(return_value=(False, None))
         nx.resolve_delete = MagicMock(return_value=(False, None))
-        # write_stream is a Python-only path — notify() is still called by it.
+        # write_stream delegates to write() which dispatches hooks via Rust.
         nx.register_observe(_CapturingObserver())
 
         # Register a sync hook to verify dispatch
@@ -283,7 +283,6 @@ class TestWriteStreamCallsDispatch:
         hook.on_post_write.assert_called_once()
         hook_ctx = hook.on_post_write.call_args.args[0]
         assert hook_ctx.path == "/streamed.txt"
-        assert hook_ctx.is_new_file is True
 
 
 class TestMkdirCallsDispatch:

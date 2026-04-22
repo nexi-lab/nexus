@@ -502,28 +502,11 @@ class ContentMixin:
         """
         path = self._validate_path(path)
 
-        # PRE-INTERCEPT: pre-read hooks (Issue #899)
-        from nexus.contracts.vfs_hooks import ReadHookContext as _RHC
-
-        self._kernel.dispatch_pre_hooks("read", _RHC(path=path, context=context))
-
-        # Route to backend with access control
-        zone_id, agent_id, is_admin = self._get_context_identity(context)
-        route = self.router.route(
-            path,
-            zone_id=self._zone_id,
-        )
-
-        # Check if file exists in metadata.  Kernel-routed lookup so
-        # federation mode hits the per-zone ``ZoneMetastore`` in
-        # mount_table — the PathRouter-side ``route.metastore`` only
-        # points at the root-zone ``RaftMetadataStore``.
-        meta = self._kernel.metastore_get(path)
-        if meta is None or meta.etag is None:
-            raise NexusFileNotFoundError(path)
-
-        # Stream from routed backend using content hash
-        yield from route.backend.stream_content(meta.etag, chunk_size=chunk_size, context=context)
+        # Route through sys_read — Rust handles pre-hooks, CAS, federation,
+        # external connector dispatch.  Chunked Rust reads are future work.
+        data = self.sys_read(path, context=context)
+        for pos in range(0, len(data), chunk_size):
+            yield data[pos : pos + chunk_size]
 
     @rpc_expose(description="Stream a byte range of file content")
     def stream_range(
@@ -551,26 +534,12 @@ class ContentMixin:
             bytes: Chunks of file content within the requested range
         """
         path = self._validate_path(path)
-        from nexus.contracts.vfs_hooks import ReadHookContext as _RHC
 
-        self._kernel.dispatch_pre_hooks("read", _RHC(path=path, context=context))
-
-        zone_id, agent_id, is_admin = self._get_context_identity(context)
-        route = self.router.route(
-            path,
-            zone_id=self._zone_id,
-        )
-
-        # Kernel-routed lookup — see ``stream`` above for the federation
-        # rationale (per-zone ZoneMetastore vs. root-zone PathRouter
-        # metastore).
-        meta = self._kernel.metastore_get(path)
-        if meta is None or meta.etag is None:
-            raise NexusFileNotFoundError(path)
-
-        yield from route.backend.stream_range(
-            meta.etag, start, end, chunk_size=chunk_size, context=context
-        )
+        # Route through sys_read with offset/count — Rust handles hooks,
+        # CAS routing, federation, external connectors.
+        data = self.sys_read(path, count=end - start + 1, offset=start, context=context)
+        for pos in range(0, len(data), chunk_size):
+            yield data[pos : pos + chunk_size]
 
     @rpc_expose(description="Write file content from stream")
     def write_stream(
@@ -613,91 +582,10 @@ class ContentMixin:
         """
         path = self._validate_path(path)
 
-        # Route to backend with write access check
-        zone_id, agent_id, is_admin = self._get_context_identity(context)
-        route = self.router.route(
-            path,
-            zone_id=self._zone_id,
-        )
-
-        # Virtual .readme/ paths are read-only (Issue #3728).
-        self._reject_if_virtual_readme(path, context, op="write_stream")
-
-        # PRE-INTERCEPT: pre-write hooks (Issue #899)
-        from nexus.contracts.vfs_hooks import WriteHookContext as _WHC
-
-        self._kernel.dispatch_pre_hooks("write", _WHC(path=path, content=b"", context=context))
-
-        # Get existing metadata for version tracking
-        now = datetime.now(UTC)
-        meta = route.metastore.get(path)
-
-        # Add backend_path to context for path-based connectors
-        if context:
-            context = _dc_replace(
-                context,
-                backend_path=route.backend_path,
-                virtual_path=path,
-                mount_path=route.mount_point,
-            )
-        else:
-            context = OperationContext(
-                user_id="anonymous",
-                groups=[],
-                backend_path=route.backend_path,
-                virtual_path=path,
-                mount_path=route.mount_point,
-            )
-
-        # Write content via streaming
-        write_result = route.backend.write_stream(chunks, context=context)
-        content_hash = write_result.content_id
-
-        # WriteResult carries the byte count to avoid a redundant
-        # get_content_size() round-trip after streaming writes.
-        size = write_result.size
-        if size <= 0:
-            try:
-                size = route.backend.get_content_size(content_hash, context=context)
-            except Exception as e:
-                logger.debug("Failed to get content size for %s: %s", content_hash, e)
-
-        # Update metadata
-        new_version = (meta.version + 1) if meta else 1
-        new_meta = FileMetadata(
-            path=path,
-            backend_name=self._driver_coordinator.backend_key(route.backend, route.mount_point),
-            physical_path=content_hash,  # CAS: hash is the "physical" location
-            etag=content_hash,
-            size=size,
-            version=new_version,
-            created_at=meta.created_at if meta else now,
-            modified_at=now,
-            zone_id=zone_id
-            or ROOT_ZONE_ID,  # Issue #904, #773: Store zone_id for PREWHERE filtering
-        )
-
-        route.metastore.put(new_meta)
-
-        # Issue #900: Unified INTERCEPT for write_stream
-        from nexus.contracts.vfs_hooks import WriteHookContext
-
-        _ws_ctx = WriteHookContext(
-            path=path,
-            content=b"",  # stream — content not available in single buffer
-            context=None,
-            zone_id=zone_id,
-            is_new_file=(meta is None),
-            metadata=new_meta,
-        )
-        self._kernel.dispatch_post_hooks("write", _ws_ctx)
-
-        return {
-            "etag": content_hash,
-            "version": new_version,
-            "modified_at": now.isoformat(),
-            "size": size,
-        }
+        # Collect chunks and delegate to write() — Rust sys_write handles
+        # CAS, metastore, OBSERVE, hooks atomically.
+        data = b"".join(chunks)
+        return self.write(path, data, context=context)
 
     @rpc_expose(description="Write file content")
     def sys_write(

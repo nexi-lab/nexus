@@ -206,26 +206,35 @@ def _create_connector_backend(spec: Any) -> Any:
         # Attempt a targeted rebind: the placeholder survives when the
         # first registration pass couldn't import the module, but the
         # user may have installed the missing dep since then. Retry
-        # the manifest import so the decorator rebinds the class.
+        # the manifest import so the decorator rebinds the class;
+        # preserve any ImportError so we can chain it into the final
+        # RuntimeError (silently swallowing the cause makes production
+        # debugging needlessly hard).
         expected_path = info.expected_module_path
+        rebind_error: BaseException | None = None
         if expected_path:
-            import contextlib
-
-            # Fall through to the restart hint when the dep is truly
-            # absent; check_runtime_deps above already ruled out the
-            # common case.
-            with contextlib.suppress(ImportError):
+            try:
                 importlib.import_module(expected_path)
+            except ImportError as e:
+                rebind_error = e
             info = ConnectorRegistry.get_info(selected_name or scheme)
 
         if info.connector_class is None:
-            raise RuntimeError(
-                f"Connector '{selected_name or scheme}' is declared in the "
-                f"manifest but its module failed to import. Check logs for "
-                f"the original ImportError; if the dependency was just "
-                f"installed, restarting the process will clear any cached "
-                f"import state."
+            detail = info.import_error or (str(rebind_error) if rebind_error else None)
+            base_msg = (
+                f"Connector '{selected_name or scheme}' is declared in "
+                f"the manifest but its module failed to import"
             )
+            if detail:
+                base_msg = f"{base_msg}: {detail}"
+            restart_hint = (
+                " — if the dependency was just installed, "
+                "restarting the process will clear any cached "
+                "import state."
+            )
+            if rebind_error is not None:
+                raise RuntimeError(base_msg + restart_hint) from rebind_error
+            raise RuntimeError(base_msg + restart_hint)
 
     return _instantiate_connector_backend(info.connector_class, info=info, scheme=scheme)
 

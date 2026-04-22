@@ -92,25 +92,43 @@ class BackendFactory:
             # re-read info. This lets "install dep → retry mount"
             # succeed in the same process.
             expected_path = info.expected_module_path
+            rebind_error: BaseException | None = None
             if expected_path:
-                import contextlib
                 import importlib
 
-                # Dep still absent despite check_runtime_deps passing
-                # is very rare (race between check and import);
-                # swallow it and fall through to the restart hint below.
-                with contextlib.suppress(ImportError):
+                try:
                     importlib.import_module(expected_path)
+                except ImportError as e:
+                    # Dep still absent despite check_runtime_deps
+                    # passing is very rare (race between check and
+                    # import). Preserve the exception so we chain it
+                    # into the user-facing RuntimeError below instead
+                    # of swallowing it silently.
+                    rebind_error = e
                 info = ConnectorRegistry.get_info(backend_type)
 
             if info.connector_class is None:
-                raise RuntimeError(
+                # Prefer the phase-2 failure captured at registration
+                # time (recorded by record_import_failure for non-dep
+                # errors like SyntaxError) — that IS the root cause.
+                # The retry's ImportError only surfaces when we have
+                # no captured history, since a fresh import failure
+                # here is often a secondary effect of the earlier one.
+                detail = info.import_error or (str(rebind_error) if rebind_error else None)
+                base_msg = (
                     f"Connector '{backend_type}' is declared in the "
-                    f"manifest but its module failed to import. Check "
-                    f"logs for the original ImportError; if the "
-                    f"dependency was just installed, restarting the "
-                    f"process will clear any cached import state."
+                    f"manifest but its module failed to import"
                 )
+                if detail:
+                    base_msg = f"{base_msg}: {detail}"
+                restart_hint = (
+                    " — if the dependency was just installed, "
+                    "restarting the process will clear any cached "
+                    "import state."
+                )
+                if rebind_error is not None:
+                    raise RuntimeError(base_msg + restart_hint) from rebind_error
+                raise RuntimeError(base_msg + restart_hint)
 
         connector_cls = info.connector_class
         mapping = info.config_mapping

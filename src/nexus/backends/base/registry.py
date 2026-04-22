@@ -261,6 +261,19 @@ class ConnectorInfo:
     expected_class_name: str | None = None
     """Manifest-declared ``class_name`` (set alongside ``expected_module_path``)."""
 
+    import_error: str | None = None
+    """Captured phase-2 import failure for this connector, if any.
+
+    ``_register_optional_backends`` records the original exception text
+    (``f"{type.__name__}: {message}"``) here when a connector module
+    fails to import for a reason OTHER than a missing dependency
+    (``ImportError`` / ``ModuleNotFoundError`` for a declared
+    ``PythonDep`` is the expected "dep absent" path and leaves this
+    field ``None``). ``BackendFactory.create()`` surfaces the captured
+    text in its ``RuntimeError`` so operators see the actual root
+    cause without digging through debug logs.
+    """
+
     @property
     def connection_args(self) -> dict[str, ConnectionArg]:
         """Get CONNECTION_ARGS from the connector class if defined.
@@ -422,6 +435,36 @@ class ConnectorRegistry:
             expected_class_name=entry.class_name,
         )
         cls._base.register(entry.name, info, allow_overwrite=True)
+
+    @classmethod
+    def record_import_failure(cls, name: str, error_text: str) -> None:
+        """Record a phase-2 import failure on the named connector's placeholder.
+
+        Called by ``_register_optional_backends`` when a connector
+        module raises a non-dependency exception (SyntaxError,
+        RuntimeError, etc.). The captured text surfaces later in
+        ``BackendFactory.create()``'s RuntimeError so operators see
+        the original cause. No-op if the placeholder is already bound
+        or absent.
+        """
+        existing = cls._base.get(name)
+        if existing is None or existing.connector_class is not None:
+            return
+        updated = ConnectorInfo(
+            name=existing.name,
+            connector_class=None,
+            description=existing.description,
+            category=existing.category,
+            runtime_deps=existing.runtime_deps,
+            service_name=existing.service_name,
+            user_scoped=existing.user_scoped,
+            config_mapping=existing.config_mapping,
+            backend_features=existing.backend_features,
+            expected_module_path=existing.expected_module_path,
+            expected_class_name=existing.expected_class_name,
+            import_error=error_text,
+        )
+        cls._base.register(name, updated, allow_overwrite=True)
 
     @classmethod
     def register(

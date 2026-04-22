@@ -77,6 +77,32 @@ class TestFactoryPlaceholder:
         # Failure message must tell users how to recover (restart hint).
         assert "restart" in msg.lower()
 
+    def test_placeholder_surfaces_captured_import_error(self) -> None:
+        """Phase-2 import errors captured by record_import_failure must
+        appear in the RuntimeError so operators see the real root cause
+        without having to hunt through debug logs."""
+        from nexus.backends.base.registry import ConnectorRegistry
+
+        entry = ConnectorManifestEntry(
+            name="ph_with_captured_err",
+            module_path="nowhere.real",
+            class_name="X",
+            description="Placeholder",
+            category="storage",
+            runtime_deps=(PythonDep("json"),),
+        )
+        ConnectorRegistry.register_placeholder(entry)
+        ConnectorRegistry.record_import_failure(
+            "ph_with_captured_err",
+            "SyntaxError: invalid syntax on line 42",
+        )
+
+        with pytest.raises(RuntimeError) as exc_info:
+            BackendFactory.create("ph_with_captured_err", {})
+        msg = str(exc_info.value)
+        assert "SyntaxError" in msg
+        assert "invalid syntax on line 42" in msg
+
     def test_unbound_placeholder_rebinds_on_targeted_import(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

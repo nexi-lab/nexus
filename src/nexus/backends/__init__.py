@@ -131,16 +131,22 @@ def _register_optional_backends() -> None:
         # Phase 2: attempt module imports; successful imports run
         # @register_connector which binds the class into the placeholder.
         #
-        # Only swallow ImportError / ModuleNotFoundError — those are the
-        # expected "dep absent" case on slim installs: the placeholder
-        # stays and BackendFactory.create() surfaces the canonical
-        # MissingDependencyError. Any other exception (SyntaxError in
-        # the connector module, ValueError from a duplicate-name
-        # registration, a RuntimeError from a misconfigured decorator,
-        # etc.) is a hard bug; letting it escape keeps
-        # ``_optional_backends_registered`` False so the next call
-        # retries, and prevents the registry from silently entering a
-        # half-populated or hijacked state.
+        # ImportError / ModuleNotFoundError is the expected "dep absent"
+        # case on slim installs — the placeholder stays untouched and
+        # BackendFactory.create() surfaces the canonical
+        # MissingDependencyError.
+        #
+        # Any other exception (SyntaxError in the connector module,
+        # ValueError from a duplicate-name registration, a RuntimeError
+        # from a misconfigured decorator, etc.) is a hard bug. We do
+        # NOT let it escape — a single broken connector module would
+        # otherwise take out mounts for every other unrelated
+        # connector sharing this process. Instead we record the
+        # failure text on that entry's placeholder (via
+        # ``import_error``) and continue with the next module. When
+        # someone later tries to mount THAT connector, BackendFactory
+        # raises a RuntimeError whose message includes the captured
+        # exception so operators see the real root cause.
         seen_modules: set[str] = set()
         for entry in CONNECTOR_MANIFEST:
             if entry.module_path in seen_modules:
@@ -155,11 +161,23 @@ def _register_optional_backends() -> None:
                     entry.module_path,
                     e,
                 )
+            except Exception as e:
+                _logger.warning(
+                    "Connector module %s failed to import with %s: %s "
+                    "(placeholder retains captured error; mounting this "
+                    "connector will raise RuntimeError — other connectors "
+                    "remain usable)",
+                    entry.module_path,
+                    type(e).__name__,
+                    e,
+                    exc_info=True,
+                )
+                ConnectorRegistry.record_import_failure(entry.name, f"{type(e).__name__}: {e}")
 
-        # Mark registered AFTER phases 1 & 2 complete. If a non-ImportError
-        # escaped before this point the registration is incomplete — we
-        # leave the flag unset so the caller can retry after fixing the
-        # underlying bug rather than operating on a half-populated registry.
+        # Mark registered AFTER phases 1 & 2 complete. Per-module hard
+        # errors are captured on the placeholder above, not raised,
+        # so the flag is safe to set even when individual connectors
+        # failed to import.
         _optional_backends_registered = True
 
         # Phase 3: external plugins via entry points (Issue #3148, Decision #4)

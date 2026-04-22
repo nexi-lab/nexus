@@ -117,6 +117,13 @@ CONNECTOR_MANIFEST: tuple[ConnectorManifestEntry, ...] = (
         category="storage",
     ),
     # --- OAuth / API connectors ---
+    # Every OAuth connector uses OAuthConnectorMixin / OAuthConnectorBase,
+    # which lazily imports ``nexus.bricks.auth.oauth.factory`` at
+    # instantiation time (see src/nexus/backends/connectors/oauth_base.py).
+    # ``nexus.bricks`` is excluded from the slim wheel, so declaring
+    # ``ServiceDep("token_manager")`` here gates the mount with a clean
+    # ``MissingDependencyError`` on slim instead of leaking a raw
+    # ModuleNotFoundError from deep inside the OAuth factory call.
     ConnectorManifestEntry(
         name="gdrive_connector",
         module_path="nexus.backends.connectors.gdrive.connector",
@@ -126,6 +133,7 @@ CONNECTOR_MANIFEST: tuple[ConnectorManifestEntry, ...] = (
         runtime_deps=(
             PythonDep("googleapiclient", extras=("gdrive",)),
             PythonDep("google_auth_oauthlib", extras=("gdrive",)),
+            ServiceDep("token_manager"),
         ),
         service_name="google-drive",
     ),
@@ -138,6 +146,7 @@ CONNECTOR_MANIFEST: tuple[ConnectorManifestEntry, ...] = (
         runtime_deps=(
             PythonDep("googleapiclient", extras=("gmail",)),
             PythonDep("google_auth_oauthlib", extras=("gmail",)),
+            ServiceDep("token_manager"),
         ),
         service_name="gmail",
     ),
@@ -150,6 +159,7 @@ CONNECTOR_MANIFEST: tuple[ConnectorManifestEntry, ...] = (
         runtime_deps=(
             PythonDep("googleapiclient", extras=("gcalendar",)),
             PythonDep("google_auth_oauthlib", extras=("gcalendar",)),
+            ServiceDep("token_manager"),
         ),
         service_name="google-calendar",
     ),
@@ -162,6 +172,7 @@ CONNECTOR_MANIFEST: tuple[ConnectorManifestEntry, ...] = (
         runtime_deps=(
             PythonDep("googleapiclient", extras=("gcalendar",)),
             PythonDep("google_auth_oauthlib", extras=("gcalendar",)),
+            ServiceDep("token_manager"),
         ),
         service_name="google-calendar",
     ),
@@ -171,7 +182,10 @@ CONNECTOR_MANIFEST: tuple[ConnectorManifestEntry, ...] = (
         class_name="PathXBackend",
         description="X (Twitter) API with OAuth 2.0 PKCE",
         category="api",
-        runtime_deps=(PythonDep("requests_oauthlib", extras=("x",)),),
+        runtime_deps=(
+            PythonDep("requests_oauthlib", extras=("x",)),
+            ServiceDep("token_manager"),
+        ),
         service_name="x",
     ),
     ConnectorManifestEntry(
@@ -180,7 +194,10 @@ CONNECTOR_MANIFEST: tuple[ConnectorManifestEntry, ...] = (
         class_name="PathSlackBackend",
         description="Slack workspace with OAuth 2.0 authentication",
         category="oauth",
-        runtime_deps=(PythonDep("slack_sdk", extras=("slack",)),),
+        runtime_deps=(
+            PythonDep("slack_sdk", extras=("slack",)),
+            ServiceDep("token_manager"),
+        ),
         service_name="slack",
     ),
     ConnectorManifestEntry(

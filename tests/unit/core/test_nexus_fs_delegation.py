@@ -42,6 +42,7 @@ def mock_fs():
         }.get(name)
     )
     fs._hook_specs = {}
+    fs._zone_id = ROOT_ZONE_ID
     return fs
 
 

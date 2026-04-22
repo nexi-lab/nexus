@@ -43,8 +43,8 @@ class TestEnlistWiredServices:
         # Factory boot may have pre-registered these; clear them for a clean test.
         for key in ("rebac", "mount"):
             try:
-                registry.unregister(key)
-            except KeyError:
+                nx._kernel.service_unregister(key)
+            except (KeyError, Exception):
                 pass
         asyncio.run(
             enlist_wired_services(registry, {"rebac_service": mock_svc, "mount_service": mock_svc})

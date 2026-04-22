@@ -71,6 +71,7 @@ mod replication;
 mod s3_backend;
 mod search;
 mod semaphore;
+mod service_registry;
 #[cfg(unix)]
 mod shm_pipe;
 #[cfg(unix)]

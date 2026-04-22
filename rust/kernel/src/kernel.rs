@@ -559,6 +559,8 @@ pub struct Kernel {
     // (Develop introduced the Arc wrapping; we take it to avoid silent
     // revert of that hardening.)
     pub(crate) agent_registry: Arc<crate::agent_registry::AgentRegistry>,
+    // Service registry — DashMap backing store for service lifecycle.
+    pub(crate) service_registry: Arc<crate::service_registry::ServiceRegistry>,
     // Per-mount metastores now live inside `MountTable::entries` as
     // `MountEntry::metastore: Option<Arc<dyn Metastore>>` (our v20
     // SSOT cleanup — kept against develop's legacy split map).
@@ -671,6 +673,7 @@ impl Kernel {
             zone_revisions: DashMap::new(),
             file_watches: Arc::new(FileWatcher::new()),
             agent_registry: Arc::new(crate::agent_registry::AgentRegistry::new()),
+            service_registry: Arc::new(crate::service_registry::ServiceRegistry::new()),
             pipe_manager: crate::pipe_manager::PipeManager::new(),
             stream_manager: Arc::new(crate::stream_manager::StreamManager::new()),
             native_hooks: Mutex::new(NativeHookRegistry::new()),

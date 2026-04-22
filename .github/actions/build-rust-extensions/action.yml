@@ -37,7 +37,12 @@ runs:
       # already on PATH.
       uses: arduino/setup-protoc@v3
       with:
-        version: "27.x"
+        # raft-proto v0.7.0 uses protobuf-build v0.14.1 whose version
+        # check rejects the 2-digit-major protoc naming (21.x / 27.x)
+        # with "No suitable protoc (>= 3.1.0) found in PATH" — even
+        # though 27.x is newer than 3.1.0.  Pin to the last 3.x-style
+        # version (3.20.3 → libprotoc 3.20.3) so the parse succeeds.
+        version: "3.20.3"
         repo-token: ${{ inputs.github-token }}
 
     - name: Install Rust toolchain

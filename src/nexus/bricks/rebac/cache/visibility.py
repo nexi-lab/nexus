@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING
 try:
     from cachebox import TTLCache
 except ImportError:
-    from cachetools import TTLCache
+    from cachetools import TTLCache  # type: ignore[assignment]
 
 try:
     from fastbloom_rs import BloomFilter

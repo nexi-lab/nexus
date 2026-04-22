@@ -27,7 +27,7 @@ from typing import Any
 try:
     from cachebox import TTLCache
 except ImportError:
-    from cachetools import TTLCache
+    from cachetools import TTLCache  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 

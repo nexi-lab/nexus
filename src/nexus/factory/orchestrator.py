@@ -192,6 +192,7 @@ async def create_nexus_fs(
     workflow_engine: "WorkflowProtocol | None" = None,
     init_cred: Any = None,
     federation: Any = None,
+    security: Any = None,
 ) -> "NexusFS":
     """Create NexusFS with default services — the recommended entry point.
 
@@ -307,6 +308,7 @@ async def create_nexus_fs(
         parsing=parsing,
         workflow_engine=workflow_engine,
         federation=federation,
+        security=security,
     )
     nx._linked = True
 

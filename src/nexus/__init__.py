@@ -602,6 +602,7 @@ async def connect(
         enabled_bricks=enabled_bricks,
         audit=audit_cfg,
         federation=federation,
+        security=getattr(cfg, "security", None),
     )
 
     # Set memory config for Memory API

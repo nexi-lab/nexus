@@ -161,3 +161,50 @@ async def test_sse_mount_honors_extra_deny_cidrs() -> None:
 
     assert excinfo.value.reason == "extra_deny_cidr"
     assert excinfo.value.cidr == "203.0.113.0/24"
+
+
+@pytest.mark.asyncio
+async def test_factory_boot_threads_ssrf_config_to_mcp_service() -> None:
+    """Regression: operator-configured SSRFConfig must reach MCPMountManager
+    through the real factory boot path (not just direct construction).
+
+    Prior to this test, _wired.py read nx._config.security.ssrf, but
+    nx._config is attached only after create_nexus_fs() returns, so the
+    read resolved to None and operator config was silently dropped.
+    """
+    from unittest.mock import MagicMock
+
+    from nexus.config import SecurityConfig, SSRFConfig
+    from nexus.factory._wired import _boot_post_kernel_services
+
+    nx = MagicMock()
+    nx._config = None  # simulate pre-attach state (real factory behavior)
+    router = MagicMock()
+    router.list_mounts = MagicMock(return_value=[])
+
+    security = SecurityConfig(ssrf=SSRFConfig(extra_deny_cidrs=["10.50.0.0/16"]))
+
+    services: dict = {}
+
+    def svc_on(name: str) -> bool:
+        return name == "mcp"
+
+    # _boot_post_kernel_services constructs MCPService etc.; run with a stubbed
+    # MCPService so we can capture the ssrf_config kwarg it was called with.
+    captured: dict = {}
+
+    class _FakeMCPService:
+        def __init__(self, *, ssrf_config=None, **kw):
+            captured["ssrf_config"] = ssrf_config
+
+    with patch("nexus.bricks.mcp.mcp_service.MCPService", _FakeMCPService):
+        # Other services touched by _boot_post_kernel_services may need
+        # extensive stubbing; swallow any boot-time failures and only assert
+        # that MCPService received the threaded config before the failure.
+        try:
+            await _boot_post_kernel_services(nx, router, services, svc_on, security_config=security)
+        except Exception:
+            pass
+
+    assert captured.get("ssrf_config") is not None
+    assert captured["ssrf_config"].extra_deny_cidrs == ("10.50.0.0/16",)

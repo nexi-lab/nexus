@@ -37,6 +37,7 @@ async def _wire_services(
     parsing: Any = None,
     workflow_engine: Any = None,
     federation: Any = None,
+    security: Any = None,
 ) -> _InitContext:
     """Phase 1: wire service topology.  Pure memory — NO I/O.
 
@@ -127,6 +128,7 @@ async def _wire_services(
         nx.router,
         _svc,
         svc_on,
+        security_config=security,
     )
 
     # Issue #1708: ServiceRegistry now has integrated lifecycle (formerly SLC).

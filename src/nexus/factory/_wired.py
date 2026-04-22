@@ -18,6 +18,8 @@ async def _boot_post_kernel_services(
     router: "PathRouter",
     services: dict[str, Any],
     svc_on: Callable[[str], bool] | None = None,
+    *,
+    security_config: Any = None,
 ) -> dict[str, Any]:
     """Boot Tier 2b (WIRED) — services needing NexusFS reference.
 
@@ -110,9 +112,7 @@ async def _boot_post_kernel_services(
                 credential_service=oauth_service,
                 mount_lister=lambda: [(m.mount_point, "mounted") for m in router.list_mounts()],
                 ssrf_config=(
-                    nx._config.security.ssrf
-                    if nx._config is not None and getattr(nx._config, "security", None) is not None
-                    else None
+                    getattr(security_config, "ssrf", None) if security_config is not None else None
                 ),
             )
             logger.debug("[BOOT:WIRED] MCPService created")

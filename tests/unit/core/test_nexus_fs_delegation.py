@@ -41,6 +41,8 @@ def mock_fs():
             "search": mock_search,
         }.get(name)
     )
+    # readdir fallback to metadata.list_iter for non-Rust paths
+    fs._kernel.readdir = MagicMock(side_effect=ValueError("test fallback"))
     fs._hook_specs = {}
     fs._zone_id = ROOT_ZONE_ID
     return fs

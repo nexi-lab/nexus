@@ -1231,26 +1231,10 @@ class MetadataMixin:
         if not validated_paths:
             return results
 
-        # Batch permission check via KernelDispatch INTERCEPT hook.
+        # Batch permission check via shared helper (hook_count fast path).
         perm_start = time.time()
-        allowed_set: set[str]
         try:
-            from nexus.contracts.exceptions import PermissionDeniedError
-            from nexus.contracts.types import OperationContext
-            from nexus.contracts.vfs_hooks import StatHookContext as _SHC
-
-            ctx = self._resolve_cred(context)
-            assert isinstance(ctx, OperationContext), "Context must be OperationContext"
-            allowed: list[str] = []
-            for p in validated_paths:
-                try:
-                    self._kernel.dispatch_pre_hooks(
-                        "stat", _SHC(path=p, context=ctx, permission="READ")
-                    )
-                    allowed.append(p)
-                except PermissionDeniedError:
-                    pass
-            allowed_set = set(allowed)
+            allowed_set = self._batch_permission_check(validated_paths, context)
         except Exception as e:
             logger.error("[STAT-BULK] Permission check failed: %s", e)
             if not skip_errors:

@@ -27,6 +27,19 @@ outputs:
 runs:
   using: composite
   steps:
+    - name: Install protoc
+      # Needed by the raft-proto v0.7.0 crate's protobuf-build step, which
+      # shells out to ``protoc`` directly and cannot reuse the vendored
+      # binary our own build.rs wires up for tonic.  Linux runners have a
+      # system protoc preinstalled; macOS does not, so every build broke
+      # with "No suitable protoc (>= 3.1.0) found in PATH" until this
+      # step landed.  The action is idempotent on hosts where protoc is
+      # already on PATH.
+      uses: arduino/setup-protoc@v3
+      with:
+        version: "27.x"
+        repo-token: ${{ inputs.github-token }}
+
     - name: Install Rust toolchain
       uses: actions-rust-lang/setup-rust-toolchain@v1
 

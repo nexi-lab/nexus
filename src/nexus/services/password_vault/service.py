@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+from typing import Any, cast
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.services.password_vault.schema import VaultEntry
@@ -152,11 +152,14 @@ class PasswordVaultService:
         subject_type: str | None = None,
     ) -> list[dict[str, Any]]:
         """Return version history (for rotation audits, M3)."""
-        return self._secrets.list_versions(
-            namespace=self.NAMESPACE,
-            key=title,
-            subject_id=subject_id,
-            subject_type=subject_type,
+        return cast(
+            "list[dict[str, Any]]",
+            self._secrets.list_versions(
+                namespace=self.NAMESPACE,
+                key=title,
+                subject_id=subject_id,
+                subject_type=subject_type,
+            ),
         )
 
     # ------------------------------------------------------------------

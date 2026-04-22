@@ -40,6 +40,17 @@ if os.environ.get("NEXUS_RUST_EDITABLE") == "1":
 os.environ.setdefault("NEXUS_ENABLE_WRITE_BUFFER", "false")
 
 # ---------------------------------------------------------------------------
+# OAuthCrypto: allow ephemeral keys in the test suite.
+# Tests do not persist secrets across process restarts, so the production
+# fail-loud default (which prevents silent data loss on the next boot) is
+# overly strict for test fixtures that call ``OAuthCrypto()`` with no
+# wired settings_store or explicit key. Tests that specifically exercise
+# the fail-loud contract use ``monkeypatch.delenv`` to remove this flag.
+# See ``tests/unit/lib/oauth/test_crypto_fail_loud.py``.
+# ---------------------------------------------------------------------------
+os.environ.setdefault("NEXUS_ALLOW_EPHEMERAL_OAUTH_KEY", "1")
+
+# ---------------------------------------------------------------------------
 # Hypothesis profiles (Issue #1303)
 # ---------------------------------------------------------------------------
 

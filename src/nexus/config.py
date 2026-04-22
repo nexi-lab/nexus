@@ -169,6 +169,14 @@ class NexusConfig(BaseModel):
         default=None,
         description="Path for the SQLAlchemy record store (SQLite). None = no record store (bare kernel).",
     )
+    database_url: str | None = Field(
+        default=None,
+        description=(
+            "Full database URL for the SQLAlchemy record store "
+            "(e.g. 'postgresql://user:pass@host/db' or 'sqlite:///path/to/db.sqlite'). "
+            "Ignored when record_store_path is set."
+        ),
+    )
 
     # In-memory metadata caching settings
     cache_path_size: int = Field(default=512, description="Max entries for path metadata cache")
@@ -559,6 +567,7 @@ def _build_env_overrides() -> dict[str, Any]:
         "NEXUS_DB_PATH": "db_path",
         "NEXUS_METASTORE_PATH": "metastore_path",
         "NEXUS_RECORD_STORE_PATH": "record_store_path",
+        "NEXUS_DATABASE_URL": "database_url",
         "NEXUS_CACHE_PATH_SIZE": "cache_path_size",
         "NEXUS_CACHE_LIST_SIZE": "cache_list_size",
         "NEXUS_CACHE_KV_SIZE": "cache_kv_size",

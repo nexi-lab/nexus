@@ -19,6 +19,7 @@ from nexus.storage.auth_stores import (
     SQLAlchemyAPIKeyStore,
     SQLAlchemyOAuthAccountStore,
     SQLAlchemyOAuthCredentialStore,
+    SQLAlchemySystemSettingsStore,
     SQLAlchemyUserStore,
     SQLAlchemyZoneStore,
 )
@@ -346,3 +347,59 @@ class TestSettingsStore:
         dto = store.get_setting("key1")
         assert dto is not None
         assert dto.description == "new"
+
+
+# ===========================================================================
+# SQLAlchemySystemSettingsStore — SQL-backed, records-tier implementation
+# ===========================================================================
+
+
+class TestSQLAlchemySystemSettingsStore:
+    """Behavioral parity with ``TestSettingsStore`` above, but against the
+    record_store SQL backend rather than the tier-violating metastore shim."""
+
+    @pytest.fixture()
+    def store(self, session_factory):
+        return SQLAlchemySystemSettingsStore(session_factory)
+
+    def test_set_and_get_setting(self, store):
+        store.set_setting("key1", "value1", description="desc")
+        dto = store.get_setting("key1")
+        assert isinstance(dto, SystemSettingDTO)
+        assert dto.key == "key1"
+        assert dto.value == "value1"
+        assert dto.description == "desc"
+
+    def test_get_setting_not_found(self, store):
+        assert store.get_setting("nonexistent") is None
+
+    def test_set_setting_upsert(self, store):
+        store.set_setting("key1", "v1")
+        store.set_setting("key1", "v2")
+        dto = store.get_setting("key1")
+        assert dto is not None
+        assert dto.value == "v2"
+
+    def test_set_setting_update_description(self, store):
+        store.set_setting("key1", "v1", description="old")
+        store.set_setting("key1", "v1", description="new")
+        dto = store.get_setting("key1")
+        assert dto is not None
+        assert dto.description == "new"
+
+    def test_description_not_overwritten_when_omitted(self, store):
+        """Passing description=None on update must not nullify the existing one."""
+        store.set_setting("key1", "v1", description="keep me")
+        store.set_setting("key1", "v2")  # no description kwarg — None default
+        dto = store.get_setting("key1")
+        assert dto is not None
+        assert dto.value == "v2"
+        assert dto.description == "keep me"
+
+    def test_multiple_keys_independent(self, store):
+        store.set_setting("a", "1")
+        store.set_setting("b", "2")
+        a = store.get_setting("a")
+        b = store.get_setting("b")
+        assert a is not None and a.value == "1"
+        assert b is not None and b.value == "2"

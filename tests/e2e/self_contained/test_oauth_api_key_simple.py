@@ -34,9 +34,10 @@ def db_session(db_engine):
 
 @pytest.fixture
 def oauth_crypto():
-    """Create OAuthCrypto instance for testing."""
-    # Use random key for testing (simpler than database persistence)
-    return OAuthCrypto()
+    """Create OAuthCrypto instance for testing with an ephemeral key."""
+    # Explicit key — post-fail-loud OAuthCrypto() no-args raises unless
+    # NEXUS_ALLOW_EPHEMERAL_OAUTH_KEY=1 or a settings_store is wired.
+    return OAuthCrypto(encryption_key=OAuthCrypto.generate_key())
 
 
 @pytest.fixture

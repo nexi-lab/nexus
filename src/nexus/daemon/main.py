@@ -317,6 +317,14 @@ def main(
             if data_dir:
                 connect_config["data_dir"] = data_dir
 
+            # Forward --database-url to NexusFS so SecretsService /
+            # PasswordVaultService / ReBAC etc. get a wired record_store.
+            # Previously the flag was only consumed by DatabaseAPIKeyAuth
+            # below, which surprised callers who expected the obvious
+            # "wire the DB" semantics.
+            if database_url:
+                connect_config["database_url"] = database_url
+
             # Respect NEXUS_ENFORCE_PERMISSIONS env var
             import os as _os
 

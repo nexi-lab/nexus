@@ -65,7 +65,7 @@ def auth_provider(test_db):
 @pytest.fixture
 def oauth_provider(test_db):
     """Create OAuthUserAuth provider for testing."""
-    oauth_crypto = OAuthCrypto()
+    oauth_crypto = OAuthCrypto(encryption_key=OAuthCrypto.generate_key())
     google_provider = GoogleOAuthProvider(
         client_id="test-client-id.apps.googleusercontent.com",
         client_secret="test-client-secret",

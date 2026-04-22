@@ -10,9 +10,13 @@ import json
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from nexus.bricks.mcp.models import MCPMount, MCPToolConfig, MCPToolDefinition
+from nexus.config import SSRFConfig
+from nexus.lib.events import emit_audit_event
+from nexus.lib.security.ssrf_transport import make_pinned_client_factory
+from nexus.lib.security.url_validator import SSRFBlocked, validate_outbound_url
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
@@ -120,13 +124,23 @@ class MCPMountManager:
     # Mount configuration filename (per-folder)
     MOUNT_CONFIG_FILENAME = "mount.json"
 
-    def __init__(self, filesystem: "NexusFS | None" = None):
+    def __init__(
+        self,
+        filesystem: "NexusFS | None" = None,
+        *,
+        ssrf_config: "SSRFConfig | None" = None,
+    ) -> None:
         """Initialize MCP mount manager.
 
         Args:
             filesystem: Optional filesystem instance (defaults to local FS)
+            ssrf_config: Optional SSRFConfig override. When provided, the
+                validator for SSE/HTTP mounts uses these operator settings
+                (``allow_private`` / ``extra_deny_cidrs``). When None, a
+                conservative default ``SSRFConfig()`` is used.
         """
         self._filesystem = filesystem
+        self._ssrf_config_override = ssrf_config
 
         # Active mount configurations (keyed by name, may include tier info)
         self._mounts: dict[str, MCPMount] = {}
@@ -378,6 +392,18 @@ class MCPMountManager:
         if not mount_config.url:
             raise MCPMountError("URL is required for SSE/HTTP transport")
 
+        ssrf_cfg = self._ssrf_config()
+        try:
+            validated = validate_outbound_url(
+                mount_config.url,
+                allow_private=ssrf_cfg.allow_private,
+                extra_deny_cidrs=ssrf_cfg.extra_deny_cidrs,
+            )
+        except SSRFBlocked as exc:
+            self._emit_ssrf_audit(mount_config, exc)
+            logger.warning("SSRF blocked for MCP mount %r: %s", mount_config.name, exc)
+            raise
+
         # Start with custom headers from mount config
         headers: dict[str, str] = dict(mount_config.headers) if mount_config.headers else {}
 
@@ -388,13 +414,55 @@ class MCPMountManager:
             if api_key:
                 headers[header_name] = f"Bearer {api_key}"
 
-        # Create SSE client session
+        # Cast to Any: mcp's ``McpHttpClientFactory`` is a Protocol and the
+        # structural match against our Callable type is lost through mypy's
+        # strict arg-type check (defaults vs positional).
+        pinned_factory = cast(Any, make_pinned_client_factory(validated))
+
+        # Create SSE client session — underlying httpx.AsyncClient is built
+        # from the pinned factory so TCP connects go to the validated IPs
+        # and redirects are disabled (prevents DNS-rebinding / redirect-
+        # based SSRF escapes).
         async with (
-            sse_client(mount_config.url, headers=headers) as (read, write),
+            sse_client(
+                mount_config.url,
+                headers=headers,
+                httpx_client_factory=pinned_factory,
+            ) as (read, write),
             ClientSession(read, write) as session,
         ):
             await session.initialize()
             return session
+
+    def _ssrf_config(self) -> SSRFConfig:
+        """Return the effective SSRFConfig.
+
+        Uses the override passed into __init__ when available so operator
+        settings in ``NexusConfig.security.ssrf`` (``allow_private`` /
+        ``extra_deny_cidrs``) take effect at SSE/HTTP mount validation
+        time. Falls back to a conservative default ``SSRFConfig()`` when
+        the manager was constructed without an override.
+        """
+        if self._ssrf_config_override is not None:
+            return self._ssrf_config_override
+        return SSRFConfig()
+
+    def _emit_ssrf_audit(self, mount_config: MCPMount, exc: SSRFBlocked) -> None:
+        """Emit a security.ssrf_blocked event; never raises."""
+        try:
+            emit_audit_event(
+                "security.ssrf_blocked",
+                {
+                    "url": exc.url,
+                    "reason": exc.reason,
+                    "ip": exc.ip,
+                    "cidr": exc.cidr,
+                    "integration": "mcp",
+                    "mount_name": mount_config.name,
+                },
+            )
+        except Exception as audit_err:  # pragma: no cover — audit must never raise
+            logger.warning("Failed to emit SSRF audit event: %s", audit_err)
 
     async def unmount(self, name: str) -> bool:
         """Unmount an MCP server.
@@ -584,6 +652,18 @@ class MCPMountManager:
         if not mount.url:
             raise MCPMountError("URL is required for SSE/HTTP transport")
 
+        ssrf_cfg = self._ssrf_config()
+        try:
+            validated = validate_outbound_url(
+                mount.url,
+                allow_private=ssrf_cfg.allow_private,
+                extra_deny_cidrs=ssrf_cfg.extra_deny_cidrs,
+            )
+        except SSRFBlocked as exc:
+            self._emit_ssrf_audit(mount, exc)
+            logger.warning("SSRF blocked for MCP mount %r (list_tools): %s", mount.name, exc)
+            raise
+
         # Start with custom headers from mount config
         headers: dict[str, str] = dict(mount.headers) if mount.headers else {}
 
@@ -594,11 +674,18 @@ class MCPMountManager:
             if api_key:
                 headers[header_name] = f"Bearer {api_key}"
 
+        # Cast to Any: see _create_sse_client for rationale.
+        pinned_factory = cast(Any, make_pinned_client_factory(validated))
+
         tools = []
 
         try:
             async with (
-                sse_client(mount.url, headers=headers) as (read, write),
+                sse_client(
+                    mount.url,
+                    headers=headers,
+                    httpx_client_factory=pinned_factory,
+                ) as (read, write),
                 ClientSession(read, write) as session,
             ):
                 await session.initialize()

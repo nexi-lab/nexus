@@ -235,7 +235,7 @@ class WebhookAction(BaseAction):
 
             # SSRF protection: block private/internal IPs (Issue #1596)
             try:
-                _url, _resolved_ips = validate_outbound_url(url)
+                validate_outbound_url(url)
             except ValueError as ssrf_err:
                 logger.warning("Webhook SSRF blocked for action '%s': %s", self.name, ssrf_err)
                 return ActionResult(

@@ -26,6 +26,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from nexus.config import SSRFConfig
     from nexus.core.nexus_fs import NexusFS
 
 from nexus.bricks.mcp.klavis_client import KlavisClient, KlavisError
@@ -111,6 +112,8 @@ class MCPConnectionManager:
         filesystem: "NexusFS | None" = None,
         registry: MCPProviderRegistry | None = None,
         klavis_api_key: str | None = None,
+        *,
+        ssrf_config: "SSRFConfig | None" = None,
     ):
         """Initialize connection manager.
 
@@ -118,6 +121,9 @@ class MCPConnectionManager:
             filesystem: Nexus filesystem instance
             registry: Provider registry (loads default if not provided)
             klavis_api_key: Klavis API key (from env KLAVIS_API_KEY if not provided)
+            ssrf_config: Optional SSRFConfig override plumbed through to the
+                underlying MCPMountManager. When None, a conservative default
+                is used for SSE/HTTP URL validation (Issue #3792).
         """
         self.filesystem = filesystem
         self.registry = registry or MCPProviderRegistry.load_default()
@@ -127,7 +133,7 @@ class MCPConnectionManager:
         self.klavis = KlavisClient(klavis_key) if klavis_key else None
 
         # Create mount manager for tool discovery/storage
-        self.mount_manager = MCPMountManager(filesystem)
+        self.mount_manager = MCPMountManager(filesystem, ssrf_config=ssrf_config)
 
         # Cache of active connections
         self._connections: dict[str, MCPConnection] = {}

@@ -15,7 +15,49 @@ from unittest.mock import patch
 
 import pytest
 
-from nexus.lib.security.url_validator import validate_outbound_url
+from nexus.lib.security.url_validator import (
+    SSRFBlocked,
+    validate_outbound_url,
+)
+
+
+class TestSSRFBlockedException:
+    """SSRFBlocked is a ValueError subclass with structured fields."""
+
+    def test_ssrf_blocked_is_value_error_subclass(self) -> None:
+        exc = SSRFBlocked("http://10.0.0.1/", reason="private_ip", ip="10.0.0.1", cidr="10.0.0.0/8")
+        assert isinstance(exc, ValueError)
+
+    def test_ssrf_blocked_exposes_fields(self) -> None:
+        exc = SSRFBlocked("http://10.0.0.1/", reason="private_ip", ip="10.0.0.1", cidr="10.0.0.0/8")
+        assert exc.url == "http://10.0.0.1/"
+        assert exc.reason == "private_ip"
+        assert exc.ip == "10.0.0.1"
+        assert exc.cidr == "10.0.0.0/8"
+
+    def test_ssrf_blocked_message_includes_url_and_ip(self) -> None:
+        exc = SSRFBlocked("http://10.0.0.1/", reason="private_ip", ip="10.0.0.1")
+        assert "10.0.0.1" in str(exc)
+        assert "http://10.0.0.1/" in str(exc)
+
+
+class TestValidatedURL:
+    """ValidatedURL NamedTuple exposing url, resolved_ips, and hostname."""
+
+    def test_three_tuple_unpack_with_hostname(self) -> None:
+        with patch("socket.getaddrinfo") as mock_dns:
+            mock_dns.return_value = [(2, 1, 6, "", ("93.184.216.34", 443))]
+            result = validate_outbound_url("https://example.com/")
+            url, ips, hostname = result
+            assert hostname == "example.com"
+
+    def test_attribute_access(self) -> None:
+        with patch("socket.getaddrinfo") as mock_dns:
+            mock_dns.return_value = [(2, 1, 6, "", ("93.184.216.34", 443))]
+            result = validate_outbound_url("https://example.com/")
+            assert result.url == "https://example.com/"
+            assert result.hostname == "example.com"
+            assert result.resolved_ips == ("93.184.216.34",)
 
 
 class TestBlockedIPRanges:
@@ -45,7 +87,7 @@ class TestBlockedIPRanges:
             mock_dns.return_value = [
                 (2, 1, 6, "", (ip, 80)),
             ]
-            with pytest.raises(ValueError, match="blocked IP range"):
+            with pytest.raises(SSRFBlocked):
                 validate_outbound_url(url)
 
     @pytest.mark.parametrize(
@@ -62,7 +104,7 @@ class TestBlockedIPRanges:
             mock_dns.return_value = [
                 (10, 1, 6, "", (ip, 80, 0, 0)),
             ]
-            with pytest.raises(ValueError, match="blocked IP range"):
+            with pytest.raises(SSRFBlocked):
                 validate_outbound_url(url)
 
 
@@ -82,9 +124,9 @@ class TestAllowedURLs:
             mock_dns.return_value = [
                 (2, 1, 6, "", (ip, 443)),
             ]
-            result_url, resolved_ips = validate_outbound_url(url)
-            assert result_url == url
-            assert ip in resolved_ips
+            result = validate_outbound_url(url)
+            assert result.url == url
+            assert ip in result.resolved_ips
 
 
 class TestSchemeValidation:
@@ -101,7 +143,7 @@ class TestSchemeValidation:
         ],
     )
     def test_blocked_schemes(self, url: str) -> None:
-        with pytest.raises(ValueError, match="scheme not allowed"):
+        with pytest.raises(SSRFBlocked):
             validate_outbound_url(url)
 
 
@@ -129,3 +171,140 @@ class TestEdgeCases:
             pytest.raises(ValueError, match="No DNS records"),
         ):
             validate_outbound_url("http://empty-dns.example.com/")
+
+
+class TestCloudMetadataExplicit:
+    """Cloud metadata IPs are blocked via the explicit metadata set,
+    catching targets like Alibaba that aren't in RFC1918/link-local."""
+
+    @pytest.mark.parametrize(
+        "ip,description",
+        [
+            ("169.254.169.254", "AWS/GCP/Azure/OCI/DO IMDS"),
+            ("100.100.100.200", "Alibaba Cloud metadata"),
+            ("fd00:ec2::254", "AWS IPv6 metadata"),
+        ],
+    )
+    def test_cloud_metadata_blocked(self, ip: str, description: str) -> None:
+        url = "http://metadata-target.example.com/"
+        family = 10 if ":" in ip else 2
+        sockaddr = (ip, 80, 0, 0) if ":" in ip else (ip, 80)
+        with patch("socket.getaddrinfo") as mock_dns:
+            mock_dns.return_value = [(family, 1, 6, "", sockaddr)]
+            with pytest.raises(SSRFBlocked) as excinfo:
+                validate_outbound_url(url)
+            assert excinfo.value.reason in {"cloud_metadata", "blocked_network"}
+            assert excinfo.value.ip == ip
+
+
+class TestUserinfoRejection:
+    """URLs with userinfo are rejected to defend against parser divergence."""
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "http://user@example.com/",
+            "http://user:pass@example.com/",
+            "http://public.com@10.0.0.1/",
+        ],
+    )
+    def test_userinfo_rejected(self, url: str) -> None:
+        with pytest.raises(SSRFBlocked) as excinfo:
+            validate_outbound_url(url)
+        assert excinfo.value.reason == "userinfo_not_allowed"
+
+
+class TestIPLiteralHostnames:
+    """IP literal hostnames skip DNS and are checked directly."""
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "http://10.0.0.1/",
+            "http://169.254.169.254/",
+            "http://[::1]/",
+            "http://[fd00:ec2::254]/",
+        ],
+    )
+    def test_ip_literal_blocked(self, url: str) -> None:
+        # No mock: must not call DNS for IP literals
+        with pytest.raises(SSRFBlocked):
+            validate_outbound_url(url)
+
+
+class TestIPv4MappedIPv6:
+    """::ffff:a.b.c.d is normalized to a.b.c.d before category check."""
+
+    @pytest.mark.parametrize(
+        "ip",
+        [
+            "::ffff:127.0.0.1",
+            "::ffff:10.0.0.1",
+            "::ffff:169.254.169.254",
+        ],
+    )
+    def test_v4_mapped_v6_blocked(self, ip: str) -> None:
+        with patch("socket.getaddrinfo") as mock_dns:
+            mock_dns.return_value = [(10, 1, 6, "", (ip, 80, 0, 0))]
+            with pytest.raises(SSRFBlocked):
+                validate_outbound_url("http://dual-stack.example.com/")
+
+
+class TestMixedResolution:
+    """Hostnames resolving to a mix of public and private IPs are rejected."""
+
+    def test_mixed_public_private_rejected(self) -> None:
+        with patch("socket.getaddrinfo") as mock_dns:
+            mock_dns.return_value = [
+                (2, 1, 6, "", ("93.184.216.34", 80)),
+                (2, 1, 6, "", ("10.0.0.1", 80)),
+            ]
+            with pytest.raises(SSRFBlocked):
+                validate_outbound_url("http://split-horizon.example.com/")
+
+
+class TestAllowPrivateKwarg:
+    """allow_private=True lets RFC1918/ULA through, but not metadata."""
+
+    def test_private_allowed_when_flag_set(self) -> None:
+        with patch("socket.getaddrinfo") as mock_dns:
+            mock_dns.return_value = [(2, 1, 6, "", ("10.0.0.1", 80))]
+            result = validate_outbound_url("http://dev-internal/", allow_private=True)
+            assert "10.0.0.1" in result.resolved_ips
+
+    def test_loopback_still_blocked_when_flag_set(self) -> None:
+        with patch("socket.getaddrinfo") as mock_dns:
+            mock_dns.return_value = [(2, 1, 6, "", ("127.0.0.1", 80))]
+            with pytest.raises(SSRFBlocked):
+                validate_outbound_url("http://local/", allow_private=True)
+
+    def test_metadata_still_blocked_when_flag_set(self) -> None:
+        with patch("socket.getaddrinfo") as mock_dns:
+            mock_dns.return_value = [(2, 1, 6, "", ("169.254.169.254", 80))]
+            with pytest.raises(SSRFBlocked) as excinfo:
+                validate_outbound_url("http://meta/", allow_private=True)
+            # Link-local is not "private", so still blocked
+            assert excinfo.value.reason in {"cloud_metadata", "blocked_network"}
+
+
+class TestExtraDenyCidrs:
+    """extra_deny_cidrs adds operator-specific blocked ranges."""
+
+    def test_custom_cidr_blocked(self) -> None:
+        with patch("socket.getaddrinfo") as mock_dns:
+            mock_dns.return_value = [(2, 1, 6, "", ("203.0.113.50", 80))]
+            with pytest.raises(SSRFBlocked) as excinfo:
+                validate_outbound_url(
+                    "http://svcmesh.example.com/",
+                    extra_deny_cidrs=["203.0.113.0/24"],
+                )
+            assert excinfo.value.reason == "extra_deny_cidr"
+            assert excinfo.value.cidr == "203.0.113.0/24"
+
+    def test_no_match_passes(self) -> None:
+        with patch("socket.getaddrinfo") as mock_dns:
+            mock_dns.return_value = [(2, 1, 6, "", ("93.184.216.34", 443))]
+            result = validate_outbound_url(
+                "https://example.com/", extra_deny_cidrs=["203.0.113.0/24"]
+            )
+            assert result.url == "https://example.com/"

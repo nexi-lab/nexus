@@ -40,8 +40,7 @@ def _resolve_parse_fn(nx: Any) -> Any:
         return None
     if ref is None:
         return None
-    inst = getattr(ref, "_service_instance", ref)
-    return inst if callable(inst) else None
+    return ref if callable(ref) else None
 
 
 @dataclass(frozen=True)

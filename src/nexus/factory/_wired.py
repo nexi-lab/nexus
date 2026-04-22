@@ -379,7 +379,7 @@ async def _boot_post_kernel_services(
     _agent_reg: Any = None
     _acp_ref = nx.service("agent_registry")
     if _acp_ref is not None:
-        _agent_reg = _acp_ref._service_instance
+        _agent_reg = _acp_ref
     if _agent_reg is None:
         try:
             from nexus.core.agent_registry import AgentRegistry
@@ -708,7 +708,7 @@ def _initialize_wired_ipc(nx: Any, services: dict[str, Any]) -> None:
 
         # Wire provisioner into AgentRegistry so register → provision is automatic
         _agent_reg_svc = nx.service("agent_registry")
-        _agent_reg = _agent_reg_svc._service_instance if _agent_reg_svc is not None else None
+        _agent_reg = _agent_reg_svc if _agent_reg_svc is not None else None
         if _agent_reg is not None and hasattr(_agent_reg, "set_provisioner"):
             _agent_reg.set_provisioner(_provisioner)
 

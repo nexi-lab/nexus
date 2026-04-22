@@ -65,11 +65,7 @@ async def startup_ipc(app: "FastAPI", svc: "LifespanServices") -> list[asyncio.T
     # federated / multi-zone setups ``svc.zone_id`` may legitimately diverge
     # from the IPC zone, so falling back to it first would split-brain the
     # sweeper from the provisioning path.
-    _prov_zone = getattr(
-        getattr(ipc_provisioner, "_service_instance", ipc_provisioner),
-        "zone_id",
-        None,
-    )
+    _prov_zone = getattr(ipc_provisioner, "zone_id", None)
     zone_id = _prov_zone or svc.zone_id or ROOT_ZONE_ID
 
     # --- Issue #3197: EventPublisher via CacheStore pub/sub ---

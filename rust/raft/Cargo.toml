@@ -95,6 +95,10 @@ mimalloc = { workspace = true, optional = true }
 
 [build-dependencies]
 tonic-build = { version = "0.13", optional = true }
+# Vendored protoc binary so raft build works on any host without a
+# system-wide protobuf-compiler install. Only used when grpc feature
+# triggers proto codegen (see build.rs).
+protoc-bin-vendored = "3"
 
 [dev-dependencies]
 tokio-test = "0.4"

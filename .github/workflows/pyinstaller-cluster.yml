@@ -152,35 +152,6 @@ jobs:
           PY
           pip install .
 
-      # ── protoc (required by nexus_raft build.rs) ─────────────────────────
-      # Mirrors the protoc install pattern from conda-pack.yml.
-      # The wrapper script reports "libprotoc 3.20.3" to satisfy the >= 3.1.0
-      # version check in protobuf-build, while delegating to the real binary.
-      - name: Install protoc (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          brew install protobuf
-          REAL_PROTOC="$(brew --prefix protobuf)/bin/protoc"
-          mkdir -p "${RUNNER_TEMP}/bin"
-          printf '%s\n' \
-            '#!/usr/bin/env bash' \
-            'if [ "${1:-}" = "--version" ]; then' \
-            '  echo "libprotoc 3.20.3"' \
-            '  exit 0' \
-            'fi' \
-            "exec \"${REAL_PROTOC}\" \"\$@\"" \
-            > "${RUNNER_TEMP}/bin/protoc"
-          chmod +x "${RUNNER_TEMP}/bin/protoc"
-          echo "NEXUS_PROTOC=${RUNNER_TEMP}/bin/protoc" >> "${GITHUB_ENV}"
-          echo "${RUNNER_TEMP}/bin" >> "${GITHUB_PATH}"
-          protoc --version
-
-      - name: Install protoc (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update -q
-          sudo apt-get install -y protobuf-compiler
-
       - name: Pre-install binary wheels (Windows)
         if: runner.os == 'Windows'
         shell: bash
@@ -188,23 +159,6 @@ jobs:
           # cryptography and other Rust/C extensions must come from binary wheels
           # on Windows ARM64 — no OpenSSL dev headers available in CI.
           pip install --only-binary :all: cryptography pyopenssl bcrypt cffi
-
-      - name: Install protoc (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          # protobuf-build 0.14.1 only accepts protoc 3.x.
-          # choco installs 34.x which fails version parsing.
-          # Download protoc 3.20.3 win64 directly; runs on ARM64 via x86 emulation.
-          $url = "https://github.com/protocolbuffers/protobuf/releases/download/v3.20.3/protoc-3.20.3-win64.zip"
-          $zip = "$env:RUNNER_TEMP\protoc.zip"
-          $dir = "$env:RUNNER_TEMP\protoc"
-          Invoke-WebRequest -Uri $url -OutFile $zip
-          Expand-Archive -Path $zip -DestinationPath $dir -Force
-          $protoc = "$dir\bin\protoc.exe"
-          echo "NEXUS_PROTOC=$protoc" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
-          echo "$dir\bin" | Out-File -Append -FilePath $env:GITHUB_PATH -Encoding utf8
-          & $protoc --version
 
       # ── maturin builds ───────────────────────────────────────────────────
       - name: Install maturin
@@ -220,8 +174,6 @@ jobs:
 
       - name: Build raft wheel  (rust/raft --features full)
         shell: bash
-        env:
-          PROTOC: ${{ env.NEXUS_PROTOC }}
         run: |
           maturin build --release \
             --features full \

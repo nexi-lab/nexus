@@ -102,9 +102,6 @@ jobs:
             rust/kernel
             rust/raft
 
-      - name: Install protobuf compiler
-        run: sudo apt-get install -y protobuf-compiler
-
       - name: Check Rust formatting
         run: |
           for crate in tasks library kernel raft; do

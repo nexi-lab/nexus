@@ -33,7 +33,6 @@ RUN set -eux; \
         curl \
         build-essential \
         ca-certificates \
-        protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
 
 # ---------- Rust Toolchain ----------

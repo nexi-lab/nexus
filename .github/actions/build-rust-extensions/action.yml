@@ -39,23 +39,6 @@ runs:
           rust/raft
           rust/tasks
 
-    - name: Install protoc
-      run: |
-        # raft-proto's protobuf-build requires protoc >= 3.1.0 (semver 3.x).
-        # Modern protoc (28.x+) uses a different version scheme that fails the check.
-        # Python 3.14 is set up by the actions/setup-python step in calling workflows;
-        # this action's setup is version-agnostic.
-        if [ "$RUNNER_OS" = "Linux" ]; then
-          sudo apt-get update && sudo apt-get install -y protobuf-compiler
-        elif [ "$RUNNER_OS" = "macOS" ]; then
-          PROTOC_VERSION="3.20.3"
-          PROTOC_ARCH="osx-x86_64"
-          curl -fsSL "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-${PROTOC_ARCH}.zip" -o /tmp/protoc.zip
-          sudo unzip -o /tmp/protoc.zip -d /usr/local bin/protoc
-          protoc --version
-        fi
-      shell: bash
-
     - name: Install maturin
       run: pip install maturin
       shell: bash

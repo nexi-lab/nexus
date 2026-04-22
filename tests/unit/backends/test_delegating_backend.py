@@ -27,12 +27,10 @@ def mock_inner() -> MagicMock:
     mock.name = "test-backend"
     mock.describe.return_value = "test-backend"
     # Set all capability flags to True (opposite of Backend defaults)
-    type(mock).user_scoped = PropertyMock(return_value=True)
     type(mock).is_connected = PropertyMock(return_value=True)
     type(mock).thread_safe = PropertyMock(return_value=True)
     type(mock).supports_rename = PropertyMock(return_value=True)
     type(mock).has_root_path = PropertyMock(return_value=True)
-    type(mock).has_token_manager = PropertyMock(return_value=True)
     type(mock).has_data_dir = PropertyMock(return_value=True)
     type(mock).supports_parallel_mmap_read = PropertyMock(return_value=True)
     return mock
@@ -55,12 +53,10 @@ class TestPropertyDelegation:
     @pytest.mark.parametrize(
         "prop",
         [
-            "user_scoped",
             "is_connected",
             "thread_safe",
             "supports_rename",
             "has_root_path",
-            "has_token_manager",
             "has_data_dir",
             "supports_parallel_mmap_read",
         ],

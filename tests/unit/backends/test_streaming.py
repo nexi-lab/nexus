@@ -34,10 +34,6 @@ class TestBackendWriteStreamDefault:
             def name(self) -> str:
                 return "test"
 
-            @property
-            def user_scoped(self) -> bool:
-                return False
-
             def write_content(
                 self, content: bytes, content_id: str = "", *, offset: int = 0, context=None
             ) -> ObjectStoreWriteResult:

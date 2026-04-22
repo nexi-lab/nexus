@@ -30,10 +30,6 @@ class BenchMockBackend:
         return "bench_mock"
 
     @property
-    def user_scoped(self) -> bool:
-        return False
-
-    @property
     def thread_safe(self) -> bool:
         return True
 

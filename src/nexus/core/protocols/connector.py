@@ -164,16 +164,10 @@ class ConnectorProtocol(
     # --- Capability flags ---
 
     @property
-    def user_scoped(self) -> bool: ...
-
-    @property
     def is_connected(self) -> bool: ...
 
     @property
     def has_root_path(self) -> bool: ...
-
-    @property
-    def has_token_manager(self) -> bool: ...
 
 @runtime_checkable
 class OAuthCapableProtocol(Protocol):
@@ -182,12 +176,22 @@ class OAuthCapableProtocol(Protocol):
     Implemented by connectors that use OAuth credentials (Gmail, GDrive,
     Slack, X, Google Calendar). Used to detect OAuth backends dynamically
     instead of hardcoding backend type lists.
+
+    ``user_scoped`` and ``has_token_manager`` moved here from
+    ConnectorProtocol (Issue #1824) — non-OAuth connectors no longer
+    need to declare these.
     """
 
     token_manager: Any
     token_manager_db: str
     user_email: str | None
     provider: str
+
+    @property
+    def user_scoped(self) -> bool: ...
+
+    @property
+    def has_token_manager(self) -> bool: ...
 
 @runtime_checkable
 class StreamingProtocol(Protocol):

@@ -19,7 +19,8 @@ from __future__ import annotations
 
 import itertools
 import logging
-import os
+import urllib.parse
+import urllib.request
 from collections.abc import Callable
 from typing import Any
 
@@ -31,28 +32,34 @@ from nexus.lib.security.url_validator import ValidatedURL
 
 logger = logging.getLogger(__name__)
 
+# Hard cap on how many resolved IPs the pinned backend will attempt. A
+# hostname that returns many addresses (attacker-influenced for agent-
+# controlled MCP URLs) should not translate into N * connect_timeout of
+# client-visible latency. The validator still accepts the full DNS
+# answer set for policy checks; we just bound connect-attempt cost.
+_MAX_PINNED_CONNECT_ATTEMPTS = 3
+
 
 def _proxy_for_url(url: str) -> str | None:
-    """Return the HTTP(S) proxy env var value applicable to ``url``, else None.
+    """Return the proxy URL applicable to ``url``, else None.
 
-    Follows standard envvar conventions: ``HTTPS_PROXY``/``https_proxy`` for
-    https URLs, ``HTTP_PROXY``/``http_proxy`` for http URLs. An exact host
-    match in ``NO_PROXY`` / ``no_proxy`` (comma-separated) disables it.
+    Delegates to ``urllib.request.getproxies()`` and ``proxy_bypass()``,
+    which implement the standard ``HTTP_PROXY`` / ``HTTPS_PROXY`` /
+    ``ALL_PROXY`` / ``NO_PROXY`` semantics (including IPv6-bracketed
+    hosts and wildcard bypass entries).
     """
-    scheme = url.split(":", 1)[0].lower()
-    proxy_var = "HTTPS_PROXY" if scheme == "https" else "HTTP_PROXY"
-    proxy = os.environ.get(proxy_var) or os.environ.get(proxy_var.lower())
+    proxies = urllib.request.getproxies()
+    parsed = urllib.parse.urlsplit(url)
+    scheme = parsed.scheme.lower()
+    proxy = proxies.get(scheme) or proxies.get("all")
     if not proxy:
         return None
-    no_proxy = os.environ.get("NO_PROXY") or os.environ.get("no_proxy") or ""
-    if no_proxy:
-        try:
-            host = url.split("://", 1)[1].split("/", 1)[0].split(":", 1)[0].lower()
-        except IndexError:
-            host = ""
-        for entry in (e.strip().lower() for e in no_proxy.split(",")):
-            if entry and (entry == "*" or host == entry or host.endswith("." + entry.lstrip("."))):
-                return None
+    host = parsed.hostname or ""
+    try:
+        if host and urllib.request.proxy_bypass(host):
+            return None
+    except (ValueError, TypeError):
+        pass
     return proxy
 
 
@@ -66,9 +73,16 @@ class _PinnedBackend(httpcore.AsyncNetworkBackend):
     ) -> None:
         if not pinned_ips:
             raise ValueError("pinned_ips must be non-empty")
+        # Deduplicate while preserving order and bound the attempt budget.
+        seen: set[str] = set()
+        deduped: list[str] = []
+        for ip in pinned_ips:
+            if ip not in seen:
+                seen.add(ip)
+                deduped.append(ip)
         self._inner = inner
-        self._pinned_ips = pinned_ips
-        self._cycle = itertools.cycle(pinned_ips)
+        self._pinned_ips = deduped[:_MAX_PINNED_CONNECT_ATTEMPTS]
+        self._cycle = itertools.cycle(self._pinned_ips)
 
     async def connect_tcp(
         self,
@@ -164,6 +178,18 @@ def make_pinned_client_factory(validated: ValidatedURL) -> PinnedClientFactory:
     is still validated upfront, and redirects are still disabled.
     """
     proxy = _proxy_for_url(validated.url)
+    if proxy is not None:
+        # Proxy-mediated egress: TCP connect goes to the proxy, not the
+        # origin, so our client-side IP pinning does not apply. The proxy
+        # is responsible for enforcing its own egress policy (including
+        # DNS rebinding protection, if any). URL validation + policy
+        # decisions already happened upfront; we surface this at WARNING
+        # so operators see when pinning is not being enforced.
+        logger.warning(
+            "SSRF pinning skipped for %s: HTTP(S)_PROXY in effect; "
+            "DNS rebinding protection at TCP connect is delegated to the proxy.",
+            validated.hostname,
+        )
 
     def factory(
         headers: dict[str, str] | None = None,
@@ -172,12 +198,6 @@ def make_pinned_client_factory(validated: ValidatedURL) -> PinnedClientFactory:
     ) -> httpx.AsyncClient:
         client_timeout = timeout if timeout is not None else httpx.Timeout(30.0)
         if proxy is not None:
-            logger.debug(
-                "SSRF pinned transport skipped for %s — proxy %s in effect; "
-                "URL was validated, proxy handles egress",
-                validated.hostname,
-                proxy,
-            )
             return httpx.AsyncClient(
                 headers=headers,
                 timeout=client_timeout,

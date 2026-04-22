@@ -884,7 +884,7 @@ class SearchService:
             all_paths = filtered_dirs + filtered_files
 
         if details:
-            return self._list_connector_details(all_paths, route, path, list_context)
+            return self._list_connector_details(all_paths)
         return all_paths
 
     def _list_from_metastore_or_api(
@@ -1107,26 +1107,21 @@ class SearchService:
     def _list_connector_details(
         self,
         all_paths: builtins.list[str],
-        route: Any,
-        path: str,
-        list_context: Any,
     ) -> builtins.list[dict[str, Any]]:
         """Build detailed results for dynamic connector paths."""
         results_with_details = []
         for entry_path in all_paths:
             file_meta = self.metadata.get(entry_path)
-            is_dir = (
+            is_dir = bool(
                 file_meta
-                and hasattr(file_meta, "mime_type")
-                and file_meta.mime_type == "inode/directory"
+                and (
+                    getattr(file_meta, "is_dir", False)
+                    or getattr(file_meta, "is_mount", False)
+                    or (
+                        hasattr(file_meta, "mime_type") and file_meta.mime_type == "inode/directory"
+                    )
+                )
             )
-            if not is_dir:
-                try:
-                    backend_relative = entry_path[len(path) :].lstrip("/")
-                    is_dir = route.backend.is_directory(backend_relative, context=list_context)
-                except Exception as e:
-                    logger.debug("Failed to check if %s is a directory: %s", entry_path, e)
-                    is_dir = False
             name = entry_path.rstrip("/").split("/")[-1]
             results_with_details.append(
                 {

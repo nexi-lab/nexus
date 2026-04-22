@@ -87,6 +87,17 @@ class XTransport:
     """
 
     transport_name: str = "x"
+    _CACHE_SCOPE_REVALIDATE_SECONDS: float = 60.0
+    _READ_CACHE_ENDPOINTS: tuple[str, ...] = (
+        "timeline",
+        "mentions",
+        "user_tweets",
+        "user_tweets_by_username",
+        "single_tweet",
+        "bookmarks",
+        "search",
+        "user_profile",
+    )
 
     def __init__(
         self,
@@ -109,13 +120,19 @@ class XTransport:
         # Create cache directory
         os.makedirs(self._cache_dir, exist_ok=True)
 
-        # In-memory cache: (cache_key, user_id) -> (content, timestamp)
+        # In-memory cache: (cache_key, cache_scope) -> (content, timestamp)
         self._memory_cache: LRUCache[tuple[str, str], tuple[bytes, float]] = LRUCache(
             maxsize=memory_cache_maxsize
         )
 
-        # User ID cache: user_email -> x_user_id
-        self._user_id_cache: LRUCache[str, str] = LRUCache(maxsize=user_id_cache_maxsize)
+        # User ID cache: (provider, zone_id, user_email, token_fingerprint) -> x_user_id
+        # Include token fingerprint so account relink/rotation doesn't reuse a stale ID.
+        self._user_id_cache: LRUCache[tuple[str, str, str, str], str] = LRUCache(
+            maxsize=user_id_cache_maxsize
+        )
+        # Tracks last seen token fingerprint per cache scope.
+        self._scope_token_fingerprint: dict[str, str] = {}
+        self._scope_fingerprint_checked_at: dict[str, float] = {}
 
     # ------------------------------------------------------------------
     # Context binding (per-request OAuth token resolution)
@@ -265,7 +282,11 @@ class XTransport:
                 backend="x",
             ) from e
 
-        return XAPIClient(access_token=access_token)
+        token_fingerprint = hashlib.sha256(access_token.encode("utf-8")).hexdigest()[:16]
+        client = XAPIClient(access_token=access_token)
+        # Attach a stable token identifier for cache keying without exposing token contents.
+        client._token_fingerprint = token_fingerprint
+        return client
 
     def _get_api_client(self) -> Any:
         """Get authenticated X API client (sync wrapper)."""
@@ -273,38 +294,56 @@ class XTransport:
 
         return run_sync(self._get_api_client_async())
 
-    async def _get_user_id(self) -> str:
-        """Get X user ID for authenticated user.
+    def _user_cache_key(
+        self,
+        resolved_email: str,
+        zone_id: str,
+        token_fingerprint: str,
+    ) -> tuple[str, str, str, str]:
+        """Build cache key for user-id lookups scoped to credential context."""
+        return (self._provider, zone_id, resolved_email, token_fingerprint)
 
-        Key the user-id cache on the resolved ``(zone_id, oauth_email)``
-        principal (not the raw nexus subject ID) so two zones sharing a
-        subject cannot pin each other's X user id.
-        """
+    def _cache_scope_identity(self) -> str:
+        """Build scoped identity used for read-cache segregation."""
+        resolved_email, zone_id = self._resolve_principal()
+        return self._cache_principal(resolved_email, zone_id)
+
+    @staticmethod
+    def _scope_cache_token(scope_identity: str) -> str:
+        """Normalize cache scope to a filename-safe token."""
+        return hashlib.sha256(scope_identity.encode("utf-8")).hexdigest()[:20]
+
+    async def _get_user_id(self, client: Any | None = None) -> str:
+        """Get X user ID for authenticated user."""
         resolved_email, zone_id = await self._resolve_principal_async()
-        cache_key = self._cache_principal(resolved_email, zone_id)
 
-        if cache_key in self._user_id_cache:
-            return self._user_id_cache[cache_key]
-
-        client = await self._get_api_client_async()
+        owns_client = client is None
+        active_client = client or await self._get_api_client_async()
         try:
-            user_data = await client.get_me()
+            token_fingerprint = getattr(active_client, "_token_fingerprint", "unknown-token")
+            cache_key = self._user_cache_key(resolved_email, zone_id, token_fingerprint)
+            if cache_key in self._user_id_cache:
+                return self._user_id_cache[cache_key]
+
+            user_data = await active_client.get_me()
             user_id: str = user_data["data"]["id"]
             self._user_id_cache[cache_key] = user_id
             return user_id
         finally:
-            await client.close()
+            if owns_client:
+                await active_client.close()
 
     def _generate_cache_key(
         self,
         endpoint: str,
         params: dict[str, Any],
-        user_id: str,
+        cache_scope: str,
     ) -> str:
         """Generate deterministic cache key for API request."""
         param_str = json.dumps(params, sort_keys=True)
         param_hash = hashlib.md5(param_str.encode()).hexdigest()[:8]
-        return f"x:{user_id}:{endpoint}:{param_hash}"
+        scope_token = self._scope_cache_token(cache_scope)
+        return f"x:{scope_token}:{endpoint}:{param_hash}"
 
     def _get_cached(
         self,
@@ -351,13 +390,13 @@ class XTransport:
 
     def _invalidate_caches(
         self,
-        user_id: str,
+        cache_scope: str,
         endpoint_types: list[str],
     ) -> None:
         """Invalidate caches for specific endpoint types."""
         keys_to_delete = []
         for cache_key, cached_user_id in self._memory_cache:
-            if cached_user_id == user_id:
+            if cached_user_id == cache_scope:
                 for endpoint_type in endpoint_types:
                     if f":{endpoint_type}:" in cache_key:
                         keys_to_delete.append((cache_key, cached_user_id))
@@ -368,12 +407,17 @@ class XTransport:
             logger.debug("[X-CACHE] Invalidated: %s", key[0])
 
         cache_dir = Path(self._cache_dir)
-        for cache_file in cache_dir.glob(f"x:{user_id}:*.json"):
-            for endpoint_type in endpoint_types:
-                if f":{endpoint_type}:" in cache_file.name:
-                    cache_file.unlink()
-                    logger.debug("[X-CACHE] Deleted: %s", cache_file.name)
-                    break
+        patterns = [
+            f"x:{self._scope_cache_token(cache_scope)}:*.json",
+            f"x:{cache_scope}:*.json",  # Legacy pre-tokenized cache key fallback
+        ]
+        for pattern in patterns:
+            for cache_file in cache_dir.glob(pattern):
+                for endpoint_type in endpoint_types:
+                    if f":{endpoint_type}:" in cache_file.name:
+                        cache_file.unlink()
+                        logger.debug("[X-CACHE] Deleted: %s", cache_file.name)
+                        break
 
     def _resolve_path(self, backend_path: str) -> tuple[str, dict[str, Any]]:
         """Resolve virtual path to X API endpoint.
@@ -566,19 +610,12 @@ class XTransport:
     def fetch(self, key: str, version_id: str | None = None) -> tuple[bytes, str | None]:
         """Fetch X content as JSON bytes by transport key."""
         endpoint_type, params = self._resolve_path(key)
-
-        # Resolve the OAuth principal BEFORE touching the cache — keying on
-        # the raw ``context.user_id`` (e.g. ``"admin"``) would let two zones
-        # or two accounts sharing a nexus subject serve each other's cached
-        # responses.  ``_cache_principal`` composes zone + email so each
-        # tenant's cache is physically distinct.
-        resolved_email, zone_id = self._resolve_principal()
-        principal = self._cache_principal(resolved_email, zone_id)
-
-        # Check cache
-        cache_key = self._generate_cache_key(endpoint_type, params, principal)
         ttl = self._cache_ttl.get(endpoint_type, 300)
-        cached = self._get_cached(cache_key, principal, ttl)
+        cache_scope = self._cache_scope_identity()
+        cache_key = self._generate_cache_key(endpoint_type, params, cache_scope)
+
+        # Keep cache fast-path independent from OAuth/token-manager health.
+        cached = self._get_cached(cache_key, cache_scope, ttl)
         if cached:
             return cached, None
 
@@ -586,11 +623,11 @@ class XTransport:
         async def _read() -> bytes:
             client = await self._get_api_client_async()
             try:
-                user_id = await self._get_user_id()
+                user_id = await self._get_user_id(client=client)
                 data = await self._fetch_from_api(client, endpoint_type, params, user_id)
                 transformed = self._transform_response(endpoint_type, data)
                 content = json.dumps(transformed, indent=2).encode("utf-8")
-                self._set_cached(cache_key, principal, content)
+                self._set_cached(cache_key, cache_scope, content)
                 return content
             finally:
                 await client.close()
@@ -709,8 +746,16 @@ class XTransport:
         if prefix == "search":
             cache_path = Path(self._cache_dir)
             entries = []
-            for file in cache_path.glob("x:*:search:*.json"):
-                entries.append(f"search/{file.name.replace('x:', '').split(':')[2]}.json")
+            scope_token = self._scope_cache_token(self._cache_scope_identity())
+            for file in cache_path.glob(f"x:{scope_token}:search:*.json"):
+                stem = file.stem
+                try:
+                    _, endpoint, query_hash = stem.rsplit(":", 2)
+                except ValueError:
+                    # Legacy/unexpected cache key format — ignore noisy entries.
+                    continue
+                if endpoint == "search":
+                    entries.append(f"search/{query_hash}.json")
             return sorted(set(entries)), []
 
         if prefix == "users":

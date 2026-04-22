@@ -66,12 +66,36 @@ class TestCheckRuntimeDeps:
         assert "pip install definitely_not_a_real_module_xyz" in reason
 
     def test_missing_python_dep_with_extras(self) -> None:
-        missing = check_runtime_deps(
-            (PythonDep("definitely_not_a_real_module_xyz", extras=("gcs", "gdrive")),)
-        )
+        # Force the hint formatter to act as if running under the slim
+        # distribution so we can assert the nexus-fs extras form. Under
+        # the full (nexus-ai-fs) or dev checkout the hint drops back to
+        # a raw-module install command, covered separately below.
+        with patch(
+            "nexus.backends.base.runtime_deps._nexus_fs_extras_available",
+            return_value=True,
+        ):
+            missing = check_runtime_deps(
+                (PythonDep("definitely_not_a_real_module_xyz", extras=("gcs", "gdrive")),)
+            )
         assert len(missing) == 1
         _, reason = missing[0]
         assert "pip install nexus-fs[gcs,gdrive]" in reason
+
+    def test_missing_python_dep_with_extras_on_full_install(self) -> None:
+        """Under the full (nexus-ai-fs) install the hint must not recommend
+        ``pip install nexus-fs[...]`` — that would install a conflicting
+        distribution. Fall back to the raw module name instead."""
+        with patch(
+            "nexus.backends.base.runtime_deps._nexus_fs_extras_available",
+            return_value=False,
+        ):
+            missing = check_runtime_deps(
+                (PythonDep("definitely_not_a_real_module_xyz", extras=("gcs",)),)
+            )
+        assert len(missing) == 1
+        _, reason = missing[0]
+        assert "nexus-fs" not in reason
+        assert "pip install definitely_not_a_real_module_xyz" in reason
 
     def test_satisfied_binary_dep(self) -> None:
         # 'sh' is on PATH on every POSIX system + in CI images.
@@ -117,9 +141,13 @@ class TestCheckRuntimeDeps:
         treat that as "not installed" rather than letting the exception
         escape. Without the guard the user sees an opaque ModuleNotFoundError
         instead of the intended MissingDependencyError."""
-        missing = check_runtime_deps(
-            (PythonDep("definitely_not_a_real_parent.child.grandchild", extras=("gcs",)),)
-        )
+        with patch(
+            "nexus.backends.base.runtime_deps._nexus_fs_extras_available",
+            return_value=True,
+        ):
+            missing = check_runtime_deps(
+                (PythonDep("definitely_not_a_real_parent.child.grandchild", extras=("gcs",)),)
+            )
         assert len(missing) == 1
         _, reason = missing[0]
         assert "definitely_not_a_real_parent.child.grandchild" in reason

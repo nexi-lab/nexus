@@ -20,7 +20,13 @@ def _clean_registry():
 
 
 class TestFactoryPlaceholder:
-    def test_placeholder_with_missing_python_dep_raises_missing_dep(self) -> None:
+    def test_placeholder_with_missing_python_dep_raises_missing_dep(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "nexus.backends.base.runtime_deps._nexus_fs_extras_available",
+            lambda: True,
+        )
         entry = ConnectorManifestEntry(
             name="ph_py_missing",
             module_path="nowhere.real",

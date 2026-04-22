@@ -58,7 +58,14 @@ class TestFactoryDepCheck:
         instance = BackendFactory.create("stub_ok", {})
         assert isinstance(instance, _OK)
 
-    def test_missing_python_dep_raises(self) -> None:
+    def test_missing_python_dep_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Force slim-install hint formatting — otherwise the raw module
+        # name is emitted under the monorepo's full distribution.
+        monkeypatch.setattr(
+            "nexus.backends.base.runtime_deps._nexus_fs_extras_available",
+            lambda: True,
+        )
+
         @register_connector(
             "stub_missing_py",
             runtime_deps=(PythonDep("definitely_not_a_real_module_xyz", extras=("gcs",)),),

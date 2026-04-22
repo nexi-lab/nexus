@@ -20,6 +20,7 @@ Dep types:
 from __future__ import annotations
 
 import functools
+import importlib.metadata
 import importlib.util
 import shutil
 from dataclasses import dataclass
@@ -84,6 +85,29 @@ _SERVICE_MODULES: dict[str, str] = {
 
 
 @functools.cache
+def _nexus_fs_extras_available() -> bool:
+    """Return True when the active distribution exposes ``nexus-fs`` extras.
+
+    The runtime ships under two mutually exclusive distributions:
+    ``nexus-fs`` (slim wheel) defines extras like ``[gcs]``, ``[gmail]``;
+    ``nexus-ai-fs`` (full monorepo) does **not** — it pulls those packages
+    in as hard deps. Hardcoding ``pip install nexus-fs[...]`` as the hint
+    would direct full-runtime users to install a conflicting distribution.
+
+    Return True only when the nexus namespace resolves to ``nexus-fs``
+    alone; in every other case (full install, ambiguous multi-dist,
+    development checkout, detection failure) return False so the hint
+    falls back to the raw module name.
+    """
+    try:
+        dists = importlib.metadata.packages_distributions().get("nexus", ())
+    except Exception:
+        return False
+    dist_set = set(dists)
+    return dist_set == {"nexus-fs"}
+
+
+@functools.cache
 def _service_available(name: str) -> bool:
     """Return True when the named service's implementing module is importable."""
     module_path = _SERVICE_MODULES.get(name)
@@ -131,7 +155,7 @@ def check_runtime_deps(
                 except (ImportError, ModuleNotFoundError, ValueError):
                     spec = None
                 if spec is None:
-                    if extras:
+                    if extras and _nexus_fs_extras_available():
                         hint = f"pip install nexus-fs[{','.join(extras)}]"
                     else:
                         hint = f"pip install {mod}"

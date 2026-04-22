@@ -928,7 +928,10 @@ mod tests {
         let s = String::from_utf8(payload).unwrap();
 
         // Should contain thinking JSON frames before the text
-        assert!(s.contains(r#""type":"thinking""#), "missing thinking frames: {s}");
+        assert!(
+            s.contains(r#""type":"thinking""#),
+            "missing thinking frames: {s}"
+        );
         assert!(s.contains("Answer"), "missing text content: {s}");
 
         // Parse the done frame (last JSON object)

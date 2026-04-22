@@ -401,6 +401,10 @@ class ManagedAgentLoop:
                     if msg.get("type") == "error":
                         logger.error("LLM stream error: %s", msg.get("message"))
                         break
+                    if msg.get("type") == "thinking":
+                        self._observer.observe_update(
+                            "thinking", {"content": msg.get("thinking", "")}
+                        )
                 except json.JSONDecodeError:
                     tokens.append(text)
             else:

@@ -83,10 +83,6 @@ def stub_fs():
     backend.stream_range.return_value = iter([b"Hello", b", Wor", b"ld!"])
     # Prevent MagicMock hasattr from matching read_content_range
     del backend.read_content_range
-    # Stub needs explicit False for dynamic connector check
-    backend.user_scoped = False
-    backend.has_token_manager = False
-
     meta_entry = MagicMock()
     meta_entry.etag = "sha256:abc123"
     meta_entry.size = 34

@@ -59,7 +59,10 @@ class IsolatedBackend(Backend):
 
     @property
     def user_scoped(self) -> bool:
-        return bool(self._cached_prop("user_scoped"))
+        try:
+            return bool(self._cached_prop("user_scoped"))
+        except IsolationError:
+            return False
 
     @property
     def is_connected(self) -> bool:
@@ -75,7 +78,10 @@ class IsolatedBackend(Backend):
 
     @property
     def has_token_manager(self) -> bool:
-        return bool(self._cached_prop("has_token_manager"))
+        try:
+            return bool(self._cached_prop("has_token_manager"))
+        except IsolationError:
+            return False
 
     @property
     def has_data_dir(self) -> bool:

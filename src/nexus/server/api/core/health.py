@@ -175,7 +175,7 @@ async def health_check_detailed(request: Request) -> dict[str, Any]:
                     "backend": backend.name,
                     "healthy": status.success,
                     "latency_ms": status.latency_ms,
-                    "user_scoped": backend.user_scoped,
+                    "user_scoped": getattr(backend, "user_scoped", False),
                     "thread_safe": backend.thread_safe,
                 }
                 if status.error_message:

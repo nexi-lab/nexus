@@ -66,16 +66,6 @@ class RemoteBackend(ObjectStoreABC):
         """Remote server always has a configured root path."""
         return True
 
-    @property
-    def user_scoped(self) -> bool:
-        """REMOTE profile is not a per-user OAuth connector backend."""
-        return False
-
-    @property
-    def has_token_manager(self) -> bool:
-        """REMOTE profile delegates auth to the server transport."""
-        return False
-
     # === RPC Transport ===
 
     def _call_rpc(

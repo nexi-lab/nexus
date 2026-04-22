@@ -76,7 +76,7 @@ class DelegatingBackend(Backend):
 
     @property
     def user_scoped(self) -> bool:
-        return self._inner.user_scoped
+        return getattr(self._inner, "user_scoped", False)
 
     @property
     def is_connected(self) -> bool:
@@ -92,7 +92,7 @@ class DelegatingBackend(Backend):
 
     @property
     def has_token_manager(self) -> bool:
-        return self._inner.has_token_manager
+        return getattr(self._inner, "has_token_manager", False)
 
     @property
     def has_data_dir(self) -> bool:

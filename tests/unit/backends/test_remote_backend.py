@@ -46,11 +46,6 @@ class TestRemoteBackendProperties:
     def test_transport_stored(self, backend: RemoteBackend, mock_transport) -> None:
         assert backend._transport is mock_transport
 
-    def test_user_scoped_is_false(self, backend: RemoteBackend) -> None:
-        assert backend.user_scoped is False
-
-    def test_has_token_manager_is_false(self, backend: RemoteBackend) -> None:
-        assert backend.has_token_manager is False
 
 
 # ---------------------------------------------------------------------------

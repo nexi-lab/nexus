@@ -127,24 +127,6 @@ class Backend(ObjectStoreABC):
     # must implement it.  No redeclaration needed here.
     # ------------------------------------------------------------------
 
-    # === Backend-level capability flags (not on ObjectStoreABC) ===
-
-    @property
-    def user_scoped(self) -> bool:
-        """Whether this backend requires per-user credentials (OAuth-based).
-
-        TODO(#1824): Move to Connector Protocol after external connector redesign.
-        """
-        return False
-
-    @property
-    def has_token_manager(self) -> bool:
-        """Whether this backend manages OAuth tokens.
-
-        TODO(#1824): Move to Connector Protocol after external connector redesign.
-        """
-        return False
-
     # === Service-level properties (not on ObjectStoreABC) ===
 
     @property
@@ -266,7 +248,7 @@ class Backend(ObjectStoreABC):
         return HandlerStatusResponse(
             success=success,
             latency_ms=latency_ms,
-            details={"backend": self.name, "user_scoped": self.user_scoped},
+            details={"backend": self.name, "user_scoped": getattr(self, "user_scoped", False)},
         )
 
     # === Content Operations (CAS) ===

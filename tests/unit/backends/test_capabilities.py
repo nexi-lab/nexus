@@ -190,19 +190,11 @@ class TestRegistryCapabilities:
                 return "fake"
 
             @property
-            def user_scoped(self) -> bool:
-                return False
-
-            @property
             def is_connected(self) -> bool:
                 return False
 
             @property
             def has_root_path(self) -> bool:
-                return False
-
-            @property
-            def has_token_manager(self) -> bool:
                 return False
 
             def connect(self) -> None:

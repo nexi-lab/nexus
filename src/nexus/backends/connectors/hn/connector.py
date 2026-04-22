@@ -67,8 +67,6 @@ class PathHNBackend(
     # Skill documentation settings
     SKILL_NAME = "hn"
 
-    user_scoped = False  # Public API, no per-user auth
-
     CONNECTION_ARGS: dict[str, ConnectionArg] = {
         "cache_ttl": ConnectionArg(
             type=ArgType.INTEGER,

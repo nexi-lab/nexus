@@ -94,10 +94,8 @@ _CONNECTOR_PROTOCOL_MEMBERS: frozenset[str] = frozenset(
         # ConnectorProtocol (connection lifecycle — connect/disconnect deleted #1811)
         "check_connection",
         # ConnectorProtocol (capability flags)
-        "user_scoped",
         "is_connected",
         "has_root_path",
-        "has_token_manager",
         # CapabilityAwareProtocol (Issue #2069)
         "backend_features",
         "has_feature",

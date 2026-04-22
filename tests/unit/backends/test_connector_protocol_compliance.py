@@ -130,10 +130,8 @@ class TestConnectorProtocolMethods:
 
     _LIFECYCLE_METHODS = ["check_connection"]
     _CAPABILITY_PROPERTIES = [
-        "user_scoped",
         "is_connected",
         "has_root_path",
-        "has_token_manager",
     ]
 
     @pytest.mark.parametrize("method_name", _LIFECYCLE_METHODS)

@@ -35,7 +35,7 @@ Executor = Callable[[bytes, ProgressReporter], Coroutine[Any, Any, bytes | None]
 class AsyncTaskRunner:
     """Async worker pool that claims and executes tasks from TaskEngine.
 
-    Implements PersistentService protocol (start/stop) for coordinator
+    Implements BackgroundService protocol (start/stop) for coordinator
     auto-lifecycle management.
 
     Usage:
@@ -166,15 +166,15 @@ class AsyncTaskRunner:
             await asyncio.sleep(self.requeue_interval)
 
     async def start(self) -> None:
-        """PersistentService: spawn the worker pool as a background task."""
+        """BackgroundService: spawn the worker pool as a background task."""
         if self._run_task is not None and not self._run_task.done():
             return  # idempotent
         self._shutdown = False
         self._run_task = asyncio.create_task(self.run(), name="async-task-runner")
-        logger.info("AsyncTaskRunner started via PersistentService.start()")
+        logger.info("AsyncTaskRunner started via BackgroundService.start()")
 
     async def stop(self) -> None:
-        """PersistentService: signal graceful shutdown and await completion."""
+        """BackgroundService: signal graceful shutdown and await completion."""
         logger.info("AsyncTaskRunner stop requested")
         self._shutdown = True
         if self._run_task is not None and not self._run_task.done():

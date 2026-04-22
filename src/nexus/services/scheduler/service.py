@@ -137,18 +137,18 @@ class SchedulerService:
         logger.info("SchedulerService initialized (pool connected, fair-share synced)")
 
     async def start(self) -> None:
-        """PersistentService: no-op — lifecycle managed by initialize(pool)/shutdown().
+        """BackgroundService: no-op — lifecycle managed by initialize(pool)/shutdown().
 
         The scheduler has two-phase init: factory creates with db_pool=None,
         lifespan calls initialize(pool) after bootstrap.  start() exists
-        solely for PersistentService protocol conformance and is called
+        solely for BackgroundService protocol conformance and is called
         during bootstrap before initialize() — this ordering is expected.
         """
         if not self._initialized:
             logger.debug("SchedulerService.start() awaiting initialize(pool) — two-phase init")
 
     async def stop(self) -> None:
-        """PersistentService: close the asyncpg pool and mark as uninitialized."""
+        """BackgroundService: close the asyncpg pool and mark as uninitialized."""
         if self._pool is not None:
             await self._pool.close()
             self._pool = None

@@ -673,5 +673,6 @@ class SubscriptionManager:
         # Currently no persistent connections to close
         # Future: close any persistent HTTP clients or background tasks
 
-    # PersistentService-compatible alias (Q1 for now — no background loop)
+    # NOT a BackgroundService today (no start() / no background loop).
+    # Alias kept so a future opt-in only needs to add start().
     stop = close

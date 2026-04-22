@@ -10,7 +10,7 @@ lifecycle in one module.
 It auto-detects lifecycle requirements:
 
     On-demand service       — register only, duck-type hook_spec() for hooks
-    PersistentService       — register + start (deferred pre-bootstrap)
+    BackgroundService       — register + start (deferred pre-bootstrap)
 
 Hook management is automatic: if an instance has a ``hook_spec()`` method
 (duck-typed), the kernel captures and registers hooks at enlist() time.
@@ -36,7 +36,7 @@ from types import MappingProxyType
 from typing import Any
 
 from nexus.contracts.protocols.service_hooks import HookSpec
-from nexus.contracts.protocols.service_lifecycle import PersistentService
+from nexus.contracts.protocols.service_lifecycle import BackgroundService
 from nexus.lib.registry import BaseRegistry
 
 logger = logging.getLogger(__name__)
@@ -332,8 +332,8 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
     def mark_bootstrapped(self) -> None:
         """Mark that bootstrap() has completed.
 
-        After this, enlist() auto-starts Q3 PersistentService instances
-        immediately instead of deferring to start_persistent_services().
+        After this, enlist() auto-starts Q3 BackgroundService instances
+        immediately instead of deferring to start_background_services().
         """
         self._bootstrapped = True
 
@@ -377,11 +377,11 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
         Auto-detects lifecycle requirements:
 
         - **On-demand**: register only.
-        - **PersistentService**: register + ``start()`` (post-bootstrap).
+        - **BackgroundService**: register + ``start()`` (post-bootstrap).
         - **Duck-typed hook_spec()**: auto-capture and register hooks.
 
-        Post-bootstrap, PersistentService instances are auto-started immediately.
-        Pre-bootstrap, start() is deferred to start_persistent_services().
+        Post-bootstrap, BackgroundService instances are auto-started immediately.
+        Pre-bootstrap, start() is deferred to start_background_services().
 
         Args:
             depends_on: Accepted for call-site compatibility; currently unused
@@ -390,14 +390,14 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
         del depends_on  # accepted but unused (BLM removed)
         self._register_service(name, instance, exports=exports, allow_overwrite=allow_overwrite)
 
-        # Auto-start persistent background work (only post-bootstrap)
-        if isinstance(instance, PersistentService) and self._bootstrapped:
+        # Auto-start background work (only post-bootstrap)
+        if isinstance(instance, BackgroundService) and self._bootstrapped:
             from nexus.lib.sync_bridge import run_sync
 
             coro = instance.start()
             if asyncio.iscoroutine(coro):
                 run_sync(coro, timeout=30.0)
-            logger.info("[COORDINATOR] enlist %r — started (PersistentService)", name)
+            logger.info("[COORDINATOR] enlist %r — started (BackgroundService)", name)
 
         # Auto-capture hooks via duck-typed hook_spec()
         if _declares_hook_spec(instance):
@@ -406,7 +406,7 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
                 self._register_hooks(name)
             logger.info("[COORDINATOR] enlist %r — hooks registered", name)
 
-        if not isinstance(instance, PersistentService) and not _declares_hook_spec(instance):
+        if not isinstance(instance, BackgroundService) and not _declares_hook_spec(instance):
             logger.info("[COORDINATOR] enlist %r — registered (on-demand)", name)
 
     # -- mount — register VFS hooks ----------------------------------------
@@ -485,10 +485,10 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
 
         logger.info("[COORDINATOR] swap %r — complete", name)
 
-    # -- Auto-lifecycle — PersistentService management ----------------------
+    # -- Auto-lifecycle — BackgroundService management ----------------------
 
-    def start_persistent_services(self, *, timeout: float = 30.0) -> list[str]:
-        """Auto-start all PersistentService instances in dependency order."""
+    def start_background_services(self, *, timeout: float = 30.0) -> list[str]:
+        """Auto-start all BackgroundService instances in dependency order."""
         from nexus.lib.sync_bridge import run_sync
 
         started: list[str] = []
@@ -496,24 +496,24 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
             info = self.service_info(name)
             if info is None:
                 continue
-            if not isinstance(info.instance, PersistentService):
+            if not isinstance(info.instance, BackgroundService):
                 continue
             try:
                 coro = info.instance.start()
                 if asyncio.iscoroutine(coro):
                     run_sync(coro, timeout=timeout)
                 started.append(name)
-                logger.info("[COORDINATOR] auto-started persistent service %r", name)
+                logger.info("[COORDINATOR] auto-started background service %r", name)
             except TimeoutError:
                 logger.error("[COORDINATOR] timeout starting %r after %.1fs", name, timeout)
             except Exception as exc:
                 logger.error("[COORDINATOR] failed to start %r: %s", name, exc)
         if started:
-            logger.info("[COORDINATOR] started %d persistent services: %s", len(started), started)
+            logger.info("[COORDINATOR] started %d background services: %s", len(started), started)
         return started
 
-    def stop_persistent_services(self, *, timeout: float = 10.0) -> list[str]:
-        """Auto-stop all PersistentService instances in reverse dependency order."""
+    def stop_background_services(self, *, timeout: float = 10.0) -> list[str]:
+        """Auto-stop all BackgroundService instances in reverse dependency order."""
         from nexus.lib.sync_bridge import run_sync
 
         stopped: list[str] = []
@@ -521,20 +521,20 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
             info = self.service_info(name)
             if info is None:
                 continue
-            if not isinstance(info.instance, PersistentService):
+            if not isinstance(info.instance, BackgroundService):
                 continue
             try:
                 coro = info.instance.stop()
                 if asyncio.iscoroutine(coro):
                     run_sync(coro, timeout=timeout)
                 stopped.append(name)
-                logger.info("[COORDINATOR] auto-stopped persistent service %r", name)
+                logger.info("[COORDINATOR] auto-stopped background service %r", name)
             except TimeoutError:
                 logger.error("[COORDINATOR] timeout stopping %r after %.1fs", name, timeout)
             except Exception as exc:
                 logger.error("[COORDINATOR] failed to stop %r: %s", name, exc)
         if stopped:
-            logger.info("[COORDINATOR] stopped %d persistent services: %s", len(stopped), stopped)
+            logger.info("[COORDINATOR] stopped %d background services: %s", len(stopped), stopped)
         return stopped
 
     def close_all_services(self) -> None:

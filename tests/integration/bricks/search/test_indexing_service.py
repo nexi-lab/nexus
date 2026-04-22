@@ -549,6 +549,106 @@ class TestIndexDirectory:
             assert path_id == "pid-x"
 
 
+class TestVirtualReadmeIndexing:
+    """Issue #3728: virtual ``.readme/`` overlay paths have no
+    FilePathModel rows but should still be indexed for semantic search."""
+
+    def test_looks_like_virtual_readme_helper(self) -> None:
+        from nexus.bricks.search.indexing_service import _looks_like_virtual_readme
+
+        # Exact ``.readme`` segment matches
+        assert _looks_like_virtual_readme("/gws/gmail/.readme/README.md") is True
+        assert _looks_like_virtual_readme("/gws/gmail/.readme/schemas/send.yaml") is True
+        assert _looks_like_virtual_readme("/.readme/README.md") is True
+
+        # Not matches
+        assert _looks_like_virtual_readme("/a/b/c.txt") is False
+        assert _looks_like_virtual_readme("/gws/gmail/INBOX/msg.yaml") is False
+
+        # Partial-name false positives rejected — segment must be exactly ``.readme``
+        assert _looks_like_virtual_readme("/work/my.readme/file.md") is False
+        assert _looks_like_virtual_readme("/work/.readmex/file.md") is False
+
+    def test_virtual_path_id_is_deterministic_and_prefixed(self) -> None:
+        from nexus.bricks.search.indexing_service import _virtual_path_id
+
+        a = _virtual_path_id("/gws/gmail/.readme/README.md")
+        b = _virtual_path_id("/gws/gmail/.readme/README.md")
+        c = _virtual_path_id("/gws/gmail/.readme/schemas/send.yaml")
+        assert a == b  # deterministic
+        assert a != c  # different paths → different ids
+        assert a.startswith("virtual:")
+        # Uses SHA-256 (64 hex chars after the prefix)
+        assert len(a) == len("virtual:") + 64
+
+    @pytest.mark.asyncio
+    async def test_index_directory_indexes_virtual_readme_paths_without_row(self) -> None:
+        """Virtual ``.readme/`` files have no FilePathModel but should still
+        be indexed via a synthetic ``virtual:`` path_id."""
+        # Session returns None for every FilePathModel query → simulates
+        # a post-mount indexing run over a skill backend where only the
+        # virtual tree has entries and the metastore has no rows for
+        # ``.readme/*``.
+        session = _mock_session(file_model=None)
+
+        pipeline = _mock_pipeline()
+        pipeline.index_documents.return_value = [
+            IndexResult(path="/gws/gmail/.readme/README.md", chunks_indexed=4),
+            IndexResult(path="/gws/gmail/.readme/schemas/send.yaml", chunks_indexed=2),
+        ]
+
+        file_list = [
+            "/gws/gmail/.readme/README.md",
+            "/gws/gmail/.readme/schemas/send.yaml",
+        ]
+        service, _, _, _ = _build_service(
+            pipeline=pipeline,
+            session=session,
+            file_list=file_list,
+            content="# Gmail\n\nsend_email schema ...",
+        )
+
+        results = await service.index_directory("/gws/gmail/")
+
+        # Both virtual paths were indexed even though _query_file_model
+        # returned None for each.
+        assert len(results) == 2
+        pipeline.index_documents.assert_awaited_once()
+        docs = pipeline.index_documents.call_args[0][0]
+        assert len(docs) == 2
+        for doc_path, content, path_id in docs:
+            assert doc_path in file_list
+            assert content == "# Gmail\n\nsend_email schema ..."
+            # Synthetic path_id is used instead of a real FilePathModel id
+            assert path_id.startswith("virtual:")
+
+    @pytest.mark.asyncio
+    async def test_index_directory_still_skips_rowless_non_readme_paths(self) -> None:
+        """A real (non-``.readme/``) file with no FilePathModel row is
+        still skipped — the virtual fallback must not catch random
+        row-less paths."""
+        session = _mock_session(file_model=None)  # all queries miss
+
+        pipeline = _mock_pipeline()
+        pipeline.index_documents.return_value = []
+
+        service, _, _, _ = _build_service(
+            pipeline=pipeline,
+            session=session,
+            file_list=["/work/notes.txt", "/work/code.py"],
+            content="some content",
+        )
+
+        await service.index_directory("/work/")
+
+        # No documents appended — both rows are missing AND they're not
+        # under ``.readme/``, so the indexer drops them like before.
+        assert pipeline.index_documents.await_count in (0, 1)
+        if pipeline.index_documents.await_count == 1:
+            docs = pipeline.index_documents.call_args[0][0]
+            assert docs == []
+
+
 class TestDeleteDocumentIndex:
     @pytest.mark.asyncio
     async def test_delete_document_index_removes_chunks(self) -> None:

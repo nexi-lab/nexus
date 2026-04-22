@@ -51,7 +51,11 @@ def generate_download_url(
         Dict with download_url, expires_in, method, backend if supported, None otherwise
     """
     try:
+        from nexus.core.router import RouteResult
+
         route = nexus_fs.router.route(path)
+        if not isinstance(route, RouteResult):
+            return None  # Pipe/Stream/External don't support signed URLs
         backend = route.backend
         backend_path = route.backend_path
 
@@ -190,13 +194,17 @@ async def handle_write(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[s
     OCC checks (if_match, if_none_match) are done here at the RPC layer
     via ``occ_write()`` helper — not in the kernel. Distributed locking
     is also NOT in write() — callers should use lock()/unlock() or
-    ``async with locked(path)`` explicitly.
+    ``with locked(path)`` explicitly.
 
     Issue #1323: OCC + lock extracted from kernel.
     """
     content = getattr(params, "content", None) or getattr(params, "buf", None) or b""
     if isinstance(content, str):
         content = content.encode("utf-8")
+
+    # R20.10: POSIX pwrite offset threaded from RPC params through to
+    # Kernel::sys_write. Default 0 = full-file write (backward compat).
+    offset = int(getattr(params, "offset", 0) or 0)
 
     # OCC: use lib/occ helper if CAS params present
     if_match = getattr(params, "if_match", None) or None
@@ -213,9 +221,10 @@ async def handle_write(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[s
             context=context,
             if_match=if_match,
             if_none_match=if_none_match,
+            offset=offset,
         )
     else:
-        write_result = nexus_fs.write(params.path, content, context=context)
+        write_result = nexus_fs.write(params.path, content, context=context, offset=offset)
 
     # write() returns dict with metadata (etag, version, modified_at, size).
     # Merge bytes_written into the response for backward compatibility.
@@ -255,6 +264,9 @@ async def handle_list(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[st
     _list_start = _time.time()
     search = nexus_fs.service("search")
     if search is not None:
+        # SearchService.list injects virtual ``.readme/`` entries for
+        # connector mounts via ``_augment_with_virtual_readme_entries``
+        # (Issue #3728), so we don't need a handler-level augment.
         result = search.list(path=params.path, **kwargs)
     else:
         result = nexus_fs.sys_readdir(params.path, **kwargs)
@@ -387,6 +399,11 @@ def handle_glob(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any
     kwargs: dict[str, Any] = {"context": context}
     if hasattr(params, "path") and params.path:
         kwargs["path"] = params.path
+    # Issue #3701 (2A): forward the stateless ``files=[...]`` narrowing
+    # parameter. Explicit ``is not None`` check so an intentional empty
+    # list ``files=[]`` (empty-set short-circuit) is preserved.
+    if hasattr(params, "files") and params.files is not None:
+        kwargs["files"] = params.files
 
     search = nexus_fs.service("search")
     assert search is not None, "SearchService required for glob"
@@ -408,6 +425,21 @@ async def handle_grep(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[st
         kwargs["file_pattern"] = params.file_pattern
     if hasattr(params, "search_mode") and params.search_mode is not None:
         kwargs["search_mode"] = params.search_mode
+    # Pre-existing RPC drift fix (#3701 follow-up): forward the context-line
+    # and invert-match params so remote SDK / MCP callers can use them.
+    # Previously these were silently dropped at this allowlist boundary.
+    if hasattr(params, "before_context") and params.before_context:
+        kwargs["before_context"] = params.before_context
+    if hasattr(params, "after_context") and params.after_context:
+        kwargs["after_context"] = params.after_context
+    if hasattr(params, "invert_match") and params.invert_match:
+        kwargs["invert_match"] = params.invert_match
+    # Issue #3701 (2A): forward the stateless ``files=[...]`` narrowing
+    # parameter. Explicit ``is not None`` check so an intentional empty
+    # list ``files=[]`` (empty-set short-circuit) is preserved all the
+    # way through to SearchService.
+    if hasattr(params, "files") and params.files is not None:
+        kwargs["files"] = params.files
 
     search = nexus_fs.service("search")
     assert search is not None, "SearchService required for grep"
@@ -428,6 +460,97 @@ def handle_search(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, A
 
     results = cast(Any, nexus_fs).search(params.query, **kwargs)
     return {"results": results}
+
+
+def _augment_paths_with_virtual_readme(
+    *,
+    nexus_fs: "NexusFS",
+    target_path: str,
+    paths_to_index: list[str],
+    context: Any,
+    logger: Any,
+) -> list[str]:
+    """Inject every virtual ``.readme/`` leaf under ``target_path``
+    into ``paths_to_index``.
+
+    Issue #3728: virtual skill-doc paths (README.md, schemas/*.yaml,
+    examples/*) have no metastore rows, so the metastore-backed
+    ``file_paths`` query above returns zero matches for them.  This
+    helper walks the router for ``target_path``, finds every skill
+    backend mount that intersects the request, and flattens each
+    mount's ``VirtualEntry`` tree into absolute paths appended to
+    the indexing list.
+
+    The walk is tolerant — anything that fails (non-routable path,
+    unknown backend, tree construction error) is logged and skipped,
+    leaving ``paths_to_index`` as the caller supplied it.
+    """
+    try:
+        from nexus.backends.connectors.schema_generator import (
+            VirtualEntry,
+            _has_skill_name,
+            _readme_dir_for,
+            get_virtual_readme_tree_for_backend,
+            overlay_owns_path,
+        )
+    except ImportError:
+        return paths_to_index
+
+    try:
+        route = nexus_fs.router.route(target_path, zone_id=nexus_fs._zone_id)
+    except Exception:
+        return paths_to_index
+
+    backend = getattr(route, "backend", None)
+    if backend is None or not _has_skill_name(backend):
+        return paths_to_index
+
+    mount_point = getattr(route, "mount_point", "") or ""
+    readme_dir_name = _readme_dir_for(backend).strip("/")
+    try:
+        if not overlay_owns_path(backend, mount_point, readme_dir_name, context=context):
+            return paths_to_index
+    except Exception:
+        return paths_to_index
+
+    try:
+        tree = get_virtual_readme_tree_for_backend(backend, mount_point)
+    except Exception:
+        return paths_to_index
+
+    mount_prefix = mount_point.rstrip("/")
+
+    def _walk(node: VirtualEntry, prefix: str) -> list[str]:
+        out: list[str] = []
+        if node.is_dir:
+            for child_name, child in node.children.items():
+                child_prefix = f"{prefix}/{child_name}" if prefix else child_name
+                out.extend(_walk(child, child_prefix))
+        else:
+            out.append(f"{mount_prefix}/{prefix}")
+        return out
+
+    flattened = _walk(tree, readme_dir_name)
+
+    # Only keep virtual leaves that fall under the caller's request.
+    target_norm = target_path.rstrip("/")
+    kept: list[str] = []
+    for leaf in flattened:
+        if target_norm == mount_prefix or leaf.startswith(target_norm + "/") or leaf == target_norm:
+            kept.append(leaf)
+
+    existing = set(paths_to_index)
+    merged = list(paths_to_index)
+    for p in kept:
+        if p not in existing:
+            merged.append(p)
+            existing.add(p)
+    logger.info(
+        "semantic_search_index: after virtual .readme/ augment: %d files (+%d virtual)",
+        len(merged),
+        len(merged) - len(paths_to_index),
+    )
+    return merged
 
 
 async def handle_semantic_search_index(
@@ -461,8 +584,16 @@ async def handle_semantic_search_index(
         # RPC may scope paths as /zone/{id}/...; DB stores unscoped virtual_path.
         db_path = unscope_internal_path(path)
 
-        # Query file paths from the daemon's database connection
+        # Query file paths from the daemon's database connection.  Also
+        # grab the ``content_hash`` at selection time so the stale-doc CAS
+        # below can cite the row's then-current hash regardless of what
+        # algorithm the backend used to produce it (raw-byte BLAKE3 for
+        # local CAS, provider version IDs for S3/GCS, …).  Scope the
+        # query with ``zone_id`` — ``file_paths`` is unique on
+        # ``(zone_id, virtual_path)`` and a path-only filter can pull in
+        # another tenant's row.
         paths_to_index: list[str] = []
+        observed_hash_by_path: dict[str, str | None] = {}
         if hasattr(daemon, "_async_session") and daemon._async_session is not None:
             from sqlalchemy import text as sa_text
 
@@ -472,39 +603,186 @@ async def handle_semantic_search_index(
                     like_pattern = db_path.rstrip("/") + "/%"
                     result = await sess.execute(
                         sa_text(
-                            "SELECT virtual_path FROM file_paths"
-                            " WHERE virtual_path LIKE :like OR virtual_path = :exact"
+                            "SELECT virtual_path, content_hash FROM file_paths"
+                            " WHERE (virtual_path LIKE :like OR virtual_path = :exact)"
+                            "   AND zone_id = :zid"
+                            "   AND deleted_at IS NULL"
                         ),
-                        {"like": like_pattern, "exact": db_path},
+                        {"like": like_pattern, "exact": db_path, "zid": zone_id},
                     )
-                    paths_to_index = [r[0] for r in result.fetchall()]
+                    rows = result.fetchall()
+                    paths_to_index = [r[0] for r in rows]
+                    observed_hash_by_path = {r[0]: r[1] for r in rows}
                 else:
+                    result = await sess.execute(
+                        sa_text(
+                            "SELECT content_hash FROM file_paths"
+                            " WHERE virtual_path = :exact"
+                            "   AND zone_id = :zid"
+                            "   AND deleted_at IS NULL"
+                        ),
+                        {"exact": db_path, "zid": zone_id},
+                    )
+                    row = result.fetchone()
                     paths_to_index = [db_path]
+                    observed_hash_by_path = {db_path: row[0] if row else None}
             _log.info(
                 "semantic_search_index: found %d files under %s", len(paths_to_index), db_path
             )
 
-        # Read content and build documents for txtai
+        # Issue #3728: virtual ``.readme/`` overlay paths have no
+        # ``file_paths`` row by design — augment the indexing list by
+        # asking the VirtualEntry tree directly (via the router) for
+        # every leaf under every skill backend mount the request path
+        # intersects.  This picks up ``README.md``, ``schemas/*.yaml``,
+        # and ``examples/*`` regardless of whether ``path`` points at
+        # the mount root or a ``.readme/`` subdir.
+        try:
+            paths_to_index = _augment_paths_with_virtual_readme(
+                nexus_fs=nexus_fs,
+                target_path=path,
+                paths_to_index=paths_to_index,
+                context=context,
+                logger=_log,
+            )
+        except Exception as _walk_err:
+            _log.debug("semantic_search_index: virtual .readme/ walk skipped: %s", _walk_err)
+
+        # Read with the caller's context (preserves ReBAC + zone scoping),
+        # then apply the same parse-aware transform the daemon refresh path
+        # uses so parseable binaries (.pdf/.docx/.xlsx/…) are indexed as
+        # parsed markdown rather than raw utf-8 garbage.  We do this as a
+        # pure transform rather than calling ``_NexusFSFileReader.read_text``
+        # because the reader constructs an admin context internally and
+        # would bypass the caller's permission scope.
+        from nexus.factory._semantic_search import _resolve_parse_fn
+        from nexus.factory.adapters import _apply_parse_transform_with_status
+        from nexus.lib.virtual_views import is_parseable_path
+
+        _parse_fn = _resolve_parse_fn(nexus_fs)
+
         documents: list[dict[str, Any]] = []
         read_errors = 0
         total_chunks = 0
+        # Track (doc_id, file_path, observed_content_hash) tuples for
+        # parseable files whose parse SUCCEEDED but produced empty text
+        # (image-only PDFs, blank docx, …).  Only these are reliable
+        # stale-doc signals: a parser *error* might be a transient outage,
+        # and wiping the doc would delete healthy content that will come
+        # back on the next tick.  ``_apply_parse_transform_with_status``
+        # tells these apart.
+        #
+        # ``observed_content_hash`` is whatever ``file_paths.content_hash``
+        # held at selection time — BLAKE3 for local CAS backends, provider
+        # version IDs for S3/GCS.  The CAS below compares string equality
+        # against the current row, so the stored shape doesn't matter:
+        # we only need the value not to have changed between our read and
+        # our purge.
+        stale_candidates: list[tuple[str, str, str | None]] = []
         for file_path in paths_to_index:
             try:
-                content = nexus_fs.sys_read(file_path, context=context)
-                if isinstance(content, bytes):
-                    content_str = content.decode("utf-8", errors="replace")
-                else:
-                    content_str = content
-                if content_str.strip():
-                    doc_id = f"{zone_id}:{file_path}" if zone_id != "root" else file_path
+                raw = nexus_fs.sys_read(file_path, context=context)
+                # Pass the DB-tracked content_hash so the parse cache key
+                # matches what has_successful_parse later compares against
+                # (etag on S3/GCS, BLAKE3 on local CAS — adapter stores
+                # whatever the caller supplies).
+                observed_hash = observed_hash_by_path.get(file_path)
+                content_str, parse_status = _apply_parse_transform_with_status(
+                    nexus_fs,
+                    file_path,
+                    raw,
+                    parse_fn=_parse_fn,
+                    content_hash=observed_hash,
+                )
+                doc_id = f"{zone_id}:{file_path}" if zone_id != ROOT_ZONE_ID else file_path
+                if content_str and content_str.strip():
                     documents.append({"id": doc_id, "text": content_str, "path": file_path})
+                elif is_parseable_path(file_path) and parse_status == "empty":
+                    stale_candidates.append((doc_id, file_path, observed_hash))
             except Exception as read_err:
                 read_errors += 1
                 _log.warning("Skipping %s: %s", file_path, read_err)
 
         _log.info(
-            "semantic_search_index: %d documents read (%d errors)", len(documents), read_errors
+            "semantic_search_index: %d documents read (%d errors, %d parse-failed)",
+            len(documents),
+            read_errors,
+            len(stale_candidates),
         )
+
+        # CAS-guard the purge against concurrent writers.  Re-read
+        # ``file_paths.content_hash`` for every candidate and only delete
+        # docs whose current DB-tracked hash still equals what we saw at
+        # read time.  If the hash has advanced, someone rewrote the file
+        # under us and a concurrent indexer may have already succeeded
+        # against the newer bytes — deleting would wipe that fresh doc.
+        #
+        # ``file_paths`` is keyed by ``(zone_id, virtual_path)`` so the
+        # lookup must be zone-scoped; a path-only query could pull another
+        # tenant's row, producing a nondeterministic delete/no-delete
+        # decision for the caller's zone.
+        stale_ids_to_delete: list[str] = []
+        if stale_candidates and hasattr(daemon, "_async_session") and daemon._async_session:
+            from sqlalchemy import text as _sa_text
+
+            async with daemon._async_session() as sess:
+                for doc_id, file_path, observed_hash in stale_candidates:
+                    try:
+                        row = (
+                            await sess.execute(
+                                _sa_text(
+                                    "SELECT content_hash FROM file_paths"
+                                    " WHERE virtual_path = :vp"
+                                    "   AND zone_id = :zid"
+                                    "   AND deleted_at IS NULL"
+                                ),
+                                {"vp": file_path, "zid": zone_id},
+                            )
+                        ).fetchone()
+                    except Exception as cas_err:
+                        _log.warning(
+                            "semantic_search_index: content_hash CAS lookup failed for %s: %s",
+                            file_path,
+                            cas_err,
+                        )
+                        continue
+                    # Safe to purge when:
+                    #   * row is None — the file_paths row was deleted
+                    #     under us, so the old doc is definitively stale.
+                    #   * row[0] == observed_hash — hash unchanged between
+                    #     selection and now, no concurrent writer.
+                    # Otherwise skip — the hash either advanced (concurrent
+                    # writer may have re-indexed) or we never had a hash to
+                    # compare against (permissive delete could wipe healthy
+                    # docs on backends that don't populate content_hash).
+                    if row is None or observed_hash is not None and row[0] == observed_hash:
+                        stale_ids_to_delete.append(doc_id)
+                    else:
+                        _log.info(
+                            "semantic_search_index: skipped stale-doc purge for %s — "
+                            "content_hash advanced or unavailable (CAS miss)",
+                            file_path,
+                        )
+        elif stale_candidates:
+            # No DB session on the daemon (fallback/mock path) — fall back
+            # to the pre-CAS behavior so we at least clear obvious stales.
+            stale_ids_to_delete = [doc_id for doc_id, _p, _h in stale_candidates]
+
+        # Purge BEFORE upserting fresh ones so the backend view is monotonic:
+        # a caller observing the index between steps never sees both the
+        # outdated and fresh versions live simultaneously.
+        if stale_ids_to_delete:
+            try:
+                removed = await daemon.delete_documents(stale_ids_to_delete, zone_id=zone_id)
+                _log.info(
+                    "semantic_search_index: purged %d stale doc(s) for failed parses", removed
+                )
+            except Exception as del_err:
+                _log.warning(
+                    "semantic_search_index: stale doc purge failed (%d ids): %s",
+                    len(stale_ids_to_delete),
+                    del_err,
+                )
 
         # Single upsert to txtai → pgvector (BM25 + dense embeddings + SPLADE)
         results: dict[str, int] = {}
@@ -553,9 +831,47 @@ async def handle_semantic_search(nexus_fs: "NexusFS", params: Any, _context: Any
     return {"results": results}
 
 
+async def handle_ainitialize_semantic_search(
+    nexus_fs: "NexusFS", params: Any, _context: Any
+) -> dict[str, Any]:
+    """Handle ``ainitialize_semantic_search`` — initialize the semantic pipeline.
+
+    The client side (``nexus search init``) calls
+    ``nx.service("search").ainitialize_semantic_search(nx=nx, ...)`` via the
+    RemoteServiceProxy, which attempts to dispatch the call as an RPC.  Before
+    this handler, no dispatch entry existed and the RPC died with
+    ``Unknown method: ainitialize_semantic_search``.
+
+    The server injects its own ``nexus_fs`` for the ``nx`` parameter since
+    the client's NexusFS instance cannot be serialized across the wire.
+    """
+    search = nexus_fs.service("search")
+    if search is None:
+        raise ValueError("SearchService not available")
+
+    await search.ainitialize_semantic_search(
+        nx=nexus_fs,
+        record_store_engine=None,
+        embedding_provider=getattr(params, "embedding_provider", None),
+        embedding_model=getattr(params, "embedding_model", None),
+        api_key=getattr(params, "api_key", None),
+        chunk_size=getattr(params, "chunk_size", 1024),
+        chunk_strategy=getattr(params, "chunk_strategy", "semantic"),
+        async_mode=getattr(params, "async_mode", True),
+        cache_url=getattr(params, "cache_url", None),
+        embedding_cache_ttl=getattr(params, "embedding_cache_ttl", 86400 * 3),
+    )
+    return {"initialized": True}
+
+
 async def handle_is_directory(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Handle is_directory method."""
     return {"is_directory": nexus_fs.is_directory(params.path, context=context)}
+
+
+# ---------------------------------------------------------------------------
+# Advisory lock handlers (F4 C5 — Rust kernel-backed)
+# ---------------------------------------------------------------------------
 
 
 def handle_sys_lock(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:  # noqa: ARG001
@@ -581,7 +897,7 @@ def handle_sys_unlock(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[st
 
 
 def handle_lock_acquire(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:  # noqa: ARG001
-    """Tier 2 lock_acquire -- dict wrapper over sys_lock for gRPC."""
+    """Tier 2 lock_acquire — dict wrapper over sys_lock for gRPC."""
     lock_id = nexus_fs.sys_lock(
         params.path,
         mode=getattr(params, "mode", "exclusive"),

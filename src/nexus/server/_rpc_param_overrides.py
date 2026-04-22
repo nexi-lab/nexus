@@ -14,11 +14,8 @@ from typing import Any
 
 from nexus.contracts.constants import DEFAULT_OAUTH_REDIRECT_URI
 from nexus.server._rpc_params_generated import (
-    SysAccessParams,
-    SysIsDirectoryParams,
-    SysMkdirParams,
+    AccessParams,
     SysRenameParams,
-    SysRmdirParams,
     SysUnlinkParams,
 )
 
@@ -42,6 +39,62 @@ class ReadParams:
     parsed: bool = False
     return_url: bool = False
     expires_in: int = 3600
+
+
+# ============================================================
+# RPC alias params with conservative defaults (Codex adversarial
+# review of nexi-lab/nexus#3701)
+# ============================================================
+#
+# These override the auto-generated ``MkdirParams`` / ``RmdirParams``
+# when accessed via the ``mkdir`` / ``rmdir`` RPC names so that legacy
+# clients sending ``{"path": "/foo"}`` without explicit ``parents`` /
+# ``exist_ok`` / ``recursive`` fields get the safe defaults
+# (``parents=False``, ``exist_ok=False``, ``recursive=False``) rather
+# than the NexusFS signature defaults (``parents=True``,
+# ``exist_ok=True``, ``recursive=True``).
+#
+# Background: ``NexusFS.mkdir`` has ``parents=True, exist_ok=True``
+# defaults (mkdir -p), and ``NexusFS.rmdir`` has ``recursive=True``
+# (rm -rf). The legacy RPC alias has always been conservative —
+# changing the defaults at the RPC layer silently turns a previously
+# safe ``rmdir`` call into a destructive recursive subtree delete,
+# and ``mkdir`` starts silently creating parent directories and
+# succeeding on existing paths. This was caught by Codex during the
+# #3701 PR review. These alias classes preserve the pre-#3701
+# behavior exactly.
+
+
+@dataclass
+class MkdirAliasParams:
+    """Legacy-conservative mkdir RPC alias params.
+
+    NexusFS.mkdir defaults to ``parents=True, exist_ok=True`` (mkdir
+    -p), but the ``mkdir`` RPC alias has historically used
+    conservative defaults so legacy clients that omit these fields
+    get a plain mkdir that errors on missing parents or existing
+    paths.
+    """
+
+    path: str
+    parents: bool = False
+    exist_ok: bool = False
+
+
+@dataclass
+class RmdirAliasParams:
+    """Legacy-conservative rmdir RPC alias params.
+
+    NexusFS.rmdir defaults to ``recursive=True`` (rm -rf), but the
+    ``rmdir`` RPC alias has historically been non-recursive so
+    legacy clients that omit ``recursive`` get subtree-safe
+    behavior. Dropping this override would turn a previously safe
+    rmdir into a destructive recursive delete — a real behavioral
+    regression.
+    """
+
+    path: str
+    recursive: bool = False
 
 
 @dataclass
@@ -202,20 +255,70 @@ class NamespaceGetParams:
 
 
 # ============================================================
+# 9. Semantic search initialization override
+# ============================================================
+#
+# ``ainitialize_semantic_search`` is a SearchService method that takes an
+# ``nx: NexusFS`` argument which cannot be serialized across RPC.  The
+# server-side handler ignores the param and injects the server's own
+# ``nexus_fs``, so we omit ``nx`` from the RPC params entirely and
+# accept only the embedding-pipeline config knobs.
+@dataclass
+class AInitializeSemanticSearchParams:
+    """Parameters for the RPC form of ``ainitialize_semantic_search``.
+
+    The client-side ``nexus search init`` CLI still passes ``nx=nx`` and
+    ``record_store_engine=None`` from its local-mode code path.  Accept
+    them as ignored optional fields so the dataclass construction
+    doesn't fail — the server-side handler injects its own ``nexus_fs``
+    for ``nx`` and leaves ``record_store_engine`` alone.
+    """
+
+    embedding_provider: str | None = None
+    embedding_model: str | None = None
+    api_key: str | None = None
+    chunk_size: int = 1024
+    chunk_strategy: str = "semantic"
+    async_mode: bool = True
+    cache_url: str | None = None
+    embedding_cache_ttl: int = 86400 * 3
+    # Ignored — client sends these but the server injects its own nx
+    nx: Any | None = None
+    record_store_engine: Any | None = None
+
+
+# ============================================================
 # Override METHOD_PARAMS entries for all override classes
 # ============================================================
 
 OVERRIDE_METHOD_PARAMS: dict[str, type] = {
     "sys_read": ReadParams,
-    # Short aliases for nexus-test / remote clients
+    # Short aliases for nexus-test / remote clients. Keys are alias names
+    # (not the canonical method on NexusFS) — the canonical method's
+    # generated params class is reused here so the alias and canonical
+    # forms accept the same params.
     "read": ReadParams,
     "write": WriteParams,
     "delete": SysUnlinkParams,
-    "exists": SysAccessParams,
-    "mkdir": SysMkdirParams,
-    "rmdir": SysRmdirParams,
+    "exists": AccessParams,
     "rename": SysRenameParams,
-    "is_directory": SysIsDirectoryParams,
+    # Codex review of #3701: restore legacy-conservative mkdir/rmdir
+    # alias defaults. NexusFS.mkdir defaults to ``parents=True,
+    # exist_ok=True`` (mkdir -p) and NexusFS.rmdir defaults to
+    # ``recursive=True`` (rm -rf), but the RPC alias has always been
+    # conservative. Using the auto-generated classes would silently
+    # flip legacy clients sending only ``{"path": ...}`` into mkdir-p
+    # semantics for mkdir and recursive subtree delete for rmdir — a
+    # real behavioral regression flagged by Codex.
+    "mkdir": MkdirAliasParams,
+    "rmdir": RmdirAliasParams,
+    # ``sys_rmdir`` is also kept as an alias for older remote clients
+    # (``nexus.backends.storage.remote`` still calls ``_call_rpc(
+    # "sys_rmdir", ...)``). It shares the same conservative defaults
+    # so both spellings behave identically. The dispatch table at
+    # ``nexus.server.rpc.dispatch`` registers ``sys_rmdir`` as a
+    # backward-compat alias to ``handle_rmdir``.
+    "sys_rmdir": RmdirAliasParams,
     "oauth_get_auth_url": OAuthGetAuthUrlParams,
     "oauth_exchange_code": OAuthExchangeCodeParams,
     # Admin
@@ -231,4 +334,8 @@ OVERRIDE_METHOD_PARAMS: dict[str, type] = {
     "namespace_get": NamespaceGetParams,
     # RemoteMetastore
     "sys_setattr": SetMetadataParams,
+    # Semantic search init (Issue #3728 follow-up — the client calls this
+    # via RemoteServiceProxy, and without an entry here ``parse_method_params``
+    # rejects the RPC as "Unknown method".)
+    "ainitialize_semantic_search": AInitializeSemanticSearchParams,
 }

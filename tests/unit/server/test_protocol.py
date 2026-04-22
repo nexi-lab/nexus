@@ -2,6 +2,7 @@
 
 import dataclasses
 from datetime import datetime
+from typing import cast
 
 import pytest
 
@@ -317,9 +318,24 @@ class TestCodegenConsistency:
             )
 
     def test_method_params_count(self):
-        """METHOD_PARAMS should have a reasonable number of entries."""
-        assert len(METHOD_PARAMS) >= 113, (
-            f"Expected at least 113 METHOD_PARAMS entries, got {len(METHOD_PARAMS)}"
+        """METHOD_PARAMS should have a reasonable number of entries.
+
+        Threshold history:
+        * Lowered from 113 → 90 in #3701 (commit d9d429abd) under the
+          mistaken assumption that ``nexus.system_services.*`` methods
+          had been deleted; in reality those methods just *moved* and
+          the codegen MODULES_TO_SCAN entries were stale.
+        * Restored to ≥150 after Codex review of #3701 (finding #3)
+          repaired MODULES_TO_SCAN to point at the post-refactor
+          canonical locations (``nexus.services.*``,
+          ``nexus.server.rpc.services.*``, ``nexus.bricks.auth.oauth.*``).
+          This guards against silently re-introducing stale module
+          paths that would once again drop METHOD_PARAMS entries and
+          break ``RemoteServiceProxy`` positional binding for any
+          missing RPC.
+        """
+        assert len(METHOD_PARAMS) >= 150, (
+            f"Expected at least 150 METHOD_PARAMS entries, got {len(METHOD_PARAMS)}"
         )
 
     def test_method_params_names_are_strings(self):
@@ -358,6 +374,96 @@ class TestCodegenConsistency:
             if not required:
                 result = parse_method_params(method_name, {})
                 assert isinstance(result, param_class)
+
+    def test_mkdir_rmdir_alias_defaults_are_conservative(self):
+        """Regression test for #3701 Codex finding #1.
+
+        NexusFS.mkdir defaults to ``parents=True, exist_ok=True``
+        (mkdir -p) and NexusFS.rmdir defaults to ``recursive=True``
+        (rm -rf), but the legacy ``mkdir`` / ``rmdir`` / ``sys_rmdir``
+        RPC aliases must override those defaults to the conservative
+        equivalents (``parents=False``, ``exist_ok=False``,
+        ``recursive=False``).
+
+        Dropping these overrides silently turns a previously safe
+        ``rmdir`` call into a destructive recursive subtree delete and
+        ``mkdir`` into mkdir-p — a real behavioral regression for
+        legacy clients that send only ``{"path": "/foo"}``.
+        """
+        from nexus.server._rpc_param_overrides import (
+            MkdirAliasParams,
+            RmdirAliasParams,
+        )
+
+        assert METHOD_PARAMS["mkdir"] is MkdirAliasParams
+        assert METHOD_PARAMS["rmdir"] is RmdirAliasParams
+        # sys_rmdir is the legacy spelling kept for older remote clients;
+        # it must share the same conservative defaults.
+        assert METHOD_PARAMS["sys_rmdir"] is RmdirAliasParams
+
+        mkdir_defaults = {f.name: f.default for f in dataclasses.fields(MkdirAliasParams)}
+        assert mkdir_defaults["parents"] is False
+        assert mkdir_defaults["exist_ok"] is False
+
+        rmdir_defaults = {f.name: f.default for f in dataclasses.fields(RmdirAliasParams)}
+        assert rmdir_defaults["recursive"] is False
+
+        # Round-trip through parse_method_params with only ``path`` set
+        # (the way legacy clients call) — defaults must hold.
+        parsed_mkdir = cast(MkdirAliasParams, parse_method_params("mkdir", {"path": "/foo"}))
+        assert parsed_mkdir.parents is False
+        assert parsed_mkdir.exist_ok is False
+
+        parsed_rmdir = cast(RmdirAliasParams, parse_method_params("rmdir", {"path": "/foo"}))
+        assert parsed_rmdir.recursive is False
+
+        parsed_sys_rmdir = cast(
+            RmdirAliasParams, parse_method_params("sys_rmdir", {"path": "/foo"})
+        )
+        assert parsed_sys_rmdir.recursive is False
+
+    def test_remote_proxy_positional_arg_resolution_for_critical_rpcs(self):
+        """Regression test for Codex review #2 finding #3.
+
+        ``RemoteServiceProxy``/``RPCProxyBase`` use METHOD_PARAMS to map
+        positional call arguments to parameter names. When an exposed
+        RPC is missing from METHOD_PARAMS, ``_get_param_names`` returns
+        ``[]`` and the positional caller's first argument is silently
+        dropped from the JSON-RPC body — the call serializes without
+        e.g. ``query`` for ``semantic_search``, ``path`` for
+        ``register_workspace``, ``agent_id`` for ``register_agent``.
+
+        Codex caught this for ``semantic_search`` (already exposed via
+        SearchService and called positionally). The root cause was a
+        stale ``MODULES_TO_SCAN`` in ``scripts/generate_rpc_params.py``
+        that pointed at deleted ``nexus.system_services.*`` paths,
+        causing the codegen to silently skip those modules. This test
+        guards the critical positional-call surface so future regen
+        drift can't reintroduce the same silent breakage.
+        """
+        from nexus.remote.rpc_proxy import RPCProxyBase
+
+        # Each tuple: (rpc_name, expected first positional param)
+        critical_positional_rpcs = [
+            ("semantic_search", "query"),
+            ("register_workspace", "path"),
+            ("register_agent", "agent_id"),
+        ]
+        for rpc_name, expected_first_param in critical_positional_rpcs:
+            assert rpc_name in METHOD_PARAMS, (
+                f"METHOD_PARAMS missing {rpc_name!r} — positional remote calls "
+                f"will silently misserialize. Check MODULES_TO_SCAN in "
+                f"scripts/generate_rpc_params.py."
+            )
+            param_names = RPCProxyBase._get_param_names(rpc_name)
+            assert param_names, (
+                f"_get_param_names({rpc_name!r}) returned [] — positional binding broken"
+            )
+            assert param_names[0] == expected_first_param, (
+                f"{rpc_name}: expected first positional={expected_first_param!r}, "
+                f"got {param_names[0]!r}. RemoteServiceProxy.{rpc_name}({expected_first_param}, ...) "
+                f"would serialize without {expected_first_param!r}."
+            )
 
 
 # ============================================================

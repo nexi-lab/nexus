@@ -76,7 +76,11 @@ EXCLUDED_METHODS: set[str] = {
     "get_dynamic_viewer_config",
     "read_with_dynamic_viewer",
     "apply_dynamic_viewer_filter",
-    "semantic_search",
+    # Codex review of #3701 (finding #3): semantic_search REMAINS exposed
+    # via SearchService and is called positionally by RemoteServiceProxy
+    # (e.g. ``proxy.semantic_search("needle", path="/docs", limit=5)``).
+    # Excluding it from METHOD_PARAMS broke that positional binding —
+    # restored so RPCProxyBase._get_param_names() can resolve "query".
     "semantic_search_stats",
     "initialize_semantic_search",
     "wait_for_changes",
@@ -87,6 +91,16 @@ EXCLUDED_METHODS: set[str] = {
 
 # Modules to scan for @rpc_expose methods.  We inspect each class in each
 # module and collect all methods that have ``_rpc_exposed = True``.
+#
+# Codex review of #3701 (finding #3): the previous list referenced stale
+# ``nexus.system_services.*`` module paths that were moved during the
+# kernel/services refactor. Those modules silently ImportError'd, the
+# codegen logged a warning, and the resulting METHOD_PARAMS was missing
+# entries for ``register_workspace``, ``register_agent``, and several
+# other still-exposed RPCs. RemoteServiceProxy / RPCProxyBase rely on
+# METHOD_PARAMS to map positional arguments to keyword names, so any
+# missing entry silently misserializes positional remote calls. Fix by
+# pointing at the canonical post-refactor locations.
 MODULES_TO_SCAN: list[str] = [
     "nexus.core.nexus_fs",
     # Search (moved to bricks tier, Issue #1287)
@@ -95,14 +109,24 @@ MODULES_TO_SCAN: list[str] = [
     "nexus.bricks.share_link.share_link_service",
     "nexus.bricks.versioning.version_service",
     "nexus.bricks.mount.mount_service",
-    "nexus.services.oauth.oauth_service",
-    "nexus.bricks.memory.memory_service",
-    "nexus.system_services.workspace.workspace_rpc_service",
-    "nexus.system_services.lifecycle.user_provisioning",
-    "nexus.system_services.agents.agent_service",
+    # OAuth credential service (moved into bricks/auth/oauth/)
+    "nexus.bricks.auth.oauth.credential_service",
+    # post-refactor canonical locations (was nexus.system_services.*)
+    "nexus.services.workspace.workspace_rpc_service",
+    "nexus.services.agents.agent_rpc_service",
+    "nexus.services.lifecycle.user_provisioning",
+    "nexus.services.acp.acp_rpc_service",
+    "nexus.services.metadata_export",
     # Brick services with @rpc_expose
     "nexus.bricks.mcp.mcp_service",
     "nexus.bricks.rebac.rebac_service",
+    # Server-side RPC services (Issue #2986: post-refactor split)
+    "nexus.server.rpc.services.snapshots_rpc",
+    "nexus.server.rpc.services.pay_rpc",
+    "nexus.server.rpc.services.governance_rpc",
+    "nexus.server.rpc.services.federation_rpc",
+    "nexus.server.rpc.services.events_rpc",
+    "nexus.server.rpc.services.audit_rpc",
 ]
 
 # Types that signal "operation context" — parameters with these types are
@@ -230,8 +254,23 @@ def _default_repr(default: Any) -> str:
 
 
 def _is_context_param(name: str, annotation_str: str) -> bool:
-    """Return True if this parameter represents an OperationContext."""
-    if annotation_str in CONTEXT_TYPES:
+    """Return True if this parameter represents an OperationContext.
+
+    Handles bare forms (``OperationContext``, ``OperationContext | None``)
+    AND single-quoted double-forward-reference forms
+    (``'OperationContext | None'``) that leak through when the source
+    has ``context: "OperationContext | None"`` with `from __future__
+    import annotations` — inspect.signature returns the annotation as
+    a string that still contains the literal inner quotes.
+    """
+    # Strip any outer single/double quote pair before comparing — this
+    # catches the double-forward-reference case.
+    stripped = annotation_str.strip()
+    if (stripped.startswith("'") and stripped.endswith("'")) or (
+        stripped.startswith('"') and stripped.endswith('"')
+    ):
+        stripped = stripped[1:-1]
+    if stripped in CONTEXT_TYPES or annotation_str in CONTEXT_TYPES:
         return True
     # Also exclude _context params (internal convention)
     return name.startswith("_") and "context" in name.lower()

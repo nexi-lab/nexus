@@ -17,7 +17,7 @@ All imports are lazy to keep ``import nexus.fs`` under 200ms.
 
 from __future__ import annotations
 
-__version__ = "0.4.6"
+__version__ = "0.4.8"
 
 # =============================================================================
 # LAZY IMPORTS — everything is deferred for <200ms import time
@@ -59,6 +59,8 @@ async def mount(
     at: str | None = None,
     mount_overrides: dict[str, str] | None = None,
     skip_unavailable: bool = False,
+    ephemeral: bool = False,
+    name: str | None = None,
 ) -> Any:
     """Mount one or more backends and return a SlimNexusFS facade.
 
@@ -72,6 +74,12 @@ async def mount(
             credentials, missing bucket, network error) are skipped with a
             warning instead of aborting the entire mount.  Useful for CLI
             commands that should not fail because of an unrelated broken mount.
+        ephemeral: If True, skip writing to mounts.json entirely.  The mount
+            is active for the lifetime of the returned SlimNexusFS object only.
+            Use this in tests and one-shot scripts to avoid accumulating stale
+            entries.  See also ``nexus.fs.testing.ephemeral_mount``.
+        name: Optional human label for the mount (single-URI only).  Stored
+            in mounts.json as ``"name"`` and usable with ``nexus-fs mount rm``.
 
     Returns:
         SlimNexusFS facade with all backends mounted.
@@ -107,6 +115,8 @@ async def mount(
         raise ValueError("At least one URI is required")
     if at is not None and len(uris) > 1:
         raise ValueError("'at' override is only valid with a single URI")
+    if name is not None and len(uris) > 1:
+        raise ValueError("'name' is only valid with a single URI")
 
     overrides = mount_overrides or {}
 
@@ -169,7 +179,6 @@ async def mount(
     # PathRouter, NexusFS, or the mount-entry writes fail.
     try:
         from nexus.contracts.constants import ROOT_ZONE_ID
-        from nexus.contracts.metadata import DT_MOUNT
         from nexus.contracts.types import OperationContext
         from nexus.core.config import PermissionConfig
         from nexus.core.nexus_fs import NexusFS
@@ -182,32 +191,44 @@ async def mount(
             ),
         )
 
+        from nexus.contracts.metadata import DT_MOUNT
+
         for mp, backend, _ in backends:
             kernel.sys_setattr(mp, entry_type=DT_MOUNT, backend=backend)
 
         # Persist mount entries so playground/fsspec/cp can auto-discover them.
         # Merges with existing entries so repeated `mount` calls accumulate.
         # Only persist URIs whose backends were successfully created.
+        # Skip entirely when ephemeral=True — caller explicitly opted out.
         skipped_uris = {u for u, _ in skipped}
-        try:
-            from nexus.fs._paths import save_persisted_mounts
+        if not ephemeral:
+            try:
+                from nexus.fs._paths import save_persisted_mounts
 
-            new_entries = [
-                {"uri": uri, "at": overrides.get(uri) or (at if i == 0 else None)}
-                for i, uri in enumerate(uris)
-                if uri not in skipped_uris
-            ]
-            save_persisted_mounts(new_entries)
-        except OSError as exc:
-            logger.warning(
-                "Could not write mounts.json (%s). "
-                "fsspec auto-discovery and playground will not find these mounts.",
-                exc,
-            )
+                new_entries = [
+                    {
+                        "uri": uri,
+                        "at": overrides.get(uri) or (at if i == 0 else None),
+                        "name": name if i == 0 else None,
+                    }
+                    for i, uri in enumerate(uris)
+                    if uri not in skipped_uris
+                ]
+                save_persisted_mounts(new_entries)
+            except OSError as exc:
+                logger.warning(
+                    "Could not write mounts.json (%s). "
+                    "fsspec auto-discovery and playground will not find these mounts.",
+                    exc,
+                )
 
-        # DT_MOUNT metadata entries are created by kernel_mount() automatically
-        # (called via DLC.mount → MountTable.add → kernel.kernel_mount).
-        # No separate metastore.put() needed here.
+        # Create DT_MOUNT or DT_EXTERNAL_STORAGE metadata entries for each mount point.
+        # Non-storage connectors (oauth/api backends like gdrive) must be registered as
+        # DT_EXTERNAL_STORAGE so the router returns ExternalRouteResult and reads go
+        # directly to backend.read_content() instead of through the kernel.
+        # Mirrors the logic in nexus.bricks.mount.mount_service (mount_service.py:608).
+        for mp, backend, spec in backends:
+            metastore.put(_make_mount_entry(mp, backend.name, entry_type=_resolve_entry_type(spec)))
     except Exception:
         for _, be, _ in backends:
             _close_backend(be)
@@ -222,6 +243,8 @@ def mount_sync(
     at: str | None = None,
     mount_overrides: dict[str, str] | None = None,
     skip_unavailable: bool = False,
+    ephemeral: bool = False,
+    name: str | None = None,
 ) -> Any:
     """Synchronous version of mount().
 
@@ -239,6 +262,8 @@ def mount_sync(
             at=at,
             mount_overrides=mount_overrides,
             skip_unavailable=skip_unavailable,
+            ephemeral=ephemeral,
+            name=name,
         )
     )
     return SyncNexusFS(async_fs)
@@ -254,11 +279,45 @@ def _close_backend(backend: Any) -> None:
             close()
 
 
+def _resolve_entry_type(spec: Any) -> int:
+    """Return DT_EXTERNAL_STORAGE for non-storage connectors, DT_MOUNT otherwise.
+
+    Built-in storage schemes (s3, gcs, local) are always DT_MOUNT.
+    Connector schemes look up the ConnectorRegistry category — oauth/api/cli
+    connectors (e.g. gdrive) get DT_EXTERNAL_STORAGE so the router bypasses
+    the kernel and dispatches reads directly to backend.read_content().
+    """
+    from nexus.contracts.metadata import DT_EXTERNAL_STORAGE, DT_MOUNT
+
+    if spec.scheme in ("s3", "gcs", "local"):
+        return DT_MOUNT
+
+    try:
+        from nexus.backends.base.registry import ConnectorRegistry
+
+        for candidate in [
+            f"{spec.scheme}_{spec.authority}" if spec.authority else None,
+            f"{spec.scheme}_connector",
+        ]:
+            if candidate is None:
+                continue
+            try:
+                info = ConnectorRegistry.get_info(candidate)
+                return DT_EXTERNAL_STORAGE if info.category != "storage" else DT_MOUNT
+            except KeyError:
+                continue
+    except Exception:
+        pass
+
+    return DT_MOUNT
+
+
 def _make_mount_entry(path: str, backend_name: str, *, entry_type: int | None = None) -> Any:
     """Create a FileMetadata entry for a mount point.
 
     Shared by mount() and tests to avoid repeating the 13-field construction.
-    entry_type defaults to DT_MOUNT.
+    entry_type defaults to DT_MOUNT; pass DT_EXTERNAL_STORAGE for non-storage
+    connectors (e.g. gdrive) so the router uses the ExternalRouteResult path.
     """
     from datetime import UTC, datetime
 

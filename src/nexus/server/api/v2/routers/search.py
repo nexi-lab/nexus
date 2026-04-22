@@ -1,9 +1,13 @@
-"""Search API v2 router (#2056, #2663).
+"""Search API v2 router (#2056, #2663, #3701).
 
 Provides search daemon endpoints:
 - GET  /api/v2/search/health   -- daemon health check (public, no auth)
 - GET  /api/v2/search/stats    -- daemon statistics
 - GET  /api/v2/search/query    -- execute search query
+- GET  /api/v2/search/grep     -- search file contents (#3701, small files=)
+- POST /api/v2/search/grep     -- same as GET, JSON body for large files=
+- GET  /api/v2/search/glob     -- search files by pattern (#3701, small files=)
+- POST /api/v2/search/glob     -- same as GET, JSON body for large files=
 - POST /api/v2/search/index    -- explicit document indexing
 - POST /api/v2/search/refresh  -- notify daemon of file change
 - POST /api/v2/search/expand   -- LLM-based query expansion
@@ -12,6 +16,13 @@ Rewritten for txtai backend (#2663):
 - txtai handles hybrid BM25+dense fusion internally
 - Zone-level isolation via txtai SQL WHERE (brick layer)
 - File-level ReBAC filtering in router (server layer)
+
+#3701 review:
+- Added grep/glob HTTP endpoints (previously MCP-only).
+- Collapsed duplicated response shaping into ``_serialize_search_result``.
+- Replaced the 3x over-fetch magic number with ``_REBAC_OVERFETCH_FACTOR``
+  and added ``truncated_by_permissions`` / ``permission_denial_rate``
+  instrumentation so callers can detect silent-undercount scenarios.
 """
 
 import logging
@@ -21,20 +32,26 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from nexus.lib.pagination import build_paginated_list_response
+from nexus.lib.rebac_filter import apply_rebac_filter as _apply_rebac_filter
+from nexus.lib.rebac_filter import compute_rebac_fetch_limit as _compute_rebac_fetch_limit
+from nexus.lib.rebac_filter import rebac_denial_stats as _rebac_denial_stats
 from nexus.server.dependencies import require_auth
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/search", tags=["search"])
 
-# Over-fetch factor to compensate for ReBAC filtering that strips
-# results that will be stripped during ReBAC filtering. 3x is the legacy
-# value chosen empirically when #2056 landed.
-_REBAC_OVERFETCH_FACTOR: int = 3
+# =============================================================================
+# Constants (#3701 review — Issue 16A)
+# =============================================================================
 
-# Threshold above which a high denial rate triggers a server-side warning
-# log (Issue 16A). Below this the silent-undercount risk is minimal.
-_REBAC_HIGH_DENIAL_WARN_THRESHOLD: float = 0.5
+# When a permission enforcer is active we over-fetch to compensate for
+# results that will be stripped during ReBAC filtering. 3x is the legacy
+# value chosen empirically when #2056 landed. Beware: when the denial rate
+# exceeds ~66% this factor is insufficient and the response reports
+# ``truncated_by_permissions`` so callers can detect the silent undercount.
+
+# ReBAC constants and helpers are now in nexus.lib.rebac_filter (#3731).
 
 # =============================================================================
 # Dependencies
@@ -79,108 +96,41 @@ def _get_async_read_session_factory(request: Request) -> Any:
     return factory
 
 
-def _compute_rebac_fetch_limit(effective_limit: int, has_enforcer: bool) -> int:
-    """Compute the over-fetch size for a given effective limit.
+# ReBAC filtering helpers are in nexus.lib.rebac_filter (#3731).
 
-    Shared helper used by ``search_query``, ``search_grep``, and
-    ``search_glob`` so the over-fetch factor lives in exactly one place.
-    Returns ``effective_limit`` unchanged when no permission enforcer is
-    active (#3701 review -- Issue 16A).
+# =============================================================================
+# Response shaping helpers (#3701 review — Issue 5A)
+# =============================================================================
+
+
+def _serialize_search_result(result: Any) -> dict[str, Any]:
+    """Serialize a single search result into the canonical response dict.
+
+    Collapses the 25-line dict comprehension previously duplicated across
+    the graph and non-graph branches of ``search_query``. Preserves the
+    pre-refactor field ordering, rounding, and None semantics.
+
+    Issue #3773: emits ``context`` when the result carries a non-None value
+    (omits the key otherwise to keep responses compact).
     """
-    if not has_enforcer:
-        return effective_limit
-    return effective_limit * _REBAC_OVERFETCH_FACTOR
-
-
-def _rebac_denial_stats(
-    pre_filter_count: int, post_filter_count: int, effective_limit: int
-) -> dict[str, Any]:
-    """Compute denial-rate instrumentation for response envelopes.
-
-    Returns a dict that gets merged into the response envelope so
-    callers can detect silent under-counting after permission filtering.
-    Emits a WARNING log when the denial rate is high *and* the caller
-    did not get enough results -- the exact failure mode 3x over-fetch
-    cannot always absorb.
-    """
-    denial_rate = 0.0 if pre_filter_count == 0 else 1.0 - (post_filter_count / pre_filter_count)
-
-    truncated = (
-        post_filter_count < effective_limit and denial_rate >= _REBAC_HIGH_DENIAL_WARN_THRESHOLD
-    )
-    if truncated:
-        logger.warning(
-            "[SEARCH-REBAC] high denial rate (%.1f%%) caused undercount: "
-            "got %d of %d requested; consider paginating or increasing limit",
-            denial_rate * 100.0,
-            post_filter_count,
-            effective_limit,
-        )
-    return {
-        "permission_denial_rate": round(denial_rate, 4),
-        "truncated_by_permissions": truncated,
+    out: dict[str, Any] = {
+        "path": result.path,
+        "chunk_text": result.chunk_text,
+        "score": round(result.score, 4),
+        "chunk_index": result.chunk_index,
+        "line_start": result.line_start,
+        "line_end": result.line_end,
+        "keyword_score": (round(result.keyword_score, 4) if result.keyword_score else None),
+        "vector_score": (round(result.vector_score, 4) if result.vector_score else None),
     }
-
-
-# =============================================================================
-# ReBAC filtering helper
-# =============================================================================
-
-
-def _normalize_path(path: str) -> str:
-    """Ensure path is absolute for ReBAC filter_list compatibility."""
-    if not path.startswith("/"):
-        return f"/{path}"
-    return path
-
-
-def _apply_rebac_filter(
-    results: list[Any],
-    permission_enforcer: Any | None,
-    auth_result: dict[str, Any],
-    zone_id: str,
-) -> tuple[list[Any], float]:
-    """Apply ReBAC file-level permission filtering to search results.
-
-    Returns (filtered_results, filter_time_ms).
-
-    Uses PermissionEnforcer.filter_search_results() which delegates to
-    rebac_list_objects() (Rust-accelerated, 1 SQL query + 1 Rust computation).
-    This bypasses the NamespaceManager pre-filter (search paths lack mount entries)
-    and avoids the stale graph cache bug in compute_permissions_bulk.
-    """
-    if permission_enforcer is None:
-        return results, 0.0
-
-    if not hasattr(permission_enforcer, "filter_search_results"):
-        return results, 0.0
-
-    user_id = auth_result.get("subject_id") or auth_result.get("user_id", "anonymous")
-    is_admin = bool(auth_result.get("is_admin", False))
-
-    # Normalize paths to absolute for ReBAC compatibility
-    path_map = {_normalize_path(r.path): r for r in results}
-    abs_paths = list(path_map.keys())
-
-    filter_start = time.perf_counter()
-    permitted_abs = permission_enforcer.filter_search_results(
-        abs_paths,
-        user_id=user_id,
-        zone_id=zone_id,
-        is_admin=is_admin,
-    )
-    filter_ms = (time.perf_counter() - filter_start) * 1000
-
-    logger.debug(
-        "[SEARCH-REBAC] permitted %d/%d paths in %.1fms",
-        len(permitted_abs),
-        len(abs_paths),
-        filter_ms,
-    )
-
-    permitted_set = set(permitted_abs)
-    filtered = [path_map[p] for p in abs_paths if p in permitted_set]
-    return filtered, filter_ms
+    splade = getattr(result, "splade_score", None)
+    out["splade_score"] = round(splade, 4) if splade is not None else None
+    reranker = getattr(result, "reranker_score", None)
+    out["reranker_score"] = round(reranker, 4) if reranker is not None else None
+    context = getattr(result, "context", None)
+    if context is not None:
+        out["context"] = context
+    return out
 
 
 # =============================================================================
@@ -296,10 +246,31 @@ async def search_query(
             effective_limit,
         )
 
-    # Over-fetch when permission filtering is active to compensate for filtered results
-    fetch_limit = effective_limit
-    if permission_enforcer is not None:
-        fetch_limit = effective_limit * 3
+    # Coerce graph_mode to 'none' when the txtai backend has graph
+    # disabled (the default — see DaemonConfig.txtai_graph). Without
+    # this, an explicit graph_mode=low|high|dual|auto request would
+    # silently fall through to ``graph_search`` which returns ``[]``
+    # for empty graph state, regressing to zero results instead of
+    # ordinary hybrid search. We log a warning so operators can flip
+    # ``NEXUS_TXTAI_GRAPH=true`` if they actually need graph queries.
+    _txtai_graph_enabled = bool(
+        getattr(getattr(search_daemon, "config", None), "txtai_graph", False)
+    )
+    if effective_graph_mode != "none" and not _txtai_graph_enabled:
+        logger.info(
+            "graph_mode=%s requested but txtai graph is disabled; "
+            "falling back to graph_mode=none. Set NEXUS_TXTAI_GRAPH=true "
+            "to enable graph-augmented search.",
+            effective_graph_mode,
+        )
+        effective_graph_mode = "none"
+
+    # Over-fetch when permission filtering is active to compensate for
+    # filtered results (#3701 review: Issue 16A — replaces the 3x magic
+    # number with a named constant and adds silent-undercount detection).
+    fetch_limit = _compute_rebac_fetch_limit(
+        effective_limit, has_enforcer=permission_enforcer is not None
+    )
 
     try:
         filter_ms = 0.0
@@ -321,9 +292,11 @@ async def search_query(
             )
 
             # ReBAC file-level filtering (Decision #17)
+            pre_filter_count = len(results)
             results, filter_ms = _apply_rebac_filter(
                 results, permission_enforcer, auth_result, zone_id
             )
+            post_filter_count = len(results)
             results = results[:effective_limit]
 
             latency_ms = (time.perf_counter() - start_time) * 1000
@@ -332,25 +305,14 @@ async def search_query(
                 "query": q,
                 "search_type": type,
                 "graph_mode": effective_graph_mode,
-                "results": [
-                    {
-                        "path": r.path,
-                        "chunk_text": r.chunk_text,
-                        "score": round(r.score, 4),
-                        "chunk_index": r.chunk_index,
-                        "line_start": r.line_start,
-                        "line_end": r.line_end,
-                        "keyword_score": round(r.keyword_score, 4) if r.keyword_score else None,
-                        "vector_score": round(r.vector_score, 4) if r.vector_score else None,
-                    }
-                    for r in results
-                ],
+                "results": [_serialize_search_result(r) for r in results],
                 "total": len(results),
                 "latency_ms": round(latency_ms, 2),
                 "latency_breakdown": {
                     "total_ms": round(latency_ms, 2),
                     "permission_filter_ms": round(filter_ms, 2),
                 },
+                **_rebac_denial_stats(pre_filter_count, post_filter_count, effective_limit),
             }
             if routing_info:
                 response["routing"] = routing_info
@@ -372,7 +334,9 @@ async def search_query(
         rerank_ms = daemon_timing.get("rerank_ms", 0.0)
 
         # ReBAC file-level filtering (Decision #17)
+        pre_filter_count = len(results)
         results, filter_ms = _apply_rebac_filter(results, permission_enforcer, auth_result, zone_id)
+        post_filter_count = len(results)
         results = results[:effective_limit]
 
         latency_ms = (time.perf_counter() - start_time) * 1000
@@ -381,25 +345,7 @@ async def search_query(
             "query": q,
             "search_type": type,
             "graph_mode": "none",
-            "results": [
-                {
-                    "path": r.path,
-                    "chunk_text": r.chunk_text,
-                    "score": round(r.score, 4),
-                    "chunk_index": r.chunk_index,
-                    "line_start": r.line_start,
-                    "line_end": r.line_end,
-                    "keyword_score": round(r.keyword_score, 4) if r.keyword_score else None,
-                    "vector_score": round(r.vector_score, 4) if r.vector_score else None,
-                    "splade_score": round(r.splade_score, 4)
-                    if r.splade_score is not None
-                    else None,
-                    "reranker_score": round(r.reranker_score, 4)
-                    if r.reranker_score is not None
-                    else None,
-                }
-                for r in results
-            ],
+            "results": [_serialize_search_result(r) for r in results],
             "total": len(results),
             "latency_ms": round(latency_ms, 2),
             "latency_breakdown": {
@@ -408,6 +354,7 @@ async def search_query(
                 "rerank_ms": round(rerank_ms, 2),
                 "permission_filter_ms": round(filter_ms, 2),
             },
+            **_rebac_denial_stats(pre_filter_count, post_filter_count, effective_limit),
         }
         if routing_info:
             response["routing"] = routing_info
@@ -434,8 +381,16 @@ async def _handle_federated_search(
 
     Delegates to FederatedSearchDispatcher which fans out search
     across all accessible zones and fuses results via raw score merge.
+
+    Issue #3778: when the active deployment profile is SANDBOX and every
+    federated peer reports unreachable, delegates to
+    ``SearchService._semantic_with_sandbox_fallback`` so the response
+    surfaces BM25S results stamped with ``semantic_degraded=True``.
     """
-    from nexus.bricks.search.federated_search import FederatedSearchDispatcher
+    from nexus.bricks.search.federated_search import (
+        FederatedSearchDispatcher,
+        is_all_peers_failed,
+    )
 
     # Resolve ReBAC service
     rebac = getattr(request.app.state, "rebac_service", None)
@@ -472,6 +427,46 @@ async def _handle_federated_search(
         fusion_method=fusion_method,
     )
 
+    # Issue #3778: SANDBOX profile — degrade semantic federation to local
+    # BM25S when every peer is unreachable.  Stamp results with
+    # ``semantic_degraded=True`` so callers can distinguish degraded pages.
+    semantic_degraded = False
+    profile = (getattr(request.app.state, "deployment_profile", "") or "").lower()
+    if (
+        profile == "sandbox"
+        and search_type in ("semantic", "hybrid")
+        and is_all_peers_failed(fed_response)
+    ):
+        nexus_fs = getattr(request.app.state, "nexus_fs", None)
+        search_service = None
+        if nexus_fs is not None:
+            try:
+                search_service = nexus_fs.service("search")
+            except Exception:
+                search_service = None
+
+        if search_service is not None:
+            from nexus.server.dependencies import get_operation_context
+
+            op_context = get_operation_context(auth_result)
+            bm25s_results = await search_service.semantic_search(
+                query=q,
+                path=path_filter or "/",
+                limit=limit,
+                search_mode="semantic",  # triggers SANDBOX fallback inside SearchService
+                context=op_context,
+            )
+            # semantic_search stamped semantic_degraded=True on each dict
+            # AND sets LAST_SEMANTIC_DEGRADED for this task — we prefer the
+            # contextvar so an empty BM25S result still surfaces degradation
+            # (R2 review).
+            fed_response.results = list(bm25s_results)
+            from nexus.contracts.search_types import LAST_SEMANTIC_DEGRADED
+
+            semantic_degraded = LAST_SEMANTIC_DEGRADED.get() or any(
+                isinstance(r, dict) and r.get("semantic_degraded") is True for r in bm25s_results
+            )
+
     response_dict: dict[str, Any] = {
         "query": q,
         "search_type": search_type,
@@ -489,6 +484,8 @@ async def _handle_federated_search(
         response_dict["zones_skipped"] = fed_response.zones_skipped
     if fed_response.cached:
         response_dict["cached"] = True
+    if semantic_degraded:
+        response_dict["semantic_degraded"] = True
     return response_dict
 
 
@@ -557,16 +554,19 @@ async def search_query_batch(
         filter_ms_total += filter_ms
         trimmed = filtered[:orig_limit]
 
-        formatted = [
-            {
+        formatted: list[dict[str, Any]] = []
+        for r in trimmed:
+            entry: dict[str, Any] = {
                 "path": r.path,
                 "chunk_text": r.chunk_text,
                 "score": round(r.score, 4),
                 "keyword_score": round(r.keyword_score, 4) if r.keyword_score is not None else None,
                 "vector_score": round(r.vector_score, 4) if r.vector_score is not None else None,
             }
-            for r in trimmed
-        ]
+            ctx = getattr(r, "context", None)
+            if ctx is not None:
+                entry["context"] = ctx
+            formatted.append(entry)
         response_queries.append(
             {
                 "query": q_spec.get("q", ""),
@@ -712,18 +712,14 @@ async def _do_grep_operation(
     # a second-layer guarantee for the HTTP surface.
     pre_filter_count = len(raw_results)
 
-    class _GrepResultShim:
-        __slots__ = ("path",)
-
-        def __init__(self, path: str) -> None:
-            self.path = path
-
-    shims = [_GrepResultShim(r["file"]) for r in raw_results if "file" in r]
-    filtered_shims, filter_ms = _apply_rebac_filter(
-        shims, permission_enforcer, auth_result, zone_id
+    # #3731: path_extractor eliminates the _GrepResultShim shim class.
+    filtered_results, filter_ms = _apply_rebac_filter(
+        raw_results,
+        permission_enforcer,
+        auth_result,
+        zone_id,
+        path_extractor=lambda r: r.get("file", ""),
     )
-    permitted_files = {shim.path for shim in filtered_shims}
-    filtered_results = [r for r in raw_results if r.get("file") in permitted_files]
     post_filter_count = len(filtered_results)
 
     # Sentinel detection: if we got at least one result beyond the
@@ -830,21 +826,15 @@ async def _do_glob_operation(
         logger.error("glob failed: %s", exc, exc_info=True)
         raise HTTPException(status_code=500, detail=f"glob failed: {type(exc).__name__}") from exc
 
-    # ReBAC filtering: wrap bare paths in a shim with a ``.path`` attribute
-    # so we can reuse ``_apply_rebac_filter``.
+    # #3731: path_extractor=identity eliminates the _GlobResultShim shim class.
     pre_filter_count = len(all_matches)
-
-    class _GlobResultShim:
-        __slots__ = ("path",)
-
-        def __init__(self, p: str) -> None:
-            self.path = p
-
-    shims = [_GlobResultShim(p) for p in all_matches]
-    filtered_shims, filter_ms = _apply_rebac_filter(
-        shims, permission_enforcer, auth_result, zone_id
+    filtered_paths, filter_ms = _apply_rebac_filter(
+        all_matches,
+        permission_enforcer,
+        auth_result,
+        zone_id,
+        path_extractor=lambda p: p,
     )
-    filtered_paths = [shim.path for shim in filtered_shims]
     post_filter_count = len(filtered_paths)
 
     total = len(filtered_paths)
@@ -1300,3 +1290,614 @@ async def search_expand(
     except Exception as e:
         logger.error("Query expansion error: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail="Query expansion failed") from e
+
+
+# =============================================================================
+# Per-directory semantic index scoping (Issue #3698)
+# =============================================================================
+#
+# Endpoints to opt a zone's directories into the embedding pipeline. When a
+# zone is in ``'scoped'`` mode, only files under registered directories are
+# embedded; BM25/FTS/Zoekt keep full coverage regardless.
+#
+# Authorization policy (Issue #6 #7): the caller must either be admin or
+# hold ReBAC write permission on the directory path. A full ReBAC integration
+# will arrive alongside the feature; this v1 uses admin-only so we don't
+# couple the search layer to the permission enforcer's async API today.
+
+
+async def _require_admin_or_path_write(
+    request: Request,
+    auth_result: dict[str, Any],
+    zone_id: str,
+    directory_path: str,
+) -> None:
+    """Policy gate for directory-scope mutation endpoints (Issue #3698 #6.7).
+
+    Policy: admin bypass, otherwise require write permission on the target
+    path via the (sync) ``permission_enforcer`` wired onto ``app.state``.
+    If no enforcer is available, deny (fail-closed) — a deployment without
+    a permission enforcer should be admin-only for mutation endpoints.
+    """
+    if auth_result.get("is_admin", False):
+        return
+
+    enforcer = getattr(request.app.state, "permission_enforcer", None)
+    if enforcer is None:
+        # Fail closed — no enforcer wired means non-admins cannot mutate
+        # index scope. Admins already bypassed above.
+        raise HTTPException(
+            status_code=403,
+            detail="index scope mutation requires admin privileges in this deployment",
+        )
+
+    from nexus.contracts.constants import ROOT_ZONE_ID
+    from nexus.contracts.types import OperationContext, Permission
+
+    ctx = OperationContext(
+        user_id=auth_result.get("subject_id", ""),
+        groups=auth_result.get("groups", []),
+        zone_id=zone_id or ROOT_ZONE_ID,
+        is_admin=False,
+        subject_type=auth_result.get("subject_type", "user"),
+        subject_id=auth_result.get("subject_id"),
+    )
+    try:
+        # PermissionEnforcer.check is sync — no await.
+        allowed = bool(enforcer.check(directory_path, Permission.WRITE, ctx))
+    except Exception as exc:
+        logger.warning("ReBAC write check failed for %s: %s", directory_path, exc)
+        raise HTTPException(status_code=500, detail="permission check failed") from exc
+
+    if not allowed:
+        raise HTTPException(
+            status_code=403,
+            detail=f"write permission required on {directory_path}",
+        )
+
+
+@router.post("/index-directory")
+async def register_indexed_directory(
+    request: Request,
+    payload: dict[str, Any],
+    auth_result: dict[str, Any] = Depends(require_auth),
+    search_daemon: Any = Depends(_get_search_daemon),
+) -> dict[str, Any]:
+    """Register a directory for scoped semantic indexing (Issue #3698).
+
+    Request body:
+        {"path": "/zone/zone_a/project/src"}  -- or any canonical virtual path
+
+    Policies (Issue #6):
+    - Non-existent directories are ALLOWED (register for future use).
+    - File paths (non-directory) are rejected — the daemon does not verify
+      this today; v1 trusts the caller. Filesystem existence check is a
+      follow-up.
+    - Path escapes (``..``) → 400.
+    - Missing zone → 404.
+    - Duplicate registration: **idempotent recovery**. Instead of 409,
+      we re-trigger the backfill so an operator who hit a previous
+      backfill failure can retry by re-issuing the same POST. The
+      response includes ``status: "already_registered"`` so the
+      caller can distinguish from a fresh registration.
+
+    Backfill outcomes (``backfill_status``):
+    - ``ok``: backfill ran cleanly (``backfill_files`` may be 0 if
+      the zone genuinely has no in-scope chunks yet).
+    - ``skewed``: a concurrent scope mutation superseded this
+      backfill. Response includes ``degraded: true``; operator should
+      retry by re-issuing this POST.
+    - ``failed``: hard failure reading or writing txtai. Metadata
+      change is committed; response includes ``degraded: true`` and
+      the error message. Operator can retry by re-issuing.
+    - ``no_op``: daemon has no DB or backend (test scaffolding).
+    """
+    from nexus.bricks.search.index_scope import (
+        DirectoryAlreadyRegisteredError,
+        InvalidDirectoryPathError,
+        ZoneNotFoundError,
+    )
+    from nexus.bricks.search.scope_ops import BackfillFailedError
+    from nexus.contracts.constants import ROOT_ZONE_ID
+
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="request body must be a JSON object")
+    directory_path = payload.get("path")
+    if not isinstance(directory_path, str) or not directory_path:
+        raise HTTPException(status_code=400, detail="'path' field is required")
+
+    zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
+
+    await _require_admin_or_path_write(request, auth_result, zone_id, directory_path)
+
+    canonical = directory_path
+    status_label = "registered"
+    backfill_status = "ok"
+    backfill_files = 0
+    backfill_error: str | None = None
+    backfill_attempted = 0
+
+    try:
+        canonical, result = await search_daemon.add_indexed_directory(zone_id, directory_path)
+        backfill_status = result.status
+        backfill_files = result.files
+    except ZoneNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except InvalidDirectoryPathError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except DirectoryAlreadyRegisteredError:
+        # **Idempotent retry**: instead of 409, re-trigger backfill so
+        # an operator who hit an earlier backfill failure can recover
+        # by re-issuing the same POST. Mark the response so the caller
+        # can distinguish from a fresh registration.
+        from nexus.bricks.search.scope_ops import validate_directory_path
+
+        canonical = validate_directory_path(directory_path)
+        status_label = "already_registered"
+        try:
+            result = await search_daemon.rerun_backfill_for_directory(zone_id, directory_path)
+            backfill_status = result.status
+            backfill_files = result.files
+        except BackfillFailedError as exc:
+            backfill_status = "failed"
+            backfill_error = str(exc)
+            backfill_attempted = exc.files_attempted
+            logger.warning(
+                "rerun backfill for already-registered %s failed: %s",
+                canonical,
+                exc,
+            )
+    except BackfillFailedError as exc:
+        # The metadata change committed BUT the backfill failed.
+        # Recompute canonical from the input since the exception
+        # doesn't carry it.
+        from nexus.bricks.search.scope_ops import validate_directory_path
+
+        try:
+            canonical = validate_directory_path(directory_path)
+        except Exception:
+            canonical = directory_path
+        backfill_status = "failed"
+        backfill_error = str(exc)
+        backfill_attempted = exc.files_attempted
+        logger.warning(
+            "register /index-directory %s succeeded but backfill failed: %s",
+            canonical,
+            exc,
+        )
+
+    response: dict[str, Any] = {
+        "zone_id": zone_id,
+        "path": canonical,
+        "status": status_label,
+        "backfill_status": backfill_status,
+        "backfill_files": backfill_files,
+    }
+    if backfill_status == "failed":
+        response["backfill_error"] = backfill_error
+        response["backfill_attempted"] = backfill_attempted
+        response["degraded"] = True
+    elif backfill_status == "skewed":
+        # Concurrent mutation superseded this backfill. The metadata
+        # change is committed but historical content was not
+        # backfilled. Operator should retry by re-issuing this POST.
+        response["degraded"] = True
+        response["backfill_hint"] = (
+            "concurrent scope mutation superseded the backfill; re-issue this POST to retry"
+        )
+    return response
+
+
+@router.delete("/index-directory")
+async def unregister_indexed_directory(
+    request: Request,
+    payload: dict[str, Any],
+    auth_result: dict[str, Any] = Depends(require_auth),
+    search_daemon: Any = Depends(_get_search_daemon),
+) -> dict[str, Any]:
+    """Unregister a directory from scoped semantic indexing (Issue #3698).
+
+    Returns 404 if the directory was not registered.
+
+    After successful unregistration this endpoint runs
+    ``purge_unscoped_embeddings`` for the zone so any txtai rows that
+    were under the removed directory disappear from semantic search at
+    the same instant. The canonical ``document_chunks`` rows are
+    preserved (purge only touches derived txtai state) so a future
+    re-registration or mode flip back to ``'all'`` can rebuild the
+    semantic index from the existing chunk store.
+    """
+    from nexus.bricks.search.index_scope import (
+        DirectoryNotRegisteredError,
+        InvalidDirectoryPathError,
+    )
+    from nexus.contracts.constants import ROOT_ZONE_ID
+
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="request body must be a JSON object")
+    directory_path = payload.get("path")
+    if not isinstance(directory_path, str) or not directory_path:
+        raise HTTPException(status_code=400, detail="'path' field is required")
+
+    zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
+
+    await _require_admin_or_path_write(request, auth_result, zone_id, directory_path)
+
+    try:
+        canonical = await search_daemon.remove_indexed_directory(zone_id, directory_path)
+    except DirectoryNotRegisteredError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except InvalidDirectoryPathError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    # Auto-purge stale derived txtai rows so query results stop showing
+    # the now-unscoped files immediately. The metadata change is the
+    # source of truth and is already committed.
+    #
+    # **Fail-closed at the HTTP boundary**: if purge raises, return
+    # 503 Service Unavailable so clients keying off HTTP status know
+    # the request did NOT fully succeed and stale txtai data may
+    # still be searchable. Returning 200 with ``degraded=true`` was
+    # misleading — automation that only inspects status codes would
+    # treat the de-scope as complete while txtai still served the
+    # old data, which is a real data-exposure risk at this trust
+    # boundary. The metadata change is NOT rolled back: the periodic
+    # _scope_refresh_loop will retry the purge on its next tick, and
+    # operators can also retry via /purge-unscoped explicitly.
+    try:
+        purged = await search_daemon.purge_unscoped_embeddings(zone_id)
+    except Exception as exc:
+        logger.warning(
+            "auto-purge after unregister failed for zone %s; "
+            "metadata committed, returning 503 so the caller retries",
+            zone_id,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "purge_failed",
+                "message": str(exc),
+                "zone_id": zone_id,
+                "path": canonical,
+                "metadata_committed": True,
+                "retry_via": "/api/v2/search/purge-unscoped",
+            },
+        ) from exc
+
+    return {
+        "zone_id": zone_id,
+        "path": canonical,
+        "status": "unregistered",
+        "purged": purged,
+        "purge_status": "ok",
+    }
+
+
+@router.get("/indexed-dirs")
+async def list_indexed_dirs(
+    auth_result: dict[str, Any] = Depends(require_auth),
+    search_daemon: Any = Depends(_get_search_daemon),
+) -> dict[str, Any]:
+    """List directories currently registered for scoped semantic indexing.
+
+    **Admin-only**: returning the registered directory list verbatim
+    leaks the prefix layout (e.g., customer / repo / project names
+    embedded in paths) to anyone who can authenticate against the
+    zone, even if they have no read permission on the prefixes
+    themselves. The mutation endpoints already require admin or
+    explicit ReBAC write; this read should match.
+
+    Returns an empty list if no directories are registered for the
+    zone (which, combined with zone mode 'all', means the zone
+    indexes everything).
+    """
+    from nexus.contracts.constants import ROOT_ZONE_ID
+
+    if not auth_result.get("is_admin", False):
+        raise HTTPException(
+            status_code=403,
+            detail="indexed-dirs is admin-only (registered directory "
+            "names can encode sensitive metadata)",
+        )
+
+    zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
+    mode = search_daemon._zone_indexing_modes.get(zone_id, "all")
+    directories = search_daemon.list_indexed_directories(zone_id)
+    return {
+        "zone_id": zone_id,
+        "indexing_mode": mode,
+        "directories": directories,
+    }
+
+
+@router.post("/indexing-mode")
+async def set_indexing_mode(
+    payload: dict[str, Any],
+    auth_result: dict[str, Any] = Depends(require_auth),
+    search_daemon: Any = Depends(_get_search_daemon),
+) -> dict[str, Any]:
+    """Flip a zone between ``'all'`` and ``'scoped'`` indexing modes (Issue #3698).
+
+    Admin-only. Takes effect immediately — the daemon updates its
+    in-memory state under ``_refresh_lock`` alongside the DB write.
+
+    When flipping a zone from ``'all'`` to ``'scoped'``, this endpoint
+    also runs ``purge_unscoped_embeddings`` for that zone so previously
+    embedded out-of-scope files become invisible to semantic search at
+    the same instant as the metadata change. Without that, the API
+    would claim "takes effect immediately" while stale txtai rows
+    remained searchable until a separate ``/purge-unscoped`` call ran.
+
+    Request body:
+        {"mode": "all" | "scoped", "zone_id": "optional — defaults to caller's zone"}
+    """
+    from nexus.bricks.search.index_scope import (
+        INDEX_MODE_ALL,
+        INDEX_MODE_SCOPED,
+        InvalidDirectoryPathError,
+        ZoneNotFoundError,
+    )
+    from nexus.bricks.search.scope_ops import BackfillFailedError
+    from nexus.contracts.constants import ROOT_ZONE_ID
+
+    if not auth_result.get("is_admin", False):
+        raise HTTPException(status_code=403, detail="set-indexing-mode is admin-only")
+
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="request body must be a JSON object")
+    mode = payload.get("mode")
+    if not isinstance(mode, str) or not mode:
+        raise HTTPException(status_code=400, detail="'mode' field is required")
+
+    zone_id = payload.get("zone_id") or auth_result.get("zone_id") or ROOT_ZONE_ID
+
+    backfill_status = "ok"
+    backfill_files = 0
+    backfill_error: str | None = None
+    backfill_attempted = 0
+    try:
+        result = await search_daemon.set_zone_indexing_mode(zone_id, mode)
+        if result is not None:
+            backfill_status = result.status
+            backfill_files = result.files
+    except ZoneNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except InvalidDirectoryPathError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except BackfillFailedError as exc:
+        # The mode flip from 'scoped' to 'all' committed BUT the
+        # backfill of historical content failed. The metadata change
+        # is irreversible (already persisted) so we surface a
+        # degraded-state response. The next write or daemon restart
+        # will pick up where backfill left off.
+        backfill_status = "failed"
+        backfill_error = str(exc)
+        backfill_attempted = exc.files_attempted
+        logger.warning(
+            "indexing-mode flip on zone %s succeeded but backfill failed: %s",
+            zone_id,
+            exc,
+        )
+
+    purged: dict[str, int] | None = None
+    if mode == INDEX_MODE_SCOPED:
+        # Auto-purge stale derived rows so de-scoping is enforced
+        # immediately at query time, not just at the next write.
+        #
+        # **Fail-closed at the HTTP boundary**: if purge raises,
+        # return 503 so clients keying off HTTP status know the
+        # request did NOT fully succeed and stale txtai data may
+        # still be searchable. Returning 200 with ``degraded=true``
+        # was misleading at this trust boundary. The metadata change
+        # is NOT rolled back: the periodic _scope_refresh_loop will
+        # retry the purge on its next tick, and operators can also
+        # retry via /purge-unscoped explicitly.
+        try:
+            purged = await search_daemon.purge_unscoped_embeddings(zone_id)
+        except Exception as exc:
+            logger.warning(
+                "auto-purge after mode=scoped flip failed for zone %s; "
+                "metadata committed, returning 503 so the caller retries",
+                zone_id,
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "purge_failed",
+                    "message": str(exc),
+                    "zone_id": zone_id,
+                    "indexing_mode": mode,
+                    "metadata_committed": True,
+                    "retry_via": "/api/v2/search/purge-unscoped",
+                },
+            ) from exc
+
+    response: dict[str, Any] = {
+        "zone_id": zone_id,
+        "indexing_mode": mode,
+        "status": "updated",
+    }
+    if mode == INDEX_MODE_ALL:
+        response["backfill_status"] = backfill_status
+        response["backfill_files"] = backfill_files
+        if backfill_status == "failed":
+            response["backfill_error"] = backfill_error
+            response["backfill_attempted"] = backfill_attempted
+            response["degraded"] = True
+        elif backfill_status == "skewed":
+            response["degraded"] = True
+            response["backfill_hint"] = (
+                "concurrent scope mutation superseded the backfill; re-issue this POST to retry"
+            )
+    if mode == INDEX_MODE_SCOPED:
+        response["purge_status"] = "ok"
+        if purged is not None:
+            response["purged"] = purged
+    return response
+
+
+@router.post("/purge-unscoped")
+async def purge_unscoped_embeddings(
+    payload: dict[str, Any] | None = None,
+    auth_result: dict[str, Any] = Depends(require_auth),
+    search_daemon: Any = Depends(_get_search_daemon),
+) -> dict[str, Any]:
+    """Admin-only: purge derived embedding artifacts for files outside any scope.
+
+    Destructive operation (Issue #3698). Call this after unregistering
+    directories to clean up stale txtai sections/vectors for files that
+    are no longer in scope. Only zones in ``'scoped'`` mode are affected.
+
+    Only deletes **derived** txtai state (``sections``, ``vectors``,
+    in-memory index). The canonical ``document_chunks`` table is
+    preserved so a future mode-flip back to ``'all'`` can rebuild
+    semantic search from existing chunks.
+
+    Request body (optional):
+        {"zone_id": "zone-name"}    # defaults to caller's zone
+
+    Both this endpoint and ``/indexing-mode`` accept the same payload
+    shape so an admin operating across zones doesn't accidentally
+    purge the wrong one.
+    """
+    from nexus.contracts.constants import ROOT_ZONE_ID
+
+    if not auth_result.get("is_admin", False):
+        raise HTTPException(
+            status_code=403,
+            detail="purge-unscoped is admin-only",
+        )
+
+    body: dict[str, Any] = payload or {}
+    zone_id = body.get("zone_id") or auth_result.get("zone_id") or ROOT_ZONE_ID
+    counts = await search_daemon.purge_unscoped_embeddings(zone_id)
+    return {
+        "zone_id": zone_id,
+        "purged": counts,
+    }
+
+
+# =============================================================================
+# /locate — global path+title skeleton search (Issue #3725)
+# =============================================================================
+
+
+class _LocateRequest(dict):
+    """Pydantic-free request body model for /locate.
+
+    Using a plain dict subclass keeps the endpoint self-contained and avoids
+    adding a Pydantic model for a single struct.  Field validation is inline.
+    """
+
+
+@router.post("/locate")
+async def search_locate(
+    request: Request,
+    payload: dict[str, Any] | None = None,
+    auth_result: dict[str, Any] = Depends(require_auth),
+    search_daemon: Any = Depends(_get_search_daemon),
+) -> dict[str, Any]:
+    """Fast global path+title file locator (Issue #3725).
+
+    Returns ranked candidate file paths whose path tokens or extracted title
+    match the query.  No embeddings, no LLM — BM25-lite over path+title.
+
+    Request body (JSON):
+        q          (str, required)   Natural-language or keyword query.
+        zone_id    (str, optional)   Zone to search; defaults to caller's zone.
+        limit      (int, optional)   Max candidates, 1–100, default 20.
+        path_prefix (str, optional)  Restrict results to this path prefix.
+
+    Response:
+        {
+          "candidates": [
+            {"path": "/workspace/src/auth/login.py", "score": 8.4, "title": "..."},
+            ...
+          ],
+          "total_before_filter": <int>,
+          "permission_denial_rate": <float>,
+          "truncated_by_permissions": <bool>,
+          "elapsed_ms": <float>
+        }
+    """
+    from nexus.contracts.constants import ROOT_ZONE_ID
+
+    start_time = time.perf_counter()
+
+    if not search_daemon.is_initialized:
+        raise HTTPException(status_code=503, detail="Search daemon is still initializing")
+
+    if not hasattr(search_daemon, "locate"):
+        raise HTTPException(
+            status_code=501, detail="Skeleton index not available on this daemon version"
+        )
+
+    body: dict[str, Any] = payload or {}
+    q: str = body.get("q", "")
+    if not q or not q.strip():
+        raise HTTPException(status_code=400, detail="'q' is required and must be non-empty")
+
+    caller_zone = auth_result.get("zone_id") or ROOT_ZONE_ID
+    zone_id: str = body.get("zone_id") or caller_zone
+    path_prefix: str | None = body.get("path_prefix")
+
+    raw_limit = body.get("limit", 20)
+    try:
+        effective_limit = max(1, min(100, int(raw_limit)))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="'limit' must be an integer 1–100") from None
+
+    # Over-fetch for ReBAC filtering (follows _compute_rebac_fetch_limit pattern)
+    permission_enforcer = getattr(request.app.state, "permission_enforcer", None)
+    fetch_limit = _compute_rebac_fetch_limit(
+        effective_limit, has_enforcer=permission_enforcer is not None
+    )
+
+    # --- Query skeleton index ---
+    raw_candidates = await search_daemon.locate(
+        q,
+        zone_id=zone_id,
+        limit=fetch_limit,
+        path_prefix=path_prefix,
+    )
+    total_before_filter = len(raw_candidates)
+
+    # --- ReBAC filtering (11A) ---
+    # Adapt candidates to the shape _apply_rebac_filter expects (needs .path attr)
+    class _PathResult:
+        def __init__(self, d: dict[str, Any]) -> None:
+            self.path = d["path"]
+            self._d = d
+
+    result_objects = [_PathResult(c) for c in raw_candidates]
+    filtered_objects, filter_ms = _apply_rebac_filter(
+        result_objects,
+        permission_enforcer,
+        auth_result,
+        zone_id,
+    )
+
+    # Unpack back to dicts and truncate to effective_limit
+    candidates = [obj._d for obj in filtered_objects[:effective_limit]]
+
+    denial_stats = _rebac_denial_stats(total_before_filter, len(filtered_objects), effective_limit)
+    elapsed_ms = (time.perf_counter() - start_time) * 1000
+
+    logger.debug(
+        "[LOCATE] q=%r zone=%s → %d/%d candidates in %.1fms (filter %.1fms)",
+        q,
+        zone_id,
+        len(candidates),
+        total_before_filter,
+        elapsed_ms,
+        filter_ms,
+    )
+
+    return {
+        "candidates": candidates,
+        "total_before_filter": total_before_filter,
+        "elapsed_ms": round(elapsed_ms, 2),
+        **denial_stats,
+    }

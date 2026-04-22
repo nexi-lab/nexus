@@ -16,28 +16,73 @@ from nexus.bricks.mcp.server import create_mcp_server
 # ============================================================================
 
 
+def _components_of(server, prefix: str) -> dict[str, object]:
+    """Return all components of ``prefix`` type (``tool`` / ``prompt`` /
+    ``resource`` / ``template``) keyed by their public name.
+
+    Shim that works for both FastMCP 2.x and 3.x so individual test
+    helpers don't have to repeat the version split.
+    """
+    # FastMCP 3.x — single component registry keyed by "<type>:<name>@..."
+    if hasattr(server, "_local_provider"):
+        lp = server._local_provider
+        return {v.name: v for k, v in lp._components.items() if k.startswith(f"{prefix}:")}
+    # FastMCP 2.x — per-type managers. Only the attribute mappings we
+    # still exercise are listed here; anything else raises.
+    attr = {
+        "tool": "_tool_manager",
+        "prompt": "_prompt_manager",
+        "resource": "_resource_manager",
+        "template": "_resource_manager",
+    }[prefix]
+    mgr = getattr(server, attr)
+    if prefix == "tool":
+        return dict(mgr._tools)
+    if prefix == "prompt":
+        return dict(mgr._prompts)
+    if prefix == "resource":
+        return dict(getattr(mgr, "_resources", {}))
+    if prefix == "template":
+        return dict(getattr(mgr, "_templates", {}))
+    raise ValueError(f"unknown component prefix: {prefix}")
+
+
 def get_tool(server, tool_name: str):
-    """Helper to get a tool from the MCP server."""
-    return server._tool_manager._tools[tool_name]
+    """Helper to get a tool from the MCP server (FastMCP 2.x and 3.x compat)."""
+    return _components_of(server, "tool")[tool_name]
 
 
 def get_prompt(server, prompt_name: str):
-    """Helper to get a prompt from the MCP server."""
-    return server._prompt_manager._prompts[prompt_name]
+    """Helper to get a prompt from the MCP server (FastMCP 2.x and 3.x compat)."""
+    return _components_of(server, "prompt")[prompt_name]
 
 
 def get_resource_template(server, uri_pattern: str):
-    """Helper to get a resource template from the MCP server."""
-    templates = server._resource_manager._templates
-    for template_key, template in templates.items():
-        if uri_pattern in str(template_key):
-            return template
+    """Helper to get a resource template from the MCP server (FastMCP 2.x+3.x).
+
+    FastMCP 3.x separates static resources from URI-pattern templates
+    into two component buckets. We search the templates bucket first
+    (matching by URI pattern) and fall back to resources for the
+    static case so older tests keep working.
+    """
+    for prefix in ("template", "resource"):
+        for key, template in _components_of(server, prefix).items():
+            # In 3.x the component key is the component's .name (so we
+            # match on the registered URI via the template's
+            # ``uri_template`` or ``uri`` attribute). Fall back to
+            # substring matching the key itself so pre-3.x templates
+            # keyed by URI string still match.
+            candidate_uri = (
+                getattr(template, "uri_template", None) or getattr(template, "uri", None) or key
+            )
+            if uri_pattern in str(candidate_uri):
+                return template
     raise KeyError(f"Resource template with pattern '{uri_pattern}' not found")
 
 
 def tool_exists(server, tool_name: str) -> bool:
-    """Check if a tool exists in the server."""
-    return tool_name in server._tool_manager._tools
+    """Check if a tool exists in the server (FastMCP 2.x and 3.x compat)."""
+    return tool_name in _components_of(server, "tool")
 
 
 # ============================================================================
@@ -49,11 +94,11 @@ def tool_exists(server, tool_name: str) -> bool:
 def mock_nx_basic():
     """Create a basic mock NexusFS with file operations."""
     nx = Mock()
-    nx.sys_read = AsyncMock(return_value=b"test content")
-    nx.sys_write = AsyncMock()
-    nx.write = AsyncMock()
-    nx.sys_unlink = AsyncMock()
-    nx.sys_readdir = AsyncMock(return_value=["/file1.txt", "/file2.txt"])
+    nx.sys_read = Mock(return_value=b"test content")
+    nx.sys_write = Mock()
+    nx.write = Mock()
+    nx.sys_unlink = Mock()
+    nx.sys_readdir = Mock(return_value=["/file1.txt", "/file2.txt"])
     _mock_search = Mock()
     _mock_search.glob = Mock(return_value=["test.py", "main.py"])
     _mock_search.grep = AsyncMock(
@@ -62,10 +107,10 @@ def mock_nx_basic():
     _service_map = {"search": _mock_search}
     nx.service = Mock(side_effect=lambda name: _service_map.get(name))
     nx._mock_search = _mock_search  # internal alias for assertion access
-    nx.access = AsyncMock(return_value=True)
-    nx.is_directory = AsyncMock(return_value=False)
-    nx.mkdir = AsyncMock()
-    nx.rmdir = AsyncMock()
+    nx.access = Mock(return_value=True)
+    nx.is_directory = Mock(return_value=False)
+    nx.mkdir = Mock()
+    nx.rmdir = Mock()
     nx.edit = Mock(
         return_value={
             "success": True,
@@ -82,8 +127,8 @@ def mock_nx_basic():
 def mock_nx_with_workflows():
     """Create mock NexusFS with workflow system."""
     nx = Mock()
-    nx.sys_read = AsyncMock(return_value=b"test")
-    nx.sys_write = AsyncMock()
+    nx.sys_read = Mock(return_value=b"test")
+    nx.sys_write = Mock()
 
     # Add workflows system
     nx.workflows = Mock()
@@ -97,16 +142,27 @@ def mock_nx_with_workflows():
 
 @pytest.fixture
 def mock_nx_with_search():
-    """Create mock NexusFS with semantic search."""
-    nx = Mock()
-    nx.sys_read = AsyncMock(return_value=b"test")
-    nx.sys_write = AsyncMock()
+    """Create mock NexusFS with semantic search.
 
-    # Add async semantic_search method
-    async def mock_semantic_search(query, path="/", limit=10, **kwargs):
+    Issue #3778: semantic search flows through ``nx.service("search").semantic_search``
+    (not a direct attribute on NexusFS) since the MCP handler resolves
+    SearchService from the kernel service registry.
+    """
+    nx = Mock()
+    nx.sys_read = Mock(return_value=b"test")
+    nx.sys_write = Mock()
+
+    async def mock_semantic_search(query, path="/", search_mode="semantic", limit=10, **kwargs):
         return [{"path": "/file1.txt", "score": 0.95, "snippet": "relevant content"}]
 
-    nx.semantic_search = AsyncMock(side_effect=mock_semantic_search)
+    _mock_search = Mock()
+    _mock_search.semantic_search = AsyncMock(side_effect=mock_semantic_search)
+    # Alias kept for legacy assertions that target the search service callable.
+    nx.semantic_search = _mock_search.semantic_search
+
+    _service_map = {"search": _mock_search}
+    nx.service = Mock(side_effect=lambda name: _service_map.get(name))
+    nx._mock_search = _mock_search
 
     return nx
 
@@ -115,8 +171,8 @@ def mock_nx_with_search():
 def mock_nx_with_sandbox():
     """Create mock NexusFS with sandbox support."""
     nx = Mock()
-    nx.sys_read = AsyncMock(return_value=b"test")
-    nx.sys_write = AsyncMock()
+    nx.sys_read = Mock(return_value=b"test")
+    nx.sys_write = Mock()
 
     # Add sandbox support
     nx.sandbox_available = True
@@ -153,8 +209,8 @@ def mock_nx_with_sandbox():
 def mock_nx_no_sandbox():
     """Create mock NexusFS without sandbox support."""
     nx = Mock()
-    nx.sys_read = AsyncMock(return_value=b"test")
-    nx.sys_write = AsyncMock()
+    nx.sys_read = Mock(return_value=b"test")
+    nx.sys_write = Mock()
     nx.sandbox_available = False
 
     return nx
@@ -166,17 +222,17 @@ def mock_nx_full():
     nx = Mock()
 
     # Basic file operations (async syscalls)
-    nx.sys_read = AsyncMock(return_value=b"test content")
-    nx.sys_write = AsyncMock()
-    nx.write = AsyncMock()
-    nx.sys_unlink = AsyncMock()
-    nx.sys_readdir = AsyncMock(return_value=["/file1.txt"])
+    nx.sys_read = Mock(return_value=b"test content")
+    nx.sys_write = Mock()
+    nx.write = Mock()
+    nx.sys_unlink = Mock()
+    nx.sys_readdir = Mock(return_value=["/file1.txt"])
     nx.glob = Mock(return_value=["test.py"])
     nx.grep = Mock(return_value=[{"file": "test.py", "line": 10, "content": "match"}])
-    nx.access = AsyncMock(return_value=True)
-    nx.is_directory = AsyncMock(return_value=False)
-    nx.mkdir = AsyncMock()
-    nx.rmdir = AsyncMock()
+    nx.access = Mock(return_value=True)
+    nx.is_directory = Mock(return_value=False)
+    nx.mkdir = Mock()
+    nx.rmdir = Mock()
 
     # Memory system via service("memory_provider") (get_memory_api() reads this)
     mock_memory = Mock()
@@ -227,7 +283,7 @@ class TestFileOperationTools:
 
         # Access tool via helper
         read_tool = get_tool(server, "nexus_read_file")
-        result = read_tool.fn(path="/test.txt")
+        result = await read_tool.fn(path="/test.txt")
 
         assert result == "test content"
         mock_nx_basic.sys_read.assert_called_once_with("/test.txt")
@@ -238,7 +294,7 @@ class TestFileOperationTools:
         server = await create_mcp_server(nx=mock_nx_basic)
 
         read_tool = get_tool(server, "nexus_read_file")
-        result = read_tool.fn(path="/test.bin")
+        result = await read_tool.fn(path="/test.bin")
 
         assert result == "binary content"
 
@@ -282,7 +338,7 @@ class TestFileOperationTools:
         getattr(mock_nx_basic, mock_method).side_effect = error_class(error_msg)
         server = await create_mcp_server(nx=mock_nx_basic)
         tool = get_tool(server, tool_name)
-        result = tool.fn(**call_kwargs)
+        result = await tool.fn(**call_kwargs)
         assert "Error" in result or "error" in result.lower()
 
     async def test_write_file_success(self, mock_nx_basic):
@@ -290,7 +346,7 @@ class TestFileOperationTools:
         server = await create_mcp_server(nx=mock_nx_basic)
 
         write_tool = get_tool(server, "nexus_write_file")
-        result = write_tool.fn(path="/test.txt", content="new content")
+        result = await write_tool.fn(path="/test.txt", content="new content")
 
         assert "Successfully wrote" in result
         assert "/test.txt" in result
@@ -306,7 +362,7 @@ class TestFileOperationTools:
         server = await create_mcp_server(nx=mock_nx_basic)
 
         delete_tool = get_tool(server, "nexus_delete_file")
-        result = delete_tool.fn(path="/test.txt")
+        result = await delete_tool.fn(path="/test.txt")
 
         assert "Successfully deleted" in result
         assert "/test.txt" in result
@@ -317,7 +373,7 @@ class TestFileOperationTools:
         server = await create_mcp_server(nx=mock_nx_basic)
 
         list_tool = get_tool(server, "nexus_list_files")
-        result = list_tool.fn(path="/data")
+        result = await list_tool.fn(path="/data")
 
         # Result should be JSON with pagination metadata
         response = json.loads(result)
@@ -334,7 +390,7 @@ class TestFileOperationTools:
         server = await create_mcp_server(nx=mock_nx_basic)
 
         list_tool = get_tool(server, "nexus_list_files")
-        list_tool.fn(path="/data", recursive=True, details=True)
+        await list_tool.fn(path="/data", recursive=True, details=True)
 
         mock_nx_basic.sys_readdir.assert_called_once_with("/data", recursive=True, details=True)
 
@@ -345,7 +401,7 @@ class TestFileOperationTools:
         server = await create_mcp_server(nx=mock_nx_basic)
 
         info_tool = get_tool(server, "nexus_file_info")
-        result = info_tool.fn(path="/test.txt")
+        result = await info_tool.fn(path="/test.txt")
 
         info = json.loads(result)
         assert info["exists"] is True
@@ -358,7 +414,7 @@ class TestFileOperationTools:
         server = await create_mcp_server(nx=mock_nx_basic)
 
         info_tool = get_tool(server, "nexus_file_info")
-        result = info_tool.fn(path="/missing.txt")
+        result = await info_tool.fn(path="/missing.txt")
 
         assert "File not found" in result
         assert "/missing.txt" in result
@@ -370,7 +426,7 @@ class TestFileOperationTools:
         server = await create_mcp_server(nx=mock_nx_basic)
 
         info_tool = get_tool(server, "nexus_file_info")
-        result = info_tool.fn(path="/data")
+        result = await info_tool.fn(path="/data")
 
         info = json.loads(result)
         assert info["is_directory"] is True
@@ -541,7 +597,7 @@ class TestDirectoryOperationTools:
         server = await create_mcp_server(nx=mock_nx_basic)
 
         mkdir_tool = get_tool(server, "nexus_mkdir")
-        result = mkdir_tool.fn(path="/new_dir")
+        result = await mkdir_tool.fn(path="/new_dir")
 
         assert "Successfully created directory" in result
         assert "/new_dir" in result
@@ -567,7 +623,7 @@ class TestDirectoryOperationTools:
         getattr(mock_nx_basic, mock_method).side_effect = error_class(error_msg)
         server = await create_mcp_server(nx=mock_nx_basic)
         tool = get_tool(server, tool_name)
-        result = tool.fn(**call_kwargs)
+        result = await tool.fn(**call_kwargs)
         assert "Error" in result or "error" in result.lower()
 
     async def test_rmdir_success(self, mock_nx_basic):
@@ -575,7 +631,7 @@ class TestDirectoryOperationTools:
         server = await create_mcp_server(nx=mock_nx_basic)
 
         rmdir_tool = get_tool(server, "nexus_rmdir")
-        result = rmdir_tool.fn(path="/old_dir")
+        result = await rmdir_tool.fn(path="/old_dir")
 
         assert "Successfully removed directory" in result
         assert "/old_dir" in result
@@ -586,7 +642,7 @@ class TestDirectoryOperationTools:
         server = await create_mcp_server(nx=mock_nx_basic)
 
         rmdir_tool = get_tool(server, "nexus_rmdir")
-        rmdir_tool.fn(path="/old_dir", recursive=True)
+        await rmdir_tool.fn(path="/old_dir", recursive=True)
 
         mock_nx_basic.rmdir.assert_called_once_with("/old_dir", recursive=True)
 
@@ -612,7 +668,15 @@ class TestSearchTools:
         assert "total" in response
         assert isinstance(response["items"], list)
         assert "test.py" in response["items"]
-        mock_nx_basic._mock_search.glob.assert_called_once_with("*.py", "/src")
+        # #3701: files=None forwarded by default so SearchService can
+        # distinguish "no filter" from "explicit empty filter".
+        # Codex review #3 finding #1: ``context=...`` is now always
+        # supplied (resolved from the connection's identity) so the
+        # underlying SearchService sees an explicit OperationContext
+        # instead of running under an ambient default.
+        mock_nx_basic._mock_search.glob.assert_called_once_with(
+            "*.py", "/src", files=None, context=ANY
+        )
 
     async def test_glob_default_path(self, mock_nx_basic):
         """Test glob with default path."""
@@ -621,7 +685,9 @@ class TestSearchTools:
         glob_tool = get_tool(server, "nexus_glob")
         glob_tool.fn(pattern="*.txt")
 
-        mock_nx_basic._mock_search.glob.assert_called_once_with("*.txt", "/")
+        mock_nx_basic._mock_search.glob.assert_called_once_with(
+            "*.txt", "/", files=None, context=ANY
+        )
 
     async def test_glob_error(self, mock_nx_basic):
         """Test glob error handling."""
@@ -635,7 +701,18 @@ class TestSearchTools:
         assert "Invalid pattern" in result
 
     async def test_grep_success(self, mock_nx_basic):
-        """Test grep content search successfully."""
+        """Test grep content search successfully.
+
+        Asserts the #3701 Issue 14 fix: MCP grep passes ``max_results`` to
+        SearchService so the underlying call can return enough matches for
+        the caller's requested page rather than silently capping at 100.
+
+        Codex review #1 finding #2: ``max_results`` is now
+        ``limit + offset + 1`` (sentinel fetch) so ``has_more`` can be
+        detected reliably. Codex review #3 finding #1: ``context=...``
+        is now always passed so SearchService runs under an explicit
+        identity.
+        """
         server = await create_mcp_server(nx=mock_nx_basic)
 
         grep_tool = get_tool(server, "nexus_grep")
@@ -646,7 +723,15 @@ class TestSearchTools:
         assert "items" in response
         assert "total" in response
         assert isinstance(response["items"], list)
-        mock_nx_basic._mock_search.grep.assert_called_once_with("TODO", "/src", ignore_case=False)
+        # Default limit=100, offset=0 → sentinel_window = 100 + 0 + 1 = 101
+        mock_nx_basic._mock_search.grep.assert_called_once_with(
+            "TODO",
+            "/src",
+            ignore_case=False,
+            max_results=101,
+            files=None,
+            context=ANY,
+        )
 
     async def test_grep_ignore_case(self, mock_nx_basic):
         """Test grep with case-insensitive search."""
@@ -655,7 +740,14 @@ class TestSearchTools:
         grep_tool = get_tool(server, "nexus_grep")
         await grep_tool.fn(pattern="error", path="/logs", ignore_case=True)
 
-        mock_nx_basic._mock_search.grep.assert_called_once_with("error", "/logs", ignore_case=True)
+        mock_nx_basic._mock_search.grep.assert_called_once_with(
+            "error",
+            "/logs",
+            ignore_case=True,
+            max_results=101,  # sentinel_window = 100 + 0 + 1
+            files=None,
+            context=ANY,
+        )
 
     async def test_grep_result_limiting(self, mock_nx_basic):
         """Test grep pagination with default limit of 100 matches."""
@@ -841,38 +933,86 @@ class TestSearchTools:
         server = await create_mcp_server(nx=mock_nx_with_search)
 
         search_tool = get_tool(server, "nexus_semantic_search")
-        result = search_tool.fn(query="authentication code", limit=5)
+        result = await search_tool.fn(query="authentication code", limit=5)
 
         response = json.loads(result)
         assert isinstance(response, dict)
         assert "items" in response
         assert "total" in response
         assert isinstance(response["items"], list)
-        # Note: With pagination, we now fetch limit*2 to check for more results
-        mock_nx_with_search.semantic_search.assert_called_once_with(
-            "authentication code", path="/", limit=10
+        # Over-fetches limit*2 to allow has_more detection without a second round-trip.
+        # #3778: handler now resolves SearchService via nx.service("search").
+        mock_nx_with_search._mock_search.semantic_search.assert_called_once_with(
+            query="authentication code",
+            path="/",
+            search_mode="semantic",
+            limit=10,
+            context=mock_nx_with_search._init_cred,
+        )
+
+    async def test_semantic_search_with_scoped_path(self, mock_nx_with_search):
+        """Test that path parameter is forwarded to semantic_search (regression for #3702)."""
+        server = await create_mcp_server(nx=mock_nx_with_search)
+
+        search_tool = get_tool(server, "nexus_semantic_search")
+        result = await search_tool.fn(query="auth", path="/workspace/src", limit=5)
+
+        response = json.loads(result)
+        assert "items" in response
+        mock_nx_with_search._mock_search.semantic_search.assert_called_once_with(
+            query="auth",
+            path="/workspace/src",
+            search_mode="semantic",
+            limit=10,
+            context=mock_nx_with_search._init_cred,
+        )
+
+    async def test_semantic_search_with_search_mode(self, mock_nx_with_search):
+        """Test that search_mode is forwarded to semantic_search."""
+        server = await create_mcp_server(nx=mock_nx_with_search)
+
+        search_tool = get_tool(server, "nexus_semantic_search")
+        result = await search_tool.fn(query="token refresh", search_mode="hybrid", limit=5)
+
+        response = json.loads(result)
+        assert "items" in response
+        # R4 review (#3778): MCP now threads an authenticated OperationContext
+        # into semantic_search. The mock resolver returns the mock's _init_cred.
+        mock_nx_with_search._mock_search.semantic_search.assert_called_once_with(
+            query="token refresh",
+            path="/",
+            search_mode="hybrid",
+            limit=10,
+            context=mock_nx_with_search._init_cred,
         )
 
     async def test_semantic_search_not_available(self, mock_nx_basic):
-        """Test semantic search when not available."""
-        # Remove semantic_search method
-        if hasattr(mock_nx_basic, "semantic_search"):
-            delattr(mock_nx_basic, "semantic_search")
+        """Test semantic search when the search brick is not loaded.
+
+        #3778: the MCP handler resolves SearchService via ``nx.service("search")``.
+        When the search service is absent (``nx.service("search")`` returns
+        None), the tool should surface an ``unavailable`` error.
+        """
+        # Override the service lookup to return None — simulates a NexusFS
+        # with no search brick registered.
+        mock_nx_basic.service = Mock(return_value=None)
 
         server = await create_mcp_server(nx=mock_nx_basic)
 
         search_tool = get_tool(server, "nexus_semantic_search")
-        result = search_tool.fn(query="test")
+        result = await search_tool.fn(query="test")
 
         assert "Semantic search not available" in result
 
     async def test_semantic_search_error(self, mock_nx_with_search):
         """Test semantic search error handling."""
-        mock_nx_with_search.semantic_search.side_effect = RuntimeError("Search service down")
+        mock_nx_with_search._mock_search.semantic_search.side_effect = RuntimeError(
+            "Search service down"
+        )
         server = await create_mcp_server(nx=mock_nx_with_search)
 
         search_tool = get_tool(server, "nexus_semantic_search")
-        result = search_tool.fn(query="test")
+        result = await search_tool.fn(query="test")
 
         assert "Error in semantic search" in result
         assert "Search service down" in result
@@ -981,7 +1121,6 @@ class TestSandboxAvailability:
         """Test sandbox tools registered when Docker provider available."""
         server = await create_mcp_server(nx=mock_nx_with_sandbox)
 
-        list(server._tool_manager._tools.keys())
         assert tool_exists(server, "nexus_python")
         assert tool_exists(server, "nexus_bash")
         assert tool_exists(server, "nexus_sandbox_create")
@@ -995,7 +1134,6 @@ class TestSandboxAvailability:
 
         server = await create_mcp_server(nx=mock_nx_no_sandbox)
 
-        list(server._tool_manager._tools.keys())
         assert not tool_exists(server, "nexus_python")
         assert not tool_exists(server, "nexus_bash")
         assert not tool_exists(server, "nexus_sandbox_create")
@@ -1329,14 +1467,14 @@ class TestServerCreation:
         server = await create_mcp_server(nx=mock_nx_full)
 
         assert server is not None
-        assert len(server._tool_manager._tools) > 0
+        assert len(_components_of(server, "tool")) > 0
 
     async def test_server_with_remote_url(self):
         """Test creating server with remote URL."""
         with patch("nexus.connect", new_callable=AsyncMock) as mock_connect:
             mock_instance = Mock()
-            mock_instance.sys_read = AsyncMock(return_value=b"test")
-            mock_instance.sys_write = AsyncMock()
+            mock_instance.sys_read = Mock(return_value=b"test")
+            mock_instance.sys_write = Mock()
             mock_connect.return_value = mock_instance
 
             server = await create_mcp_server(remote_url="http://localhost:2026", api_key="test-key")
@@ -1350,9 +1488,9 @@ class TestServerCreation:
         """Test creating server with auto-connect."""
         with patch("nexus.connect", new_callable=AsyncMock) as mock_connect:
             mock_nx = Mock()
-            mock_nx.sys_read = AsyncMock(return_value=b"test")
-            mock_nx.sys_write = AsyncMock()
-            mock_nx.write = AsyncMock()
+            mock_nx.sys_read = Mock(return_value=b"test")
+            mock_nx.sys_write = Mock()
+            mock_nx.write = Mock()
             mock_connect.return_value = mock_nx
 
             server = await create_mcp_server()
@@ -1380,16 +1518,14 @@ class TestServerCreation:
         # glob, grep, semantic_search, store_memory, query_memory,
         # list_workflows, execute_workflow
         # = 14 tools minimum
-        assert len(server._tool_manager._tools) >= 15
+        assert len(_components_of(server, "tool")) >= 15
 
     async def test_server_tool_count_with_all_features(self, mock_nx_full):
         """Test server has correct tool count with all features."""
         server = await create_mcp_server(nx=mock_nx_full)
 
-        # All basic tools + 5 sandbox tools = 19 tools minimum
-        list(server._tool_manager._tools.keys())
-
-        # Verify sandbox tools are included
+        # Verify sandbox tools are included (all basic tools + 5 sandbox
+        # tools = 19 tools minimum on the full-featured server).
         assert tool_exists(server, "nexus_python")
         assert tool_exists(server, "nexus_bash")
         assert tool_exists(server, "nexus_sandbox_create")

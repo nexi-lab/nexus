@@ -320,6 +320,8 @@ class TokenManager:
                 return cached_raw.decode()
 
         # Per-credential lock prevents concurrent refresh races (Issue #2281).
+        # _last_resolved stash: resolve() reads metadata from the same locked
+        # section that produced the access token, avoiding a second DB round-trip.
         lock_key = (provider, user_email, zone_id)
         lock = self._get_refresh_lock(lock_key)
         try:
@@ -390,6 +392,8 @@ class TokenManager:
 
                         model.encrypted_access_token = encrypted_access_token
                         model.expires_at = new_credential.expires_at
+                        if new_credential.scopes is not None:
+                            model.scopes = json.dumps(list(new_credential.scopes))
                         model.last_refreshed_at = datetime.now(UTC)
                         model.updated_at = datetime.now(UTC)
 

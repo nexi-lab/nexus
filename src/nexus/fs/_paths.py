@@ -26,7 +26,9 @@ cannot be regenerated without re-authenticating.
 
 from __future__ import annotations
 
+import datetime
 import os
+import sys
 from pathlib import Path
 
 from platformdirs import PlatformDirs
@@ -63,14 +65,40 @@ def mounts_file() -> Path:
 
 
 def _normalize_mount_entry(entry: "str | dict") -> dict:
-    """Normalize a mount entry to ``{"uri": ..., "at": ...}`` form.
+    """Normalize a mount entry to the canonical dict form.
 
-    Handles both the legacy format (plain URI string) and the new
-    format (dict with ``uri`` and optional ``at``).
+    Handles the legacy plain-string format and all versioned dict forms.
+    Missing metadata fields default to None so callers can always do
+    ``entry.get("created_at")`` without KeyError.
+
+    Canonical shape::
+
+        {
+            "uri":          str,
+            "at":           str | None,
+            "name":         str | None,   # user-assigned human label
+            "created_at":   str | None,   # ISO-8601 UTC
+            "created_by":   str | None,   # "pid=N exe=nexus-fs"
+            "last_used_at": str | None,   # ISO-8601 UTC
+        }
     """
     if isinstance(entry, str):
-        return {"uri": entry, "at": None}
-    return {"uri": entry["uri"], "at": entry.get("at")}
+        return {
+            "uri": entry,
+            "at": None,
+            "name": None,
+            "created_at": None,
+            "created_by": None,
+            "last_used_at": None,
+        }
+    return {
+        "uri": entry["uri"],
+        "at": entry.get("at"),
+        "name": entry.get("name"),
+        "created_at": entry.get("created_at"),
+        "created_by": entry.get("created_by"),
+        "last_used_at": entry.get("last_used_at"),
+    }
 
 
 def load_persisted_mounts() -> list[dict]:
@@ -79,17 +107,34 @@ def load_persisted_mounts() -> list[dict]:
     Returns a list of ``{"uri": str, "at": str | None}`` dicts.
     Backward-compatible with the legacy ``["uri", ...]`` format.
     Returns an empty list if the file doesn't exist or is invalid.
+
+    Note: A missing file is silently treated as an empty list (normal first-run
+    state).  A *corrupt* file (invalid JSON) emits a warning to stderr and also
+    returns an empty list so the process can continue, but the warning tells the
+    user their state file needs attention rather than silently losing their mounts.
     """
     import json
+    import sys
 
     mf = mounts_file()
     try:
         with open(mf) as f:
             raw = json.load(f)
-    except (OSError, json.JSONDecodeError):
+    except OSError:
+        # File doesn't exist or isn't readable — normal on first run.
+        return []
+    except json.JSONDecodeError as exc:
+        # File exists but is corrupt.  Warn loudly so the user knows to restore
+        # from the .bak backup rather than silently losing their mount config.
+        print(
+            f"warning: nexus-fs: mounts.json is corrupt and will be ignored "
+            f"({mf}: {exc}). Restore from a .bak backup if needed.",
+            file=sys.stderr,
+        )
         return []
 
     if not isinstance(raw, list):
+        # Valid JSON but wrong shape — treat as empty, no warning needed.
         return []
 
     return [_normalize_mount_entry(e) for e in raw]
@@ -112,23 +157,77 @@ def build_mount_args(entries: list[dict]) -> tuple[list[str], dict[str, str]]:
     return uris, overrides
 
 
+def _now_iso() -> str:
+    """Return the current UTC time as an ISO-8601 string."""
+    return datetime.datetime.now(datetime.UTC).isoformat()
+
+
+def _created_by_stamp() -> str:
+    """Return a human-readable 'who created this entry' string."""
+    exe = Path(sys.argv[0]).name if sys.argv else "unknown"
+    return f"pid={os.getpid()} exe={exe}"
+
+
 def save_persisted_mounts(entries: list[dict], *, merge: bool = True) -> None:
     """Persist mount entries to ``mounts.json``, merging by default.
 
     Args:
-        entries: List of ``{"uri": str, "at": str | None}`` dicts to save.
-        merge: If True (default), merge with existing entries. Entries
-            with the same URI are updated; new entries are appended.
+        entries: List of mount entry dicts.  At minimum each must have a
+            ``"uri"`` key.  Other fields (``at``, ``name``, ``created_at``,
+            ``created_by``, ``last_used_at``) are optional — missing ones
+            are auto-populated or preserved from the existing entry.
+        merge: If True (default), merge with existing entries by URI:
+            - New URI → ``created_at`` / ``created_by`` are stamped now.
+            - Existing URI → ``created_at`` / ``created_by`` preserved;
+              ``last_used_at`` updated to now; ``name`` preserved if the
+              incoming entry omits it.
+            - ``--at`` change on an existing URI → warning to stderr (the
+              new value wins; mount() prevents true dual-mount of same URI).
+
+    Concurrency note: the write is atomic on local POSIX/Windows filesystems
+    (mkstemp + os.replace).  It is NOT atomic across NFS/CIFS — two
+    concurrent writers on a network-backed NEXUS_FS_STATE_DIR can silently
+    drop each other's changes.  Use isolated NEXUS_FS_STATE_DIR paths in
+    parallel test workers (via ``monkeypatch.setenv`` or ``ephemeral_mount``).
     """
     import json
     import tempfile
 
     if merge:
         existing = load_persisted_mounts()
-        # Index existing by URI for dedup
         by_uri = {e["uri"]: e for e in existing}
+        now = _now_iso()
+        creator = _created_by_stamp()
+
         for entry in entries:
-            by_uri[entry["uri"]] = entry
+            uri = entry["uri"]
+            prev = by_uri.get(uri)
+
+            if prev:
+                # Warn on silent --at replacement
+                if prev.get("at") != entry.get("at"):
+                    print(
+                        f"warning: nexus-fs: mount point for {uri!r} changed "
+                        f"from {prev.get('at')!r} to {entry.get('at')!r}.",
+                        file=sys.stderr,
+                    )
+                merged: dict = {**prev, **entry}
+                # Preserve provenance from the original creation
+                merged["created_at"] = prev.get("created_at") or now
+                merged["created_by"] = prev.get("created_by") or creator
+                merged["last_used_at"] = now
+                # Keep existing name when the caller doesn't supply one
+                if not entry.get("name"):
+                    merged["name"] = prev.get("name")
+            else:
+                merged = dict(entry)
+                merged.setdefault("created_at", now)
+                merged.setdefault("created_by", creator)
+                merged.setdefault("last_used_at", now)
+                merged.setdefault("name", None)
+
+            by_uri[uri] = merged
+
         entries = list(by_uri.values())
 
     mf = mounts_file()

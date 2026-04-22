@@ -646,3 +646,95 @@ class TestTrigramBenchmarks:
         result = benchmark(search_trigram)
         assert result is not None
         print(f"\n[INFO] Trigram search: {len(result)} matches")
+
+
+# =============================================================================
+# files=[...] VALIDATOR BENCHMARKS (#3701 Issue 13A)
+#
+# These benchmarks document the cost of the caller-supplied files
+# validator used by grep/glob when ``files=[...]`` is set. The
+# FILES_FILTER_TRIGRAM_THRESHOLD constant (200) was chosen as a
+# conservative crossover point between direct-scan and
+# trigram+post-filter — a full end-to-end crossover benchmark would
+# require a real trigram index on a realistic corpus, which is out of
+# scope for this file. Production operators should tune the threshold
+# by profiling their own workloads.
+# =============================================================================
+
+
+def _stub_search_service(list_return: list[str]):
+    """Build a SearchService with just enough wiring to exercise the validator.
+
+    Uses ``patch.object`` so the stub overrides ``list`` and
+    ``_get_routing_params`` without assigning to bound-method
+    attributes (mypy rejects that). Caller must stop the returned
+    patches in a ``finally`` block.
+    """
+    from unittest.mock import MagicMock, patch
+
+    from nexus.bricks.search.search_service import SearchService
+
+    svc = SearchService(metadata_store=MagicMock())
+    list_patch = patch.object(svc, "list", return_value=list_return)
+    routing_patch = patch.object(svc, "_get_routing_params", return_value=(None, None, False))
+    list_patch.start()
+    routing_patch.start()
+    return svc, (list_patch, routing_patch)
+
+
+@pytest.mark.benchmark_hash
+class TestFilesFilterValidator:
+    """Benchmark the validator's overhead at realistic list sizes."""
+
+    def test_validator_small_list(self, benchmark):
+        """Typical agent narrowing: 10 files."""
+        svc, patches = _stub_search_service(list_return=[f"/f{i}.py" for i in range(50)])
+        try:
+            files = [f"/f{i}.py" for i in range(10)]
+
+            def run():
+                return svc._validate_and_normalize_files(files, path="/", context=None)
+
+            result = benchmark(run)
+            assert len(result[0]) == 10
+        finally:
+            for p in patches:
+                p.stop()
+
+    def test_validator_at_threshold_size(self, benchmark):
+        """At the trigram-bypass threshold: 200 files."""
+        from nexus.bricks.search.search_service import FILES_FILTER_TRIGRAM_THRESHOLD
+
+        svc, patches = _stub_search_service(
+            list_return=[f"/f{i}.py" for i in range(FILES_FILTER_TRIGRAM_THRESHOLD * 2)]
+        )
+        try:
+            files = [f"/f{i}.py" for i in range(FILES_FILTER_TRIGRAM_THRESHOLD)]
+
+            def run():
+                return svc._validate_and_normalize_files(files, path="/", context=None)
+
+            result = benchmark(run)
+            assert len(result[0]) == FILES_FILTER_TRIGRAM_THRESHOLD
+        finally:
+            for p in patches:
+                p.stop()
+
+    def test_validator_at_size_cap(self, benchmark):
+        """Stress: validator at FILES_FILTER_SIZE_CAP = 10k entries."""
+        from nexus.bricks.search.search_service import FILES_FILTER_SIZE_CAP
+
+        svc, patches = _stub_search_service(
+            list_return=[f"/f{i}.py" for i in range(FILES_FILTER_SIZE_CAP)]
+        )
+        try:
+            files = [f"/f{i}.py" for i in range(FILES_FILTER_SIZE_CAP)]
+
+            def run():
+                return svc._validate_and_normalize_files(files, path="/", context=None)
+
+            result = benchmark(run)
+            assert len(result[0]) == FILES_FILTER_SIZE_CAP
+        finally:
+            for p in patches:
+                p.stop()

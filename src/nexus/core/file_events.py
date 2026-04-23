@@ -28,10 +28,6 @@ class FileEventType(StrEnum):
     METADATA_CHANGE = "metadata_change"  # chmod, chown, truncate (Issue #1115)
     DIR_CREATE = "dir_create"
     DIR_DELETE = "dir_delete"
-    # Issue #1129: Bidirectional sync events
-    SYNC_TO_BACKEND_REQUESTED = "sync_to_backend_requested"
-    SYNC_TO_BACKEND_COMPLETED = "sync_to_backend_completed"
-    SYNC_TO_BACKEND_FAILED = "sync_to_backend_failed"
     CONFLICT_DETECTED = "conflict_detected"
     # Mount/unmount lifecycle events (Step C: unified into OBSERVE phase)
     MOUNT = "mount"
@@ -47,15 +43,12 @@ FILE_EVENT_BIT: dict[FileEventType, int] = {
     FileEventType.METADATA_CHANGE: 1 << 3,
     FileEventType.DIR_CREATE: 1 << 4,
     FileEventType.DIR_DELETE: 1 << 5,
-    FileEventType.SYNC_TO_BACKEND_REQUESTED: 1 << 6,
-    FileEventType.SYNC_TO_BACKEND_COMPLETED: 1 << 7,
-    FileEventType.SYNC_TO_BACKEND_FAILED: 1 << 8,
-    FileEventType.CONFLICT_DETECTED: 1 << 9,
-    FileEventType.FILE_COPY: 1 << 10,  # Issue #3329
-    FileEventType.MOUNT: 1 << 11,
-    FileEventType.UNMOUNT: 1 << 12,
+    FileEventType.CONFLICT_DETECTED: 1 << 6,
+    FileEventType.FILE_COPY: 1 << 7,
+    FileEventType.MOUNT: 1 << 8,
+    FileEventType.UNMOUNT: 1 << 9,
 }
-ALL_FILE_EVENTS: int = (1 << 13) - 1  # 0x1FFF — matches all event types
+ALL_FILE_EVENTS: int = (1 << 10) - 1  # 0x3FF — matches all event types
 
 
 @dataclass(frozen=True)

@@ -46,13 +46,10 @@ pub(crate) enum FileEventType {
     MetadataChange = 1 << 3,
     DirCreate = 1 << 4,
     DirDelete = 1 << 5,
-    SyncToBackendRequested = 1 << 6,
-    SyncToBackendCompleted = 1 << 7,
-    SyncToBackendFailed = 1 << 8,
-    ConflictDetected = 1 << 9,
-    FileCopy = 1 << 10,
-    Mount = 1 << 11,
-    Unmount = 1 << 12,
+    ConflictDetected = 1 << 6,
+    FileCopy = 1 << 7,
+    Mount = 1 << 8,
+    Unmount = 1 << 9,
 }
 
 #[allow(dead_code)]
@@ -75,9 +72,6 @@ impl FileEventType {
             FileEventType::MetadataChange => "metadata_change",
             FileEventType::DirCreate => "dir_create",
             FileEventType::DirDelete => "dir_delete",
-            FileEventType::SyncToBackendRequested => "sync_to_backend_requested",
-            FileEventType::SyncToBackendCompleted => "sync_to_backend_completed",
-            FileEventType::SyncToBackendFailed => "sync_to_backend_failed",
             FileEventType::ConflictDetected => "conflict_detected",
             FileEventType::FileCopy => "file_copy",
             FileEventType::Mount => "mount",
@@ -91,7 +85,7 @@ impl FileEventType {
 /// Computed as `(1 << N) - 1` where N is the number of variants. Adding
 /// a new variant requires bumping the shift here and in Python.
 #[allow(dead_code)]
-pub(crate) const ALL_FILE_EVENTS: u32 = (1 << 13) - 1;
+pub(crate) const ALL_FILE_EVENTS: u32 = (1 << 10) - 1;
 
 /// Kernel file-system event — Rust mirror of `nexus.core.file_events.FileEvent`.
 ///
@@ -812,19 +806,16 @@ mod tests {
         assert_eq!(FileEventType::MetadataChange.bit(), 1 << 3);
         assert_eq!(FileEventType::DirCreate.bit(), 1 << 4);
         assert_eq!(FileEventType::DirDelete.bit(), 1 << 5);
-        assert_eq!(FileEventType::SyncToBackendRequested.bit(), 1 << 6);
-        assert_eq!(FileEventType::SyncToBackendCompleted.bit(), 1 << 7);
-        assert_eq!(FileEventType::SyncToBackendFailed.bit(), 1 << 8);
-        assert_eq!(FileEventType::ConflictDetected.bit(), 1 << 9);
-        assert_eq!(FileEventType::FileCopy.bit(), 1 << 10);
-        assert_eq!(FileEventType::Mount.bit(), 1 << 11);
-        assert_eq!(FileEventType::Unmount.bit(), 1 << 12);
+        assert_eq!(FileEventType::ConflictDetected.bit(), 1 << 6);
+        assert_eq!(FileEventType::FileCopy.bit(), 1 << 7);
+        assert_eq!(FileEventType::Mount.bit(), 1 << 8);
+        assert_eq!(FileEventType::Unmount.bit(), 1 << 9);
     }
 
     #[test]
     fn test_all_file_events_mask() {
-        // Must equal `nexus.core.file_events.ALL_FILE_EVENTS == (1 << 13) - 1`.
-        assert_eq!(ALL_FILE_EVENTS, 0x1FFF);
+        // Must equal `nexus.core.file_events.ALL_FILE_EVENTS == (1 << 10) - 1`.
+        assert_eq!(ALL_FILE_EVENTS, 0x3FF);
         // Every variant bit must be present in the all-mask.
         let bits = [
             FileEventType::FileWrite.bit(),
@@ -833,9 +824,6 @@ mod tests {
             FileEventType::MetadataChange.bit(),
             FileEventType::DirCreate.bit(),
             FileEventType::DirDelete.bit(),
-            FileEventType::SyncToBackendRequested.bit(),
-            FileEventType::SyncToBackendCompleted.bit(),
-            FileEventType::SyncToBackendFailed.bit(),
             FileEventType::ConflictDetected.bit(),
             FileEventType::FileCopy.bit(),
             FileEventType::Mount.bit(),
@@ -856,18 +844,6 @@ mod tests {
         assert_eq!(FileEventType::MetadataChange.as_str(), "metadata_change");
         assert_eq!(FileEventType::DirCreate.as_str(), "dir_create");
         assert_eq!(FileEventType::DirDelete.as_str(), "dir_delete");
-        assert_eq!(
-            FileEventType::SyncToBackendRequested.as_str(),
-            "sync_to_backend_requested"
-        );
-        assert_eq!(
-            FileEventType::SyncToBackendCompleted.as_str(),
-            "sync_to_backend_completed"
-        );
-        assert_eq!(
-            FileEventType::SyncToBackendFailed.as_str(),
-            "sync_to_backend_failed"
-        );
         assert_eq!(
             FileEventType::ConflictDetected.as_str(),
             "conflict_detected"

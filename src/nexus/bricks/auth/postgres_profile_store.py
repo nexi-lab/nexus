@@ -90,6 +90,36 @@ class CrossPrincipalConflict(Exception):
         )
 
 
+class ProfileNotFound(Exception):
+    """No envelope-carrying auth_profile row for (tenant, principal, provider)."""
+
+    def __init__(self, *, tenant_id: uuid.UUID, principal_id: uuid.UUID, provider: str):
+        self.tenant_id = tenant_id
+        self.principal_id = principal_id
+        self.provider = provider
+        super().__init__(
+            f"no auth_profile row tenant={tenant_id} principal={principal_id} provider={provider}"
+        )
+
+
+@dataclass(frozen=True)
+class DecryptedProfile:
+    """Output of ``PostgresAuthProfileStore.decrypt_profile``.
+
+    ``plaintext`` is the daemon-pushed envelope payload (provider-specific JSON).
+    Caller (CredentialConsumer) hands this to the matching ProviderAdapter.
+
+    ``last_synced_at`` lets the consumer return 409 stale_source when the row
+    is older than ``sync_ttl_seconds``.
+    """
+
+    plaintext: bytes
+    profile_id: str
+    kek_version: int
+    last_synced_at: datetime
+    sync_ttl_seconds: int
+
+
 # ---------------------------------------------------------------------------
 # Schema (idempotent CREATE TABLE IF NOT EXISTS + RLS policies)
 # ---------------------------------------------------------------------------
@@ -1401,6 +1431,69 @@ class PostgresAuthProfileStore:
             dek, bytes(row.nonce), bytes(row.ciphertext), aad=expected_aad
         )
         return profile, self._deserialize_credential(plaintext)
+
+    def decrypt_profile(
+        self,
+        *,
+        principal_id: uuid.UUID,
+        provider: str,
+        encryption: EncryptionProvider,
+        dek_cache: DEKCache,
+    ) -> DecryptedProfile:
+        """Decrypt the envelope row matching (tenant, principal, provider).
+
+        Selects the most-recently-updated row for that triple (the daemon may
+        have pushed multiple over time; we always read newest). Raises
+        ``ProfileNotFound`` if no row exists.
+
+        DEK is unwrapped via ``encryption.unwrap_dek`` with cache-through on
+        ``dek_cache``. AES-GCM decrypt failures bubble as ``EnvelopeError``
+        subclasses (no plaintext in repr).
+        """
+        with self._scoped() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT id, ciphertext, wrapped_dek, nonce, aad, kek_version, "
+                    "       last_synced_at, sync_ttl_seconds "
+                    "FROM auth_profiles "
+                    "WHERE tenant_id = :t AND principal_id = :p AND provider = :prov "
+                    "  AND ciphertext IS NOT NULL "
+                    "ORDER BY updated_at DESC LIMIT 1"
+                ),
+                {"t": str(self._tenant_id), "p": str(principal_id), "prov": provider},
+            ).fetchone()
+
+        if row is None:
+            raise ProfileNotFound(
+                tenant_id=self._tenant_id,
+                principal_id=principal_id,
+                provider=provider,
+            )
+
+        profile_id, ciphertext, wrapped_dek, nonce, aad, kek_version, lsa, sttl = row
+        cache_key = DEKCache.make_key(
+            tenant_id=self._tenant_id,
+            kek_version=kek_version,
+            wrapped_dek=bytes(wrapped_dek),
+        )
+        dek = dek_cache.get(cache_key)
+        if dek is None:
+            dek = encryption.unwrap_dek(
+                bytes(wrapped_dek),
+                tenant_id=self._tenant_id,
+                aad=bytes(aad),
+                kek_version=kek_version,
+            )
+            dek_cache.put(cache_key, dek)
+
+        plaintext = AESGCMEnvelope().decrypt(dek, bytes(nonce), bytes(ciphertext), aad=bytes(aad))
+        return DecryptedProfile(
+            plaintext=plaintext,
+            profile_id=profile_id,
+            kek_version=kek_version,
+            last_synced_at=lsa,
+            sync_ttl_seconds=sttl,
+        )
 
     # ------------------------------------------------------------------
     # Tenant-wide helpers (migration/admin only — outside normal Protocol)

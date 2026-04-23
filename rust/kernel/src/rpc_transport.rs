@@ -44,7 +44,16 @@ impl RpcTransport {
         tls: Option<&TlsConfig>,
         timeout: Duration,
     ) -> Result<Self, String> {
-        let channel = Self::build_channel(address, tls, timeout)?;
+        // tonic's `Endpoint::connect_lazy` builds a hyper-util legacy Client
+        // that spawns its connection-pool driver via `TokioExecutor::execute`.
+        // That spawn requires `Handle::current()`, so when we build the
+        // channel directly from Python's sys_setattr thread it panics with
+        // "there is no reactor running". Enter the transport's own runtime
+        // for the duration of channel construction.
+        let channel = {
+            let _guard = runtime.enter();
+            Self::build_channel(address, tls, timeout)?
+        };
 
         Ok(Self {
             runtime,

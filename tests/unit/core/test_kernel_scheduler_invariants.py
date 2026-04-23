@@ -40,7 +40,9 @@ class TestSchedulerNoStarvation:
 
     @given(requests=st.lists(agent_request(), min_size=1, max_size=50))
     @settings(deadline=None)
-    def test_all_submitted_are_eventually_returned(self, requests: list[AgentRequest]) -> None:
+    async def test_all_submitted_are_eventually_returned(
+        self, requests: list[AgentRequest]
+    ) -> None:
         """Submit N requests, call next() N times, get all N back."""
 
         async def _inner():
@@ -70,7 +72,7 @@ class TestSchedulerNoStarvation:
 
     @given(requests=st.lists(agent_request(), min_size=0, max_size=20))
     @settings(deadline=None)
-    def test_next_returns_none_when_empty(self, requests: list[AgentRequest]) -> None:
+    async def test_next_returns_none_when_empty(self, requests: list[AgentRequest]) -> None:
         """next() returns None after all requests consumed."""
 
         async def _inner():
@@ -101,7 +103,7 @@ class TestSchedulerPriorityOrdering:
         ),
     )
     @settings(deadline=None)
-    def test_dequeue_order_respects_priority(self, priorities: list[int]) -> None:
+    async def test_dequeue_order_respects_priority(self, priorities: list[int]) -> None:
         """Requests dequeued in priority order (high → low)."""
 
         async def _inner():
@@ -133,7 +135,7 @@ class TestSchedulerPriorityOrdering:
         priority=st.integers(min_value=0, max_value=100),
     )
     @settings(deadline=None)
-    def test_equal_priority_fifo(self, n: int, priority: int) -> None:
+    async def test_equal_priority_fifo(self, n: int, priority: int) -> None:
         """Equal-priority requests are dequeued in FIFO order."""
 
         async def _inner():
@@ -171,7 +173,7 @@ class TestSchedulerCancelInvariants:
         cancel_idx=st.data(),
     )
     @settings(deadline=None)
-    def test_cancelled_never_returned(
+    async def test_cancelled_never_returned(
         self,
         requests: list[AgentRequest],
         cancel_idx: st.DataObject,
@@ -212,7 +214,7 @@ class TestSchedulerPendingCountInvariants:
 
     @given(requests=st.lists(agent_request(), min_size=0, max_size=30))
     @settings(deadline=None)
-    def test_pending_count_after_submit(self, requests: list[AgentRequest]) -> None:
+    async def test_pending_count_after_submit(self, requests: list[AgentRequest]) -> None:
         """pending_count() == number of submitted requests."""
 
         async def _inner():
@@ -228,7 +230,7 @@ class TestSchedulerPendingCountInvariants:
         consume_count=st.data(),
     )
     @settings(deadline=None)
-    def test_pending_count_after_consume(
+    async def test_pending_count_after_consume(
         self,
         requests: list[AgentRequest],
         consume_count: st.DataObject,
@@ -260,7 +262,7 @@ class TestSchedulerPendingCountInvariants:
         ),
     )
     @settings(deadline=None)
-    def test_pending_count_with_zone_filter(
+    async def test_pending_count_with_zone_filter(
         self, zone_requests: list[tuple[str, AgentRequest]]
     ) -> None:
         """pending_count(zone_id=X) == count of requests with that zone_id."""

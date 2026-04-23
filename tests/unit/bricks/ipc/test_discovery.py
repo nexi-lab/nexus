@@ -89,7 +89,7 @@ class TestAgentDiscovery:
         names = {a.agent_id for a in agents}
         assert names == {"analyst", "reviewer"}
 
-    def test_find_by_skill(self, vfs: InMemoryVFS) -> None:
+    async def test_find_by_skill(self, vfs: InMemoryVFS) -> None:
         async def _run() -> None:
             await _create_agent(vfs, "analyst", skills=["research", "data_analysis"])
             await _create_agent(vfs, "reviewer", skills=["code_review", "security_audit"])
@@ -104,7 +104,7 @@ class TestAgentDiscovery:
 
         asyncio.run(_run())
 
-    def test_find_by_skill_no_matches(self, vfs: InMemoryVFS) -> None:
+    async def test_find_by_skill_no_matches(self, vfs: InMemoryVFS) -> None:
         async def _run() -> None:
             await _create_agent(vfs, "analyst", skills=["research"])
 

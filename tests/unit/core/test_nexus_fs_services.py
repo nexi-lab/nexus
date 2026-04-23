@@ -23,7 +23,7 @@ except Exception:
 pytestmark = pytest.mark.skipif(not _raft_available, reason="Raft metastore not available")
 
 
-async def _make_fs(tmp_path: Path, *, enforce_permissions: bool = True) -> NexusFS:
+def _make_fs(tmp_path: Path, *, enforce_permissions: bool = True) -> NexusFS:
     """Create NexusFS via factory (includes two-phase wired services)."""
     from nexus.factory import create_nexus_fs
     from nexus.storage.record_store import SQLAlchemyRecordStore
@@ -47,10 +47,9 @@ async def _make_fs(tmp_path: Path, *, enforce_permissions: bool = True) -> Nexus
 class TestNexusFSServiceComposition:
     """Test that NexusFS correctly instantiates all services."""
 
-    @pytest.mark.asyncio
     def test_all_services_instantiated(self, tmp_path: Path):
         """Test that all services are created during NexusFS initialization."""
-        fs = await _make_fs(tmp_path, enforce_permissions=False)
+        fs = _make_fs(tmp_path, enforce_permissions=False)
 
         # Verify all services are instantiated
         assert fs.service("version_service") is not None, "VersionService not instantiated"
@@ -70,10 +69,9 @@ class TestNexusFSServiceComposition:
         assert fs.service("search") is not None
         assert fs.service("share_link") is not None
 
-    @pytest.mark.asyncio
     def test_service_dependencies_correct(self, tmp_path: Path):
         """Test that services receive correct dependencies."""
-        fs = await _make_fs(tmp_path)
+        fs = _make_fs(tmp_path)
 
         # VersionService dependencies (injected by _make_fs, mimicking factory)
         assert fs.service("version_service").metadata == fs.metadata
@@ -95,10 +93,9 @@ class TestNexusFSServiceComposition:
         # ShareLinkService should have gateway
         assert fs.service("share_link")._gw is not None
 
-    @pytest.mark.asyncio
     def test_version_service_delegation(self, tmp_path: Path):
         """Test that VersionService is available on NexusFS."""
-        fs = await _make_fs(tmp_path, enforce_permissions=False)
+        fs = _make_fs(tmp_path, enforce_permissions=False)
 
         # Verify version_service exists and is not None
         assert fs.service("version_service") is not None, "VersionService not instantiated"

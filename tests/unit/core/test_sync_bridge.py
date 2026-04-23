@@ -105,7 +105,7 @@ class TestRunSyncFromSyncContext:
 class TestRunSyncFromAsyncContext:
     """run_sync() called from within an async event loop (e.g. FastAPI worker thread)."""
 
-    def test_from_thread_pool_worker(self) -> None:
+    async def test_from_thread_pool_worker(self) -> None:
         """Simulate a FastAPI sync dep running in the threadpool."""
 
         async def _test(loop: asyncio.AbstractEventLoop) -> None:
@@ -117,7 +117,7 @@ class TestRunSyncFromAsyncContext:
 
         _run_with_loop(_test)
 
-    def test_error_from_thread_pool_worker(self) -> None:
+    async def test_error_from_thread_pool_worker(self) -> None:
         """Errors propagate correctly through the thread pool."""
 
         async def _test(loop: asyncio.AbstractEventLoop) -> None:
@@ -129,7 +129,7 @@ class TestRunSyncFromAsyncContext:
 
         _run_with_loop(_test)
 
-    def test_nested_calls_from_thread_pool(self) -> None:
+    async def test_nested_calls_from_thread_pool(self) -> None:
         """Multiple run_sync calls from the same worker thread."""
 
         async def _test(loop: asyncio.AbstractEventLoop) -> None:
@@ -143,7 +143,7 @@ class TestRunSyncFromAsyncContext:
 
         _run_with_loop(_test)
 
-    def test_timeout_from_thread_pool(self) -> None:
+    async def test_timeout_from_thread_pool(self) -> None:
         """Timeout works when called from thread pool."""
 
         async def _test(loop: asyncio.AbstractEventLoop) -> None:
@@ -186,7 +186,7 @@ class TestRunSyncTimeout:
 
 
 class TestRunSyncConcurrent:
-    def test_concurrent_workers(self) -> None:
+    async def test_concurrent_workers(self) -> None:
         """Multiple thread pool workers calling run_sync concurrently."""
 
         async def _test(loop: asyncio.AbstractEventLoop) -> None:
@@ -218,7 +218,7 @@ class TestFireAndForget:
         time.sleep(0.05)
         assert result_holder == [42]
 
-    def test_from_async_context(self) -> None:
+    async def test_from_async_context(self) -> None:
         """fire_and_forget schedules on the current loop when available."""
 
         async def _test(loop: asyncio.AbstractEventLoop) -> None:

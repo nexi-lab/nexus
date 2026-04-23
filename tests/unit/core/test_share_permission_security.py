@@ -467,10 +467,9 @@ class TestHelperMethodIntegration:
         )
         assert tuple_id
 
-    @pytest.mark.asyncio
     def test_enforce_permissions_false_allows_all(self, temp_dir: Path) -> None:
         """Test that enforce_permissions=False bypasses checks."""
-        nx = await create_nexus_fs(
+        nx = create_nexus_fs(
             backend=CASLocalBackend(temp_dir),
             metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
             record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),

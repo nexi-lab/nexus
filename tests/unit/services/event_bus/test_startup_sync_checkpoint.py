@@ -81,7 +81,7 @@ def _make_bus(
 class TestStartupSyncCheckpointSafety:
     """Test that checkpoint advances correctly based on success/failure."""
 
-    def test_all_succeed_advances_to_last(self):
+    async def test_all_succeed_advances_to_last(self):
         """When all events succeed, checkpoint advances to last event's timestamp."""
         t1 = datetime(2026, 1, 1, 0, 0, 1)
         t2 = datetime(2026, 1, 1, 0, 0, 2)
@@ -109,7 +109,7 @@ class TestStartupSyncCheckpointSafety:
         assert len(checkpoint_updates) == 1
         assert checkpoint_updates[0] == t3
 
-    def test_partial_failure_stops_at_last_success(self):
+    async def test_partial_failure_stops_at_last_success(self):
         """When event #2 fails, checkpoint advances to event #1 only."""
         t1 = datetime(2026, 1, 1, 0, 0, 1)
         t2 = datetime(2026, 1, 1, 0, 0, 2)
@@ -144,7 +144,7 @@ class TestStartupSyncCheckpointSafety:
         assert len(checkpoint_updates) == 1
         assert checkpoint_updates[0] == t1  # checkpoint at first event, NOT t3
 
-    def test_first_event_fails_no_checkpoint_update(self):
+    async def test_first_event_fails_no_checkpoint_update(self):
         """When the very first event fails, checkpoint is NOT updated at all."""
         t1 = datetime(2026, 1, 1, 0, 0, 1)
         t2 = datetime(2026, 1, 1, 0, 0, 2)
@@ -169,7 +169,7 @@ class TestStartupSyncCheckpointSafety:
         assert handler.call_count == 1  # tried first, failed, stopped
         assert len(checkpoint_updates) == 0  # NO checkpoint update
 
-    def test_truncated_batch_logs_warning(self):
+    async def test_truncated_batch_logs_warning(self):
         """When batch hits max_sync_events, a warning is logged."""
         ops = [_make_operation(f"op-{i}", datetime(2026, 1, 1, 0, 0, i)) for i in range(1, 6)]
 
@@ -189,7 +189,7 @@ class TestStartupSyncCheckpointSafety:
 
         asyncio.run(run())
 
-    def test_no_handler_still_advances_checkpoint(self):
+    async def test_no_handler_still_advances_checkpoint(self):
         """When no event_handler is provided, all events count as synced."""
         t1 = datetime(2026, 1, 1, 0, 0, 1)
         t2 = datetime(2026, 1, 1, 0, 0, 2)
@@ -213,7 +213,7 @@ class TestStartupSyncCheckpointSafety:
         assert len(checkpoint_updates) == 1
         assert checkpoint_updates[0] == t2
 
-    def test_failed_events_retried_on_next_startup(self):
+    async def test_failed_events_retried_on_next_startup(self):
         """Simulate two startups: first has a failure, second retries from checkpoint."""
         t1 = datetime(2026, 1, 1, 0, 0, 1)
         t2 = datetime(2026, 1, 1, 0, 0, 2)

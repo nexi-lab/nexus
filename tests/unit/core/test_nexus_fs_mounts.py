@@ -14,7 +14,6 @@ _mount_persist_service, and _sync_service (replacing old __getattr__ routing):
 
 from __future__ import annotations
 
-import asyncio
 import contextlib
 import tempfile
 from collections.abc import Generator
@@ -40,14 +39,12 @@ def temp_dir() -> Generator[Path, None, None]:
 @pytest.fixture
 def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
     """Create a NexusFS instance for testing."""
-    nx = asyncio.run(
-        create_nexus_fs(
-            backend=CASLocalBackend(temp_dir),
-            metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
-            record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
-            parsing=ParseConfig(auto_parse=False),
-            permissions=PermissionConfig(enforce=False),
-        )
+    nx = create_nexus_fs(
+        backend=CASLocalBackend(temp_dir),
+        metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
+        record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
+        parsing=ParseConfig(auto_parse=False),
+        permissions=PermissionConfig(enforce=False),
     )
     yield nx
     nx.close()
@@ -56,14 +53,12 @@ def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
 @pytest.fixture
 def nx_with_permissions(temp_dir: Path) -> Generator[NexusFS, None, None]:
     """Create a NexusFS instance with permissions enabled."""
-    nx = asyncio.run(
-        create_nexus_fs(
-            backend=CASLocalBackend(temp_dir),
-            metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata-perms")),
-            record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
-            parsing=ParseConfig(auto_parse=False),
-            permissions=PermissionConfig(enforce=True),
-        )
+    nx = create_nexus_fs(
+        backend=CASLocalBackend(temp_dir),
+        metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata-perms")),
+        record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
+        parsing=ParseConfig(auto_parse=False),
+        permissions=PermissionConfig(enforce=True),
     )
     yield nx
     nx.close()

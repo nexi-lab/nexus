@@ -76,7 +76,7 @@ class TestColdStartNexusFSConstruction:
         assert nx.service("mcp") is None
 
     @pytest.mark.asyncio
-    def test_enlist_wired_services(self, tmp_path) -> None:
+    async def test_enlist_wired_services(self, tmp_path) -> None:
         """enlist_wired_services should register services via registry (#1708)."""
         from unittest.mock import MagicMock
 

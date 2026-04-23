@@ -211,7 +211,7 @@ def test_rest_endpoints_use_authenticated_zone_instead_of_app_state() -> None:
     assert count_response.json() == {"agent_id": "agent:bob", "count": 1}
 
 
-def test_sse_stream_emits_connected_and_delivery_event() -> None:
+async def test_sse_stream_emits_connected_and_delivery_event() -> None:
     storage = InMemoryStorageDriver()
     provisioner = AgentProvisioner(storage, zone_id=ROOT_ZONE_ID)
     asyncio.run(provisioner.provision("agent:alice", name="Alice"))

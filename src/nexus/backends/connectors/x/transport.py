@@ -33,7 +33,7 @@ from collections.abc import Iterator
 from copy import copy
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from cachetools import LRUCache
 
@@ -285,7 +285,7 @@ class XTransport:
         token_fingerprint = hashlib.sha256(access_token.encode("utf-8")).hexdigest()[:16]
         client = XAPIClient(access_token=access_token)
         # Attach a stable token identifier for cache keying without exposing token contents.
-        client._token_fingerprint = token_fingerprint
+        cast(Any, client)._token_fingerprint = token_fingerprint
         return client
 
     def _get_api_client(self) -> Any:

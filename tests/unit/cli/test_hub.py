@@ -370,3 +370,48 @@ def test_hub_zone_list_delegates_to_zone_list(monkeypatch):
     result = runner.invoke(hub, ["zone", "list"])
     assert result.exit_code == 0, result.output
     assert called.get("ok") is True
+
+
+def test_hub_status_json_includes_expected_fields(monkeypatch):
+    monkeypatch.setenv("NEXUS_MCP_HOST", "0.0.0.0")
+    monkeypatch.setenv("NEXUS_MCP_PORT", "8081")
+    monkeypatch.setenv("NEXUS_PROFILE", "full")
+
+    session = MagicMock()
+    # Token counts: 5 active + 2 revoked
+    session.execute.return_value.scalar.side_effect = [5, 2]
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_session_factory",
+        lambda: _mock_session_ctx(session),
+    )
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub._read_redis_stats",
+        lambda: {"qps_5m": 3.5, "connections": 4, "redis": "ok"},
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(hub, ["status", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["profile"] == "full"
+    assert payload["endpoint"] == "http://0.0.0.0:8081/mcp"
+    assert payload["tokens"] == {"active": 5, "revoked": 2}
+    assert payload["qps_5m"] == 3.5
+    assert payload["connections"] == 4
+    assert payload["postgres"] == "ok"
+
+
+def test_hub_status_postgres_unreachable_marks_err(monkeypatch):
+    def boom():
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr("nexus.cli.commands.hub.get_session_factory", boom)
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub._read_redis_stats",
+        lambda: {"qps_5m": None, "connections": None, "redis": "n/a"},
+    )
+    runner = CliRunner()
+    result = runner.invoke(hub, ["status", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["postgres"] == "err"

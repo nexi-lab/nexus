@@ -7,10 +7,12 @@ Remote admin is tracked as a follow-up to issue #3784.
 
 from __future__ import annotations
 
+import os
 from datetime import UTC, datetime
+from typing import Any
 
 import click
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from nexus.cli.commands._hub_common import (
     format_table,
@@ -205,3 +207,96 @@ def hub_zone_list(ctx: click.Context) -> None:
             "`nexus zone list` is not available — cannot delegate from `hub zone list`."
         )
     ctx.invoke(list_cmd)
+
+
+def _read_redis_stats() -> dict[str, Any]:
+    """Read the `nexus:hub:*` counters written by middleware_audit._record_metrics.
+
+    Returns a dict with `qps_5m`, `connections`, `redis` ∈ {"ok", "n/a"}.
+    """
+    import time
+
+    url = os.environ.get("NEXUS_REDIS_URL") or os.environ.get("DRAGONFLY_URL")
+    if not url:
+        return {"qps_5m": None, "connections": None, "redis": "n/a"}
+    try:
+        import redis  # synchronous client for CLI
+    except ImportError:
+        return {"qps_5m": None, "connections": None, "redis": "n/a"}
+
+    try:
+        client = redis.from_url(url, socket_timeout=2)
+        client.ping()
+        now_min = int(time.time()) // 60
+        minute_keys = [f"nexus:hub:qps:{now_min - i}" for i in range(5)]
+        active_key = f"nexus:hub:active:{now_min}"
+        values = client.mget(minute_keys)
+        total = sum(int(v) for v in values if v is not None)
+        active = client.scard(active_key)
+        return {
+            "qps_5m": round(total / 300.0, 2),
+            "connections": int(active),
+            "redis": "ok",
+        }
+    except Exception:  # noqa: BLE001
+        return {"qps_5m": None, "connections": None, "redis": "n/a"}
+
+
+@hub.command("status")
+@click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
+def hub_status(as_json: bool) -> None:
+    """Show hub health: postgres, redis, tokens, connections, qps."""
+    import json as _json
+
+    host = os.environ.get("NEXUS_MCP_HOST", "0.0.0.0")
+    port = os.environ.get("NEXUS_MCP_PORT", "8081")
+    profile = os.environ.get("NEXUS_PROFILE", "full")
+    endpoint = f"http://{host}:{port}/mcp"
+
+    pg_state = "ok"
+    active = revoked = 0
+    try:
+        factory = get_session_factory()
+        with factory() as session:
+            active = (
+                session.execute(
+                    select(func.count()).select_from(APIKeyModel).where(APIKeyModel.revoked == 0)
+                ).scalar()
+                or 0
+            )
+            revoked = (
+                session.execute(
+                    select(func.count()).select_from(APIKeyModel).where(APIKeyModel.revoked == 1)
+                ).scalar()
+                or 0
+            )
+    except Exception:  # noqa: BLE001
+        pg_state = "err"
+
+    redis_stats = _read_redis_stats()
+
+    payload = {
+        "endpoint": endpoint,
+        "profile": profile,
+        "postgres": pg_state,
+        "redis": redis_stats["redis"],
+        "tokens": {"active": int(active), "revoked": int(revoked)},
+        "connections": redis_stats["connections"],
+        "qps_5m": redis_stats["qps_5m"],
+    }
+
+    if as_json:
+        click.echo(_json.dumps(payload, indent=2))
+        return
+
+    click.echo(f"endpoint:    {payload['endpoint']}")
+    click.echo(f"profile:     {payload['profile']}")
+    click.echo(f"postgres:    {payload['postgres']}")
+    click.echo(f"redis:       {payload['redis']}")
+    click.echo(
+        f"tokens:      {payload['tokens']['active']} active, {payload['tokens']['revoked']} revoked"
+    )
+    click.echo(
+        f"connections: {payload['connections'] if payload['connections'] is not None else 'n/a'}"
+    )
+    click.echo(f"qps (5m):    {payload['qps_5m'] if payload['qps_5m'] is not None else 'n/a'}")

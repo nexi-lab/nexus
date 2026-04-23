@@ -79,16 +79,14 @@ def benchmark_nexus(benchmark_backend, benchmark_db, benchmark_loop):
     """
     _, metadata_store = _build_kernel_metastore(benchmark_db)
     record_store = SQLAlchemyRecordStore()  # in-memory SQLite for benchmarks
-    nx = benchmark_loop.run_until_complete(
-        create_nexus_fs(
-            backend=benchmark_backend,
-            metadata_store=metadata_store,
-            record_store=record_store,
-            is_admin=True,
-            permissions=PermissionConfig(enforce=False),
-            parsing=ParseConfig(auto_parse=False),
-            cache=CacheConfig(),
-        )
+    nx = create_nexus_fs(
+        backend=benchmark_backend,
+        metadata_store=metadata_store,
+        record_store=record_store,
+        is_admin=True,
+        permissions=PermissionConfig(enforce=False),
+        parsing=ParseConfig(auto_parse=False),
+        cache=CacheConfig(),
     )
     yield nx
     nx.close()
@@ -99,18 +97,16 @@ def benchmark_nexus_with_permissions(benchmark_backend, benchmark_db, benchmark_
     """Create a NexusFS instance with permissions enabled for ReBAC benchmarks."""
     _, metadata_store = _build_kernel_metastore(str(benchmark_db).replace(".db", "") + "_perms.db")
     record_store = SQLAlchemyRecordStore()  # in-memory SQLite for benchmarks
-    nx = benchmark_loop.run_until_complete(
-        create_nexus_fs(
-            backend=benchmark_backend,
-            metadata_store=metadata_store,
-            record_store=record_store,
-            is_admin=False,  # Not admin - will check permissions
-            zone_id="benchmark_zone",
-            agent_id="benchmark_agent",
-            permissions=PermissionConfig(enforce=True),
-            parsing=ParseConfig(auto_parse=False),
-            cache=CacheConfig(),
-        )
+    nx = create_nexus_fs(
+        backend=benchmark_backend,
+        metadata_store=metadata_store,
+        record_store=record_store,
+        is_admin=False,  # Not admin - will check permissions
+        zone_id="benchmark_zone",
+        agent_id="benchmark_agent",
+        permissions=PermissionConfig(enforce=True),
+        parsing=ParseConfig(auto_parse=False),
+        cache=CacheConfig(),
     )
     yield nx
     nx.close()
@@ -133,7 +129,7 @@ def populated_nexus(benchmark_nexus, sample_files, benchmark_loop):
     """Create a NexusFS with pre-populated files for read benchmarks."""
     nx = benchmark_nexus
 
-    async def _populate():
+    def _populate():
         # Create directory structure
         for i in range(10):
             nx.mkdir(f"/dir_{i}", parents=True)
@@ -154,7 +150,7 @@ def populated_nexus(benchmark_nexus, sample_files, benchmark_loop):
             nx.write(f"/many_files/file_{i:04d}.py", f"# Python {i}".encode())
             nx.write(f"/many_files/file_{i:04d}.json", f'{{"id": {i}}}'.encode())
 
-    benchmark_loop.run_until_complete(_populate())
+    _populate()
     yield nx
 
 
@@ -163,14 +159,14 @@ def deep_directory_nexus(benchmark_nexus, benchmark_loop):
     """Create a NexusFS with deep directory structure for path resolution benchmarks."""
     nx = benchmark_nexus
 
-    async def _populate():
+    def _populate():
         current_path = ""
         for i in range(20):
             current_path += f"/level_{i}"
             nx.mkdir(current_path, parents=True)
             nx.write(f"{current_path}/file.txt", f"Content at depth {i}".encode())
 
-    benchmark_loop.run_until_complete(_populate())
+    _populate()
     yield nx
 
 

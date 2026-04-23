@@ -73,25 +73,10 @@ async def _wire_services(
         record_store=nx._record_store,
     )
 
-    # --- ContentCache (Issue #657) ---
-    _content_cache = None
-    _cache_cfg = nx._cache_config
-    if _cache_cfg.enable_content_cache:
-        _root_backend: Any = None
-        try:
-            _root_backend = nx.router.route("/").backend
-        except Exception:
-            logger.debug("No root backend mounted — ContentCache disabled")
-        if _root_backend is not None and getattr(_root_backend, "has_root_path", False):
-            from nexus.storage.content_cache import ContentCache
-
-            _content_cache = ContentCache(max_size_mb=_cache_cfg.content_cache_size_mb)
-
     # Factory-created brick artifacts (not runtime services — enlisted separately)
     _brick_updates: dict[str, Any] = {
         "cache_brick": _cache_brick,
         "parse_fn": _parse_fn,
-        "content_cache": _content_cache,
         "parser_registry": parsers_brick.parser_registry,
         "provider_registry": parsers_brick.provider_registry,
     }

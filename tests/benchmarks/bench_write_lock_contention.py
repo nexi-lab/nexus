@@ -208,7 +208,7 @@ async def _run(n_seq: int = 20, ops_per_agent: int = 10, burst_count: int = 50) 
                 is_admin=True,
                 permissions=PermissionConfig(enforce=False),
                 parsing=ParseConfig(auto_parse=False),
-                cache=CacheConfig(enable_content_cache=True),
+                cache=CacheConfig(),
             )
 
         sep = "=" * 70

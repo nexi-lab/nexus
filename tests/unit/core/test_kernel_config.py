@@ -35,8 +35,6 @@ class TestCacheConfig:
         assert cfg.kv_size == 256
         assert cfg.exists_size == 1024
         assert cfg.ttl_seconds == 300
-        assert cfg.enable_content_cache is True
-        assert cfg.content_cache_size_mb == 256
 
     def test_frozen(self) -> None:
         cfg = CacheConfig()
@@ -52,10 +50,8 @@ class TestCacheConfig:
     def test_custom_values(self) -> None:
         cfg = CacheConfig(
             ttl_seconds=None,
-            content_cache_size_mb=512,
         )
         assert cfg.ttl_seconds is None
-        assert cfg.content_cache_size_mb == 512
 
 
 # ---------------------------------------------------------------------------

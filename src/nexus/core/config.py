@@ -31,10 +31,9 @@ from nexus.contracts.constants import DEFAULT_NATS_URL
 
 @dataclass(frozen=True)
 class CacheConfig:
-    """In-memory LRU cache and content cache configuration.
+    """In-memory LRU cache configuration.
 
-    Configures sizes for the kernel's internal path/list/kv/exists caches
-    and the optional content cache for faster reads.
+    Configures sizes for the kernel's internal path/list/kv/exists caches.
     NOT related to the CacheStore pillar (Dragonfly/ephemeral KV+PubSub).
     """
 
@@ -43,8 +42,6 @@ class CacheConfig:
     kv_size: int = 256
     exists_size: int = 1024
     ttl_seconds: int | None = 300
-    enable_content_cache: bool = True
-    content_cache_size_mb: int = 256
 
 
 @dataclass(frozen=True)

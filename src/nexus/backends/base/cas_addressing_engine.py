@@ -13,7 +13,6 @@ Thin subclasses exist for: registration, CONNECTION_ARGS, connector-specific
 features (batch reads, signed URLs, versioning).
 
 Feature DI (optional optimizations):
-    content_cache — In-memory cache for read_content() hot path
     meta_cache    — LRU cache for _read_meta() hot path (e.g. cachetools.LRUCache)
     on_write_callback — Write notification (e.g. Zoekt reindex)
     cdc_engine    — ChunkingStrategy for large file chunking (CDC)
@@ -109,7 +108,6 @@ class CASAddressingEngine(Backend):
         *,
         backend_name: str | None = None,
         # Feature DI — optional optimizations, all None-safe
-        content_cache: Any | None = None,
         meta_cache: Any | None = None,
         on_write_callback: Any | None = None,
         cdc_engine: "ChunkingStrategy | None" = None,
@@ -121,7 +119,6 @@ class CASAddressingEngine(Backend):
         # Bloom filter previously lived here; removed in R10f — Rust stat() is
         # fast enough (5-17μs) that the seeding cost of a Bloom filter doesn't
         # pay back. Tracked under #3799 if benchmarks later justify.
-        self._cache = content_cache  # storage.content_cache.ContentCache
         self._meta_cache: Any | None = meta_cache  # cachetools.LRUCache
         self._meta_cache_hits = 0
         self._meta_cache_misses = 0
@@ -236,10 +233,6 @@ class CASAddressingEngine(Backend):
         if self._cdc is not None and self._cdc.should_chunk(content):
             content_hash = self._cdc.write_chunked(content, context)
 
-            # Feature DI: content cache (bloom removed in R10f)
-            if self._cache is not None:
-                self._cache.put(content_hash, content)
-
             return WriteResult(content_id=content_hash, version=content_hash, size=len(content))
 
         content_hash = hash_content(content)
@@ -260,10 +253,6 @@ class CASAddressingEngine(Backend):
                     self._transport.store(key, content)
 
             # No .meta for non-CDC content — ref_count eliminated.
-
-            # Feature DI: Content cache (bloom removed in R10f)
-            if self._cache is not None:
-                self._cache.put(content_hash, content)
 
             # Feature DI: Write callback (e.g. Zoekt reindex)
             if is_new and self._on_write_callback is not None:
@@ -324,11 +313,6 @@ class CASAddressingEngine(Backend):
 
     def read_content(self, content_id: str, context: "OperationContext | None" = None) -> bytes:
         content_hash = content_id  # CAS: content_id is a SHA-256 hash
-        # Feature DI: cache hit → skip transport
-        if self._cache is not None:
-            cached: bytes | None = self._cache.get(content_hash)
-            if cached is not None:
-                return cached
 
         key = self._blob_key(content_hash)
 
@@ -343,13 +327,7 @@ class CASAddressingEngine(Backend):
 
                 if ChunkedReference.is_chunked_manifest(data):
                     chunked_content: bytes = self._cdc.read_chunked(content_hash, context)
-                    if self._cache is not None:
-                        self._cache.put(content_hash, chunked_content)
                     return chunked_content
-
-            # Feature DI: cache on miss
-            if self._cache is not None:
-                self._cache.put(content_hash, data)
 
             return data
 
@@ -442,11 +420,6 @@ class CASAddressingEngine(Backend):
         - Single blob: read full content, verify hash, then slice.
         """
         content_hash = content_id  # CAS: content_id is a SHA-256 hash
-        # Feature DI: content cache hit → slice
-        if self._cache is not None:
-            cached: bytes | None = self._cache.get(content_hash)
-            if cached is not None:
-                return cached[start:end]
 
         # Feature DI: CDC chunked content → range-aware chunk read
         if self._cdc is not None and self._cdc.is_chunked(content_hash):

@@ -17,13 +17,12 @@ Architecture::
     ├── TigerCache
     ├── ResourceMapCache
     ├── EmbeddingCache
-    └── CachingBackendWrapper factory
 
 NOTE: L2 async write-behind is a follow-up (Decision #14).
 """
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from nexus.cache.base import (
     EmbeddingCacheProtocol,
@@ -39,9 +38,6 @@ from nexus.cache.domain import (
 )
 from nexus.cache.settings import CacheSettings
 from nexus.contracts.cache_store import NullCacheStore
-
-if TYPE_CHECKING:
-    from nexus.backends.wrappers.caching import CacheWrapperConfig, CachingBackendWrapper
 
 logger = logging.getLogger(__name__)
 
@@ -227,43 +223,3 @@ class CacheBrick:
     def has_cache_store(self) -> bool:
         """Whether a real (non-Null) CacheStoreABC driver is active."""
         return not isinstance(self._store, NullCacheStore)
-
-    # ------------------------------------------------------------------
-    # CachingBackendWrapper factory
-    # ------------------------------------------------------------------
-
-    def create_caching_wrapper(
-        self,
-        inner: Any,
-        config: "CacheWrapperConfig | None" = None,
-        *,
-        enable_logging: bool = False,
-    ) -> "CachingBackendWrapper":
-        """Create a CachingBackendWrapper for the given backend.
-
-        Args:
-            inner: Backend to wrap with caching.
-            config: Optional wrapper configuration.
-            enable_logging: If True, insert LoggingBackendWrapper.
-
-        Returns:
-            CachingBackendWrapper wrapping the inner backend.
-        """
-        from nexus.backends.wrappers.caching import CacheWrapperConfig as CWC
-        from nexus.backends.wrappers.caching import CachingBackendWrapper
-
-        effective_config = config or CWC()
-
-        wrapped_inner = inner
-        if enable_logging:
-            from nexus.backends.wrappers.logging import LoggingBackendWrapper
-
-            wrapped_inner = LoggingBackendWrapper(inner=inner)
-
-        cache_store = self._store if self.has_cache_store else None
-
-        return CachingBackendWrapper(
-            inner=wrapped_inner,
-            config=effective_config,
-            cache_store=cache_store,
-        )

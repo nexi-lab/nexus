@@ -83,7 +83,6 @@ class CASLocalBackend(CASAddressingEngine, MultipartUpload):
     def __init__(
         self,
         root_path: str | Path,
-        content_cache: Any | None = None,
         batch_read_workers: int = 8,
         on_write_callback: Any | None = None,
         *,
@@ -93,7 +92,6 @@ class CASLocalBackend(CASAddressingEngine, MultipartUpload):
         self.root_path = Path(root_path).resolve()
         self.cas_root = self.root_path / "cas"
         self.dir_root = self.root_path / "dirs"
-        self.content_cache = content_cache
         self.batch_read_workers = batch_read_workers
 
         # Ensure directories exist
@@ -124,7 +122,6 @@ class CASLocalBackend(CASAddressingEngine, MultipartUpload):
         super().__init__(
             transport,
             backend_name="local",
-            content_cache=content_cache,
             meta_cache=meta_cache,
             on_write_callback=on_write_callback,
         )

@@ -69,7 +69,7 @@ async def test_wire_services_passes_enabled_bricks_to_wired_boot(
         _parse_config=None,
         cache_store=object(),
         _record_store=object(),
-        _cache_config=SimpleNamespace(enable_content_cache=False),
+        _cache_config=SimpleNamespace(),
         metadata=object(),
         _init_cred=None,
         _perm_config=SimpleNamespace(enforce=True),

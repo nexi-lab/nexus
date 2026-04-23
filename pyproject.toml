@@ -746,7 +746,6 @@ warn_unused_ignores = false
 # --- Backend / driver return-type mismatches ---
 [[tool.mypy.overrides]]
 module = [
-    "nexus.cache.backend_wrapper",
     "nexus.ipc.driver",
 ]
 disable_error_code = ["return-value", "override"]

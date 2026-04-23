@@ -114,11 +114,6 @@ async def get_cache_stats(
 
     cache_stats: dict[str, Any] = {}
 
-    if hasattr(nexus_fs, "backend") and hasattr(nexus_fs.backend, "content_cache"):
-        cc = nexus_fs.backend.content_cache
-        if cc and hasattr(cc, "get_stats"):
-            cache_stats["content_cache"] = cc.get_stats()
-
     rm = getattr(nexus_fs, "_rebac_manager", None)
     if rm is not None:
         pc = getattr(rm, "_permission_cache", None)

@@ -190,12 +190,6 @@ def stats(
                 # Collect stats from various cache layers
                 cache_stats: dict[str, Any] = {}
 
-                # Content cache stats
-                if hasattr(nx, "backend") and hasattr(nx.backend, "content_cache"):
-                    cc = nx.backend.content_cache
-                    if cc and hasattr(cc, "get_stats"):
-                        cache_stats["content_cache"] = cc.get_stats()
-
                 # Permission cache stats
                 rm = nx.service("rebac_manager") if hasattr(nx, "service") else None
                 if rm is not None:
@@ -301,17 +295,6 @@ def clear(
     async def _impl() -> None:
         async with open_filesystem(remote_url, remote_api_key) as nx:
             cleared: list[str] = []
-
-            # Clear content cache
-            if (
-                (content or clear_all)
-                and hasattr(nx, "backend")
-                and hasattr(nx.backend, "content_cache")
-            ):
-                cc = nx.backend.content_cache
-                if cc and hasattr(cc, "clear"):
-                    cc.clear()
-                    cleared.append("content")
 
             # Clear permission cache
             if permissions or clear_all:

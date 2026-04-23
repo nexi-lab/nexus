@@ -3,8 +3,7 @@
 Tests verify that the full composition chain (compress → encrypt → leaf)
 correctly transforms data on write and reverses transforms on read.
 
-Also tests cache wrapper chains (Decision 10A) and performance regression
-tests (Decision 16A).
+Also tests performance regression tests (Decision 16A).
 
 Design reference:
     - NEXUS-LEGO-ARCHITECTURE.md PART 16, Recursive Wrapping (Mechanism 2)
@@ -243,102 +242,6 @@ class TestWrapperChainPerformance:
 
 
 # ---------------------------------------------------------------------------
-# Cache Wrapper Chain Tests (Decision 10A)
-# ---------------------------------------------------------------------------
-
-
-class TestCacheWrapperChain:
-    """Cache wrapper in composition chains."""
-
-    def test_cache_compress_encrypt_chain_roundtrip(self) -> None:
-        """cache → compress → encrypt → leaf roundtrip."""
-        from cryptography.hazmat.primitives.ciphers.aead import AESGCMSIV
-
-        from nexus.backends.wrappers.caching import CacheWrapperConfig, CachingBackendWrapper
-        from nexus.backends.wrappers.compressed import CompressedStorage, CompressedStorageConfig
-        from nexus.backends.wrappers.encrypted import EncryptedStorage, EncryptedStorageConfig
-
-        mock, storage = make_storage_mock()
-        key = AESGCMSIV.generate_key(bit_length=256)
-
-        encrypted = EncryptedStorage(
-            inner=mock,
-            config=EncryptedStorageConfig(key=key, metrics_enabled=False),
-        )
-        compressed = CompressedStorage(
-            inner=encrypted,
-            config=CompressedStorageConfig(min_size=0, metrics_enabled=False),
-        )
-        cached = CachingBackendWrapper(
-            inner=compressed,
-            config=CacheWrapperConfig(metrics_enabled=False),
-        )
-
-        plaintext = b"cache chain test data " * 100
-        write_resp = cached.write_content(plaintext)
-        assert isinstance(write_resp, WriteResult)
-
-        # First read populates L1
-        read_back = cached.read_content(write_resp.content_id)
-        assert read_back == plaintext
-
-        # Second read should hit L1 cache
-        read_back2 = cached.read_content(write_resp.content_id)
-        assert read_back2 == plaintext
-
-    def test_cache_only_chain(self) -> None:
-        """cache → leaf: verify cache hit skips inner."""
-
-        from nexus.backends.wrappers.caching import CacheWrapperConfig, CachingBackendWrapper
-
-        mock, storage = make_storage_mock()
-        cached = CachingBackendWrapper(
-            inner=mock,
-            config=CacheWrapperConfig(metrics_enabled=False),
-        )
-
-        # Write and first read
-        write_resp = cached.write_content(b"hello")
-        content_hash = write_resp.content_id
-        cached.read_content(content_hash)
-
-        # Reset mock call count
-        mock.read_content.reset_mock()
-
-        # Second read should hit L1, not call inner
-        read_back = cached.read_content(content_hash)
-        assert read_back == b"hello"
-        mock.read_content.assert_not_called()
-
-    def test_cache_chain_describe(self) -> None:
-        """describe() shows full chain with cache."""
-        from cryptography.hazmat.primitives.ciphers.aead import AESGCMSIV
-
-        from nexus.backends.wrappers.caching import CacheWrapperConfig, CachingBackendWrapper
-        from nexus.backends.wrappers.compressed import CompressedStorage, CompressedStorageConfig
-        from nexus.backends.wrappers.encrypted import EncryptedStorage, EncryptedStorageConfig
-
-        mock, _ = make_storage_mock()
-        key = AESGCMSIV.generate_key(bit_length=256)
-
-        encrypted = EncryptedStorage(
-            inner=mock,
-            config=EncryptedStorageConfig(key=key, metrics_enabled=False),
-        )
-        compressed = CompressedStorage(
-            inner=encrypted,
-            config=CompressedStorageConfig(metrics_enabled=False),
-        )
-        cached = CachingBackendWrapper(
-            inner=compressed,
-            config=CacheWrapperConfig(metrics_enabled=False),
-        )
-        assert cached.describe() == (
-            "cache → compress(zstd) → encrypt(AES-256-GCM-SIV) → storage-mock"
-        )
-
-
-# ---------------------------------------------------------------------------
 # Performance Regression Tests (Decision 16A)
 # ---------------------------------------------------------------------------
 
@@ -359,44 +262,3 @@ class TestPerformanceRegression:
         elapsed_ms = (time.perf_counter() - start) * 1000 / iterations
 
         assert elapsed_ms < 5.0, f"wrap() too slow: {elapsed_ms:.2f}ms per call"
-
-    def test_full_chain_with_cache_overhead(self) -> None:
-        """4-layer chain (cache → compress → encrypt → logging → leaf) < 10ms per op."""
-        from cryptography.hazmat.primitives.ciphers.aead import AESGCMSIV
-
-        from nexus.backends.wrappers.caching import CacheWrapperConfig, CachingBackendWrapper
-        from nexus.backends.wrappers.compressed import CompressedStorage, CompressedStorageConfig
-        from nexus.backends.wrappers.encrypted import EncryptedStorage, EncryptedStorageConfig
-        from nexus.backends.wrappers.logging import LoggingBackendWrapper
-
-        mock, storage = make_storage_mock()
-        key = AESGCMSIV.generate_key(bit_length=256)
-
-        logged = LoggingBackendWrapper(inner=mock)
-        encrypted = EncryptedStorage(
-            inner=logged,
-            config=EncryptedStorageConfig(key=key, metrics_enabled=False),
-        )
-        compressed = CompressedStorage(
-            inner=encrypted,
-            config=CompressedStorageConfig(min_size=0, metrics_enabled=False),
-        )
-        cached = CachingBackendWrapper(
-            inner=compressed,
-            config=CacheWrapperConfig(metrics_enabled=False),
-        )
-
-        content = b"full chain perf data " * 100
-
-        # Warm up
-        h = cached.write_content(content).content_id
-        cached.read_content(h)
-
-        # Time reads (includes L1 cache hit path)
-        start = time.perf_counter()
-        iterations = 100
-        for _ in range(iterations):
-            cached.read_content(h)
-        read_elapsed_ms = (time.perf_counter() - start) * 1000 / iterations
-
-        assert read_elapsed_ms < 10.0, f"Read too slow: {read_elapsed_ms:.2f}ms per op"

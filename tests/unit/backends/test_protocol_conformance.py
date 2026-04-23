@@ -8,7 +8,6 @@ Verifies that:
 5. Non-compliant classes are correctly rejected
 6. DelegatingBackend satisfies ConnectorProtocol (Issue #2362)
 7. SearchableConnector conformance (Issue #2367)
-8. CachingConnectorContract and CacheConfigContract conformance (Issue #2362)
 """
 
 import hashlib
@@ -17,7 +16,6 @@ from typing import Any
 import pytest
 
 from nexus.backends.base.backend import Backend
-from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.core.object_store import WriteResult
 from nexus.core.protocols.connector import (
@@ -438,47 +436,3 @@ class TestSearchableConnectorConformance:
 
         obj = _PartialSearchable()
         assert not isinstance(obj, SearchableConnector)
-
-
-# ---------------------------------------------------------------------------
-# Test: CachingConnectorContract and CacheConfigContract (Issue #2362, Decision 12A)
-# ---------------------------------------------------------------------------
-
-
-class TestCachingContractConformance:
-    """Verify CachingConnectorContract and CacheConfigContract protocols."""
-
-    def test_caching_backend_wrapper_satisfies_caching_connector_contract(self) -> None:
-        """CachingBackendWrapper satisfies the new CachingConnectorContract."""
-        from nexus.backends.wrappers.caching import CachingBackendWrapper
-        from nexus.core.protocols.caching import CachingConnectorContract
-
-        inner = _MockBackend()
-        wrapper = CachingBackendWrapper(inner=inner)
-        assert isinstance(wrapper, CachingConnectorContract)
-
-    def test_plain_backend_not_caching_connector(self) -> None:
-        """Plain Backend without get_cache_stats/clear_cache is not CachingConnectorContract."""
-        from nexus.core.protocols.caching import CachingConnectorContract
-
-        backend = _MockBackend()
-        assert not isinstance(backend, CachingConnectorContract)
-
-    def test_cache_config_contract_satisfied(self) -> None:
-        """Object with session_factory/zone_id/l1_only satisfies CacheConfigContract."""
-        from nexus.core.protocols.caching import CacheConfigContract
-
-        class _MockCacheConfig:
-            session_factory = None
-            zone_id = ROOT_ZONE_ID
-            l1_only = False
-
-        obj = _MockCacheConfig()
-        assert isinstance(obj, CacheConfigContract)
-
-    def test_cache_config_contract_rejected(self) -> None:
-        """Object missing cache config attributes fails CacheConfigContract."""
-        from nexus.core.protocols.caching import CacheConfigContract
-
-        backend = _MockBackend()
-        assert not isinstance(backend, CacheConfigContract)

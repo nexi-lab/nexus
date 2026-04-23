@@ -1,7 +1,7 @@
 """WrapperMetrics — shared OTel metrics helper for Backend wrappers (#1705).
 
 Provides lazy-initialized OTel counters and thread-safe stat tracking
-for all recursive wrappers (CachingBackendWrapper, EncryptedStorage,
+for all recursive wrappers (EncryptedStorage,
 CompressedStorage, etc.).
 
 Composition-based: each wrapper owns a WrapperMetrics instance rather

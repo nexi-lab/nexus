@@ -45,30 +45,15 @@ def backend_with_features(transport):
     Bloom filter was removed in R10f — direct `_transport.exists()` is
     fast enough that the pre-filter no longer pays back.
     """
-    cache = SimpleCache()
     callback = MagicMock()
     return CASAddressingEngine(
         transport,
         backend_name="test-local-features",
-        content_cache=cache,
         on_write_callback=callback,
     )
 
 
 # === Simple test doubles for Feature DI ===
-
-
-class SimpleCache:
-    """Minimal cache for testing."""
-
-    def __init__(self):
-        self._store: dict[str, bytes] = {}
-
-    def get(self, key: str) -> bytes | None:
-        return self._store.get(key)
-
-    def put(self, key: str, value: bytes) -> None:
-        self._store[key] = value
 
 
 # === Basic CRUD ===
@@ -219,25 +204,6 @@ class TestDirectoryOperations:
         entries = backend.list_dir("parent")
         assert "child1/" in entries
         assert "child2/" in entries
-
-
-# === Feature DI: Content Cache ===
-
-
-class TestContentCache:
-    def test_cache_hit_on_second_read(self, backend_with_features):
-        b = backend_with_features
-        r = b.write_content(b"cached data")
-        # First read populates cache (write also populates)
-        data1 = b.read_content(r.content_id)
-        assert data1 == b"cached data"
-        # Cache should have it
-        assert b._cache.get(r.content_id) == b"cached data"
-
-    def test_cache_populated_on_write(self, backend_with_features):
-        b = backend_with_features
-        r = b.write_content(b"write cache")
-        assert b._cache.get(r.content_id) == b"write cache"
 
 
 # === Feature DI: on_write_callback ===

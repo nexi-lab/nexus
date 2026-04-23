@@ -91,6 +91,7 @@ impl From<KernelError> for PyErr {
                     pyo3::exceptions::PyFileNotFoundError::new_err(path)
                 }
             }),
+            KernelError::FileExists(msg) => pyo3::exceptions::PyFileExistsError::new_err(msg),
             KernelError::Route(RouteError::NotMounted(msg)) => {
                 pyo3::exceptions::PyValueError::new_err(msg)
             }

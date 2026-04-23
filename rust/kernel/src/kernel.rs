@@ -43,6 +43,7 @@ pub(crate) mod vfs_proto {
 pub enum KernelError {
     InvalidPath(String),
     FileNotFound(String),
+    FileExists(String),
     Route(RouteError),
     IOError(String),
     TrieError(String),
@@ -3310,9 +3311,22 @@ impl Kernel {
             (Some(m), _) => (m.entry_type == DT_DIR, m.entry_type),
             (None, Some(e)) => (e.entry_type == DT_DIR, e.entry_type),
             (None, None) => {
-                // Not found in Rust metastore/dcache — let Python handle under VFS lock
-                release_locks(&self.lock_manager, lock1, lock2);
-                return miss();
+                // Check for implicit directory: no explicit entry, but has children
+                let child_prefix = format!("{}/", old_zone_path.trim_end_matches('/'));
+                let has_children = self
+                    .with_metastore(&old_route.mount_point, |ms| {
+                        ms.list(&child_prefix)
+                            .map(|v| !v.is_empty())
+                            .unwrap_or(false)
+                    })
+                    .unwrap_or(false);
+                if has_children {
+                    (true, DT_DIR)
+                } else {
+                    // Source truly does not exist — raise FileNotFound
+                    release_locks(&self.lock_manager, lock1, lock2);
+                    return Err(KernelError::FileNotFound(old_path.to_string()));
+                }
             }
         };
 
@@ -3338,8 +3352,7 @@ impl Kernel {
             _ => {}
         }
 
-        // 5. Destination conflict check — let Python handle under VFS lock
-        //    (Python has richer stale-metadata cleanup logic with backend.file_exists)
+        // 5. Destination conflict check
         let new_exists = self
             .with_metastore(&old_route.mount_point, |ms| {
                 ms.exists(&new_zone_path).unwrap_or(false)
@@ -3347,7 +3360,10 @@ impl Kernel {
             .unwrap_or(false);
         if new_exists {
             release_locks(&self.lock_manager, lock1, lock2);
-            return miss();
+            return Err(KernelError::FileExists(format!(
+                "Destination path already exists: {}",
+                new_path
+            )));
         }
 
         // 6. Atomic rename (and, for directories, recursive child rewrite)
@@ -3356,11 +3372,11 @@ impl Kernel {
         //    is crash-safe on the standalone-redb hot path; the default
         //    trait impl is a put-then-delete that matches the previous
         //    hand-rolled loop below.
-        if old_meta.is_some() {
-            self.with_metastore(&old_route.mount_point, |ms| {
-                let _ = ms.rename_path(&old_zone_path, &new_zone_path);
-            });
-        }
+        // Always call rename_path: handles both explicit entries and
+        // implicit directories (children-only rename when root entry is None).
+        self.with_metastore(&old_route.mount_point, |ms| {
+            let _ = ms.rename_path(&old_zone_path, &new_zone_path);
+        });
 
         // 8. Backend rename (best-effort, PAS only)
         let _ = self.mount_table.rename_file(

@@ -715,66 +715,10 @@ class MetadataMixin:
         ) or self.metadata.is_implicit_directory(old_path)
 
         # Rust sys_rename handles: sorted VFS locks + metastore put-then-delete
-        # + recursive children rename + backend rename + dcache updates + OBSERVE.
+        # + recursive children rename (incl. implicit dirs) + backend rename
+        # + dcache updates + OBSERVE.
         _rust_ctx = self._build_rust_ctx(context, is_admin)
         _rename_result = self._kernel.sys_rename(old_path, new_path, _rust_ctx)
-
-        # Rust hit=true: metastore.rename_path() handled the entry AND all
-        # children atomically (redb: single txn). Trust Rust SSOT.
-        if _rename_result.hit:
-            if _rename_result.post_hook_needed:
-                from nexus.contracts.vfs_hooks import RenameHookContext
-
-                _rename_ctx = RenameHookContext(
-                    old_path=old_path,
-                    new_path=new_path,
-                    context=context,
-                    zone_id=zone_id,
-                    agent_id=agent_id,
-                    is_directory=bool(_rename_result.is_directory),
-                    metadata=meta,
-                )
-                self._kernel.dispatch_post_hooks("rename", _rename_ctx)
-            return {}
-
-        # Python fallback for when Rust returns hit=false (implicit dirs,
-        # DT_MOUNT/DT_EXTERNAL_STORAGE). Rust's rename_path() only handles
-        # entries it finds via metastore.get() — implicit dirs have no entry.
-        old_route = self.router.route(old_path, zone_id=self._zone_id)
-        new_route = self.router.route(new_path, zone_id=self._zone_id)
-
-        is_implicit_dir = not old_route.metastore.exists(
-            old_path
-        ) and self.metadata.is_implicit_directory(old_path)
-        if not old_route.metastore.exists(old_path) and not is_implicit_dir:
-            raise NexusFileNotFoundError(old_path)
-
-        meta = old_route.metastore.get(old_path)
-        is_directory = is_implicit_dir or (meta and meta.mime_type == "inode/directory")
-
-        # Check destination
-        if new_route.metastore.exists(new_path):
-            raise FileExistsError(f"Destination path already exists: {new_path}")
-
-        # Metadata rename (put-first for crash safety)
-        from dataclasses import replace as _replace
-
-        _old_meta = old_route.metastore.get(old_path)
-        if _old_meta is not None:
-            _new_meta = _replace(_old_meta, path=new_path)
-            new_route.metastore.put(_new_meta)
-            old_route.metastore.delete(old_path)
-        elif not is_directory:
-            raise NexusFileNotFoundError(old_path)
-
-        # Rename children for implicit directories
-        if is_directory:
-            _prefix = old_path.rstrip("/") + "/"
-            for child in old_route.metastore.list(_prefix, recursive=True):
-                _child_new = new_path + child.path[len(old_path) :]
-                _child_new_meta = _replace(child, path=_child_new)
-                new_route.metastore.put(_child_new_meta)
-                old_route.metastore.delete(child.path)
 
         # POST-INTERCEPT hooks
         if _rename_result.post_hook_needed:
@@ -786,7 +730,7 @@ class MetadataMixin:
                 context=context,
                 zone_id=zone_id,
                 agent_id=agent_id,
-                is_directory=bool(is_directory),
+                is_directory=bool(_rename_result.is_directory or is_directory),
                 metadata=meta,
             )
             self._kernel.dispatch_post_hooks("rename", _rename_ctx)

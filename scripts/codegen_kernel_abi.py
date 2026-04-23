@@ -2109,6 +2109,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "                    pyo3::exceptions::PyFileNotFoundError::new_err(path)",
             "                }",
             "            }),",
+            "            KernelError::FileExists(msg) => pyo3::exceptions::PyFileExistsError::new_err(msg),",
             "            KernelError::Route(RouteError::NotMounted(msg)) => {",
             "                pyo3::exceptions::PyValueError::new_err(msg)",
             "            }",

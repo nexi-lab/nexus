@@ -205,3 +205,55 @@ def test_token_list_json(monkeypatch):
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert payload["tokens"][0]["name"] == "alice"
+
+
+def test_token_list_filters_revoked_with_real_sql(monkeypatch):
+    """Integration: default query actually filters revoked rows via WHERE revoked == 0."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from nexus.storage.models import APIKeyModel, Base
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine, future=True, expire_on_commit=False)
+
+    with Session() as s, s.begin():
+        s.add(
+            APIKeyModel(
+                key_hash="hash_active",
+                user_id="alice",
+                name="alice",
+                zone_id="root",
+                is_admin=0,
+                revoked=0,
+            )
+        )
+        s.add(
+            APIKeyModel(
+                key_hash="hash_revoked",
+                user_id="bob",
+                name="bob",
+                zone_id="root",
+                is_admin=0,
+                revoked=1,
+            )
+        )
+
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_session_factory",
+        lambda: Session,
+    )
+
+    runner = CliRunner()
+    # Default: only "alice" should appear.
+    default_result = runner.invoke(hub, ["token", "list"])
+    assert default_result.exit_code == 0, default_result.output
+    assert "alice" in default_result.output
+    assert "bob" not in default_result.output
+
+    # --show-revoked: both appear.
+    all_result = runner.invoke(hub, ["token", "list", "--show-revoked"])
+    assert all_result.exit_code == 0, all_result.output
+    assert "alice" in all_result.output
+    assert "bob" in all_result.output

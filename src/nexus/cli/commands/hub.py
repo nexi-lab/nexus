@@ -148,4 +148,4 @@ def token_list(show_revoked: bool, as_json: bool) -> None:
             for r in rows
         ],
     )
-    click.echo(body if body else "(no tokens)")
+    click.echo(body)

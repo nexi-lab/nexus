@@ -73,8 +73,8 @@ class TestNexusFSServiceComposition:
         """Test that services receive correct dependencies."""
         fs = _make_fs(tmp_path)
 
-        # VersionService dependencies (injected by _make_fs, mimicking factory)
-        assert fs.service("version_service").metadata == fs.metadata
+        # VersionService dependencies (may be proxy-wrapped after Rust kernel init)
+        assert fs.service("version_service").metadata is not None
         assert fs.service("version_service").cas == fs.router.route("/").backend
 
         # ReBACService should have a rebac_manager (may be proxy-wrapped)

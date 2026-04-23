@@ -106,6 +106,12 @@ class ContentMixin:
         # External connector mounts are now handled by Rust-registered native
         # backends — no Python re-routing needed.
         # DT_PIPE / DT_STREAM: entry_type signals IPC dispatch below.
+        #
+        # Slim-package mode: ``nexus-fs`` can ship without ``nexus_kernel``,
+        # in which case ``self._kernel`` is None. Raise NexusFileNotFoundError
+        # so the SlimNexusFS facade's Python fallback chain takes over.
+        if self._kernel is None:
+            raise NexusFileNotFoundError(path)
         _rust_ctx = self._build_rust_ctx(context, _is_admin)
         result = self._kernel.sys_read(path, _rust_ctx)
 

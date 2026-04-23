@@ -1,6 +1,6 @@
 {
   "name": "@nexus-ai-fs/api-client",
-  "version": "0.9.34",
+  "version": "0.9.35",
   "description": "Shared HTTP client for Nexus APIs — retry, auth, error mapping, case transform",
   "type": "module",
   "main": "./dist/index.cjs",

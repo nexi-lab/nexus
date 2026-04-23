@@ -42,9 +42,9 @@ class DelegatingBackend(Backend):
         orchestration, calling the hooks at the right points. These wrappers
         never touch directory ops or connection lifecycle.
 
-        **Behavioral wrappers** (CachingBackendWrapper, LoggingBackendWrapper):
+        **Behavioral wrappers** (LoggingBackendWrapper):
         Override full methods directly (read_content, write_content, etc.)
-        to add caching, logging, or other cross-cutting behavior. These
+        to add logging or other cross-cutting behavior. These
         wrappers bypass the transform hooks entirely and manage delegation
         to ``_inner`` themselves.
 

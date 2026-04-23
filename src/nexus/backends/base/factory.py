@@ -196,14 +196,6 @@ class BackendFactory:
         result: Backend
 
         match wrapper_type:
-            case "cache" | "caching":
-                from nexus.backends.wrappers.caching import (
-                    CacheWrapperConfig,
-                    CachingBackendWrapper,
-                )
-
-                cache_cfg = CacheWrapperConfig(**cfg) if cfg else None
-                result = CachingBackendWrapper(inner=inner, config=cache_cfg)
             case "compress" | "compressed":
                 from nexus.backends.wrappers.compressed import (
                     CompressedStorage,

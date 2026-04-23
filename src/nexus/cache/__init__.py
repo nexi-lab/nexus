@@ -28,11 +28,6 @@ Note:
         from nexus.cache.dragonfly import DragonflyCacheStore
 """
 
-from nexus.backends.wrappers.caching import (
-    CacheStrategy,
-    CacheWrapperConfig,
-    CachingBackendWrapper,
-)
 from nexus.cache.base import (
     EmbeddingCacheProtocol,
     PermissionCacheProtocol,
@@ -51,10 +46,6 @@ __all__ = [
     # Factory + config (deprecated — use CacheBrick instead)
     "CacheFactory",
     "CacheSettings",
-    # CachingBackendWrapper — transparent caching decorator for any Backend (#1392)
-    "CachingBackendWrapper",
-    "CacheStrategy",
-    "CacheWrapperConfig",
     # Consumer-facing protocols (what you program against)
     "EmbeddingCacheProtocol",
     "PermissionCacheProtocol",

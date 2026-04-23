@@ -95,23 +95,8 @@ class TestBackendFactoryWrap:
         wrapped = BackendFactory.wrap(base, "encrypt", {"key": key})
         assert isinstance(wrapped, EncryptedStorage)
 
-    def test_wrap_caching(self, tmp_path: Any) -> None:
-        """wrap("cache") creates a CachingBackendWrapper."""
-        from nexus.backends.wrappers.caching import CachingBackendWrapper
-
-        base = BackendFactory.create("cas_local", {"data_dir": str(tmp_path / "data")})
-        wrapped = BackendFactory.wrap(base, "cache")
-        assert isinstance(wrapped, CachingBackendWrapper)
-
     def test_wrap_unknown_type(self, tmp_path: Any) -> None:
         """wrap() raises ValueError for unknown wrapper types."""
         base = BackendFactory.create("cas_local", {"data_dir": str(tmp_path / "data")})
         with pytest.raises(ValueError, match="Unknown wrapper type"):
             BackendFactory.wrap(base, "nonexistent")
-
-    def test_wrap_chain_describe(self, tmp_path: Any) -> None:
-        """Successive wrap() calls produce correct describe() output."""
-        base = BackendFactory.create("cas_local", {"data_dir": str(tmp_path / "data")})
-        logged = BackendFactory.wrap(base, "logging")
-        cached = BackendFactory.wrap(logged, "cache")
-        assert cached.describe() == "cache → logging → local"

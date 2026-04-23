@@ -12,12 +12,6 @@ Usage:
     from nexus.backends.wrappers.logging import LoggingBackendWrapper
 
     logged = LoggingBackendWrapper(inner=s3_backend)
-    # or as part of a chain:
-    cached_logged = CachingBackendWrapper(
-        inner=LoggingBackendWrapper(inner=s3_backend),
-        config=config,
-    )
-    cached_logged.describe()  # "cache → logging → s3"
 
 Design reference:
     - NEXUS-LEGO-ARCHITECTURE.md PART 16 — Recursive Wrapping (Mechanism 2)

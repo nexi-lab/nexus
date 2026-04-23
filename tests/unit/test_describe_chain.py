@@ -16,10 +16,6 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCMSIV
 
 from nexus.backends.base.backend import Backend
 from nexus.backends.storage.delegating import DelegatingBackend
-from nexus.backends.wrappers.caching import (
-    CacheWrapperConfig,
-    CachingBackendWrapper,
-)
 from nexus.backends.wrappers.compressed import (
     CompressedStorage,
     CompressedStorageConfig,
@@ -60,12 +56,6 @@ class TestLeafBackendDescribe:
 class TestSingleWrapperDescribe:
     """Single wrapper should prepend its layer name."""
 
-    def test_caching_wrapper(self) -> None:
-        leaf = _make_leaf("local")
-        config = CacheWrapperConfig(l2_enabled=False, metrics_enabled=False)
-        wrapper = CachingBackendWrapper(inner=leaf, config=config)
-        assert wrapper.describe() == "cache → local"
-
     def test_logging_wrapper(self) -> None:
         leaf = _make_leaf("s3")
         wrapper = LoggingBackendWrapper(inner=leaf)
@@ -88,20 +78,13 @@ class TestSingleWrapperDescribe:
 class TestTwoDeepChainDescribe:
     """2-deep chain should show all layers in order."""
 
-    def test_cache_then_logging(self) -> None:
-        leaf = _make_leaf("s3")
-        logged = LoggingBackendWrapper(inner=leaf)
-        config = CacheWrapperConfig(l2_enabled=False, metrics_enabled=False)
-        cached = CachingBackendWrapper(inner=logged, config=config)
-        assert cached.describe() == "cache → logging → s3"
-
-    def test_logging_then_cache(self) -> None:
+    def test_logging_then_encrypt(self) -> None:
         """Order matters — reversed chain should produce reversed description."""
-        leaf = _make_leaf("gcs")
-        config = CacheWrapperConfig(l2_enabled=False, metrics_enabled=False)
-        cached = CachingBackendWrapper(inner=leaf, config=config)
-        logged = LoggingBackendWrapper(inner=cached)
-        assert logged.describe() == "logging → cache → gcs"
+        leaf = _make_leaf("local")
+        enc_config = EncryptedStorageConfig(key=_TEST_KEY, metrics_enabled=False)
+        encrypted = EncryptedStorage(inner=leaf, config=enc_config)
+        logged = LoggingBackendWrapper(inner=encrypted)
+        assert logged.describe() == "logging → encrypt(AES-256-GCM-SIV) → local"
 
 
 class TestDeepChainDescribe:
@@ -111,29 +94,25 @@ class TestDeepChainDescribe:
         leaf = _make_leaf("local")
         logged1 = LoggingBackendWrapper(inner=leaf)
         logged2 = LoggingBackendWrapper(inner=logged1)
-        config = CacheWrapperConfig(l2_enabled=False, metrics_enabled=False)
-        cached = CachingBackendWrapper(inner=logged2, config=config)
-        assert cached.describe() == "cache → logging → logging → local"
+        logged3 = LoggingBackendWrapper(inner=logged2)
+        assert logged3.describe() == "logging → logging → logging → local"
 
     def test_same_wrapper_stacked(self) -> None:
         """Same wrapper type stacked should repeat in description."""
         leaf = _make_leaf("s3")
-        config = CacheWrapperConfig(l2_enabled=False, metrics_enabled=False)
-        inner_cache = CachingBackendWrapper(inner=leaf, config=config)
-        outer_cache = CachingBackendWrapper(inner=inner_cache, config=config)
-        assert outer_cache.describe() == "cache → cache → s3"
+        logged1 = LoggingBackendWrapper(inner=leaf)
+        logged2 = LoggingBackendWrapper(inner=logged1)
+        assert logged2.describe() == "logging → logging → s3"
 
     @_skip_no_zstd
     def test_full_production_chain(self) -> None:
-        """Recommended production chain: cache → compress → encrypt → leaf."""
+        """Recommended production chain: compress → encrypt → leaf."""
         leaf = _make_leaf("s3")
         enc_config = EncryptedStorageConfig(key=_TEST_KEY, metrics_enabled=False)
         encrypted = EncryptedStorage(inner=leaf, config=enc_config)
         cmp_config = CompressedStorageConfig(metrics_enabled=False)
         compressed = CompressedStorage(inner=encrypted, config=cmp_config)
-        cache_config = CacheWrapperConfig(l2_enabled=False, metrics_enabled=False)
-        cached = CachingBackendWrapper(inner=compressed, config=cache_config)
-        assert cached.describe() == "cache → compress(zstd) → encrypt(AES-256-GCM-SIV) → s3"
+        assert compressed.describe() == "compress(zstd) → encrypt(AES-256-GCM-SIV) → s3"
 
 
 class TestDescribableProtocol:
@@ -142,12 +121,6 @@ class TestDescribableProtocol:
     def test_leaf_is_describable(self) -> None:
         leaf = _make_leaf("local")
         assert isinstance(leaf, Describable)
-
-    def test_caching_wrapper_is_describable(self) -> None:
-        leaf = _make_leaf("local")
-        config = CacheWrapperConfig(l2_enabled=False, metrics_enabled=False)
-        wrapper = CachingBackendWrapper(inner=leaf, config=config)
-        assert isinstance(wrapper, Describable)
 
     def test_logging_wrapper_is_describable(self) -> None:
         leaf = _make_leaf("local")

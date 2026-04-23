@@ -5,9 +5,6 @@ Caching contracts:
 - ``CacheConfigContract`` — the 3-attribute contract for cache configuration
   (session_factory, zone_id, l1_only).
 
-- ``CachingConnectorContract`` — wrapping-chain cache methods for
-  CachingBackendWrapper (get_cache_stats, clear_cache, describe).
-
 - ``TigerCacheProtocol`` — protocol for Tiger bitmap cache backends (cross-brick).
 
 - ``EmbeddingCacheProtocol`` — protocol for embedding vector caches (cross-brick).
@@ -39,25 +36,6 @@ class CacheConfigContract(Protocol):
     session_factory: Any | None
     zone_id: str | None
     l1_only: bool
-
-@runtime_checkable
-class CachingConnectorContract(Protocol):
-    """Wrapping-chain cache capability protocol.
-
-    Satisfied by CachingBackendWrapper and any other wrapper that provides
-    cache introspection and management at the connector level.
-
-    Methods:
-        get_cache_stats: Return cache hit/miss/error counters.
-        clear_cache: Clear all cached entries and reset stats.
-        describe: Return the wrapper chain description string.
-    """
-
-    def get_cache_stats(self) -> dict[str, Any]: ...
-
-    def clear_cache(self) -> None: ...
-
-    def describe(self) -> str: ...
 
 @runtime_checkable
 class TigerCacheProtocol(Protocol):

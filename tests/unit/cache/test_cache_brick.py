@@ -7,7 +7,7 @@ Tests cover:
 - Default construction (NullCacheStore fallback)
 - Real store injection
 - Protocol-typed accessor properties
-- CachingBackendWrapper factory method
+- CachingBackendWrapper factory method (DELETED — CachingBackendWrapper removed)
 - Immutability
 - Zero nexus.core imports (brick isolation)
 """
@@ -137,30 +137,6 @@ class TestCacheBrickProtocols:
         store = _make_mock_store()
         brick = CacheBrick(cache_store=store)
         assert brick.cache_store is store
-
-
-# ---------------------------------------------------------------------------
-# Backend wrapper factory
-# ---------------------------------------------------------------------------
-
-
-class TestCacheBrickBackendWrapper:
-    """Test CachingBackendWrapper creation."""
-
-    def test_create_backend_wrapper(self) -> None:
-        """create_caching_wrapper should return a CachingBackendWrapper."""
-        from nexus.backends.wrappers.caching import CachingBackendWrapper
-        from nexus.cache.brick import CacheBrick
-
-        brick = CacheBrick()
-        mock_backend = MagicMock()
-        mock_backend.name = "test"
-        mock_backend.read_content = AsyncMock()
-        mock_backend.write_content = AsyncMock()
-        mock_backend.delete_content = AsyncMock()
-        mock_backend.content_exists = AsyncMock()
-        wrapper = brick.create_caching_wrapper(mock_backend)
-        assert isinstance(wrapper, CachingBackendWrapper)
 
 
 # ---------------------------------------------------------------------------

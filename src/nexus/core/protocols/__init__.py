@@ -21,7 +21,7 @@ References:
 """
 
 from nexus.contracts.cache_store import CacheStoreABC, NullCacheStore
-from nexus.core.protocols.caching import CacheConfigContract, CachingConnectorContract
+from nexus.core.protocols.caching import CacheConfigContract
 from nexus.contracts.backend_features import BackendFeature
 from nexus.core.protocols.connector import (
     BatchContentProtocol,
@@ -43,7 +43,6 @@ __all__ = [
     "BatchContentProtocol",
     "CacheConfigContract",
     "CacheStoreABC",
-    "CachingConnectorContract",
     "CapabilityAwareProtocol",
     "BackendFeature",
     "ConnectorProtocol",

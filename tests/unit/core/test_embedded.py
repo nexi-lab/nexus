@@ -668,7 +668,7 @@ def test_glob_question_mark_pattern(embedded: NexusFS) -> None:
 
 
 @pytest.mark.asyncio
-def test_grep_simple_search(embedded: NexusFS) -> None:
+async def test_grep_simple_search(embedded: NexusFS) -> None:
     """Test basic grep search."""
     # Create test files
     embedded.write("/file1.txt", b"Hello World\nFoo Bar\nHello Again")
@@ -689,7 +689,7 @@ def test_grep_simple_search(embedded: NexusFS) -> None:
 
 
 @pytest.mark.asyncio
-def test_grep_regex_pattern(embedded: NexusFS) -> None:
+async def test_grep_regex_pattern(embedded: NexusFS) -> None:
     """Test grep with regex patterns."""
     # Create test file
     embedded.write("/code.py", b"def foo():\n    pass\ndef bar():\n    return 42")
@@ -703,7 +703,7 @@ def test_grep_regex_pattern(embedded: NexusFS) -> None:
 
 
 @pytest.mark.asyncio
-def test_grep_with_file_pattern(embedded: NexusFS) -> None:
+async def test_grep_with_file_pattern(embedded: NexusFS) -> None:
     """Test grep with file filtering."""
     # Create test files
     embedded.write("/file1.py", b"import os\nimport sys")
@@ -719,7 +719,7 @@ def test_grep_with_file_pattern(embedded: NexusFS) -> None:
 
 
 @pytest.mark.asyncio
-def test_grep_case_insensitive(embedded: NexusFS) -> None:
+async def test_grep_case_insensitive(embedded: NexusFS) -> None:
     """Test case-insensitive grep search."""
     # Create test file
     embedded.write("/file.txt", b"ERROR: Something went wrong\nError in processing\nerror detected")
@@ -734,7 +734,7 @@ def test_grep_case_insensitive(embedded: NexusFS) -> None:
 
 
 @pytest.mark.asyncio
-def test_grep_max_results(embedded: NexusFS) -> None:
+async def test_grep_max_results(embedded: NexusFS) -> None:
     """Test grep result limiting."""
     # Create file with many matches
     content = "\n".join([f"Line {i} with MATCH" for i in range(100)])
@@ -746,7 +746,7 @@ def test_grep_max_results(embedded: NexusFS) -> None:
 
 
 @pytest.mark.asyncio
-def test_grep_skips_binary_files(embedded: NexusFS) -> None:
+async def test_grep_skips_binary_files(embedded: NexusFS) -> None:
     """Test that grep skips binary files."""
     # Create binary file
     embedded.write("/binary.bin", bytes(range(256)))
@@ -761,7 +761,7 @@ def test_grep_skips_binary_files(embedded: NexusFS) -> None:
 
 
 @pytest.mark.asyncio
-def test_grep_empty_results(embedded: NexusFS) -> None:
+async def test_grep_empty_results(embedded: NexusFS) -> None:
     """Test grep with no matches."""
     embedded.write("/file.txt", b"Hello World")
 

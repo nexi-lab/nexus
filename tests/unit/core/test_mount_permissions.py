@@ -255,7 +255,7 @@ class TestListMountsPermissionFiltering:
 class TestListSavedMountsUserFiltering:
     """Tests for list_saved_mounts user-based filtering."""
 
-    def test_list_saved_mounts_without_context_shows_all(
+    async def test_list_saved_mounts_without_context_shows_all(
         self, nx_with_permissions: NexusFS
     ) -> None:
         """Test that list_saved_mounts without context returns empty list (no context = no user)."""
@@ -276,7 +276,9 @@ class TestListSavedMountsUserFiltering:
         # The fix ensures that WITH context, it filters automatically.
         assert isinstance(mounts, list)
 
-    def test_list_saved_mounts_filters_by_user_context(self, nx_with_permissions: NexusFS) -> None:
+    async def test_list_saved_mounts_filters_by_user_context(
+        self, nx_with_permissions: NexusFS
+    ) -> None:
         """Test that list_saved_mounts automatically filters by current user."""
         # Save mount for Alice
         await nx_with_permissions.service("mount_persist").save_mount(
@@ -336,7 +338,7 @@ class TestListSavedMountsUserFiltering:
         # Bob should NOT see Alice's mount (security fix)
         assert "/mnt/alice" not in bob_mount_points
 
-    def test_list_saved_mounts_filters_by_zone(self, nx_with_permissions: NexusFS) -> None:
+    async def test_list_saved_mounts_filters_by_zone(self, nx_with_permissions: NexusFS) -> None:
         """Test that list_saved_mounts filters by zone_id from context."""
         # Save mount for zone1
         await nx_with_permissions.service("mount_persist").save_mount(
@@ -375,7 +377,7 @@ class TestListSavedMountsUserFiltering:
         # Should NOT see zone2 mount (cross-zone isolation)
         assert "/mnt/zone2" not in zone1_mount_points
 
-    def test_list_saved_mounts_explicit_filter_overrides_context(
+    async def test_list_saved_mounts_explicit_filter_overrides_context(
         self, nx_with_permissions: NexusFS
     ) -> None:
         """Test that explicit owner_user_id parameter overrides context filtering."""
@@ -415,7 +417,7 @@ class TestListSavedMountsUserFiltering:
         assert "/mnt/bob" in mount_points
         assert "/mnt/alice" not in mount_points
 
-    def test_list_saved_mounts_with_agent_context(self, nx_with_permissions: NexusFS) -> None:
+    async def test_list_saved_mounts_with_agent_context(self, nx_with_permissions: NexusFS) -> None:
         """Test that list_saved_mounts works with agent subject_type."""
         # Save mount for an agent
         await nx_with_permissions.service("mount_persist").save_mount(
@@ -447,7 +449,7 @@ class TestListSavedMountsUserFiltering:
 class TestCrossZoneIsolation:
     """Tests for cross-zone isolation in mount operations."""
 
-    def test_user_cannot_see_other_zone_mounts(
+    async def test_user_cannot_see_other_zone_mounts(
         self, nx_with_permissions: NexusFS, temp_dir: Path
     ) -> None:
         """Test that users from different zones cannot see each other's mounts."""
@@ -565,7 +567,7 @@ class TestCrossZoneIsolation:
 class TestSaveMountAutoPopulation:
     """Tests for save_mount auto-population of owner_user_id and zone_id from context."""
 
-    def test_save_mount_auto_populates_owner_from_context(
+    async def test_save_mount_auto_populates_owner_from_context(
         self, nx_with_permissions: NexusFS
     ) -> None:
         """Test that save_mount automatically populates owner_user_id from context."""
@@ -593,7 +595,7 @@ class TestSaveMountAutoPopulation:
         assert saved_mount["owner_user_id"] == "user:alice@example.com"
         assert saved_mount["zone_id"] == "zone1"
 
-    def test_save_mount_auto_populates_zone_from_context(
+    async def test_save_mount_auto_populates_zone_from_context(
         self, nx_with_permissions: NexusFS
     ) -> None:
         """Test that save_mount automatically populates zone_id from context."""
@@ -619,7 +621,7 @@ class TestSaveMountAutoPopulation:
         assert saved_mount["zone_id"] == "acme_corp"
         assert saved_mount["owner_user_id"] == "user:bob@example.com"
 
-    def test_save_mount_explicit_params_override_context(
+    async def test_save_mount_explicit_params_override_context(
         self, nx_with_permissions: NexusFS
     ) -> None:
         """Test that explicit owner_user_id and zone_id override context values."""
@@ -649,7 +651,7 @@ class TestSaveMountAutoPopulation:
         assert saved_mount["owner_user_id"] == "user:bob@example.com"
         assert saved_mount["zone_id"] == "zone2"
 
-    def test_save_mount_with_agent_context(self, nx_with_permissions: NexusFS) -> None:
+    async def test_save_mount_with_agent_context(self, nx_with_permissions: NexusFS) -> None:
         """Test that save_mount handles agent subject_type correctly."""
         context = OperationContext(
             user_id="bot123",
@@ -675,7 +677,7 @@ class TestSaveMountAutoPopulation:
         assert saved_mount["owner_user_id"] == "agent:bot123"
         assert saved_mount["zone_id"] == "zone1"
 
-    def test_list_saved_mounts_shows_only_owned_mounts_after_auto_population(
+    async def test_list_saved_mounts_shows_only_owned_mounts_after_auto_population(
         self, nx_with_permissions: NexusFS
     ) -> None:
         """Test that list_saved_mounts returns only mounts owned by the user after auto-population."""
@@ -725,7 +727,7 @@ class TestSaveMountAutoPopulation:
         assert "/mnt/bob_auto" in bob_mount_points
         assert "/mnt/alice_auto" not in bob_mount_points
 
-    def test_save_mount_without_context_uses_explicit_params(
+    async def test_save_mount_without_context_uses_explicit_params(
         self, nx_with_permissions: NexusFS
     ) -> None:
         """Test that save_mount works without context when explicit params are provided."""

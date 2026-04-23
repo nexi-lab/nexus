@@ -464,6 +464,25 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # Reclaim ~30 GB from the hosted runner before the build. CUDA
+      # variant pulls torch-cuda (~2 GB), txtai + sentence-transformers,
+      # and builds a multi-arch image (amd64 + arm64 via QEMU) — that
+      # combined layer store repeatedly blew past ubuntu-latest's
+      # ~14 GB post-checkout budget and got the runner killed. Removes
+      # tooling (Android SDK, .NET, Haskell, CodeQL, etc.) we don't
+      # use in this job.
+      - name: Free disk space (CUDA variant)
+        if: matrix.variant == 'cuda'
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: false
+          swap-storage: true
+
       - name: Set up QEMU (multi-arch)
         uses: docker/setup-qemu-action@v3
 
@@ -490,7 +509,16 @@ jobs:
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "tags=ghcr.io/nexi-lab/nexus:${VERSION}${SUFFIX},ghcr.io/nexi-lab/nexus:stable${SUFFIX},ghcr.io/nexi-lab/nexus:latest${SUFFIX}" >> "$GITHUB_OUTPUT"
 
+      # Local-load build is ONLY needed to run the CPU-gated smoke tests
+      # below. The CUDA variant skips all of those tests (PyTorch CUDA
+      # wheels ship AVX-512 binaries that SIGILL on hosted runners), so
+      # materializing a ~8-10 GB CUDA image into the local Docker store
+      # is wasted work AND blows past the standard ubuntu-latest runner's
+      # ~14 GB disk budget (it competes with the later multi-arch layer
+      # store in "Build and push to GHCR"). Scope this step to CPU only;
+      # CUDA goes straight to the registry-cached multi-arch push.
       - name: Build image (local load for smoke tests)
+        if: matrix.variant == 'cpu'
         uses: docker/build-push-action@v6
         with:
           context: .

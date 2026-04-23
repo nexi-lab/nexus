@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import MagicMock
 
 from click.testing import CliRunner
@@ -146,3 +147,61 @@ def test_token_create_duplicate_filter_ignores_revoked(monkeypatch):
     )
     assert result.exit_code == 0, result.output
     assert "sk-" in result.output  # real create_api_key ran
+
+
+def _fake_row(**overrides):
+    row = MagicMock()
+    row.key_id = overrides.get("key_id", "kid_xxxx")
+    row.name = overrides.get("name", "alice")
+    row.zone_id = overrides.get("zone_id", "root")
+    row.is_admin = overrides.get("is_admin", 0)
+    row.created_at = overrides.get("created_at")
+    row.last_used_at = overrides.get("last_used_at")
+    row.revoked = overrides.get("revoked", 0)
+    row.revoked_at = overrides.get("revoked_at")
+    return row
+
+
+def test_token_list_hides_revoked_by_default(monkeypatch):
+    active = _fake_row(name="alice", key_id="kid_a")
+
+    session = MagicMock()
+    session.execute.return_value.scalars.return_value.all.return_value = [active]
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_session_factory",
+        lambda: _mock_session_ctx(session),
+    )
+    runner = CliRunner()
+    result = runner.invoke(hub, ["token", "list"])
+    assert result.exit_code == 0, result.output
+    assert "alice" in result.output
+    assert "bob" not in result.output
+
+
+def test_token_list_show_revoked_includes_revoked(monkeypatch):
+    revoked = _fake_row(name="bob", key_id="kid_b", revoked=1)
+    session = MagicMock()
+    session.execute.return_value.scalars.return_value.all.return_value = [revoked]
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_session_factory",
+        lambda: _mock_session_ctx(session),
+    )
+    runner = CliRunner()
+    result = runner.invoke(hub, ["token", "list", "--show-revoked"])
+    assert result.exit_code == 0, result.output
+    assert "bob" in result.output
+
+
+def test_token_list_json(monkeypatch):
+    row = _fake_row(name="alice", key_id="kid_a")
+    session = MagicMock()
+    session.execute.return_value.scalars.return_value.all.return_value = [row]
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_session_factory",
+        lambda: _mock_session_ctx(session),
+    )
+    runner = CliRunner()
+    result = runner.invoke(hub, ["token", "list", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["tokens"][0]["name"] == "alice"

@@ -13,6 +13,7 @@ import click
 from sqlalchemy import select
 
 from nexus.cli.commands._hub_common import (
+    format_table,
     get_session_factory,
     parse_duration,
 )
@@ -84,3 +85,67 @@ def token_create(
     click.echo(f"token:  {raw_key}")
     click.echo("")
     click.echo("Save this token now — it will not be shown again.")
+
+
+@token.command("list")
+@click.option(
+    "--show-revoked",
+    "show_revoked",
+    is_flag=True,
+    help="Include revoked tokens in the output.",
+)
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    help="Emit JSON instead of a text table.",
+)
+def token_list(show_revoked: bool, as_json: bool) -> None:
+    """List tokens (active by default)."""
+    import json as _json
+
+    factory = get_session_factory()
+    with factory() as session:
+        stmt = select(APIKeyModel).order_by(APIKeyModel.created_at.desc())
+        if not show_revoked:
+            stmt = stmt.where(APIKeyModel.revoked == 0)
+        rows = session.execute(stmt).scalars().all()
+
+    def _iso(dt: datetime | None) -> str:
+        return dt.isoformat() if dt else "-"
+
+    if as_json:
+        payload = {
+            "tokens": [
+                {
+                    "key_id": r.key_id,
+                    "name": r.name,
+                    "zone": r.zone_id,
+                    "admin": bool(r.is_admin),
+                    "created": _iso(r.created_at),
+                    "last_used": _iso(r.last_used_at),
+                    "revoked": bool(r.revoked),
+                    "revoked_at": _iso(r.revoked_at),
+                }
+                for r in rows
+            ]
+        }
+        click.echo(_json.dumps(payload, indent=2))
+        return
+
+    body = format_table(
+        headers=["key_id", "name", "zone", "admin", "created", "last_used", "revoked_at"],
+        rows=[
+            [
+                r.key_id[:12] + "…" if len(r.key_id) > 12 else r.key_id,
+                r.name,
+                r.zone_id,
+                "yes" if r.is_admin else "no",
+                _iso(r.created_at),
+                _iso(r.last_used_at),
+                _iso(r.revoked_at),
+            ]
+            for r in rows
+        ],
+    )
+    click.echo(body if body else "(no tokens)")

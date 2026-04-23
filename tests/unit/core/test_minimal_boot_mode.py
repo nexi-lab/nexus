@@ -81,7 +81,7 @@ class TestSlimBootViaFactory:
         data_dir = tmp_path / "data"
         data_dir.mkdir(exist_ok=True)
 
-        nx = await create_nexus_fs(
+        nx = create_nexus_fs(
             backend=PathLocalBackend(root_path=data_dir),
             metadata_store=DictMetastore(),
             record_store=None,
@@ -102,7 +102,7 @@ class TestSlimBootViaFactory:
         data_dir = tmp_path / "data"
         data_dir.mkdir(exist_ok=True)
 
-        nx = await create_nexus_fs(
+        nx = create_nexus_fs(
             backend=PathLocalBackend(root_path=data_dir),
             metadata_store=DictMetastore(),
             record_store=None,
@@ -326,7 +326,7 @@ class TestSlimIntegrationViaConnect:
         enabled_bricks = resolve_enabled_bricks(profile)
         assert enabled_bricks == frozenset()
 
-        nx = await create_nexus_fs(
+        nx = create_nexus_fs(
             backend=PathLocalBackend(root_path=data_dir),
             metadata_store=DictMetastore(),
             record_store=None,
@@ -371,7 +371,7 @@ class TestSlimIntegrationViaConnect:
         with caplog.at_level(logging.INFO, logger="nexus.factory.orchestrator"):
             # Using record_store triggers create_nexus_services which logs bricks
             # With record_store=None, factory path skips services entirely
-            nx = await create_nexus_fs(
+            nx = create_nexus_fs(
                 backend=PathLocalBackend(root_path=data_dir),
                 metadata_store=DictMetastore(),
                 record_store=None,
@@ -391,7 +391,7 @@ class TestSlimIntegrationViaConnect:
         data_dir = tmp_path / "data"
         data_dir.mkdir(exist_ok=True)
 
-        nx = await create_nexus_fs(
+        nx = create_nexus_fs(
             backend=PathLocalBackend(root_path=data_dir),
             metadata_store=DictMetastore(),
             record_store=None,
@@ -414,7 +414,7 @@ class TestSlimIntegrationViaConnect:
         data_dir = tmp_path / "data"
         data_dir.mkdir(exist_ok=True)
 
-        nx = await create_nexus_fs(
+        nx = create_nexus_fs(
             backend=PathLocalBackend(root_path=data_dir),
             metadata_store=DictMetastore(),
             record_store=None,

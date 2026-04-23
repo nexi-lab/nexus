@@ -102,7 +102,7 @@ async def nexus_fs_with_tiger(db_with_migrations, tmp_path):
     backend = CASLocalBackend(root_path=str(storage_path))
 
     # Create NexusFS with Tiger Cache enabled
-    nx = await create_nexus_fs(
+    nx = create_nexus_fs(
         backend=backend,
         metadata_store=RaftMetadataStore.embedded(str(tmp_path / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=str(db_with_migrations)),

@@ -84,7 +84,7 @@ async def _create_factory_nexus_fs(
 
     record_store = create_record_store(db_url=PG_URL, create_tables=True)
 
-    return await create_nexus_fs(
+    return create_nexus_fs(
         backend=backend,
         metadata_store=metadata_store,
         record_store=record_store,

@@ -69,7 +69,7 @@ async def app_with_auth():
     metadata_store = RaftMetadataStore.embedded(str(tmp_path / "raft"))
     record_store = SQLAlchemyRecordStore(db_url=db_url)
 
-    nx = await create_nexus_fs(
+    nx = create_nexus_fs(
         backend=backend,
         metadata_store=metadata_store,
         record_store=record_store,

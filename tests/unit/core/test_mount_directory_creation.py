@@ -41,7 +41,7 @@ async def nx_with_mount():
         db_file = Path(tmpdir) / "metadata.db"
         metadata_store = RaftMetadataStore.embedded(str(db_file).replace(".db", ""))
 
-        nx = await create_nexus_fs(
+        nx = create_nexus_fs(
             backend=root_backend,
             metadata_store=metadata_store,
             permissions=PermissionConfig(enforce=False),

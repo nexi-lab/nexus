@@ -408,7 +408,7 @@ class TestBrickServicesFieldCompleteness:
         backend.on_write_callback = None
         backend.on_sync_callback = None
 
-        nx = await create_nexus_fs(
+        nx = create_nexus_fs(
             backend=backend,
             metadata_store=metadata_store,
             record_store=record_store,
@@ -462,7 +462,7 @@ class TestBrickServicesFieldCompleteness:
 
         sentinel_engine = MagicMock()
 
-        nx = await create_nexus_fs(
+        nx = create_nexus_fs(
             backend=backend,
             metadata_store=metadata_store,
             record_store=record_store,

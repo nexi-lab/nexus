@@ -151,7 +151,7 @@ class TestVersionHistoryGC:
         data_dir.mkdir(parents=True, exist_ok=True)
         backend = CASLocalBackend(root_path=data_dir)
         metadata_store = RaftMetadataStore.embedded(str(data_dir / "raft-metadata"))
-        nx = await create_nexus_fs(
+        nx = create_nexus_fs(
             backend=backend,
             metadata_store=metadata_store,
             record_store=record_store,
@@ -345,7 +345,7 @@ class TestVersionHistoryGC:
         rs_empty = SQLAlchemyRecordStore(db_path=str(data_dir / "nexus.db"))
         backend = CASLocalBackend(root_path=data_dir)
         metadata_store = RaftMetadataStore.embedded(str(data_dir / "metadata"))
-        nx_empty = await create_nexus_fs(
+        nx_empty = create_nexus_fs(
             backend=backend,
             metadata_store=metadata_store,
             record_store=rs_empty,

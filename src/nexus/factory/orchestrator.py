@@ -171,7 +171,7 @@ def create_nexus_services(
     return system_dict
 
 
-async def create_nexus_fs(
+def create_nexus_fs(
     backend: "Backend",
     metadata_store: "MetastoreABC",
     record_store: "RecordStoreABC | None" = None,
@@ -300,7 +300,7 @@ async def create_nexus_fs(
         services = {}
 
     # Linearized lifecycle — no partial injection (PR #3371 Phase 2)
-    init_ctx = await _wire_services(
+    init_ctx = _wire_services(
         nx,
         services=services,
         zone_id=zone_id,
@@ -312,7 +312,7 @@ async def create_nexus_fs(
     )
     nx._linked = True
 
-    await _initialize_services(nx, init_ctx)
+    _initialize_services(nx, init_ctx)
     nx._initialized = True
 
     return nx
@@ -341,7 +341,7 @@ async def _register_vfs_hooks(
 
     _on = _make_gate(svc_on)
 
-    async def _enlist(name: str, hook: Any) -> None:
+    def _enlist(name: str, hook: Any) -> None:
         """Enlist hook via sys_setattr — factory is the first user."""
         nx.sys_setattr(f"/__sys__/services/{name}", service=hook)
 
@@ -353,7 +353,7 @@ async def _register_vfs_hooks(
     if _zl is not None:
         from nexus.services.lifecycle.zone_write_guard_hook import ZoneWriteGuardHook
 
-        await _enlist("zone_write_guard", ZoneWriteGuardHook(zone_lifecycle=_zl))
+        _enlist("zone_write_guard", ZoneWriteGuardHook(zone_lifecycle=_zl))
 
     # ── Permission pre-intercept hook (Issue #899) ────────────────
     if permission_checker is not None:
@@ -415,7 +415,7 @@ async def _register_vfs_hooks(
             descendant_checker=nx.service("descendant_checker"),
             lease_table=_lease_table,
         )
-        await _enlist("permission", _perm_hook)
+        _enlist("permission", _perm_hook)
 
         # Expose lease table for late-binding consumers
         # (e.g., AcpService agent termination → lease revocation, Issue #3398).
@@ -435,14 +435,14 @@ async def _register_vfs_hooks(
         if isinstance(write_observer, _ObsWO):
             # Registered as service. Rust kernel dispatches observers directly;
             # no Python on_mutation or hook_spec needed.
-            await _enlist("audit", write_observer)
+            _enlist("audit", write_observer)
         else:
             from nexus.storage.write_observer_hooks import SyncAuditWriteInterceptor
 
             audit: SyncAuditWriteInterceptor = SyncAuditWriteInterceptor(
                 write_observer, strict_mode=strict
             )
-            await _enlist("audit", audit)
+            _enlist("audit", audit)
 
     # DynamicViewerReadHook (post-read: column-level CSV filtering)
     has_viewer = (
@@ -459,7 +459,7 @@ async def _register_vfs_hooks(
             get_viewer_config=nx.get_dynamic_viewer_config,
             apply_filter=nx.apply_dynamic_viewer_filter,
         )
-        await _enlist("viewer", _viewer_hook)
+        _enlist("viewer", _viewer_hook)
 
     # ContentParserEngine (on-demand parsed reads — Issue #1383)
     from nexus.bricks.parsers.engine import ContentParserEngine
@@ -480,13 +480,13 @@ async def _register_vfs_hooks(
             parse_fn=parse_fn,
             metadata=nx.metadata,
         )
-        await _enlist("auto_parse", _auto_parse_hook)
+        _enlist("auto_parse", _auto_parse_hook)
 
     # MarkdownStructureWriteHook (post-write: sync structural index — Issue #3718)
     from nexus.bricks.parsers.md_structure_hook import MarkdownStructureWriteHook
 
     _md_struct_hook = MarkdownStructureWriteHook(metadata=nx.metadata)
-    await _enlist("md_structure", _md_struct_hook)
+    _enlist("md_structure", _md_struct_hook)
 
     # TigerCacheRenameHook (post-rename: bitmap updates)
     _rebac_mgr = _ss.get("rebac_manager")
@@ -505,14 +505,14 @@ async def _register_vfs_hooks(
             tiger_cache=tiger_cache,
             metadata_list_iter=_metadata_list_iter,
         )
-        await _enlist("tiger_rename", _tiger_rename_hook)
+        _enlist("tiger_rename", _tiger_rename_hook)
 
     # TigerCacheWriteHook (post-write: add new files to ancestor directory grants)
     if tiger_cache is not None:
         from nexus.bricks.rebac.cache.tiger.write_hook import TigerCacheWriteHook
 
         _tiger_write_hook = TigerCacheWriteHook(tiger_cache=tiger_cache)
-        await _enlist("tiger_write", _tiger_write_hook)
+        _enlist("tiger_write", _tiger_write_hook)
 
     # ── PRE-DISPATCH: Virtual view resolver (Issue #332, #889) ────────
     from nexus.bricks.parsers.virtual_view_resolver import VirtualViewResolver
@@ -524,7 +524,7 @@ async def _register_vfs_hooks(
         parse_fn=parse_fn,
         read_tracker_fn=None,
     )
-    await _enlist("virtual_view", _vview_resolver)
+    _enlist("virtual_view", _vview_resolver)
 
     # ── AgentStatusResolver (procfs virtual filesystem for AgentRegistry — Issue #1570, #1810) ──
     _proc_ref = nx.service("agent_registry") if hasattr(nx, "service") else None
@@ -534,7 +534,7 @@ async def _register_vfs_hooks(
             from nexus.core.agent_status_resolver import AgentStatusResolver
 
             _agent_status_resolver = AgentStatusResolver(_proc_table)
-            await _enlist("agent_status", _agent_status_resolver)
+            _enlist("agent_status", _agent_status_resolver)
         except Exception as exc:
             logger.debug("[BOOT:HOOKS] AgentStatusResolver unavailable: %s", exc)
 
@@ -556,9 +556,9 @@ async def _register_vfs_hooks(
                 _task_write_hook.register_handler(_task_consumer)
                 _task_consumer.set_task_service(_task_svc)
 
-            await _enlist("task_write", _task_write_hook)
-            await _enlist("task_agent_resolver", TaskAgentResolver(_proc_table))
-            await _enlist("task_manager", _task_svc)  # Issue #1768: Q1 service via coordinator
+            _enlist("task_write", _task_write_hook)
+            _enlist("task_agent_resolver", TaskAgentResolver(_proc_table))
+            _enlist("task_manager", _task_svc)  # Issue #1768: Q1 service via coordinator
         except Exception as exc:
             logger.warning("[BOOT:BRICK] task_manager wiring failed: %s", exc)
     else:
@@ -569,7 +569,7 @@ async def _register_vfs_hooks(
     if _snapshot_svc is not None:
         from nexus.bricks.snapshot.snapshot_hook import SnapshotWriteHook
 
-        await _enlist("snapshot_write", SnapshotWriteHook(_snapshot_svc))
+        _enlist("snapshot_write", SnapshotWriteHook(_snapshot_svc))
 
     # ── Deferred permission buffer (Issue #1773, #1682) ────────────────
     _dpb = _ss.get("deferred_permission_buffer")
@@ -577,7 +577,7 @@ async def _register_vfs_hooks(
     if _dpb is not None:
         from nexus.bricks.rebac.deferred_permission_hook import DeferredPermissionHook
 
-        await _enlist(
+        _enlist(
             "deferred_permission",
             DeferredPermissionHook(_dpb, rebac_manager=_rebac_for_perm),
         )
@@ -587,7 +587,7 @@ async def _register_vfs_hooks(
         if _hier is not None or _rebac_for_perm is not None:
             from nexus.bricks.rebac.sync_permission_hook import SyncPermissionWriteHook
 
-            await _enlist(
+            _enlist(
                 "sync_permission",
                 SyncPermissionWriteHook(hierarchy_manager=_hier, rebac_manager=_rebac_for_perm),
             )
@@ -600,7 +600,7 @@ async def _register_vfs_hooks(
     if _zl2 is not None:
         from nexus.services.lifecycle.zone_writability_hook import ZoneWritabilityHook
 
-        await _enlist("zone_writability", ZoneWritabilityHook(_zl2))
+        _enlist("zone_writability", ZoneWritabilityHook(_zl2))
 
     # ── OBSERVE observers (Issue #900, #922) ──────────────────────────
     # FileWatcher is now Rust kernel-internal (sys_watch + dispatch_observers).
@@ -611,7 +611,7 @@ async def _register_vfs_hooks(
 
     _stream_watcher = StreamRemoteWatcher(nx)
     _stream_observer = StreamEventObserver(_stream_watcher)
-    await _enlist("stream_event_observer", _stream_observer)
+    _enlist("stream_event_observer", _stream_observer)
 
     # EventBus (optional): NATS/Dragonfly for distributed pub/sub.
     _event_bus = None
@@ -628,7 +628,7 @@ async def _register_vfs_hooks(
     from nexus.services.event_bus.observer import EventBusObserver
 
     _bus_observer = EventBusObserver(event_bus=_event_bus)
-    await _enlist("event_bus_observer", _bus_observer)
+    _enlist("event_bus_observer", _bus_observer)
 
     # RevisionTrackingObserver deleted (§10 A2): zone revision counter is now
     # a kernel primitive (AtomicU64 per zone). The kernel auto-increments on

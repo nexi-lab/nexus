@@ -31,7 +31,7 @@ async def nexus_fs(tmp_path, isolated_db):
     """Create a NexusFS with permissions disabled (pure listing tests)."""
     backend = CASLocalBackend(str(tmp_path / "data"))
     metadata_store = RaftMetadataStore.embedded(str(isolated_db).replace(".db", ""))
-    nx = await create_nexus_fs(
+    nx = create_nexus_fs(
         backend=backend,
         metadata_store=metadata_store,
         permissions=PermissionConfig(enforce=False),

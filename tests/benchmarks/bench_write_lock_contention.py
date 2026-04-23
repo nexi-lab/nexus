@@ -201,7 +201,7 @@ async def _run(n_seq: int = 20, ops_per_agent: int = 10, burst_count: int = 50) 
             storage = tmp_path / f"storage{suffix}"
             storage.mkdir(parents=True, exist_ok=True)
             db_base = str(tmp_path / f"bench{suffix}")
-            return await create_nexus_fs(
+            return create_nexus_fs(
                 backend=CASLocalBackend(str(storage)),
                 metadata_store=RaftMetadataStore.embedded(db_base),
                 record_store=SQLAlchemyRecordStore(db_path=str(tmp_path / f"records{suffix}.db")),

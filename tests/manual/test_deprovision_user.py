@@ -71,7 +71,7 @@ async def main() -> None:
     print("Initializing NexusFS...")
     # db_path accepts both PostgreSQL URLs and SQLite file paths
     record_store = SQLAlchemyRecordStore(db_path=db_path)
-    nx = await create_nexus_fs(
+    nx = create_nexus_fs(
         backend=CASLocalBackend(args.backend_path),
         metadata_store=RaftMetadataStore.embedded(str(Path(args.backend_path) / "raft-metadata")),
         record_store=record_store,

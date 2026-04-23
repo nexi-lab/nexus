@@ -68,7 +68,7 @@ async def nx(temp_dir: Path, record_store: SQLAlchemyRecordStore):
     else:
         metadata_store = raft_store
 
-    nx = await create_nexus_fs(
+    nx = create_nexus_fs(
         backend=CASLocalBackend(str(temp_dir / "data")),
         metadata_store=metadata_store,
         record_store=record_store,

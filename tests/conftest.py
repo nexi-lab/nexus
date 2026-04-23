@@ -221,7 +221,7 @@ async def make_test_nexus(
         context if context is not None else (TEST_ADMIN_CONTEXT if is_admin else TEST_CONTEXT)
     )
 
-    return await create_nexus_fs(
+    return create_nexus_fs(
         backend=backend,
         metadata_store=metadata_store,
         record_store=record_store,

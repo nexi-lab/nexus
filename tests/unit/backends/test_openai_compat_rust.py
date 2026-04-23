@@ -155,7 +155,7 @@ def _anthropic_sse_happy() -> str:
 
 async def _bootstrap(tmp_path: Path) -> Any:
     """Spin up an in-process NexusFS with a root CASLocal backend."""
-    return await create_nexus_fs(
+    return create_nexus_fs(
         backend=CASLocalBackend(tmp_path / "data"),
         metadata_store=DictMetastore(),
         record_store=SQLAlchemyRecordStore(db_path=tmp_path / "meta.db"),

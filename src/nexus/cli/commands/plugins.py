@@ -391,7 +391,7 @@ def _register_plugin_commands(main: click.Group) -> None:
                             async def _load() -> Any:
                                 nonlocal nx
                                 nx = connect()
-                                plugin_registry = PR(nx)
+                                plugin_registry = PR(nx)  # type: ignore[arg-type]  # NexusFS ⊃ NexusFilesystem after §12 sync
                                 await plugin_registry.discover()
                                 await plugin_registry.initialize_all()
                                 return await plugin_registry.get_plugin(p_name)

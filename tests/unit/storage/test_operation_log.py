@@ -45,7 +45,7 @@ async def nx(
     temp_dir: Path, local_backend: CASLocalBackend, record_store: SQLAlchemyRecordStore
 ) -> AsyncGenerator[NexusFS, None]:
     """Create a NexusFS instance for testing."""
-    nx = await create_nexus_fs(
+    nx = create_nexus_fs(
         backend=local_backend,
         metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
         record_store=record_store,

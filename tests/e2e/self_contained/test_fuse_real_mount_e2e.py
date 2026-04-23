@@ -44,7 +44,7 @@ async def fuse_mount(tmp_path):
 
     backend = CASLocalBackend(root_path=storage_path)
     metastore = RaftMetadataStore.embedded(db_path=db_path)
-    nx = await create_nexus_fs(
+    nx = create_nexus_fs(
         backend=backend,
         metadata_store=metastore,
         permissions=PermissionConfig(enforce=False),

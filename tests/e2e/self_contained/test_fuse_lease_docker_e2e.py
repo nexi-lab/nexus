@@ -40,7 +40,7 @@ async def run_tests() -> int:
 
     backend = CASLocalBackend(root_path=storage_path)
     metastore = DictMetastore()
-    nx = await create_nexus_fs(
+    nx = create_nexus_fs(
         backend=backend,
         metadata_store=metastore,
         permissions=PermissionConfig(enforce=False),

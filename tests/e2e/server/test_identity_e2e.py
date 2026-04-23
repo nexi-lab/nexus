@@ -109,7 +109,7 @@ async def app(tmp_path: Any, db_path: Any, session_factory: Any, api_keys: Any) 
     metadata_store = DictMetastore()
     record_store = SQLAlchemyRecordStore(db_url=f"sqlite:///{db_path}")
 
-    nx = await create_nexus_fs(
+    nx = create_nexus_fs(
         backend=backend,
         metadata_store=metadata_store,
         record_store=record_store,

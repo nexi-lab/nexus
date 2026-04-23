@@ -243,7 +243,7 @@ async def test_in_process_thread_exhaustion(
         backend = CASLocalBackend(root_path=tmpdir)
 
         # Create NexusFS without permissions for setup
-        nx = await create_nexus_fs(
+        nx = create_nexus_fs(
             backend=backend,
             metadata_store=RaftMetadataStore.embedded(db_path.replace(".db", "-raft")),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
@@ -359,7 +359,7 @@ async def test_async_thread_exhaustion(
         backend = CASLocalBackend(root_path=tmpdir)
 
         # Create NexusFS without permissions for setup
-        nx = await create_nexus_fs(
+        nx = create_nexus_fs(
             backend=backend,
             metadata_store=RaftMetadataStore.embedded(db_path.replace(".db", "-raft")),
             record_store=SQLAlchemyRecordStore(db_path=db_path),

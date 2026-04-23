@@ -42,7 +42,7 @@ def temp_dir() -> Generator[Path, None, None]:
 @pytest.fixture
 async def embedded(temp_dir: Path) -> AsyncGenerator[NexusFS, None]:
     """Create an Embedded filesystem instance."""
-    nx = await create_nexus_fs(
+    nx = create_nexus_fs(
         backend=CASLocalBackend(temp_dir),
         metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
@@ -62,7 +62,7 @@ async def test_init_creates_directories(temp_dir: Path) -> None:
     data_dir = temp_dir / "nexus-data"
     assert not data_dir.exists()
 
-    nx = await create_nexus_fs(
+    nx = create_nexus_fs(
         backend=CASLocalBackend(data_dir),
         metadata_store=RaftMetadataStore.embedded(str(data_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=data_dir / "metadata.db"),
@@ -398,7 +398,7 @@ async def test_context_manager(temp_dir: Path) -> None:
     """Test using Embedded as context manager."""
     content = b"Test content"
 
-    nx = await create_nexus_fs(
+    nx = create_nexus_fs(
         backend=CASLocalBackend(temp_dir),
         metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),

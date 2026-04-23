@@ -36,7 +36,7 @@ async def _make_fs(tmp_path: Path, *, enforce_permissions: bool = True) -> Nexus
     metadata_store = RaftMetadataStore.embedded(str(db_path))
     record_store = SQLAlchemyRecordStore(db_path=str(tmp_path / "nexus.db"))
 
-    return await create_nexus_fs(
+    return create_nexus_fs(
         backend=backend,
         metadata_store=metadata_store,
         record_store=record_store,

@@ -98,7 +98,7 @@ async def _make_nexus_fs(data_dir: Path, *, enforce_permissions: bool = False):
     data_dir.mkdir(parents=True, exist_ok=True)
     db_path = data_dir / "metadata.db"
 
-    return await create_nexus_fs(
+    return create_nexus_fs(
         backend=CASLocalBackend(data_dir),
         metadata_store=RaftMetadataStore.embedded(str(data_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=db_path),

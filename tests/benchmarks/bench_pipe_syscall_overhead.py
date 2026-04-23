@@ -84,7 +84,7 @@ async def _setup(tmp_dir: Path):
 
     metastore = RaftMetadataStore.embedded(str(raft_path))
 
-    nx = await create_nexus_fs(
+    nx = create_nexus_fs(
         backend=PathLocalBackend(root_path=str(data_dir)),
         metadata_store=metastore,
         parsing=ParseConfig(auto_parse=False),

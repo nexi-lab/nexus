@@ -50,7 +50,7 @@ async def embedded_cas(
 
     (Environment variable isolation is handled by the global conftest fixture)
     """
-    emb = await create_nexus_fs(
+    emb = create_nexus_fs(
         backend=local_backend,
         metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),

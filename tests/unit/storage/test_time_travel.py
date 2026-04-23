@@ -64,7 +64,7 @@ class TestTimeTravelDebug:
             metadata_store = RaftMetadataStore.embedded(str(data_dir / "raft-metadata"))
         except RuntimeError:
             metadata_store = DictMetastore(data_dir / "raft-metadata.json")
-        nx = await create_nexus_fs(
+        nx = create_nexus_fs(
             backend=backend,
             metadata_store=metadata_store,
             record_store=record_store,

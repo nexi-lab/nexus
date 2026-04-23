@@ -273,7 +273,7 @@ class TestSaveMount:
     async def test_save_mount_without_mount_manager_raises_error(self, temp_dir: Path) -> None:
         """Test that save_mount raises RuntimeError without mount manager."""
         # Create NexusFS without database (no mount manager)
-        nx = await create_nexus_fs(
+        nx = create_nexus_fs(
             backend=CASLocalBackend(temp_dir),
             metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-test-save-mount")),
             record_store=SQLAlchemyRecordStore(db_path=temp_dir / "test_save_mount.db"),
@@ -323,7 +323,7 @@ class TestListSavedMounts:
         self, temp_dir: Path
     ) -> None:
         """Test that list_saved_mounts raises RuntimeError without mount manager."""
-        nx = await create_nexus_fs(
+        nx = create_nexus_fs(
             backend=CASLocalBackend(temp_dir),
             metadata_store=RaftMetadataStore.embedded(
                 str(temp_dir / "raft-test-list-saved-mounts")
@@ -348,7 +348,7 @@ class TestLoadMount:
     @pytest.mark.asyncio
     async def test_load_mount_without_mount_manager_raises_error(self, temp_dir: Path) -> None:
         """Test that load_mount raises RuntimeError without mount manager."""
-        nx = await create_nexus_fs(
+        nx = create_nexus_fs(
             backend=CASLocalBackend(temp_dir),
             metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-test-load-mount")),
             record_store=SQLAlchemyRecordStore(db_path=temp_dir / "test_load_mount.db"),
@@ -373,7 +373,7 @@ class TestDeleteSavedMount:
         self, temp_dir: Path
     ) -> None:
         """Test that delete_saved_mount raises RuntimeError without mount manager."""
-        nx = await create_nexus_fs(
+        nx = create_nexus_fs(
             backend=CASLocalBackend(temp_dir),
             metadata_store=RaftMetadataStore.embedded(
                 str(temp_dir / "raft-test-delete-saved-mount")

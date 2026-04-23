@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { RingBuffer, SseClient } from "../src/sse-client.js";
+import type { SseEvent } from "../src/types.js";
 
 describe("RingBuffer", () => {
   it("stores items up to capacity", () => {
@@ -50,6 +51,12 @@ describe("RingBuffer", () => {
     expect(buf.toArray()).toEqual(["a"]);
     buf.push("b");
     expect(buf.toArray()).toEqual(["b"]);
+  });
+
+  it("rejects invalid capacities", () => {
+    expect(() => new RingBuffer<number>(0)).toThrow(RangeError);
+    expect(() => new RingBuffer<number>(-1)).toThrow(RangeError);
+    expect(() => new RingBuffer<number>(1.5)).toThrow(RangeError);
   });
 
   it("tracks totalPushed monotonically", () => {
@@ -266,6 +273,28 @@ describe("SseClient", () => {
     expect(events[0]!.data).toBe("line1\nline2");
   });
 
+  it("parses CRLF-terminated SSE events", async () => {
+    const clientRef: { current: SseClient | null } = { current: null };
+    const fetchFn = mockSseFetch(
+      ["id: 7\r\nevent: update\r\ndata: hello\r\n\r\n"],
+      clientRef,
+    );
+
+    const client = new SseClient({
+      baseUrl: "http://localhost:2026",
+      apiKey: "test-key",
+      fetch: fetchFn,
+      flushIntervalMs: 10_000,
+    });
+    clientRef.current = client;
+
+    await client.connect("/events");
+
+    const events = client.getBufferedEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toEqual({ id: "7", event: "update", data: "hello", retry: undefined });
+  });
+
   it("skips empty SSE blocks", async () => {
     const clientRef: { current: SseClient | null } = { current: null };
     const fetchFn = mockSseFetch(
@@ -395,6 +424,127 @@ describe("SseClient", () => {
     await connectPromise;
 
     expect(reconnectHandler).toHaveBeenCalledWith(1);
+  });
+
+  it("fires reconnect handler when stream closes cleanly", async () => {
+    let callCount = 0;
+    const fetchFn = vi.fn(async (_url: string, init?: RequestInit) => {
+      callCount++;
+      if (init?.signal?.aborted) {
+        throw new DOMException("Aborted", "AbortError");
+      }
+      // Return an empty stream that closes immediately.
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.close();
+          },
+        }),
+        { status: 200 },
+      );
+    }) as unknown as typeof globalThis.fetch;
+
+    const reconnectHandler = vi.fn();
+    const client = new SseClient({
+      baseUrl: "http://localhost:2026",
+      apiKey: "test-key",
+      fetch: fetchFn,
+    });
+    client.onReconnect(reconnectHandler);
+
+    const connectPromise = client.connect("/events");
+    await new Promise((r) => setTimeout(r, 700));
+    client.disconnect();
+    await connectPromise;
+
+    expect(reconnectHandler).toHaveBeenCalledWith(1);
+  });
+
+  it("does not let an old connect loop restart after a new connect call", async () => {
+    const fetchFn = vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.signal?.aborted) {
+        throw new DOMException("Aborted", "AbortError");
+      }
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.close();
+          },
+        }),
+        { status: 200 },
+      );
+    }) as unknown as typeof globalThis.fetch;
+
+    const client = new SseClient({
+      baseUrl: "http://localhost:2026",
+      apiKey: "test-key",
+      fetch: fetchFn,
+    });
+
+    const firstConnect = client.connect("/events-a");
+    await new Promise((r) => setTimeout(r, 100));
+    const secondConnect = client.connect("/events-b");
+    await new Promise((r) => setTimeout(r, 900));
+    client.disconnect();
+
+    await Promise.all([firstConnect, secondConnect]);
+
+    const eventARequests = fetchFn.mock.calls.filter(([requestUrl]) =>
+      String(requestUrl).endsWith("/events-a"),
+    ).length;
+    expect(eventARequests).toBe(1);
+  });
+
+  it("does not ingest stale events from an invalidated session", async () => {
+    const emitted: SseEvent[] = [];
+    const encoder = new TextEncoder();
+    const fetchFn = vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.signal?.aborted) {
+        throw new DOMException("Aborted", "AbortError");
+      }
+
+      if (url.endsWith("/events-a")) {
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              setTimeout(() => {
+                controller.enqueue(encoder.encode("event: msg\ndata: from-old\n\n"));
+                controller.close();
+              }, 150);
+            },
+          }),
+          { status: 200 },
+        );
+      }
+
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.close();
+          },
+        }),
+        { status: 200 },
+      );
+    }) as unknown as typeof globalThis.fetch;
+
+    const client = new SseClient({
+      baseUrl: "http://localhost:2026",
+      apiKey: "test-key",
+      fetch: fetchFn,
+      flushIntervalMs: 10,
+    });
+    client.onEvent((batch) => emitted.push(...batch));
+
+    const firstConnect = client.connect("/events-a");
+    await new Promise((r) => setTimeout(r, 50));
+    const secondConnect = client.connect("/events-b");
+    await new Promise((r) => setTimeout(r, 450));
+    client.disconnect();
+
+    await Promise.all([firstConnect, secondConnect]);
+
+    expect(emitted.some((event) => event.data === "from-old")).toBe(false);
+    expect(client.getBufferedEvents().some((event) => event.data === "from-old")).toBe(false);
   });
 
   it("strips trailing slashes from baseUrl", async () => {

@@ -19,6 +19,9 @@ export class RingBuffer<T> {
   private _totalPushed = 0;
 
   constructor(readonly capacity: number) {
+    if (!Number.isInteger(capacity) || capacity < 1) {
+      throw new RangeError("RingBuffer capacity must be a positive integer");
+    }
     this.buffer = new Array<T | undefined>(capacity);
   }
 
@@ -57,8 +60,13 @@ export class RingBuffer<T> {
   lastN(n: number): readonly T[] {
     if (n <= 0 || this.count === 0) return [];
     const take = Math.min(n, this.count);
-    const all = this.toArray();
-    return all.slice(all.length - take);
+    const result = new Array<T>(take);
+    const start = (this.head - take + this.capacity) % this.capacity;
+    for (let i = 0; i < take; i++) {
+      const index = (start + i) % this.capacity;
+      result[i] = this.buffer[index] as T;
+    }
+    return result;
   }
 
   clear(): void {
@@ -102,6 +110,7 @@ export class SseClient {
   private reconnectAttempt = 0;
   private lastEventId: string | undefined;
   private connected = false;
+  private connectSessionId = 0;
 
   private eventHandler: SseEventHandler | null = null;
   private errorHandler: SseErrorHandler | null = null;
@@ -137,13 +146,16 @@ export class SseClient {
   async connect(path: string): Promise<void> {
     this.disconnect();
 
-    this.abortController = new AbortController();
+    const controller = new AbortController();
+    this.abortController = controller;
+    const sessionId = ++this.connectSessionId;
     this.startFlushTimer();
 
-    await this.connectWithRetry(path);
+    await this.connectWithRetry(path, controller, sessionId);
   }
 
   disconnect(): void {
+    this.connectSessionId++;
     this.abortController?.abort();
     this.abortController = null;
     this.stopFlushTimer();
@@ -165,25 +177,41 @@ export class SseClient {
   // Internal
   // ===========================================================================
 
-  private async connectWithRetry(path: string): Promise<void> {
-    while (this.abortController && !this.abortController.signal.aborted) {
+  private async connectWithRetry(
+    path: string,
+    controller: AbortController,
+    sessionId: number,
+  ): Promise<void> {
+    while (!controller.signal.aborted && this.connectSessionId === sessionId) {
       try {
-        await this.streamEvents(path);
+        await this.streamEvents(path, controller, sessionId);
+        if (controller.signal.aborted || this.connectSessionId !== sessionId) return;
+
+        // A clean stream close still means we should reconnect. Apply the
+        // same backoff policy to avoid hot-loop reconnect storms.
+        this.reconnectAttempt++;
+        this.reconnectHandler?.(this.reconnectAttempt);
+        const slept = await sleepWithAbort(this.computeReconnectDelay(), controller.signal);
+        if (!slept || this.connectSessionId !== sessionId) return;
       } catch (error) {
-        if (this.abortController?.signal.aborted) return;
+        if (controller.signal.aborted || this.connectSessionId !== sessionId) return;
 
         this.connected = false;
         this.reconnectAttempt++;
         this.errorHandler?.(error instanceof Error ? error : new Error(String(error)));
         this.reconnectHandler?.(this.reconnectAttempt);
 
-        const delay = this.computeReconnectDelay();
-        await sleep(delay);
+        const slept = await sleepWithAbort(this.computeReconnectDelay(), controller.signal);
+        if (!slept || this.connectSessionId !== sessionId) return;
       }
     }
   }
 
-  private async streamEvents(path: string): Promise<void> {
+  private async streamEvents(
+    path: string,
+    controller: AbortController,
+    sessionId: number,
+  ): Promise<void> {
     const url = `${this.baseUrl}${path}`;
     const headers: Record<string, string> = {
       Authorization: `Bearer ${this.apiKey}`,
@@ -200,7 +228,7 @@ export class SseClient {
 
     const response = await this.fetchFn(url, {
       headers,
-      signal: this.abortController?.signal,
+      signal: controller.signal,
     });
 
     if (!response.ok) {
@@ -220,7 +248,12 @@ export class SseClient {
 
     try {
       while (true) {
+        if (controller.signal.aborted || this.connectSessionId !== sessionId) return;
         const { done, value } = await reader.read();
+        if (controller.signal.aborted || this.connectSessionId !== sessionId) {
+          void reader.cancel().catch(() => {});
+          return;
+        }
         if (done) break;
 
         partial += decoder.decode(value, { stream: true });
@@ -236,7 +269,9 @@ export class SseClient {
       }
     } finally {
       reader.releaseLock();
-      this.connected = false;
+      if (this.connectSessionId === sessionId) {
+        this.connected = false;
+      }
     }
   }
 
@@ -245,7 +280,8 @@ export class SseClient {
     remaining: string;
   } {
     const parsed: SseEvent[] = [];
-    const blocks = text.split("\n\n");
+    const normalizedText = text.replace(/\r\n/g, "\n");
+    const blocks = normalizedText.split("\n\n");
 
     // Last block may be incomplete — keep it as remaining
     const remaining = blocks.pop() ?? "";
@@ -311,6 +347,24 @@ export class SseClient {
   }
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function sleepWithAbort(ms: number, signal: AbortSignal): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (signal.aborted) {
+      resolve(false);
+      return;
+    }
+
+    const timeoutId = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve(true);
+    }, ms);
+
+    const onAbort = (): void => {
+      clearTimeout(timeoutId);
+      signal.removeEventListener("abort", onAbort);
+      resolve(false);
+    };
+
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
 }

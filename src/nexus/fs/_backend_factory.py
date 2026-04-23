@@ -10,11 +10,38 @@ import importlib
 import inspect
 import logging
 import os
+import re
 import shutil
 import subprocess
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+_WINDOWS_DRIVE_PATH = re.compile(r"^[A-Za-z]:(?:/.*)?$")
+
+
+def _local_root_from_spec(spec: Any) -> str:
+    """Reconstruct a local backend root path from a parsed MountSpec.
+
+    ``parse_uri()`` stores ``local:///tmp/data`` as authority="tmp", path="data".
+    This helper restores the missing separator and keeps absolute-path semantics.
+    """
+    path_segments = [spec.authority]
+    if spec.path:
+        path_segments.append(str(spec.path).lstrip("/"))
+    joined = "/".join(segment.rstrip("/") for segment in path_segments if segment)
+    uri_lower = str(spec.uri).lower()
+    if (
+        uri_lower.startswith("local:///") or uri_lower.startswith("cas-local:///")
+    ) and not joined.startswith("/"):
+        if _WINDOWS_DRIVE_PATH.match(joined):
+            if joined.endswith(":"):
+                joined = f"{joined}/"
+            if os.name != "nt":
+                joined = f"/{joined}"
+        else:
+            joined = "/" + joined
+    return joined or "."
 
 
 def create_backend(spec: Any) -> Any:
@@ -79,19 +106,11 @@ def create_backend(spec: Any) -> Any:
         # URI reconstruction: ``parse_uri`` splits ``local:///abs/path``
         # into ``authority="abs"`` + ``path="path"`` because urllib's
         # netloc empty-case handler takes the first path segment as a
-        # stand-in authority.  Concatenating those back drops the
-        # leading ``/``, giving a cwd-relative path (e.g.
-        # ``$(pwd)/abspath``) instead of the intended absolute one.
-        # Rebuild from the original URI — everything after the scheme
-        # prefix is the filesystem path as the user typed it.
+        # stand-in authority.  ``_local_root_from_spec`` restores the
+        # intended absolute/path semantics (including drive-root forms).
         from pathlib import Path as _Path
 
-        prefix = f"{spec.scheme}://"
-        raw_path = spec.uri[len(prefix) :] if spec.uri.startswith(prefix) else ""
-        if not raw_path:
-            # Fallback for callers that constructed a MountSpec directly.
-            raw_path = spec.authority + (spec.path or "")
-        root = _Path(raw_path).expanduser().resolve()
+        root = _Path(_local_root_from_spec(spec)).expanduser().resolve()
         root.mkdir(parents=True, exist_ok=True)
         if spec.scheme == "cas-local":
             from nexus.backends.storage.cas_local import CASLocalBackend

@@ -278,7 +278,11 @@ class NexusFileSystem(AbstractFileSystem):
     ) -> None:
         """Write data to a file."""
         path = self._strip_protocol(path)
-        self._nexus.write(path, value)
+        try:
+            self._nexus.write(path, value)
+        finally:
+            # Mutations invalidate directory listings and metadata cache.
+            self.dircache.clear()
 
     # -- Delete ----------------------------------------------------------------
 
@@ -291,12 +295,16 @@ class NexusFileSystem(AbstractFileSystem):
                 recursively.
         """
         path = self._strip_protocol(path)
-        # Check if it's a directory — if so, use rmdir
-        stat = self._nexus.stat(path)
-        if stat and stat.get("is_directory"):
-            self._nexus.rmdir(path, recursive=recursive)
-        else:
-            self._nexus.delete(path)
+        try:
+            # Check if it's a directory — if so, use rmdir
+            stat = self._nexus.stat(path)
+            if stat and stat.get("is_directory"):
+                self._nexus.rmdir(path, recursive=recursive)
+            else:
+                self._nexus.delete(path)
+        finally:
+            # Mutations invalidate directory listings and metadata cache.
+            self.dircache.clear()
 
     # -- Copy ------------------------------------------------------------------
 
@@ -304,7 +312,11 @@ class NexusFileSystem(AbstractFileSystem):
         """Copy a single file."""
         path1 = self._strip_protocol(path1)
         path2 = self._strip_protocol(path2)
-        self._nexus.copy(path1, path2)
+        try:
+            self._nexus.copy(path1, path2)
+        finally:
+            # Mutations invalidate directory listings and metadata cache.
+            self.dircache.clear()
 
     # -- Directories -----------------------------------------------------------
 
@@ -523,7 +535,13 @@ class NexusWriteFile:
         if not self._closed:
             self._closed = True
             self._buffer.seek(0)
-            self._nexus.write(self.path, self._buffer.read())
+            try:
+                self._nexus.write(self.path, self._buffer.read())
+            finally:
+                # Keep listings consistent after buffered writes, including
+                # the case where backend write outcome is uncertain.
+                if self.fs is not None and hasattr(self.fs, "dircache"):
+                    self.fs.dircache.clear()
 
     @property
     def closed(self) -> bool:

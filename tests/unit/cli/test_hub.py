@@ -257,3 +257,98 @@ def test_token_list_filters_revoked_with_real_sql(monkeypatch):
     assert all_result.exit_code == 0, all_result.output
     assert "alice" in all_result.output
     assert "bob" in all_result.output
+
+
+def test_token_revoke_by_name_sets_revoked(monkeypatch):
+    row = _fake_row(name="alice", key_id="kid_alice", revoked=0)
+    row.revoked = 0
+    row.revoked_at = None
+    session = MagicMock()
+    session.execute.return_value.scalars.return_value.all.return_value = [row]
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_session_factory",
+        lambda: _mock_session_ctx(session),
+    )
+    runner = CliRunner()
+    result = runner.invoke(hub, ["token", "revoke", "alice"])
+    assert result.exit_code == 0, result.output
+    assert row.revoked == 1
+    assert row.revoked_at is not None
+
+
+def test_token_revoke_not_found_exits_1(monkeypatch):
+    session = MagicMock()
+    session.execute.return_value.scalars.return_value.all.return_value = []
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_session_factory",
+        lambda: _mock_session_ctx(session),
+    )
+    runner = CliRunner()
+    result = runner.invoke(hub, ["token", "revoke", "nosuch"])
+    assert result.exit_code == 1
+
+
+def test_token_revoke_ambiguous_exits_2(monkeypatch):
+    a = _fake_row(name="alice", key_id="kid_a")
+    b = _fake_row(name="alice", key_id="kid_b")
+    session = MagicMock()
+    session.execute.return_value.scalars.return_value.all.return_value = [a, b]
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_session_factory",
+        lambda: _mock_session_ctx(session),
+    )
+    runner = CliRunner()
+    result = runner.invoke(hub, ["token", "revoke", "alice"])
+    assert result.exit_code == 2
+    assert "ambiguous" in result.output.lower()
+
+
+def test_token_revoke_with_real_sql(monkeypatch):
+    """Integration: revoke sets revoked=1 and revoked_at, and only affects matching row."""
+    from sqlalchemy import create_engine
+    from sqlalchemy import select as _select
+    from sqlalchemy.orm import sessionmaker
+
+    from nexus.storage.models import APIKeyModel, Base
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine, future=True, expire_on_commit=False)
+
+    with Session() as s, s.begin():
+        s.add(
+            APIKeyModel(
+                key_hash="h_alice",
+                user_id="alice",
+                name="alice",
+                zone_id="root",
+                is_admin=0,
+                revoked=0,
+            )
+        )
+        s.add(
+            APIKeyModel(
+                key_hash="h_bob",
+                user_id="bob",
+                name="bob",
+                zone_id="root",
+                is_admin=0,
+                revoked=0,
+            )
+        )
+
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_session_factory",
+        lambda: Session,
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(hub, ["token", "revoke", "alice"])
+    assert result.exit_code == 0, result.output
+
+    with Session() as s:
+        rows = {r.name: r for r in s.execute(_select(APIKeyModel)).scalars().all()}
+        assert rows["alice"].revoked == 1
+        assert rows["alice"].revoked_at is not None
+        assert rows["bob"].revoked == 0
+        assert rows["bob"].revoked_at is None

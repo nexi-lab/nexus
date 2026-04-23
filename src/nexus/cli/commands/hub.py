@@ -149,3 +149,40 @@ def token_list(show_revoked: bool, as_json: bool) -> None:
         ],
     )
     click.echo(body)
+
+
+@token.command("revoke")
+@click.argument("identifier")
+def token_revoke(identifier: str) -> None:
+    """Revoke a token by key_id prefix or name. Soft-delete (audit trail preserved)."""
+    factory = get_session_factory()
+    with factory() as session, session.begin():
+        # Match by exact key_id, key_id prefix, or name (all must be non-revoked).
+        matches = (
+            session.execute(
+                select(APIKeyModel)
+                .where(APIKeyModel.revoked == 0)
+                .where(
+                    (APIKeyModel.key_id == identifier)
+                    | (APIKeyModel.key_id.startswith(identifier))
+                    | (APIKeyModel.name == identifier)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if len(matches) == 0:
+            raise click.ClickException(f"no active token matches {identifier!r}")
+        if len(matches) > 1:
+            names = ", ".join(f"{m.name} ({m.key_id})" for m in matches)
+            click.echo(
+                f"ambiguous: {len(matches)} tokens match {identifier!r} — {names}",
+                err=True,
+            )
+            raise SystemExit(2)
+
+        row = matches[0]
+        row.revoked = 1
+        row.revoked_at = datetime.now(UTC)
+
+    click.echo(f"revoked {row.name} ({row.key_id}). Effective within 60s (auth cache TTL).")

@@ -283,9 +283,11 @@ class NexusFS(  # type: ignore[misc]
         )
 
         # PathRouter reads from DLC + delegates LPM to the kernel.
+        # Use self.metadata (RustMetastoreProxy if available) so route.metastore
+        # reads go through the same store as kernel sys_write writes.
         self.router = PathRouter(
             self._driver_coordinator,
-            metadata_store,
+            self.metadata,
             self._kernel,
         )
 

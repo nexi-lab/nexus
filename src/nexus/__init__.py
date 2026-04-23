@@ -10,7 +10,7 @@ Deployment profiles control which bricks are enabled:
 - lite: Core services
 - full: All bricks (default)
 - cloud: All bricks + federation
-- remote: Thin gRPC client (RemoteBackend + RemoteServiceProxy)
+- remote: Thin gRPC client (Rust RemoteBackend/Metastore + RemoteServiceProxy)
 
 SDK vs CLI:
 -----------
@@ -204,7 +204,7 @@ async def connect(
     This is the main entry point for using Nexus. It dispatches based on the
     deployment profile in configuration:
 
-    - **profile="remote"**: Thin gRPC client (RemoteBackend + RemoteServiceProxy).
+    - **profile="remote"**: Thin gRPC client (Rust RemoteBackend/Metastore + RemoteServiceProxy).
     - **All other profiles**: Local NexusFS. Federation (Raft + ZoneManager) is
       auto-detected based on whether the Rust extensions are importable.
 
@@ -350,41 +350,51 @@ async def connect(
             tls_config=_tls_config,
         )
 
-        # RemoteBackend + RemoteMetastore — stateless proxies, server is SSOT.
-        from nexus.backends.storage.remote import RemoteBackend
-        from nexus.storage.remote_metastore import RemoteMetastore
+        # Rust kernel owns the remote backend + metastore (Phase 4).
+        # Python RPCTransport is kept only for service proxies (Issue #1171).
+        from nexus_kernel import Kernel as _RemoteKernel
 
-        remote_backend = RemoteBackend(transport)
-        remote_metastore = RemoteMetastore(transport)
-
-        # Build a lightweight NexusFS directly — no factory, no bricks.
-        # Server is SSOT; client just proxies calls via gRPC.
-        # No parser registries — remote delegates all parsing to the server.
         from nexus.contracts.types import OperationContext as _RemoteOC
         from nexus.core.config import PermissionConfig as _PermissionConfig
+        from nexus.core.metastore import RustMetastoreProxy
         from nexus.core.nexus_fs import NexusFS as _RemoteNexusFS
 
+        _remote_kernel = _RemoteKernel()
+        _remote_metastore = RustMetastoreProxy(_remote_kernel)
+
         nfs = _RemoteNexusFS(
-            metadata_store=remote_metastore,
+            metadata_store=_remote_metastore,
             permissions=_PermissionConfig(enforce=False),
             init_cred=_RemoteOC(user_id="remote", groups=[], is_admin=False),
         )
 
-        # Mount root backend — Rust kernel is SSOT for routing (F2).
+        # Mount root backend via Rust kernel — creates Rust RemoteBackend
+        # + RemoteMetastore internally, no Python shim needed.
         from nexus.contracts.metadata import DT_MOUNT
 
-        nfs.sys_setattr("/", entry_type=DT_MOUNT, backend=remote_backend)
+        _remote_ca_pem = _tls_config.ca_pem if _tls_config else None
+        _remote_cert_pem = _tls_config.node_cert_pem if _tls_config else None
+        _remote_key_pem = _tls_config.node_key_pem if _tls_config else None
+
+        nfs.sys_setattr(
+            "/",
+            entry_type=DT_MOUNT,
+            backend_type="remote",
+            backend_name="remote",
+            server_address=grpc_address,
+            remote_auth_token=api_key,
+            remote_ca_pem=_remote_ca_pem,
+            remote_cert_pem=_remote_cert_pem,
+            remote_key_pem=_remote_key_pem,
+            remote_timeout=float(timeout),
+        )
 
         # Wire service proxies for REMOTE profile (Issue #1171).
         # Fills all 25+ service slots with RemoteServiceProxy — forwards
         # method calls to the server via gRPC.
-        from nexus.factory._remote import (
-            _boot_remote_services,
-            install_remote_kernel_rpc_overrides,
-        )
+        from nexus.factory._remote import _boot_remote_services
 
         await _boot_remote_services(nfs, call_rpc=transport.call_rpc)
-        install_remote_kernel_rpc_overrides(nfs, transport)
         nfs._register_runtime_closeable(transport)
 
         return nfs

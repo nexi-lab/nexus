@@ -98,13 +98,16 @@ jobs:
       # rust/kernel pulls in raft → raft-proto, whose build script uses
       # protobuf-build 0.14.1 and only accepts classic 3.x protoc. brew's
       # current `protobuf` formula ships 34.x which is rejected, so pin
-      # the last classic release and prepend it to PATH.
+      # a late 3.x release and prepend it to PATH. 3.20.2 (not 3.20.3)
+      # is the last 3.x release whose GitHub assets include an arm64
+      # macOS zip — 3.20.3 shipped x86_64 only, so `osx-aarch_64.zip`
+      # 404s on macos-14.
       - name: Install protoc (macOS)
         if: runner.os == 'macOS'
         shell: bash -el {0}
         run: |
           set -euo pipefail
-          PROTOC_VERSION=3.20.3
+          PROTOC_VERSION=3.20.2
           case "$(uname -m)" in
             arm64) ARCH=aarch_64 ;;
             x86_64) ARCH=x86_64 ;;

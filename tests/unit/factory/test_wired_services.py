@@ -1,6 +1,5 @@
 """Tests for enlist_wired_services with plain dict (Issue #2133, #1381, #1452, #1708)."""
 
-import asyncio
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -46,9 +45,7 @@ class TestEnlistWiredServices:
                 nx._kernel.service_unregister(key)
             except (KeyError, Exception):
                 pass
-        asyncio.run(
-            enlist_wired_services(registry, {"rebac_service": mock_svc, "mount_service": mock_svc})
-        )
+        enlist_wired_services(registry, {"rebac_service": mock_svc, "mount_service": mock_svc})
         assert nx.service("rebac") is mock_svc
         assert nx.service("mount") is mock_svc
         assert nx.service("mcp") is None

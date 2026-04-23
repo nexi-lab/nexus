@@ -32,7 +32,7 @@ class _DummyDriverCoordinator:
 
 
 @pytest.mark.asyncio
-async def test_wire_services_passes_enabled_bricks_to_wired_boot(
+def test_wire_services_passes_enabled_bricks_to_wired_boot(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured: dict[str, Any] = {}
@@ -80,7 +80,7 @@ async def test_wire_services_passes_enabled_bricks_to_wired_boot(
     )
 
     bricks = frozenset({"search", "auth", "pay"})
-    await _wire_services(nx, services={}, enabled_bricks=bricks)
+    _wire_services(nx, services={}, enabled_bricks=bricks)
 
     wired_services = captured["services"]
     assert wired_services["enabled_bricks"] == bricks

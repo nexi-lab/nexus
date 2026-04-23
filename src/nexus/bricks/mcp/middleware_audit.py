@@ -44,6 +44,37 @@ async def _publish_record(record: dict[str, Any]) -> None:
         await client.close()
 
 
+async def _record_metrics(record: dict[str, Any]) -> None:
+    """Write lightweight Redis counters used by `nexus hub status` (#3784).
+
+    - ``nexus:hub:qps:<epoch-minute>``: INCR per audited request (10 min TTL).
+    - ``nexus:hub:active:<epoch-minute>``: SADD subject_id (10 min TTL).
+
+    Fire-and-forget: errors are swallowed so audit stays on the happy path.
+    """
+    try:
+        import redis.asyncio as redis  # local import — optional
+    except ImportError:
+        return
+    url = os.environ.get("NEXUS_REDIS_URL") or os.environ.get("DRAGONFLY_URL")
+    if not url:
+        return
+    client = redis.from_url(url)
+    try:
+        epoch_min = int(time.time()) // 60
+        qps_key = f"nexus:hub:qps:{epoch_min}"
+        active_key = f"nexus:hub:active:{epoch_min}"
+        await client.incr(qps_key)
+        await client.expire(qps_key, 600)
+        member = record.get("subject_id") or record.get("token_hash") or "anonymous"
+        await client.sadd(active_key, member)
+        await client.expire(active_key, 600)
+    except Exception:  # noqa: BLE001 — fire-and-forget
+        return
+    finally:
+        await client.close()
+
+
 def _hash_token(auth_header: str) -> str | None:
     lowered = auth_header.lower()
     if not lowered.startswith("bearer "):
@@ -201,6 +232,10 @@ class MCPAuditLogMiddleware:
             await _publish_record(record)
         except Exception:
             logger.warning("mcp audit publish failed", exc_info=True)
+        try:
+            await _record_metrics(record)
+        except Exception:
+            logger.warning("mcp audit metrics failed", exc_info=True)
 
 
 __all__ = ["MCPAuditLogMiddleware"]

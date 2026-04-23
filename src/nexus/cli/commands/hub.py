@@ -186,3 +186,22 @@ def token_revoke(identifier: str) -> None:
         row.revoked_at = datetime.now(UTC)
 
     click.echo(f"revoked {row.name} ({row.key_id}). Effective within 60s (auth cache TTL).")
+
+
+@hub.group("zone")
+def hub_zone() -> None:
+    """Zone inspection (aliases existing `nexus zone` commands)."""
+
+
+@hub_zone.command("list")
+@click.pass_context
+def hub_zone_list(ctx: click.Context) -> None:
+    """List zones — alias of `nexus zone list`."""
+    from nexus.cli.commands.zone import zone as _zone
+
+    list_cmd = _zone.commands.get("list")
+    if list_cmd is None:
+        raise click.ClickException(
+            "`nexus zone list` is not available — cannot delegate from `hub zone list`."
+        )
+    ctx.invoke(list_cmd)

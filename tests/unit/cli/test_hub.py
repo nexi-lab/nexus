@@ -352,3 +352,21 @@ def test_token_revoke_with_real_sql(monkeypatch):
         assert rows["alice"].revoked_at is not None
         assert rows["bob"].revoked == 0
         assert rows["bob"].revoked_at is None
+
+
+def test_hub_zone_list_delegates_to_zone_list(monkeypatch):
+    called = {}
+
+    def fake_zone_list_callback(**kwargs):
+        called["ok"] = True
+
+    from nexus.cli.commands import zone as zone_module
+
+    list_cmd = zone_module.zone.commands.get("list")
+    assert list_cmd is not None, "precondition: `nexus zone list` must exist"
+    monkeypatch.setattr(list_cmd, "callback", fake_zone_list_callback)
+
+    runner = CliRunner()
+    result = runner.invoke(hub, ["zone", "list"])
+    assert result.exit_code == 0, result.output
+    assert called.get("ok") is True

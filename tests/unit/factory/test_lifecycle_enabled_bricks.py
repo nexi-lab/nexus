@@ -37,7 +37,7 @@ async def test_wire_services_passes_enabled_bricks_to_wired_boot(
 ) -> None:
     captured: dict[str, Any] = {}
 
-    async def _fake_boot_post_kernel_services(
+    def _fake_boot_post_kernel_services(
         nx: Any,
         router: Any,
         services: dict[str, Any],
@@ -50,7 +50,7 @@ async def test_wire_services_passes_enabled_bricks_to_wired_boot(
         captured["security_config"] = security_config
         return {}
 
-    async def _fake_enlist_services(nx: Any, services: dict[str, Any]) -> None:
+    def _fake_enlist_services(nx: Any, services: dict[str, Any]) -> None:
         return None
 
     async def _fake_sys_setattr(*_args: Any, **_kwargs: Any) -> None:

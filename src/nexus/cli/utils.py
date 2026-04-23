@@ -195,7 +195,7 @@ class _LocalWorkspaceFilesystemProxy:
         return _wrapped
 
 
-async def connect_local_workspace(data_dir: str) -> NexusFS:
+def connect_local_workspace(data_dir: str) -> NexusFS:
     """Connect to a self-contained local workspace without ambient env bleed."""
     with _isolated_local_workspace_env(data_dir):
         filesystem = nexus.connect(
@@ -266,7 +266,7 @@ async def get_filesystem(
             and not remote_profile_requested
             and remote_url_source is not ParameterSource.COMMANDLINE
         ):
-            return await connect_local_workspace(explicit_local_data_dir)
+            return connect_local_workspace(explicit_local_data_dir)
 
         resolved = resolve_connection(
             remote_url=remote_url,

@@ -65,7 +65,7 @@ def init(path: str) -> None:
             data_dir.mkdir(parents=True, exist_ok=True)
 
             # Initialize Nexus
-            nx = await connect_local_workspace(str(data_dir))
+            nx = connect_local_workspace(str(data_dir))
 
             # Create default directories
             nx.mkdir("/workspace", exist_ok=True)

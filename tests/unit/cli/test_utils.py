@@ -188,7 +188,7 @@ class TestConnectLocalWorkspace:
                     "remote_url": os.environ.get("NEXUS_URL"),
                 }
 
-        async def _mock_connect(config):
+        def _mock_connect(config):
             return DummyFilesystem()
 
         monkeypatch.setenv("NEXUS_DATA_DIR", ambient_data_dir)
@@ -196,7 +196,7 @@ class TestConnectLocalWorkspace:
         monkeypatch.setenv("NEXUS_URL", "http://127.0.0.1:65535")
         monkeypatch.setattr("nexus.connect", _mock_connect)
 
-        filesystem = await connect_local_workspace(local_data_dir)
+        filesystem = connect_local_workspace(local_data_dir)
 
         assert os.environ["NEXUS_DATA_DIR"] == ambient_data_dir
         assert os.environ["NEXUS_DATABASE_URL"] == ambient_database_url
@@ -235,11 +235,11 @@ class TestConnectLocalWorkspace:
             def close(self) -> None:
                 return None
 
-        async def _mock_connect(config):
+        def _mock_connect(config):
             seen["config"] = config
             return DummyFilesystem()
 
-        async def _unexpected_local_connect(data_dir: str):
+        def _unexpected_local_connect(data_dir: str):
             raise AssertionError(f"local workspace override should not run: {data_dir}")
 
         monkeypatch.setenv("NEXUS_DATA_DIR", ambient_data_dir)

@@ -413,8 +413,19 @@ class PathXBackend(
         if pattern.startswith("/x/search/"):
             cache_path = Path(self._cache_dir)
             matches = []
-            for file in cache_path.glob("x:*:search:*.json"):
-                virtual_path = f"/x/search/{file.stem.split(':')[-1]}.json"
+            bound_transport = self._x_transport.with_context(context)
+            scope_token = bound_transport._scope_cache_token(
+                bound_transport._cache_scope_identity()
+            )
+            for file in cache_path.glob(f"x:{scope_token}:search:*.json"):
+                stem = file.stem
+                try:
+                    _, endpoint, query_hash = stem.rsplit(":", 2)
+                except ValueError:
+                    continue
+                if endpoint != "search":
+                    continue
+                virtual_path = f"/x/search/{query_hash}.json"
                 matches.append(virtual_path)
             filtered = glob_fast.glob_filter(matches, include_patterns=[pattern])
             return sorted(set(filtered))
@@ -448,33 +459,36 @@ class PathXBackend(
 
         # Search cached files
         if path.startswith("x/timeline") or path.startswith("x/bookmarks"):
-            return self._grep_cached(regex, path, max_results)
+            return self._grep_cached(regex, path, max_results, context=context)
 
         # Search user's tweets via API
         if path.startswith("x/posts"):
             return self._grep_user_tweets(regex, max_results, context)
 
         # Fallback: search cached files
-        return self._grep_cached(regex, path, max_results)
+        return self._grep_cached(regex, path, max_results, context=context)
 
     def _grep_cached(
         self,
         regex: re.Pattern[str],
         path: str,
         max_results: int,
+        context: Any = None,
     ) -> list[dict[str, Any]]:
         """Search cached JSON files."""
         import json
 
         results: list[dict[str, Any]] = []
         cache_path = Path(self._cache_dir)
+        bound_transport = self._x_transport.with_context(context)
+        scope_token = bound_transport._scope_cache_token(bound_transport._cache_scope_identity())
 
         pattern_map = {
-            "x/timeline": "x:*:timeline:*.json",
-            "x/bookmarks": "x:*:bookmarks:*.json",
-            "x/mentions": "x:*:mentions:*.json",
+            "x/timeline": f"x:{scope_token}:timeline:*.json",
+            "x/bookmarks": f"x:{scope_token}:bookmarks:*.json",
+            "x/mentions": f"x:{scope_token}:mentions:*.json",
         }
-        glob_pattern = pattern_map.get(path, "*.json")
+        glob_pattern = pattern_map.get(path, f"x:{scope_token}:*.json")
 
         for file in cache_path.glob(glob_pattern):
             if len(results) >= max_results:
@@ -516,7 +530,7 @@ class PathXBackend(
             transport = self._x_transport.with_context(context)
             client = await transport._get_api_client_async()
             try:
-                user_id = await transport._get_user_id()
+                user_id = await transport._get_user_id(client=client)
                 response = await client.get_user_tweets(user_id, max_results=100)
                 for tweet in response.get("data", []):
                     if len(results) >= max_results:

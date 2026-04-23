@@ -25,6 +25,7 @@ Storage structure:
 from __future__ import annotations
 
 import logging
+import time
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from nexus.backends.base.backend import HandlerStatusResponse
@@ -474,12 +475,73 @@ class PathGDriveBackend(
         try:
             path = path.strip("/")
             self._bind_transport(context)
+            bound = self._drive_transport.with_context(context)
+            service = bound._get_drive_service()
+            folder_id, path_prefix = bound._resolve_list_prefix(service, path)
+            if folder_id is None:
+                return []
 
-            blob_keys, common_prefixes = self._transport.list_keys(prefix=path, delimiter="/")
+            blob_keys: list[str] = []
+            common_prefixes: list[str] = []
+            next_page_token: str | None = None
+            seen_page_tokens: set[str] = set()
+            pages_fetched = 0
+            started_at = time.monotonic()
+
+            while True:
+                page_blobs, page_prefixes, next_page_token = bound._list_page_under_folder(
+                    service,
+                    folder_id,
+                    path_prefix,
+                    page_token=next_page_token,
+                    page_size=1000,
+                )
+                blob_keys.extend(page_blobs)
+                common_prefixes.extend(page_prefixes)
+                pages_fetched += 1
+
+                if not next_page_token:
+                    break
+                if next_page_token in seen_page_tokens:
+                    raise BackendError(
+                        f"Drive listing incomplete for '{path}': "
+                        f"repeated next_page_token={next_page_token}",
+                        backend="gdrive",
+                        path=path,
+                    )
+                seen_page_tokens.add(next_page_token)
+
+                limit_reason: str | None = None
+                if (
+                    bound._LIST_KEYS_MAX_ELAPSED_SECONDS is not None
+                    and (time.monotonic() - started_at) >= bound._LIST_KEYS_MAX_ELAPSED_SECONDS
+                ):
+                    limit_reason = (
+                        f"max_elapsed_seconds={bound._LIST_KEYS_MAX_ELAPSED_SECONDS} reached"
+                    )
+                elif (
+                    bound._LIST_KEYS_MAX_PAGES is not None
+                    and pages_fetched >= bound._LIST_KEYS_MAX_PAGES
+                ):
+                    limit_reason = f"max_pages={bound._LIST_KEYS_MAX_PAGES} reached"
+                elif (
+                    bound._LIST_KEYS_MAX_ITEMS is not None
+                    and (len(blob_keys) + len(common_prefixes)) >= bound._LIST_KEYS_MAX_ITEMS
+                ):
+                    limit_reason = f"max_items={bound._LIST_KEYS_MAX_ITEMS} reached"
+
+                if limit_reason:
+                    message = (
+                        f"Drive listing incomplete for '{path}': {limit_reason}. "
+                        f"next_page_token={next_page_token}"
+                    )
+                    if bound._LIST_KEYS_FAIL_ON_TRUNCATION:
+                        raise BackendError(message, backend="gdrive", path=path)
+                    logger.warning(message)
+                    break
 
             # Build entry list: folder names with trailing /, file names without
             entries: list[str] = []
-            path_prefix = f"{path}/" if path else ""
 
             for prefix_path in common_prefixes:
                 name = (

@@ -26,6 +26,7 @@ from __future__ import annotations
 import io
 import logging
 import mimetypes
+import time
 from collections.abc import Iterator
 from copy import copy
 from typing import TYPE_CHECKING, Any
@@ -91,6 +92,10 @@ class DriveTransport:
     """
 
     transport_name: str = "gdrive"
+    _LIST_KEYS_MAX_PAGES: int | None = 200
+    _LIST_KEYS_MAX_ITEMS: int | None = 50000
+    _LIST_KEYS_MAX_ELAPSED_SECONDS: float = 120.0
+    _LIST_KEYS_FAIL_ON_TRUNCATION: bool = True
 
     def __init__(
         self,
@@ -186,48 +191,102 @@ class DriveTransport:
         query: str,
         fields: str = "files(id, name)",
         page_size: int = 1000,
+        *,
+        all_pages: bool = False,
+        max_pages: int | None = None,
+        max_items: int | None = None,
+        max_elapsed_seconds: float | None = None,
+        fail_on_truncation: bool = False,
     ) -> list[dict[str, Any]]:
-        """Execute files.list with shared drive support."""
-        if self._use_shared_drives and self._shared_drive_id:
-            results = (
-                service.files()
-                .list(
-                    q=query,
-                    spaces="drive",
-                    fields=fields,
-                    corpora="drive",
-                    driveId=self._shared_drive_id,
-                    includeItemsFromAllDrives=True,
-                    supportsAllDrives=True,
-                    pageSize=page_size,
+        """Execute files.list with shared-drive support and optional pagination."""
+        list_fields = fields
+        if all_pages and "nextPageToken" not in list_fields:
+            list_fields = f"nextPageToken, {list_fields}"
+
+        collected: list[dict[str, Any]] = []
+        page_token: str | None = None
+        seen_page_tokens: set[str] = set()
+        pages_fetched = 0
+        truncation_reason: str | None = None
+        started_at = time.monotonic()
+
+        while True:
+            if (
+                max_elapsed_seconds is not None
+                and (time.monotonic() - started_at) >= max_elapsed_seconds
+            ):
+                truncation_reason = f"max_elapsed_seconds={max_elapsed_seconds} reached"
+                break
+
+            page_size_for_call = page_size
+            if max_items is not None:
+                remaining = max_items - len(collected)
+                if remaining <= 0:
+                    truncation_reason = f"max_items={max_items} reached"
+                    break
+                page_size_for_call = min(page_size, remaining)
+
+            kwargs: dict[str, Any] = {
+                "q": query,
+                "spaces": "drive",
+                "fields": list_fields,
+                "pageSize": page_size_for_call,
+            }
+            if page_token:
+                kwargs["pageToken"] = page_token
+
+            if self._use_shared_drives and self._shared_drive_id:
+                kwargs.update(
+                    {
+                        "corpora": "drive",
+                        "driveId": self._shared_drive_id,
+                        "includeItemsFromAllDrives": True,
+                        "supportsAllDrives": True,
+                    }
                 )
-                .execute()
-            )
-        elif self._use_shared_drives:
-            results = (
-                service.files()
-                .list(
-                    q=query,
-                    spaces="drive",
-                    fields=fields,
-                    includeItemsFromAllDrives=True,
-                    supportsAllDrives=True,
-                    pageSize=page_size,
+            elif self._use_shared_drives:
+                kwargs.update(
+                    {
+                        "includeItemsFromAllDrives": True,
+                        "supportsAllDrives": True,
+                    }
                 )
-                .execute()
-            )
-        else:
-            results = (
-                service.files()
-                .list(
-                    q=query,
-                    spaces="drive",
-                    fields=fields,
-                    pageSize=page_size,
-                )
-                .execute()
-            )
-        return list(results.get("files", []))
+
+            results = service.files().list(**kwargs).execute()
+            pages_fetched += 1
+            page_files = list(results.get("files", []))
+            collected.extend(page_files)
+
+            if not all_pages:
+                break
+
+            next_page_token = results.get("nextPageToken")
+            if not next_page_token:
+                break
+            if max_pages is not None and pages_fetched >= max_pages:
+                truncation_reason = f"max_pages={max_pages} reached"
+                break
+            if max_items is not None and len(collected) >= max_items:
+                truncation_reason = f"max_items={max_items} reached"
+                break
+            if next_page_token in seen_page_tokens:
+                truncation_reason = "repeated nextPageToken detected"
+                break
+            seen_page_tokens.add(next_page_token)
+            page_token = next_page_token
+
+        if truncation_reason:
+            message = f"Drive listing incomplete for query={query}: {truncation_reason}"
+            if fail_on_truncation:
+                raise BackendError(message, backend="gdrive")
+            logger.warning(message)
+
+        return collected
+
+    @staticmethod
+    def _escape_query_literal(value: str) -> str:
+        """Escape string literal for Google Drive query expressions."""
+        return value.replace("\\", "\\\\").replace("'", "\\'")
 
     def _get_or_create_root_folder(self, service: Resource) -> str:
         """Get or create root folder in Drive.
@@ -246,8 +305,9 @@ class DriveTransport:
             return self._folder_cache[cache_key]
 
         try:
+            escaped_root_folder = self._escape_query_literal(self._root_folder)
             query = (
-                f"name='{self._root_folder}' "
+                f"name='{escaped_root_folder}' "
                 f"and mimeType='application/vnd.google-apps.folder' "
                 f"and trashed=false"
             )
@@ -302,8 +362,10 @@ class DriveTransport:
             return self._folder_cache[cache_key]
 
         try:
+            escaped_name = self._escape_query_literal(name)
+            escaped_parent_id = self._escape_query_literal(parent_id)
             query = (
-                f"name='{name}' and '{parent_id}' in parents "
+                f"name='{escaped_name}' and '{escaped_parent_id}' in parents "
                 f"and mimeType='application/vnd.google-apps.folder' "
                 f"and trashed=false"
             )
@@ -345,8 +407,10 @@ class DriveTransport:
         Returns:
             Folder ID if found, None otherwise.
         """
+        escaped_name = self._escape_query_literal(name)
+        escaped_parent_id = self._escape_query_literal(parent_id)
         query = (
-            f"name='{name}' and '{parent_id}' in parents "
+            f"name='{escaped_name}' and '{escaped_parent_id}' in parents "
             f"and mimeType='application/vnd.google-apps.folder' and trashed=false"
         )
         files = self._list_files(service, query)
@@ -403,7 +467,9 @@ class DriveTransport:
         fields: str = "files(id, name)",
     ) -> list[dict[str, Any]]:
         """Find files by name in a parent folder."""
-        query = f"name='{filename}' and '{parent_id}' in parents and trashed=false"
+        escaped_filename = self._escape_query_literal(filename)
+        escaped_parent_id = self._escape_query_literal(parent_id)
+        query = f"name='{escaped_filename}' and '{escaped_parent_id}' in parents and trashed=false"
         return self._list_files(service, query, fields=fields)
 
     # ------------------------------------------------------------------
@@ -573,6 +639,98 @@ class DriveTransport:
         except Exception as e:
             raise NexusFileNotFoundError(key) from e
 
+    def _resolve_list_prefix(
+        self,
+        service: Resource,
+        prefix: str,
+    ) -> tuple[str | None, str]:
+        """Resolve list prefix to (folder_id, path_prefix)."""
+        if not prefix:
+            return self._get_or_create_root_folder(service), ""
+
+        root_id = self._get_or_create_root_folder(service)
+        parts = prefix.split("/")
+        current_id = root_id
+        for part in parts:
+            if not part:
+                continue
+            found = self._find_folder(service, part, current_id)
+            if found is None:
+                return None, ""
+            current_id = found
+        return current_id, prefix + "/"
+
+    def _list_page_under_folder(
+        self,
+        service: Resource,
+        folder_id: str,
+        path_prefix: str,
+        *,
+        page_size: int = 1000,
+        page_token: str | None = None,
+    ) -> tuple[list[str], list[str], str | None]:
+        """List a single Drive page under a folder and return nextPageToken."""
+        escaped_folder_id = self._escape_query_literal(folder_id)
+        query = f"'{escaped_folder_id}' in parents and trashed=false"
+        kwargs: dict[str, Any] = {
+            "q": query,
+            "spaces": "drive",
+            "fields": "nextPageToken, files(id, name, mimeType)",
+            "pageSize": page_size,
+        }
+        if page_token:
+            kwargs["pageToken"] = page_token
+        if self._use_shared_drives and self._shared_drive_id:
+            kwargs.update(
+                {
+                    "corpora": "drive",
+                    "driveId": self._shared_drive_id,
+                    "includeItemsFromAllDrives": True,
+                    "supportsAllDrives": True,
+                }
+            )
+        elif self._use_shared_drives:
+            kwargs.update(
+                {
+                    "includeItemsFromAllDrives": True,
+                    "supportsAllDrives": True,
+                }
+            )
+
+        result = service.files().list(**kwargs).execute()
+        blob_keys: list[str] = []
+        common_prefixes: list[str] = []
+        for file_entry in result.get("files", []):
+            name = file_entry["name"]
+            file_mime = file_entry.get("mimeType", "")
+            if file_mime == "application/vnd.google-apps.folder":
+                common_prefixes.append(f"{path_prefix}{name}/")
+            else:
+                blob_keys.append(f"{path_prefix}{name}")
+        return blob_keys, common_prefixes, result.get("nextPageToken")
+
+    def list_keys_page(
+        self,
+        prefix: str,
+        *,
+        page_token: str | None = None,
+        page_size: int = 1000,
+    ) -> tuple[list[str], list[str], str | None]:
+        """List a single page of keys and return continuation token."""
+        service = self._get_drive_service()
+        prefix = prefix.strip("/")
+        folder_id, path_prefix = self._resolve_list_prefix(service, prefix)
+        if folder_id is None:
+            return [], [], None
+        blob_keys, common_prefixes, next_page_token = self._list_page_under_folder(
+            service,
+            folder_id,
+            path_prefix,
+            page_size=page_size,
+            page_token=page_token,
+        )
+        return sorted(set(blob_keys)), sorted(set(common_prefixes)), next_page_token
+
     def list_keys(self, prefix: str, delimiter: str = "/") -> tuple[list[str], list[str]]:
         """List files and folders under *prefix*.
 
@@ -585,43 +743,65 @@ class DriveTransport:
         """
         service = self._get_drive_service()
         prefix = prefix.strip("/")
-
-        # Resolve prefix to folder ID
-        if not prefix:
-            folder_id = self._get_or_create_root_folder(service)
-            path_prefix = ""
-        else:
-            root_id = self._get_or_create_root_folder(service)
-            parts = prefix.split("/")
-            current_id = root_id
-            for part in parts:
-                if not part:
-                    continue
-                found = self._find_folder(service, part, current_id)
-                if found is None:
-                    # Folder doesn't exist — return empty
-                    return [], []
-                current_id = found
-            folder_id = current_id
-            path_prefix = prefix + "/"
-
-        # Query all files/folders in this directory
-        query = f"'{folder_id}' in parents and trashed=false"
-        files = self._list_files(service, query, fields="files(id, name, mimeType)", page_size=1000)
-
         blob_keys: list[str] = []
         common_prefixes: list[str] = []
+        folder_id, path_prefix = self._resolve_list_prefix(service, prefix)
+        if folder_id is None:
+            return [], []
 
-        for file_entry in files:
-            name = file_entry["name"]
-            file_mime = file_entry.get("mimeType", "")
+        next_page_token: str | None = None
+        pages_fetched = 0
+        started_at = time.monotonic()
+        truncation_reason: str | None = None
+        seen_page_tokens: set[str] = set()
 
-            if file_mime == "application/vnd.google-apps.folder":
-                common_prefixes.append(f"{path_prefix}{name}/")
-            else:
-                blob_keys.append(f"{path_prefix}{name}")
+        while True:
+            page_blobs, page_prefixes, next_page_token = self._list_page_under_folder(
+                service,
+                folder_id,
+                path_prefix,
+                page_size=1000,
+                page_token=next_page_token,
+            )
+            blob_keys.extend(page_blobs)
+            common_prefixes.extend(page_prefixes)
+            pages_fetched += 1
 
-        return sorted(blob_keys), sorted(common_prefixes)
+            if not next_page_token:
+                break
+            if next_page_token in seen_page_tokens:
+                truncation_reason = "repeated nextPageToken detected"
+                break
+            seen_page_tokens.add(next_page_token)
+            if (
+                self._LIST_KEYS_MAX_ELAPSED_SECONDS is not None
+                and (time.monotonic() - started_at) >= self._LIST_KEYS_MAX_ELAPSED_SECONDS
+            ):
+                truncation_reason = (
+                    f"max_elapsed_seconds={self._LIST_KEYS_MAX_ELAPSED_SECONDS} reached"
+                )
+                break
+            if self._LIST_KEYS_MAX_PAGES is not None and pages_fetched >= self._LIST_KEYS_MAX_PAGES:
+                truncation_reason = f"max_pages={self._LIST_KEYS_MAX_PAGES} reached"
+                break
+            if (
+                self._LIST_KEYS_MAX_ITEMS is not None
+                and (len(blob_keys) + len(common_prefixes)) >= self._LIST_KEYS_MAX_ITEMS
+            ):
+                truncation_reason = f"max_items={self._LIST_KEYS_MAX_ITEMS} reached"
+                break
+
+        if truncation_reason and next_page_token:
+            message = (
+                f"Drive listing incomplete for prefix='{prefix}': {truncation_reason}. "
+                f"next_page_token={next_page_token}. "
+                "Use list_keys_page(prefix=..., page_token=...) to continue."
+            )
+            if self._LIST_KEYS_FAIL_ON_TRUNCATION:
+                raise BackendError(message, backend="gdrive")
+            logger.warning(message)
+
+        return sorted(set(blob_keys)), sorted(set(common_prefixes))
 
     def copy_key(self, src_key: str, dst_key: str) -> None:
         """Copy a file within Drive (server-side copy)."""

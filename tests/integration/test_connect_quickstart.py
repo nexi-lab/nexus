@@ -48,26 +48,36 @@ async def test_remote_connect_skips_mount_persistence_and_parser_autodiscovery(
     parser_registry / provider_registry are brick-layer — the kernel must
     NOT hold references to them, and the remote connect path must NOT import
     bricks.parsers at all.
+
+    Phase 4: REMOTE profile now uses Rust RemoteBackend/RemoteMetastore
+    installed via sys_setattr(backend_type="remote"). Verify the NexusFS
+    uses RustMetastoreProxy (not Python RemoteMetastore) and has no
+    brick-layer registries.
     """
-    from nexus.storage.remote_metastore import RemoteMetastore
+    mock_channel = MagicMock()
 
-    def _unexpected(*args, **kwargs):
-        raise AssertionError("remote connect should not perform this bootstrap step")
+    with (
+        patch("nexus.remote.rpc_transport.grpc.insecure_channel", return_value=mock_channel),
+        patch(
+            "nexus.remote.rpc_transport.vfs_pb2_grpc.NexusVFSServiceStub", return_value=MagicMock()
+        ),
+    ):
+        nx = await nexus.connect(
+            config={
+                "profile": "remote",
+                "url": "http://127.0.0.1:2027",
+            }
+        )
+        try:
+            # Kernel must NOT hold brick-layer parser/provider registry references
+            assert not hasattr(nx, "parser_registry")
+            assert not hasattr(nx, "provider_registry")
+            # Metastore must be RustMetastoreProxy (delegating to Rust kernel)
+            from nexus.core.metastore import RustMetastoreProxy
 
-    monkeypatch.setattr(RemoteMetastore, "put", _unexpected)
-
-    nx = await nexus.connect(
-        config={
-            "profile": "remote",
-            "url": "http://127.0.0.1:2027",
-        }
-    )
-    try:
-        # Kernel must NOT hold brick-layer parser/provider registry references
-        assert not hasattr(nx, "parser_registry")
-        assert not hasattr(nx, "provider_registry")
-    finally:
-        nx.close()
+            assert isinstance(nx.metadata, RustMetastoreProxy)
+        finally:
+            nx.close()
 
 
 @pytest.mark.asyncio

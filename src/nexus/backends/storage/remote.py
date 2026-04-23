@@ -1,20 +1,21 @@
-"""RemoteBackend — ObjectStoreABC proxy for REMOTE deployment profile.
+"""RemoteBackend — ObjectStoreABC proxy for federation content reads.
 
-Proxies content operations to a Nexus server over gRPC via ``RPCTransport``.
-Implements the ``ObjectStoreABC`` interface so the kernel can run its
-natural VFS pipeline identically to standalone/federation modes.
+Proxies content operations to a remote Nexus peer over gRPC via ``RPCTransport``.
+Implements the ``ObjectStoreABC`` interface so the kernel can run its natural
+VFS pipeline for cross-zone content fetches.
 
-The kernel calls ``read_content(hash, context)`` / ``write_content(content,
-context)`` etc.  RemoteBackend extracts the virtual path from the
-``OperationContext`` and forwards the call to the server's NexusFS-level
-RPC endpoint, which runs the same operation server-side.
+Used by DriverLifecycleCoordinator.resolve_backend() for federation reads
+when a local backend miss falls back to a remote origin node. NOT used for
+REMOTE deployment profile — that is handled by Rust RemoteBackend installed
+via ``sys_setattr(backend_type="remote")``.
 
 Content deletion (``delete_content``) is a deliberate no-op: the kernel
-always follows with ``metastore.delete(path)`` which triggers
-``RemoteMetastore`` → server ``delete`` RPC → full server-side delete.
+always follows with ``metastore.delete(path)`` which triggers the
+server-side delete pipeline.
 
 Issue #844: Converge RemoteNexusFS → NexusFS(profile=REMOTE).
 Issue #1133: Unified gRPC transport.
+Issue #1134: REMOTE profile migrated to Rust kernel.
 """
 
 from __future__ import annotations

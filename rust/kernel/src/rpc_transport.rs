@@ -36,6 +36,7 @@ pub(crate) struct RpcTransport {
 
 impl RpcTransport {
     /// Connect to a remote server. `address` is `host:port` or `http(s)://host:port`.
+    /// Channel is lazy — actual TCP connection happens on first RPC call.
     pub fn new(
         runtime: Arc<tokio::runtime::Runtime>,
         address: &str,
@@ -43,9 +44,7 @@ impl RpcTransport {
         tls: Option<&TlsConfig>,
         timeout: Duration,
     ) -> Result<Self, String> {
-        let channel = runtime
-            .block_on(Self::connect(address, tls, timeout))
-            .map_err(|e| format!("RpcTransport connect {address}: {e}"))?;
+        let channel = Self::build_channel(address, tls, timeout)?;
 
         Ok(Self {
             runtime,
@@ -62,7 +61,7 @@ impl RpcTransport {
         &self.runtime
     }
 
-    async fn connect(
+    fn build_channel(
         address: &str,
         tls: Option<&TlsConfig>,
         timeout: Duration,
@@ -91,9 +90,10 @@ impl RpcTransport {
                 .map_err(|e| format!("TLS config for '{address}': {e}"))?;
         }
 
-        ep.connect()
-            .await
-            .map_err(|e| format!("connect {address}: {e}"))
+        // Lazy connection: channel is established on first RPC call, not here.
+        // This avoids blocking during NexusFS construction and allows tests to
+        // create REMOTE profile NexusFS instances without a running server.
+        Ok(ep.connect_lazy())
     }
 
     fn client(&self) -> vfs_proto::nexus_vfs_service_client::NexusVfsServiceClient<Channel> {

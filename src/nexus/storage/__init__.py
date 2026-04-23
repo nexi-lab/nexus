@@ -1,8 +1,8 @@
 """Storage layer for Nexus - metadata store and SQLAlchemy models.
 
 Heavy imports (views, models, FileContentCache) are lazily loaded to allow
-the ``remote_metastore`` module to be imported in environments that lack
-SQLAlchemy (e.g. the slim remote-only Docker image).
+lightweight environments (e.g. the slim remote-only Docker image) to import
+storage without pulling in SQLAlchemy.
 """
 
 import importlib

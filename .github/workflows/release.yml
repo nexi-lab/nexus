@@ -125,12 +125,15 @@ jobs:
         # raft-proto's build script uses `protobuf-build v0.14.1`, which
         # rejects protoc's new calendar-versioned releases (e.g. "libprotoc
         # 34.1") with "No suitable `protoc` (>= 3.1.0) found in PATH". Pin
-        # to the last classic 3.x release — brew's `protobuf` formula ships
-        # 34.x and is unusable here.
+        # to a late 3.x release — brew's `protobuf` formula ships 34.x
+        # and is unusable here. We pick 3.20.2 rather than 3.20.3 because
+        # the 3.20.3 GitHub release only published `osx-x86_64.zip`; the
+        # arm64 artifact was dropped, so `osx-aarch_64.zip` 404s on
+        # macos-14 (Apple Silicon) runners.
         if: runner.os == 'macOS'
         run: |
           set -euo pipefail
-          PROTOC_VERSION=3.20.3
+          PROTOC_VERSION=3.20.2
           case "$(uname -m)" in
             arm64) ARCH=aarch_64 ;;
             x86_64) ARCH=x86_64 ;;

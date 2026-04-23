@@ -258,6 +258,34 @@ _TABLE_STATEMENTS: tuple[str, ...] = (
     """,
     "CREATE INDEX IF NOT EXISTS idx_auth_profile_writes_tenant_profile "
     "ON auth_profile_writes(tenant_id, principal_id, auth_profile_id, written_at DESC)",
+    # Read-path audit log (#3818). Same partitioning + RLS posture as
+    # auth_profile_writes — every server-side credential resolution via
+    # /v1/auth/token-exchange appends a row here (via Task 7's
+    # ReadAuditWriter, sampled at 1%). Range-partitioned by read_at so the
+    # partition key is part of the PK; default partition catches every row
+    # until per-month partitions are provisioned in production.
+    """
+    CREATE TABLE IF NOT EXISTS auth_profile_reads (
+        id                BIGSERIAL,
+        read_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        tenant_id         UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+        principal_id      UUID NOT NULL,
+        auth_profile_id   TEXT NOT NULL,
+        caller_machine_id UUID NOT NULL,
+        caller_kind       TEXT NOT NULL,
+        provider          TEXT NOT NULL,
+        purpose           TEXT NOT NULL,
+        cache_hit         BOOLEAN NOT NULL,
+        kek_version       INTEGER NOT NULL,
+        PRIMARY KEY (read_at, id)
+    ) PARTITION BY RANGE (read_at)
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS auth_profile_reads_default
+        PARTITION OF auth_profile_reads DEFAULT
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_auth_profile_reads_tenant_principal_provider "
+    "ON auth_profile_reads(tenant_id, principal_id, provider, read_at DESC)",
 )
 
 # RLS statements. Run LAST so the backfill in _upgrade_shape_in_place is not
@@ -279,6 +307,8 @@ _RLS_STATEMENTS: tuple[str, ...] = (
     "ALTER TABLE daemon_refresh_nonces FORCE ROW LEVEL SECURITY",
     "ALTER TABLE auth_profile_writes ENABLE ROW LEVEL SECURITY",
     "ALTER TABLE auth_profile_writes FORCE ROW LEVEL SECURITY",
+    "ALTER TABLE auth_profile_reads ENABLE ROW LEVEL SECURITY",
+    "ALTER TABLE auth_profile_reads FORCE ROW LEVEL SECURITY",
 )
 
 # Policies are separate because ``CREATE POLICY`` lacks IF NOT EXISTS in
@@ -322,6 +352,11 @@ _POLICY_STATEMENTS: tuple[str, ...] = (
     "DROP POLICY IF EXISTS tenant_isolation_auth_profile_writes ON auth_profile_writes",
     """
     CREATE POLICY tenant_isolation_auth_profile_writes ON auth_profile_writes
+        USING (tenant_id = current_setting('app.current_tenant', true)::UUID)
+    """,
+    "DROP POLICY IF EXISTS auth_profile_reads_tenant_isolation ON auth_profile_reads",
+    """
+    CREATE POLICY auth_profile_reads_tenant_isolation ON auth_profile_reads
         USING (tenant_id = current_setting('app.current_tenant', true)::UUID)
     """,
 )

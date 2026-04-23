@@ -29,7 +29,7 @@ async def nx_with_db(tmp_path):
     Base.metadata.create_all(engine)
     session_factory = sessionmaker(bind=engine)
 
-    nx = await make_test_nexus(tmp_path)
+    nx = make_test_nexus(tmp_path)
     nx.SessionLocal = session_factory
 
     # Mock entity registry
@@ -286,7 +286,7 @@ class TestProvisionUserPartialFailure:
         """Missing SessionLocal should raise TypeError (None is not callable)."""
         from nexus.services.lifecycle.user_provisioning import UserProvisioningService
 
-        nx = await make_test_nexus(tmp_path)
+        nx = make_test_nexus(tmp_path)
         mock_registry = MagicMock()
         mock_registry.get_entity.return_value = None
         # Issue #1801: _system_services deleted — pass mocks directly to service constructor

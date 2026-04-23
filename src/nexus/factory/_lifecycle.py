@@ -28,7 +28,7 @@ class _InitContext:
     permission_checker: Any
 
 
-async def _wire_services(
+def _wire_services(
     nx: Any,
     *,
     services: dict[str, Any] | None = None,
@@ -108,7 +108,7 @@ async def _wire_services(
     )
 
     # --- Boot wired services → register into ServiceRegistry ---
-    _wired = await _boot_post_kernel_services(
+    _wired = _boot_post_kernel_services(
         nx,
         nx.router,
         _svc,
@@ -204,7 +204,7 @@ async def _wire_services(
     )
 
 
-async def _initialize_services(
+def _initialize_services(
     nx: Any,
     ctx: _InitContext,
 ) -> None:
@@ -241,7 +241,7 @@ async def _initialize_services(
     # _build_retroactive_hook_specs() has been deleted — hooks self-describe.
     from nexus.factory.orchestrator import _register_vfs_hooks
 
-    await _register_vfs_hooks(
+    _register_vfs_hooks(
         nx,
         services=ctx.services,
         permission_checker=ctx.permission_checker,

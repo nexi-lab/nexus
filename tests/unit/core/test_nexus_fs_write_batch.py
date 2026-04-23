@@ -17,7 +17,7 @@ from tests.helpers.failing_backend import FailingBackend
 @pytest.fixture()
 async def nx(tmp_path):
     """Create a NexusFS instance with permissions disabled for unit tests."""
-    return await make_test_nexus(tmp_path)
+    return make_test_nexus(tmp_path)
 
 
 class TestWriteBatchHappyPath:
@@ -119,7 +119,7 @@ class TestWriteBatchWithFailingBackend:
         real_backend = CASLocalBackend(root_path=data_dir)
         failing = FailingBackend(real_backend, fail_on_nth=2, fail_permanently=True)
 
-        nx = await make_test_nexus(tmp_path / "nx", backend=failing)
+        nx = make_test_nexus(tmp_path / "nx", backend=failing)
 
         # First file write succeeds (call #1 = write_content)
         # Second file write fails (call #2+ = write_content, permanently)

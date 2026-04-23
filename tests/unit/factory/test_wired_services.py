@@ -17,7 +17,7 @@ class TestEnlistWiredServices:
         """Minimal NexusFS via factory boot path."""
         from tests.conftest import make_test_nexus
 
-        return await make_test_nexus(tmp_path)
+        return make_test_nexus(tmp_path)
 
     @pytest.fixture()
     def registry(self, nx: Any) -> Any:

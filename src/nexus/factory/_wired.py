@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-async def _boot_post_kernel_services(
+def _boot_post_kernel_services(
     nx: Any,
     router: "PathRouter",
     services: dict[str, Any],

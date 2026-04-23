@@ -136,7 +136,7 @@ if _HAS_STRUCTLOG:
         structlog.contextvars.clear_contextvars()
 
 
-async def make_test_nexus(
+def make_test_nexus(
     tmp_path,
     *,
     backend=None,

@@ -68,7 +68,7 @@ class TestColdStartNexusFSConstruction:
         """NexusFS should construct via make_test_nexus with defaults."""
         from tests.conftest import make_test_nexus
 
-        nx = await make_test_nexus(tmp_path)
+        nx = make_test_nexus(tmp_path)
 
         # ServiceRegistry should be empty (SLIM profile — no bricks)
         assert nx.service("rebac") is None
@@ -83,7 +83,7 @@ class TestColdStartNexusFSConstruction:
         from nexus.factory.service_routing import enlist_wired_services
         from tests.conftest import make_test_nexus
 
-        nx = await make_test_nexus(tmp_path)
+        nx = make_test_nexus(tmp_path)
 
         mock_svc = MagicMock()
         await enlist_wired_services(nx, {"rebac_service": mock_svc})

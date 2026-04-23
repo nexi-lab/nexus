@@ -20,7 +20,7 @@ async def nx(tmp_path):
     Uses CASLocalBackend because rename is a metadata-only operation —
     content is addressed by hash, so reads work after path changes.
     """
-    return await make_test_nexus(tmp_path, backend=_create_local_backend(tmp_path))
+    return make_test_nexus(tmp_path, backend=_create_local_backend(tmp_path))
 
 
 class TestRenameHappyPath:
@@ -130,7 +130,7 @@ class TestRenameWithFailingBackend:
             fail_on_methods=["write_content"],
             fail_on_nth=2,
         )
-        nx = await make_test_nexus(tmp_path / "nx", backend=failing)
+        nx = make_test_nexus(tmp_path / "nx", backend=failing)
         # First write succeeds
         nx.write("/files/a.txt", b"data")
         # Second write fails due to backend

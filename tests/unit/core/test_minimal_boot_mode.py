@@ -123,7 +123,7 @@ class TestSlimFileOperations:
     async def minimal_nx(self, tmp_path: "Path") -> "NexusFS":
         from tests.conftest import make_test_nexus
 
-        return await make_test_nexus(tmp_path)
+        return make_test_nexus(tmp_path)
 
     @pytest.mark.asyncio
     async def test_write_and_read(self, minimal_nx: "NexusFS") -> None:

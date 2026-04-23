@@ -318,7 +318,7 @@ def create_nexus_fs(
     return nx
 
 
-async def _register_vfs_hooks(
+def _register_vfs_hooks(
     nx: "NexusFS",
     *,
     services: Any = None,

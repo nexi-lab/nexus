@@ -33,7 +33,7 @@ async def nx(tmp_path: Path) -> NexusFS:
     from nexus import CASLocalBackend
 
     backend = CASLocalBackend(str(tmp_path / "data"))
-    return await make_test_nexus(tmp_path, backend=backend)
+    return make_test_nexus(tmp_path, backend=backend)
 
 
 class _CapturingObserver:
@@ -331,7 +331,7 @@ class TestRmdirCallsDispatch:
         from nexus.backends.storage.cas_local import CASLocalBackend
 
         backend = CASLocalBackend(root_path=str(tmp_path / "cas_data"))
-        cas_nx = await make_test_nexus(tmp_path, backend=backend)
+        cas_nx = make_test_nexus(tmp_path, backend=backend)
 
         cas_nx.resolve_read = MagicMock(return_value=(False, None))
         cas_nx.resolve_write = MagicMock(return_value=(False, None))
@@ -375,7 +375,7 @@ class TestVFSObserverCoverage:
         from nexus import CASLocalBackend
 
         backend = CASLocalBackend(str(tmp_path / "data"))
-        nx = await make_test_nexus(tmp_path, backend=backend)
+        nx = make_test_nexus(tmp_path, backend=backend)
         nx.register_observe(hook)
         return nx
 

@@ -44,7 +44,7 @@ class TestWirableFSConformance:
         assert hasattr(WirableFS, "__protocol_attrs__") or True
 
         # Verify an instance satisfies the protocol structurally
-        nx = await make_test_nexus(tmp_path)
+        nx = make_test_nexus(tmp_path)
         assert isinstance(nx, WirableFS)
 
 

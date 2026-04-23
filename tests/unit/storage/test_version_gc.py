@@ -161,7 +161,7 @@ class TestVersionHistoryGC:
         nx.close()
 
     @pytest.mark.asyncio
-    async def test_gc_preserves_latest_version(self, nx, record_store):
+    def test_gc_preserves_latest_version(self, nx, record_store):
         """Test that GC always preserves the latest version."""
         path = "/workspace/test.txt"
 
@@ -187,7 +187,7 @@ class TestVersionHistoryGC:
         assert content == b"Version 5"
 
     @pytest.mark.asyncio
-    async def test_gc_dry_run_no_changes(self, nx, record_store):
+    def test_gc_dry_run_no_changes(self, nx, record_store):
         """Test that dry run doesn't delete anything."""
         path = "/workspace/test.txt"
 
@@ -217,7 +217,7 @@ class TestVersionHistoryGC:
             assert final_count == initial_count
 
     @pytest.mark.asyncio
-    async def test_gc_respects_max_versions(self, nx, record_store):
+    def test_gc_respects_max_versions(self, nx, record_store):
         """Test GC enforces max versions per resource."""
         path = "/workspace/many_versions.txt"
 
@@ -264,7 +264,7 @@ class TestVersionHistoryGC:
             assert count == 3
 
     @pytest.mark.asyncio
-    async def test_gc_stats_reporting(self, nx, record_store):
+    def test_gc_stats_reporting(self, nx, record_store):
         """Test that GC reports accurate statistics."""
         # Create a file
         path = "/workspace/stats_test.txt"
@@ -284,7 +284,7 @@ class TestVersionHistoryGC:
         assert table_stats["unique_resources"] >= 1
 
     @pytest.mark.asyncio
-    async def test_gc_multiple_resources(self, nx, record_store):
+    def test_gc_multiple_resources(self, nx, record_store):
         """Test GC handles multiple resources correctly."""
         # Create versions for multiple files
         for file_num in range(3):
@@ -312,7 +312,7 @@ class TestVersionHistoryGC:
             assert b"Version 4" in content  # Latest version
 
     @pytest.mark.asyncio
-    async def test_gc_override_params(self, nx, record_store):
+    def test_gc_override_params(self, nx, record_store):
         """Test parameter override functionality."""
         path = "/workspace/override_test.txt"
         for i in range(5):
@@ -336,7 +336,7 @@ class TestVersionHistoryGC:
         assert stats.deleted_by_count == 3  # 5 - 2 = 3
 
     @pytest.mark.asyncio
-    async def test_gc_empty_table(self, temp_dir):
+    def test_gc_empty_table(self, temp_dir):
         """Test GC handles empty version_history table."""
         data_dir = Path(temp_dir) / "nexus-data-empty"
         data_dir.mkdir(parents=True, exist_ok=True)
@@ -368,7 +368,7 @@ class TestVersionGCTask:
     """Test background GC task."""
 
     @pytest.mark.asyncio
-    async def test_gc_task_runs(self):
+    def test_gc_task_runs(self):
         """Test that GC task can be started."""
         from nexus.server.background_tasks import version_gc_task
 

@@ -64,7 +64,7 @@ class TestColdStartNexusFSConstruction:
     """Verify NexusFS can be constructed via factory (test mode)."""
 
     @pytest.mark.asyncio
-    async def test_nexus_fs_minimal_construction(self, tmp_path) -> None:
+    def test_nexus_fs_minimal_construction(self, tmp_path) -> None:
         """NexusFS should construct via make_test_nexus with defaults."""
         from tests.conftest import make_test_nexus
 
@@ -76,7 +76,7 @@ class TestColdStartNexusFSConstruction:
         assert nx.service("mcp") is None
 
     @pytest.mark.asyncio
-    async def test_enlist_wired_services(self, tmp_path) -> None:
+    def test_enlist_wired_services(self, tmp_path) -> None:
         """enlist_wired_services should register services via registry (#1708)."""
         from unittest.mock import MagicMock
 

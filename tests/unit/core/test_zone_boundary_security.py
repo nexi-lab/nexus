@@ -59,7 +59,7 @@ class TestZoneBoundarySecurity:
     """Test zone boundary security for admin bypass."""
 
     @pytest.mark.asyncio
-    async def test_zone_admin_cannot_access_other_zone_files(self, nx: NexusFS) -> None:
+    def test_zone_admin_cannot_access_other_zone_files(self, nx: NexusFS) -> None:
         """Test that zone admin cannot access files from other zones."""
         # Setup: Create file in zone1 as system admin with MANAGE_ZONES
         system_admin = OperationContext(
@@ -100,7 +100,7 @@ class TestZoneBoundarySecurity:
             nx.sys_read(test_file, context=zone_admin_techcorp)
 
     @pytest.mark.asyncio
-    async def test_system_admin_can_access_any_zone(self, nx: NexusFS) -> None:
+    def test_system_admin_can_access_any_zone(self, nx: NexusFS) -> None:
         """Test that system admin with MANAGE_ZONES can access any zone."""
         # Setup: Create file in zone1
         system_admin_setup = OperationContext(
@@ -141,7 +141,7 @@ class TestZoneBoundarySecurity:
         assert content == b"secret acme data"
 
     @pytest.mark.asyncio
-    async def test_zone_admin_can_access_own_zone(self, nx: NexusFS) -> None:
+    def test_zone_admin_can_access_own_zone(self, nx: NexusFS) -> None:
         """Test that zone admin can access files in their own zone."""
         # Setup: Create file in zone1
         system_admin = OperationContext(
@@ -185,7 +185,7 @@ class TestZoneBoundarySecurity:
         assert content == b"acme data"
 
     @pytest.mark.asyncio
-    async def test_cross_zone_write_denied(self, nx: NexusFS) -> None:
+    def test_cross_zone_write_denied(self, nx: NexusFS) -> None:
         """Test that zone admin cannot write to other zone's files."""
         # Setup: Create file in zone1
         system_admin = OperationContext(
@@ -225,7 +225,7 @@ class TestZoneBoundarySecurity:
             nx.write(test_file, b"hacked!", context=zone_admin_techcorp)
 
     @pytest.mark.asyncio
-    async def test_system_admin_without_manage_zones_denied(self, nx: NexusFS) -> None:
+    def test_system_admin_without_manage_zones_denied(self, nx: NexusFS) -> None:
         """Test that admin without MANAGE_ZONES cannot access other zones."""
         # Setup: Create file in zone1
         system_admin = OperationContext(

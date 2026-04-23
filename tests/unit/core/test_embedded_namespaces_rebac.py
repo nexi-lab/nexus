@@ -29,7 +29,7 @@ def cleanup_windows_db():
 
 
 @pytest.mark.asyncio
-async def test_workspace_namespace_operations():
+def test_workspace_namespace_operations():
     """Test basic operations in workspace namespace with ReBAC."""
     with tempfile.TemporaryDirectory() as tmpdir:
         nx = create_nexus_fs(
@@ -75,7 +75,7 @@ async def test_workspace_namespace_operations():
 
 
 @pytest.mark.asyncio
-async def test_shared_namespace_operations():
+def test_shared_namespace_operations():
     """Test basic operations in shared namespace with ReBAC."""
     with tempfile.TemporaryDirectory() as tmpdir:
         nx = create_nexus_fs(
@@ -115,7 +115,7 @@ async def test_shared_namespace_operations():
 
 
 @pytest.mark.asyncio
-async def test_external_namespace_operations():
+def test_external_namespace_operations():
     """Test basic operations in external namespace with ReBAC."""
     with tempfile.TemporaryDirectory() as tmpdir:
         nx = create_nexus_fs(
@@ -154,7 +154,7 @@ async def test_external_namespace_operations():
 
 
 @pytest.mark.asyncio
-async def test_multi_namespace_operations_single_zone():
+def test_multi_namespace_operations_single_zone():
     """Test operations across multiple namespaces for single zone."""
     with tempfile.TemporaryDirectory() as tmpdir:
         nx = create_nexus_fs(
@@ -189,7 +189,7 @@ async def test_multi_namespace_operations_single_zone():
 
 
 @pytest.mark.asyncio
-async def test_namespace_isolation_between_zones():
+def test_namespace_isolation_between_zones():
     """Test that different zones' workspaces are isolated."""
     with tempfile.TemporaryDirectory() as tmpdir:
         nx = create_nexus_fs(

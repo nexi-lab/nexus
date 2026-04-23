@@ -57,7 +57,7 @@ def nx(
 
 
 @pytest.mark.asyncio
-async def test_write_operation_logged(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
+def test_write_operation_logged(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
     """Test that write operations are logged."""
     path = "/test.txt"
     content = b"Test content"
@@ -80,9 +80,7 @@ async def test_write_operation_logged(nx: NexusFS, record_store: SQLAlchemyRecor
 
 
 @pytest.mark.asyncio
-async def test_write_update_operation_logged(
-    nx: NexusFS, record_store: SQLAlchemyRecordStore
-) -> None:
+def test_write_update_operation_logged(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
     """Test that updating a file logs the previous version."""
     path = "/test.txt"
     content1 = b"Version 1"
@@ -118,7 +116,7 @@ async def test_write_update_operation_logged(
 
 
 @pytest.mark.asyncio
-async def test_delete_operation_logged(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
+def test_delete_operation_logged(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
     """Test that delete operations are logged with snapshot."""
     path = "/test.txt"
     content = b"Test content"
@@ -148,7 +146,7 @@ async def test_delete_operation_logged(nx: NexusFS, record_store: SQLAlchemyReco
 
 
 @pytest.mark.asyncio
-async def test_rename_operation_logged(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
+def test_rename_operation_logged(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
     """Test that rename operations are logged.
 
     The PR #2929 two-row rename pattern creates 2 operation_log rows:
@@ -185,9 +183,7 @@ async def test_rename_operation_logged(nx: NexusFS, record_store: SQLAlchemyReco
 
 
 @pytest.mark.asyncio
-async def test_operation_log_filtering_by_agent(
-    nx: NexusFS, record_store: SQLAlchemyRecordStore
-) -> None:
+def test_operation_log_filtering_by_agent(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
     """Test filtering operations by agent ID using context parameter."""
     from nexus.contracts.types import OperationContext
 
@@ -215,9 +211,7 @@ async def test_operation_log_filtering_by_agent(
 
 
 @pytest.mark.asyncio
-async def test_operation_log_filtering_by_type(
-    nx: NexusFS, record_store: SQLAlchemyRecordStore
-) -> None:
+def test_operation_log_filtering_by_type(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
     """Test filtering operations by type."""
     path = "/test.txt"
 
@@ -249,7 +243,7 @@ async def test_operation_log_filtering_by_type(
 
 
 @pytest.mark.asyncio
-async def test_get_path_history(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
+def test_get_path_history(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
     """Test getting operation history for a specific path."""
     path = "/test.txt"
 
@@ -270,7 +264,7 @@ async def test_get_path_history(nx: NexusFS, record_store: SQLAlchemyRecordStore
 
 
 @pytest.mark.asyncio
-async def test_get_last_operation(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
+def test_get_last_operation(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
     """Test getting the last operation."""
     # Perform operations
     nx.write("/file1.txt", b"Content 1")
@@ -288,7 +282,7 @@ async def test_get_last_operation(nx: NexusFS, record_store: SQLAlchemyRecordSto
 
 
 @pytest.mark.asyncio
-async def test_undo_write_new_file(nx: NexusFS) -> None:
+def test_undo_write_new_file(nx: NexusFS) -> None:
     """Test undoing a write operation for a new file (should delete it)."""
     path = "/test.txt"
     content = b"Test content"
@@ -303,7 +297,7 @@ async def test_undo_write_new_file(nx: NexusFS) -> None:
 
 
 @pytest.mark.asyncio
-async def test_undo_write_update(
+def test_undo_write_update(
     nx: NexusFS, local_backend: CASLocalBackend, record_store: SQLAlchemyRecordStore
 ) -> None:
     """Test undoing a write operation that updated an existing file."""
@@ -338,7 +332,7 @@ async def test_undo_write_update(
 
 
 @pytest.mark.asyncio
-async def test_undo_delete(
+def test_undo_delete(
     nx: NexusFS, local_backend: CASLocalBackend, record_store: SQLAlchemyRecordStore
 ) -> None:
     """Test undoing a delete operation."""
@@ -371,7 +365,7 @@ async def test_undo_delete(
 
 
 @pytest.mark.asyncio
-async def test_undo_rename(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
+def test_undo_rename(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
     """Test undoing a rename operation.
 
     With two-row rename (Issue #2929), get_last_operation returns the

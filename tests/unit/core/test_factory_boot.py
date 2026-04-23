@@ -385,7 +385,7 @@ class TestBrickServicesFieldCompleteness:
     """Issue #2134: Factory-created bricks are packed into BrickServices container."""
 
     @pytest.mark.asyncio
-    async def test_create_nexus_fs_packs_factory_bricks_into_brick_services(self) -> None:
+    def test_create_nexus_fs_packs_factory_bricks_into_brick_services(self) -> None:
         """create_nexus_fs() packs parse_fn, content_cache, registries, lock manager
         into BrickServices rather than passing as flat NexusFS params (Issue #2134).
         """
@@ -439,7 +439,7 @@ class TestBrickServicesFieldCompleteness:
         # The factory gracefully degrades — ContentCache is optional.
 
     @pytest.mark.asyncio
-    async def test_create_nexus_fs_workflow_engine_override_in_brick_services(self) -> None:
+    def test_create_nexus_fs_workflow_engine_override_in_brick_services(self) -> None:
         """workflow_engine param is packed into BrickServices (Issue #2134)."""
         record_store = MagicMock()
         record_store.engine = MagicMock()

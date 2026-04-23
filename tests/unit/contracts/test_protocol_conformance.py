@@ -32,7 +32,7 @@ class TestWirableFSConformance:
     """Verify NexusFS implements the WirableFS protocol."""
 
     @pytest.mark.asyncio
-    async def test_nexus_fs_is_wirable(self, tmp_path) -> None:
+    def test_nexus_fs_is_wirable(self, tmp_path) -> None:
         from nexus.contracts.wirable_fs import WirableFS
         from nexus.core.nexus_fs import NexusFS
         from tests.conftest import make_test_nexus

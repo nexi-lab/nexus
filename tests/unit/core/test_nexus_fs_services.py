@@ -48,7 +48,7 @@ class TestNexusFSServiceComposition:
     """Test that NexusFS correctly instantiates all services."""
 
     @pytest.mark.asyncio
-    async def test_all_services_instantiated(self, tmp_path: Path):
+    def test_all_services_instantiated(self, tmp_path: Path):
         """Test that all services are created during NexusFS initialization."""
         fs = await _make_fs(tmp_path, enforce_permissions=False)
 
@@ -71,7 +71,7 @@ class TestNexusFSServiceComposition:
         assert fs.service("share_link") is not None
 
     @pytest.mark.asyncio
-    async def test_service_dependencies_correct(self, tmp_path: Path):
+    def test_service_dependencies_correct(self, tmp_path: Path):
         """Test that services receive correct dependencies."""
         fs = await _make_fs(tmp_path)
 
@@ -96,7 +96,7 @@ class TestNexusFSServiceComposition:
         assert fs.service("share_link")._gw is not None
 
     @pytest.mark.asyncio
-    async def test_version_service_delegation(self, tmp_path: Path):
+    def test_version_service_delegation(self, tmp_path: Path):
         """Test that VersionService is available on NexusFS."""
         fs = await _make_fs(tmp_path, enforce_permissions=False)
 

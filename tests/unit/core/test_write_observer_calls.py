@@ -148,9 +148,7 @@ class TestWriteCallsDispatch:
     """write() should call _dispatch.notify() with FILE_WRITE event."""
 
     @pytest.mark.asyncio
-    async def test_new_file_notifies_with_is_new_true(
-        self, nx: NexusFS, mock_notify: MagicMock
-    ) -> None:
+    def test_new_file_notifies_with_is_new_true(self, nx: NexusFS, mock_notify: MagicMock) -> None:
         nx.write("/new.txt", b"hello")
 
         mock_notify.assert_called_once()
@@ -160,7 +158,7 @@ class TestWriteCallsDispatch:
         assert event.is_new is True
 
     @pytest.mark.asyncio
-    async def test_update_file_notifies_with_is_new_false(
+    def test_update_file_notifies_with_is_new_false(
         self, nx: NexusFS, mock_notify: MagicMock
     ) -> None:
         nx.write("/file.txt", b"v1")
@@ -175,7 +173,7 @@ class TestWriteCallsDispatch:
         assert event.path == "/file.txt"
 
     @pytest.mark.asyncio
-    async def test_notify_receives_etag_and_size(self, nx: NexusFS, mock_notify: MagicMock) -> None:
+    def test_notify_receives_etag_and_size(self, nx: NexusFS, mock_notify: MagicMock) -> None:
         nx.write("/test.txt", b"content")
 
         event = mock_notify.call_args.args[0]
@@ -188,7 +186,7 @@ class TestDeleteCallsDispatch:
     """delete() should call _dispatch.notify() with FILE_DELETE event."""
 
     @pytest.mark.asyncio
-    async def test_delete_notifies_dispatch(self, nx: NexusFS, mock_notify: MagicMock) -> None:
+    def test_delete_notifies_dispatch(self, nx: NexusFS, mock_notify: MagicMock) -> None:
         nx.write("/test.txt", b"content")
         mock_notify.reset_mock()
 
@@ -200,7 +198,7 @@ class TestDeleteCallsDispatch:
         assert event.path == "/test.txt"
 
     @pytest.mark.asyncio
-    async def test_delete_passes_etag(self, nx: NexusFS, mock_notify: MagicMock) -> None:
+    def test_delete_passes_etag(self, nx: NexusFS, mock_notify: MagicMock) -> None:
         result = nx.write("/test.txt", b"content")
         etag = result["etag"]
         mock_notify.reset_mock()
@@ -215,7 +213,7 @@ class TestRenameCallsDispatch:
     """rename() should call _dispatch.notify() with FILE_RENAME event."""
 
     @pytest.mark.asyncio
-    async def test_rename_notifies_dispatch(self, nx: NexusFS, mock_notify: MagicMock) -> None:
+    def test_rename_notifies_dispatch(self, nx: NexusFS, mock_notify: MagicMock) -> None:
         nx.write("/old.txt", b"content")
         mock_notify.reset_mock()
 
@@ -232,7 +230,7 @@ class TestWriteBatchCallsDispatch:
     """write_batch() should call _dispatch.notify() for each file."""
 
     @pytest.mark.asyncio
-    async def test_batch_notifies_per_file(self, nx: NexusFS, mock_notify: MagicMock) -> None:
+    def test_batch_notifies_per_file(self, nx: NexusFS, mock_notify: MagicMock) -> None:
         files = [("/a.txt", b"aaa"), ("/b.txt", b"bbb")]
         nx.write_batch(files)
 
@@ -241,7 +239,7 @@ class TestWriteBatchCallsDispatch:
         assert paths == {"/a.txt", "/b.txt"}
 
     @pytest.mark.asyncio
-    async def test_batch_events_are_file_write(self, nx: NexusFS, mock_notify: MagicMock) -> None:
+    def test_batch_events_are_file_write(self, nx: NexusFS, mock_notify: MagicMock) -> None:
         files = [("/a.txt", b"aaa")]
         nx.write_batch(files)
 
@@ -260,7 +258,7 @@ class TestWriteStreamCallsDispatch:
     """write_stream() delegates to write() which dispatches post-write hooks via Rust."""
 
     @pytest.mark.asyncio
-    async def test_write_stream_dispatches_post_hooks(self, nx: NexusFS) -> None:
+    def test_write_stream_dispatches_post_hooks(self, nx: NexusFS) -> None:
         if not hasattr(nx, "write_stream"):
             pytest.skip("write_stream not available")
 
@@ -289,7 +287,7 @@ class TestMkdirCallsDispatch:
     """mkdir() calls _dispatch.notify() with DIR_CREATE (Issue #625 gap closed)."""
 
     @pytest.mark.asyncio
-    async def test_mkdir_notifies_dispatch(self, nx: NexusFS, mock_notify: MagicMock) -> None:
+    def test_mkdir_notifies_dispatch(self, nx: NexusFS, mock_notify: MagicMock) -> None:
         nx.mkdir("/testdir")
 
         mock_notify.assert_called_once()
@@ -298,9 +296,7 @@ class TestMkdirCallsDispatch:
         assert event.path == "/testdir"
 
     @pytest.mark.asyncio
-    async def test_mkdir_parents_notifies_dispatch(
-        self, nx: NexusFS, mock_notify: MagicMock
-    ) -> None:
+    def test_mkdir_parents_notifies_dispatch(self, nx: NexusFS, mock_notify: MagicMock) -> None:
         nx.mkdir("/a/b/c", parents=True)
 
         # notify is called once for the final directory
@@ -314,7 +310,7 @@ class TestRmdirCallsDispatch:
     """rmdir() calls _dispatch.notify() with DIR_DELETE (Issue #625 gap closed)."""
 
     @pytest.mark.asyncio
-    async def test_rmdir_notifies_dispatch(self, nx: NexusFS, mock_notify: MagicMock) -> None:
+    def test_rmdir_notifies_dispatch(self, nx: NexusFS, mock_notify: MagicMock) -> None:
         nx.mkdir("/mydir")
         mock_notify.reset_mock()
 
@@ -326,7 +322,7 @@ class TestRmdirCallsDispatch:
         assert event.path == "/mydir"
 
     @pytest.mark.asyncio
-    async def test_rmdir_recursive_notifies_dispatch(self, tmp_path: Path) -> None:
+    def test_rmdir_recursive_notifies_dispatch(self, tmp_path: Path) -> None:
         """Use CAS backend to avoid PathLocal rmdir ordering bug (deletes dir marker before contents)."""
         from nexus.backends.storage.cas_local import CASLocalBackend
 
@@ -380,7 +376,7 @@ class TestVFSObserverCoverage:
         return nx
 
     @pytest.mark.asyncio
-    async def test_write_fires_hook(self, nx_with_hook: NexusFS, hook: _CapturingObserver) -> None:
+    def test_write_fires_hook(self, nx_with_hook: NexusFS, hook: _CapturingObserver) -> None:
         nx_with_hook.write("/file.txt", b"hello")
         hook.flush(nx_with_hook)
         hook.assert_called_once()
@@ -388,7 +384,7 @@ class TestVFSObserverCoverage:
         assert hook.last_event.path == "/file.txt"
 
     @pytest.mark.asyncio
-    async def test_delete_fires_hook(self, nx_with_hook: NexusFS, hook: _CapturingObserver) -> None:
+    def test_delete_fires_hook(self, nx_with_hook: NexusFS, hook: _CapturingObserver) -> None:
         nx_with_hook.write("/file.txt", b"hello")
         hook.flush(nx_with_hook)
         hook.reset()
@@ -400,7 +396,7 @@ class TestVFSObserverCoverage:
         assert hook.last_event.type == FileEventType.FILE_DELETE
 
     @pytest.mark.asyncio
-    async def test_rename_fires_hook(self, nx_with_hook: NexusFS, hook: _CapturingObserver) -> None:
+    def test_rename_fires_hook(self, nx_with_hook: NexusFS, hook: _CapturingObserver) -> None:
         nx_with_hook.write("/old.txt", b"hello")
         hook.flush(nx_with_hook)
         hook.reset()
@@ -413,7 +409,7 @@ class TestVFSObserverCoverage:
         assert hook.last_event.new_path == "/new.txt"
 
     @pytest.mark.asyncio
-    async def test_write_batch_fires_hook_per_file(
+    def test_write_batch_fires_hook_per_file(
         self, nx_with_hook: NexusFS, hook: _CapturingObserver
     ) -> None:
         files = [("/a.txt", b"aaa"), ("/b.txt", b"bbb"), ("/c.txt", b"ccc")]
@@ -425,7 +421,7 @@ class TestVFSObserverCoverage:
         assert paths == {"/a.txt", "/b.txt", "/c.txt"}
 
     @pytest.mark.asyncio
-    async def test_mkdir_fires_hook(self, nx_with_hook: NexusFS, hook: _CapturingObserver) -> None:
+    def test_mkdir_fires_hook(self, nx_with_hook: NexusFS, hook: _CapturingObserver) -> None:
         nx_with_hook.mkdir("/newdir")
         hook.flush(nx_with_hook)
 
@@ -434,7 +430,7 @@ class TestVFSObserverCoverage:
         assert hook.last_event.path == "/newdir"
 
     @pytest.mark.asyncio
-    async def test_rmdir_fires_hook(self, nx_with_hook: NexusFS, hook: _CapturingObserver) -> None:
+    def test_rmdir_fires_hook(self, nx_with_hook: NexusFS, hook: _CapturingObserver) -> None:
         nx_with_hook.mkdir("/mydir")
         hook.flush(nx_with_hook)
         hook.reset()

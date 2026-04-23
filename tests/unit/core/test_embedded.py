@@ -57,7 +57,7 @@ async def embedded(temp_dir: Path) -> AsyncGenerator[NexusFS, None]:
 
 
 @pytest.mark.asyncio
-async def test_init_creates_directories(temp_dir: Path) -> None:
+def test_init_creates_directories(temp_dir: Path) -> None:
     """Test that initialization creates necessary directories."""
     data_dir = temp_dir / "nexus-data"
     assert not data_dir.exists()
@@ -81,7 +81,7 @@ async def test_init_creates_directories(temp_dir: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_write_and_read(embedded: NexusFS) -> None:
+def test_write_and_read(embedded: NexusFS) -> None:
     """Test writing and reading a file."""
     content = b"Hello, Nexus!"
     path = "/test/file.txt"
@@ -95,7 +95,7 @@ async def test_write_and_read(embedded: NexusFS) -> None:
 
 
 @pytest.mark.asyncio
-async def test_write_creates_metadata(embedded: NexusFS) -> None:
+def test_write_creates_metadata(embedded: NexusFS) -> None:
     """Test that writing creates metadata."""
     content = b"Test content"
     path = "/test.txt"
@@ -115,7 +115,7 @@ async def test_write_creates_metadata(embedded: NexusFS) -> None:
 
 
 @pytest.mark.asyncio
-async def test_write_updates_version(embedded: NexusFS) -> None:
+def test_write_updates_version(embedded: NexusFS) -> None:
     """Test that rewriting a file updates version number.
 
     Version tracking implemented in v0.3.5.
@@ -146,7 +146,7 @@ async def test_write_updates_version(embedded: NexusFS) -> None:
 
 
 @pytest.mark.asyncio
-async def test_read_nonexistent_file_raises_error(embedded: NexusFS) -> None:
+def test_read_nonexistent_file_raises_error(embedded: NexusFS) -> None:
     """Test that reading nonexistent file raises error."""
     with pytest.raises(NexusFileNotFoundError) as exc_info:
         embedded.sys_read("/nonexistent.txt")
@@ -155,7 +155,7 @@ async def test_read_nonexistent_file_raises_error(embedded: NexusFS) -> None:
 
 
 @pytest.mark.asyncio
-async def test_delete(embedded: NexusFS) -> None:
+def test_delete(embedded: NexusFS) -> None:
     """Test deleting a file."""
     path = "/test.txt"
     content = b"Test content"
@@ -176,14 +176,14 @@ async def test_delete(embedded: NexusFS) -> None:
 
 
 @pytest.mark.asyncio
-async def test_delete_nonexistent_file_raises_error(embedded: NexusFS) -> None:
+def test_delete_nonexistent_file_raises_error(embedded: NexusFS) -> None:
     """Test that deleting nonexistent file raises error."""
     with pytest.raises(NexusFileNotFoundError):
         embedded.sys_unlink("/nonexistent.txt")
 
 
 @pytest.mark.asyncio
-async def test_delete_removes_metadata(embedded: NexusFS) -> None:
+def test_delete_removes_metadata(embedded: NexusFS) -> None:
     """Test that deleting removes metadata."""
     path = "/test.txt"
 
@@ -200,7 +200,7 @@ async def test_delete_removes_metadata(embedded: NexusFS) -> None:
 
 
 @pytest.mark.asyncio
-async def test_exists(embedded: NexusFS) -> None:
+def test_exists(embedded: NexusFS) -> None:
     """Test checking file existence."""
     path = "/test.txt"
 
@@ -217,7 +217,7 @@ async def test_exists(embedded: NexusFS) -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_files(embedded: NexusFS) -> None:
+def test_list_files(embedded: NexusFS) -> None:
     """Test listing files."""
     # Create multiple files
     embedded.write("/file1.txt", b"Content 1")
@@ -234,7 +234,7 @@ async def test_list_files(embedded: NexusFS) -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_with_prefix(embedded: NexusFS) -> None:
+def test_list_with_prefix(embedded: NexusFS) -> None:
     """Test listing files with prefix."""
     # Create multiple files
     embedded.write("/file1.txt", b"Content 1")
@@ -253,21 +253,21 @@ async def test_list_with_prefix(embedded: NexusFS) -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_empty(embedded: NexusFS) -> None:
+def test_list_empty(embedded: NexusFS) -> None:
     """Test listing when no user files exist."""
     files = [f for f in embedded.sys_readdir() if _is_user_file(f)]
     assert len(files) == 0
 
 
 @pytest.mark.asyncio
-async def test_path_validation_empty_path(embedded: NexusFS) -> None:
+def test_path_validation_empty_path(embedded: NexusFS) -> None:
     """Test that empty path raises error."""
     with pytest.raises(InvalidPathError):
         embedded.sys_read("")
 
 
 @pytest.mark.asyncio
-async def test_path_validation_null_byte(embedded: NexusFS) -> None:
+def test_path_validation_null_byte(embedded: NexusFS) -> None:
     """Test that path with null byte raises error."""
     with pytest.raises(InvalidPathError) as exc_info:
         embedded.write("/bad\x00path.txt", b"Content")
@@ -276,7 +276,7 @@ async def test_path_validation_null_byte(embedded: NexusFS) -> None:
 
 
 @pytest.mark.asyncio
-async def test_path_validation_parent_directory(embedded: NexusFS) -> None:
+def test_path_validation_parent_directory(embedded: NexusFS) -> None:
     """Test that path with .. raises error."""
     with pytest.raises(InvalidPathError) as exc_info:
         embedded.sys_read("/../etc/passwd")
@@ -285,7 +285,7 @@ async def test_path_validation_parent_directory(embedded: NexusFS) -> None:
 
 
 @pytest.mark.asyncio
-async def test_path_normalization_leading_slash(embedded: NexusFS) -> None:
+def test_path_normalization_leading_slash(embedded: NexusFS) -> None:
     """Test that paths are normalized with leading slash."""
     content = b"Test content"
 
@@ -302,7 +302,7 @@ async def test_path_normalization_leading_slash(embedded: NexusFS) -> None:
 
 
 @pytest.mark.asyncio
-async def test_binary_content(embedded: NexusFS) -> None:
+def test_binary_content(embedded: NexusFS) -> None:
     """Test handling of binary content."""
     # Create binary content with various byte values
     content = bytes(range(256))
@@ -314,7 +314,7 @@ async def test_binary_content(embedded: NexusFS) -> None:
 
 
 @pytest.mark.asyncio
-async def test_empty_file(embedded: NexusFS) -> None:
+def test_empty_file(embedded: NexusFS) -> None:
     """Test handling of empty files."""
     embedded.write("/empty.txt", b"")
 
@@ -328,7 +328,7 @@ async def test_empty_file(embedded: NexusFS) -> None:
 
 
 @pytest.mark.asyncio
-async def test_large_file(embedded: NexusFS) -> None:
+def test_large_file(embedded: NexusFS) -> None:
     """Test handling of large files."""
     # Create 1MB of data
     content = b"x" * (1024 * 1024)
@@ -341,7 +341,7 @@ async def test_large_file(embedded: NexusFS) -> None:
 
 
 @pytest.mark.asyncio
-async def test_unicode_paths(embedded: NexusFS) -> None:
+def test_unicode_paths(embedded: NexusFS) -> None:
     """Test handling of unicode paths."""
     content = b"Unicode content"
     path = "/测试/файл/αρχείο.txt"
@@ -354,7 +354,7 @@ async def test_unicode_paths(embedded: NexusFS) -> None:
 
 
 @pytest.mark.asyncio
-async def test_etag_changes_on_update(embedded: NexusFS) -> None:
+def test_etag_changes_on_update(embedded: NexusFS) -> None:
     """Test that ETag changes when file is updated."""
     path = "/test.txt"
 
@@ -375,7 +375,7 @@ async def test_etag_changes_on_update(embedded: NexusFS) -> None:
 
 
 @pytest.mark.asyncio
-async def test_etag_same_for_same_content(embedded: NexusFS) -> None:
+def test_etag_same_for_same_content(embedded: NexusFS) -> None:
     """Test that ETag is the same for same content."""
     path1 = "/file1.txt"
     path2 = "/file2.txt"
@@ -394,7 +394,7 @@ async def test_etag_same_for_same_content(embedded: NexusFS) -> None:
 
 
 @pytest.mark.asyncio
-async def test_context_manager(temp_dir: Path) -> None:
+def test_context_manager(temp_dir: Path) -> None:
     """Test using Embedded as context manager."""
     content = b"Test content"
 
@@ -416,7 +416,7 @@ async def test_context_manager(temp_dir: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_modified_at_updates(embedded: NexusFS) -> None:
+def test_modified_at_updates(embedded: NexusFS) -> None:
     """Test that modified_at timestamp updates on write."""
     with freeze_time("2025-01-01 12:00:00") as frozen_time:
         path = "/test.txt"
@@ -443,7 +443,7 @@ async def test_modified_at_updates(embedded: NexusFS) -> None:
 
 
 @pytest.mark.asyncio
-async def test_created_at_persists(embedded: NexusFS) -> None:
+def test_created_at_persists(embedded: NexusFS) -> None:
     """Test that created_at timestamp persists across updates."""
     path = "/test.txt"
 
@@ -466,7 +466,7 @@ async def test_created_at_persists(embedded: NexusFS) -> None:
 
 
 @pytest.mark.asyncio
-async def test_multiple_operations(embedded: NexusFS) -> None:
+def test_multiple_operations(embedded: NexusFS) -> None:
     """Test multiple file operations in sequence."""
     # Create multiple files
     for i in range(10):
@@ -494,7 +494,7 @@ async def test_multiple_operations(embedded: NexusFS) -> None:
 
 
 @pytest.mark.asyncio
-async def test_overwrite_preserves_path(embedded: NexusFS) -> None:
+def test_overwrite_preserves_path(embedded: NexusFS) -> None:
     """Test that overwriting a file preserves the path."""
     path = "/test.txt"
 
@@ -517,7 +517,7 @@ async def test_overwrite_preserves_path(embedded: NexusFS) -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_recursive(embedded: NexusFS) -> None:
+def test_list_recursive(embedded: NexusFS) -> None:
     """Test recursive listing of files.
 
     The kernel's metadata.list() returns only file entries, not virtual
@@ -556,7 +556,7 @@ async def test_list_recursive(embedded: NexusFS) -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_with_details(embedded: NexusFS) -> None:
+def test_list_with_details(embedded: NexusFS) -> None:
     """Test listing files with detailed metadata.
 
     The kernel's sys_readdir(details=True) returns dicts with keys:
@@ -589,7 +589,7 @@ async def test_list_with_details(embedded: NexusFS) -> None:
 
 
 @pytest.mark.asyncio
-async def test_glob_simple_pattern(embedded: NexusFS) -> None:
+def test_glob_simple_pattern(embedded: NexusFS) -> None:
     """Test glob with simple wildcard patterns."""
     # Create test files
     embedded.write("/test1.txt", b"Content")
@@ -616,7 +616,7 @@ async def test_glob_simple_pattern(embedded: NexusFS) -> None:
 
 
 @pytest.mark.asyncio
-async def test_glob_recursive_pattern(embedded: NexusFS) -> None:
+def test_glob_recursive_pattern(embedded: NexusFS) -> None:
     """Test glob with recursive ** pattern."""
     # Create nested structure
     embedded.write("/src/main.py", b"Content")
@@ -637,7 +637,7 @@ async def test_glob_recursive_pattern(embedded: NexusFS) -> None:
 
 
 @pytest.mark.asyncio
-async def test_glob_with_base_path(embedded: NexusFS) -> None:
+def test_glob_with_base_path(embedded: NexusFS) -> None:
     """Test glob with a base path."""
     # Create files
     embedded.write("/data/file1.csv", b"Content")
@@ -652,7 +652,7 @@ async def test_glob_with_base_path(embedded: NexusFS) -> None:
 
 
 @pytest.mark.asyncio
-async def test_glob_question_mark_pattern(embedded: NexusFS) -> None:
+def test_glob_question_mark_pattern(embedded: NexusFS) -> None:
     """Test glob with ? wildcard."""
     # Create files
     embedded.write("/file1.txt", b"Content")
@@ -668,7 +668,7 @@ async def test_glob_question_mark_pattern(embedded: NexusFS) -> None:
 
 
 @pytest.mark.asyncio
-async def test_grep_simple_search(embedded: NexusFS) -> None:
+def test_grep_simple_search(embedded: NexusFS) -> None:
     """Test basic grep search."""
     # Create test files
     embedded.write("/file1.txt", b"Hello World\nFoo Bar\nHello Again")
@@ -689,7 +689,7 @@ async def test_grep_simple_search(embedded: NexusFS) -> None:
 
 
 @pytest.mark.asyncio
-async def test_grep_regex_pattern(embedded: NexusFS) -> None:
+def test_grep_regex_pattern(embedded: NexusFS) -> None:
     """Test grep with regex patterns."""
     # Create test file
     embedded.write("/code.py", b"def foo():\n    pass\ndef bar():\n    return 42")
@@ -703,7 +703,7 @@ async def test_grep_regex_pattern(embedded: NexusFS) -> None:
 
 
 @pytest.mark.asyncio
-async def test_grep_with_file_pattern(embedded: NexusFS) -> None:
+def test_grep_with_file_pattern(embedded: NexusFS) -> None:
     """Test grep with file filtering."""
     # Create test files
     embedded.write("/file1.py", b"import os\nimport sys")
@@ -719,7 +719,7 @@ async def test_grep_with_file_pattern(embedded: NexusFS) -> None:
 
 
 @pytest.mark.asyncio
-async def test_grep_case_insensitive(embedded: NexusFS) -> None:
+def test_grep_case_insensitive(embedded: NexusFS) -> None:
     """Test case-insensitive grep search."""
     # Create test file
     embedded.write("/file.txt", b"ERROR: Something went wrong\nError in processing\nerror detected")
@@ -734,7 +734,7 @@ async def test_grep_case_insensitive(embedded: NexusFS) -> None:
 
 
 @pytest.mark.asyncio
-async def test_grep_max_results(embedded: NexusFS) -> None:
+def test_grep_max_results(embedded: NexusFS) -> None:
     """Test grep result limiting."""
     # Create file with many matches
     content = "\n".join([f"Line {i} with MATCH" for i in range(100)])
@@ -746,7 +746,7 @@ async def test_grep_max_results(embedded: NexusFS) -> None:
 
 
 @pytest.mark.asyncio
-async def test_grep_skips_binary_files(embedded: NexusFS) -> None:
+def test_grep_skips_binary_files(embedded: NexusFS) -> None:
     """Test that grep skips binary files."""
     # Create binary file
     embedded.write("/binary.bin", bytes(range(256)))
@@ -761,7 +761,7 @@ async def test_grep_skips_binary_files(embedded: NexusFS) -> None:
 
 
 @pytest.mark.asyncio
-async def test_grep_empty_results(embedded: NexusFS) -> None:
+def test_grep_empty_results(embedded: NexusFS) -> None:
     """Test grep with no matches."""
     embedded.write("/file.txt", b"Hello World")
 
@@ -770,7 +770,7 @@ async def test_grep_empty_results(embedded: NexusFS) -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_returns_list_type(embedded: NexusFS) -> None:
+def test_list_returns_list_type(embedded: NexusFS) -> None:
     """Test that list() returns a list."""
     embedded.write("/file1.txt", b"Content")
     embedded.write("/file2.txt", b"Content")

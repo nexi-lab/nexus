@@ -113,7 +113,7 @@ class TestZoektPipeConsumerE2E:
     """Prove DT_PIPE end-to-end: sync notify_write -> pipe -> consumer -> reindex."""
 
     @pytest.mark.asyncio
-    async def test_notify_write_triggers_reindex(self) -> None:
+    def test_notify_write_triggers_reindex(self) -> None:
         """Full E2E: sync notify_write -> buffer -> sys_write -> consumer -> reindex."""
         from nexus.factory.zoekt_pipe_consumer import ZoektPipeConsumer
 
@@ -142,7 +142,7 @@ class TestZoektPipeConsumerE2E:
             await consumer.stop()
 
     @pytest.mark.asyncio
-    async def test_sync_complete_triggers_reindex(self) -> None:
+    def test_sync_complete_triggers_reindex(self) -> None:
         """notify_sync_complete flows through pipe to trigger reindex."""
         from nexus.factory.zoekt_pipe_consumer import ZoektPipeConsumer
 
@@ -164,7 +164,7 @@ class TestZoektPipeConsumerE2E:
             await consumer.stop()
 
     @pytest.mark.asyncio
-    async def test_debounce_coalesces_writes(self) -> None:
+    def test_debounce_coalesces_writes(self) -> None:
         """Multiple rapid writes within debounce window -> single reindex."""
         from nexus.factory.zoekt_pipe_consumer import ZoektPipeConsumer
 
@@ -192,7 +192,7 @@ class TestZoektPipeConsumerE2E:
             await consumer.stop()
 
     @pytest.mark.asyncio
-    async def test_fallback_without_bind_fs(self) -> None:
+    def test_fallback_without_bind_fs(self) -> None:
         """Without bind_fs, notify_write falls back to direct call."""
         from nexus.factory.zoekt_pipe_consumer import ZoektPipeConsumer
 
@@ -208,7 +208,7 @@ class TestZoektPipeConsumerE2E:
         zoekt.notify_write.assert_called_once_with("/workspace/file.txt")
 
     @pytest.mark.asyncio
-    async def test_graceful_shutdown_drains(self) -> None:
+    def test_graceful_shutdown_drains(self) -> None:
         """stop() drains remaining pipe events before exiting."""
         from nexus.factory.zoekt_pipe_consumer import ZoektPipeConsumer
 
@@ -231,7 +231,7 @@ class TestZoektPipeConsumerE2E:
         assert consumer._consumer_task is None
 
     @pytest.mark.asyncio
-    async def test_pipe_full_falls_back(self) -> None:
+    def test_pipe_full_falls_back(self) -> None:
         """When deque maxlen is reached, oldest events are dropped (deque behavior)."""
         from nexus.factory.zoekt_pipe_consumer import ZoektPipeConsumer
 
@@ -315,7 +315,7 @@ class TestPipedWriteObserverE2E:
     """
 
     @pytest.mark.asyncio
-    async def test_write_event_flows_through_pipe(self) -> None:
+    def test_write_event_flows_through_pipe(self) -> None:
         """Full E2E: sys_write (producer) -> pipe -> consumer -> _flush_batch."""
         from nexus.storage.piped_record_store_write_observer import (
             _AUDIT_PIPE_PATH,
@@ -345,7 +345,7 @@ class TestPipedWriteObserverE2E:
                 await observer.stop()
 
     @pytest.mark.asyncio
-    async def test_batch_write_flows_through_pipe(self) -> None:
+    def test_batch_write_flows_through_pipe(self) -> None:
         """Multiple events enqueued via pipe flush in batches."""
         from nexus.storage.piped_record_store_write_observer import (
             _AUDIT_PIPE_PATH,
@@ -378,7 +378,7 @@ class TestPipedWriteObserverE2E:
                 await observer.stop()
 
     @pytest.mark.asyncio
-    async def test_delete_event_flows_through_pipe(self) -> None:
+    def test_delete_event_flows_through_pipe(self) -> None:
         """Delete event flows through pipe to consumer."""
         from nexus.storage.piped_record_store_write_observer import (
             _AUDIT_PIPE_PATH,
@@ -407,7 +407,7 @@ class TestPipedWriteObserverE2E:
                 await observer.stop()
 
     @pytest.mark.asyncio
-    async def test_pre_buffer_drains_on_start(self) -> None:
+    def test_pre_buffer_drains_on_start(self) -> None:
         """Events buffered in _pre_buffer before bind_fs are drained via flush_sync on stop."""
         from nexus.storage.piped_record_store_write_observer import (
             PipedRecordStoreWriteObserver,
@@ -463,7 +463,7 @@ class TestPipedWriteObserverE2E:
         assert len(observer._pre_buffer) == 0
 
     @pytest.mark.asyncio
-    async def test_metrics_tracking(self) -> None:
+    def test_metrics_tracking(self) -> None:
         """Observer metrics reflect actual event flow."""
         from nexus.storage.piped_record_store_write_observer import (
             _AUDIT_PIPE_PATH,
@@ -508,7 +508,7 @@ class TestPostFlushHooks:
     """Verify post-flush hooks are called after successful flush."""
 
     @pytest.mark.asyncio
-    async def test_hook_called_after_flush(self) -> None:
+    def test_hook_called_after_flush(self) -> None:
         """Post-flush hook receives events after successful commit."""
         from nexus.storage.piped_record_store_write_observer import (
             PipedRecordStoreWriteObserver,
@@ -555,7 +555,7 @@ class TestPostFlushHooks:
         assert captured_events[0]["path"] == "/test.csv"
 
     @pytest.mark.asyncio
-    async def test_hook_failure_does_not_block_flush(self) -> None:
+    def test_hook_failure_does_not_block_flush(self) -> None:
         """A failing hook must not prevent the audit trail from committing."""
         from nexus.storage.piped_record_store_write_observer import (
             PipedRecordStoreWriteObserver,
@@ -606,7 +606,7 @@ class TestPostFlushHooks:
         assert len(second_hook_called) == 1
 
     @pytest.mark.asyncio
-    async def test_no_hooks_no_error(self) -> None:
+    def test_no_hooks_no_error(self) -> None:
         """Flush works fine with no hooks registered."""
         from nexus.storage.piped_record_store_write_observer import (
             PipedRecordStoreWriteObserver,

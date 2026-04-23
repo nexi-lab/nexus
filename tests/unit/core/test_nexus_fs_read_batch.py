@@ -28,7 +28,7 @@ class TestReadBatchHappyPath:
     """Basic batch read operations that should succeed."""
 
     @pytest.mark.asyncio
-    async def test_read_batch_single_file(self, nx):
+    def test_read_batch_single_file(self, nx):
         nx.write("/files/a.txt", b"hello")
         results = nx.read_batch(["/files/a.txt"])
         assert len(results) == 1
@@ -36,7 +36,7 @@ class TestReadBatchHappyPath:
         assert results[0]["path"] == "/files/a.txt"
 
     @pytest.mark.asyncio
-    async def test_read_batch_multiple_files(self, nx):
+    def test_read_batch_multiple_files(self, nx):
         files = [
             ("/files/a.txt", b"aaa"),
             ("/files/b.txt", b"bbb"),
@@ -52,7 +52,7 @@ class TestReadBatchHappyPath:
             assert results[i]["content"] == content
 
     @pytest.mark.asyncio
-    async def test_read_batch_preserves_input_order(self, nx):
+    def test_read_batch_preserves_input_order(self, nx):
         """Result list must match input path order."""
         nx.write("/files/first.txt", b"first")
         nx.write("/files/second.txt", b"second")
@@ -67,25 +67,25 @@ class TestReadBatchHappyPath:
         assert results[2]["content"] == b"second"
 
     @pytest.mark.asyncio
-    async def test_read_batch_returns_etag(self, nx):
+    def test_read_batch_returns_etag(self, nx):
         nx.write("/files/a.txt", b"content")
         results = nx.read_batch(["/files/a.txt"])
         assert "etag" in results[0]
 
     @pytest.mark.asyncio
-    async def test_read_batch_returns_version(self, nx):
+    def test_read_batch_returns_version(self, nx):
         nx.write("/files/a.txt", b"v1")
         results = nx.read_batch(["/files/a.txt"])
         assert results[0]["version"] >= 1
 
     @pytest.mark.asyncio
-    async def test_read_batch_returns_size(self, nx):
+    def test_read_batch_returns_size(self, nx):
         nx.write("/files/a.txt", b"hello")
         results = nx.read_batch(["/files/a.txt"])
         assert results[0]["size"] == 5
 
     @pytest.mark.asyncio
-    async def test_read_batch_matches_write_batch_etag(self, nx):
+    def test_read_batch_matches_write_batch_etag(self, nx):
         """etag from read_batch should match the etag from write_batch."""
         write_results = nx.write_batch([("/files/a.txt", b"data")])
         read_results = nx.read_batch(["/files/a.txt"])
@@ -97,7 +97,7 @@ class TestReadBatchEmptyInput:
     """Edge case: empty batch."""
 
     @pytest.mark.asyncio
-    async def test_empty_batch_returns_empty_list(self, nx):
+    def test_empty_batch_returns_empty_list(self, nx):
         results = nx.read_batch([])
         assert results == []
 
@@ -106,14 +106,14 @@ class TestReadBatchStrictMode:
     """Strict mode (partial=False, the default) raises on missing paths."""
 
     @pytest.mark.asyncio
-    async def test_missing_path_raises_file_not_found(self, nx):
+    def test_missing_path_raises_file_not_found(self, nx):
         from nexus.contracts.exceptions import NexusFileNotFoundError
 
         with pytest.raises(NexusFileNotFoundError):
             nx.read_batch(["/files/does_not_exist.txt"])
 
     @pytest.mark.asyncio
-    async def test_one_missing_in_batch_raises(self, nx):
+    def test_one_missing_in_batch_raises(self, nx):
         """Even one missing path raises in strict mode."""
         from nexus.contracts.exceptions import NexusFileNotFoundError
 
@@ -126,7 +126,7 @@ class TestReadBatchPartialMode:
     """Partial mode (partial=True) returns per-item errors instead of raising."""
 
     @pytest.mark.asyncio
-    async def test_missing_path_returns_error_item(self, nx):
+    def test_missing_path_returns_error_item(self, nx):
         results = nx.read_batch(["/files/missing.txt"], partial=True)
         assert len(results) == 1
         assert results[0]["path"] == "/files/missing.txt"
@@ -134,7 +134,7 @@ class TestReadBatchPartialMode:
         assert results[0]["error"] in ("not_found", "permission_denied")
 
     @pytest.mark.asyncio
-    async def test_mixed_hit_and_miss(self, nx):
+    def test_mixed_hit_and_miss(self, nx):
         nx.write("/files/exists.txt", b"found")
         results = nx.read_batch(["/files/exists.txt", "/files/missing.txt"], partial=True)
         assert len(results) == 2
@@ -146,14 +146,14 @@ class TestReadBatchPartialMode:
         assert results[1]["path"] == "/files/missing.txt"
 
     @pytest.mark.asyncio
-    async def test_all_missing_returns_all_errors(self, nx):
+    def test_all_missing_returns_all_errors(self, nx):
         results = nx.read_batch(["/files/a.txt", "/files/b.txt", "/files/c.txt"], partial=True)
         assert len(results) == 3
         for r in results:
             assert "error" in r
 
     @pytest.mark.asyncio
-    async def test_partial_preserves_order_with_mixed_results(self, nx):
+    def test_partial_preserves_order_with_mixed_results(self, nx):
         nx.write("/files/b.txt", b"middle")
         results = nx.read_batch(["/files/a.txt", "/files/b.txt", "/files/c.txt"], partial=True)
         assert results[0]["path"] == "/files/a.txt"
@@ -168,14 +168,14 @@ class TestReadBatchContentEdgeCases:
     """Edge cases in content payloads."""
 
     @pytest.mark.asyncio
-    async def test_empty_content(self, nx):
+    def test_empty_content(self, nx):
         nx.write("/files/empty.txt", b"")
         results = nx.read_batch(["/files/empty.txt"])
         assert results[0]["content"] == b""
         assert results[0]["size"] == 0
 
     @pytest.mark.asyncio
-    async def test_binary_content_round_trip(self, nx):
+    def test_binary_content_round_trip(self, nx):
         binary = bytes(range(256))
         nx.write("/files/binary.bin", binary)
         results = nx.read_batch(["/files/binary.bin"])
@@ -183,7 +183,7 @@ class TestReadBatchContentEdgeCases:
         assert results[0]["size"] == 256
 
     @pytest.mark.asyncio
-    async def test_large_batch(self, nx):
+    def test_large_batch(self, nx):
         """Read 50 files written by write_batch."""
         files = [(f"/files/file_{i:03d}.txt", f"content_{i}".encode()) for i in range(50)]
         nx.write_batch(files)
@@ -196,7 +196,7 @@ class TestReadBatchContentEdgeCases:
             assert results[i]["content"] == content
 
     @pytest.mark.asyncio
-    async def test_duplicate_paths_in_batch(self, nx):
+    def test_duplicate_paths_in_batch(self, nx):
         """Duplicate paths in input should return duplicate results."""
         nx.write("/files/a.txt", b"data")
         results = nx.read_batch(["/files/a.txt", "/files/a.txt"])
@@ -209,14 +209,14 @@ class TestReadBatchPathValidation:
     """Path validation — invalid paths always raise regardless of partial mode."""
 
     @pytest.mark.asyncio
-    async def test_invalid_path_raises(self, nx):
+    def test_invalid_path_raises(self, nx):
         from nexus.contracts.exceptions import InvalidPathError
 
         with pytest.raises(InvalidPathError):
             nx.read_batch([""])
 
     @pytest.mark.asyncio
-    async def test_invalid_path_raises_even_in_partial_mode(self, nx):
+    def test_invalid_path_raises_even_in_partial_mode(self, nx):
         """InvalidPathError is never swallowed by partial mode."""
         from nexus.contracts.exceptions import InvalidPathError
 

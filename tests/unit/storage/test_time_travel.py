@@ -83,7 +83,7 @@ class TestTimeTravelDebug:
         )
 
     @pytest.mark.asyncio
-    async def test_time_travel_read_file_history(self, nx, record_store, time_travel):
+    def test_time_travel_read_file_history(self, nx, record_store, time_travel):
         """Test reading file at different historical points."""
         path = "/workspace/test.txt"
 
@@ -118,7 +118,7 @@ class TestTimeTravelDebug:
         assert state_v3["operation_id"] == op_v3
 
     @pytest.mark.asyncio
-    async def test_time_travel_file_deleted(self, nx, backend, record_store, time_travel):
+    def test_time_travel_file_deleted(self, nx, backend, record_store, time_travel):
         """Test reading file that was deleted."""
         path = "/workspace/deleted.txt"
 
@@ -156,7 +156,7 @@ class TestTimeTravelDebug:
             time_travel.get_file_at_operation(path, op_delete)
 
     @pytest.mark.asyncio
-    async def test_time_travel_list_directory(self, nx, record_store, time_travel):
+    def test_time_travel_list_directory(self, nx, record_store, time_travel):
         """Test listing directory at historical operation point."""
         # Create multiple files
         nx.write("/workspace/file1.txt", b"File 1")
@@ -207,7 +207,7 @@ class TestTimeTravelDebug:
         assert "/workspace/file3.txt" in paths
 
     @pytest.mark.asyncio
-    async def test_time_travel_diff_operations(self, nx, record_store, time_travel):
+    def test_time_travel_diff_operations(self, nx, record_store, time_travel):
         """Test diffing file state between two operations."""
         path = "/workspace/evolving.txt"
 
@@ -240,7 +240,7 @@ class TestTimeTravelDebug:
         assert diff["size_diff"] == len(b"Hello World - Updated!") - len(b"Hello World")
 
     @pytest.mark.asyncio
-    async def test_time_travel_diff_file_created(self, nx, record_store, time_travel):
+    def test_time_travel_diff_file_created(self, nx, record_store, time_travel):
         """Test diff when file was created between operations."""
         # Create a baseline operation
         nx.write("/workspace/baseline.txt", b"Baseline")
@@ -271,7 +271,7 @@ class TestTimeTravelDebug:
         assert diff["size_diff"] == len(b"New content")
 
     @pytest.mark.asyncio
-    async def test_time_travel_diff_file_deleted(self, nx, backend, record_store, time_travel):
+    def test_time_travel_diff_file_deleted(self, nx, backend, record_store, time_travel):
         """Test diff when file was deleted between operations."""
         path = "/workspace/to_delete.txt"
 
@@ -304,7 +304,7 @@ class TestTimeTravelDebug:
         assert diff["size_diff"] == -len(b"Will be deleted")
 
     @pytest.mark.asyncio
-    async def test_time_travel_with_agent_id(self, nx, record_store, time_travel):
+    def test_time_travel_with_agent_id(self, nx, record_store, time_travel):
         """Test time-travel with agent-specific operations using context parameter."""
         from nexus.contracts.types import OperationContext
 
@@ -339,7 +339,7 @@ class TestTimeTravelDebug:
             time_travel.get_file_at_operation("/any/path", "fake-operation-id")
 
     @pytest.mark.asyncio
-    async def test_time_travel_metadata_preservation(self, nx, record_store, time_travel):
+    def test_time_travel_metadata_preservation(self, nx, record_store, time_travel):
         """Test that metadata is preserved in historical reads."""
         path = "/workspace/metadata_test.txt"
 

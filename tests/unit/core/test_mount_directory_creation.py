@@ -53,7 +53,7 @@ def nx_with_mount():
 
 
 @pytest.mark.asyncio
-async def test_mount_creates_directory_entry(nx_with_mount):
+def test_mount_creates_directory_entry(nx_with_mount):
     """Test that adding a mount creates directory metadata entry."""
     nx, tmpdir = nx_with_mount
 
@@ -91,7 +91,7 @@ async def test_mount_creates_directory_entry(nx_with_mount):
 
 
 @pytest.mark.asyncio
-async def test_mount_appears_in_listing(nx_with_mount):
+def test_mount_appears_in_listing(nx_with_mount):
     """Test that mount points appear when listing parent directories."""
     nx, tmpdir = nx_with_mount
 
@@ -117,7 +117,7 @@ async def test_mount_appears_in_listing(nx_with_mount):
 
 
 @pytest.mark.asyncio
-async def test_mount_appears_in_detailed_listing(nx_with_mount):
+def test_mount_appears_in_detailed_listing(nx_with_mount):
     """Test that mount points appear with correct metadata in detailed listings."""
     nx, tmpdir = nx_with_mount
 
@@ -154,7 +154,7 @@ async def test_mount_appears_in_detailed_listing(nx_with_mount):
 
 
 @pytest.mark.asyncio
-async def test_nested_mount_creates_all_parents(nx_with_mount):
+def test_nested_mount_creates_all_parents(nx_with_mount):
     """Test that mounting at /a/b/c/mount creates /a, /a/b, /a/b/c, /a/b/c/mount."""
     nx, tmpdir = nx_with_mount
 
@@ -189,7 +189,7 @@ async def test_nested_mount_creates_all_parents(nx_with_mount):
 
 
 @pytest.mark.asyncio
-async def test_add_mount_via_api_creates_directory(nx_with_mount):
+def test_add_mount_via_api_creates_directory(nx_with_mount):
     """Test that add_mount() API creates directory entry via _grant_mount_owner_permission."""
     nx, tmpdir = nx_with_mount
 
@@ -220,7 +220,7 @@ async def test_add_mount_via_api_creates_directory(nx_with_mount):
 
 
 @pytest.mark.asyncio
-async def test_mount_exist_ok_does_not_fail(nx_with_mount):
+def test_mount_exist_ok_does_not_fail(nx_with_mount):
     """Test that creating mount directory with exist_ok=True doesn't fail if already exists."""
     nx, tmpdir = nx_with_mount
 
@@ -235,7 +235,7 @@ async def test_mount_exist_ok_does_not_fail(nx_with_mount):
 
 
 @pytest.mark.asyncio
-async def test_multiple_mounts_in_same_parent(nx_with_mount):
+def test_multiple_mounts_in_same_parent(nx_with_mount):
     """Test that multiple mounts under same parent all appear in listing."""
     nx, tmpdir = nx_with_mount
 

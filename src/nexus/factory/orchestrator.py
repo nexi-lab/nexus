@@ -423,26 +423,17 @@ def _register_vfs_hooks(
             nx._permission_lease_table = _lease_table
 
     # ── Audit write interceptor (Issue #900, #1772) ──
-    # Observer dispatch is now Rust-native (MutationObserver trait).
-    # Sync observer  → sync SyncAuditWriteInterceptor calls on_write() directly.
+    # Both sync and debounced observers now implement on_write/on_delete/etc.
+    # SyncAuditWriteInterceptor bridges kernel dispatch_post_hooks → observer.
     write_observer = _ss.get("write_observer")
     if write_observer is not None:
-        from nexus.storage.piped_record_store_write_observer import (
-            RecordStoreWriteObserver as _ObsWO,
-        )
+        from nexus.storage.write_observer_hooks import SyncAuditWriteInterceptor
 
         strict = getattr(write_observer, "_strict_mode", True)
-        if isinstance(write_observer, _ObsWO):
-            # Registered as service. Rust kernel dispatches observers directly;
-            # no Python on_mutation or hook_spec needed.
-            _enlist("audit", write_observer)
-        else:
-            from nexus.storage.write_observer_hooks import SyncAuditWriteInterceptor
-
-            audit: SyncAuditWriteInterceptor = SyncAuditWriteInterceptor(
-                write_observer, strict_mode=strict
-            )
-            _enlist("audit", audit)
+        audit: SyncAuditWriteInterceptor = SyncAuditWriteInterceptor(
+            write_observer, strict_mode=strict
+        )
+        _enlist("audit", audit)
 
     # DynamicViewerReadHook (post-read: column-level CSV filtering)
     has_viewer = (

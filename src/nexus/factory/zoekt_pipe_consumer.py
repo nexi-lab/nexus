@@ -182,10 +182,10 @@ class ZoektPipeConsumer:
         has_sync = False
 
         while True:
-            # If nothing pending, block until first event
+            # If nothing pending, block until first event (in thread to avoid blocking event loop)
             if not pending_paths and not has_sync:
                 try:
-                    first = nx.sys_read(_ZOEKT_PIPE_PATH)
+                    first = await asyncio.to_thread(nx.sys_read, _ZOEKT_PIPE_PATH)
                 except NexusFileNotFoundError:
                     logger.debug("Zoekt pipe closed, consumer exiting")
                     break

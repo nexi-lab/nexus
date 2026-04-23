@@ -15,7 +15,7 @@ directly.  Mocks target agent_registry.get() → AgentDescriptor.
 import json
 from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -138,7 +138,7 @@ class TestSetAgentSpec:
         mock_pt = MagicMock()
         mock_pt.get.return_value = _make_descriptor()
 
-        mock_vfs = AsyncMock()
+        mock_vfs = MagicMock()
         # No existing spec — sys_read raises so generation starts at 0+1=1
         mock_vfs.sys_read.side_effect = FileNotFoundError("not found")
 
@@ -165,7 +165,7 @@ class TestSetAgentSpec:
         mock_pt = MagicMock()
         mock_pt.get.return_value = None
 
-        mock_vfs = AsyncMock()
+        mock_vfs = MagicMock()
 
         app = _create_test_app(mock_pt, mock_vfs=mock_vfs)
         _override_auth(app)
@@ -214,7 +214,7 @@ class TestGetAgentSpec:
             "spec_generation": 3,
         }
 
-        mock_vfs = AsyncMock()
+        mock_vfs = MagicMock()
         mock_vfs.sys_read.return_value = json.dumps(spec_data).encode()
 
         app = _create_test_app(mock_pt, mock_vfs=mock_vfs)
@@ -232,7 +232,7 @@ class TestGetAgentSpec:
         mock_pt = MagicMock()
         mock_pt.get.return_value = None
 
-        mock_vfs = AsyncMock()
+        mock_vfs = MagicMock()
 
         app = _create_test_app(mock_pt, mock_vfs=mock_vfs)
         _override_auth(app)
@@ -263,7 +263,7 @@ class TestDriftDetection:
             "spec_generation": 5,
         }
 
-        mock_vfs = AsyncMock()
+        mock_vfs = MagicMock()
         mock_vfs.sys_read.return_value = json.dumps(spec_data).encode()
 
         app = _create_test_app(mock_pt, mock_vfs=mock_vfs)

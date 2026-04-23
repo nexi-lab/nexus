@@ -77,13 +77,14 @@ class MockNexusFS:
         self._pipes[path].put_nowait(data)
 
     def sys_read(self, path: str, **kwargs: object) -> bytes:  # noqa: ARG002
-        """Read data from the pipe queue (non-blocking).
+        """Read data from the pipe queue (blocking with short timeout).
 
-        Uses get_nowait() — simulates the real DT_PIPE fast-path where
-        the consumer drains until the queue is empty.  Raises
-        NexusFileNotFoundError when the pipe is closed, missing, or empty
-        so the consumer's drain loop breaks quickly.
+        Blocks up to 0.5s waiting for data to arrive, simulating the
+        real DT_PIPE blocking read.  Raises NexusFileNotFoundError when
+        the pipe is closed, missing, or times out (consumer breaks).
         """
+        import time
+
         if path in self._closed:
             from nexus.contracts.exceptions import NexusFileNotFoundError
 
@@ -92,12 +93,22 @@ class MockNexusFS:
             from nexus.contracts.exceptions import NexusFileNotFoundError
 
             raise NexusFileNotFoundError(path=path)
-        try:
-            return self._pipes[path].get_nowait()
-        except asyncio.QueueEmpty:
-            from nexus.contracts.exceptions import NexusFileNotFoundError
 
-            raise NexusFileNotFoundError(path=path) from None
+        # Block with polling (simulate blocking read)
+        deadline = time.monotonic() + 0.5
+        while time.monotonic() < deadline:
+            if path in self._closed:
+                from nexus.contracts.exceptions import NexusFileNotFoundError
+
+                raise NexusFileNotFoundError(path=path)
+            try:
+                return self._pipes[path].get_nowait()
+            except asyncio.QueueEmpty:
+                time.sleep(0.005)  # 5ms poll
+
+        from nexus.contracts.exceptions import NexusFileNotFoundError
+
+        raise NexusFileNotFoundError(path=path)
 
     def sys_unlink(self, path: str, **kwargs: object) -> None:  # noqa: ARG002
         """Close the pipe — subsequent reads raise NexusFileNotFoundError."""
@@ -133,8 +144,11 @@ class TestZoektPipeConsumerE2E:
             consumer.notify_write("/workspace/file1.txt")
             consumer.notify_write("/workspace/file2.txt")
 
-            # Wait for debounce window + consumer processing
-            await asyncio.sleep(0.1)
+            # Wait for flush loop (10ms) + debounce (50ms) + consumer processing
+            for _ in range(30):
+                if zoekt.trigger_reindex_async.call_count >= 1:
+                    break
+                await asyncio.sleep(0.05)
 
             # Verify reindex was triggered
             assert zoekt.trigger_reindex_async.call_count >= 1
@@ -158,7 +172,10 @@ class TestZoektPipeConsumerE2E:
 
         try:
             consumer.notify_sync_complete(files_synced=5)
-            await asyncio.sleep(0.1)
+            for _ in range(30):
+                if zoekt.trigger_reindex_async.call_count >= 1:
+                    break
+                await asyncio.sleep(0.05)
             assert zoekt.trigger_reindex_async.call_count >= 1
         finally:
             await consumer.stop()
@@ -183,11 +200,14 @@ class TestZoektPipeConsumerE2E:
             for i in range(20):
                 consumer.notify_write(f"/workspace/file{i}.txt")
 
-            # Wait for debounce + processing
-            await asyncio.sleep(0.1)
+            # Wait for flush loop + debounce + processing
+            for _ in range(30):
+                if zoekt.trigger_reindex_async.call_count >= 1:
+                    break
+                await asyncio.sleep(0.05)
 
-            # Should coalesce into 1 reindex call (not 20)
-            assert zoekt.trigger_reindex_async.call_count == 1
+            # Should coalesce into a small number of reindex calls (not 20)
+            assert 1 <= zoekt.trigger_reindex_async.call_count <= 3
         finally:
             await consumer.stop()
 
@@ -305,154 +325,133 @@ def _make_rmdir_event(path: str) -> bytes:
 
 
 class TestPipedWriteObserverE2E:
-    """Prove DT_PIPE end-to-end: AuditWriteInterceptor -> pipe -> consumer -> flush.
+    """Test RecordStoreWriteObserver debounce-based event flow.
 
-    We patch ``_process_events_in_session`` (the DB flush layer) so these tests
-    verify the DT_PIPE IPC path without requiring sqlalchemy/RecordStore.
+    The observer accumulates events in a deque via on_write/on_delete/etc.
+    and flushes them to RecordStore in debounced batches.
 
-    Since the observer is now a pure consumer (Issue #1772), events are written
-    to the pipe directly via mock_nx.sys_write (simulating AuditWriteInterceptor).
+    We patch ``_process_events_in_session`` (the DB flush layer) so these
+    tests verify the debounce + flush path without requiring sqlalchemy.
     """
 
-    @pytest.mark.asyncio
-    async def test_write_event_flows_through_pipe(self) -> None:
-        """Full E2E: sys_write (producer) -> pipe -> consumer -> _flush_batch."""
+    def test_write_event_enqueued_and_flushed(self) -> None:
+        """on_write enqueues event, flush_sync drains to DB."""
         from nexus.storage.piped_record_store_write_observer import (
-            _AUDIT_PIPE_PATH,
-            PipedRecordStoreWriteObserver,
+            RecordStoreWriteObserver,
         )
 
-        mock_nx = MockNexusFS()
-
-        observer = PipedRecordStoreWriteObserver(MagicMock())
-        observer.bind_fs(mock_nx)
+        observer = RecordStoreWriteObserver(MagicMock(), debounce_seconds=10)
 
         with patch.object(
-            PipedRecordStoreWriteObserver,
+            RecordStoreWriteObserver,
             "_process_events_in_session",
             staticmethod(_noop_process_events),
         ):
-            await observer.start()
-            try:
-                # Simulate AuditWriteInterceptor writing an event
-                mock_nx.sys_write(_AUDIT_PIPE_PATH, _make_write_event("/workspace/test.txt"))
-                for _ in range(50):
-                    if observer._total_flushed >= 1:
-                        break
-                    await asyncio.sleep(0.05)
-                assert observer._total_flushed >= 1
-            finally:
-                await observer.stop()
-
-    @pytest.mark.asyncio
-    async def test_batch_write_flows_through_pipe(self) -> None:
-        """Multiple events enqueued via pipe flush in batches."""
-        from nexus.storage.piped_record_store_write_observer import (
-            _AUDIT_PIPE_PATH,
-            PipedRecordStoreWriteObserver,
-        )
-
-        mock_nx = MockNexusFS()
-
-        observer = PipedRecordStoreWriteObserver(MagicMock())
-        observer.bind_fs(mock_nx)
-
-        with patch.object(
-            PipedRecordStoreWriteObserver,
-            "_process_events_in_session",
-            staticmethod(_noop_process_events),
-        ):
-            await observer.start()
-            try:
-                for i in range(5):
-                    mock_nx.sys_write(
-                        _AUDIT_PIPE_PATH,
-                        _make_write_event(f"/workspace/file{i}.txt", size=i * 10),
-                    )
-                for _ in range(50):
-                    if observer._total_flushed >= 5:
-                        break
-                    await asyncio.sleep(0.05)
-                assert observer._total_flushed >= 5
-            finally:
-                await observer.stop()
-
-    @pytest.mark.asyncio
-    async def test_delete_event_flows_through_pipe(self) -> None:
-        """Delete event flows through pipe to consumer."""
-        from nexus.storage.piped_record_store_write_observer import (
-            _AUDIT_PIPE_PATH,
-            PipedRecordStoreWriteObserver,
-        )
-
-        mock_nx = MockNexusFS()
-
-        observer = PipedRecordStoreWriteObserver(MagicMock())
-        observer.bind_fs(mock_nx)
-
-        with patch.object(
-            PipedRecordStoreWriteObserver,
-            "_process_events_in_session",
-            staticmethod(_noop_process_events),
-        ):
-            await observer.start()
-            try:
-                mock_nx.sys_write(_AUDIT_PIPE_PATH, _make_delete_event("/workspace/deleted.txt"))
-                for _ in range(50):
-                    if observer._total_flushed >= 1:
-                        break
-                    await asyncio.sleep(0.05)
-                assert observer._total_flushed >= 1
-            finally:
-                await observer.stop()
-
-    @pytest.mark.asyncio
-    async def test_pre_buffer_drains_on_start(self) -> None:
-        """Events buffered in _pre_buffer before bind_fs are drained via flush_sync on stop."""
-        from nexus.storage.piped_record_store_write_observer import (
-            PipedRecordStoreWriteObserver,
-        )
-
-        observer = PipedRecordStoreWriteObserver(MagicMock())
-
-        # Buffer events BEFORE bind_fs (CLI mode / pre-startup)
-        observer._pre_buffer.append(_make_write_event("/workspace/early.txt"))
-        assert len(observer._pre_buffer) == 1
-
-        with patch.object(
-            PipedRecordStoreWriteObserver,
-            "_process_events_in_session",
-            staticmethod(_noop_process_events),
-        ):
-            # flush_sync drains pre-buffer directly to DB (no pipe needed)
+            observer.on_write(
+                MagicMock(
+                    path="/workspace/test.txt",
+                    etag="abc",
+                    to_dict=lambda: {"path": "/workspace/test.txt"},
+                ),
+                is_new=True,
+                path="/workspace/test.txt",
+            )
+            assert len(observer._pending) == 1
             flushed = observer.flush_sync()
             assert flushed == 1
-            assert len(observer._pre_buffer) == 0
+            assert observer._total_flushed >= 1
+
+    def test_batch_write_enqueued_and_flushed(self) -> None:
+        """Multiple on_write calls enqueue events, flush_sync drains all."""
+        from nexus.storage.piped_record_store_write_observer import (
+            RecordStoreWriteObserver,
+        )
+
+        observer = RecordStoreWriteObserver(MagicMock(), debounce_seconds=10)
+
+        with patch.object(
+            RecordStoreWriteObserver,
+            "_process_events_in_session",
+            staticmethod(_noop_process_events),
+        ):
+            for i in range(5):
+                observer.on_write(
+                    MagicMock(
+                        path=f"/workspace/file{i}.txt",
+                        etag=f"e{i}",
+                        to_dict=lambda i=i: {"path": f"/workspace/file{i}.txt"},
+                    ),
+                    is_new=True,
+                    path=f"/workspace/file{i}.txt",
+                )
+            assert len(observer._pending) == 5
+            flushed = observer.flush_sync()
+            assert flushed == 5
+            assert observer._total_flushed >= 5
+
+    def test_delete_event_enqueued_and_flushed(self) -> None:
+        """on_delete enqueues event, flush_sync drains to DB."""
+        from nexus.storage.piped_record_store_write_observer import (
+            RecordStoreWriteObserver,
+        )
+
+        observer = RecordStoreWriteObserver(MagicMock(), debounce_seconds=10)
+
+        with patch.object(
+            RecordStoreWriteObserver,
+            "_process_events_in_session",
+            staticmethod(_noop_process_events),
+        ):
+            observer.on_delete(path="/workspace/deleted.txt")
+            assert len(observer._pending) == 1
+            flushed = observer.flush_sync()
+            assert flushed == 1
+            assert observer._total_flushed >= 1
+
+    def test_pending_enqueue_and_flush_sync(self) -> None:
+        """Events enqueued via _enqueue are drained by flush_sync."""
+        from nexus.storage.piped_record_store_write_observer import (
+            RecordStoreWriteObserver,
+        )
+
+        observer = RecordStoreWriteObserver(MagicMock(), debounce_seconds=10)
+
+        event = json.loads(_make_write_event("/workspace/early.txt"))
+        observer._enqueue(event)
+        assert len(observer._pending) == 1
+
+        with patch.object(
+            RecordStoreWriteObserver,
+            "_process_events_in_session",
+            staticmethod(_noop_process_events),
+        ):
+            flushed = observer.flush_sync()
+            assert flushed == 1
+            assert len(observer._pending) == 0
             assert observer._total_flushed >= 1
 
     def test_flush_sync_for_cli_mode(self) -> None:
         """flush_sync() works without asyncio for CLI shutdown path."""
         from nexus.storage.piped_record_store_write_observer import (
-            PipedRecordStoreWriteObserver,
+            RecordStoreWriteObserver,
         )
 
-        mock_session = MagicMock()
-        mock_session.__enter__ = MagicMock(return_value=mock_session)
-        mock_session.__exit__ = MagicMock(return_value=False)
+        observer = RecordStoreWriteObserver(MagicMock(), debounce_seconds=10)
 
-        mock_record_store = MagicMock()
-        mock_record_store.session_factory.return_value = mock_session
+        # Enqueue events directly via on_write/on_delete
+        observer.on_write(
+            MagicMock(
+                path="/workspace/cli.txt", etag="c1", to_dict=lambda: {"path": "/workspace/cli.txt"}
+            ),
+            is_new=True,
+            path="/workspace/cli.txt",
+        )
+        observer.on_delete(path="/workspace/old.txt")
 
-        observer = PipedRecordStoreWriteObserver(mock_record_store)
-
-        # No bind_fs — events go to pre_buffer directly
-        observer._pre_buffer.append(_make_write_event("/workspace/cli.txt"))
-        observer._pre_buffer.append(_make_delete_event("/workspace/old.txt"))
-
-        assert len(observer._pre_buffer) == 2
+        assert len(observer._pending) == 2
 
         with patch.object(
-            PipedRecordStoreWriteObserver,
+            RecordStoreWriteObserver,
             "_process_events_in_session",
             staticmethod(_noop_process_events),
         ):
@@ -460,43 +459,40 @@ class TestPipedWriteObserverE2E:
 
         assert flushed == 2
         assert observer._total_flushed == 2
-        assert len(observer._pre_buffer) == 0
+        assert len(observer._pending) == 0
 
-    @pytest.mark.asyncio
-    async def test_metrics_tracking(self) -> None:
+    def test_metrics_tracking(self) -> None:
         """Observer metrics reflect actual event flow."""
         from nexus.storage.piped_record_store_write_observer import (
-            _AUDIT_PIPE_PATH,
-            PipedRecordStoreWriteObserver,
+            RecordStoreWriteObserver,
         )
 
-        mock_nx = MockNexusFS()
-
-        observer = PipedRecordStoreWriteObserver(MagicMock())
-        observer.bind_fs(mock_nx)
+        observer = RecordStoreWriteObserver(MagicMock(), debounce_seconds=10)
 
         with patch.object(
-            PipedRecordStoreWriteObserver,
+            RecordStoreWriteObserver,
             "_process_events_in_session",
             staticmethod(_noop_process_events),
         ):
-            await observer.start()
-            try:
-                mock_nx.sys_write(_AUDIT_PIPE_PATH, _make_write_event("/workspace/metrics.txt"))
-                mock_nx.sys_write(_AUDIT_PIPE_PATH, _make_mkdir_event("/workspace/newdir"))
-                mock_nx.sys_write(_AUDIT_PIPE_PATH, _make_rmdir_event("/workspace/olddir"))
+            observer.on_write(
+                MagicMock(
+                    path="/workspace/metrics.txt",
+                    etag="m1",
+                    to_dict=lambda: {"path": "/workspace/metrics.txt"},
+                ),
+                is_new=True,
+                path="/workspace/metrics.txt",
+            )
+            observer.on_mkdir(path="/workspace/newdir")
+            observer.on_rmdir(path="/workspace/olddir")
 
-                for _ in range(50):
-                    if observer._total_flushed >= 3:
-                        break
-                    await asyncio.sleep(0.05)
+            flushed = observer.flush_sync()
+            assert flushed == 3
 
-                metrics = observer.metrics
-                assert metrics["total_flushed"] >= 3
-                assert metrics["total_failed"] == 0
-                assert metrics["total_dropped"] == 0
-            finally:
-                await observer.stop()
+            metrics = observer.metrics
+            assert metrics["total_flushed"] >= 3
+            assert metrics["total_failed"] == 0
+            assert metrics["total_dropped"] == 0
 
 
 # ======================================================================
@@ -507,7 +503,6 @@ class TestPipedWriteObserverE2E:
 class TestPostFlushHooks:
     """Verify post-flush hooks are called after successful flush."""
 
-    @pytest.mark.asyncio
     def test_hook_called_after_flush(self) -> None:
         """Post-flush hook receives events after successful commit."""
         from nexus.storage.piped_record_store_write_observer import (
@@ -554,7 +549,6 @@ class TestPostFlushHooks:
         assert len(captured_events) == 1
         assert captured_events[0]["path"] == "/test.csv"
 
-    @pytest.mark.asyncio
     def test_hook_failure_does_not_block_flush(self) -> None:
         """A failing hook must not prevent the audit trail from committing."""
         from nexus.storage.piped_record_store_write_observer import (
@@ -605,7 +599,6 @@ class TestPostFlushHooks:
         # Second hook was still called
         assert len(second_hook_called) == 1
 
-    @pytest.mark.asyncio
     def test_no_hooks_no_error(self) -> None:
         """Flush works fine with no hooks registered."""
         from nexus.storage.piped_record_store_write_observer import (

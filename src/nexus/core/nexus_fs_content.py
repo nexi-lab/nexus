@@ -789,6 +789,10 @@ class ContentMixin:
         context = self._parse_context(context)
         _is_admin = getattr(context, "is_admin", False) if context else False
         _rust_ctx = self._build_rust_ctx(context, _is_admin)
+
+        # Capture old metadata BEFORE write for audit snapshot_hash (old_etag)
+        _old_meta = self.metadata.get(path)
+
         result = self._kernel.sys_write(path, _rust_ctx, buf)
 
         # POST-INTERCEPT hooks
@@ -805,7 +809,7 @@ class ContentMixin:
                 context=_ctx,
                 zone_id=zone_id,
                 agent_id=agent_id,
-                is_new_file=False,
+                is_new_file=(_old_meta is None),
                 content_hash=_cid,
                 metadata=FileMetadata(
                     path=path,
@@ -816,7 +820,7 @@ class ContentMixin:
                     version=result.version,
                     zone_id=zone_id,
                 ),
-                old_metadata=None,
+                old_metadata=_old_meta,
                 new_version=result.version,
             ),
         )

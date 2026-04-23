@@ -81,7 +81,7 @@ def install_remote_kernel_rpc_overrides(nfs: "NexusFS", transport: "RPCTransport
     cast(Any, nfs).sys_rename = types.MethodType(_remote_sys_rename, nfs)
 
 
-async def _boot_remote_services(nfs: "NexusFS", call_rpc: Callable[..., Any]) -> None:
+def _boot_remote_services(nfs: "NexusFS", call_rpc: Callable[..., Any]) -> None:
     """Wire RemoteServiceProxy instances via coordinator.enlist().
 
     Like ``mount -t nfs``: fills VFS service slots with RPC forwarders
@@ -107,7 +107,7 @@ async def _boot_remote_services(nfs: "NexusFS", call_rpc: Callable[..., Any]) ->
     from nexus.factory.service_routing import _CANONICAL_NAMES, enlist_wired_services
 
     wired_dict: dict[str, Any] = dict.fromkeys(_CANONICAL_NAMES.keys(), proxy)
-    await enlist_wired_services(nfs, wired_dict)
+    enlist_wired_services(nfs, wired_dict)
 
     # version_service — enlist into ServiceRegistry
     nfs.sys_setattr("/__sys__/services/version_service", service=proxy)

@@ -117,7 +117,7 @@ async def _wire_services(
     )
 
     # Issue #1708: ServiceRegistry now has integrated lifecycle (formerly SLC).
-    await enlist_services(nx, _wired)
+    enlist_services(nx, _wired)
 
     # Issue #1811: DriverLifecycleCoordinator is kernel-owned (created in
     # NexusFS.__init__). Root mount ("/") registered via sys_setattr(DT_MOUNT)
@@ -132,7 +132,7 @@ async def _wire_services(
 
     # Enlist all system+brick services into ServiceRegistry.
     # Canonical name mapping consolidated in service_routing.py.
-    await enlist_services(nx, _svc)
+    enlist_services(nx, _svc)
 
     # R20.18.5: federation is kernel-internal now. The federation
     # parameter is vestigial (always None post-cutover). Kernel::new()
@@ -232,7 +232,7 @@ async def _initialize_services(
     _initialize_wired_ipc(nx, _ipc_services)
     # _initialize_wired_ipc may have created ipc_provisioner — enlist newly
     # produced services so /api/v2/ipc/* and lifespan IPC startup can resolve them.
-    await enlist_services(nx, _ipc_services)
+    enlist_services(nx, _ipc_services)
 
     # --- Register VFS hooks (INTERCEPT + OBSERVE — Issue #900) ---
     # Issue #1610/#1612/#1613/#1616: All hooks declare hook_spec() (duck-typed).

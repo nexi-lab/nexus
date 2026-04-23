@@ -1,7 +1,7 @@
 """Unit tests for Embedded filesystem."""
 
 import tempfile
-from collections.abc import AsyncGenerator, Generator
+from collections.abc import Generator
 from datetime import timedelta
 from pathlib import Path
 
@@ -40,7 +40,7 @@ def temp_dir() -> Generator[Path, None, None]:
 
 
 @pytest.fixture
-async def embedded(temp_dir: Path) -> AsyncGenerator[NexusFS, None]:
+def embedded(temp_dir: Path) -> Generator[NexusFS, None, None]:
     """Create an Embedded filesystem instance."""
     nx = create_nexus_fs(
         backend=CASLocalBackend(temp_dir),

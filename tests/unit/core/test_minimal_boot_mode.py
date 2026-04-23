@@ -120,7 +120,7 @@ class TestSlimFileOperations:
     """File operations work in kernel-only mode (no system services)."""
 
     @pytest.fixture()
-    async def minimal_nx(self, tmp_path: "Path") -> "NexusFS":
+    def minimal_nx(self, tmp_path: "Path") -> "NexusFS":
         from tests.conftest import make_test_nexus
 
         return make_test_nexus(tmp_path)

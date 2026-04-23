@@ -749,7 +749,6 @@ class ContentMixin:
         count: int | None = None,
         offset: int = 0,
         context: OperationContext | None = None,
-        consistency: str | None = None,
         ttl: float | None = None,
     ) -> dict[str, Any]:
         """Write with metadata return (Tier 2 convenience).
@@ -775,9 +774,6 @@ class ContentMixin:
                 ``offset`` within the existing file; gap past EOF is
                 zero-filled. Threaded into ``Kernel::sys_write`` (R20.10).
             context: Operation context.
-            consistency: Metadata consistency mode. Currently ignored — the
-                kernel routes through per-mount metastores which encode
-                their own consistency.
             ttl: TTL in seconds for ephemeral content (Issue #3405). Threaded
                 onto the context's ``ttl_seconds`` field; kernel hot path
                 picks it up if the mount supports TTL bucketing.
@@ -785,7 +781,6 @@ class ContentMixin:
         Returns:
             Dict with metadata (etag, version, modified_at, size).
         """
-        del consistency  # threaded via context.metadata_consistency; kernel owns it now.
 
         if isinstance(buf, str):
             buf = buf.encode("utf-8")

@@ -523,10 +523,6 @@ def create_async_files_router(
     @router.post("/write", response_model=WriteResponse)
     async def write_file(
         request: WriteRequest,
-        write_mode: str | None = Query(
-            None,
-            description="Write consistency mode: 'sync' (default, strong) or 'async' (eventual)",
-        ),
         transaction_id: str | None = Query(
             None,
             description="Active transaction ID to track this write in (from snapshots API)",
@@ -588,19 +584,6 @@ def create_async_files_router(
                 "buf": content,
                 "context": context,
             }
-            if write_mode is not None:
-                from nexus.contracts.types import WriteMode
-
-                try:
-                    mode = WriteMode(write_mode)
-                except ValueError:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Invalid write_mode: {write_mode!r}. "
-                        f"Valid values: {[m.value for m in WriteMode]}",
-                    ) from None
-                write_kwargs["consistency"] = mode.to_metastore_consistency()
-
             # fs.write is async — call directly
             result = fs.write(**write_kwargs)
 

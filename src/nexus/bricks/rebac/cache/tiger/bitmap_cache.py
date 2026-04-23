@@ -19,7 +19,7 @@ import threading
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from pyroaring import BitMap as RoaringBitmap
 from sqlalchemy import delete, insert, or_, select, update
@@ -282,7 +282,7 @@ class TigerCache:
                 )
 
                 if operation == "get":
-                    result = client.hgetall(key)
+                    result = cast(dict[bytes, bytes], client.hgetall(key))
                     if not result:
                         return None
                     data = result.get(b"data")
@@ -324,7 +324,10 @@ class TigerCache:
                     # Use SCAN for safe iteration
                     cursor = 0
                     while True:
-                        cursor, keys = client.scan(cursor=cursor, match=pattern, count=100)
+                        cursor, keys = cast(
+                            tuple[int, list[bytes]],
+                            client.scan(cursor=cursor, match=pattern, count=100),
+                        )
                         if keys:
                             client.delete(*keys)
                             count += len(keys)

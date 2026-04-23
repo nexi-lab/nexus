@@ -203,11 +203,11 @@ class TestRustDCacheMetastoreIntegration(unittest.TestCase):
             def _get_raw(self, path):
                 return self._store.get(path)
 
-            def _put_raw(self, metadata, *, consistency="sc"):
+            def _put_raw(self, metadata):
                 self._store[metadata.path] = metadata
                 return None
 
-            def _delete_raw(self, path, *, consistency="sc"):
+            def _delete_raw(self, path):
                 return self._store.pop(path, None)
 
             def _exists_raw(self, path):

@@ -260,7 +260,7 @@ class TestListSavedMountsUserFiltering:
     ) -> None:
         """Test that list_saved_mounts without context returns empty list (no context = no user)."""
         # Save a mount
-        await nx_with_permissions.service("mount_persist").save_mount(
+        nx_with_permissions.service("mount_persist").save_mount(
             mount_point="/mnt/test",
             backend_type="cas_local",
             backend_config={"data_dir": "/tmp/test"},
@@ -281,7 +281,7 @@ class TestListSavedMountsUserFiltering:
     ) -> None:
         """Test that list_saved_mounts automatically filters by current user."""
         # Save mount for Alice
-        await nx_with_permissions.service("mount_persist").save_mount(
+        nx_with_permissions.service("mount_persist").save_mount(
             mount_point="/mnt/alice",
             backend_type="cas_local",
             backend_config={"data_dir": "/tmp/alice"},
@@ -290,7 +290,7 @@ class TestListSavedMountsUserFiltering:
         )
 
         # Save mount for Bob
-        await nx_with_permissions.service("mount_persist").save_mount(
+        nx_with_permissions.service("mount_persist").save_mount(
             mount_point="/mnt/bob",
             backend_type="cas_local",
             backend_config={"data_dir": "/tmp/bob"},
@@ -341,7 +341,7 @@ class TestListSavedMountsUserFiltering:
     async def test_list_saved_mounts_filters_by_zone(self, nx_with_permissions: NexusFS) -> None:
         """Test that list_saved_mounts filters by zone_id from context."""
         # Save mount for zone1
-        await nx_with_permissions.service("mount_persist").save_mount(
+        nx_with_permissions.service("mount_persist").save_mount(
             mount_point="/mnt/zone1",
             backend_type="cas_local",
             backend_config={"data_dir": "/tmp/zone1"},
@@ -350,7 +350,7 @@ class TestListSavedMountsUserFiltering:
         )
 
         # Save mount for zone2
-        await nx_with_permissions.service("mount_persist").save_mount(
+        nx_with_permissions.service("mount_persist").save_mount(
             mount_point="/mnt/zone2",
             backend_type="cas_local",
             backend_config={"data_dir": "/tmp/zone2"},
@@ -382,7 +382,7 @@ class TestListSavedMountsUserFiltering:
     ) -> None:
         """Test that explicit owner_user_id parameter overrides context filtering."""
         # Save mounts for different users
-        await nx_with_permissions.service("mount_persist").save_mount(
+        nx_with_permissions.service("mount_persist").save_mount(
             mount_point="/mnt/alice",
             backend_type="cas_local",
             backend_config={"data_dir": "/tmp/alice"},
@@ -390,7 +390,7 @@ class TestListSavedMountsUserFiltering:
             zone_id="zone1",
         )
 
-        await nx_with_permissions.service("mount_persist").save_mount(
+        nx_with_permissions.service("mount_persist").save_mount(
             mount_point="/mnt/bob",
             backend_type="cas_local",
             backend_config={"data_dir": "/tmp/bob"},
@@ -420,7 +420,7 @@ class TestListSavedMountsUserFiltering:
     async def test_list_saved_mounts_with_agent_context(self, nx_with_permissions: NexusFS) -> None:
         """Test that list_saved_mounts works with agent subject_type."""
         # Save mount for an agent
-        await nx_with_permissions.service("mount_persist").save_mount(
+        nx_with_permissions.service("mount_persist").save_mount(
             mount_point="/mnt/agent",
             backend_type="cas_local",
             backend_config={"data_dir": "/tmp/agent"},
@@ -484,7 +484,7 @@ class TestCrossZoneIsolation:
         )
 
         # Save mount for zone1
-        await nx_with_permissions.service("mount_persist").save_mount(
+        nx_with_permissions.service("mount_persist").save_mount(
             mount_point="/mnt/zone1_saved",
             backend_type="cas_local",
             backend_config={"data_dir": str(mount_dir1)},
@@ -523,7 +523,7 @@ class TestCrossZoneIsolation:
         )
 
         # Save mount for zone2
-        await nx_with_permissions.service("mount_persist").save_mount(
+        nx_with_permissions.service("mount_persist").save_mount(
             mount_point="/mnt/zone2_saved",
             backend_type="cas_local",
             backend_config={"data_dir": str(mount_dir2)},
@@ -580,7 +580,7 @@ class TestSaveMountAutoPopulation:
         )
 
         # Save mount without explicit owner_user_id
-        await nx_with_permissions.service("mount_persist").save_mount(
+        nx_with_permissions.service("mount_persist").save_mount(
             mount_point="/mnt/auto_owner",
             backend_type="cas_local",
             backend_config={"data_dir": "/tmp/test"},
@@ -608,7 +608,7 @@ class TestSaveMountAutoPopulation:
         )
 
         # Save mount without explicit zone_id
-        await nx_with_permissions.service("mount_persist").save_mount(
+        nx_with_permissions.service("mount_persist").save_mount(
             mount_point="/mnt/auto_zone",
             backend_type="cas_local",
             backend_config={"data_dir": "/tmp/test"},
@@ -634,7 +634,7 @@ class TestSaveMountAutoPopulation:
         )
 
         # Save mount with explicit owner and zone (different from context)
-        await nx_with_permissions.service("mount_persist").save_mount(
+        nx_with_permissions.service("mount_persist").save_mount(
             mount_point="/mnt/explicit_override",
             backend_type="cas_local",
             backend_config={"data_dir": "/tmp/test"},
@@ -662,7 +662,7 @@ class TestSaveMountAutoPopulation:
         )
 
         # Save mount with agent context
-        await nx_with_permissions.service("mount_persist").save_mount(
+        nx_with_permissions.service("mount_persist").save_mount(
             mount_point="/mnt/agent_mount",
             backend_type="cas_local",
             backend_config={"data_dir": "/tmp/agent"},
@@ -689,7 +689,7 @@ class TestSaveMountAutoPopulation:
             subject_type="user",
             subject_id="alice@example.com",
         )
-        await nx_with_permissions.service("mount_persist").save_mount(
+        nx_with_permissions.service("mount_persist").save_mount(
             mount_point="/mnt/alice_auto",
             backend_type="cas_local",
             backend_config={"data_dir": "/tmp/alice"},
@@ -704,7 +704,7 @@ class TestSaveMountAutoPopulation:
             subject_type="user",
             subject_id="bob@example.com",
         )
-        await nx_with_permissions.service("mount_persist").save_mount(
+        nx_with_permissions.service("mount_persist").save_mount(
             mount_point="/mnt/bob_auto",
             backend_type="cas_local",
             backend_config={"data_dir": "/tmp/bob"},
@@ -732,7 +732,7 @@ class TestSaveMountAutoPopulation:
     ) -> None:
         """Test that save_mount works without context when explicit params are provided."""
         # Save mount without context but with explicit parameters
-        await nx_with_permissions.service("mount_persist").save_mount(
+        nx_with_permissions.service("mount_persist").save_mount(
             mount_point="/mnt/no_context",
             backend_type="cas_local",
             backend_config={"data_dir": "/tmp/test"},

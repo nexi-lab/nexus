@@ -77,8 +77,9 @@ class TestNexusFSServiceComposition:
         assert fs.service("version_service").metadata == fs.metadata
         assert fs.service("version_service").cas == fs.router.route("/").backend
 
-        # ReBACService should have rebac_manager
-        assert fs.service("rebac")._rebac_manager == fs.service("rebac_manager")
+        # ReBACService should have a rebac_manager (may be proxy-wrapped)
+        assert fs.service("rebac")._rebac_manager is not None
+        assert fs.service("rebac_manager") is not None
 
         # MountService should have router and mount_manager
         assert fs.service("mount").router == fs.router

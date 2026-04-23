@@ -36,12 +36,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-@register_connector(
-    "cas_gcs",
-    description="Google Cloud Storage with CAS deduplication",
-    category="storage",
-    requires=["google-cloud-storage"],
-)
+@register_connector("cas_gcs")
 class CASGCSBackend(CASAddressingEngine):
     """Google Cloud Storage backend with CAS deduplication.
 

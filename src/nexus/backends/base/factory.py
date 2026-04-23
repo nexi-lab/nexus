@@ -58,13 +58,18 @@ class BackendFactory:
             Instantiated Backend
 
         Raises:
-            RuntimeError: If backend_type is not registered
+            RuntimeError: If ``backend_type`` is not registered, or if it
+                is registered as a manifest placeholder whose module failed
+                to import (deps satisfied but class never bound).
             TypeError: If required constructor args are missing
+            MissingDependencyError: If any of the connector's runtime_deps are unmet
         """
         from nexus.backends.base.registry import (
             ConnectorRegistry,
             _ensure_optional_backends_registered,
         )
+        from nexus.backends.base.runtime_deps import check_runtime_deps
+        from nexus.contracts.exceptions import MissingDependencyError
 
         _ensure_optional_backends_registered()
 
@@ -72,6 +77,61 @@ class BackendFactory:
             info = ConnectorRegistry.get_info(backend_type)
         except KeyError:
             raise RuntimeError(f"Unsupported backend type: {backend_type}") from None
+
+        missing = check_runtime_deps(info.runtime_deps)
+        if missing:
+            raise MissingDependencyError(backend=backend_type, missing=missing)
+
+        if info.connector_class is None:
+            # Placeholder still unbound even though deps are now
+            # satisfied. ``_register_optional_backends()`` is one-shot
+            # per process — if the user just installed the missing
+            # package, the placeholder will stay unbound until
+            # restart. Attempt a targeted re-import of the manifest
+            # module so the decorator runs and binds the class; then
+            # re-read info. This lets "install dep → retry mount"
+            # succeed in the same process.
+            expected_path = info.expected_module_path
+            rebind_error: BaseException | None = None
+            if expected_path:
+                import importlib
+
+                try:
+                    importlib.import_module(expected_path)
+                except Exception as e:
+                    # Catch Exception (not just ImportError) so a
+                    # SyntaxError / RuntimeError surfaced during the
+                    # targeted re-import does NOT escape as an
+                    # uncontrolled exception and break per-connector
+                    # failure containment. The controlled RuntimeError
+                    # below chains the captured cause — including dep
+                    # races (ImportError) and hard module bugs alike.
+                    rebind_error = e
+                info = ConnectorRegistry.get_info(backend_type)
+
+            if info.connector_class is None:
+                # Prefer the phase-2 failure captured at registration
+                # time (recorded by record_import_failure for non-dep
+                # errors like SyntaxError) — that IS the root cause.
+                # The retry's ImportError only surfaces when we have
+                # no captured history, since a fresh import failure
+                # here is often a secondary effect of the earlier one.
+                detail = info.import_error or (str(rebind_error) if rebind_error else None)
+                base_msg = (
+                    f"Connector '{backend_type}' is declared in the "
+                    f"manifest but its module failed to import"
+                )
+                if detail:
+                    base_msg = f"{base_msg}: {detail}"
+                restart_hint = (
+                    " — if the dependency was just installed, "
+                    "restarting the process will clear any cached "
+                    "import state."
+                )
+                if rebind_error is not None:
+                    raise RuntimeError(base_msg + restart_hint) from rebind_error
+                raise RuntimeError(base_msg + restart_hint)
+
         connector_cls = info.connector_class
         mapping = info.config_mapping
 

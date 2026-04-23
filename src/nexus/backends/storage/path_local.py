@@ -28,11 +28,7 @@ from nexus.backends.transports.local_transport import LocalTransport
 from nexus.contracts.backend_features import BLOB_BACKEND_FEATURES, BackendFeature
 
 
-@register_connector(
-    "path_local",
-    description="Local filesystem with direct path mapping (no CAS)",
-    category="storage",
-)
+@register_connector("path_local")
 class PathLocalBackend(PathAddressingEngine):
     """Local filesystem backend with direct path mapping.
 

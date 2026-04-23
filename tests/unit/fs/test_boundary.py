@@ -21,8 +21,13 @@ from pathlib import Path
 import pytest
 
 # Modules explicitly excluded in packages/nexus-fs/pyproject.toml [tool.hatch.build.targets.wheel]
+# Directory-level excludes (``**/<dir>/**``) become a dotted package root;
+# file-level excludes (``**/<name>.py``) become a single dotted module.
+# Both are checked by ``_is_excluded`` so boundary violations land on either
+# kind of exclusion.
 EXCLUDED_MODULES = frozenset(
     {
+        # Directory roots
         "nexus.bricks",
         "nexus.server",
         "nexus.factory",
@@ -33,6 +38,23 @@ EXCLUDED_MODULES = frozenset(
         "nexus.services",
         "nexus.grpc",
         "nexus.security",
+        "nexus.cache",
+        "nexus.daemon",
+        "nexus.migrations",
+        "nexus.network",
+        "nexus.plugins",
+        "nexus.proxy",
+        "nexus.sdk",
+        "nexus.task_manager",
+        "nexus.tasks",
+        "nexus.tools",
+        "nexus.validation",
+        "nexus.config",  # the subpackage; nexus/config.py is kept
+        # Single-file module excludes
+        "nexus._kernel_api_groups",
+        "nexus.auth_config",
+        "nexus.sync",
+        "nexus.utils.timing",
     }
 )
 
@@ -93,12 +115,40 @@ class TestPackagingBoundary:
         with open(pyproject, "rb") as f:
             config = tomllib.load(f)
         excludes = config["tool"]["hatch"]["build"]["targets"]["wheel"]["exclude"]
-        # Convert glob patterns like "nexus/factory/**" to dotted module roots
-        pyproject_excluded = set()
+
+        # Patterns are either directory globs like ``**/bricks/**`` /
+        # ``**/nexus/cli/**`` or file globs like ``**/sync.py`` /
+        # ``**/utils/timing.py``. Normalize both shapes to dotted module
+        # names: directory globs become package roots, file globs become
+        # single-module names. Skipping file globs here would leave a
+        # blind spot — imports of ``nexus.sync`` or ``nexus.auth_config``
+        # would pass the boundary check even though those files are
+        # excluded from the slim wheel.
+        pyproject_excluded: set[str] = set()
         for pattern in excludes:
-            # "nexus/factory/**" → "nexus.factory"
-            root = pattern.replace("/**", "").replace("/", ".")
-            pyproject_excluded.add(root)
+            core = pattern.removeprefix("**/")
+            if core.endswith(".py"):
+                # File pattern: strip ``.py`` and convert remaining path.
+                core = core.removesuffix(".py")
+                dotted = core.replace("/", ".")
+                # Bare filename matches ``src/nexus/<name>.py`` so prefix
+                # the nexus namespace. Multi-segment paths already include
+                # enough path to be mapped directly under nexus.
+                if "." not in dotted:
+                    pyproject_excluded.add(f"nexus.{dotted}")
+                else:
+                    pyproject_excluded.add(
+                        dotted if dotted.startswith("nexus.") else f"nexus.{dotted}"
+                    )
+            else:
+                core = core.removesuffix("/**")
+                # "nexus/cli" / "nexus/config" → "nexus.cli" / "nexus.config"
+                if core.startswith("nexus/"):
+                    pyproject_excluded.add(core.replace("/", "."))
+                else:
+                    # Bare top-level name like "bricks" → "nexus.bricks"
+                    pyproject_excluded.add(f"nexus.{core}")
+
         assert pyproject_excluded == EXCLUDED_MODULES, (
             f"EXCLUDED_MODULES in test is out of sync with pyproject.toml.\n"
             f"  Test has: {sorted(EXCLUDED_MODULES - pyproject_excluded)}\n"

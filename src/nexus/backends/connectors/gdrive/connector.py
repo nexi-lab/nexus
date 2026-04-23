@@ -58,13 +58,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-@register_connector(
-    "gdrive_connector",
-    description="Google Drive with OAuth 2.0 authentication",
-    category="oauth",
-    requires=["google-api-python-client", "google-auth-oauthlib"],
-    service_name="google-drive",
-)
+@register_connector("gdrive_connector")
 class PathGDriveBackend(
     PathAddressingEngine,
     OAuthConnectorMixin,

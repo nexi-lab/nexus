@@ -33,15 +33,23 @@ Inspired by:
 
 import inspect
 import logging
+import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
+from nexus.backends.base.runtime_deps import (
+    BinaryDep,
+    PythonDep,
+    RuntimeDep,
+    ServiceDep,
+)
 from nexus.contracts.backend_features import BackendFeature
 from nexus.lib.registry import BaseRegistry
 
 if TYPE_CHECKING:
+    from nexus.backends._manifest import ConnectorManifestEntry
     from nexus.backends.base.backend import Backend
 
 
@@ -199,8 +207,12 @@ class ConnectorInfo:
     name: str
     """Unique identifier for the connector (e.g., 'gcs_connector', 's3_connector')."""
 
-    connector_class: "type[Backend]"
-    """The connector class."""
+    connector_class: "type[Backend] | None"
+    """The connector class, or None if this is a manifest-registered
+    placeholder whose module has not yet been imported (or whose import
+    failed). ``BackendFactory.create()`` raises ``MissingDependencyError``
+    or a clear ``RuntimeError`` when attempting to mount a placeholder
+    whose deps are satisfied."""
 
     description: str = ""
     """Human-readable description of the connector."""
@@ -208,8 +220,14 @@ class ConnectorInfo:
     category: str = "storage"
     """Category for grouping (e.g., 'storage', 'api', 'database')."""
 
-    requires: list[str] = field(default_factory=list)
-    """List of optional dependencies required by this connector."""
+    runtime_deps: tuple[RuntimeDep, ...] = ()
+    """Typed runtime dependencies (Issue #3830).
+
+    Populated at registration from either ``@register_connector(runtime_deps=...)``
+    or the class attribute ``RUNTIME_DEPS``. Checked by
+    :meth:`nexus.backends.base.factory.BackendFactory.create` before
+    instantiation.
+    """
 
     user_scoped: bool = False
     """Whether this connector requires per-user OAuth credentials."""
@@ -229,6 +247,32 @@ class ConnectorInfo:
 
     backend_features: frozenset[BackendFeature] = field(default_factory=frozenset)
     """Capabilities declared by this connector (Issue #2069)."""
+
+    expected_module_path: str | None = None
+    """Manifest-declared ``module_path`` (set for built-in placeholders).
+
+    When present, ``register()`` enforces that any class bound to this
+    name has ``__module__ == expected_module_path``. This blocks silent
+    name takeover by an entry-point plugin or an accidental collision
+    that would otherwise bind a foreign class behind a trusted
+    built-in name.
+    """
+
+    expected_class_name: str | None = None
+    """Manifest-declared ``class_name`` (set alongside ``expected_module_path``)."""
+
+    import_error: str | None = None
+    """Captured phase-2 import failure for this connector, if any.
+
+    ``_register_optional_backends`` records the original exception text
+    (``f"{type.__name__}: {message}"``) here when a connector module
+    fails to import for a reason OTHER than a missing dependency
+    (``ImportError`` / ``ModuleNotFoundError`` for a declared
+    ``PythonDep`` is the expected "dep absent" path and leaves this
+    field ``None``). ``BackendFactory.create()`` surfaces the captured
+    text in its ``RuntimeError`` so operators see the actual root
+    cause without digging through debug logs.
+    """
 
     @property
     def connection_args(self) -> dict[str, ConnectionArg]:
@@ -317,33 +361,146 @@ class ConnectorRegistry:
     _base: BaseRegistry[ConnectorInfo] = BaseRegistry("connectors")
 
     @classmethod
+    def register_placeholder(cls, entry: "ConnectorManifestEntry") -> None:
+        """Register a manifest-sourced placeholder ConnectorInfo.
+
+        Called during Phase 1 of ``_register_optional_backends()``, before
+        any connector module is imported. The placeholder carries the
+        manifest's metadata and runtime_deps but has ``connector_class=None``.
+
+        If the connector module imports successfully later, its
+        ``@register_connector("name")`` call hits the placeholder-binding
+        path in :meth:`register` and attaches the real class (preserving
+        manifest metadata). If the import fails, the placeholder remains
+        — ``BackendFactory.create()`` will raise ``MissingDependencyError``
+        with the manifest's install hints.
+
+        If a prior direct import already bound the class (e.g., test code
+        running ``from nexus.backends.storage.cas_local import CASLocalBackend``
+        before ``_register_optional_backends()``), preserve the class
+        binding and backfill manifest metadata on top. This keeps the
+        manifest authoritative for metadata without losing the already-bound
+        class.
+
+        The pre-bound class is preserved ONLY when its ``__module__`` and
+        ``__name__`` match the manifest's declared ``module_path`` /
+        ``class_name``. A mismatch means some other code registered a
+        foreign class under a built-in connector name — keeping it would
+        let an unrelated class execute behind a trusted name (e.g. the
+        ``path_s3`` entry pointing at a non-S3 implementation). Raise a
+        hard error so name hijacking is fail-loud, not fail-silent.
+        """
+        existing = cls._base.get(entry.name)
+        if existing is not None and existing.connector_class is not None:
+            bound = existing.connector_class
+            if (
+                getattr(bound, "__module__", None) != entry.module_path
+                or getattr(bound, "__name__", None) != entry.class_name
+            ):
+                raise ValueError(
+                    f"Connector name {entry.name!r} is already bound to "
+                    f"{getattr(bound, '__module__', '?')}."
+                    f"{getattr(bound, '__name__', '?')}, which does not match "
+                    f"the manifest declaration "
+                    f"{entry.module_path}.{entry.class_name}. Refusing to "
+                    f"preserve the pre-bound class; unregister it or fix "
+                    f"the manifest before re-running registration."
+                )
+            # Already bound by a prior direct import. Preserve the class
+            # and its derived fields; backfill manifest metadata.
+            merged = ConnectorInfo(
+                name=entry.name,
+                connector_class=existing.connector_class,
+                description=entry.description,
+                category=entry.category,
+                user_scoped=existing.user_scoped,
+                config_mapping=existing.config_mapping,
+                service_name=entry.service_name,
+                backend_features=existing.backend_features,
+                runtime_deps=entry.runtime_deps,
+                expected_module_path=entry.module_path,
+                expected_class_name=entry.class_name,
+            )
+            cls._base.register(entry.name, merged, allow_overwrite=True)
+            return
+
+        info = ConnectorInfo(
+            name=entry.name,
+            connector_class=None,
+            description=entry.description,
+            category=entry.category,
+            runtime_deps=entry.runtime_deps,
+            service_name=entry.service_name,
+            expected_module_path=entry.module_path,
+            expected_class_name=entry.class_name,
+        )
+        cls._base.register(entry.name, info, allow_overwrite=True)
+
+    @classmethod
+    def record_import_failure(cls, name: str, error_text: str) -> None:
+        """Record a phase-2 import failure on the named connector's placeholder.
+
+        Called by ``_register_optional_backends`` when a connector
+        module raises a non-dependency exception (SyntaxError,
+        RuntimeError, etc.). The captured text surfaces later in
+        ``BackendFactory.create()``'s RuntimeError so operators see
+        the original cause. No-op if the placeholder is already bound
+        or absent.
+        """
+        existing = cls._base.get(name)
+        if existing is None or existing.connector_class is not None:
+            return
+        updated = ConnectorInfo(
+            name=existing.name,
+            connector_class=None,
+            description=existing.description,
+            category=existing.category,
+            runtime_deps=existing.runtime_deps,
+            service_name=existing.service_name,
+            user_scoped=existing.user_scoped,
+            config_mapping=existing.config_mapping,
+            backend_features=existing.backend_features,
+            expected_module_path=existing.expected_module_path,
+            expected_class_name=existing.expected_class_name,
+            import_error=error_text,
+        )
+        cls._base.register(name, updated, allow_overwrite=True)
+
+    @classmethod
     def register(
         cls,
         name: str,
         connector_class: "type[Backend]",
-        description: str = "",
-        category: str = "storage",
-        requires: list[str] | None = None,
+        description: str | None = None,
+        category: str | None = None,
+        requires: list[str] | None = None,  # noqa: ARG003 — accepted for API compat, ignored per spec §6
         service_name: str | None = None,
+        runtime_deps: tuple[RuntimeDep, ...] | None = None,
     ) -> None:
         """Register a connector class.
 
         Args:
             name: Unique identifier for the connector
             connector_class: The connector class to register
-            description: Human-readable description
-            category: Category for grouping
-            requires: List of optional dependencies
+            description: Human-readable description. ``None`` means "not
+                provided; use default" (``""`` for external plugins, or the
+                manifest value for built-in placeholder-bound connectors).
+            category: Category for grouping. ``None`` means "not provided;
+                use default" (``"storage"`` for external plugins, or the
+                manifest value for built-in placeholder-bound connectors).
+            requires: **Deprecated** — list of pip-package names. Prefer
+                ``runtime_deps`` with :class:`PythonDep` entries.
             service_name: Unified service name for service_map integration
+            runtime_deps: Typed runtime dependencies (Issue #3830). Takes
+                precedence over the class attribute ``RUNTIME_DEPS``.
 
         Raises:
-            ValueError: If a connector with the same name is already registered,
-                or if the connector class does not satisfy ConnectorProtocol.
+            ValueError: If a connector with the same name is already
+                registered, if ``runtime_deps`` contains non-RuntimeDep
+                entries, or if the connector class does not satisfy
+                ConnectorProtocol.
         """
         # Validate ConnectorProtocol conformance (Issue #1703).
-        # Cannot use issubclass() because ConnectorProtocol has @property
-        # members which Python's runtime_checkable doesn't support for
-        # issubclass(). Instead, check for required method/property presence.
         missing = [m for m in _CONNECTOR_PROTOCOL_MEMBERS if not hasattr(connector_class, m)]
         if missing:
             raise ValueError(
@@ -353,38 +510,134 @@ class ConnectorRegistry:
 
         existing = cls._base.get(name)
         if existing is not None:
+            if existing.connector_class is None:
+                # Placeholder-binding path. The manifest (via
+                # register_placeholder) already set runtime_deps,
+                # description, category, service_name. We attach
+                # the real class and derive class-scoped fields
+                # (user_scoped, config_mapping, backend_features).
+                # Decorator kwargs other than `name` are IGNORED
+                # here — manifest is the single source of truth for
+                # built-in connectors. If the caller passed any such
+                # kwargs, emit a UserWarning pointing them at the
+                # manifest.
+
+                # Provenance check: reject any class whose __module__ /
+                # __name__ does not match the manifest declaration.
+                # Without this, an entry-point plugin or accidental
+                # name collision could bind a foreign class behind a
+                # trusted built-in name (e.g. "path_gcs" pointing at
+                # a non-GCS implementation).
+                if existing.expected_module_path is not None:
+                    bound_module = getattr(connector_class, "__module__", None)
+                    bound_name = getattr(connector_class, "__name__", None)
+                    if (
+                        bound_module != existing.expected_module_path
+                        or bound_name != existing.expected_class_name
+                    ):
+                        raise ValueError(
+                            f"Connector name {name!r} is reserved by the "
+                            f"manifest for "
+                            f"{existing.expected_module_path}."
+                            f"{existing.expected_class_name}; refusing to "
+                            f"bind {bound_module}.{bound_name}. Register "
+                            f"external plugins under a different name."
+                        )
+                decorator_provided_metadata = (
+                    (description is not None and description != existing.description)
+                    or (category is not None and category != existing.category)
+                    or bool(requires)
+                    or (service_name is not None and service_name != existing.service_name)
+                    or (runtime_deps is not None and tuple(runtime_deps) != existing.runtime_deps)
+                )
+                if decorator_provided_metadata:
+                    warnings.warn(
+                        f"@register_connector('{name}', ...): metadata kwargs "
+                        f"ignored because '{name}' is declared in the manifest "
+                        f"(src/nexus/backends/_manifest.py). Edit the manifest "
+                        f"to change metadata for built-in connectors.",
+                        UserWarning,
+                        stacklevel=3,
+                    )
+
+                user_scoped = getattr(connector_class, "user_scoped", False)
+                if isinstance(user_scoped, property):
+                    user_scoped = False
+
+                bound = ConnectorInfo(
+                    name=name,
+                    connector_class=connector_class,
+                    description=existing.description,
+                    category=existing.category,
+                    user_scoped=user_scoped,
+                    config_mapping=derive_config_mapping(connector_class),
+                    service_name=existing.service_name,
+                    backend_features=getattr(connector_class, "_BACKEND_FEATURES", frozenset()),
+                    runtime_deps=existing.runtime_deps,
+                    expected_module_path=existing.expected_module_path,
+                    expected_class_name=existing.expected_class_name,
+                )
+                cls._base.register(name, bound, allow_overwrite=True)
+                return
+
             if existing.connector_class is not connector_class:
                 raise ValueError(
-                    f"Connector '{name}' is already registered to {existing.connector_class.__name__}. "
+                    f"Connector '{name}' is already registered to "
+                    f"{existing.connector_class.__name__}. "
                     f"Cannot register {connector_class.__name__}."
                 )
-            # Same class, skip duplicate registration (can happen with re-imports)
+            # Same class; idempotent re-registration.
             return
 
-        # Get user_scoped from class if it exists
         user_scoped = getattr(connector_class, "user_scoped", False)
-        # Handle property descriptor
         if isinstance(user_scoped, property):
-            # Default to False for property, will be checked at instance level
             user_scoped = False
 
         config_mapping = derive_config_mapping(connector_class)
 
-        # Extract backend features from class (Issue #2069)
         backend_features: frozenset[BackendFeature] = getattr(
             connector_class, "_BACKEND_FEATURES", frozenset()
         )
 
+        # Resolve runtime_deps: decorator arg wins, else class attr, else ().
+        # Legacy ``requires=`` is ignored (not translated) — PyPI package
+        # names are not always valid importable module names
+        # (``google-cloud-storage`` vs. ``google.cloud.storage``).
+        # Callers are expected to migrate to ``runtime_deps=`` per the
+        # DeprecationWarning emitted above. See Issue #3830 spec §6.
+        class_attr_deps = getattr(connector_class, "RUNTIME_DEPS", None)
+        resolved_deps: tuple[RuntimeDep, ...]
+        if runtime_deps is not None:
+            if class_attr_deps is not None and tuple(class_attr_deps) != tuple(runtime_deps):
+                warnings.warn(
+                    f"Connector '{name}': runtime_deps= decorator arg overrides "
+                    f"class attribute RUNTIME_DEPS.",
+                    UserWarning,
+                    stacklevel=3,
+                )
+            resolved_deps = tuple(runtime_deps)
+        elif class_attr_deps is not None:
+            resolved_deps = tuple(class_attr_deps)
+        else:
+            resolved_deps = ()
+
+        bad = [d for d in resolved_deps if not isinstance(d, (PythonDep, BinaryDep, ServiceDep))]
+        if bad:
+            raise ValueError(
+                f"Connector '{name}': runtime_deps / RUNTIME_DEPS entries must be "
+                f"PythonDep / BinaryDep / ServiceDep, got: {bad!r}"
+            )
+
         info = ConnectorInfo(
             name=name,
             connector_class=connector_class,
-            description=description,
-            category=category,
-            requires=requires or [],
+            description=description if description is not None else "",
+            category=category if category is not None else "storage",
             user_scoped=user_scoped,
             config_mapping=config_mapping,
             service_name=service_name,
             backend_features=backend_features,
+            runtime_deps=resolved_deps,
         )
         cls._base.register(name, info, allow_overwrite=True)
 
@@ -402,10 +655,18 @@ class ConnectorRegistry:
             KeyError: If connector is not found
         """
         try:
-            return cls._base.get_or_raise(name).connector_class
+            info = cls._base.get_or_raise(name)
         except KeyError:
             available = ", ".join(cls._base.list_names())
             raise KeyError(f"Unknown connector '{name}'. Available: {available}") from None
+        if info.connector_class is None:
+            raise KeyError(
+                f"Connector '{name}' is registered as a manifest placeholder but "
+                f"its module has not been imported (likely due to missing runtime "
+                f"dependencies). Use BackendFactory.create() for a helpful "
+                f"MissingDependencyError with install hints."
+            )
+        return info.connector_class
 
     @classmethod
     def get_info(cls, name: str) -> ConnectorInfo:
@@ -533,37 +794,43 @@ class ConnectorRegistry:
 
 def register_connector(
     name: str,
-    description: str = "",
-    category: str = "storage",
+    description: str | None = None,
+    category: str | None = None,
     requires: list[str] | None = None,
     service_name: str | None = None,
+    runtime_deps: tuple[RuntimeDep, ...] | None = None,
 ) -> "Callable[[type[Backend]], type[Backend]]":
     """Decorator to register a connector class.
 
-    Use this decorator on connector classes to automatically register them
-    with the ConnectorRegistry at import time.
-
     Args:
-        name: Unique identifier for the connector (e.g., 'gcs_connector')
-        description: Human-readable description
-        category: Category for grouping (default: 'storage')
-        requires: List of optional dependencies (e.g., ['google-cloud-storage'])
+        name: Unique identifier for the connector
+        description: Human-readable description. ``None`` (default) means
+            "not provided; use default" — the manifest value for built-in
+            connectors, or ``""`` for external plugins.
+        category: Category for grouping. ``None`` (default) means "not
+            provided; use default" — the manifest value for built-in
+            connectors, or ``"storage"`` for external plugins.
+        requires: **Deprecated** — use ``runtime_deps=`` instead.
         service_name: Unified service name for service_map integration
-            (e.g., 'gmail', 'google-drive'). When set, service_map.py
-            auto-derives the connector field from this registry.
+        runtime_deps: Typed runtime deps (Issue #3830). Takes precedence
+            over the class attribute ``RUNTIME_DEPS``.
 
-    Returns:
-        Decorator function
+    Example::
 
-    Example:
-        >>> @register_connector(
-        ...     "azure_blob",
-        ...     description="Azure Blob Storage connector",
-        ...     requires=["azure-storage-blob"]
-        ... )
-        ... class AzureBlobConnector(PathAddressingEngine):
-        ...     pass
+        @register_connector(
+            "path_s3",
+            runtime_deps=(PythonDep("boto3", extras=("s3",)),),
+        )
+        class PathS3Backend(PathAddressingEngine):
+            ...
     """
+    if requires:
+        warnings.warn(
+            "register_connector(requires=...) is deprecated; "
+            "use runtime_deps=(PythonDep(...), ...) instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
     def decorator(cls: "type[Backend]") -> "type[Backend]":
         ConnectorRegistry.register(
@@ -573,6 +840,7 @@ def register_connector(
             category=category,
             requires=requires,
             service_name=service_name,
+            runtime_deps=runtime_deps,
         )
         return cls
 

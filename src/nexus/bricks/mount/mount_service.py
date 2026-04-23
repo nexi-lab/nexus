@@ -820,6 +820,7 @@ class MountService:
             List of connector info dictionaries
         """
         from nexus.backends.base.registry import ConnectorRegistry
+        from nexus.backends.base.runtime_deps import PythonDep
 
         if category:
             connectors = ConnectorRegistry.list_by_category(category)
@@ -831,7 +832,7 @@ class MountService:
                 "name": c.name,
                 "description": c.description,
                 "category": c.category,
-                "requires": c.requires,
+                "requires": [d.module for d in c.runtime_deps if isinstance(d, PythonDep)],
                 "user_scoped": c.user_scoped,
             }
             for c in connectors

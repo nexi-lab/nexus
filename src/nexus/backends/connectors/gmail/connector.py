@@ -62,13 +62,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-@register_connector(
-    "gmail_connector",
-    description="Gmail with OAuth 2.0 authentication (send, reply, forward, draft, trash)",
-    category="oauth",
-    requires=["google-api-python-client", "google-auth-oauthlib"],
-    service_name="gmail",
-)
+@register_connector("gmail_connector")
 class PathGmailBackend(
     PathAddressingEngine,
     OAuthConnectorMixin,

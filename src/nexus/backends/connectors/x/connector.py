@@ -55,13 +55,7 @@ glob_fast = _il.import_module("nexus.bricks.search.primitives").glob_fast
 logger = logging.getLogger(__name__)
 
 
-@register_connector(
-    "x_connector",
-    description="X (Twitter) API with OAuth 2.0 PKCE",
-    category="api",
-    requires=["requests-oauthlib"],
-    service_name="x",
-)
+@register_connector("x_connector")
 class PathXBackend(
     PathAddressingEngine,
     OAuthConnectorMixin,

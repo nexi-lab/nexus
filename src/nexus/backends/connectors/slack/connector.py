@@ -56,13 +56,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-@register_connector(
-    "slack_connector",
-    description="Slack workspace with OAuth 2.0 authentication",
-    category="oauth",
-    requires=["slack-sdk"],
-    service_name="slack",
-)
+@register_connector("slack_connector")
 class PathSlackBackend(
     PathAddressingEngine,
     OAuthConnectorMixin,

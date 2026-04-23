@@ -35,13 +35,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-@register_connector(
-    "path_gcs",
-    description="Google Cloud Storage with direct path mapping",
-    category="storage",
-    requires=["google-cloud-storage"],
-    service_name="gcs",
-)
+@register_connector("path_gcs")
 class PathGCSBackend(PathAddressingEngine):
     """Google Cloud Storage connector with direct path mapping.
 

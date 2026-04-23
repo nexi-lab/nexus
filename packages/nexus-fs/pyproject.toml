@@ -50,11 +50,23 @@ gdrive = [
     "google-api-python-client>=2.0",
     "google-auth-oauthlib>=1.0",
 ]
+gmail = [
+    "google-api-python-client>=2.0",
+    "google-auth-oauthlib>=1.0",
+]
+gcalendar = [
+    "google-api-python-client>=2.0",
+    "google-auth-oauthlib>=1.0",
+]
+slack = ["slack-sdk>=3.0"]
+anthropic = ["anthropic>=0.30"]
+openai = ["openai>=1.0"]
+x = ["requests-oauthlib>=1.3"]
 edit = ["rapidfuzz>=3.0"]
 fsspec = ["fsspec>=2024.0"]
 tui = ["textual>=1.0"]
 all = [
-    "nexus-fs[s3,gcs,gdrive,fsspec,tui,edit]",
+    "nexus-fs[s3,gcs,gdrive,gmail,gcalendar,slack,anthropic,openai,x,fsspec,tui,edit]",
 ]
 dev = [
     "nexus-fs[all]",
@@ -97,16 +109,38 @@ include = [
     "nexus/config.py",
 ]
 exclude = [
-    "nexus/bricks/**",
-    "nexus/server/**",
-    "nexus/factory/**",
-    "nexus/raft/**",
-    "nexus/cli/**",
-    "nexus/fuse/**",
-    "nexus/remote/**",
-    "nexus/services/**",
-    "nexus/grpc/**",
-    "nexus/security/**",
+    # Full-runtime subpackages that don't belong on slim
+    "**/bricks/**",
+    "**/server/**",
+    "**/factory/**",
+    "**/raft/**",
+    # Top-level nexus/cli only — keep nexus/backends/connectors/cli
+    # so dynamic CLI YAML connector loading still works on slim.
+    "**/nexus/cli/**",
+    "**/fuse/**",
+    "**/remote/**",
+    "**/services/**",
+    "**/grpc/**",
+    "**/security/**",
+    "**/cache/**",
+    "**/daemon/**",
+    "**/migrations/**",
+    "**/network/**",
+    "**/plugins/**",
+    "**/proxy/**",
+    "**/sdk/**",
+    "**/task_manager/**",
+    "**/tasks/**",
+    "**/tools/**",
+    "**/validation/**",
+    # Top-level modules that belong to the full runtime
+    "**/_kernel_api_groups.py",
+    "**/auth_config.py",
+    "**/sync.py",
+    # utils/ keep only __init__.py and edit_engine.py
+    "**/utils/timing.py",
+    # nexus/config/ directory (keep only config.py as a sibling)
+    "**/nexus/config/**",
 ]
 
 [tool.pytest.ini_options]

@@ -82,12 +82,7 @@ def _load_gws_config(filename: str) -> CLIConnectorConfig | None:
 # ============================================================================
 
 
-@register_connector(
-    "gws_sheets",
-    description="Google Sheets via gws CLI",
-    category="cli",
-    service_name="gws",
-)
+@register_connector("gws_sheets")
 class SheetsConnector(PathCLIBackend):
     """Google Sheets CLI connector via ``gws sheets``."""
 
@@ -174,12 +169,7 @@ class SheetsConnector(PathCLIBackend):
 # ============================================================================
 
 
-@register_connector(
-    "gws_docs",
-    description="Google Docs via gws CLI",
-    category="cli",
-    service_name="gws",
-)
+@register_connector("gws_docs")
 class DocsConnector(PathCLIBackend):
     """Google Docs CLI connector via ``gws docs``."""
 
@@ -365,12 +355,7 @@ class DocsConnector(PathCLIBackend):
 # ============================================================================
 
 
-@register_connector(
-    "gws_chat",
-    description="Google Chat via gws CLI",
-    category="cli",
-    service_name="gws",
-)
+@register_connector("gws_chat")
 class ChatConnector(PathCLIBackend):
     """Google Chat CLI connector via ``gws chat``."""
 
@@ -458,12 +443,7 @@ class ChatConnector(PathCLIBackend):
 # ============================================================================
 
 
-@register_connector(
-    "gws_drive",
-    description="Google Drive via gws CLI",
-    category="cli",
-    service_name="gws",
-)
+@register_connector("gws_drive")
 class DriveConnector(PathCLIBackend):
     """Google Drive CLI connector via ``gws drive``."""
 
@@ -581,12 +561,7 @@ def _gmail_category_from_labels(labels: list[str] | None) -> str:
     return "PRIMARY"
 
 
-@register_connector(
-    "gws_gmail",
-    description="Gmail via gws CLI",
-    category="cli",
-    service_name="gws",
-)
+@register_connector("gws_gmail")
 class GmailConnector(PathCLIBackend):
     """Gmail CLI connector via ``gws gmail``.
 
@@ -1297,12 +1272,7 @@ class GmailConnector(PathCLIBackend):
 # ============================================================================
 
 
-@register_connector(
-    "gws_calendar",
-    description="Google Calendar via gws CLI",
-    category="cli",
-    service_name="gws",
-)
+@register_connector("gws_calendar")
 class CalendarConnector(PathCLIBackend):
     """Calendar CLI connector via ``gws calendar``.
 

@@ -1,6 +1,7 @@
 """Unit tests for connector registry."""
 
 import inspect
+import warnings
 
 import pytest
 
@@ -14,6 +15,7 @@ from nexus.backends.base.registry import (
     derive_config_mapping,
     register_connector,
 )
+from nexus.backends.base.runtime_deps import BinaryDep, PythonDep, RuntimeDep
 
 
 class DummyBackend(Backend):
@@ -90,13 +92,15 @@ class TestConnectorRegistry:
 
     def test_register_connector(self):
         """Test registering a connector."""
-        ConnectorRegistry.register(
-            name="test_backend",
-            connector_class=DummyBackend,
-            description="Test backend",
-            category="storage",
-            requires=["test-dep"],
-        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            ConnectorRegistry.register(
+                name="test_backend",
+                connector_class=DummyBackend,
+                description="Test backend",
+                category="storage",
+                requires=["test-dep"],
+            )
 
         assert ConnectorRegistry.is_registered("test_backend")
         info = ConnectorRegistry.get_info("test_backend")
@@ -104,7 +108,8 @@ class TestConnectorRegistry:
         assert info.connector_class == DummyBackend
         assert info.description == "Test backend"
         assert info.category == "storage"
-        assert info.requires == ["test-dep"]
+        # Legacy requires= kwarg is ignored per Issue #3830 spec §6; callers must use runtime_deps=
+        assert info.runtime_deps == ()
 
     def test_register_duplicate_same_class(self):
         """Test registering same class twice is idempotent."""
@@ -231,20 +236,23 @@ class TestRegisterConnectorDecorator:
 
     def test_decorator_with_all_options(self):
         """Test decorator with all options."""
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
 
-        @register_connector(
-            "full_test",
-            description="Full test",
-            category="api",
-            requires=["dep1", "dep2"],
-        )
-        class FullBackend(DummyBackend):
-            pass
+            @register_connector(
+                "full_test",
+                description="Full test",
+                category="api",
+                requires=["dep1", "dep2"],
+            )
+            class FullBackend(DummyBackend):
+                pass
 
         info = ConnectorRegistry.get_info("full_test")
         assert info.description == "Full test"
         assert info.category == "api"
-        assert info.requires == ["dep1", "dep2"]
+        # Legacy requires= kwarg is ignored per Issue #3830 spec §6; callers must use runtime_deps=
+        assert info.runtime_deps == ()
 
 
 class TestCreateConnectorFromConfig:
@@ -601,3 +609,426 @@ class TestExhaustiveBackendMappings:
         info = ConnectorRegistry.get_info("local")
 
         assert info.config_mapping["data_dir"] == "root_path"
+
+
+class TestConnectorInfoRuntimeDeps:
+    def test_default_empty_tuple(self) -> None:
+        from nexus.backends.base.registry import ConnectorInfo
+
+        info = ConnectorInfo(name="t", connector_class=DummyBackend)
+        assert info.runtime_deps == ()
+
+    def test_runtime_deps_stored(self) -> None:
+        from nexus.backends.base.registry import ConnectorInfo
+
+        deps: tuple[RuntimeDep, ...] = (
+            PythonDep("boto3", extras=("s3",)),
+            BinaryDep("gws", "brew install gws"),
+        )
+        info = ConnectorInfo(
+            name="t",
+            connector_class=DummyBackend,
+            runtime_deps=deps,
+        )
+        assert info.runtime_deps == deps
+
+
+class TestRegisterRuntimeDeps:
+    def setup_method(self) -> None:
+        from nexus.backends.base.registry import ConnectorRegistry
+
+        ConnectorRegistry.clear()
+
+    def teardown_method(self) -> None:
+        from nexus.backends.base.registry import ConnectorRegistry
+
+        ConnectorRegistry.clear()
+
+    def test_decorator_kwarg_populates_runtime_deps(self) -> None:
+        from nexus.backends.base.registry import (
+            ConnectorRegistry,
+            register_connector,
+        )
+
+        @register_connector(
+            "t_deco",
+            runtime_deps=(PythonDep("boto3", extras=("s3",)),),
+        )
+        class T(DummyBackend):
+            pass
+
+        info = ConnectorRegistry.get_info("t_deco")
+        assert info.runtime_deps == (PythonDep("boto3", extras=("s3",)),)
+
+    def test_class_attr_populates_runtime_deps_when_no_decorator_arg(self) -> None:
+        from nexus.backends.base.registry import (
+            ConnectorRegistry,
+            register_connector,
+        )
+
+        @register_connector("t_attr")
+        class T(DummyBackend):
+            RUNTIME_DEPS = (BinaryDep("gws", "brew install gws"),)
+
+        info = ConnectorRegistry.get_info("t_attr")
+        assert info.runtime_deps == (BinaryDep("gws", "brew install gws"),)
+
+    def test_decorator_arg_wins_when_both_present(self) -> None:
+        from nexus.backends.base.registry import (
+            ConnectorRegistry,
+            register_connector,
+        )
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+
+            @register_connector("t_both", runtime_deps=(PythonDep("httpx"),))
+            class T(DummyBackend):
+                RUNTIME_DEPS = (BinaryDep("gws", "brew install gws"),)
+
+            assert any(
+                issubclass(w.category, UserWarning) and "runtime_deps" in str(w.message)
+                for w in caught
+            )
+
+        info = ConnectorRegistry.get_info("t_both")
+        assert info.runtime_deps == (PythonDep("httpx"),)
+
+    def test_bad_runtime_dep_type_raises(self) -> None:
+        from typing import Any
+
+        from nexus.backends.base.registry import ConnectorRegistry
+
+        bad_deps: Any = ("not-a-dep-instance",)
+        with pytest.raises(ValueError, match="RUNTIME_DEPS"):
+            ConnectorRegistry.register(
+                name="t_bad",
+                connector_class=DummyBackend,
+                runtime_deps=bad_deps,
+            )
+
+    def test_legacy_requires_kwarg_emits_deprecation(self) -> None:
+        from nexus.backends.base.registry import (
+            ConnectorRegistry,
+            register_connector,
+        )
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+
+            @register_connector("t_legacy", requires=["httpx"])
+            class T(DummyBackend):
+                pass
+
+            assert any(issubclass(w.category, DeprecationWarning) for w in caught)
+
+        info = ConnectorRegistry.get_info("t_legacy")
+        assert info.runtime_deps == ()
+
+    def test_no_conflict_warning_when_deps_match(self) -> None:
+        from nexus.backends.base.registry import (
+            ConnectorRegistry,
+            register_connector,
+        )
+
+        matching_deps = (PythonDep("httpx"),)
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+
+            @register_connector("t_match", runtime_deps=matching_deps)
+            class T(DummyBackend):
+                RUNTIME_DEPS = matching_deps  # same tuple, no conflict
+
+            conflict_warnings = [
+                w
+                for w in caught
+                if issubclass(w.category, UserWarning) and "runtime_deps" in str(w.message)
+            ]
+            assert conflict_warnings == []
+
+        info = ConnectorRegistry.get_info("t_match")
+        assert info.runtime_deps == matching_deps
+
+
+class TestPlaceholderRegistration:
+    def setup_method(self) -> None:
+        from nexus.backends.base.registry import ConnectorRegistry
+
+        ConnectorRegistry.clear()
+
+    def teardown_method(self) -> None:
+        from nexus.backends.base.registry import ConnectorRegistry
+
+        ConnectorRegistry.clear()
+
+    def test_register_placeholder_stores_entry(self) -> None:
+        from nexus.backends._manifest import ConnectorManifestEntry
+        from nexus.backends.base.registry import ConnectorRegistry
+        from nexus.backends.base.runtime_deps import PythonDep
+
+        entry = ConnectorManifestEntry(
+            name="placeholder_test",
+            module_path="nowhere.real",
+            class_name="Nope",
+            description="Placeholder for test",
+            category="storage",
+            runtime_deps=(PythonDep("boto3", extras=("s3",)),),
+        )
+        ConnectorRegistry.register_placeholder(entry)
+
+        info = ConnectorRegistry.get_info("placeholder_test")
+        assert info.connector_class is None
+        assert info.runtime_deps == (PythonDep("boto3", extras=("s3",)),)
+        assert info.description == "Placeholder for test"
+        assert info.category == "storage"
+
+    def test_register_binds_class_into_placeholder(self) -> None:
+        from nexus.backends._manifest import ConnectorManifestEntry
+        from nexus.backends.base.registry import (
+            ConnectorRegistry,
+            register_connector,
+        )
+        from nexus.backends.base.runtime_deps import PythonDep
+
+        entry = ConnectorManifestEntry(
+            name="bind_test",
+            module_path=__name__,
+            class_name="T",
+            description="Bind test",
+            category="storage",
+            runtime_deps=(PythonDep("json"),),
+            service_name="bind-svc",
+        )
+        ConnectorRegistry.register_placeholder(entry)
+
+        @register_connector("bind_test")
+        class T(DummyBackend):
+            pass
+
+        info = ConnectorRegistry.get_info("bind_test")
+        assert info.connector_class is T
+        # manifest metadata preserved
+        assert info.runtime_deps == (PythonDep("json"),)
+        assert info.description == "Bind test"
+        assert info.category == "storage"
+        assert info.service_name == "bind-svc"
+
+    def test_register_emits_warning_when_builtin_passes_metadata(self) -> None:
+        import warnings
+
+        from nexus.backends._manifest import ConnectorManifestEntry
+        from nexus.backends.base.registry import (
+            ConnectorRegistry,
+            register_connector,
+        )
+
+        entry = ConnectorManifestEntry(
+            name="warn_test",
+            module_path=__name__,
+            class_name="T",
+            description="Manifest description",
+            category="storage",
+        )
+        ConnectorRegistry.register_placeholder(entry)
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+
+            @register_connector(
+                "warn_test",
+                description="Decorator description",  # should trigger warning
+            )
+            class T(DummyBackend):
+                pass
+
+            assert any(
+                issubclass(w.category, UserWarning) and "manifest" in str(w.message).lower()
+                for w in caught
+            ), "expected UserWarning about manifest overriding decorator kwargs"
+
+        # Manifest values preserved despite decorator kwargs
+        info = ConnectorRegistry.get_info("warn_test")
+        assert info.description == "Manifest description"
+
+    def test_external_plugin_still_registers_without_placeholder(self) -> None:
+        from nexus.backends.base.registry import (
+            ConnectorRegistry,
+            register_connector,
+        )
+        from nexus.backends.base.runtime_deps import PythonDep
+
+        @register_connector(
+            "external_plugin",
+            description="External plugin",
+            category="external",
+            runtime_deps=(PythonDep("json"),),
+        )
+        class T(DummyBackend):
+            pass
+
+        info = ConnectorRegistry.get_info("external_plugin")
+        assert info.connector_class is T
+        assert info.description == "External plugin"
+        assert info.runtime_deps == (PythonDep("json"),)
+
+    def test_get_raises_for_unbound_placeholder(self) -> None:
+        import pytest
+
+        from nexus.backends._manifest import ConnectorManifestEntry
+        from nexus.backends.base.registry import ConnectorRegistry
+
+        entry = ConnectorManifestEntry(
+            name="unbound",
+            module_path="nowhere.real",
+            class_name="Nope",
+            description="Unbound placeholder",
+            category="storage",
+        )
+        ConnectorRegistry.register_placeholder(entry)
+
+        with pytest.raises(KeyError, match="placeholder"):
+            ConnectorRegistry.get("unbound")
+
+    def test_register_emits_no_warning_when_builtin_passes_only_name(self) -> None:
+        import warnings
+
+        from nexus.backends._manifest import ConnectorManifestEntry
+        from nexus.backends.base.registry import (
+            ConnectorRegistry,
+            register_connector,
+        )
+        from nexus.backends.base.runtime_deps import PythonDep
+
+        entry = ConnectorManifestEntry(
+            name="no_warn_test",
+            module_path=__name__,
+            class_name="T",
+            description="Manifest description",
+            category="storage",
+            runtime_deps=(PythonDep("json"),),
+            service_name="svc",
+        )
+        ConnectorRegistry.register_placeholder(entry)
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+
+            @register_connector("no_warn_test")
+            class T(DummyBackend):
+                pass
+
+            manifest_warnings = [
+                w
+                for w in caught
+                if issubclass(w.category, UserWarning) and "manifest" in str(w.message).lower()
+            ]
+            assert not manifest_warnings, (
+                "no warning expected when decorator passes only name; "
+                f"got: {[str(w.message) for w in manifest_warnings]}"
+            )
+
+    def test_register_placeholder_preserves_already_bound_class(self) -> None:
+        """When a connector module was imported before _register_optional_backends
+        runs, the placeholder pass must not wipe the bound class — it must
+        backfill manifest metadata on top."""
+        from nexus.backends._manifest import ConnectorManifestEntry
+        from nexus.backends.base.registry import (
+            ConnectorRegistry,
+            register_connector,
+        )
+        from nexus.backends.base.runtime_deps import PythonDep
+
+        # Simulate a direct import binding the class first (no placeholder
+        # exists yet; hits the external-plugin branch of register()).
+        @register_connector("preexisting", description="from decorator", category="storage")
+        class PreExisting(DummyBackend):
+            pass
+
+        # Now manifest-driven Phase 1 runs. module_path / class_name
+        # MUST match the pre-bound class — placeholder pass rejects any
+        # foreign class under a manifest name (see Issue #3830 round 7).
+        entry = ConnectorManifestEntry(
+            name="preexisting",
+            module_path=PreExisting.__module__,
+            class_name=PreExisting.__name__,
+            description="from manifest",
+            category="oauth",
+            runtime_deps=(PythonDep("json"),),
+            service_name="svc",
+        )
+        ConnectorRegistry.register_placeholder(entry)
+
+        info = ConnectorRegistry.get_info("preexisting")
+        # Class binding preserved.
+        assert info.connector_class is PreExisting
+        # Manifest metadata backfilled (wins over decorator values).
+        assert info.description == "from manifest"
+        assert info.category == "oauth"
+        assert info.runtime_deps == (PythonDep("json"),)
+        assert info.service_name == "svc"
+        # Class-derived fields from the existing (decorator-bound) entry preserved.
+        assert info.user_scoped is False
+        assert info.backend_features == frozenset()
+        # DummyBackend.CONNECTION_ARGS produces a non-trivial config_mapping;
+        # confirm it's preserved (not wiped to {}).
+        assert info.config_mapping  # non-empty
+
+    def test_register_placeholder_rejects_foreign_class(self) -> None:
+        """A name hijack must fail loud, not silently preserve a foreign class.
+
+        If some other code pre-registers a class under a manifest-owned
+        name (e.g. ``path_s3`` → ``SomeOtherClass``), ``register_placeholder``
+        must raise rather than backfilling metadata on top of the
+        foreign implementation.
+        """
+        from nexus.backends._manifest import ConnectorManifestEntry
+        from nexus.backends.base.registry import (
+            ConnectorRegistry,
+            register_connector,
+        )
+
+        @register_connector("hijack_victim", description="attacker", category="storage")
+        class Hijack(DummyBackend):
+            pass
+
+        entry = ConnectorManifestEntry(
+            name="hijack_victim",
+            module_path="nexus.backends.storage.path_s3",  # manifest target
+            class_name="PathS3Backend",  # NOT matching Hijack
+            description="Real backend",
+            category="storage",
+        )
+        with pytest.raises(ValueError, match="already bound to"):
+            ConnectorRegistry.register_placeholder(entry)
+
+    def test_register_rejects_foreign_class_binding_to_placeholder(self) -> None:
+        """Binding a foreign class into an existing manifest placeholder must fail.
+
+        The placeholder carries expected ``module_path`` / ``class_name``;
+        any decorator call that tries to bind a class whose ``__module__``
+        / ``__name__`` does not match must be rejected. Without this,
+        entry-point plugins or accidental collisions could replace a
+        built-in connector implementation while keeping the manifest's
+        metadata and runtime_deps.
+        """
+        from nexus.backends._manifest import ConnectorManifestEntry
+        from nexus.backends.base.registry import (
+            ConnectorRegistry,
+            register_connector,
+        )
+
+        entry = ConnectorManifestEntry(
+            name="provenance_gate",
+            module_path="nexus.backends.storage.path_s3",
+            class_name="PathS3Backend",
+            description="Manifest entry",
+            category="storage",
+        )
+        ConnectorRegistry.register_placeholder(entry)
+
+        with pytest.raises(ValueError, match="reserved by the manifest"):
+
+            @register_connector("provenance_gate")
+            class Impostor(DummyBackend):
+                pass

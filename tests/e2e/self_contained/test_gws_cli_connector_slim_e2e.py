@@ -84,7 +84,13 @@ class TestSlimPackageWiring:
     """Verify the slim package resolves gws:// URIs to the correct connector."""
 
     def test_gws_gmail_uri_resolves_to_gmail_connector(self) -> None:
-        """_create_connector_backend('gws://gmail') must return GmailConnector."""
+        """_create_connector_backend('gws://gmail') must return GmailConnector.
+
+        ``check_runtime_deps`` is patched to return no missing deps so the
+        test exercises URI routing in isolation — Issue #3830 added a
+        ``BinaryDep("gws")`` check that would otherwise raise
+        MissingDependencyError on CI runners without the gws CLI.
+        """
         from nexus.fs._backend_factory import _create_connector_backend
 
         class _FakeSpec:
@@ -95,6 +101,7 @@ class TestSlimPackageWiring:
 
         with (
             patch("nexus.fs._backend_factory._discover_connector_module"),
+            patch("nexus.backends.base.runtime_deps.check_runtime_deps", return_value=[]),
             patch("nexus.fs._backend_factory._instantiate_connector_backend") as mock_inst,
         ):
             mock_inst.return_value = MagicMock(spec=GmailConnector)
@@ -105,7 +112,12 @@ class TestSlimPackageWiring:
         assert cls_arg is GmailConnector
 
     def test_gws_calendar_uri_resolves_to_calendar_connector(self) -> None:
-        """_create_connector_backend('gws://calendar') must return CalendarConnector."""
+        """_create_connector_backend('gws://calendar') must return CalendarConnector.
+
+        See ``test_gws_gmail_uri_resolves_to_gmail_connector`` — the
+        ``check_runtime_deps`` patch isolates URI routing from the
+        environment's gws CLI availability.
+        """
         from nexus.fs._backend_factory import _create_connector_backend
 
         class _FakeSpec:
@@ -116,6 +128,7 @@ class TestSlimPackageWiring:
 
         with (
             patch("nexus.fs._backend_factory._discover_connector_module"),
+            patch("nexus.backends.base.runtime_deps.check_runtime_deps", return_value=[]),
             patch("nexus.fs._backend_factory._instantiate_connector_backend") as mock_inst,
         ):
             mock_inst.return_value = MagicMock(spec=CalendarConnector)

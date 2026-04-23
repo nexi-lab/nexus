@@ -30,13 +30,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-@register_connector(
-    "path_s3",
-    description="AWS S3 with direct path mapping",
-    category="storage",
-    requires=["boto3"],
-    service_name="s3",
-)
+@register_connector("path_s3")
 class PathS3Backend(PathAddressingEngine, MultipartUpload):
     """AWS S3 connector with direct path mapping and multipart upload."""
 

@@ -116,14 +116,57 @@ def _create_connector_backend(spec: Any) -> Any:
     scheme = spec.scheme
     authority = spec.authority
 
-    _discover_connector_module(scheme)
+    # Ensure manifest placeholders are registered FIRST so that any
+    # `@register_connector("name")` call inside _discover_connector_module
+    # hits the placeholder-binding path and preserves manifest-sourced
+    # metadata (description, category, runtime_deps, service_name).
+    # Without this, a direct URI-scheme import takes the external-plugin
+    # branch of register() with empty defaults and the entry has no
+    # runtime_deps — mount skips the MissingDependencyError check.
+    from nexus.backends import _register_optional_backends
+
+    _register_optional_backends()
+
+    # If any manifest entry references this scheme, Phase 2 of
+    # _register_optional_backends already attempted the import — the
+    # placeholder (or bound class) is authoritative. Skip
+    # _discover_connector_module entirely so a transitive ImportError
+    # from re-importing the module doesn't mask the canonical
+    # MissingDependencyError / placeholder RuntimeError.
+    #
+    # For schemes NOT in the manifest (external plugins packaged as
+    # nexus.backends.connectors.<x>.connector), preserve the original
+    # behavior: _discover_connector_module propagates real import
+    # errors so operators see the actual root cause rather than a
+    # generic "connector not found".
+    from nexus.backends._manifest import CONNECTOR_MANIFEST
+
+    # Scheme is "known to the manifest" when it maps to a connector
+    # module OR to a registry name stripped of the ``_connector`` suffix.
+    # The latter catches alias entries like ``gcalendar_connector`` whose
+    # module_path points at ``...connectors.calendar.connector`` —
+    # without it a ``gcalendar://`` mount would skip past the placeholder
+    # lookup and crash in _discover_connector_module on a missing
+    # ``nexus.backends.connectors.gcalendar`` package.
+    manifest_schemes: set[str] = set()
+    for entry in CONNECTOR_MANIFEST:
+        if entry.module_path.endswith(".connector"):
+            manifest_schemes.add(entry.module_path.rsplit(".connector", 1)[0].split(".")[-1])
+        if entry.name.endswith("_connector"):
+            manifest_schemes.add(entry.name.removesuffix("_connector"))
+    if scheme not in manifest_schemes:
+        _discover_connector_module(scheme)
 
     from nexus.backends.base.registry import ConnectorRegistry
 
     connector_name = f"{scheme}_{authority}" if authority else scheme
     fallback_name = f"{scheme}_connector"
 
-    connector_cls = None
+    # Resolve via get_info() so we can see BOTH bound classes and
+    # manifest placeholders. get() hides placeholders behind a KeyError,
+    # which would collapse "missing Python dep" into "connector not
+    # found" — the exact ambiguity Issue #3830 set out to eliminate.
+    info = None
     selected_name: str | None = None
     for candidate in [
         connector_name,
@@ -133,13 +176,13 @@ def _create_connector_backend(spec: Any) -> Any:
         if candidate is None:
             continue
         try:
-            connector_cls = ConnectorRegistry.get(candidate)
+            info = ConnectorRegistry.get_info(candidate)
             selected_name = candidate
             break
         except KeyError:
             continue
 
-    if connector_cls is None:
+    if info is None:
         from nexus.contracts.exceptions import NexusURIError
 
         available = ConnectorRegistry.list_available()
@@ -150,8 +193,54 @@ def _create_connector_backend(spec: Any) -> Any:
             f"Registered connectors: {', '.join(available) if available else 'none'}",
         )
 
-    info = ConnectorRegistry.get_info(selected_name) if selected_name is not None else None
-    return _instantiate_connector_backend(connector_cls, info=info, scheme=scheme)
+    # Placeholder-first dep check: mirror BackendFactory.create() so the
+    # URI path produces the same diagnostics as programmatic mounts.
+    from nexus.backends.base.runtime_deps import check_runtime_deps
+    from nexus.contracts.exceptions import MissingDependencyError
+
+    missing = check_runtime_deps(info.runtime_deps)
+    if missing:
+        raise MissingDependencyError(backend=selected_name or scheme, missing=missing)
+
+    if info.connector_class is None:
+        # Attempt a targeted rebind: the placeholder survives when the
+        # first registration pass couldn't import the module, but the
+        # user may have installed the missing dep since then. Retry
+        # the manifest import so the decorator rebinds the class;
+        # preserve any ImportError so we can chain it into the final
+        # RuntimeError (silently swallowing the cause makes production
+        # debugging needlessly hard).
+        expected_path = info.expected_module_path
+        rebind_error: BaseException | None = None
+        if expected_path:
+            try:
+                importlib.import_module(expected_path)
+            except Exception as e:
+                # Match BackendFactory.create(): catch Exception (not
+                # just ImportError) so a SyntaxError / RuntimeError
+                # during re-import stays contained and feeds the
+                # controlled error path below instead of escaping raw.
+                rebind_error = e
+            info = ConnectorRegistry.get_info(selected_name or scheme)
+
+        if info.connector_class is None:
+            detail = info.import_error or (str(rebind_error) if rebind_error else None)
+            base_msg = (
+                f"Connector '{selected_name or scheme}' is declared in "
+                f"the manifest but its module failed to import"
+            )
+            if detail:
+                base_msg = f"{base_msg}: {detail}"
+            restart_hint = (
+                " — if the dependency was just installed, "
+                "restarting the process will clear any cached "
+                "import state."
+            )
+            if rebind_error is not None:
+                raise RuntimeError(base_msg + restart_hint) from rebind_error
+            raise RuntimeError(base_msg + restart_hint)
+
+    return _instantiate_connector_backend(info.connector_class, info=info, scheme=scheme)
 
 
 def _default_token_manager_db() -> str:
@@ -321,12 +410,19 @@ def _discover_connector_module(scheme: str) -> None:
             importlib.import_module(mod_path)
             return
         except ModuleNotFoundError as exc:
-            # Only treat as "module doesn't exist" if the missing module
-            # is the one we tried to import. If a transitive dependency
-            # inside the connector is missing, that's a real bug — re-raise
-            # so the user sees the actual missing package, not a misleading
-            # "no connector found" error.
-            if exc.name is not None and exc.name == mod_path:
+            # Treat "the connector module or one of its ancestor packages
+            # under nexus.backends.connectors is absent" as expected — the
+            # discovery loop will fall back to registry lookup and a clean
+            # NexusURIError. Any other missing name (a transitive dep like
+            # ``googleapiclient`` inside a connector that DID resolve on
+            # disk) must re-raise so the operator sees the real culprit.
+            if exc.name is not None and (
+                exc.name == mod_path
+                or (
+                    mod_path.startswith(exc.name + ".")
+                    and exc.name.startswith("nexus.backends.connectors.")
+                )
+            ):
                 continue
             raise
         except ImportError:

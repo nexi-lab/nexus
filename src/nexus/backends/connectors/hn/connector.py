@@ -39,13 +39,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-@register_connector(
-    "hn_connector",
-    description="HackerNews API (read-only)",
-    category="api",
-    requires=["httpx"],
-    service_name="hackernews",
-)
+@register_connector("hn_connector")
 class PathHNBackend(
     PathAddressingEngine,
     ReadmeDocMixin,

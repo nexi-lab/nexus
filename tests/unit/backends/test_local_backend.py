@@ -331,34 +331,6 @@ def test_batch_read_content_deduplication(temp_backend):
     assert result[content_hash] == content
 
 
-def test_batch_read_content_with_cache(tmp_path):
-    """Test that batch read leverages content cache."""
-    from nexus.storage.content_cache import ContentCache
-
-    cache = ContentCache(max_size_mb=10)
-    backend = CASLocalBackend(root_path=tmp_path / "backend", content_cache=cache)
-
-    # Write content
-    content1 = b"Cached content 1"
-    content2 = b"Cached content 2"
-    hash1 = backend.write_content(content1).content_id
-    hash2 = backend.write_content(content2).content_id
-
-    # First batch read (populates cache)
-    result1 = backend.batch_read_content([hash1, hash2])
-    assert result1[hash1] == content1
-    assert result1[hash2] == content2
-
-    # Verify cache was populated
-    assert backend.content_cache.get(hash1) == content1
-    assert backend.content_cache.get(hash2) == content2
-
-    # Second batch read (should hit cache)
-    result2 = backend.batch_read_content([hash1, hash2])
-    assert result2[hash1] == content1
-    assert result2[hash2] == content2
-
-
 def test_batch_read_content_parallel(tmp_path):
     """Test batch read uses parallel reads for multiple uncached files.
 
@@ -368,8 +340,6 @@ def test_batch_read_content_parallel(tmp_path):
     3. Results are correctly mapped to their hashes
     """
     backend = CASLocalBackend(root_path=tmp_path / "backend")
-    # No cache - forces disk reads
-    backend.content_cache = None
 
     # Write multiple files
     contents = [f"Content for file {i}".encode() for i in range(10)]
@@ -392,7 +362,6 @@ def test_batch_read_content_parallel_performance(tmp_path):
     import time
 
     backend = CASLocalBackend(root_path=tmp_path / "backend")
-    backend.content_cache = None  # Disable cache to force disk reads
 
     # Write 20 files
     contents = [f"Content for performance test file {i}".encode() for i in range(20)]
@@ -416,7 +385,6 @@ def test_batch_read_content_parallel_performance(tmp_path):
 def test_batch_read_content_single_file_no_threadpool(tmp_path):
     """Test that single file batch read doesn't use ThreadPoolExecutor overhead."""
     backend = CASLocalBackend(root_path=tmp_path / "backend")
-    backend.content_cache = None
 
     content = b"Single file content"
     content_hash = backend.write_content(content).content_id
@@ -447,7 +415,6 @@ def test_batch_read_respects_worker_limit(tmp_path):
     """Test that batch read respects the configured worker limit."""
     # Create backend with low worker count (simulating HDD config)
     backend = CASLocalBackend(root_path=tmp_path / "backend", batch_read_workers=2)
-    backend.content_cache = None
 
     # Write 10 files
     contents = [f"Content {i}".encode() for i in range(10)]

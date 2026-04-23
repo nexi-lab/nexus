@@ -449,22 +449,6 @@ class TestRangeReads:
         result = backend.read_content_range(content_hash, start, end)
         assert result == large_content[start:end]
 
-    def test_range_read_from_cache(self, backend: CASLocalBackend) -> None:
-        """Test that range read uses content cache if available."""
-        from unittest.mock import MagicMock
-
-        content = b"cached content for range"
-        content_hash = backend.write_content(content).content_id
-
-        # Mock content cache
-        mock_cache = MagicMock()
-        mock_cache.get.return_value = content
-        backend._cache = mock_cache
-
-        result = backend.read_content_range(content_hash, 0, 6)
-        assert result == b"cached"
-        mock_cache.get.assert_called_once_with(content_hash)
-
 
 class TestCDCChunking:
     """Tests specifically for CDC chunking behavior."""

@@ -7,11 +7,13 @@ name: Conda Pack
 # so there is no conflict between this workflow and release.yml.
 #
 # Build order per runner:
-#   1. Create nexus conda env (Python 3.14) + pip install .
-#   2. Compile kernel  (rust/kernel) via maturin
-#   3. Compile raft  (rust/raft --features full) via maturin
-#   4. pip install both .whl files into the nexus env
-#   5. conda-pack the nexus env → <artifact_name>-<version>.tar.gz
+#   1. Create nexus conda env (Python 3.14)
+#   2. Rust toolchain + (macOS) pinned protoc 3.20.3
+#   3. pip install . (pdf-inspector builds from sdist against pyo3-ffi)
+#   4. Compile kernel (rust/kernel) via maturin — pulls in raft rlib;
+#      Metastore / ZoneManager are re-exported from nexus_kernel
+#   5. pip install kernel wheel into the nexus env (skipped on Windows)
+#   6. conda-pack the nexus env → <artifact_name>-<version>.tar.gz
 
 on:
   workflow_dispatch:
@@ -21,6 +23,12 @@ on:
 
 permissions:
   contents: write
+
+# pdf-inspector ships PyO3 0.22.6 in its sdist; that release caps at
+# Python 3.13 and only accepts 3.14 when we opt into abi3 forward-
+# compatibility. pyproject.toml's core deps document the requirement.
+env:
+  PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
 
 jobs:
   conda-pack:
@@ -67,14 +75,10 @@ jobs:
         run: |
           conda create -n nexus python=3.14 -y
 
-      - name: Install project into nexus environment
-        shell: bash -el {0}
-        run: |
-          conda run -n nexus pip install .
-
       # ── Rust toolchain ────────────────────────────────────────────────────
-      # Reads the required toolchain version from rust-toolchain.toml
-      # automatically. No need to specify the version explicitly.
+      # Must come BEFORE `pip install .` because pdf-inspector's sdist has
+      # no cp314 wheel and builds from source against pyo3-ffi. Reads the
+      # required toolchain version from rust-toolchain.toml automatically.
       - name: Setup Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
 
@@ -89,7 +93,34 @@ jobs:
           shared-key: conda-pack-rust-${{ matrix.os }}
           workspaces: |
             rust/kernel
-            rust/raft
+
+      # ── protoc for raft-proto transitive build script ────────────────────
+      # rust/kernel pulls in raft → raft-proto, whose build script uses
+      # protobuf-build 0.14.1 and only accepts classic 3.x protoc. brew's
+      # current `protobuf` formula ships 34.x which is rejected, so pin
+      # the last classic release and prepend it to PATH.
+      - name: Install protoc (macOS)
+        if: runner.os == 'macOS'
+        shell: bash -el {0}
+        run: |
+          set -euo pipefail
+          PROTOC_VERSION=3.20.3
+          case "$(uname -m)" in
+            arm64) ARCH=aarch_64 ;;
+            x86_64) ARCH=x86_64 ;;
+            *) echo "Unsupported arch: $(uname -m)" >&2; exit 1 ;;
+          esac
+          mkdir -p "$HOME/protoc"
+          curl -fsSL -o /tmp/protoc.zip \
+            "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-osx-${ARCH}.zip"
+          unzip -o /tmp/protoc.zip -d "$HOME/protoc"
+          echo "$HOME/protoc/bin" >> "$GITHUB_PATH"
+          "$HOME/protoc/bin/protoc" --version
+
+      - name: Install project into nexus environment
+        shell: bash -el {0}
+        run: |
+          conda run -n nexus pip install .
 
       # ── maturin builds ───────────────────────────────────────────────────
       # Install maturin inside the nexus env so it automatically uses the
@@ -100,6 +131,9 @@ jobs:
           conda run -n nexus pip install maturin
 
       # Skipped on Windows: shm_pipe.rs / shm_stream.rs use POSIX-only APIs.
+      # The nexus_raft crate is now rlib-only and is linked into the kernel
+      # cdylib, so there is no separate raft wheel to build here anymore —
+      # Metastore / ZoneManager are exposed from nexus_kernel directly.
       - name: Build kernel wheel  (rust/kernel)
         if: matrix.os != 'windows-latest'
         shell: bash -el {0}
@@ -109,27 +143,20 @@ jobs:
             --out build/dist \
             -m rust/kernel/Cargo.toml
 
-      - name: Build raft wheel  (rust/raft --features full)
-        shell: bash -el {0}
-        run: |
-          mkdir -p build/dist
-          conda run -n nexus maturin build --release \
-            --features full \
-            --out build/dist \
-            -m rust/raft/Cargo.toml
-
       # ── Install wheels into the nexus env ────────────────────────────────
       - name: Install Rust wheels into nexus environment
+        if: matrix.os != 'windows-latest'
         shell: bash -el {0}
         run: |
           echo "=== Built wheels ==="
           ls -lh build/dist/
           conda run -n nexus pip install build/dist/*.whl
 
-      - name: Verify full raft extension in nexus environment
+      - name: Verify kernel extension in nexus environment
+        if: matrix.os != 'windows-latest'
         shell: bash -el {0}
         run: |
-          conda run -n nexus python -c "from _nexus_raft import Metastore, ZoneManager; print('raft full OK')"
+          conda run -n nexus python -c "from nexus_kernel import Metastore, ZoneManager; print('nexus_kernel OK')"
 
       # ── conda-pack ───────────────────────────────────────────────────────
       - name: Install conda-pack into base environment

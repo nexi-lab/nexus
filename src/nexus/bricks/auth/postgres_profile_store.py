@@ -40,7 +40,7 @@ import secrets
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Any
 
@@ -111,9 +111,13 @@ class DecryptedProfile:
 
     ``last_synced_at`` lets the consumer return 409 stale_source when the row
     is older than ``sync_ttl_seconds``.
+
+    ``plaintext`` is marked ``repr=False`` so the credential bytes never appear
+    in default ``__repr__`` output (which is what ``log.info("decrypted %s", out)``
+    or an unhandled-exception locals frame would emit).
     """
 
-    plaintext: bytes
+    plaintext: bytes = field(repr=False)
     profile_id: str
     kek_version: int
     last_synced_at: datetime
@@ -1471,6 +1475,21 @@ class PostgresAuthProfileStore:
             )
 
         profile_id, ciphertext, wrapped_dek, nonce, aad, kek_version, lsa, sttl = row
+
+        # Defense-in-depth: cross-check the row's stored AAD against the
+        # tenant|principal|profile_id format that writers use. AES-GCM tag
+        # verification alone won't catch a tampered ``aad`` column — the
+        # tag was bound to whatever AAD landed in the row. Mirror what
+        # ``get_with_credential`` already enforces (see lines ~1397-1404).
+        expected_aad = self._aad_for(profile_id)
+        if bytes(aad) != expected_aad:
+            raise AADMismatch.from_row(
+                tenant_id=self._tenant_id,
+                profile_id=profile_id,
+                kek_version=kek_version,
+                cause="stored AAD does not match tenant|principal|profile_id",
+            )
+
         cache_key = DEKCache.make_key(
             tenant_id=self._tenant_id,
             kek_version=kek_version,
@@ -1481,12 +1500,12 @@ class PostgresAuthProfileStore:
             dek = encryption.unwrap_dek(
                 bytes(wrapped_dek),
                 tenant_id=self._tenant_id,
-                aad=bytes(aad),
+                aad=expected_aad,
                 kek_version=kek_version,
             )
             dek_cache.put(cache_key, dek)
 
-        plaintext = AESGCMEnvelope().decrypt(dek, bytes(nonce), bytes(ciphertext), aad=bytes(aad))
+        plaintext = AESGCMEnvelope().decrypt(dek, bytes(nonce), bytes(ciphertext), aad=expected_aad)
         return DecryptedProfile(
             plaintext=plaintext,
             profile_id=profile_id,

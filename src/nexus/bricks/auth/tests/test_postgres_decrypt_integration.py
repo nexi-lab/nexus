@@ -193,3 +193,102 @@ def test_decrypt_profile_raises_profile_not_found(engine):
             encryption=encryption,
             dek_cache=DEKCache(),
         )
+
+
+def test_decrypted_profile_repr_masks_plaintext(engine):
+    """The DecryptedProfile dataclass must NOT print plaintext in its repr.
+
+    A Task-8 caller that ``log.info("decrypted %s", out)`` or hits an
+    unhandled exception (locals frame) must not leak the credential JSON.
+    """
+    from nexus.bricks.auth.postgres_profile_store import DecryptedProfile
+
+    tenant_id = uuid.uuid4()
+    principal_id = uuid.uuid4()
+    encryption = InMemoryEncryptionProvider()
+    plaintext = b'{"token":"super_secret_value"}'
+    _seed_envelope_row(
+        engine=engine,
+        tenant_id=tenant_id,
+        principal_id=principal_id,
+        profile_id="github-default",
+        provider="github",
+        plaintext=plaintext,
+        encryption=encryption,
+    )
+    store = PostgresAuthProfileStore(
+        "",
+        tenant_id=tenant_id,
+        principal_id=principal_id,
+        engine=engine,
+    )
+    out = store.decrypt_profile(
+        principal_id=principal_id,
+        provider="github",
+        encryption=encryption,
+        dek_cache=DEKCache(),
+    )
+    assert isinstance(out, DecryptedProfile)
+    # Sanity: plaintext is recoverable via the field, just not via repr.
+    assert out.plaintext == plaintext
+    rendered = repr(out)
+    assert "super_secret_value" not in rendered
+    assert b"super_secret_value" not in rendered.encode()
+
+
+def test_decrypt_profile_rejects_tampered_aad(engine):
+    """Defense-in-depth: a row whose aad column has been tampered with
+    (different from what writers compute) must be rejected even if the
+    AES-GCM tag verifies under the tampered AAD."""
+    from nexus.bricks.auth.envelope import AADMismatch
+
+    tenant_id = uuid.uuid4()
+    principal_id = uuid.uuid4()
+    encryption = InMemoryEncryptionProvider()
+    plaintext = b'{"token":"x"}'
+    _seed_envelope_row(
+        engine=engine,
+        tenant_id=tenant_id,
+        principal_id=principal_id,
+        profile_id="github-default",
+        provider="github",
+        plaintext=plaintext,
+        encryption=encryption,
+    )
+    # Tamper: rewrite aad to a different (but well-formed) value, AND
+    # re-encrypt with the new AAD so the AES-GCM tag still verifies.
+    # The defense-in-depth check should catch this.
+    tampered_aad = str(tenant_id).encode() + b"|" + str(principal_id).encode() + b"|other-profile"
+    dek = b"\x00" * 32
+    nonce, new_ct = AESGCMEnvelope().encrypt(dek, plaintext, aad=tampered_aad)
+    new_wrapped, _ = encryption.wrap_dek(dek, tenant_id=tenant_id, aad=tampered_aad)
+    with engine.begin() as conn:
+        conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(tenant_id)})
+        conn.execute(
+            text(
+                "UPDATE auth_profiles SET aad = :aad, ciphertext = :ct, "
+                "wrapped_dek = :wd, nonce = :no "
+                "WHERE tenant_id = :t AND id = 'github-default'"
+            ),
+            {
+                "aad": tampered_aad,
+                "ct": new_ct,
+                "wd": new_wrapped,
+                "no": nonce,
+                "t": str(tenant_id),
+            },
+        )
+
+    store = PostgresAuthProfileStore(
+        "",
+        tenant_id=tenant_id,
+        principal_id=principal_id,
+        engine=engine,
+    )
+    with pytest.raises(AADMismatch):
+        store.decrypt_profile(
+            principal_id=principal_id,
+            provider="github",
+            encryption=encryption,
+            dek_cache=DEKCache(),
+        )

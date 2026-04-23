@@ -124,16 +124,12 @@ class MCPMountManager:
     # Mount configuration filename (per-folder)
     MOUNT_CONFIG_FILENAME = "mount.json"
 
-<<<<<<< HEAD
     def __init__(
         self,
         filesystem: "NexusFS | None" = None,
         *,
         ssrf_config: "SSRFConfig | None" = None,
     ) -> None:
-=======
-    def __init__(self, filesystem: "NexusFS | None" = None):
->>>>>>> ad030090f (fix: nuclear restore 168 files + rustfmt)
         """Initialize MCP mount manager.
 
         Args:

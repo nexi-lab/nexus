@@ -554,7 +554,6 @@ class PathGmailBackend(
             if not path:
                 return [f"{label}/" for label in self.LABEL_FOLDERS]
 
-<<<<<<< HEAD
             path_parts = path.split("/")
             is_label = path in self.LABEL_FOLDERS
             is_inbox_category = (
@@ -563,19 +562,12 @@ class PathGmailBackend(
                 and path_parts[1] in _GMAIL_CATEGORY_FOLDERS
             )
             if not (is_label or is_inbox_category):
-=======
-            if path not in self.LABEL_FOLDERS:
->>>>>>> b3f8f6397 (fix: restore 61 silently reverted files + rustfmt)
                 raise FileNotFoundError(f"Directory not found: {path}")
 
             if self._pool is None:
                 # Single-account path
                 self._bind_transport(context)
-<<<<<<< HEAD
                 keys, prefixes = self._transport.list_keys(prefix=path, delimiter="/")
-=======
-                keys, _prefixes = self._transport.list_keys(prefix=path, delimiter="/")
->>>>>>> b3f8f6397 (fix: restore 61 silently reverted files + rustfmt)
             else:
                 # Pool-based: rotate credentials on rate-limit.
                 # user_email_override routes the transport to the selected profile's
@@ -590,11 +582,7 @@ class PathGmailBackend(
                     )
                     return transport.list_keys(prefix=path, delimiter="/")
 
-<<<<<<< HEAD
                 keys, prefixes = self._pool.execute_sync(
-=======
-                keys, _prefixes = self._pool.execute_sync(
->>>>>>> b3f8f6397 (fix: restore 61 silently reverted files + rustfmt)
                     _list,
                     classify_google_error,
                     bypass_exceptions=(NexusFileNotFoundError,),
@@ -602,7 +590,6 @@ class PathGmailBackend(
 
             # Strip label prefix from keys: "LABEL/thread-msg.yaml" → "thread-msg.yaml"
             label_prefix = f"{path}/"
-<<<<<<< HEAD
             leaves: list[str] = []
             dirs: list[str] = []
             for key in keys:
@@ -619,14 +606,6 @@ class PathGmailBackend(
             # every real email client.  Directory entries (category
             # sub-labels) stay alphabetical.
             return sorted(dirs) + sorted(leaves, reverse=True)
-=======
-            files = []
-            for key in keys:
-                name = key[len(label_prefix) :] if key.startswith(label_prefix) else key
-                if name:
-                    files.append(name)
-            return sorted(files)
->>>>>>> b3f8f6397 (fix: restore 61 silently reverted files + rustfmt)
 
         except FileNotFoundError:
             raise

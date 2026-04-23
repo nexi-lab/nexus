@@ -141,7 +141,7 @@ class TestVersionHistoryGC:
         rs.close()
 
     @pytest.fixture
-    async def nx(self, temp_dir, record_store):
+    def nx(self, temp_dir, record_store):
         """Create NexusFS instance for testing.
 
         Uses RaftMetadataStore. TODO: Version history depends on FilePathModel

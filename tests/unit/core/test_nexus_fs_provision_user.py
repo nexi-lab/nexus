@@ -18,7 +18,7 @@ from tests.conftest import make_test_nexus
 
 
 @pytest.fixture()
-async def nx_with_db(tmp_path):
+def nx_with_db(tmp_path):
     """Create a NexusFS instance with a real SQLite database for provisioning tests."""
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker

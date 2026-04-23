@@ -41,7 +41,7 @@ def local_backend(temp_dir: Path) -> CASLocalBackend:
 
 
 @pytest.fixture
-async def nx(
+def nx(
     temp_dir: Path, local_backend: CASLocalBackend, record_store: SQLAlchemyRecordStore
 ) -> AsyncGenerator[NexusFS, None]:
     """Create a NexusFS instance for testing."""

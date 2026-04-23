@@ -13,7 +13,7 @@ class TestEnlistWiredServices:
     """Test enlist_wired_services accepts dict (#1708)."""
 
     @pytest.fixture()
-    async def nx(self, tmp_path: Any) -> Any:
+    def nx(self, tmp_path: Any) -> Any:
         """Minimal NexusFS via factory boot path."""
         from tests.conftest import make_test_nexus
 

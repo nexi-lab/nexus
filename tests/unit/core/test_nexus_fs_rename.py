@@ -14,7 +14,7 @@ from tests.helpers.failing_backend import FailingBackend
 
 
 @pytest.fixture()
-async def nx(tmp_path):
+def nx(tmp_path):
     """Create a NexusFS instance with CAS backend for unit tests.
 
     Uses CASLocalBackend because rename is a metadata-only operation —

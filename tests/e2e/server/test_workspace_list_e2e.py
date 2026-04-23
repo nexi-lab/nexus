@@ -127,7 +127,7 @@ backend = CASLocalBackend(root_path='{backend_root}')
 metadata_store = RaftMetadataStore.embedded('{meta_dir}')
 record_store = SQLAlchemyRecordStore(db_path='{db_path}')
 
-nx = asyncio.run(create_nexus_fs(
+nx = create_nexus_fs(
     backend=backend,
     metadata_store=metadata_store,
     record_store=record_store,

@@ -15,7 +15,7 @@ from tests.helpers.failing_backend import FailingBackend
 
 
 @pytest.fixture()
-async def nx(tmp_path):
+def nx(tmp_path):
     """Create a NexusFS instance with permissions disabled for unit tests."""
     return make_test_nexus(tmp_path)
 

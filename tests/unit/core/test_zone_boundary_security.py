@@ -31,7 +31,7 @@ def temp_dir() -> Generator[Path, None, None]:
 
 
 @pytest.fixture
-async def nx(temp_dir: Path) -> AsyncGenerator[NexusFS, None]:
+def nx(temp_dir: Path) -> AsyncGenerator[NexusFS, None]:
     """Create a NexusFS instance with permissions enforced."""
     nx = create_nexus_fs(
         backend=CASLocalBackend(temp_dir),

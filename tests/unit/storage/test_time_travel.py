@@ -52,7 +52,7 @@ class TestTimeTravelDebug:
         return CASLocalBackend(root_path=data_dir)
 
     @pytest.fixture
-    async def nx(self, temp_dir, record_store, backend):
+    def nx(self, temp_dir, record_store, backend):
         """Create NexusFS instance for testing.
 
         Uses RaftMetadataStore. TODO: Time travel depends on FilePathModel

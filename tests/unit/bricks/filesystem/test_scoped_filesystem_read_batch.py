@@ -17,7 +17,7 @@ from tests.conftest import make_test_nexus
 
 
 @pytest.fixture()
-async def nx(tmp_path):
+def nx(tmp_path):
     return make_test_nexus(tmp_path)
 
 

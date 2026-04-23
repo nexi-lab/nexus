@@ -31,7 +31,7 @@ def _mount_via_setattr(nx, mount_point: str, backend) -> None:
 
 
 @pytest.fixture
-async def nx_with_mount():
+def nx_with_mount():
     """Create NexusFS instance with mount manager support via factory."""
     from nexus.backends.storage.cas_local import CASLocalBackend
     from nexus.factory import create_nexus_fs

@@ -35,33 +35,8 @@ from nexus.backends.connectors.github.schemas import (
 logger = logging.getLogger(__name__)
 
 
-<<<<<<< HEAD
 @register_connector("github_connector")
 @register_connector("gws_github")
-=======
-@register_connector(
-    # Primary registry name matches the factory lookup fallback
-    # ``f"{scheme}_connector"`` so ``github://<authority>`` mounts resolve
-    # to this class.  Before #3728 the connector was registered only as
-    # ``"gws_github"``, which was unreachable from any scheme and made
-    # ``nexus-fs mount github://...`` fail.
-    "github_connector",
-    description="GitHub via gh CLI",
-    category="cli",
-)
-<<<<<<< HEAD
->>>>>>> c25f7f03d (feat: reapply 36 lost commits — async→sync, dead code cleanup, Rust dispatch simplification)
-=======
-@register_connector(
-    # Deprecated alias — kept so persisted mounts stored under the old
-    # ``backend_type: "gws_github"`` key (in ``mounts.json`` or the
-    # ``mount_persist`` store) still load after upgrade.  Remove once a
-    # migration has rewritten stored entries to ``github_connector``.
-    "gws_github",
-    description="GitHub via gh CLI (deprecated alias, use github_connector)",
-    category="cli",
-)
->>>>>>> 5d325f31e (fix: nuclear restore 168 files + rustfmt)
 class GitHubConnector(PathCLIBackend):
     """GitHub CLI connector via ``gh``."""
 

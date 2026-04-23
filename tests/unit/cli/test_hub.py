@@ -47,12 +47,11 @@ def test_token_create_prints_raw_key_and_row(monkeypatch):
 
 
 def test_token_create_admin_flag_sets_is_admin(monkeypatch):
-    monkeypatch.setattr(
-        "nexus.cli.commands.hub.create_api_key",
-        lambda session, **kw: ("kid", "sk-x")
-        if kw["is_admin"]
-        else (_ for _ in ()).throw(AssertionError("is_admin=False")),
-    )
+    def _assert_admin(session, **kw):
+        assert kw["is_admin"] is True, "is_admin flag should be set"
+        return ("kid", "sk-x")
+
+    monkeypatch.setattr("nexus.cli.commands.hub.create_api_key", _assert_admin)
     monkeypatch.setattr(
         "nexus.cli.commands.hub.get_session_factory",
         lambda: _mock_session_ctx(MagicMock()),
@@ -109,3 +108,41 @@ def test_token_create_expires_sets_expires_at(monkeypatch):
     )
     assert result.exit_code == 0, result.output
     assert captured["expires_at"] is not None
+
+
+def test_token_create_duplicate_filter_ignores_revoked(monkeypatch):
+    """Integration: a revoked token with the same name should NOT block creation."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from nexus.storage.models import APIKeyModel, Base
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine, future=True, expire_on_commit=False)
+
+    # Seed: one REVOKED token named "alice"
+    with Session() as s, s.begin():
+        s.add(
+            APIKeyModel(
+                key_hash="deadbeef",
+                user_id="alice",
+                name="alice",
+                zone_id="root",
+                is_admin=0,
+                revoked=1,
+            )
+        )
+
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_session_factory",
+        lambda: Session,
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        hub,
+        ["token", "create", "--name", "alice", "--zone", "root"],
+    )
+    assert result.exit_code == 0, result.output
+    assert "sk-" in result.output  # real create_api_key ran

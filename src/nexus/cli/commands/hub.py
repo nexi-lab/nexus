@@ -57,7 +57,7 @@ def token_create(
         except ValueError as exc:
             raise click.ClickException(str(exc)) from exc
 
-    with factory() as session:
+    with factory() as session, session.begin():
         existing = (
             session.execute(
                 select(APIKeyModel).where(APIKeyModel.name == name).where(APIKeyModel.revoked == 0)
@@ -79,7 +79,6 @@ def token_create(
             is_admin=is_admin,
             expires_at=expires_at,
         )
-        session.commit()
 
     click.echo(f"key_id: {key_id}")
     click.echo(f"token:  {raw_key}")

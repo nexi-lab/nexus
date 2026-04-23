@@ -128,13 +128,14 @@ async def _mount_workspace(nx: Any, cwd: str) -> None:
 
 
 def _build_tool_registry(nx: Any, cwd: str) -> Any:
-    """Build ToolRegistry with all 6 built-in tools (Tier A).
+    """Build ToolRegistry with all 7 built-in tools (Tier A).
 
     All tools call async NexusFS syscalls.
     """
     from nexus.services.agent_runtime.tool_registry import ToolRegistry
     from nexus.services.agent_runtime.tools import (
         BashTool,
+        BrowserTool,
         EditFileTool,
         GlobTool,
         GrepTool,
@@ -164,6 +165,7 @@ def _build_tool_registry(nx: Any, cwd: str) -> Any:
     registry.register(BashTool(cwd=cwd))
     registry.register(GlobTool(search))
     registry.register(GrepTool(search))
+    registry.register(BrowserTool())
     return registry
 
 

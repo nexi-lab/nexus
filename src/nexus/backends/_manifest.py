@@ -217,22 +217,10 @@ CONNECTOR_MANIFEST: tuple[ConnectorManifestEntry, ...] = (
         service_name="hackernews",
     ),
     # --- Compute ---
-    ConnectorManifestEntry(
-        name="anthropic_native",
-        module_path="nexus.backends.compute.anthropic_native",
-        class_name="CASAnthropicBackend",
-        description="Native Anthropic Claude API (direct SDK, no translation)",
-        category="compute",
-        runtime_deps=(PythonDep("anthropic", extras=("anthropic",)),),
-    ),
-    ConnectorManifestEntry(
-        name="openai_compatible",
-        module_path="nexus.backends.compute.openai_compatible",
-        class_name="CASOpenAIBackend",
-        description="OpenAI-compatible LLM API (OpenAI, SudoRouter, OpenRouter, Ollama)",
-        category="compute",
-        runtime_deps=(PythonDep("openai", extras=("openai",)),),
-    ),
+    # (anthropic_native / openai_compatible migrated to Rust-native LLM
+    # backends on develop (commit 5461136d71b). The backend names remain
+    # valid at the kernel dispatch layer but are no longer
+    # Python-registered connectors, so they have no manifest entry.)
     # --- CLI-backed connectors (gws family) ---
     ConnectorManifestEntry(
         name="gws_gmail",

@@ -36,7 +36,13 @@ class TestManifestStructure:
                 )
 
     def test_expected_connectors_present(self) -> None:
-        """All 22 A-full connectors must appear in the manifest."""
+        """Python-registered A-full connectors must appear in the manifest.
+
+        ``anthropic_native`` and ``openai_compatible`` migrated to the
+        Rust LLM backend layer (develop commit 5461136d71b) — the names
+        remain valid at the kernel dispatch layer but are no longer
+        Python-registered connectors.
+        """
         names = {e.name for e in CONNECTOR_MANIFEST}
         expected = {
             "path_gcs",
@@ -52,8 +58,6 @@ class TestManifestStructure:
             "x_connector",
             "slack_connector",
             "hn_connector",
-            "anthropic_native",
-            "openai_compatible",
             "gws_gmail",
             "gws_calendar",
             "gws_sheets",

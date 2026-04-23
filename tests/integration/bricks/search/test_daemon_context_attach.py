@@ -293,7 +293,7 @@ class TestLoopLocalResolver:
         for eng in list(daemon._path_context_engines_by_loop.values()):
             await eng.dispose()
 
-    async def test_resolver_builds_distinct_caches_per_loop(self, tmp_path) -> None:
+    def test_resolver_builds_distinct_caches_per_loop(self, tmp_path) -> None:
         """Run the resolver on two fresh asyncio loops and confirm the
         daemon caches distinct instances keyed by loop."""
         import asyncio
@@ -342,7 +342,7 @@ class TestResolverPrunesClosedLoops:
     don't accumulate dead refs on long-running servers with worker loop
     churn."""
 
-    async def test_closed_loop_entries_are_pruned(self, tmp_path) -> None:
+    def test_closed_loop_entries_are_pruned(self, tmp_path) -> None:
         import asyncio
 
         from nexus.bricks.search.daemon import DaemonConfig, SearchDaemon

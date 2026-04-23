@@ -671,7 +671,7 @@ class TestAtomicReindex:
     state — old chunks must remain until new chunks are fully committed.
     """
 
-    async def test_pipeline_failure_does_not_delete_old_chunks(self) -> None:
+    def test_pipeline_failure_does_not_delete_old_chunks(self) -> None:
         """When pipeline.index_document raises, no DELETE is executed on the session."""
         file_model = _mock_file_model(
             path_id="pid-1",
@@ -700,7 +700,7 @@ class TestAtomicReindex:
             stmt_str = str(stmt)
             assert "DELETE" not in stmt_str.upper() or "document_chunks" not in stmt_str
 
-    async def test_successful_reindex_delegates_delete_to_pipeline(self) -> None:
+    def test_successful_reindex_delegates_delete_to_pipeline(self) -> None:
         """On success, pipeline handles delete+insert atomically (no service-level delete)."""
         file_model = _mock_file_model(
             path_id="pid-1",
@@ -729,7 +729,7 @@ class TestAtomicReindex:
             stmt_str = str(stmt)
             assert "DELETE" not in stmt_str.upper() or "document_chunks" not in stmt_str
 
-    async def test_hash_not_updated_on_pipeline_failure(self) -> None:
+    def test_hash_not_updated_on_pipeline_failure(self) -> None:
         """When pipeline fails, indexed_content_hash must NOT be updated."""
         file_model = _mock_file_model(
             path_id="pid-1",

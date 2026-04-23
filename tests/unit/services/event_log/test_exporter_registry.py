@@ -199,7 +199,7 @@ class TestExporterRegistryCircuitBreaker:
 
         assert registry.breaker_states["kafka"] == CircuitState.CLOSED.value
 
-    async def test_breaker_trips_after_threshold_failures(self) -> None:
+    def test_breaker_trips_after_threshold_failures(self) -> None:
         """Circuit breaker opens after failure_threshold consecutive failures."""
 
         async def _run():
@@ -216,7 +216,7 @@ class TestExporterRegistryCircuitBreaker:
 
         asyncio.run(_run())
 
-    async def test_open_breaker_fast_fails(self) -> None:
+    def test_open_breaker_fast_fails(self) -> None:
         """OPEN circuit breaker returns all event IDs without calling exporter."""
 
         async def _run():
@@ -239,7 +239,7 @@ class TestExporterRegistryCircuitBreaker:
 
         asyncio.run(_run())
 
-    async def test_partial_failure_records_failure_on_breaker(self) -> None:
+    def test_partial_failure_records_failure_on_breaker(self) -> None:
         """Partial failures (some event IDs returned) record as failure."""
 
         async def _run():
@@ -255,7 +255,7 @@ class TestExporterRegistryCircuitBreaker:
 
         asyncio.run(_run())
 
-    async def test_success_records_success_on_breaker(self) -> None:
+    def test_success_records_success_on_breaker(self) -> None:
         """Successful dispatch after failures keeps breaker CLOSED."""
 
         async def _run():
@@ -277,7 +277,7 @@ class TestExporterRegistryCircuitBreaker:
 
         asyncio.run(_run())
 
-    async def test_independent_breakers_per_exporter(self) -> None:
+    def test_independent_breakers_per_exporter(self) -> None:
         """Each exporter has its own independent circuit breaker."""
 
         async def _run():
@@ -301,7 +301,7 @@ class TestExporterRegistryCircuitBreaker:
 class TestExporterRegistryTimeout:
     """Test per-exporter timeout behavior (Issue #2750)."""
 
-    async def test_timeout_returns_all_ids_as_failed(self) -> None:
+    def test_timeout_returns_all_ids_as_failed(self) -> None:
         """Exporter timeout returns all event IDs as failed."""
 
         async def _run():
@@ -322,7 +322,7 @@ class TestExporterRegistryTimeout:
 
         asyncio.run(_run())
 
-    async def test_timeout_records_failure_on_breaker(self) -> None:
+    def test_timeout_records_failure_on_breaker(self) -> None:
         """Timeout records a failure on the circuit breaker."""
 
         async def _run():
@@ -344,7 +344,7 @@ class TestExporterRegistryTimeout:
 
         asyncio.run(_run())
 
-    async def test_slow_exporter_does_not_block_fast_exporter(self) -> None:
+    def test_slow_exporter_does_not_block_fast_exporter(self) -> None:
         """A slow exporter does not block delivery to a fast exporter."""
 
         async def _run():

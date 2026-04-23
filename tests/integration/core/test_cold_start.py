@@ -75,8 +75,7 @@ class TestColdStartNexusFSConstruction:
         assert nx.service("mount") is None
         assert nx.service("mcp") is None
 
-    @pytest.mark.asyncio
-    async def test_enlist_wired_services(self, tmp_path) -> None:
+    def test_enlist_wired_services(self, tmp_path) -> None:
         """enlist_wired_services should register services via registry (#1708)."""
         from unittest.mock import MagicMock
 
@@ -86,5 +85,5 @@ class TestColdStartNexusFSConstruction:
         nx = make_test_nexus(tmp_path)
 
         mock_svc = MagicMock()
-        await enlist_wired_services(nx, {"rebac_service": mock_svc})
+        enlist_wired_services(nx, {"rebac_service": mock_svc})
         assert nx.service("rebac") is mock_svc

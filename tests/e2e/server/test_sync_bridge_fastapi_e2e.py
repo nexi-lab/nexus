@@ -107,7 +107,7 @@ async def server_app_no_perms(tmp_path):
 class TestServerHealth:
     """Basic server health with our changes."""
 
-    async def test_health_endpoint(self, server_app_no_perms):
+    def test_health_endpoint(self, server_app_no_perms):
         """Server should start and respond to health checks."""
         app, _api_key = server_app_no_perms
 
@@ -132,7 +132,7 @@ class TestFileOperationsE2E:
     with run_sync() and fire_and_forget().
     """
 
-    async def test_write_and_read_file(self, server_app_no_perms):
+    def test_write_and_read_file(self, server_app_no_perms):
         """Write a file via API, then read it back."""
         app, api_key = server_app_no_perms
 
@@ -159,7 +159,7 @@ class TestFileOperationsE2E:
 
         _run_async(_test())
 
-    async def test_write_delete_exists(self, server_app_no_perms):
+    def test_write_delete_exists(self, server_app_no_perms):
         """Write, check exists, delete — exercises event dispatch paths."""
         app, api_key = server_app_no_perms
 
@@ -195,7 +195,7 @@ class TestFileOperationsE2E:
 
         _run_async(_test())
 
-    async def test_concurrent_file_operations(self, server_app_no_perms):
+    def test_concurrent_file_operations(self, server_app_no_perms):
         """Multiple concurrent operations should not deadlock or error."""
         app, api_key = server_app_no_perms
 
@@ -227,7 +227,7 @@ class TestFileOperationsE2E:
 class TestPermissionsE2E:
     """Test that permissions work correctly with our sync_bridge changes."""
 
-    async def test_unauthenticated_request_rejected(self, server_app):
+    def test_unauthenticated_request_rejected(self, server_app):
         """Request without API key should be rejected when auth is enabled."""
         app, _api_key = server_app
 
@@ -245,7 +245,7 @@ class TestPermissionsE2E:
 
         _run_async(_test())
 
-    async def test_authenticated_write_with_permissions(self, server_app):
+    def test_authenticated_write_with_permissions(self, server_app):
         """Authenticated write should work with permissions enforcement."""
         app, api_key = server_app
 
@@ -278,7 +278,7 @@ class TestPermissionsE2E:
 class TestNoAsyncioRunErrors:
     """Verify our changes don't produce asyncio.run() errors in server context."""
 
-    async def test_multiple_sequential_operations_no_loop_error(self, server_app_no_perms):
+    def test_multiple_sequential_operations_no_loop_error(self, server_app_no_perms):
         """Sequential operations should never hit 'cannot call asyncio.run()' error."""
         app, api_key = server_app_no_perms
 

@@ -93,7 +93,7 @@ async def test_app_with_perms(tmp_path):
 class TestValidationRPCEndpoint:
     """E2E: sandbox_validate accessible through FastAPI RPC endpoint."""
 
-    async def test_sandbox_validate_rpc_dispatch(self, test_app):
+    def test_sandbox_validate_rpc_dispatch(self, test_app):
         """sandbox_validate RPC method is dispatched correctly."""
         app, api_key, nx = test_app
 
@@ -117,7 +117,7 @@ class TestValidationRPCEndpoint:
 
         _run_async(_test())
 
-    async def test_sandbox_validate_rpc_with_custom_workspace(self, test_app):
+    def test_sandbox_validate_rpc_with_custom_workspace(self, test_app):
         """sandbox_validate accepts workspace_path parameter via RPC."""
         app, api_key, nx = test_app
 
@@ -140,7 +140,7 @@ class TestValidationRPCEndpoint:
 
         _run_async(_test())
 
-    async def test_sandbox_validate_requires_auth(self, test_app):
+    def test_sandbox_validate_requires_auth(self, test_app):
         """sandbox_validate rejects unauthenticated requests."""
         app, _api_key, _nx = test_app
 

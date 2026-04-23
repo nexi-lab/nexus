@@ -311,10 +311,27 @@ class MetadataMixin:
             zone_id = attrs.get("zone_id", ROOT_ZONE_ID)
             metastore = attrs.get("metastore")
 
-            # LLM backends — Rust owns the ObjectStore; no Python shim.
-            # `backend_type="openai"` / `"anthropic"` triggers the native
-            # construction path in `PyKernel::sys_setattr` via the typed
-            # kwarg passthrough below.
+            # Rust-native backends — Rust owns the ObjectStore; no Python shim.
+            # `backend_type="openai"` / `"anthropic"` / `"remote"` triggers
+            # the native construction path in `PyKernel::sys_setattr` via
+            # the typed kwarg passthrough below.
+            if backend_type == "remote" and backend is None:
+                _backend_name = attrs.get("backend_name", "remote")
+                result = self._kernel.sys_setattr(
+                    path,
+                    entry_type,
+                    _backend_name,
+                    backend_type="remote",
+                    server_address=attrs.get("server_address"),
+                    remote_auth_token=attrs.get("remote_auth_token"),
+                    remote_ca_pem=attrs.get("remote_ca_pem"),
+                    remote_cert_pem=attrs.get("remote_cert_pem"),
+                    remote_key_pem=attrs.get("remote_key_pem"),
+                    remote_timeout=float(attrs.get("remote_timeout", 90.0)),
+                    zone_id=zone_id,
+                )
+                return result
+
             if backend_type in ("openai", "anthropic") and backend is None:
                 _backend_name = attrs.get("backend_name", backend_type)
                 result = self._kernel.sys_setattr(

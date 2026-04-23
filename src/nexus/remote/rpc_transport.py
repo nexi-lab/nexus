@@ -1,7 +1,7 @@
 """Sync gRPC transport client for the REMOTE deployment profile.
 
 Client-side gRPC transport that replaces the duplicated HTTP/JSON-RPC
-transport (httpx + tenacity) in ``RemoteBackend`` and ``RemoteMetastore``
+transport (httpx + tenacity) in ``RemoteBackend`` and ``RemoteMetastore`` (now Rust)
 with a single gRPC channel.
 
 Phase 1 (PR #2667): Generic ``call_rpc()`` — method name + JSON payload.
@@ -50,7 +50,7 @@ _CHANNEL_OPTIONS = build_channel_options(
 
 
 class RPCTransport:
-    """Sync gRPC transport — replaces HTTP/JSON-RPC in RemoteBackend & RemoteMetastore.
+    """Sync gRPC transport — replaces HTTP/JSON-RPC in RemoteBackend & RemoteMetastore (now Rust).
 
     Creates a single ``grpc.Channel`` with automatic keepalive and retry.
     All RPC calls go through the generic ``NexusVFSService.Call`` endpoint

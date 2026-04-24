@@ -1436,6 +1436,44 @@ class PostgresAuthProfileStore:
         )
         return profile, self._deserialize_credential(plaintext)
 
+    def assert_machine_active(self, *, principal_id: uuid.UUID, machine_id: uuid.UUID) -> None:
+        """Reject if the daemon's machine row is missing or revoked.
+
+        Mirrors the check the auth-profiles push router performs: a JWT
+        cryptographically valid is not enough — the daemon's row must still
+        be present and unrevoked at the time of every credential read. Without
+        this, a JWT minted before revocation can keep returning provider
+        bearers until natural expiry. Raises ``MachineUnknownOrRevoked``.
+        """
+        from nexus.bricks.auth.consumer import MachineUnknownOrRevoked
+
+        with self._scoped() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT revoked_at FROM daemon_machines "
+                    "WHERE tenant_id = :t AND principal_id = :p AND id = :m"
+                ),
+                {
+                    "t": str(self._tenant_id),
+                    "p": str(principal_id),
+                    "m": str(machine_id),
+                },
+            ).fetchone()
+        if row is None:
+            raise MachineUnknownOrRevoked.from_row(
+                tenant_id=self._tenant_id,
+                principal_id=principal_id,
+                provider="-",
+                cause="machine_unknown",
+            )
+        if row.revoked_at is not None:
+            raise MachineUnknownOrRevoked.from_row(
+                tenant_id=self._tenant_id,
+                principal_id=principal_id,
+                provider="-",
+                cause="machine_revoked",
+            )
+
     def decrypt_profile(
         self,
         *,
@@ -1446,35 +1484,47 @@ class PostgresAuthProfileStore:
     ) -> DecryptedProfile:
         """Decrypt the envelope row matching (tenant, principal, provider).
 
-        Selects the most-recently-updated row for that triple (the daemon may
-        have pushed multiple over time; we always read newest). Raises
-        ``ProfileNotFound`` if no row exists.
+        Fetches up to 2 rows for that triple. If 2 rows are returned the
+        request is ambiguous — the wire contract has no profile_id field
+        to disambiguate, so we fail closed with
+        ``MultipleProfilesForProvider`` rather than silently pick the
+        newest (which could hand back the wrong account's credentials).
+        Raises ``ProfileNotFound`` if no row exists.
 
         DEK is unwrapped via ``encryption.unwrap_dek`` with cache-through on
         ``dek_cache``. AES-GCM decrypt failures bubble as ``EnvelopeError``
         subclasses (no plaintext in repr).
         """
+        from nexus.bricks.auth.consumer import MultipleProfilesForProvider
+
         with self._scoped() as conn:
-            row = conn.execute(
+            rows = conn.execute(
                 text(
                     "SELECT id, ciphertext, wrapped_dek, nonce, aad, kek_version, "
                     "       last_synced_at, sync_ttl_seconds "
                     "FROM auth_profiles "
                     "WHERE tenant_id = :t AND principal_id = :p AND provider = :prov "
                     "  AND ciphertext IS NOT NULL "
-                    "ORDER BY updated_at DESC LIMIT 1"
+                    "ORDER BY updated_at DESC LIMIT 2"
                 ),
                 {"t": str(self._tenant_id), "p": str(principal_id), "prov": provider},
-            ).fetchone()
+            ).fetchall()
 
-        if row is None:
+        if not rows:
             raise ProfileNotFound(
                 tenant_id=self._tenant_id,
                 principal_id=principal_id,
                 provider=provider,
             )
+        if len(rows) > 1:
+            raise MultipleProfilesForProvider.from_row(
+                tenant_id=self._tenant_id,
+                principal_id=principal_id,
+                provider=provider,
+                cause=f"{len(rows)}+ active envelopes; collapse to one or upgrade wire contract",
+            )
 
-        profile_id, ciphertext, wrapped_dek, nonce, aad, kek_version, lsa, sttl = row
+        profile_id, ciphertext, wrapped_dek, nonce, aad, kek_version, lsa, sttl = rows[0]
 
         # Defense-in-depth: cross-check the row's stored AAD against the
         # tenant|principal|profile_id format that writers use. AES-GCM tag

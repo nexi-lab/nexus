@@ -21,12 +21,18 @@ from fastapi.responses import JSONResponse
 from nexus.bricks.auth.consumer import (
     AdapterMaterializeFailed,
     CredentialConsumer,
+    MachineUnknownOrRevoked,
+    MultipleProfilesForProvider,
     ProfileNotFoundForCaller,
     ProviderNotConfigured,
     StaleSource,
 )
 from nexus.bricks.auth.envelope import EncryptionProvider, EnvelopeError
 from nexus.server.api.v1.jwt_signer import JwtSigner, JwtVerifyError
+
+# RFC 6749 §5.1 — token responses MUST NOT be cached. Applied to both
+# success and error responses since either may carry sensitive data.
+_NO_STORE_HEADERS = {"Cache-Control": "no-store", "Pragma": "no-cache"}
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +50,7 @@ def _err(http_status: int, code: str, description: str) -> JSONResponse:
     return JSONResponse(
         status_code=http_status,
         content={"error": code, "error_description": description},
+        headers=_NO_STORE_HEADERS,
     )
 
 
@@ -105,8 +112,16 @@ def make_token_exchange_router(
                 purpose=scope,
                 force_refresh=force_refresh,
             )
+        except MachineUnknownOrRevoked as exc:
+            # Cryptographically valid JWT but the daemon row is missing or
+            # revoked — treat as 401 invalid_token so a compromised daemon's
+            # JWT stops working the moment its row is revoked, even if the
+            # JWT has not yet expired.
+            return _err(401, "invalid_token", exc.cause or "machine_revoked")
         except (ProfileNotFoundForCaller, ProviderNotConfigured) as exc:
             return _err(403, "access_denied", exc.cause or "")
+        except MultipleProfilesForProvider as exc:
+            return _err(409, "ambiguous_profile", exc.cause or "")
         except StaleSource as exc:
             return _err(409, "stale_source", exc.cause or "")
         except (AdapterMaterializeFailed, EnvelopeError) as exc:
@@ -117,12 +132,15 @@ def make_token_exchange_router(
         if cred.expires_at is not None:
             expires_in = max(0, int((cred.expires_at - datetime.now(UTC)).total_seconds()))
 
-        return {
-            "access_token": cred.access_token,
-            "issued_token_type": _ISSUED_TYPE,
-            "token_type": "Bearer",
-            "expires_in": expires_in,
-            "nexus_credential_metadata": cred.metadata,
-        }
+        return JSONResponse(
+            content={
+                "access_token": cred.access_token,
+                "issued_token_type": _ISSUED_TYPE,
+                "token_type": "Bearer",
+                "expires_in": expires_in,
+                "nexus_credential_metadata": cred.metadata,
+            },
+            headers=_NO_STORE_HEADERS,
+        )
 
     return router

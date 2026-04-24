@@ -110,6 +110,18 @@ def test_s3_list_buckets_as_user_via_token_exchange():
         )
         conn.execute(
             text(
+                "INSERT INTO daemon_machines (id, tenant_id, principal_id, pubkey) "
+                "VALUES (:m, :t, :p, :pk) ON CONFLICT DO NOTHING"
+            ),
+            {
+                "m": str(machine),
+                "t": str(tenant),
+                "p": str(principal),
+                "pk": b"e2e-pubkey-" + machine.bytes,
+            },
+        )
+        conn.execute(
+            text(
                 "INSERT INTO auth_profiles "
                 "(tenant_id, principal_id, id, provider, account_identifier, "
                 " backend, backend_key, last_synced_at, sync_ttl_seconds, "

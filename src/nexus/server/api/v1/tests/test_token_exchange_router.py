@@ -131,12 +131,42 @@ def _seed_github(
         )
 
 
+def _seed_active_machine(engine: Engine, tenant: uuid.UUID, principal: uuid.UUID) -> uuid.UUID:
+    machine_id = uuid.uuid4()
+    with engine.begin() as conn:
+        conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(tenant)})
+        conn.execute(
+            text("INSERT INTO tenants (id, name) VALUES (:id, :n) ON CONFLICT DO NOTHING"),
+            {"id": str(tenant), "n": f"tx-{tenant}"},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO principals (id, tenant_id, kind) VALUES (:id, :t, 'human') "
+                "ON CONFLICT DO NOTHING"
+            ),
+            {"id": str(principal), "t": str(tenant)},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO daemon_machines (id, tenant_id, principal_id, pubkey) "
+                "VALUES (:m, :t, :p, :pk) ON CONFLICT DO NOTHING"
+            ),
+            {
+                "m": str(machine_id),
+                "t": str(tenant),
+                "p": str(principal),
+                "pk": b"test-pubkey-" + machine_id.bytes,
+            },
+        )
+    return machine_id
+
+
 def test_token_exchange_happy_path_returns_200_with_bearer(engine: Engine) -> None:
     tenant = uuid.uuid4()
     principal = uuid.uuid4()
-    machine = uuid.uuid4()
     app, signer, encryption = _build_app(engine, tenant, principal)
     _seed_github(engine, tenant, principal, encryption)
+    machine = _seed_active_machine(engine, tenant, principal)
     jwt = signer.sign(
         DaemonClaims(tenant_id=tenant, principal_id=principal, machine_id=machine),
         ttl=timedelta(hours=1),
@@ -160,6 +190,67 @@ def test_token_exchange_happy_path_returns_200_with_bearer(engine: Engine) -> No
     assert body["issued_token_type"] == "urn:ietf:params:oauth:token-type:access_token"
     assert "nexus_credential_metadata" in body
     assert body["nexus_credential_metadata"]["scopes_csv"] == "repo"
+    # RFC 6749 §5.1: token responses MUST NOT be cached.
+    assert r.headers.get("cache-control") == "no-store"
+    assert r.headers.get("pragma") == "no-cache"
+
+
+def test_token_exchange_revoked_machine_returns_401(engine: Engine) -> None:
+    tenant = uuid.uuid4()
+    principal = uuid.uuid4()
+    app, signer, encryption = _build_app(engine, tenant, principal)
+    _seed_github(engine, tenant, principal, encryption)
+    machine = _seed_active_machine(engine, tenant, principal)
+    with engine.begin() as conn:
+        conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(tenant)})
+        conn.execute(
+            text("UPDATE daemon_machines SET revoked_at = NOW() WHERE id = :m"),
+            {"m": str(machine)},
+        )
+    jwt = signer.sign(
+        DaemonClaims(tenant_id=tenant, principal_id=principal, machine_id=machine),
+        ttl=timedelta(hours=1),
+    )
+    client = TestClient(app)
+    r = client.post(
+        "/v1/auth/token-exchange",
+        data={
+            "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+            "subject_token": jwt,
+            "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+            "resource": "urn:nexus:provider:github",
+            "scope": "x",
+        },
+    )
+    assert r.status_code == 401
+    assert r.json()["error"] == "invalid_token"
+    assert "machine_revoked" in r.json()["error_description"]
+
+
+def test_token_exchange_unknown_machine_returns_401(engine: Engine) -> None:
+    tenant = uuid.uuid4()
+    principal = uuid.uuid4()
+    app, signer, encryption = _build_app(engine, tenant, principal)
+    _seed_github(engine, tenant, principal, encryption)
+    # Don't seed daemon_machines — JWT carries an unknown machine_id.
+    jwt = signer.sign(
+        DaemonClaims(tenant_id=tenant, principal_id=principal, machine_id=uuid.uuid4()),
+        ttl=timedelta(hours=1),
+    )
+    client = TestClient(app)
+    r = client.post(
+        "/v1/auth/token-exchange",
+        data={
+            "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+            "subject_token": jwt,
+            "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+            "resource": "urn:nexus:provider:github",
+            "scope": "x",
+        },
+    )
+    assert r.status_code == 401
+    assert r.json()["error"] == "invalid_token"
+    assert "machine_unknown" in r.json()["error_description"]
 
 
 def test_token_exchange_invalid_jwt_returns_401(engine: Engine) -> None:
@@ -207,15 +298,10 @@ def test_token_exchange_no_profile_returns_403(engine: Engine) -> None:
     tenant = uuid.uuid4()
     principal = uuid.uuid4()
     app, signer, _ = _build_app(engine, tenant, principal)
-    # Seed tenant + principal but no profile
-    with engine.begin() as conn:
-        conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(tenant)})
-        conn.execute(
-            text("INSERT INTO tenants (id, name) VALUES (:id, :n) ON CONFLICT DO NOTHING"),
-            {"id": str(tenant), "n": f"tx-{tenant}"},
-        )
+    # Seed tenant + principal + active machine but no envelope profile
+    machine = _seed_active_machine(engine, tenant, principal)
     jwt = signer.sign(
-        DaemonClaims(tenant_id=tenant, principal_id=principal, machine_id=uuid.uuid4()),
+        DaemonClaims(tenant_id=tenant, principal_id=principal, machine_id=machine),
         ttl=timedelta(hours=1),
     )
     client = TestClient(app)

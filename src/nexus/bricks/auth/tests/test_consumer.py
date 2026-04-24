@@ -12,6 +12,8 @@ from sqlalchemy import create_engine, text
 
 from nexus.bricks.auth.consumer import (
     CredentialConsumer,
+    MachineUnknownOrRevoked,
+    MultipleProfilesForProvider,
     ProfileNotFoundForCaller,
     ProviderNotConfigured,
     StaleSource,
@@ -84,6 +86,50 @@ def _seed_github_envelope(
         )
 
 
+def _seed_active_machine(*, engine, tenant_id, principal_id) -> uuid.UUID:
+    """Insert a tenant/principal/active-daemon row; return the machine UUID.
+
+    Required because consumer.resolve now performs a daemon_machines
+    revocation check before any cache lookup or decrypt.
+    """
+    machine_id = uuid.uuid4()
+    with engine.begin() as conn:
+        conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(tenant_id)})
+        conn.execute(
+            text("INSERT INTO tenants (id, name) VALUES (:id, :n) ON CONFLICT DO NOTHING"),
+            {"id": str(tenant_id), "n": f"tx-{tenant_id}"},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO principals (id, tenant_id, kind) VALUES (:id, :t, 'human') "
+                "ON CONFLICT DO NOTHING"
+            ),
+            {"id": str(principal_id), "t": str(tenant_id)},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO daemon_machines (id, tenant_id, principal_id, pubkey) "
+                "VALUES (:m, :t, :p, :pk) ON CONFLICT DO NOTHING"
+            ),
+            {
+                "m": str(machine_id),
+                "t": str(tenant_id),
+                "p": str(principal_id),
+                "pk": b"test-pubkey-" + machine_id.bytes,
+            },
+        )
+    return machine_id
+
+
+def _revoke_machine(*, engine, tenant_id, machine_id) -> None:
+    with engine.begin() as conn:
+        conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(tenant_id)})
+        conn.execute(
+            text("UPDATE daemon_machines SET revoked_at = NOW() WHERE id = :m"),
+            {"m": str(machine_id)},
+        )
+
+
 def _make_consumer(engine, tenant_id, principal_id=None, encryption=None, cache=None):
     encryption = encryption or InMemoryEncryptionProvider()
     cache = cache or ResolvedCredCache(ceiling_seconds=300)
@@ -103,11 +149,11 @@ def _make_consumer(engine, tenant_id, principal_id=None, encryption=None, cache=
     )
 
 
-def _claims(tenant_id, principal_id):
+def _claims(tenant_id, principal_id, machine_id=None):
     return DaemonClaims(
         tenant_id=tenant_id,
         principal_id=principal_id,
-        machine_id=uuid.uuid4(),
+        machine_id=machine_id or uuid.uuid4(),
     )
 
 
@@ -118,10 +164,11 @@ def test_resolve_happy_path_returns_materialized_cred(engine):
     _seed_github_envelope(
         engine=engine, tenant_id=tenant, principal_id=principal, encryption=encryption
     )
+    machine = _seed_active_machine(engine=engine, tenant_id=tenant, principal_id=principal)
     consumer = _make_consumer(engine, tenant, principal, encryption=encryption)
 
     out = consumer.resolve(
-        claims=_claims(tenant, principal),
+        claims=_claims(tenant, principal, machine),
         provider="github",
         purpose="list-repos",
     )
@@ -136,15 +183,20 @@ def test_resolve_warm_cache_skips_decrypt(engine):
     _seed_github_envelope(
         engine=engine, tenant_id=tenant, principal_id=principal, encryption=encryption
     )
+    machine = _seed_active_machine(engine=engine, tenant_id=tenant, principal_id=principal)
     consumer = _make_consumer(engine, tenant, principal, encryption=encryption)
 
-    first = consumer.resolve(claims=_claims(tenant, principal), provider="github", purpose="x")
+    first = consumer.resolve(
+        claims=_claims(tenant, principal, machine), provider="github", purpose="x"
+    )
     # Drop the row so a second decrypt would fail
     with engine.begin() as conn:
         conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(tenant)})
         conn.execute(text("DELETE FROM auth_profiles WHERE tenant_id = :t"), {"t": str(tenant)})
 
-    second = consumer.resolve(claims=_claims(tenant, principal), provider="github", purpose="x")
+    second = consumer.resolve(
+        claims=_claims(tenant, principal, machine), provider="github", purpose="x"
+    )
     assert second is first  # cached, same object
 
 
@@ -155,17 +207,18 @@ def test_resolve_force_refresh_bypasses_cache(engine):
     _seed_github_envelope(
         engine=engine, tenant_id=tenant, principal_id=principal, encryption=encryption
     )
+    machine = _seed_active_machine(engine=engine, tenant_id=tenant, principal_id=principal)
     consumer = _make_consumer(engine, tenant, principal, encryption=encryption)
 
     # Prime the cache.
-    consumer.resolve(claims=_claims(tenant, principal), provider="github", purpose="x")
+    consumer.resolve(claims=_claims(tenant, principal, machine), provider="github", purpose="x")
     with engine.begin() as conn:
         conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(tenant)})
         conn.execute(text("DELETE FROM auth_profiles WHERE tenant_id = :t"), {"t": str(tenant)})
 
     with pytest.raises(ProfileNotFoundForCaller):
         consumer.resolve(
-            claims=_claims(tenant, principal),
+            claims=_claims(tenant, principal, machine),
             provider="github",
             purpose="x",
             force_refresh=True,
@@ -175,16 +228,11 @@ def test_resolve_force_refresh_bypasses_cache(engine):
 def test_resolve_raises_profile_not_found(engine):
     tenant = uuid.uuid4()
     principal = uuid.uuid4()
-    with engine.begin() as conn:
-        conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(tenant)})
-        conn.execute(
-            text("INSERT INTO tenants (id, name) VALUES (:id, :n) ON CONFLICT DO NOTHING"),
-            {"id": str(tenant), "n": f"tx-{tenant}"},
-        )
+    machine = _seed_active_machine(engine=engine, tenant_id=tenant, principal_id=principal)
     consumer = _make_consumer(engine, tenant, principal)
 
     with pytest.raises(ProfileNotFoundForCaller):
-        consumer.resolve(claims=_claims(tenant, principal), provider="github", purpose="x")
+        consumer.resolve(claims=_claims(tenant, principal, machine), provider="github", purpose="x")
 
 
 def test_resolve_raises_provider_not_configured(engine):
@@ -211,6 +259,84 @@ def test_resolve_raises_stale_source_when_last_synced_past_ttl(engine):
         sync_ttl=60,
         lsa_offset_seconds=120,  # 2 minutes ago, TTL is 60s → stale
     )
+    machine = _seed_active_machine(engine=engine, tenant_id=tenant, principal_id=principal)
     consumer = _make_consumer(engine, tenant, principal, encryption=encryption)
     with pytest.raises(StaleSource):
+        consumer.resolve(claims=_claims(tenant, principal, machine), provider="github", purpose="x")
+
+
+def test_resolve_rejects_unknown_machine(engine):
+    """JWT-valid but no daemon_machines row → MachineUnknownOrRevoked."""
+    tenant = uuid.uuid4()
+    principal = uuid.uuid4()
+    encryption = InMemoryEncryptionProvider()
+    _seed_github_envelope(
+        engine=engine, tenant_id=tenant, principal_id=principal, encryption=encryption
+    )
+    # No _seed_active_machine — claims carry a fresh machine_id with no row.
+    consumer = _make_consumer(engine, tenant, principal, encryption=encryption)
+    with pytest.raises(MachineUnknownOrRevoked) as exc:
         consumer.resolve(claims=_claims(tenant, principal), provider="github", purpose="x")
+    assert exc.value.cause == "machine_unknown"
+
+
+def test_resolve_rejects_revoked_machine_even_when_cached(engine):
+    """Revoking the daemon row mid-cache must invalidate further reads."""
+    tenant = uuid.uuid4()
+    principal = uuid.uuid4()
+    encryption = InMemoryEncryptionProvider()
+    _seed_github_envelope(
+        engine=engine, tenant_id=tenant, principal_id=principal, encryption=encryption
+    )
+    machine = _seed_active_machine(engine=engine, tenant_id=tenant, principal_id=principal)
+    consumer = _make_consumer(engine, tenant, principal, encryption=encryption)
+
+    # Prime cache.
+    consumer.resolve(claims=_claims(tenant, principal, machine), provider="github", purpose="x")
+    # Revoke after cache populated.
+    _revoke_machine(engine=engine, tenant_id=tenant, machine_id=machine)
+    with pytest.raises(MachineUnknownOrRevoked) as exc:
+        consumer.resolve(claims=_claims(tenant, principal, machine), provider="github", purpose="x")
+    assert exc.value.cause == "machine_revoked"
+
+
+def test_resolve_rejects_when_multiple_profiles_for_provider(engine):
+    """Two envelope rows for same (tenant, principal, provider) → fail closed."""
+    tenant = uuid.uuid4()
+    principal = uuid.uuid4()
+    encryption = InMemoryEncryptionProvider()
+    # First profile — uses the helper which writes 'github-default'.
+    _seed_github_envelope(
+        engine=engine, tenant_id=tenant, principal_id=principal, encryption=encryption
+    )
+    # Second profile, different id, same provider — manually inserted.
+    payload = json.dumps({"token": "ghp_other", "scopes": ["repo"]}).encode()
+    aad = str(tenant).encode() + b"|" + str(principal).encode() + b"|" + b"github-other"
+    dek = b"\x02" * 32
+    nonce, ct = AESGCMEnvelope().encrypt(dek, payload, aad=aad)
+    wrapped, kv = encryption.wrap_dek(dek, tenant_id=tenant, aad=aad)
+    with engine.begin() as conn:
+        conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(tenant)})
+        conn.execute(
+            text(
+                "INSERT INTO auth_profiles "
+                "(tenant_id, principal_id, id, provider, account_identifier, "
+                " backend, backend_key, last_synced_at, sync_ttl_seconds, "
+                " ciphertext, wrapped_dek, nonce, aad, kek_version) "
+                "VALUES (:t, :p, 'github-other', 'github', 'other', 'envelope', 'k', "
+                " NOW(), 300, :ct, :wd, :no, :aad, :kv)"
+            ),
+            {
+                "t": str(tenant),
+                "p": str(principal),
+                "ct": ct,
+                "wd": wrapped,
+                "no": nonce,
+                "aad": aad,
+                "kv": kv,
+            },
+        )
+    machine = _seed_active_machine(engine=engine, tenant_id=tenant, principal_id=principal)
+    consumer = _make_consumer(engine, tenant, principal, encryption=encryption)
+    with pytest.raises(MultipleProfilesForProvider):
+        consumer.resolve(claims=_claims(tenant, principal, machine), provider="github", purpose="x")

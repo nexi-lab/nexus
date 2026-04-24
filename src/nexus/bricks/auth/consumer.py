@@ -125,6 +125,28 @@ class AdapterMaterializeFailed(ConsumerError):
     """Provider adapter raised while decoding the envelope payload."""
 
 
+class MachineUnknownOrRevoked(ConsumerError):
+    """Daemon machine row absent or has revoked_at set.
+
+    Distinct from a JWT verification failure — the JWT is cryptographically
+    valid but the daemon has been revoked (or its row deleted) since the
+    token was issued. Router maps this to 401 invalid_token so a compromised
+    daemon stops minting upstream creds the moment its row is revoked.
+    """
+
+
+class MultipleProfilesForProvider(ConsumerError):
+    """More than one envelope row exists for (tenant, principal, provider).
+
+    The wire contract today maps ``resource=urn:nexus:provider:<name>`` to a
+    single provider name with no profile_id discriminator, so we cannot
+    deterministically pick one row. Fail closed instead of silently picking
+    the most-recently-updated row, which could hand back the wrong account's
+    credentials. Operators must collapse to one active envelope per provider
+    or upgrade the wire contract.
+    """
+
+
 # ---------------------------------------------------------------------------
 # CredentialConsumer (orchestrator) — implementation in Task 8
 # ---------------------------------------------------------------------------
@@ -216,6 +238,15 @@ class CredentialConsumer:
             )
             now = datetime.now(UTC)
 
+            # Revocation gate (BEFORE cache lookup): a JWT minted before the
+            # daemon row was revoked must not keep handing out cached
+            # credentials until natural expiry. Per-request indexed lookup —
+            # one row, one column, one ms.
+            self._get_store(claims).assert_machine_active(
+                principal_id=claims.principal_id,
+                machine_id=claims.machine_id,
+            )
+
             if not force_refresh:
                 cached = self._cred_cache.get(cache_key, now=now)
                 if cached is not None:
@@ -283,8 +314,11 @@ class CredentialConsumer:
             )
             return materialized
 
-        except (ProfileNotFoundForCaller, ProviderNotConfigured):
+        except (ProfileNotFoundForCaller, ProviderNotConfigured, MachineUnknownOrRevoked):
             result_label = "denied"
+            raise
+        except MultipleProfilesForProvider:
+            result_label = "ambiguous"
             raise
         except StaleSource:
             result_label = "stale"

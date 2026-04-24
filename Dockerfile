@@ -205,21 +205,40 @@ ENV GLIBC_TUNABLES="glibc.rtld.optional_static_tls=16384"
 # gh: GitHub CLI for GitHub connector
 # Skipped for SANDBOX (#3778) — these connectors aren't used in the sandbox profile.
 ARG TARGETARCH
+# Retry wrapper: 3 attempts with exponential backoff for flaky external
+# network steps (cli.github.com keyring, apt repo sync). Previously a
+# transient curl/apt failure in --no-cache rebuilds aborted the whole
+# image build (#3784 follow-up).
 RUN set -eux; \
+    retry() { \
+        local n=0 max=3 delay=5; \
+        until "$@"; do \
+            n=$((n + 1)); \
+            if [ "$n" -ge "$max" ]; then \
+                echo "retry: giving up on: $*" >&2; \
+                return 1; \
+            fi; \
+            echo "retry: attempt $n failed, sleeping ${delay}s before retry" >&2; \
+            sleep "$delay"; \
+            delay=$((delay * 2)); \
+        done; \
+    }; \
     case ",${NEXUS_PROFILE_EXTRAS}," in \
       *,all,*) \
         ARCH=$([ "${TARGETARCH}" = "arm64" ] && echo "aarch64" || echo "x86_64"); \
         tmpdir="$(mktemp -d)"; \
         trap 'rm -rf "$tmpdir"' EXIT; \
-        curl -fsSL "https://github.com/googleworkspace/cli/releases/latest/download/google-workspace-cli-${ARCH}-unknown-linux-gnu.tar.gz" \
-            | tar -xz -C "$tmpdir"; \
+        retry curl -fsSL -o "$tmpdir/gws.tgz" \
+            "https://github.com/googleworkspace/cli/releases/latest/download/google-workspace-cli-${ARCH}-unknown-linux-gnu.tar.gz"; \
+        tar -xz -C "$tmpdir" -f "$tmpdir/gws.tgz"; \
         install -m 0755 "$tmpdir/gws" /usr/local/bin/gws; \
         sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources; \
-        curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-            | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && \
+        retry curl -fsSL -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
+            https://cli.github.com/packages/githubcli-archive-keyring.gpg && \
         echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
             > /etc/apt/sources.list.d/github-cli.list && \
-        apt-get update && apt-get install -y --no-install-recommends git gh && \
+        retry apt-get update && \
+        retry apt-get install -y --no-install-recommends git gh && \
         rm -rf /var/lib/apt/lists/* && \
         gws --version && gh --version ;; \
       *) echo "Skipping gws/gh CLI connectors for extras: ${NEXUS_PROFILE_EXTRAS}" ;; \

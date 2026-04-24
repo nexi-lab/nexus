@@ -47,6 +47,17 @@ def _add_health_check_route(mcp_server: Any) -> None:
         )
 
 
+def _extract_bearer_token(request: "Request") -> str | None:
+    """Pull an API key from ``X-Nexus-API-Key`` or ``Authorization: Bearer``."""
+    api_key = request.headers.get("X-Nexus-API-Key") or request.headers.get("x-nexus-api-key")
+    if api_key:
+        return api_key
+    auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
+    if auth_header and auth_header.lower().startswith("bearer "):
+        return auth_header[7:]
+    return None
+
+
 class _APIKeyMiddleware(BaseHTTPMiddleware):
     """Extract API key from HTTP headers into request contextvar.
 
@@ -54,18 +65,41 @@ class _APIKeyMiddleware(BaseHTTPMiddleware):
     ``mcp.run(middleware=[Middleware(_APIKeyMiddleware)])``.
     FastMCP's ``http_app()`` returns a fresh Starlette app on each
     call, so middleware added after the fact is lost.
+
+    Hub opt-in (#3784): when ``NEXUS_MCP_REQUIRE_BEARER=true``, missing
+    bearer is rejected with 401 BEFORE the tool layer can fall back to
+    an ambient ``_default_nx`` connection seeded with ``NEXUS_API_KEY``
+    / profile credentials. This prevents unauthenticated requests from
+    executing as the frontend's ambient identity on two-service hub
+    deployments. ``/health`` is always allowed through so container
+    healthchecks keep working.
     """
 
     async def dispatch(self, request: "Request", call_next: Any) -> "Response":
+        import os
+
         from nexus.bricks.mcp import reset_request_api_key, set_request_api_key
 
-        api_key = request.headers.get("X-Nexus-API-Key") or request.headers.get("x-nexus-api-key")
-        if not api_key:
-            auth_header = request.headers.get("Authorization") or request.headers.get(
-                "authorization"
+        api_key = _extract_bearer_token(request)
+
+        # Fail-closed when the deployment opts into hub-frontend mode.
+        require_bearer = os.environ.get("NEXUS_MCP_REQUIRE_BEARER", "").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        if require_bearer and not api_key and request.url.path != "/health":
+            from starlette.responses import JSONResponse
+
+            return cast(
+                "Response",
+                JSONResponse(
+                    {"error": "missing_bearer_token"},
+                    status_code=401,
+                    headers={"WWW-Authenticate": 'Bearer realm="nexus-hub"'},
+                ),
             )
-            if auth_header and auth_header.lower().startswith("bearer "):
-                api_key = auth_header[7:]
+
         token = set_request_api_key(api_key) if api_key else None
         try:
             response = await call_next(request)
@@ -73,6 +107,87 @@ class _APIKeyMiddleware(BaseHTTPMiddleware):
         finally:
             if token is not None:
                 reset_request_api_key(token)
+
+
+def _reject_embedded_hub_mode(transport: str, remote_url: str | None = None) -> None:
+    """Refuse ``nexus mcp serve --transport http`` in embedded hub mode (#3784).
+
+    "Embedded hub" = ``NEXUS_DATABASE_URL`` set AND no remote URL
+    resolvable from ``--remote-url``, ``NEXUS_URL``, or the active
+    profile, on an HTTP transport. This configuration would accept
+    bearer tokens but run every tool call against the ambient local
+    ``NexusFS`` — no per-token identity, no zone isolation, no
+    connection to the hub's Postgres auth layer in the tool path.
+
+    The supported hub deployment is the two-service design in
+    ``docker-compose.hub.yml``: an ``nexusd`` RPC server plus a thin
+    ``nexus mcp serve --url http://nexus:2026`` frontend. The frontend
+    opens a per-request remote ``NexusFS`` with the client's bearer
+    and the RPC server's ``DatabaseAPIKeyAuth`` enforces identity/zone
+    on every call.
+
+    We fail closed at startup so operators see a clear error instead of
+    silently getting an unsafe deployment. Launches that provide the
+    remote URL via any supported channel (``--remote-url`` CLI flag,
+    ``NEXUS_URL`` env, active profile) are allowed through — those are
+    the two-service-safe shapes we actually want people to use.
+    """
+    import os
+
+    # stdio is single-user (no network) and safe. Every other transport
+    # (http, sse, and any future network transport) accepts bearer
+    # tokens from multiple clients, so the same guard applies (#3784
+    # round 10: SSE was previously skipped here and silently fell back
+    # to the ambient NexusFS).
+    if transport == "stdio":
+        return
+    if not os.environ.get("NEXUS_DATABASE_URL"):
+        return
+
+    # Resolve the effective remote URL the same way `_async_serve` will
+    # — CLI flag first, then env, then active profile — so a safe
+    # remote frontend launched as
+    # `nexus --profile hub mcp serve --transport http` is not
+    # false-rejected. `get_filesystem` reads the profile from
+    # ``ctx.obj['profile']`` (set by the root `nexus` command), so we
+    # do the same here.
+    if remote_url:
+        return
+    if os.environ.get("NEXUS_URL"):
+        return
+    try:
+        from nexus.cli.config import resolve_connection
+
+        profile_name = None
+        try:
+            ctx = click.get_current_context(silent=True)
+            if ctx is not None and ctx.obj:
+                profile_name = ctx.obj.get("profile")
+        except RuntimeError:
+            pass
+
+        resolved = resolve_connection(
+            remote_url=None,
+            remote_api_key=None,
+            profile_name=profile_name,
+        )
+        if getattr(resolved, "is_remote", False):
+            return
+    except Exception:
+        # If profile resolution itself is broken, fall through to the
+        # fail-closed error below — that's safer than masking a missing
+        # remote URL with an unrelated exception.
+        pass
+
+    raise click.ClickException(
+        "Embedded hub mode (NEXUS_DATABASE_URL set + no remote URL + "
+        "--transport http) is not supported: tool calls would run under "
+        "ambient local identity without per-token zone isolation. "
+        "Use the two-service hub deployment instead: run `nexusd` as the "
+        "RPC server and point this MCP frontend at it with "
+        "`--remote-url http://<nexus-host>:2026` or NEXUS_URL=…. "
+        "See docker-compose.hub.yml and docs/hub-deploy.md."
+    )
 
 
 def _build_http_middleware() -> list[Any]:
@@ -225,13 +340,83 @@ def serve(
         NEXUS_URL=http://localhost:2026 NEXUS_API_KEY=YOUR_KEY nexus mcp serve
     """
     import asyncio
+    import os
+
+    # Resolve the effective remote URL/api_key once — same logic
+    # ``get_filesystem`` uses — and thread the resolved values into
+    # both the startup guard and the MCP server. For profile-only
+    # launches (e.g. `nexus --profile hub mcp serve`), this promotes
+    # the profile's URL into the `remote_url` passed to
+    # `create_mcp_server`, so per-request bearer tokens actually build
+    # per-request remote connections instead of falling through to an
+    # ambient `_default_nx` (#3784 round 7 fix).
+    resolved_remote_url = remote_url
+    resolved_remote_api_key = remote_api_key
+    try:
+        from nexus.cli.config import resolve_connection
+
+        profile_name = None
+        try:
+            ctx = click.get_current_context(silent=True)
+            if ctx is not None and ctx.obj:
+                profile_name = ctx.obj.get("profile")
+        except RuntimeError:
+            pass
+
+        resolved = resolve_connection(
+            remote_url=remote_url or os.environ.get("NEXUS_URL"),
+            remote_api_key=remote_api_key or os.environ.get("NEXUS_API_KEY"),
+            profile_name=profile_name,
+        )
+        if getattr(resolved, "is_remote", False):
+            resolved_remote_url = resolved.url or resolved_remote_url
+            resolved_remote_api_key = resolved.api_key or resolved_remote_api_key
+    except Exception:
+        # Fall through with the raw CLI-passed values — downstream
+        # paths handle None/empty safely (stdio single-user mode).
+        pass
+
+    # Fail-closed: refuse unsupported embedded-hub configuration before
+    # we open a port (#3784). Pass the resolved URL so a profile-only
+    # remote frontend is not false-rejected.
+    _reject_embedded_hub_mode(transport, remote_url=resolved_remote_url)
+
+    # When transport=http resolves a remote URL AND an ambient api_key
+    # (from --api-key, NEXUS_API_KEY, or a profile), the MCP server's
+    # `_default_nx` connection is seeded with that key — so missing
+    # bearer silently executes as the profile identity. Auto-promote
+    # NEXUS_MCP_REQUIRE_BEARER=true for that shape so unauthenticated
+    # requests hit a 401 at the middleware instead. Operators who
+    # intentionally want the ambient-identity fallback (e.g. a trusted
+    # single-tenant sidecar) can opt out with
+    # NEXUS_MCP_ALLOW_AMBIENT_KEY=true (#3784 round 8).
+    if (
+        transport in ("http", "sse")
+        and resolved_remote_url
+        and resolved_remote_api_key
+        and os.environ.get("NEXUS_MCP_ALLOW_AMBIENT_KEY", "").lower() not in ("1", "true", "yes")
+        and os.environ.get("NEXUS_MCP_REQUIRE_BEARER", "").lower() not in ("1", "true", "yes")
+    ):
+        os.environ["NEXUS_MCP_REQUIRE_BEARER"] = "true"
+        console.print(
+            "[nexus.warning]⚠ Auto-enabled NEXUS_MCP_REQUIRE_BEARER=true — remote "
+            "URL + ambient API key detected. Set NEXUS_MCP_ALLOW_AMBIENT_KEY=true to "
+            "opt out.[/nexus.warning]"
+        )
 
     # FastMCP's .run(transport="http") starts its own event loop via anyio.run
     # and cannot be called from inside an already-running asyncio loop. Split
     # async setup (connects, creates server, installs middleware) from the
     # synchronous transport run.
     mcp_server = asyncio.run(
-        _async_serve(transport, host, port, api_key, remote_url, remote_api_key)
+        _async_serve(
+            transport,
+            host,
+            port,
+            api_key,
+            resolved_remote_url,
+            resolved_remote_api_key,
+        )
     )
     if mcp_server is None:
         return

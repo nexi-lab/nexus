@@ -135,6 +135,33 @@ SANDBOX_HTTP_ALLOWLIST: frozenset[str] = frozenset(
 )
 
 
+def _federation_rpc_active(kernel: Any) -> bool:
+    """Decide whether to mount FederationRPCService on the RPC surface.
+
+    Gates on two signals:
+    - ``mount_reconciliation_done()`` — kernel bootstrap has finished.
+    - ``callable(zone_list)`` — kernel actually exposes the zone API
+      (slim profiles don't).
+
+    Does NOT inspect ``zone_list()``'s result: a brand-new stack has zero
+    zones, and ``federation_list_zones`` is the primary way to observe
+    that state. Gating on non-empty would make bootstrap chicken-and-egg
+    (#3784 follow-up: ``federation_list_zones`` returns 'Method not found'
+    on fresh stacks).
+    """
+    if kernel is None:
+        return False
+    try:
+        mrd = getattr(kernel, "mount_reconciliation_done", None)
+        active = bool(mrd()) if callable(mrd) else bool(mrd)
+        if not active:
+            return False
+        zl = getattr(kernel, "zone_list", None)
+        return callable(zl)
+    except Exception:
+        return False
+
+
 def _filter_routes_for_sandbox(app: "FastAPI") -> None:
     """Issue #3778: remove every `Route` not in SANDBOX_HTTP_ALLOWLIST.
 
@@ -406,21 +433,7 @@ def create_app(
         # replacement is /__sys__/zones/ procfs through sys_stat, tracked
         # as a post-merge follow-up).
         _kernel = getattr(nexus_fs, "_kernel", None)
-        _fed_active = False
-        if _kernel is not None:
-            _mrd = getattr(_kernel, "mount_reconciliation_done", None)
-            try:
-                _fed_active = bool(_mrd()) if callable(_mrd) else bool(_mrd)
-                # "always ready" semantics: True even when federation is
-                # disabled. Gate the RPC on an actual zone list signal
-                # so we don't mount federation_* on slim profiles.
-                if _fed_active:
-                    _zl = getattr(_kernel, "zone_list", None)
-                    if callable(_zl):
-                        _fed_active = bool(_zl())
-            except Exception:
-                _fed_active = False
-        if _fed_active:
+        if _federation_rpc_active(_kernel):
             from nexus.server.rpc.services.federation_rpc import FederationRPCService
 
             _rpc_sources.append(FederationRPCService(_kernel, nexus_fs))

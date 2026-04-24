@@ -91,6 +91,7 @@ class RPCTransport:
         else:
             host = server_address.rsplit(":", 1)[0].strip("[]")
             import ipaddress as _ipaddress
+            import os as _os
 
             _is_local = host == "localhost"
             if not _is_local:
@@ -98,10 +99,20 @@ class RPCTransport:
                     _is_local = _ipaddress.ip_address(host).is_loopback
                 except ValueError:
                     _is_local = False
-            if not _is_local:
+            # Escape hatch for trusted private networks (docker-compose, k8s
+            # pods on a shared network namespace). Default refuses insecure
+            # non-loopback to prevent accidental plaintext-over-internet.
+            _allow_insecure = _os.environ.get("NEXUS_GRPC_ALLOW_INSECURE", "").lower() in (
+                "1",
+                "true",
+                "yes",
+            )
+            if not _is_local and not _allow_insecure:
                 raise ValueError(
                     f"Insecure gRPC channel refused for non-loopback address '{server_address}'. "
-                    "Configure TLS for remote connections."
+                    "Configure TLS for remote connections, or set "
+                    "NEXUS_GRPC_ALLOW_INSECURE=true for trusted private networks "
+                    "(docker-compose, k8s pod-local)."
                 )
             self._channel = grpc.insecure_channel(server_address, options=_CHANNEL_OPTIONS)
         self._stub = vfs_pb2_grpc.NexusVFSServiceStub(self._channel)

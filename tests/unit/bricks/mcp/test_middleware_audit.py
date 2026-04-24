@@ -108,3 +108,54 @@ def test_bearer_case_insensitive(app: Starlette, captured_records: list[dict]) -
     )
     assert len(captured_records) == 1
     assert captured_records[0]["token_hash"] is not None
+
+
+def test_x_nexus_api_key_header_hashed(app: Starlette, captured_records: list[dict]) -> None:
+    """Regression: X-Nexus-API-Key clients must produce a token_hash so
+    active-client metrics don't collapse distinct tokens to 'anonymous' (#3784)."""
+    client = TestClient(app)
+    client.post(
+        "/mcp",
+        json={"jsonrpc": "2.0", "id": 1, "method": "initialize"},
+        headers={"X-Nexus-API-Key": "sk-x-nexus-one"},
+    )
+    assert len(captured_records) == 1
+    assert captured_records[0]["token_hash"] is not None
+
+
+def test_distinct_x_nexus_api_keys_produce_distinct_hashes(
+    app: Starlette, captured_records: list[dict]
+) -> None:
+    """Two X-Nexus-API-Key clients must hash to two different token_hashes."""
+    client = TestClient(app)
+    client.post(
+        "/mcp",
+        json={"jsonrpc": "2.0", "id": 1, "method": "initialize"},
+        headers={"X-Nexus-API-Key": "sk-one"},
+    )
+    client.post(
+        "/mcp",
+        json={"jsonrpc": "2.0", "id": 2, "method": "initialize"},
+        headers={"X-Nexus-API-Key": "sk-two"},
+    )
+    hashes = {r["token_hash"] for r in captured_records}
+    assert None not in hashes
+    assert len(hashes) == 2
+
+
+def test_bearer_and_x_nexus_api_key_hash_same_token_identically(
+    app: Starlette, captured_records: list[dict]
+) -> None:
+    """Same raw token via either header must produce the same hash."""
+    client = TestClient(app)
+    client.post(
+        "/mcp",
+        json={"jsonrpc": "2.0", "id": 1, "method": "initialize"},
+        headers={"Authorization": "Bearer sk-same"},
+    )
+    client.post(
+        "/mcp",
+        json={"jsonrpc": "2.0", "id": 2, "method": "initialize"},
+        headers={"X-Nexus-API-Key": "sk-same"},
+    )
+    assert captured_records[0]["token_hash"] == captured_records[1]["token_hash"]

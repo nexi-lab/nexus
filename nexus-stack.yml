@@ -261,7 +261,7 @@ services:
   # MCP Server (optional add-on)
   # ============================================================================
   mcp-server:
-    image: nexus-server:latest
+    image: ${NEXUS_IMAGE_REF:-nexus-server:latest}
     restart: unless-stopped
     profiles:
       - mcp
@@ -272,6 +272,18 @@ services:
     environment:
       NEXUS_URL: http://nexus:2026
       NEXUS_API_KEY: ${NEXUS_API_KEY:-}
+      NEXUS_GRPC_ALLOW_INSECURE: "true"
+      # Must match whatever port the nexus service binds gRPC on
+      # (default 2028; overridable via NEXUS_GRPC_PORT). Without this,
+      # the sidecar hard-codes 2028 while the server may be elsewhere.
+      NEXUS_GRPC_PORT: "${NEXUS_GRPC_PORT:-2028}"
+      # Fail-closed bearer policy (#3784): requests without
+      # `Authorization: Bearer` or `X-Nexus-API-Key` are rejected with
+      # 401 before the tool layer can fall back to an ambient
+      # `NEXUS_API_KEY`-seeded connection. Flip to "false" only if this
+      # sidecar is exclusively reached over a private network with
+      # pre-trusted clients.
+      NEXUS_MCP_REQUIRE_BEARER: "${NEXUS_MCP_REQUIRE_BEARER:-true}"
       MCP_HOST: "0.0.0.0"
       MCP_PORT: "8081"
     ports:

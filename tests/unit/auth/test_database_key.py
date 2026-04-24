@@ -309,3 +309,80 @@ class TestHMACSecretConfiguration:
             hash1 = DatabaseAPIKeyAuth._hash_key(raw_key)
             hash2 = DatabaseAPIKeyAuth._hash_key(raw_key)
         assert hash1 == hash2
+
+
+# ── #3784 round 10: runtime zone lifecycle gate ──────────
+
+
+class TestZoneLifecycleGate:
+    """Tokens minted against a zone that is later soft-deleted or moved to
+    a non-Active phase must stop authenticating — otherwise existing tokens
+    keep working against data operators meant to isolate or remove."""
+
+    @pytest.mark.asyncio
+    async def test_active_zone_allows_auth(self, auth_provider, session_factory):
+        """Token with a zone row in phase='Active' + deleted_at IS NULL → OK."""
+        from nexus.storage.models import ZoneModel
+
+        with session_factory() as session, session.begin():
+            session.add(ZoneModel(zone_id="zone_alpha", name="alpha", phase="Active"))
+            _key_id, raw_key = _create_key(session, zone_id="zone_alpha")
+
+        result = await auth_provider.authenticate(raw_key)
+        assert result.authenticated is True
+        assert result.zone_id == "zone_alpha"
+
+    @pytest.mark.asyncio
+    async def test_terminating_zone_rejects_auth(self, auth_provider, session_factory):
+        """Token whose zone flipped to phase='Terminating' must fail closed."""
+        from nexus.storage.models import ZoneModel
+
+        with session_factory() as session, session.begin():
+            session.add(ZoneModel(zone_id="zone_alpha", name="alpha", phase="Active"))
+            _key_id, raw_key = _create_key(session, zone_id="zone_alpha")
+
+        # Zone lifecycle transitions to Terminating after the token existed.
+        with session_factory() as session, session.begin():
+            zone = session.scalar(select(ZoneModel).where(ZoneModel.zone_id == "zone_alpha"))
+            zone.phase = "Terminating"
+
+        result = await auth_provider.authenticate(raw_key)
+        assert result.authenticated is False
+
+    @pytest.mark.asyncio
+    async def test_soft_deleted_zone_rejects_auth(self, auth_provider, session_factory):
+        """Token whose zone has deleted_at set must fail closed."""
+        from nexus.storage.models import ZoneModel
+
+        with session_factory() as session, session.begin():
+            session.add(ZoneModel(zone_id="zone_alpha", name="alpha", phase="Active"))
+            _key_id, raw_key = _create_key(session, zone_id="zone_alpha")
+
+        with session_factory() as session, session.begin():
+            zone = session.scalar(select(ZoneModel).where(ZoneModel.zone_id == "zone_alpha"))
+            zone.deleted_at = datetime.now(UTC)
+
+        result = await auth_provider.authenticate(raw_key)
+        assert result.authenticated is False
+
+    @pytest.mark.asyncio
+    async def test_missing_zone_row_falls_through(self, auth_provider, session_factory):
+        """Legacy deployments that scope by zone_id without populating the
+        zones table continue to authenticate — the runtime gate only fires
+        when the zone row *exists and is retired*. `hub token create`
+        enforces zone-must-exist for new tokens, so this path is
+        backward-compat only."""
+        with session_factory() as session, session.begin():
+            _key_id, raw_key = _create_key(session, zone_id="zone_alpha")
+
+        result = await auth_provider.authenticate(raw_key)
+        assert result.authenticated is True
+
+    @pytest.mark.asyncio
+    async def test_null_zone_id_token_unaffected(self, auth_provider, session_factory):
+        """Tokens with zone_id=None (pre-hub / admin-global) bypass the gate."""
+        with session_factory() as session, session.begin():
+            _key_id, raw_key = _create_key(session, zone_id=None)
+
+        result = await auth_provider.authenticate(raw_key)
+        assert result.authenticated is True

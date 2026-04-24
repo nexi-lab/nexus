@@ -508,13 +508,6 @@ class MetadataMixin:
             self._kernel.service_unregister(name)
             return {"path": path, "unregistered": True, "service": name}
 
-        # DT_PIPE fast-path: check Rust IPC registry
-        if self._kernel.has_pipe(path):
-            return self._pipe_destroy(path)
-        # DT_STREAM fast-path: check Rust IPC registry
-        if self._kernel.has_stream(path):
-            return self._stream_destroy(path)
-
         path = self._validate_path(path)
 
         # PRE-DISPATCH: virtual path resolvers (Issue #889)
@@ -522,96 +515,73 @@ class MetadataMixin:
         if _handled:
             return _result
 
-        # DT_PIPE / DT_STREAM: kernel-native IPC destroy (§4.2)
-        _ipc_meta = self.metadata.get(path)
-        if _ipc_meta is not None and _ipc_meta.is_pipe:
-            return self._pipe_destroy(path)
-        if _ipc_meta is not None and _ipc_meta.is_stream:
-            return self._stream_destroy(path)
-
-        # Extract identity for permission checks
-        zone_id, agent_id, is_admin = self._get_context_identity(context)
-
         # Virtual .readme/ paths are read-only (Issue #3728).
         self._reject_if_virtual_readme(path, context, op="delete")
 
-        # Check if file exists in metadata.
-        # Use prefetched hint from resolve_delete() if available (#1311)
-        meta = _result if _result is not None else self.metadata.get(path)
-
-        if meta is None:
-            raise NexusFileNotFoundError(path)
-
-        # ── Directory branch: rmdir logic ────────────────────────────
-        if meta.is_dir or meta.is_mount or meta.is_external_storage:
-            return self._unlink_directory(path, meta=meta, recursive=recursive, context=context)
-
-        # ── File branch: regular unlink ──────────────────────────────
-
-        # PRE-INTERCEPT hooks dispatched by Rust kernel
+        # ── Call Rust first — handles DT_REG, DT_PIPE, DT_STREAM ────
+        zone_id, agent_id, is_admin = self._get_context_identity(context)
         _rust_ctx = self._build_rust_ctx(context, is_admin)
         _unlink_result = self._kernel.sys_unlink(path, _rust_ctx)
 
-        # POST-INTERCEPT hooks
-        from nexus.contracts.vfs_hooks import DeleteHookContext
+        if _unlink_result.hit:
+            # Rust handled: DT_REG (file delete), DT_PIPE (pipe destroy),
+            # DT_STREAM (stream destroy). Fire POST-hooks and return.
+            if _unlink_result.post_hook_needed:
+                from nexus.contracts.vfs_hooks import DeleteHookContext
 
-        _delete_ctx = DeleteHookContext(
-            path=path,
-            context=context,
-            zone_id=zone_id,
-            agent_id=agent_id,
-            metadata=meta,
-        )
-        if _unlink_result.post_hook_needed:
-            self._kernel.dispatch_post_hooks("delete", _delete_ctx)
+                self._kernel.dispatch_post_hooks(
+                    "delete",
+                    DeleteHookContext(
+                        path=path,
+                        context=context,
+                        zone_id=zone_id,
+                        agent_id=agent_id,
+                    ),
+                )
+            return {}
 
-        # Rust sys_unlink handles: VFS lock + metastore.delete + backend.delete_file
-        # + dcache.evict + OBSERVE dispatch.  No Python-side I/O needed.
+        # ── Rust miss: branch on entry_type ──────────────────────────
+        et = _unlink_result.entry_type
+        if et == 0:
+            # Not found in metastore/dcache
+            raise NexusFileNotFoundError(path)
 
-        return {}
+        # DT_DIR: delegate to Rust sys_rmdir (recursive child delete,
+        # backend rmdir, dcache evict, observer dispatch).
+        from nexus.contracts.metadata import DT_DIR as _DT_DIR
 
-    def _unlink_directory(
-        self,
-        path: str,
-        *,
-        meta: "FileMetadata",
-        recursive: bool,
-        context: OperationContext | None,
-    ) -> dict[str, Any]:
-        """Internal: directory delete logic.
+        if et == _DT_DIR:
+            _rmdir_result = self._kernel.sys_rmdir(path, _rust_ctx, recursive)
+            if _rmdir_result.post_hook_needed:
+                from nexus.contracts.vfs_hooks import RmdirHookContext
 
-        DT_MOUNT unmount stays in Python (uses _driver_coordinator).
-        All other directory deletion delegated to Rust sys_rmdir.
-        """
-        ctx = self._resolve_cred(context)
+                ctx = self._resolve_cred(context)
+                self._kernel.dispatch_post_hooks(
+                    "rmdir",
+                    RmdirHookContext(
+                        path=path,
+                        context=ctx,
+                        zone_id=zone_id,
+                        agent_id=agent_id,
+                        recursive=recursive,
+                    ),
+                )
+            return {}
 
-        # DT_MOUNT: unmount via DriverLifecycleCoordinator + delete metadata
-        if meta.is_mount:
+        # DT_MOUNT (2) / DT_EXTERNAL_STORAGE (5): unmount via DLC (Python service-tier)
+        if et in (2, 5):
+            ctx = self._resolve_cred(context)
+            from nexus.contracts.vfs_hooks import RmdirHookContext
+
+            self._kernel.dispatch_pre_hooks("rmdir", RmdirHookContext(path=path, context=ctx))
             removed = self._driver_coordinator.unmount(path)
             if removed:
+                self.metadata.delete(path)
                 logger.info("sys_unlink: unmounted %s", path)
             return {}
 
-        # Rust sys_rmdir handles: PRE hooks + children batch delete + backend.rmdir
-        # + metastore.delete + dcache.evict + OBSERVE dispatch.
-        _rust_ctx = self._build_rust_ctx(ctx, ctx.is_admin)
-        _rmdir_result = self._kernel.sys_rmdir(path, _rust_ctx, recursive)
-
-        # POST-INTERCEPT hooks
-        if _rmdir_result.post_hook_needed:
-            from nexus.contracts.vfs_hooks import RmdirHookContext
-
-            self._kernel.dispatch_post_hooks(
-                "rmdir",
-                RmdirHookContext(
-                    path=path,
-                    context=ctx,
-                    zone_id=ctx.zone_id,
-                    agent_id=ctx.agent_id,
-                    recursive=recursive,
-                ),
-            )
-
+        # Unknown entry type — should not happen
+        logger.warning("sys_unlink: unexpected entry_type=%d for %s", et, path)
         return {}
 
     @rpc_expose(description="Rename/move file")
@@ -657,7 +627,6 @@ class MetadataMixin:
         # Normalize context dict to OperationContext dataclass (CLI passes dicts)
         context = self._parse_context(context)
 
-        # Extract identity
         zone_id, agent_id, is_admin = self._get_context_identity(context)
 
         # Virtual .readme/ paths are read-only on both ends (Issue #3728).
@@ -711,6 +680,9 @@ class MetadataMixin:
         # Python fallback for DT_MOUNT/DT_EXTERNAL_STORAGE (Rust returns
         # hit=false for these). No child-walking needed — mounts are single
         # entries; Rust's rename_path() handles children atomically.
+        # Lazy routing — only happens on fallback (DT_MOUNT/DT_EXTERNAL_STORAGE).
+        old_route = self.router.route(old_path, zone_id=self._zone_id)
+        new_route = self.router.route(new_path, zone_id=self._zone_id)
         is_implicit_dir = not old_route.metastore.exists(
             old_path
         ) and self.metadata.is_implicit_directory(old_path)

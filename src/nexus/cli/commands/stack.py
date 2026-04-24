@@ -697,10 +697,19 @@ def up(
     # Default: pull prebuilt image.  Only build when explicitly requested
     # via --build (local dev iteration).
     if build is None:
-        # Reuse local build if previous state says so (and not --pull)
         if prev_state.get("build_mode") == "local" and force_pull is not True:
+            # Reuse local build if previous state says so (and not --pull)
             using_local_build = True
-        build = False
+            build = False
+        elif _compose_has_build(cf) and force_pull is not True:
+            # Repo-checkout default: compose file has a `build:` directive AND
+            # no remembered local-build state. Default to local build so we
+            # don't silently pull a stale GHCR image and overwrite worktree
+            # edits. Matches the docstring promise that "repo-checkout stacks
+            # rebuild automatically".
+            build = True
+        else:
+            build = False
 
     # --pull clears local build mode
     if force_pull:

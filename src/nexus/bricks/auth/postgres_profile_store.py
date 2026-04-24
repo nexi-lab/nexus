@@ -1445,21 +1445,38 @@ class PostgresAuthProfileStore:
         """Cheap predicate-only check: a usable envelope exists right now.
 
         Cache-hit paths call this BEFORE returning the cached credential so an
-        operator disable, an automatic cooldown, or a freshly-pushed ambiguous
-        second envelope all take effect within ~ms instead of waiting for the
-        cache TTL. Mirrors the SQL predicates in ``decrypt_profile`` (active
-        ciphertext, not disabled, not cooled-down) but reads no payload.
+        operator disable, an automatic cooldown, a freshly-pushed ambiguous
+        second envelope, OR a daemon that stopped pushing for longer than its
+        ``sync_ttl_seconds`` all take effect within ~ms instead of waiting for
+        the cache TTL. Mirrors the SQL predicates in ``decrypt_profile`` (active
+        ciphertext, not disabled, not cooled-down, not stale) but reads no
+        payload.
 
-        Raises ``ProfileNotFound`` (no usable row) or
-        ``MultipleProfilesForProvider`` (>1 active rows — same fail-closed
-        behavior as decrypt_profile).
+        Single round trip returning two counts:
+          - ``usable``: rows that pass every gate including freshness
+          - ``stale_only``: rows that pass disable/cooldown but failed freshness
+
+        Mapping:
+          - ``usable > 1``  → MultipleProfilesForProvider (fail closed)
+          - ``usable == 1`` → ok
+          - ``usable == 0`` and ``stale_only >= 1`` → StaleSource
+          - ``usable == 0`` and ``stale_only == 0`` → ProfileNotFound
         """
-        from nexus.bricks.auth.consumer import MultipleProfilesForProvider
+        from nexus.bricks.auth.consumer import MultipleProfilesForProvider, StaleSource
 
         with self._scoped() as conn:
-            count_row = conn.execute(
+            row = conn.execute(
                 text(
-                    "SELECT COUNT(*) FROM auth_profiles "
+                    "SELECT "
+                    "  COUNT(*) FILTER (WHERE "
+                    "    last_synced_at IS NOT NULL "
+                    "    AND last_synced_at + (sync_ttl_seconds || ' seconds')::INTERVAL > NOW()"
+                    "  ) AS usable, "
+                    "  COUNT(*) FILTER (WHERE "
+                    "    last_synced_at IS NULL "
+                    "    OR last_synced_at + (sync_ttl_seconds || ' seconds')::INTERVAL <= NOW()"
+                    "  ) AS stale_only "
+                    "FROM auth_profiles "
                     "WHERE tenant_id = :t AND principal_id = :p AND provider = :prov "
                     "  AND ciphertext IS NOT NULL "
                     "  AND (disabled_until IS NULL OR disabled_until <= NOW()) "
@@ -1467,20 +1484,29 @@ class PostgresAuthProfileStore:
                 ),
                 {"t": str(self._tenant_id), "p": str(principal_id), "prov": provider},
             ).fetchone()
-        active = int(count_row[0]) if count_row else 0
-        if active == 0:
-            raise ProfileNotFound(
-                tenant_id=self._tenant_id,
-                principal_id=principal_id,
-                provider=provider,
-            )
-        if active > 1:
+        usable = int(row.usable) if row else 0
+        stale_only = int(row.stale_only) if row else 0
+        if usable > 1:
             raise MultipleProfilesForProvider.from_row(
                 tenant_id=self._tenant_id,
                 principal_id=principal_id,
                 provider=provider,
-                cause=f"{active}+ active envelopes; collapse to one or upgrade wire contract",
+                cause=f"{usable}+ active envelopes; collapse to one or upgrade wire contract",
             )
+        if usable == 1:
+            return
+        if stale_only >= 1:
+            raise StaleSource.from_row(
+                tenant_id=self._tenant_id,
+                principal_id=principal_id,
+                provider=provider,
+                cause="last_synced_at_past_sync_ttl",
+            )
+        raise ProfileNotFound(
+            tenant_id=self._tenant_id,
+            principal_id=principal_id,
+            provider=provider,
+        )
 
     def assert_machine_active(self, *, principal_id: uuid.UUID, machine_id: uuid.UUID) -> None:
         """Reject if the daemon's machine row is missing or revoked.

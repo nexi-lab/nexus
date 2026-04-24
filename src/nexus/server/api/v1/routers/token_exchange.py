@@ -136,19 +136,18 @@ def make_token_exchange_router(
             logger.warning("envelope_error: %r", exc)  # __repr__ masks plaintext
             return _err(500, "envelope_error", "see server logs")
 
-        expires_in = 0
+        # RFC 6749 §5.1: expires_in is OPTIONAL. Omit it for non-expiring
+        # credentials (e.g. GitHub classic PATs) — emitting expires_in=0
+        # signals "already expired" and clients drop the credential.
+        body: dict[str, object] = {
+            "access_token": cred.access_token,
+            "issued_token_type": _ISSUED_TYPE,
+            "token_type": "Bearer",
+            "nexus_credential_metadata": cred.metadata,
+        }
         if cred.expires_at is not None:
-            expires_in = max(0, int((cred.expires_at - datetime.now(UTC)).total_seconds()))
+            body["expires_in"] = max(0, int((cred.expires_at - datetime.now(UTC)).total_seconds()))
 
-        return JSONResponse(
-            content={
-                "access_token": cred.access_token,
-                "issued_token_type": _ISSUED_TYPE,
-                "token_type": "Bearer",
-                "expires_in": expires_in,
-                "nexus_credential_metadata": cred.metadata,
-            },
-            headers=_NO_STORE_HEADERS,
-        )
+        return JSONResponse(content=body, headers=_NO_STORE_HEADERS)
 
     return router

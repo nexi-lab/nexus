@@ -465,6 +465,75 @@ def test_resolve_allows_cross_machine_read_when_opted_in(engine, monkeypatch, ca
     assert any("cross_machine_read" in rec.message for rec in caplog.records)
 
 
+def test_warm_cache_evicts_when_source_goes_stale(engine):
+    """Daemon primes cache, then stops pushing past sync_ttl. Next read on the
+    warm cache must surface StaleSource (and evict) instead of returning
+    the cached plaintext for the rest of the cache TTL.
+
+    Regression for codex round-5 finding F15.
+    """
+    tenant = uuid.uuid4()
+    principal = uuid.uuid4()
+    encryption = InMemoryEncryptionProvider()
+    _seed_github_envelope(
+        engine=engine, tenant_id=tenant, principal_id=principal, encryption=encryption
+    )
+    machine = _seed_active_machine(engine=engine, tenant_id=tenant, principal_id=principal)
+    consumer = _make_consumer(engine, tenant, principal, encryption=encryption)
+    # Prime the cache.
+    consumer.resolve(claims=_claims(tenant, principal, machine), provider="github", purpose="x")
+    # Push the row's last_synced_at past sync_ttl_seconds (default 300s in helper).
+    with engine.begin() as conn:
+        conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(tenant)})
+        conn.execute(
+            text(
+                "UPDATE auth_profiles SET last_synced_at = NOW() - INTERVAL '1 hour' "
+                "WHERE tenant_id = :t"
+            ),
+            {"t": str(tenant)},
+        )
+    with pytest.raises(StaleSource):
+        consumer.resolve(claims=_claims(tenant, principal, machine), provider="github", purpose="x")
+
+
+def test_warm_cache_does_not_bypass_cross_machine_check(engine, monkeypatch):
+    """Daemon A primes the cache; Daemon B (different machine_id) must NOT
+    inherit A's plaintext from the warm cache.
+
+    Without machine_id in the cache key, B passes assert_machine_active and
+    assert_profile_active, then returns A's cached credential — silently
+    skipping the writer_machine_id check on the decrypt path. Regression for
+    codex round-5 finding F14.
+    """
+    monkeypatch.delenv("NEXUS_AUTH_ALLOW_CROSS_MACHINE_READ", raising=False)
+    encryption = InMemoryEncryptionProvider()
+    tenant = uuid.uuid4()
+    principal = uuid.uuid4()
+    _seed_github_envelope(
+        engine=engine, tenant_id=tenant, principal_id=principal, encryption=encryption
+    )
+    machine_a = _seed_active_machine(engine=engine, tenant_id=tenant, principal_id=principal)
+    # Stamp the envelope row's writer_machine_id to A so A's read is in-machine.
+    with engine.begin() as conn:
+        conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(tenant)})
+        conn.execute(
+            text("UPDATE auth_profiles SET machine_id = :m WHERE tenant_id = :t"),
+            {"m": str(machine_a), "t": str(tenant)},
+        )
+    machine_b = _seed_active_machine(engine=engine, tenant_id=tenant, principal_id=principal)
+
+    consumer = _make_consumer(engine, tenant, principal, encryption=encryption)
+    # Prime the cache as daemon A — happy path, in-machine read.
+    consumer.resolve(claims=_claims(tenant, principal, machine_a), provider="github", purpose="x")
+    # Daemon B requests with the cache hot — must NOT be served from cache;
+    # decrypt path must fire and the cross-machine check must reject.
+    with pytest.raises(MachineUnknownOrRevoked) as exc:
+        consumer.resolve(
+            claims=_claims(tenant, principal, machine_b), provider="github", purpose="x"
+        )
+    assert exc.value.cause == "cross_machine_read_disallowed"
+
+
 def test_cache_hit_evicts_when_profile_disabled_after_caching(engine):
     """A profile disabled AFTER cache prime must take effect within ms, not
     wait for the cache TTL."""

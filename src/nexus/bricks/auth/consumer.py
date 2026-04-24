@@ -247,10 +247,17 @@ class CredentialConsumer:
                     cause="adapter_not_registered",
                 )
 
+            # machine_id is part of the key so a warm cache cannot return
+            # another daemon's credential under cross-machine read enforcement.
+            # Without this, machine A pushes + caches; machine B's request
+            # passes assert_machine_active + assert_profile_active and gets
+            # A's plaintext from cache without ever reaching the
+            # writer_machine_id check on the decrypt path.
             cache_key = (
                 str(claims.tenant_id),
                 str(claims.principal_id),
                 provider,
+                str(claims.machine_id),
             )
             now = datetime.now(UTC)
 
@@ -285,7 +292,11 @@ class CredentialConsumer:
                             provider=provider,
                             cause="profile_disabled_or_cooldown",
                         ) from exc
-                    except MultipleProfilesForProvider:
+                    except (MultipleProfilesForProvider, StaleSource):
+                        # Stale source on a warm cache means the daemon
+                        # stopped pushing for longer than sync_ttl_seconds —
+                        # serving the cached plaintext would mask a stuck
+                        # daemon. Evict + propagate so the router 409s.
                         self._cred_cache.evict(cache_key)
                         raise
 

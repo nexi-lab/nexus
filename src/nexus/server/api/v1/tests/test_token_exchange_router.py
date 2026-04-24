@@ -193,6 +193,88 @@ def test_token_exchange_happy_path_returns_200_with_bearer(engine: Engine) -> No
     # RFC 6749 §5.1: token responses MUST NOT be cached.
     assert r.headers.get("cache-control") == "no-store"
     assert r.headers.get("pragma") == "no-cache"
+    # RFC 6749 §5.1: expires_in is OPTIONAL. Classic GitHub PATs have no
+    # expiry — the field must be omitted, not emitted as 0 (which clients
+    # interpret as "already expired"). Regression for codex round-5 F16.
+    assert "expires_in" not in body
+
+
+def test_token_exchange_emits_expires_in_when_credential_has_expiry(
+    engine: Engine,
+) -> None:
+    """Fine-grained PATs / STS creds carry expires_at — the wire response
+    MUST include expires_in. Companion to the classic-PAT happy path which
+    asserts the field is OMITTED. Together they pin RFC 6749 §5.1 semantics.
+    """
+    from datetime import UTC, datetime
+
+    tenant = uuid.uuid4()
+    principal = uuid.uuid4()
+    app, signer, encryption = _build_app(engine, tenant, principal)
+
+    # Seed a github profile whose envelope payload carries expires_at.
+    expires_at = datetime.now(UTC) + timedelta(minutes=30)
+    payload = json.dumps(
+        {"token": "github_pat_real", "scopes": ["repo"], "expires_at": expires_at.isoformat()}
+    ).encode()
+    aad = str(tenant).encode() + b"|" + str(principal).encode() + b"|" + b"github-default"
+    dek = b"\x03" * 32
+    nonce, ct = AESGCMEnvelope().encrypt(dek, payload, aad=aad)
+    wrapped, kv = encryption.wrap_dek(dek, tenant_id=tenant, aad=aad)
+    with engine.begin() as conn:
+        conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(tenant)})
+        conn.execute(
+            text("INSERT INTO tenants (id, name) VALUES (:id, :n) ON CONFLICT DO NOTHING"),
+            {"id": str(tenant), "n": f"tx-{tenant}"},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO principals (id, tenant_id, kind) VALUES (:id, :t, 'human') "
+                "ON CONFLICT DO NOTHING"
+            ),
+            {"id": str(principal), "t": str(tenant)},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO auth_profiles "
+                "(tenant_id, principal_id, id, provider, account_identifier, "
+                " backend, backend_key, last_synced_at, sync_ttl_seconds, "
+                " ciphertext, wrapped_dek, nonce, aad, kek_version) "
+                "VALUES (:t, :p, 'github-default', 'github', 'me', 'envelope', 'k', "
+                " NOW(), 300, :ct, :wd, :no, :aad, :kv)"
+            ),
+            {
+                "t": str(tenant),
+                "p": str(principal),
+                "ct": ct,
+                "wd": wrapped,
+                "no": nonce,
+                "aad": aad,
+                "kv": kv,
+            },
+        )
+    machine = _seed_active_machine(engine, tenant, principal)
+    jwt = signer.sign(
+        DaemonClaims(tenant_id=tenant, principal_id=principal, machine_id=machine),
+        ttl=timedelta(hours=1),
+    )
+
+    client = TestClient(app)
+    r = client.post(
+        "/v1/auth/token-exchange",
+        data={
+            "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+            "subject_token": jwt,
+            "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+            "resource": "urn:nexus:provider:github",
+            "scope": "list-repos",
+        },
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert "expires_in" in body
+    # ~30 minutes minus a few seconds of test elapsed time
+    assert 1500 <= body["expires_in"] <= 1800
 
 
 def test_token_exchange_revoked_machine_returns_401(engine: Engine) -> None:

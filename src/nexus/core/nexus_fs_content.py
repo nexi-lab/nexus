@@ -766,7 +766,6 @@ class ContentMixin:
             Dict with metadata (etag, version, modified_at, size).
         """
         del consistency  # threaded via context.metadata_consistency; kernel owns it now.
-        del offset  # Rust sys_write handles offset natively.
 
         if isinstance(buf, str):
             buf = buf.encode("utf-8")
@@ -793,7 +792,7 @@ class ContentMixin:
         # Capture old metadata BEFORE write for audit snapshot_hash (old_etag)
         _old_meta = self.metadata.get(path)
 
-        result = self._kernel.sys_write(path, _rust_ctx, buf)
+        result = self._kernel.sys_write(path, _rust_ctx, buf, offset)
 
         # POST-INTERCEPT hooks
         zone_id, agent_id, _ = self._get_context_identity(context)

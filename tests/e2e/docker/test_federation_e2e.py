@@ -2121,22 +2121,18 @@ def _bootstrap_standalone_fs(tmp_path):
     No RPC surface is added — the test drives kernel syscalls in-process
     via the PyO3 bindings (the pattern validated for R20.14).
     """
-    import asyncio
-
     from nexus.backends.storage.cas_local import CASLocalBackend
     from nexus.core.config import ParseConfig, PermissionConfig
     from nexus.factory import create_nexus_fs
     from nexus.storage.record_store import SQLAlchemyRecordStore
     from tests.helpers.dict_metastore import DictMetastore
 
-    return asyncio.run(
-        create_nexus_fs(
-            backend=CASLocalBackend(tmp_path / "data"),
-            metadata_store=DictMetastore(),
-            record_store=SQLAlchemyRecordStore(db_path=tmp_path / "meta.db"),
-            parsing=ParseConfig(auto_parse=False),
-            permissions=PermissionConfig(enforce=False),
-        )
+    return create_nexus_fs(
+        backend=CASLocalBackend(tmp_path / "data"),
+        metadata_store=DictMetastore(),
+        record_store=SQLAlchemyRecordStore(db_path=tmp_path / "meta.db"),
+        parsing=ParseConfig(auto_parse=False),
+        permissions=PermissionConfig(enforce=False),
     )
 
 

@@ -140,9 +140,12 @@ def _reject_embedded_hub_mode(transport: str, remote_url: str | None = None) -> 
         return
 
     # Resolve the effective remote URL the same way `_async_serve` will
-    # — CLI flag first, then env/profile — so a safe remote frontend
-    # launched as `nexus mcp serve --remote-url http://nexus:2026` is
-    # not false-rejected.
+    # — CLI flag first, then env, then active profile — so a safe
+    # remote frontend launched as
+    # `nexus --profile hub mcp serve --transport http` is not
+    # false-rejected. `get_filesystem` reads the profile from
+    # ``ctx.obj['profile']`` (set by the root `nexus` command), so we
+    # do the same here.
     if remote_url:
         return
     if os.environ.get("NEXUS_URL"):
@@ -150,9 +153,18 @@ def _reject_embedded_hub_mode(transport: str, remote_url: str | None = None) -> 
     try:
         from nexus.cli.config import resolve_connection
 
+        profile_name = None
+        try:
+            ctx = click.get_current_context(silent=True)
+            if ctx is not None and ctx.obj:
+                profile_name = ctx.obj.get("profile")
+        except RuntimeError:
+            pass
+
         resolved = resolve_connection(
             remote_url=None,
             remote_api_key=None,
+            profile_name=profile_name,
         )
         if getattr(resolved, "is_remote", False):
             return

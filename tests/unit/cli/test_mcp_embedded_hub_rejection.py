@@ -86,6 +86,43 @@ class TestRejectEmbeddedHubMode:
         monkeypatch.setattr(_config, "resolve_connection", lambda **_: _Remote())
         _reject_embedded_hub_mode("http")
 
+    def test_profile_name_threaded_to_resolve_connection(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Regression (round 6): ``--profile hub`` must be passed through
+        to ``resolve_connection`` so a profile-only remote URL works."""
+        monkeypatch.setenv("NEXUS_DATABASE_URL", "postgresql://x/y")
+        monkeypatch.delenv("NEXUS_URL", raising=False)
+        from nexus.cli import config as _config
+
+        seen_kwargs: dict[str, Any] = {}
+
+        class _Remote:
+            is_remote = True
+
+        def _stub(**kwargs: Any) -> Any:
+            seen_kwargs.update(kwargs)
+            return _Remote()
+
+        monkeypatch.setattr(_config, "resolve_connection", _stub)
+
+        # Simulate the root `nexus --profile hub` command populating
+        # ctx.obj the same way it does in production.
+        import click as _click
+
+        @_click.command()
+        @_click.pass_context
+        def _fake(ctx: _click.Context) -> None:
+            ctx.ensure_object(dict)
+            ctx.obj["profile"] = "hub"
+            _reject_embedded_hub_mode("http")
+
+        from click.testing import CliRunner
+
+        result = CliRunner().invoke(_fake, [], standalone_mode=False)
+        assert result.exception is None, result.output
+        assert seen_kwargs.get("profile_name") == "hub"
+
     def test_sse_transport_not_affected(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Only 'http' is the concerning path — sse has different defaults."""
         monkeypatch.setenv("NEXUS_DATABASE_URL", "postgresql://x/y")

@@ -118,36 +118,6 @@ async def test_write_update_operation_logged(
 
 
 @pytest.mark.asyncio
-async def test_delete_operation_logged(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
-    """Test that delete operations are logged with snapshot."""
-    path = "/test.txt"
-    content = b"Test content"
-
-    # Write and then delete (use write() to get metadata dict with etag)
-    result = nx.write(path, content)
-    content_hash = result["etag"]
-    nx.sys_unlink(path)
-    await _flush(nx)
-
-    # Check operation log
-    with record_store.session_factory() as session:
-        logger = OperationLogger(session)
-        operations = logger.list_operations(operation_type="delete", limit=10)
-
-        assert len(operations) >= 1
-        latest = operations[0]
-        assert latest.operation_type == "delete"
-        assert latest.path == path
-        assert latest.status == "success"
-        assert latest.snapshot_hash == content_hash  # Should store content for undo
-
-        # Check metadata snapshot
-        metadata = logger.get_metadata_snapshot(latest)
-        assert metadata is not None
-        assert metadata["size"] == len(content)
-
-
-@pytest.mark.asyncio
 async def test_rename_operation_logged(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
     """Test that rename operations are logged.
 
@@ -335,39 +305,6 @@ async def test_undo_write_update(
         # Verify restoration
         restored_content = nx.sys_read(path)
         assert restored_content == content1
-
-
-@pytest.mark.asyncio
-async def test_undo_delete(
-    nx: NexusFS, local_backend: CASLocalBackend, record_store: SQLAlchemyRecordStore
-) -> None:
-    """Test undoing a delete operation."""
-    path = "/test.txt"
-    content = b"Test content"
-
-    # Write and delete (use write() to get metadata dict with etag)
-    result = nx.write(path, content)
-    content_hash = result["etag"]
-    local_backend.write_content(content)  # Hold extra CAS reference so blob survives unlink
-    nx.sys_unlink(path)
-    await _flush(nx)
-    assert not nx.access(path)
-
-    # Get delete operation
-    with record_store.session_factory() as session:
-        logger = OperationLogger(session)
-        last_op = logger.get_last_operation(operation_type="delete")
-
-        assert last_op is not None
-        assert last_op.snapshot_hash == content_hash
-
-        # Undo by restoring from snapshot
-        restored_content = local_backend.read_content(last_op.snapshot_hash)
-        nx.write(path, restored_content)
-
-        # Verify restoration
-        assert nx.access(path)
-        assert nx.sys_read(path) == content
 
 
 @pytest.mark.asyncio

@@ -11,7 +11,6 @@ Tests cover:
 import pytest
 
 from tests.conftest import make_test_nexus
-from tests.helpers.failing_backend import FailingBackend
 
 
 @pytest.fixture()
@@ -103,33 +102,6 @@ class TestWriteBatchVersioning:
         )
         assert results[0]["version"] == 2  # existing file incremented
         assert results[1]["version"] == 1  # new file starts at 1
-
-
-class TestWriteBatchWithFailingBackend:
-    """Backend failures during batch write."""
-
-    @pytest.mark.asyncio
-    def test_backend_failure_raises_error(self, tmp_path):
-        """When backend.write_content() fails, the error should propagate."""
-        from nexus.backends.storage.cas_local import CASLocalBackend
-        from nexus.contracts.exceptions import BackendError
-
-        data_dir = tmp_path / "data"
-        data_dir.mkdir()
-        real_backend = CASLocalBackend(root_path=data_dir)
-        failing = FailingBackend(real_backend, fail_on_nth=2, fail_permanently=True)
-
-        nx = make_test_nexus(tmp_path / "nx", backend=failing)
-
-        # First file write succeeds (call #1 = write_content)
-        # Second file write fails (call #2+ = write_content, permanently)
-        with pytest.raises(BackendError):
-            nx.write_batch(
-                [
-                    ("/files/a.txt", b"ok"),
-                    ("/files/b.txt", b"fail"),
-                ]
-            )
 
 
 class TestWriteBatchContentEdgeCases:

@@ -15,14 +15,10 @@
 use parking_lot::Mutex;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList};
-use std::io;
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::backend::{
-    CasLocalBackend, LocalConnectorBackend, ObjectStore, PathLocalBackend, StorageError,
-    WriteResult,
-};
+use crate::backend::{CasLocalBackend, LocalConnectorBackend, ObjectStore, PathLocalBackend};
 #[cfg(feature = "py-hook-adapters")]
 use crate::dispatch::PathResolver;
 use crate::hook_registry::HookRegistry;
@@ -397,191 +393,6 @@ fn rust_ctx_to_python<'py>(
 // Direction 3 (PILLAR): Store adapters — Python ABC -> Rust trait
 // ═══════════════════════════════════════════════════════════════════════════
 
-// ── PyObjectStoreAdapter ────────────────────────────────────────
-
-/// Wraps Python `ObjectStoreABC` -> Rust `ObjectStore` trait.
-///
-/// Transitional adapter: Python backend via GIL (cold path).
-pub(crate) struct PyObjectStoreAdapter {
-    inner: Py<PyAny>,
-    backend_name: String,
-}
-
-unsafe impl Send for PyObjectStoreAdapter {}
-unsafe impl Sync for PyObjectStoreAdapter {}
-
-impl PyObjectStoreAdapter {
-    pub(crate) fn new(py: Python<'_>, inner: Py<PyAny>) -> Self {
-        let name = inner
-            .bind(py)
-            .getattr("name")
-            .and_then(|n| n.extract::<String>())
-            .unwrap_or_else(|_| "<backend>".to_string());
-        Self {
-            inner,
-            backend_name: name,
-        }
-    }
-}
-
-impl ObjectStore for PyObjectStoreAdapter {
-    fn name(&self) -> &str {
-        &self.backend_name
-    }
-
-    fn write_content(
-        &self,
-        content: &[u8],
-        content_id: &str,
-        ctx: &crate::kernel::OperationContext,
-        offset: u64,
-    ) -> Result<WriteResult, StorageError> {
-        Python::attach(|py| {
-            let obj = self.inner.bind(py);
-            // Convert Rust ctx → Python OperationContext (carries backend_path for PAS)
-            let py_ctx = rust_ctx_to_python(py, ctx, content_id)
-                .map_err(|e| StorageError::IOError(io::Error::other(e)))?;
-            let kwargs = pyo3::types::PyDict::new(py);
-            let _ = kwargs.set_item("context", &py_ctx);
-            // R20.10: thread offset as a kwarg so Python backends
-            // (PAS-addressing-engine RMW) honor POSIX pwrite semantics.
-            let _ = kwargs.set_item("offset", offset);
-            let result = obj
-                .call_method("write_content", (content, content_id), Some(&kwargs))
-                .map_err(|e| StorageError::IOError(io::Error::other(e.to_string())))?;
-            // Python ObjectStoreABC.write_content() returns WriteResult
-            let cid = result
-                .getattr("content_id")
-                .and_then(|v| v.extract::<String>())
-                .map_err(|e| StorageError::IOError(io::Error::other(e.to_string())))?;
-            let version = result
-                .getattr("version")
-                .and_then(|v| v.extract::<String>())
-                .unwrap_or_else(|_| cid.clone());
-            let size = result
-                .getattr("size")
-                .and_then(|v| v.extract::<u64>())
-                .unwrap_or(content.len() as u64);
-            Ok(WriteResult {
-                content_id: cid,
-                version,
-                size,
-            })
-        })
-    }
-
-    fn read_content(
-        &self,
-        content_id: &str,
-        backend_path: &str,
-        ctx: &crate::kernel::OperationContext,
-    ) -> Result<Vec<u8>, StorageError> {
-        Python::attach(|py| {
-            let obj = self.inner.bind(py);
-            // Convert Rust OperationContext → Python OperationContext
-            let py_ctx = rust_ctx_to_python(py, ctx, backend_path)
-                .map_err(|e| StorageError::IOError(io::Error::other(e)))?;
-            let result = obj
-                .call_method(
-                    "read_content",
-                    (content_id,),
-                    Some(&{
-                        let kw = pyo3::types::PyDict::new(py);
-                        let _ = kw.set_item("context", &py_ctx);
-                        kw
-                    }),
-                )
-                .map_err(|e| StorageError::IOError(io::Error::other(e.to_string())))?;
-            result
-                .extract::<Vec<u8>>()
-                .map_err(|e| StorageError::IOError(io::Error::other(e.to_string())))
-        })
-    }
-
-    fn delete_content(&self, content_id: &str) -> Result<(), StorageError> {
-        Python::attach(|py| {
-            let obj = self.inner.bind(py);
-            obj.call_method1("delete_content", (content_id,))
-                .map_err(|e| StorageError::IOError(io::Error::other(e.to_string())))?;
-            Ok(())
-        })
-    }
-
-    fn get_content_size(&self, content_id: &str) -> Result<u64, StorageError> {
-        Python::attach(|py| {
-            let obj = self.inner.bind(py);
-            let result = obj
-                .call_method1("get_content_size", (content_id,))
-                .map_err(|e| StorageError::IOError(io::Error::other(e.to_string())))?;
-            result
-                .extract::<u64>()
-                .map_err(|e| StorageError::IOError(io::Error::other(e.to_string())))
-        })
-    }
-
-    fn mkdir(&self, path: &str, parents: bool, exist_ok: bool) -> Result<(), StorageError> {
-        Python::attach(|py| {
-            let obj = self.inner.bind(py);
-            obj.call_method1("mkdir", (path, parents, exist_ok))
-                .map_err(|e| StorageError::IOError(io::Error::other(e.to_string())))?;
-            Ok(())
-        })
-    }
-
-    fn rmdir(&self, path: &str, recursive: bool) -> Result<(), StorageError> {
-        Python::attach(|py| {
-            let obj = self.inner.bind(py);
-            obj.call_method1("rmdir", (path, recursive))
-                .map_err(|e| StorageError::IOError(io::Error::other(e.to_string())))?;
-            Ok(())
-        })
-    }
-
-    fn delete_file(&self, path: &str) -> Result<(), StorageError> {
-        Python::attach(|py| {
-            let obj = self.inner.bind(py);
-            obj.call_method1("delete_file", (path,))
-                .map_err(|e| StorageError::IOError(io::Error::other(e.to_string())))?;
-            Ok(())
-        })
-    }
-
-    fn rename(&self, old_path: &str, new_path: &str) -> Result<(), StorageError> {
-        Python::attach(|py| {
-            let obj = self.inner.bind(py);
-            obj.call_method1("rename", (old_path, new_path))
-                .map_err(|e| StorageError::IOError(io::Error::other(e.to_string())))?;
-            Ok(())
-        })
-    }
-
-    fn copy_file(&self, src_path: &str, dst_path: &str) -> Result<WriteResult, StorageError> {
-        Python::attach(|py| {
-            let obj = self.inner.bind(py);
-            // Check if the Python backend has copy_file (PAS-only method)
-            if !obj.hasattr("copy_file").unwrap_or(false) {
-                return Err(StorageError::NotSupported("copy_file"));
-            }
-            obj.call_method1("copy_file", (src_path, dst_path))
-                .map_err(|e| StorageError::IOError(io::Error::other(e.to_string())))?;
-            // copy_file returns None in Python; compute result from destination
-            let size = obj
-                .call_method1("get_size_by_path", (dst_path,))
-                .and_then(|v| v.extract::<u64>())
-                .unwrap_or(0);
-            let version = obj
-                .call_method1("get_version_by_path", (dst_path,))
-                .and_then(|v| v.extract::<String>())
-                .unwrap_or_default();
-            Ok(WriteResult {
-                content_id: version.clone(),
-                version,
-                size,
-            })
-        })
-    }
-}
-
 // ═══════════════════════════════════════════════════════════════════════════
 // Direction 2 (DISPATCH): Python hooks/resolvers/observers -> Rust traits
 // ═══════════════════════════════════════════════════════════════════════════
@@ -951,6 +762,11 @@ pub struct PySysWriteResult {
     pub post_hook_needed: bool,
     pub version: u32,
     pub size: u64,
+    pub is_new: bool,
+    pub old_etag: Option<String>,
+    pub old_size: Option<u64>,
+    pub old_version: Option<u32>,
+    pub old_modified_at_ms: Option<i64>,
 }
 
 // ── PySysUnlinkResult ───────────────────────────────────────────
@@ -975,6 +791,10 @@ pub struct PySysRenameResult {
     pub success: bool,
     pub post_hook_needed: bool,
     pub is_directory: bool,
+    pub old_etag: Option<String>,
+    pub old_size: Option<u64>,
+    pub old_version: Option<u32>,
+    pub old_modified_at_ms: Option<i64>,
 }
 
 // ── PySysMkdirResult ────────────────────────────────────────────
@@ -1669,7 +1489,7 @@ impl PyKernel {
 
     // ── sys_setattr — unified mount/attr syscall ─────────────────────
 
-    #[pyo3(signature = (path, entry_type, backend_name="", local_root=None, fsync=false, py_backend=None, backend_type="cas", follow_symlinks=true, openai_base_url=None, openai_api_key=None, openai_model=None, openai_blob_root=None, anthropic_base_url=None, anthropic_api_key=None, anthropic_model=None, anthropic_blob_root=None, s3_bucket=None, s3_prefix=None, aws_region=None, aws_access_key=None, aws_secret_key=None, s3_endpoint=None, gcs_bucket=None, gcs_prefix=None, access_token=None, root_folder_id=None, bot_token=None, default_channel=None, metastore_path=None, io_profile="balanced", zone_id="root", is_external=false, capacity=65536, mime_type=None, modified_at_ms=None, read_fd=None, write_fd=None, server_address=None, remote_auth_token=None, remote_ca_pem=None, remote_cert_pem=None, remote_key_pem=None, remote_timeout=30.0))]
+    #[pyo3(signature = (path, entry_type, backend_name="", local_root=None, fsync=false, backend_type="cas", follow_symlinks=true, openai_base_url=None, openai_api_key=None, openai_model=None, openai_blob_root=None, anthropic_base_url=None, anthropic_api_key=None, anthropic_model=None, anthropic_blob_root=None, s3_bucket=None, s3_prefix=None, aws_region=None, aws_access_key=None, aws_secret_key=None, s3_endpoint=None, gcs_bucket=None, gcs_prefix=None, access_token=None, root_folder_id=None, bot_token=None, default_channel=None, hn_stories_per_feed=None, hn_include_comments=None, cli_command=None, cli_service=None, cli_auth_env_json=None, x_bearer_token=None, metastore_path=None, io_profile="balanced", zone_id="root", is_external=false, capacity=65536, mime_type=None, modified_at_ms=None, read_fd=None, write_fd=None, server_address=None, remote_auth_token=None, remote_ca_pem=None, remote_cert_pem=None, remote_key_pem=None, remote_timeout=30.0))]
     #[allow(clippy::too_many_arguments)]
     fn sys_setattr<'py>(
         &self,
@@ -1679,7 +1499,6 @@ impl PyKernel {
         backend_name: &str,
         local_root: Option<&str>,
         fsync: bool,
-        py_backend: Option<Py<PyAny>>,
         backend_type: &str,
         follow_symlinks: bool,
         openai_base_url: Option<&str>,
@@ -1702,6 +1521,12 @@ impl PyKernel {
         root_folder_id: Option<&str>,
         bot_token: Option<&str>,
         default_channel: Option<&str>,
+        hn_stories_per_feed: Option<usize>,
+        hn_include_comments: Option<bool>,
+        cli_command: Option<&str>,
+        cli_service: Option<&str>,
+        cli_auth_env_json: Option<&str>,
+        x_bearer_token: Option<&str>,
         metastore_path: Option<&str>,
         io_profile: &str,
         zone_id: &str,
@@ -1900,6 +1725,51 @@ impl PyKernel {
                 .replace(remote_ms);
             let b = crate::remote_backend::RemoteBackend::new(transport);
             Some(Arc::new(b) as Arc<dyn ObjectStore>)
+        } else if backend_type == "hn" {
+            #[cfg(feature = "connectors")]
+            {
+                let stories = hn_stories_per_feed.unwrap_or(10);
+                let comments = hn_include_comments.unwrap_or(true);
+                let b = crate::hn_backend::HNBackend::new(backend_name, stories, comments)
+                    .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
+                Some(Arc::new(b))
+            }
+            #[cfg(not(feature = "connectors"))]
+            {
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                    "connectors feature not enabled",
+                ));
+            }
+        } else if backend_type == "cli" {
+            #[cfg(feature = "connectors")]
+            {
+                let cmd = cli_command.unwrap_or("");
+                let svc = cli_service.unwrap_or("");
+                let auth = cli_auth_env_json.unwrap_or("");
+                let b = crate::cli_backend::CLIBackend::new(backend_name, cmd, svc, auth)
+                    .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
+                Some(Arc::new(b))
+            }
+            #[cfg(not(feature = "connectors"))]
+            {
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                    "connectors feature not enabled",
+                ));
+            }
+        } else if backend_type == "x" {
+            #[cfg(feature = "connectors")]
+            {
+                let token = x_bearer_token.unwrap_or("");
+                let b = crate::x_backend::XBackend::new(backend_name, token)
+                    .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
+                Some(Arc::new(b))
+            }
+            #[cfg(not(feature = "connectors"))]
+            {
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                    "connectors feature not enabled",
+                ));
+            }
         } else if let Some(root) = local_root {
             if backend_type == "local_connector" {
                 let b = LocalConnectorBackend::new(Path::new(root), follow_symlinks, fsync)
@@ -1921,11 +1791,7 @@ impl PyKernel {
                 Some(Arc::new(b))
             }
         } else {
-            py_backend.map(|obj| -> Arc<dyn ObjectStore> {
-                Python::attach(|py| {
-                    Arc::new(PyObjectStoreAdapter::new(py, obj)) as Arc<dyn ObjectStore>
-                })
-            })
+            None
         };
 
         // Metastore resolution: metastore_path -> LocalMetastore.
@@ -2456,6 +2322,11 @@ impl PyKernel {
             post_hook_needed: result.post_hook_needed,
             version: result.version,
             size: result.size,
+            is_new: result.is_new,
+            old_etag: result.old_etag,
+            old_size: result.old_size,
+            old_version: result.old_version,
+            old_modified_at_ms: result.old_modified_at_ms,
         })
     }
 
@@ -2585,6 +2456,10 @@ impl PyKernel {
             success: result.success,
             post_hook_needed: result.post_hook_needed,
             is_directory: result.is_directory,
+            old_etag: result.old_etag,
+            old_size: result.old_size,
+            old_version: result.old_version,
+            old_modified_at_ms: result.old_modified_at_ms,
         })
     }
 
@@ -2728,6 +2603,11 @@ impl PyKernel {
                 post_hook_needed: r.post_hook_needed,
                 version: r.version,
                 size: r.size,
+                is_new: r.is_new,
+                old_etag: r.old_etag,
+                old_size: r.old_size,
+                old_version: r.old_version,
+                old_modified_at_ms: r.old_modified_at_ms,
             })
             .collect())
     }

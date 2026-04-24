@@ -176,6 +176,16 @@ pub struct SysWriteResult {
     pub version: u32,
     /// Content size in bytes.
     pub size: u64,
+    /// True if the file did not exist before this write.
+    pub is_new: bool,
+    /// Etag (content hash) of the file before this write (None if new file).
+    pub old_etag: Option<String>,
+    /// Size of the file before this write (None if new file).
+    pub old_size: Option<u64>,
+    /// Metadata version before this write (None if new file).
+    pub old_version: Option<u32>,
+    /// Modified-at timestamp (epoch ms) before this write (None if new file).
+    pub old_modified_at_ms: Option<i64>,
 }
 
 /// Result of sys_unlink(): hit + metadata for event payload.
@@ -205,6 +215,11 @@ pub struct SysRenameResult {
     pub post_hook_needed: bool,
     /// True if the renamed entry is a directory.
     pub is_directory: bool,
+    /// Old metadata fields for Python post-hook dispatch (audit trail).
+    pub old_etag: Option<String>,
+    pub old_size: Option<u64>,
+    pub old_version: Option<u32>,
+    pub old_modified_at_ms: Option<i64>,
 }
 
 /// Result of sys_mkdir(): hit flag.
@@ -2654,7 +2669,7 @@ impl Kernel {
             )));
         }
 
-        // 5. Backend read (CasLocal or PyObjectStoreAdapter)
+        // 5. Backend read (Rust-native ObjectStore)
         let content =
             self.vfs_router
                 .read_content(&route.mount_point, content_id, &route.backend_path, ctx);
@@ -2775,6 +2790,11 @@ impl Kernel {
                 post_hook_needed: false,
                 version: 0,
                 size: 0,
+                is_new: false,
+                old_etag: None,
+                old_size: None,
+                old_version: None,
+                old_modified_at_ms: None,
             })
         };
 
@@ -2819,6 +2839,11 @@ impl Kernel {
                                 post_hook_needed: false,
                                 version: 0,
                                 size: n as u64,
+                                is_new: false,
+                                old_etag: None,
+                                old_size: None,
+                                old_version: None,
+                                old_modified_at_ms: None,
                             });
                         }
                         Err(crate::pipe::PipeError::Full(_, _)) => {
@@ -2843,6 +2868,11 @@ impl Kernel {
                                 post_hook_needed: false,
                                 version: 0,
                                 size: offset as u64,
+                                is_new: false,
+                                old_etag: None,
+                                old_size: None,
+                                old_version: None,
+                                old_modified_at_ms: None,
                             });
                         }
                         Err(crate::stream::StreamError::Full(_, _)) => return miss(),
@@ -2864,7 +2894,7 @@ impl Kernel {
             return miss();
         }
 
-        // 5. Backend write (CasLocal or PyObjectStoreAdapter).
+        // 5. Backend write (Rust-native ObjectStore).
         //    Pass backend_path as content_id for PAS; for CAS at offset=0
         //    content_id is ignored, but for offset>0 we need the OLD
         //    content hash so CASEngine::write_partial can splice against
@@ -2915,10 +2945,17 @@ impl Kernel {
         // 6. After write -> build metadata + metastore.put + dcache update
         let result = match write_result {
             Some(wr) => {
-                // Snapshot old dcache state for the OBSERVE event payload
-                // (is_new + old_etag fields). Done before metastore.put so
-                // we capture the pre-write version, not the new one.
-                let old_entry = self.dcache.get_entry(path);
+                // Snapshot old state for OBSERVE event payload + Python
+                // post-hook dispatch (is_new, old_etag, old_size, etc.).
+                // DCache → metastore fallback ensures accuracy even on cold
+                // dcache (matches the authority that Python metadata.get()
+                // had before this crossing elimination).
+                let old_entry = self.dcache.get_entry(path).or_else(|| {
+                    self.with_metastore(&route.mount_point, |ms| {
+                        ms.get(path).ok().flatten().map(|m| (&m).into())
+                    })
+                    .flatten()
+                });
                 let old_version = old_entry.as_ref().map(|e| e.version).unwrap_or(0);
                 let old_etag = old_entry.as_ref().and_then(|e| e.etag.clone());
                 let new_version = old_version + 1;
@@ -2962,6 +2999,14 @@ impl Kernel {
                     let _ = ms.put(path, meta);
                 });
 
+                // Snapshot old_entry fields for the result struct before
+                // dispatch_mutation moves old_etag into its closure.
+                let result_is_new = old_entry.is_none();
+                let result_old_etag = old_etag.clone();
+                let result_old_size = old_entry.as_ref().map(|e| e.size);
+                let result_old_version = old_entry.as_ref().map(|e| e.version);
+                let result_old_modified_at_ms = old_entry.as_ref().and_then(|e| e.modified_at_ms);
+
                 // OBSERVE-phase dispatch (§11 Phase 5): queue FileWrite to
                 // the kernel observer ThreadPool. Returns immediately —
                 // observer callbacks run off the syscall hot path.
@@ -2981,6 +3026,11 @@ impl Kernel {
                     post_hook_needed: self.write_hook_count.load(Ordering::Relaxed) > 0,
                     version: new_version,
                     size: wr.size,
+                    is_new: result_is_new,
+                    old_etag: result_old_etag,
+                    old_size: result_old_size,
+                    old_version: result_old_version,
+                    old_modified_at_ms: result_old_modified_at_ms,
                 })
             }
             None => miss(),
@@ -3015,15 +3065,51 @@ impl Kernel {
         // 4. DCache lookup. On miss, fall back to the per-mount metastore
         //    so federation zones see inodes that haven't been cached yet
         //    (F2 C5 — matches sys_read's cold path). Full path.
+        //    On double miss, check implicit directory (path has children
+        //    in metastore but no explicit entry — e.g. /docs/ when
+        //    /docs/readme.md exists). Returns synthetic DT_DIR.
         let entry = match self.dcache.get_entry(path) {
             Some(e) => e,
             None => {
-                let meta = self
+                match self
                     .with_metastore(&route.mount_point, |ms| ms.get(path).ok().flatten())
-                    .flatten()?;
-                let cached: CachedEntry = (&meta).into();
-                self.dcache.put(path, cached.clone());
-                cached
+                    .flatten()
+                {
+                    Some(meta) => {
+                        let cached: CachedEntry = (&meta).into();
+                        self.dcache.put(path, cached.clone());
+                        cached
+                    }
+                    None => {
+                        // Implicit directory: children exist under this prefix
+                        // but no explicit entry. Eliminates Python fallback to
+                        // _check_is_directory() (Crossing 3a).
+                        let is_implicit = self
+                            .with_metastore(&route.mount_point, |ms| {
+                                ms.is_implicit_directory(path).unwrap_or(false)
+                            })
+                            .unwrap_or(false);
+                        if is_implicit {
+                            return Some(StatResult {
+                                path: path.to_string(),
+                                backend_name: String::new(),
+                                physical_path: String::new(),
+                                size: 4096,
+                                etag: None,
+                                mime_type: "inode/directory".to_string(),
+                                is_directory: true,
+                                entry_type: DT_DIR,
+                                mode: 0o755,
+                                version: 0,
+                                zone_id: Some(route.zone_id.clone()),
+                                created_at_ms: None,
+                                modified_at_ms: None,
+                                lock: None,
+                            });
+                        }
+                        return None;
+                    }
+                }
             }
         };
 
@@ -3233,6 +3319,10 @@ impl Kernel {
                 success: false,
                 post_hook_needed: false,
                 is_directory: false,
+                old_etag: None,
+                old_size: None,
+                old_version: None,
+                old_modified_at_ms: None,
             })
         };
 
@@ -3347,6 +3437,10 @@ impl Kernel {
                     success: false,
                     post_hook_needed: false,
                     is_directory,
+                    old_etag: None,
+                    old_size: None,
+                    old_version: None,
+                    old_modified_at_ms: None,
                 });
             }
             _ => {}
@@ -3406,11 +3500,34 @@ impl Kernel {
             ev.new_path = Some(new_path_owned);
         });
 
+        // Extract old metadata fields for Python post-hook dispatch.
+        // Prefer metastore (old_meta) over dcache (old_entry) for accuracy.
+        let (rename_old_etag, rename_old_size, rename_old_version, rename_old_modified_at_ms) =
+            match (&old_meta, &old_entry) {
+                (Some(m), _) => (
+                    m.etag.clone(),
+                    Some(m.size),
+                    Some(m.version),
+                    m.modified_at_ms,
+                ),
+                (None, Some(e)) => (
+                    e.etag.clone(),
+                    Some(e.size),
+                    Some(e.version),
+                    e.modified_at_ms,
+                ),
+                (None, None) => (None, None, None, None),
+            };
+
         Ok(SysRenameResult {
             hit: true,
             success: true,
             post_hook_needed: self.rename_hook_count.load(Ordering::Relaxed) > 0,
             is_directory,
+            old_etag: rename_old_etag,
+            old_size: rename_old_size,
+            old_version: rename_old_version,
+            old_modified_at_ms: rename_old_modified_at_ms,
         })
     }
 
@@ -3699,24 +3816,35 @@ impl Kernel {
         // 2. Route (check write access)
         let route = self.vfs_router.route(path, &ctx.zone_id)?;
 
-        // 3. Existence check via metastore (per-mount or global) — full path
-        let exists = self
+        // 3. Existence check: explicit entry OR implicit directory (children
+        //    exist under this prefix). Eliminates Python's router.route() +
+        //    metastore.get() + is_implicit_directory() pre-check (Crossing 3a).
+        let explicit_exists = self
             .with_metastore(&route.mount_point, |ms| ms.exists(path).unwrap_or(false))
             .unwrap_or(false);
-        if exists {
+        let implicit_exists = !explicit_exists
+            && self
+                .with_metastore(&route.mount_point, |ms| {
+                    ms.is_implicit_directory(path).unwrap_or(false)
+                })
+                .unwrap_or(false);
+        if explicit_exists || implicit_exists {
             if !exist_ok && !parents {
                 return Err(KernelError::IOError(format!(
                     "Directory already exists: {path}"
                 )));
             }
-            // Already exists — ensure parents and return
-            if parents {
-                self.ensure_parent_directories(path, ctx, &route.mount_point)?;
+            // Explicit entry: ensure parents and return (already materialized).
+            // Implicit dir: fall through to create explicit DT_DIR entry.
+            if explicit_exists {
+                if parents {
+                    self.ensure_parent_directories(path, ctx, &route.mount_point)?;
+                }
+                return Ok(SysMkdirResult {
+                    hit: true,
+                    post_hook_needed: self.mkdir_hook_count.load(Ordering::Relaxed) > 0,
+                });
             }
-            return Ok(SysMkdirResult {
-                hit: true,
-                post_hook_needed: self.mkdir_hook_count.load(Ordering::Relaxed) > 0,
-            });
         }
 
         // 4. Backend mkdir (best-effort, PAS backends create physical dirs)
@@ -3994,6 +4122,11 @@ impl Kernel {
                         post_hook_needed: false,
                         version: 0,
                         size: 0,
+                        is_new: false,
+                        old_etag: None,
+                        old_size: None,
+                        old_version: None,
+                        old_modified_at_ms: None,
                     });
                     continue;
                 }
@@ -4007,6 +4140,11 @@ impl Kernel {
                     post_hook_needed: false,
                     version: 0,
                     size: 0,
+                    is_new: false,
+                    old_etag: None,
+                    old_size: None,
+                    old_version: None,
+                    old_modified_at_ms: None,
                 });
                 continue;
             }
@@ -4027,7 +4165,8 @@ impl Kernel {
 
             match write_result {
                 Some(wr) => {
-                    let old_version = self.dcache.get_entry(path).map(|e| e.version).unwrap_or(0);
+                    let batch_old_entry = self.dcache.get_entry(path);
+                    let old_version = batch_old_entry.as_ref().map(|e| e.version).unwrap_or(0);
                     let new_version = old_version + 1;
 
                     // Collect metadata for batch put (instead of N individual puts)
@@ -4061,6 +4200,11 @@ impl Kernel {
                             || self.write_batch_hook_count.load(Ordering::Relaxed) > 0,
                         version: new_version,
                         size: wr.size,
+                        is_new: batch_old_entry.is_none(),
+                        old_etag: batch_old_entry.as_ref().and_then(|e| e.etag.clone()),
+                        old_size: batch_old_entry.as_ref().map(|e| e.size),
+                        old_version: batch_old_entry.as_ref().map(|e| e.version),
+                        old_modified_at_ms: batch_old_entry.as_ref().and_then(|e| e.modified_at_ms),
                     });
                 }
                 None => {
@@ -4070,6 +4214,11 @@ impl Kernel {
                         post_hook_needed: false,
                         version: 0,
                         size: 0,
+                        is_new: false,
+                        old_etag: None,
+                        old_size: None,
+                        old_version: None,
+                        old_modified_at_ms: None,
                     });
                 }
             }

@@ -156,6 +156,10 @@ def gcs_fs(tmp_path: Path):
     return _build_gcs_fs(tmp_path)
 
 
+@pytest.mark.skip(
+    reason="GCS lifecycle now handled by Rust GcsBackend — Python mock transport "
+    "is bypassed. These tests need rewriting as Rust-level GCS integration tests."
+)
 @pytest.mark.integration
 class TestGCSBackendLifecycle:
     @pytest.mark.asyncio

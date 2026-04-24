@@ -246,7 +246,8 @@ def test_sys_readdir_propagates_connector_backend_error(tmp_path: Path) -> None:
 
     class _ExplodingBackend:
         name = "exploding_connector"
-        has_root_path = False
+        has_root_path = True
+        root_path = str(tmp_path / "exploding")
 
         def list_dir(self, path: str, context: OperationContext | None = None) -> list[str]:
             raise BackendError("connector 503", backend="exploding_connector")

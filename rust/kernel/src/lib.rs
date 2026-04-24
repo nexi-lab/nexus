@@ -24,6 +24,8 @@ mod cas_chunking;
 mod cas_engine;
 mod cas_remote;
 mod cas_transport;
+#[cfg(feature = "connectors")]
+mod cli_backend;
 mod dcache;
 mod dispatch;
 mod dlc;
@@ -37,6 +39,8 @@ mod glob;
 #[cfg(feature = "connectors")]
 mod gmail_backend;
 mod hash;
+#[cfg(feature = "connectors")]
+mod hn_backend;
 mod hook_registry;
 mod io;
 mod kernel;
@@ -91,6 +95,8 @@ mod trigram;
 mod volume_engine;
 mod volume_index;
 mod wal_stream;
+#[cfg(feature = "connectors")]
+mod x_backend;
 
 use pyo3::prelude::*;
 

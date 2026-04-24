@@ -273,6 +273,10 @@ services:
       NEXUS_URL: http://nexus:2026
       NEXUS_API_KEY: ${NEXUS_API_KEY:-}
       NEXUS_GRPC_ALLOW_INSECURE: "true"
+      # Must match whatever port the nexus service binds gRPC on
+      # (default 2028; overridable via NEXUS_GRPC_PORT). Without this,
+      # the sidecar hard-codes 2028 while the server may be elsewhere.
+      NEXUS_GRPC_PORT: "${NEXUS_GRPC_PORT:-2028}"
       MCP_HOST: "0.0.0.0"
       MCP_PORT: "8081"
     ports:

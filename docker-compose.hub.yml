@@ -78,6 +78,10 @@ services:
 
   mcp-frontend:
     image: ghcr.io/nexi-lab/nexus:latest
+    # The base image ships a docker-entrypoint.sh that boots nexusd; we
+    # need to run `nexus mcp serve` instead, so clear the entrypoint and
+    # let `command:` be execed directly.
+    entrypoint: []
     environment:
       # Point MCP at the RPC server — bearer tokens flow through as the
       # per-request api_key for the remote NexusFS connection, so the

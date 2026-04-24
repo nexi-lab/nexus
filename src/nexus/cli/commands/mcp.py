@@ -80,14 +80,15 @@ class _APIKeyMiddleware(BaseHTTPMiddleware):
                 reset_request_api_key(token)
 
 
-def _reject_embedded_hub_mode(transport: str) -> None:
+def _reject_embedded_hub_mode(transport: str, remote_url: str | None = None) -> None:
     """Refuse ``nexus mcp serve --transport http`` in embedded hub mode (#3784).
 
-    "Embedded hub" = ``NEXUS_DATABASE_URL`` set AND ``NEXUS_URL`` unset on
-    an HTTP transport. This configuration would accept bearer tokens but
-    run every tool call against the ambient local ``NexusFS`` — no
-    per-token identity, no zone isolation, no connection to the hub's
-    Postgres auth layer in the tool path.
+    "Embedded hub" = ``NEXUS_DATABASE_URL`` set AND no remote URL
+    resolvable from ``--remote-url``, ``NEXUS_URL``, or the active
+    profile, on an HTTP transport. This configuration would accept
+    bearer tokens but run every tool call against the ambient local
+    ``NexusFS`` — no per-token identity, no zone isolation, no
+    connection to the hub's Postgres auth layer in the tool path.
 
     The supported hub deployment is the two-service design in
     ``docker-compose.hub.yml``: an ``nexusd`` RPC server plus a thin
@@ -97,7 +98,10 @@ def _reject_embedded_hub_mode(transport: str) -> None:
     on every call.
 
     We fail closed at startup so operators see a clear error instead of
-    silently getting an unsafe deployment.
+    silently getting an unsafe deployment. Launches that provide the
+    remote URL via any supported channel (``--remote-url`` CLI flag,
+    ``NEXUS_URL`` env, active profile) are allowed through — those are
+    the two-service-safe shapes we actually want people to use.
     """
     import os
 
@@ -105,16 +109,37 @@ def _reject_embedded_hub_mode(transport: str) -> None:
         return
     if not os.environ.get("NEXUS_DATABASE_URL"):
         return
+
+    # Resolve the effective remote URL the same way `_async_serve` will
+    # — CLI flag first, then env/profile — so a safe remote frontend
+    # launched as `nexus mcp serve --remote-url http://nexus:2026` is
+    # not false-rejected.
+    if remote_url:
+        return
     if os.environ.get("NEXUS_URL"):
         return
+    try:
+        from nexus.cli.config import resolve_connection
+
+        resolved = resolve_connection(
+            remote_url=None,
+            remote_api_key=None,
+        )
+        if getattr(resolved, "is_remote", False):
+            return
+    except Exception:
+        # If profile resolution itself is broken, fall through to the
+        # fail-closed error below — that's safer than masking a missing
+        # remote URL with an unrelated exception.
+        pass
 
     raise click.ClickException(
-        "Embedded hub mode (NEXUS_DATABASE_URL set + NEXUS_URL unset + "
+        "Embedded hub mode (NEXUS_DATABASE_URL set + no remote URL + "
         "--transport http) is not supported: tool calls would run under "
         "ambient local identity without per-token zone isolation. "
         "Use the two-service hub deployment instead: run `nexusd` as the "
         "RPC server and point this MCP frontend at it with "
-        "NEXUS_URL=http://<nexus-host>:2026. "
+        "`--remote-url http://<nexus-host>:2026` or NEXUS_URL=…. "
         "See docker-compose.hub.yml and docs/hub-deploy.md."
     )
 
@@ -271,8 +296,9 @@ def serve(
     import asyncio
 
     # Fail-closed: refuse unsupported embedded-hub configuration before
-    # we open a port (#3784).
-    _reject_embedded_hub_mode(transport)
+    # we open a port (#3784). Pass the CLI `--remote-url` through so a
+    # two-service frontend launched via flag is not false-rejected.
+    _reject_embedded_hub_mode(transport, remote_url=remote_url)
 
     # FastMCP's .run(transport="http") starts its own event loop via anyio.run
     # and cannot be called from inside an already-running asyncio loop. Split

@@ -45,11 +45,8 @@ def _build_service(
     # nexus_fs is required for sys_setattr(DT_MOUNT) — kernel-backed mount path
     # after F4 Rust-ification.
     mock_nexus_fs = MagicMock()
-    mock_kernel = MagicMock()
     mock_dlc = MagicMock()
-    service = MountService(
-        kernel=mock_kernel, dlc=mock_dlc, gateway=gateway, nexus_fs=mock_nexus_fs
-    )
+    service = MountService(dlc=mock_dlc, gateway=gateway, nexus_fs=mock_nexus_fs)
     # DriverLifecycleCoordinator is kernel-owned; mock it for unit tests.
     service._driver_coordinator = MagicMock()
     return service, gateway

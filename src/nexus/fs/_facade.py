@@ -621,17 +621,18 @@ class SlimNexusFS:
         and mount root is DT_EXTERNAL_STORAGE).  Every other route type
         (non-connector CAS, path-local, pipe, stream) falls back to the
         kernel path.
+
+        Uses DLC.resolve_path() (Phase G pattern) so this works in both
+        full-kernel and slim mode as long as the DLC has a kernel ref.
         """
-        from nexus.contracts.exceptions import InvalidPathError, PathNotMountedError
         from nexus.contracts.types import OperationContext
-        from nexus.core.path_utils import extract_zone_id, validate_path
+        from nexus.core.path_utils import validate_path
 
         try:
             normalized = validate_path(path)
         except Exception:
             return None
 
-        _py_kernel = getattr(self._kernel, "_kernel", None)
         _dlc = getattr(self._kernel, "_driver_coordinator", None)
         if _dlc is None:
             return None
@@ -640,20 +641,13 @@ class SlimNexusFS:
         is_admin = bool(getattr(caller_ctx, "is_admin", True))
         zone_id = getattr(caller_ctx, "zone_id", None) or "root"
 
-        # Route via Rust kernel when available; DLC LPM fallback for slim mode
-        if _py_kernel is not None:
-            try:
-                rr = _py_kernel.route(normalized, zone_id)
-            except (PathNotMountedError, InvalidPathError):
-                return None
-            except Exception:
-                return None
-            info = _dlc.get_mount_info_canonical(rr.mount_point)
-            if info is None:
-                return None
-            backend_path = getattr(rr, "backend_path", "") or ""
-            user_mp = extract_zone_id(rr.mount_point)[1]
-        else:
+        # Route via DLC.resolve_path() — delegates to Rust kernel internally
+        resolved = _dlc.resolve_path(normalized, zone_id)
+        if resolved is None:
+            return None
+        backend, backend_path, user_mp = resolved
+        info = _dlc.get_mount_info(user_mp, zone_id)
+        if info is None:
             return None
 
         if not getattr(info, "is_external", False):

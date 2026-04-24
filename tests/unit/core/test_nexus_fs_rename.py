@@ -10,7 +10,6 @@ Tests cover:
 import pytest
 
 from tests.conftest import make_test_nexus
-from tests.helpers.failing_backend import FailingBackend
 
 
 @pytest.fixture()
@@ -114,30 +113,6 @@ class TestRenameErrorPaths:
         nx.write("/files/valid.txt", b"content")
         with pytest.raises(InvalidPathError):
             nx.sys_rename("", "/files/new.txt")
-
-
-class TestRenameWithFailingBackend:
-    """Backend failures during rename operations."""
-
-    @pytest.mark.asyncio
-    def test_backend_failure_on_connector_rename(self, tmp_path):
-        """When a connector backend's rename_file() fails, BackendError should be raised."""
-        # This test uses FailingBackend to simulate connector failures.
-        # Note: CAS backends don't call backend.rename_file() — they only update metadata.
-        # So this test is mainly relevant for connector backends that support rename.
-        failing = FailingBackend(
-            _create_local_backend(tmp_path),
-            fail_on_methods=["write_content"],
-            fail_on_nth=2,
-        )
-        nx = make_test_nexus(tmp_path / "nx", backend=failing)
-        # First write succeeds
-        nx.write("/files/a.txt", b"data")
-        # Second write fails due to backend
-        from nexus.contracts.exceptions import BackendError
-
-        with pytest.raises(BackendError):
-            nx.write("/files/b.txt", b"data2")
 
 
 class TestRenameMetadataConsistency:

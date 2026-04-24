@@ -710,16 +710,6 @@ class MetadataMixin:
             if _unlink_result.post_hook_needed:
                 from nexus.contracts.vfs_hooks import DeleteHookContext
 
-                # Reconstruct old metadata from Rust result for operation log
-                _del_meta = None
-                if getattr(_unlink_result, "old_etag", None) is not None:
-                    _del_meta = FileMetadata(
-                        path=path,
-                        backend_name="",
-                        physical_path=_unlink_result.old_etag or "",
-                        size=getattr(_unlink_result, "old_size", 0) or 0,
-                        etag=_unlink_result.old_etag,
-                    )
                 self._kernel.dispatch_post_hooks(
                     "delete",
                     DeleteHookContext(
@@ -727,7 +717,6 @@ class MetadataMixin:
                         context=context,
                         zone_id=zone_id,
                         agent_id=agent_id,
-                        metadata=_del_meta,
                     ),
                 )
             return {}

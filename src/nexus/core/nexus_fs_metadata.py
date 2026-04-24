@@ -490,20 +490,31 @@ class MetadataMixin:
                 )
                 return result
 
-            # ── CAS-local detection — Rust takes ownership natively ──
-            _is_cas_local = getattr(backend, "has_root_path", False) and _cls_name.startswith("CAS")
-            if not _is_cas_local:
+            # ── Local backend detection — Rust takes ownership natively ──
+            # CASLocalBackend, PathLocalBackend, LocalConnectorBackend all
+            # have root_path; Rust constructs the matching backend from local_root.
+            _has_root = getattr(backend, "has_root_path", False)
+            _local_root = str(getattr(backend, "root_path", "")) if _has_root else None
+            if _local_root is None:
                 raise ValueError(
                     f"No Rust-native backend for {_cls_name}. "
                     "All connectors must be covered by _extract_rust_backend_params()."
                 )
-            _local_root = str(getattr(backend, "root_path", None))
+
+            # Determine local backend type for Rust dispatch
+            if "LocalConnector" in _cls_name:
+                _local_type = "local_connector"
+            elif "PathLocal" in _cls_name:
+                _local_type = "path_local"
+            else:
+                _local_type = "cas"  # CASLocalBackend (default)
 
             result = self._kernel.sys_setattr(
                 path,
                 entry_type,
                 _backend_name,
                 local_root=_local_root,
+                backend_type=_local_type,
                 fsync=True,
                 zone_id=zone_id,
                 metastore_path=_ms_path_str,

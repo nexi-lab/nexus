@@ -17,6 +17,11 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from nexus.bricks.auth.consumer_metrics import (
+    TOKEN_EXCHANGE_LATENCY,
+    TOKEN_EXCHANGE_REQUESTS,
+)
+
 if TYPE_CHECKING:
     from nexus.bricks.auth.consumer_cache import ResolvedCredCache
     from nexus.bricks.auth.consumer_providers.base import ProviderAdapter
@@ -155,88 +160,109 @@ class CredentialConsumer:
         purpose: str,
         force_refresh: bool = False,
     ) -> MaterializedCredential:
+        import time
         from datetime import UTC, datetime, timedelta
 
         from nexus.bricks.auth.postgres_profile_store import ProfileNotFound
 
-        adapter = self._adapters.get(provider)
-        if adapter is None:
-            raise ProviderNotConfigured.from_row(
-                tenant_id=claims.tenant_id,
-                principal_id=claims.principal_id,
-                provider=provider,
-                cause="adapter_not_registered",
-            )
-
-        cache_key = (
-            str(claims.tenant_id),
-            str(claims.principal_id),
-            provider,
-        )
-        now = datetime.now(UTC)
-
-        if not force_refresh:
-            cached = self._cred_cache.get(cache_key, now=now)
-            if cached is not None:
-                # Cache hit — log sampled audit row, no decrypt
-                self._audit.write(
+        start = time.monotonic()
+        cache_label = "miss"
+        result_label = "ok"
+        try:
+            adapter = self._adapters.get(provider)
+            if adapter is None:
+                raise ProviderNotConfigured.from_row(
                     tenant_id=claims.tenant_id,
                     principal_id=claims.principal_id,
-                    auth_profile_id="cached",
-                    caller_machine_id=claims.machine_id,
-                    caller_kind="daemon",
                     provider=provider,
-                    purpose=purpose,
-                    cache_hit=True,
-                    kek_version=0,  # unknown on cache hit; sentinel value
+                    cause="adapter_not_registered",
                 )
-                return cached
 
-        try:
-            decrypted = self._store.decrypt_profile(
-                principal_id=claims.principal_id,
-                provider=provider,
-                encryption=self._encryption,
-                dek_cache=self._dek_cache,
+            cache_key = (
+                str(claims.tenant_id),
+                str(claims.principal_id),
+                provider,
             )
-        except ProfileNotFound as exc:
-            raise ProfileNotFoundForCaller.from_row(
-                tenant_id=claims.tenant_id,
-                principal_id=claims.principal_id,
-                provider=provider,
-                cause="no_envelope_row",
-            ) from exc
+            now = datetime.now(UTC)
 
-        # Stale-source check: last_synced_at + sync_ttl must be in the future.
-        ttl_window = timedelta(seconds=decrypted.sync_ttl_seconds)
-        if decrypted.last_synced_at + ttl_window < now:
-            raise StaleSource.from_row(
+            if not force_refresh:
+                cached = self._cred_cache.get(cache_key, now=now)
+                if cached is not None:
+                    # Cache hit — log sampled audit row, no decrypt
+                    cache_label = "hit"
+                    self._audit.write(
+                        tenant_id=claims.tenant_id,
+                        principal_id=claims.principal_id,
+                        auth_profile_id="cached",
+                        caller_machine_id=claims.machine_id,
+                        caller_kind="daemon",
+                        provider=provider,
+                        purpose=purpose,
+                        cache_hit=True,
+                        kek_version=0,  # unknown on cache hit; sentinel value
+                    )
+                    return cached
+
+            try:
+                decrypted = self._store.decrypt_profile(
+                    principal_id=claims.principal_id,
+                    provider=provider,
+                    encryption=self._encryption,
+                    dek_cache=self._dek_cache,
+                )
+            except ProfileNotFound as exc:
+                raise ProfileNotFoundForCaller.from_row(
+                    tenant_id=claims.tenant_id,
+                    principal_id=claims.principal_id,
+                    provider=provider,
+                    cause="no_envelope_row",
+                ) from exc
+
+            # Stale-source check: last_synced_at + sync_ttl must be in the future.
+            ttl_window = timedelta(seconds=decrypted.sync_ttl_seconds)
+            if decrypted.last_synced_at + ttl_window < now:
+                raise StaleSource.from_row(
+                    tenant_id=claims.tenant_id,
+                    principal_id=claims.principal_id,
+                    provider=provider,
+                    cause=f"last_synced_at_age={int((now - decrypted.last_synced_at).total_seconds())}s",
+                )
+
+            try:
+                materialized = adapter.materialize(decrypted.plaintext)
+            except (ValueError, KeyError) as exc:
+                raise AdapterMaterializeFailed.from_row(
+                    tenant_id=claims.tenant_id,
+                    principal_id=claims.principal_id,
+                    provider=provider,
+                    cause=f"{type(exc).__name__}",
+                ) from exc
+
+            self._cred_cache.put(cache_key, materialized, now=now)
+            self._audit.write(
                 tenant_id=claims.tenant_id,
                 principal_id=claims.principal_id,
+                auth_profile_id=decrypted.profile_id,
+                caller_machine_id=claims.machine_id,
+                caller_kind="daemon",
                 provider=provider,
-                cause=f"last_synced_at_age={int((now - decrypted.last_synced_at).total_seconds())}s",
+                purpose=purpose,
+                cache_hit=False,
+                kek_version=decrypted.kek_version,
             )
+            return materialized
 
-        try:
-            materialized = adapter.materialize(decrypted.plaintext)
-        except (ValueError, KeyError) as exc:
-            raise AdapterMaterializeFailed.from_row(
-                tenant_id=claims.tenant_id,
-                principal_id=claims.principal_id,
-                provider=provider,
-                cause=f"{type(exc).__name__}",
-            ) from exc
-
-        self._cred_cache.put(cache_key, materialized, now=now)
-        self._audit.write(
-            tenant_id=claims.tenant_id,
-            principal_id=claims.principal_id,
-            auth_profile_id=decrypted.profile_id,
-            caller_machine_id=claims.machine_id,
-            caller_kind="daemon",
-            provider=provider,
-            purpose=purpose,
-            cache_hit=False,
-            kek_version=decrypted.kek_version,
-        )
-        return materialized
+        except (ProfileNotFoundForCaller, ProviderNotConfigured):
+            result_label = "denied"
+            raise
+        except StaleSource:
+            result_label = "stale"
+            raise
+        except AdapterMaterializeFailed:
+            result_label = "envelope_error"
+            raise
+        finally:
+            TOKEN_EXCHANGE_LATENCY.labels(provider=provider, cache=cache_label).observe(
+                time.monotonic() - start
+            )
+            TOKEN_EXCHANGE_REQUESTS.labels(provider=provider, result=result_label).inc()

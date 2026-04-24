@@ -14,6 +14,8 @@ import uuid
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from nexus.bricks.auth.consumer_metrics import READ_AUDIT_WRITES
+
 logger = logging.getLogger(__name__)
 
 _PURPOSE_MAX_LEN = 256
@@ -81,6 +83,7 @@ class ReadAuditWriter:
                         "kv": kek_version,
                     },
                 )
+                READ_AUDIT_WRITES.labels(cache="hit" if cache_hit else "miss").inc()
         except Exception:  # noqa: BLE001
             logger.exception(
                 "auth_profile_reads insert failed tenant=%s principal=%s provider=%s",

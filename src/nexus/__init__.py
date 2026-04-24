@@ -350,30 +350,36 @@ def connect(
             tls_config=_tls_config,
         )
 
-        # RemoteBackend + RemoteMetastore — stateless proxies, server is SSOT.
-        from nexus.backends.storage.remote import RemoteBackend
-        from nexus.storage.remote_metastore import RemoteMetastore
-
-        remote_backend = RemoteBackend(transport)
-        remote_metastore = RemoteMetastore(transport)
-
-        # Build a lightweight NexusFS directly — no factory, no bricks.
-        # Server is SSOT; client just proxies calls via gRPC.
-        # No parser registries — remote delegates all parsing to the server.
+        # Rust-native remote wiring (Issue #1134 Phase 4, a803a9d63):
+        # the root mount carries backend_type="remote" + connection params,
+        # and PyKernel::sys_setattr constructs both the Rust RemoteBackend
+        # and the Rust RemoteMetastore from those params — no Python shim.
+        # Metastore is a stock RustMetastoreProxy: the single Rust kernel
+        # routes per-mount reads/writes to the remote backend it built.
+        from nexus.contracts.metadata import DT_MOUNT
         from nexus.contracts.types import OperationContext as _RemoteOC
         from nexus.core.config import PermissionConfig as _PermissionConfig
         from nexus.core.nexus_fs import NexusFS as _RemoteNexusFS
 
+        remote_metastore = _open_local_metastore(":memory:")
         nfs = _RemoteNexusFS(
             metadata_store=remote_metastore,
             permissions=_PermissionConfig(enforce=False),
             init_cred=_RemoteOC(user_id="remote", groups=[], is_admin=False),
         )
 
-        # Mount root backend — Rust kernel is SSOT for routing (F2).
-        from nexus.contracts.metadata import DT_MOUNT
-
-        nfs.sys_setattr("/", entry_type=DT_MOUNT, backend=remote_backend)
+        nfs.sys_setattr(
+            "/",
+            entry_type=DT_MOUNT,
+            backend_type="remote",
+            backend_name="remote",
+            server_address=grpc_address,
+            remote_auth_token=api_key,
+            remote_ca_pem=(_tls_config.ca_pem.decode() if _tls_config else None),
+            remote_cert_pem=(_tls_config.node_cert_pem.decode() if _tls_config else None),
+            remote_key_pem=(_tls_config.node_key_pem.decode() if _tls_config else None),
+            remote_timeout=float(timeout),
+        )
 
         # Wire service proxies for REMOTE profile (Issue #1171).
         # Fills all 25+ service slots with RemoteServiceProxy — forwards

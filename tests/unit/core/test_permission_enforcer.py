@@ -296,7 +296,7 @@ class TestPermissionEnforcer:
         class MockRouter:
             """Mock router that returns backend_path without leading slash (as the real router does)."""
 
-            def route(self, path, *, zone_id: str = ROOT_ZONE_ID):
+            def route(self, path, zone_id: str = ROOT_ZONE_ID):
                 del zone_id  # production enforcer passes zone_id; Mock ignores
 
                 class MockBackend:

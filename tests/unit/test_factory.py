@@ -65,7 +65,8 @@ def _make_mock_ctx(**overrides: Any) -> Any:
         "record_store": MagicMock(),
         "metadata_store": MagicMock(),
         "backend": MagicMock(),
-        "router": MagicMock(),
+        "kernel": MagicMock(),
+        "dlc": MagicMock(),
         "engine": mock_engine,
         "read_engine": mock_engine,
         "perm": MagicMock(
@@ -112,15 +113,15 @@ class TestBootKernelServices:
         assert isinstance(result, dict)
         assert len(result) == 0
 
-    def test_failure_on_none_router(self) -> None:
-        """BootError when router is None."""
+    def test_failure_on_none_kernel(self) -> None:
+        """BootError when kernel is None."""
         from nexus.factory import _boot_kernel_services
 
-        ctx = _make_mock_ctx(router=None)
+        ctx = _make_mock_ctx(kernel=None)
         with pytest.raises(BootError) as exc_info:
             _boot_kernel_services(ctx)
         assert exc_info.value.tier == "kernel"
-        assert "router" in str(exc_info.value).lower()
+        assert "kernel" in str(exc_info.value).lower()
 
     def test_failure_on_none_metadata_store(self) -> None:
         """BootError when metadata_store is None."""
@@ -489,7 +490,8 @@ class TestCreateNexusServicesIntegration:
             record_store=record_store,
             metadata_store=MagicMock(),
             backend=MagicMock(),
-            router=MagicMock(),
+            kernel=MagicMock(),
+            dlc=MagicMock(),
         )
         assert isinstance(result, dict)
         # Issue #2193: all services in a single flat dict
@@ -516,7 +518,8 @@ class TestCreateNexusServicesIntegration:
                 record_store=record_store,
                 metadata_store=MagicMock(),
                 backend=MagicMock(),
-                router=MagicMock(),
+                kernel=MagicMock(),
+                dlc=MagicMock(),
             )
 
     def test_boot_tags_in_log_output(self, caplog: pytest.LogCaptureFixture) -> None:
@@ -532,7 +535,8 @@ class TestCreateNexusServicesIntegration:
                 record_store=record_store,
                 metadata_store=MagicMock(),
                 backend=MagicMock(),
-                router=MagicMock(),
+                kernel=MagicMock(),
+                dlc=MagicMock(),
             )
 
         messages = " ".join(r.message for r in caplog.records)

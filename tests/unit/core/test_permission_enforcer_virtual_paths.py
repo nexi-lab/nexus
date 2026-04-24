@@ -55,7 +55,7 @@ class MockRouter:
     def __init__(self, mount_point: str = "/mnt/gcs"):
         self.mount_point = mount_point
 
-    def route(self, path: str, *, zone_id: str = ROOT_ZONE_ID):
+    def route(self, path: str, zone_id: str = ROOT_ZONE_ID):
         # Simulate mount point stripping
         del zone_id  # production enforcer now passes zone_id; Mock ignores
         if path.startswith(self.mount_point):
@@ -229,7 +229,7 @@ class TestNonFileBackendObjectId:
         db_backend = MockBackend(object_type="postgres:table", object_id="users")
 
         class DatabaseRouter:
-            def route(self, path, **kwargs):
+            def route(self, path, zone_id=None):
                 return MockRoute(backend_path="public.users", backend=db_backend)
 
         router = DatabaseRouter()
@@ -251,7 +251,7 @@ class TestNonFileBackendObjectId:
         redis_backend = MockBackend(object_type="redis:key", object_id="session:abc123")
 
         class RedisRouter:
-            def route(self, path, **kwargs):
+            def route(self, path, zone_id=None):
                 return MockRoute(backend_path="session:abc123", backend=redis_backend)
 
         router = RedisRouter()
@@ -273,7 +273,7 @@ class TestRouterFailureFallback:
         """Test that kernel routing exceptions fall back to virtual path with object_type='file'."""
 
         class FailingKernel:
-            def route(self, path, **kwargs):
+            def route(self, path, zone_id=None):
                 raise RuntimeError("Kernel routing unavailable")
 
         rebac = MockReBACManager()

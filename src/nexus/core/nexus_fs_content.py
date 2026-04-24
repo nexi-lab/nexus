@@ -42,7 +42,6 @@ class ContentMixin:
     _kernel: Any  # Rust Kernel
     _zone_id: str
     metadata: Any
-    router: Any
     _driver_coordinator: Any
 
     # =================================================================
@@ -435,12 +434,11 @@ class ContentMixin:
             self._kernel.dispatch_pre_hooks("read", _RHC(path=path, context=context))
 
             zone_id, agent_id, is_admin = self._get_context_identity(context)
-            route = self.router.route(path, zone_id=self._zone_id)
+            _rust_route = self._kernel.route(path, self._zone_id)
 
             # Per-zone metastore lookup — go through the kernel so federation
-            # mode hits the ZoneMetastore registered in mount_table, not the
-            # root-zone ``RaftMetadataStore`` that ``route.metastore`` points
-            # at in PathRouter.
+            # mode hits the ZoneMetastore registered in VFSRouter, not the
+            # root-zone ``RaftMetadataStore``.
             meta = self._kernel.metastore_get(path)
 
             if meta is None or meta.etag is None:
@@ -450,11 +448,13 @@ class ContentMixin:
             if hasattr(_rb, "read_content_range"):
                 from dataclasses import replace as _replace
 
+                from nexus.core.path_utils import extract_zone_id as _ezi
+
                 read_context = (
                     _replace(
                         context,
-                        backend_path=route.backend_path,
-                        mount_path=route.mount_point,
+                        backend_path=_rust_route.backend_path,
+                        mount_path=_ezi(_rust_route.mount_point)[1],
                     )
                     if context
                     else None
@@ -1342,24 +1342,29 @@ class ContentMixin:
                 )
             else:
                 # Fallback: remote backend or route failure — use Python path
-                route = self.router.route(path, zone_id=self._zone_id)
+                from nexus.core.path_utils import extract_zone_id as _ezi
+
+                _rr = self._kernel.route(path, self._zone_id)
+                _di = self._driver_coordinator.get_mount_info_canonical(_rr.mount_point)
+                _be = _di.backend if _di else None
+                _user_mp = _ezi(_rr.mount_point)[1]
                 _write_ctx = (
                     _dc_replace(
                         context,
-                        backend_path=route.backend_path,
+                        backend_path=_rr.backend_path,
                         virtual_path=path,
-                        mount_path=route.mount_point,
+                        mount_path=_user_mp,
                     )
                     if context
                     else OperationContext(
                         user_id="anonymous",
                         groups=[],
-                        backend_path=route.backend_path,
+                        backend_path=_rr.backend_path,
                         virtual_path=path,
-                        mount_path=route.mount_point,
+                        mount_path=_user_mp,
                     )
                 )
-                content_hash = route.backend.write_content(content, context=_write_ctx).content_id
+                content_hash = _be.write_content(content, context=_write_ctx).content_id
                 meta = existing_metadata.get(path)
                 new_version = (meta.version + 1) if meta else 1
                 results.append(
@@ -1373,9 +1378,7 @@ class ContentMixin:
                 metadata_list.append(
                     FileMetadata(
                         path=path,
-                        backend_name=self._driver_coordinator.backend_key(
-                            route.backend, route.mount_point
-                        ),
+                        backend_name=self._driver_coordinator.backend_key(_be, _user_mp),
                         physical_path=content_hash,
                         size=len(content),
                         etag=content_hash,

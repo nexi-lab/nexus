@@ -47,7 +47,6 @@ class MetadataMixin:
     _zone_id: str
     _hook_specs: dict  # Hook specs stored on NexusFS
     metadata: Any
-    router: Any
     _driver_coordinator: Any
 
     # ── Internal helpers ──────────────────────────────────────────────
@@ -441,14 +440,11 @@ class MetadataMixin:
         path = self._validate_path(path)
         ctx = self._resolve_cred(context)
 
-        # Route to backend with write access check
-        route = self.router.route(path, zone_id=self._zone_id)
-
         # Virtual .readme/ paths are read-only (Issue #3728).
         self._reject_if_virtual_readme(path, context, op="mkdir")
 
         # Check if directory already exists
-        existing = route.metastore.get(path)
+        existing = self.metadata.get(path)
         is_implicit_dir = existing is None and self.metadata.is_implicit_directory(path)
 
         if existing is not None or is_implicit_dir:
@@ -557,20 +553,15 @@ class MetadataMixin:
         if _ipc_meta is not None and _ipc_meta.is_stream:
             return self._stream_destroy(path)
 
-        # Route to backend with write access check FIRST (to check zone/agent isolation)
-        # This must happen before permission check so AccessDeniedError is raised before PermissionError
+        # Extract identity for permission checks
         zone_id, agent_id, is_admin = self._get_context_identity(context)
-        route = self.router.route(
-            path,
-            zone_id=self._zone_id,
-        )
 
         # Virtual .readme/ paths are read-only (Issue #3728).
         self._reject_if_virtual_readme(path, context, op="delete")
 
         # Check if file exists in metadata.
         # Use prefetched hint from resolve_delete() if available (#1311)
-        meta = _result if _result is not None else route.metastore.get(path)
+        meta = _result if _result is not None else self.metadata.get(path)
 
         if meta is None:
             raise NexusFileNotFoundError(path)
@@ -690,12 +681,8 @@ class MetadataMixin:
         # Normalize context dict to OperationContext dataclass (CLI passes dicts)
         context = self._parse_context(context)
 
-        # Route source path (Rust handles full rename including destination)
+        # Extract identity
         zone_id, agent_id, is_admin = self._get_context_identity(context)
-        old_route = self.router.route(
-            old_path,
-            zone_id=self._zone_id,
-        )
 
         # Virtual .readme/ paths are read-only on both ends (Issue #3728).
         self._reject_if_virtual_readme(old_path, context, op="rename")
@@ -709,7 +696,7 @@ class MetadataMixin:
         # proxy so the POST-hook payload still reports the right flag when
         # the fallback path runs below; the kernel already reports this on
         # hit via ``_rename_result.is_directory``.
-        meta = old_route.metastore.get(old_path)
+        meta = self.metadata.get(old_path)
         is_directory = (
             meta and meta.mime_type == "inode/directory"
         ) or self.metadata.is_implicit_directory(old_path)
@@ -775,10 +762,6 @@ class MetadataMixin:
 
         zone_id, agent_id, is_admin = self._get_context_identity(context)
 
-        # Route both paths
-        src_route = self.router.route(src_path, zone_id=self._zone_id)
-        dst_route = self.router.route(dst_path, zone_id=self._zone_id)
-
         # Virtual .readme/ destination is read-only (Issue #3728).
         self._reject_if_virtual_readme(dst_path, context, op="copy")
 
@@ -815,10 +798,12 @@ class MetadataMixin:
                 backend file that hasn't been synced to the metastore
                 still blocks the copy.
                 """
-                if dst_route.metastore.exists(dst_path):
+                if self.metadata.exists(dst_path):
                     raise FileExistsError(f"Destination path already exists: {dst_path}")
-                _dst_bp = getattr(dst_route, "backend_path", "") or ""
-                _dst_be = getattr(dst_route, "backend", None)
+                _dst_rust = self._kernel.route(dst_path, self._zone_id)
+                _dst_info = self._driver_coordinator.get_mount_info_canonical(_dst_rust.mount_point)
+                _dst_bp = _dst_rust.backend_path or ""
+                _dst_be = _dst_info.backend if _dst_info else None
                 _fn = getattr(_dst_be, "content_exists", None)
                 if _dst_be is not None and callable(_fn):
                     from dataclasses import replace as _replace
@@ -866,12 +851,10 @@ class MetadataMixin:
             }
 
         # Fast-fail
-        if not src_route.metastore.exists(src_path) and not self.metadata.is_implicit_directory(
-            src_path
-        ):
+        if not self.metadata.exists(src_path) and not self.metadata.is_implicit_directory(src_path):
             raise NexusFileNotFoundError(src_path)
 
-        src_meta = src_route.metastore.get(src_path)
+        src_meta = self.metadata.get(src_path)
         if src_meta is None:
             raise NexusFileNotFoundError(src_path)
         if src_meta.mime_type == "inode/directory":
@@ -906,7 +889,7 @@ class MetadataMixin:
 
         # Python fallback — Rust sys_copy returned miss (should be rare)
         logger.debug("sys_copy miss for %s → %s, falling back to Python", src_path, dst_path)
-        if dst_route.metastore.exists(dst_path):
+        if self.metadata.exists(dst_path):
             raise FileExistsError(f"Destination path already exists: {dst_path}")
 
         # Read source content and write to destination (no VFS lock needed —
@@ -1010,22 +993,23 @@ class MetadataMixin:
             # Only external connectors need a backend call — CAS backends
             # always have size set in metastore by sys_write.
             self._get_context_identity(context)
-            route = self.router.route(
-                path,
-                zone_id=self._zone_id,
-            )
+            _rust_route = self._kernel.route(path, self._zone_id)
+            _dlc_info = self._driver_coordinator.get_mount_info_canonical(_rust_route.mount_point)
             try:
                 # Add backend_path to context for path-based connectors
                 size_context = context
                 if context:
                     from dataclasses import replace
 
+                    from nexus.core.path_utils import extract_zone_id
+
                     size_context = replace(
                         context,
-                        backend_path=route.backend_path,
-                        mount_path=route.mount_point,
+                        backend_path=_rust_route.backend_path,
+                        mount_path=extract_zone_id(_rust_route.mount_point)[1],
                     )
-                size = route.backend.get_content_size(meta.etag, context=size_context)
+                _be = _dlc_info.backend if _dlc_info else None
+                size = _be.get_content_size(meta.etag, context=size_context) if _be else None
             except Exception as exc:
                 logger.debug("Failed to get content size for %s: %s", path, exc)
                 size = None
@@ -1550,20 +1534,23 @@ class MetadataMixin:
         # Only intercept ExternalRouteResult — these are mounts with
         # is_external_storage metadata set. Plain RouteResult backends
         # (LocalBackend, CASLocalBackend, etc.) use the normal metastore path.
-        if path and path != "/" and getattr(self, "router", None):
+        if path and path != "/" and getattr(self, "_kernel", None):
             try:
-                from nexus.core.router import ExternalRouteResult
-
                 _is_admin = (
                     context.is_admin
                     if context is not None and not isinstance(context, dict)
                     else (context.get("is_admin", False) if isinstance(context, dict) else False)
                 )
-                _route = self.router.route(path, zone_id=self._zone_id)
-                backend = getattr(_route, "backend", None)
-                if isinstance(_route, ExternalRouteResult) and backend is not None:
-                    backend_path = getattr(_route, "backend_path", "") or ""
-                    mount_point = getattr(_route, "mount_point", "") or ""
+                _rust_route = self._kernel.route(path, self._zone_id)
+                _dlc_info = self._driver_coordinator.get_mount_info_canonical(
+                    _rust_route.mount_point
+                )
+                backend = _dlc_info.backend if _dlc_info else None
+                if _rust_route.is_external and backend is not None:
+                    from nexus.core.path_utils import extract_zone_id as _ezi
+
+                    backend_path = _rust_route.backend_path or ""
+                    mount_point = _ezi(_rust_route.mount_point)[1] or ""
                     _ctx = (
                         _dc_replace(
                             context,

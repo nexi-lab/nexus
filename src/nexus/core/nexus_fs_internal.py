@@ -33,7 +33,7 @@ class InternalMixin:
     _kernel: Any  # Rust Kernel — single stub, other attrs via MRO
     _zone_id: str
     _init_cred: Any
-    router: Any
+    _driver_coordinator: Any
 
     # ── Context helpers ──────────────────────────────────────────────
 
@@ -162,16 +162,19 @@ class InternalMixin:
             return None
         try:
             _, _, is_admin = self._get_context_identity(ctx)
-            route = self.router.route(path, zone_id=self._zone_id)
+            _rr = self._kernel.route(path, self._zone_id)
+            _di = self._driver_coordinator.get_mount_info_canonical(_rr.mount_point)
         except Exception:
             return None
 
-        backend = getattr(route, "backend", None)
+        backend = _di.backend if _di else None
         if backend is None:
             return None
 
-        mount_point = getattr(route, "mount_point", "") or ""
-        backend_path = getattr(route, "backend_path", "") or ""
+        from nexus.core.path_utils import extract_zone_id as _ezi
+
+        mount_point = _ezi(_rr.mount_point)[1] or ""
+        backend_path = _rr.backend_path or ""
 
         from nexus.backends.connectors.schema_generator import (
             _parse_readme_path_parts,
@@ -252,16 +255,19 @@ class InternalMixin:
             return
         try:
             _, _, is_admin = self._get_context_identity(context)
-            route = self.router.route(path, zone_id=self._zone_id)
+            _rr = self._kernel.route(path, self._zone_id)
+            _di = self._driver_coordinator.get_mount_info_canonical(_rr.mount_point)
         except Exception:
             return  # non-routable path — let the real call surface the error
 
-        backend = getattr(route, "backend", None)
+        backend = _di.backend if _di else None
         if backend is None:
             return
 
-        backend_path = getattr(route, "backend_path", "") or ""
-        mount_point = getattr(route, "mount_point", "") or ""
+        from nexus.core.path_utils import extract_zone_id as _ezi
+
+        backend_path = _rr.backend_path or ""
+        mount_point = _ezi(_rr.mount_point)[1] or ""
 
         from nexus.backends.connectors.schema_generator import overlay_owns_path
 
@@ -298,16 +304,19 @@ class InternalMixin:
             return None
         try:
             _, _, is_admin = self._get_context_identity(context)
-            route = self.router.route(path, zone_id=self._zone_id)
+            _rr = self._kernel.route(path, self._zone_id)
+            _di = self._driver_coordinator.get_mount_info_canonical(_rr.mount_point)
         except Exception:
             return None
 
-        backend = getattr(route, "backend", None)
+        backend = _di.backend if _di else None
         if backend is None:
             return None
 
-        mount_point = getattr(route, "mount_point", "") or ""
-        backend_path = getattr(route, "backend_path", "") or ""
+        from nexus.core.path_utils import extract_zone_id as _ezi
+
+        mount_point = _ezi(_rr.mount_point)[1] or ""
+        backend_path = _rr.backend_path or ""
 
         from nexus.backends.connectors.schema_generator import dispatch_virtual_readme_read
 

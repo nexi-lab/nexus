@@ -491,11 +491,17 @@ class MetadataMixin:
                 return result
 
             # ── Local backend detection — Rust takes ownership natively ──
-            # CASLocalBackend, PathLocalBackend, LocalConnectorBackend all
-            # have root_path; Rust constructs the matching backend from local_root.
-            _has_root = getattr(backend, "has_root_path", False)
-            _local_root = str(getattr(backend, "root_path", "")) if _has_root else None
-            if _local_root is None:
+            # CASLocalBackend has root_path; PathLocalBackend has root_path;
+            # LocalConnectorBackend has local_path. Rust constructs the matching
+            # backend from local_root param.
+            _local_root = (
+                str(getattr(backend, "root_path", ""))
+                if getattr(backend, "has_root_path", False)
+                else str(getattr(backend, "local_path", ""))
+                if hasattr(backend, "local_path")
+                else None
+            )
+            if not _local_root:
                 raise ValueError(
                     f"No Rust-native backend for {_cls_name}. "
                     "All connectors must be covered by _extract_rust_backend_params()."

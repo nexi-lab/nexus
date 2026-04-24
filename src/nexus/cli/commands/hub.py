@@ -198,7 +198,13 @@ def hub_zone() -> None:
 @hub_zone.command("list")
 @click.pass_context
 def hub_zone_list(ctx: click.Context) -> None:
-    """List zones — alias of `nexus zone list`."""
+    """List zones — alias of `nexus zone list`.
+
+    `ctx.invoke` bypasses Click's option-parsing, so envvar defaults on the
+    underlying `zone list` command (NEXUS_URL, NEXUS_API_KEY, NEXUS_DATA_DIR,
+    etc.) are not picked up automatically. Forward them explicitly here so
+    the alias behaves the same as running `nexus zone list` directly.
+    """
     from nexus.cli.commands.zone import zone as _zone
 
     list_cmd = _zone.commands.get("list")
@@ -206,7 +212,18 @@ def hub_zone_list(ctx: click.Context) -> None:
         raise click.ClickException(
             "`nexus zone list` is not available — cannot delegate from `hub zone list`."
         )
-    ctx.invoke(list_cmd)
+    ctx.invoke(
+        list_cmd,
+        hostname=os.environ.get("NEXUS_HOSTNAME"),
+        data_dir=os.environ.get("NEXUS_DATA_DIR", "./nexus-data/zones"),
+        bind=os.environ.get("NEXUS_BIND_ADDR", "0.0.0.0:2028"),
+        remote_url=os.environ.get("NEXUS_URL"),
+        remote_api_key=os.environ.get("NEXUS_API_KEY"),
+        json_output=False,
+        quiet=False,
+        verbosity=0,
+        fields=None,
+    )
 
 
 def _read_redis_stats() -> dict[str, Any]:

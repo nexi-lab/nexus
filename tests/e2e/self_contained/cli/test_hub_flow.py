@@ -6,7 +6,8 @@ Drives the whole admin story against a real running nexus stack:
 2. ``nexus hub token list --json`` includes the new row.
 3. HTTP request to the MCP endpoint with the token succeeds (not 401).
 4. ``nexus hub token revoke e2e`` marks the row revoked.
-5. After the auth-cache TTL expires, the same token is rejected with 401.
+5. ``nexus hub token list --show-revoked --json`` shows ``revoked=True``
+   and a non-null ``revoked_at`` for the row.
 6. ``nexus hub status --json`` reports ``postgres: ok`` and
    ``tokens.revoked >= 1``.
 
@@ -16,9 +17,10 @@ The test discovers the stack via the same env vars the MCP HTTP tests use
 see spec §Token/admin model — bootstrap). Skips cleanly if any of those
 are missing so local dev-loops don't fail without a stack running.
 
-Notes:
-- The AuthIdentityCache TTL is 60s (in-process on the MCP server), so
-  step 5 sleeps 61s. Run with ``-m slow`` when you want the full check.
+Note: wire-level revocation propagation under the 60s AuthIdentityCache
+TTL is covered by ``tests/e2e/self_contained/mcp/test_mcp_http_audit.py``
+(shipped with #3779). This test covers the admin-level lifecycle only,
+so no long sleep is required.
 """
 
 from __future__ import annotations
@@ -27,14 +29,13 @@ import json
 import os
 import subprocess
 import sys
-import time
 import uuid
 from pathlib import Path
 
 import httpx
 import pytest
 
-pytestmark = [pytest.mark.e2e, pytest.mark.slow]
+pytestmark = [pytest.mark.e2e]
 
 
 def _nexus_bin() -> str:
@@ -149,31 +150,19 @@ def test_hub_end_to_end_token_lifecycle(hub_cli_env: dict[str, str]) -> None:
         assert revoke.returncode == 0, revoke.stderr
         assert "revoked" in revoke.stdout.lower()
 
-        # 5. Wait for the 60s auth-identity cache TTL to drop the entry,
-        #    then the same token must be rejected. Time budget: 62s.
-        time.sleep(62)
-        resp = httpx.post(
-            f"{mcp_base_url}/mcp",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json",
-                "Accept": "application/json, text/event-stream",
-            },
-            json={
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "initialize",
-                "params": {
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": {},
-                    "clientInfo": {"name": "hub-e2e", "version": "1"},
-                },
-            },
-            timeout=10.0,
-        )
-        assert resp.status_code == 401, (
-            f"revoked token still accepted (status {resp.status_code}): {resp.text[:300]}"
-        )
+        # 5. Verify revocation is persisted: `hub token list --show-revoked`
+        #    must return the row with revoked=True and a non-null revoked_at.
+        #    Note: MCP `initialize` is an unauthenticated handshake (FastMCP
+        #    enforces auth at the tool-call layer), so we check DB state
+        #    rather than wire-level rejection. Wire-level revocation
+        #    propagation under the 60s AuthIdentityCache TTL is covered by
+        #    `tests/e2e/self_contained/mcp/test_mcp_http_audit.py` (#3779).
+        listed_after = _run(["hub", "token", "list", "--show-revoked", "--json"], env=hub_cli_env)
+        assert listed_after.returncode == 0, listed_after.stderr
+        rows = {t["name"]: t for t in json.loads(listed_after.stdout)["tokens"]}
+        assert token_name in rows, f"{token_name!r} not in list after revoke"
+        assert rows[token_name]["revoked"] is True, rows[token_name]
+        assert rows[token_name]["revoked_at"] != "-", rows[token_name]
 
         # 6. Hub status reports postgres ok and revoked >= 1.
         status = _run(["hub", "status", "--json"], env=hub_cli_env)

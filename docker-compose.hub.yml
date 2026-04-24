@@ -1,0 +1,54 @@
+# Reference hub deployment for issue #3784.
+#
+# Usage:
+#   export POSTGRES_PASSWORD=<strong-random-value>
+#   docker compose -f docker-compose.hub.yml up -d
+#   docker compose -f docker-compose.hub.yml exec nexus \
+#     nexus hub token create --name root --admin --zone root
+#
+# TLS: terminate at a reverse proxy (Caddy/nginx). Sample config in
+# docs/hub-deploy.md.
+
+services:
+  nexus:
+    image: ghcr.io/nexi-lab/nexus:latest
+    environment:
+      NEXUS_PROFILE: full
+      NEXUS_DATABASE_URL: postgresql://nexus:${POSTGRES_PASSWORD}@postgres:5432/nexus
+      NEXUS_MCP_HOST: 0.0.0.0
+      NEXUS_MCP_PORT: 8081
+      NEXUS_REDIS_URL: redis://redis:6379
+    ports:
+      - "8081:8081"
+    volumes:
+      - nexus-data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    command: ["nexus", "mcp", "serve", "--transport", "http"]
+
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_DB: nexus
+      POSTGRES_USER: nexus
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nexus"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis-data:/data
+
+volumes:
+  nexus-data:
+  postgres-data:
+  redis-data:

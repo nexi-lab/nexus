@@ -60,29 +60,25 @@ class MetadataMixin:
         """
         # S3 backends (PathS3Backend, CASS3Backend)
         if "S3" in cls_name:
-            bucket = getattr(backend, "bucket_name", None)
-            if bucket:
-                return {
-                    "backend_type": "s3",
-                    "s3_bucket": bucket,
-                    "s3_prefix": getattr(backend, "prefix", None) or "",
-                    "aws_region": getattr(backend, "region_name", None),
-                    "aws_access_key": getattr(backend, "_access_key_id", None)
-                    or getattr(backend, "access_key_id", None),
-                    "aws_secret_key": getattr(backend, "_secret_access_key", None)
-                    or getattr(backend, "secret_access_key", None),
-                    "s3_endpoint": getattr(backend, "endpoint_url", None),
-                }
+            return {
+                "backend_type": "s3",
+                "s3_bucket": getattr(backend, "bucket_name", None) or "",
+                "s3_prefix": getattr(backend, "prefix", None) or "",
+                "aws_region": getattr(backend, "region_name", None),
+                "aws_access_key": getattr(backend, "_access_key_id", None)
+                or getattr(backend, "access_key_id", None),
+                "aws_secret_key": getattr(backend, "_secret_access_key", None)
+                or getattr(backend, "secret_access_key", None),
+                "s3_endpoint": getattr(backend, "endpoint_url", None),
+            }
         # GCS backends (PathGCSBackend, CASGCSBackend)
         if "GCS" in cls_name:
-            bucket = getattr(backend, "bucket_name", None)
-            if bucket:
-                return {
-                    "backend_type": "gcs",
-                    "gcs_bucket": bucket,
-                    "gcs_prefix": getattr(backend, "prefix", None) or "",
-                    "access_token": getattr(backend, "access_token", None),
-                }
+            return {
+                "backend_type": "gcs",
+                "gcs_bucket": getattr(backend, "bucket_name", None) or "",
+                "gcs_prefix": getattr(backend, "prefix", None) or "",
+                "access_token": getattr(backend, "access_token", None),
+            }
         # GDrive connector
         if "GDrive" in cls_name or "Gdrive" in cls_name:
             token = getattr(backend, "_access_token", None) or getattr(

@@ -23,6 +23,8 @@ from nexus.bricks.auth.consumer_metrics import (
 )
 
 if TYPE_CHECKING:
+    from sqlalchemy.engine import Engine
+
     from nexus.bricks.auth.consumer_cache import ResolvedCredCache
     from nexus.bricks.auth.consumer_providers.base import ProviderAdapter
     from nexus.bricks.auth.envelope import DEKCache, EncryptionProvider
@@ -138,19 +140,48 @@ class CredentialConsumer:
     def __init__(
         self,
         *,
-        store: "PostgresAuthProfileStore",
         encryption: "EncryptionProvider",
         dek_cache: "DEKCache",
         cred_cache: "ResolvedCredCache",
         adapters: dict[str, "ProviderAdapter"],
         audit: "ReadAuditWriter",
+        store: "PostgresAuthProfileStore | None" = None,
+        engine: "Engine | None" = None,
     ) -> None:
+        # Either ``store`` (single-tenant, used by tests that pre-bind a tenant)
+        # OR ``engine`` (multi-tenant, used by the server which scopes per-request
+        # via JWT claims). When both are provided, ``store`` wins — tests get
+        # deterministic behaviour without having to drop the engine.
+        if store is None and engine is None:
+            raise ValueError("CredentialConsumer requires either store=... or engine=...")
         self._store = store
+        self._engine = engine
         self._encryption = encryption
         self._dek_cache = dek_cache
         self._cred_cache = cred_cache
         self._adapters = adapters
         self._audit = audit
+
+    def _get_store(self, claims: "DaemonClaims") -> "PostgresAuthProfileStore":
+        """Return a store scoped to ``claims.tenant_id``.
+
+        - If a pre-bound store was supplied at construction (test path), return
+          it as-is. Tests bind the store to a known tenant; we don't second-guess.
+        - Otherwise, construct a fresh store using ``claims.tenant_id`` so the
+          underlying ``decrypt_profile`` SQL filters by the JWT-verified tenant
+          rather than a boot-time placeholder.
+        """
+        if self._store is not None:
+            return self._store
+        # Local import to avoid a circular dep at module load time.
+        from nexus.bricks.auth.postgres_profile_store import PostgresAuthProfileStore
+
+        return PostgresAuthProfileStore(
+            "",
+            tenant_id=claims.tenant_id,
+            principal_id=claims.principal_id,
+            engine=self._engine,
+        )
 
     def resolve(
         self,
@@ -204,7 +235,7 @@ class CredentialConsumer:
                     return cached
 
             try:
-                decrypted = self._store.decrypt_profile(
+                decrypted = self._get_store(claims).decrypt_profile(
                     principal_id=claims.principal_id,
                     provider=provider,
                     encryption=self._encryption,

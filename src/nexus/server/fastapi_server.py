@@ -1011,21 +1011,6 @@ def _register_routes(app: FastAPI) -> None:
         logger.warning(f"Failed to import secrets router: {e}")
 
     # ---- /v1 (nexus-bot daemon, #3804) ----
-    # Token-exchange stub — always registered; flag controls behavior
-    # (route currently always returns 501, so there's no gating risk).
-    try:
-        from nexus.server.api.v1.routers.token_exchange import make_token_exchange_router
-
-        _token_exchange_enabled = os.environ.get("NEXUS_TOKEN_EXCHANGE_ENABLED", "").lower() in (
-            "1",
-            "true",
-            "yes",
-        )
-        app.include_router(make_token_exchange_router(enabled=_token_exchange_enabled))
-        logger.info("v1 token-exchange route registered (enabled=%s)", _token_exchange_enabled)
-    except ImportError as e:
-        logger.warning(f"Failed to import v1 token-exchange router: {e}")
-
     # Daemon enroll/refresh + auth-profiles routers — gated on JWT signing key
     # + enroll-token secret. If either env var is missing, skip with a warning;
     # deployments that don't use the nexus-bot daemon are unaffected.
@@ -1092,6 +1077,61 @@ def _register_routes(app: FastAPI) -> None:
                     )
                     app.include_router(make_jwks_router(signer=_v1_signer))
                     logger.info("v1 daemon + auth-profiles + jwks routes registered")
+
+                    # Token-exchange (#3818): read path. Reuses _v1_engine + _v1_signer
+                    # from the daemon block. Adds an EncryptionProvider (envelope
+                    # decrypt) and a CredentialConsumer orchestrator. Default off
+                    # until ops verifies KMS/Vault wiring (NEXUS_TOKEN_EXCHANGE_ENABLED).
+                    # The consumer is constructed with engine=_v1_engine — it builds
+                    # a fresh tenant-scoped PostgresAuthProfileStore per request from
+                    # the JWT-verified DaemonClaims, so there's no boot-time tenant
+                    # placeholder leaking into the SQL WHERE clause.
+                    try:
+                        from nexus.bricks.auth.consumer import CredentialConsumer
+                        from nexus.bricks.auth.consumer_cache import ResolvedCredCache
+                        from nexus.bricks.auth.consumer_providers import (
+                            default_adapters,
+                        )
+                        from nexus.bricks.auth.envelope import DEKCache
+                        from nexus.bricks.auth.envelope_providers.in_memory import (
+                            InMemoryEncryptionProvider,
+                        )
+                        from nexus.bricks.auth.read_audit import ReadAuditWriter
+                        from nexus.server.api.v1.routers.token_exchange import (
+                            make_token_exchange_router,
+                        )
+                    except ImportError as e:
+                        logger.warning("v1 token-exchange disabled: import failed (%s)", e)
+                    else:
+                        _token_exchange_enabled = os.environ.get(
+                            "NEXUS_TOKEN_EXCHANGE_ENABLED", ""
+                        ).lower() in ("1", "true", "yes")
+                        # MVP: InMemoryEncryptionProvider unless an operator wires
+                        # Vault/KMS via app.state.encryption_provider. Production
+                        # deployments override this in their startup hook.
+                        _enc = getattr(app.state, "encryption_provider", None) or (
+                            InMemoryEncryptionProvider()
+                        )
+                        _consumer = CredentialConsumer(
+                            engine=_v1_engine,
+                            encryption=_enc,
+                            dek_cache=DEKCache(),
+                            cred_cache=ResolvedCredCache(),
+                            adapters=default_adapters(),
+                            audit=ReadAuditWriter(engine=_v1_engine),
+                        )
+                        app.include_router(
+                            make_token_exchange_router(
+                                enabled=_token_exchange_enabled,
+                                signer=_v1_signer,
+                                consumer=_consumer,
+                                encryption=_enc,
+                            )
+                        )
+                        logger.info(
+                            "v1 token-exchange route registered (enabled=%s)",
+                            _token_exchange_enabled,
+                        )
 
                     # Dev-loop convenience: mint tenant/principal/enroll-token in
                     # one call. Requires admin-bypass explicitly on AND a
